@@ -112,6 +112,9 @@ export function BuiltInProviderAuthoringView(props: Readonly<{
                 ) : undefined}
                 description={props.provenance === 'external'
                     ? t('settingsProviders.compatibility.experimentalDescription')
+                    // A gateway asks for no key: it draws on the subscriptions chosen below.
+                    : props.gatewayDraft
+                        ? t('settingsProvidersCollection.gateway.description')
                     : props.providerName
                         ? t('settingsProvidersCollection.addDescription', { provider: props.providerName })
                         : t('settingsProviders.authoring.builtInDescription')}
@@ -183,8 +186,9 @@ export function BuiltInProviderAuthoringView(props: Readonly<{
                     />
                 ) : null}
                 {props.nameField}
-                {props.gatewayDraft?.fields}
             </ItemGroup>
+            {/* The gateway's own sections, each with its sheet, follow the name rather than nesting in its card. */}
+            {props.gatewayDraft?.fields}
             {props.endpointTemplates.length > 0 ? (
                 // The header editor is the public plugin-ui one, so its sheet sits in core's plugin presentation scope.
                 <CorePluginUiPresentationScope>
