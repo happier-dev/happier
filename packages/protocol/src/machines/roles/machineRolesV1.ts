@@ -8,7 +8,7 @@ import {
   type MachineMetadataFieldPortV1,
 } from '../machineMetadataFieldV1.js';
 import type { ManagedMachineEnrollmentIdentityV1 } from '../managed/enrollmentIdentityV1.js';
-import { MachineIsolationV1Schema } from '../metadataUpdate.js';
+import { MachineIsolationV1Schema } from '../machineIsolationV1.js';
 
 /**
  * The nine built-in Machine roles. Machine core (identity, credentials,
