@@ -401,6 +401,13 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     // Unclassified PR captures retain a due time for interrupted-batch recovery.
     // Widen the strict state union without changing existing custody rows.
     migrate: (value) => value,
+  }, {
+    id: 'channel-state-v22-to-v23',
+    fromSchemaVersion: 22,
+    toSchemaVersion: 23,
+    // Embedded Action schemas changed under V22. Data validates retained rows
+    // against the new contract before promoting; custody values stay intact.
+    migrate: (value) => value,
   }],
   [CHANNEL_DELIVERIES_COLLECTION_ID]: [{
     id: 'channel-deliveries-v1-to-v2',

@@ -144,6 +144,46 @@ const providerObservationShell = {
 } as const;
 
 describe('Channels collection declarations', () => {
+  it('migrates the published V22 contract before adopting changed embedded Action schemas', async () => {
+    const retained = JSON.parse(readFileSync(new URL(
+      './testkit/fixtures/channelStateV22.json', import.meta.url,
+    ), 'utf8'));
+    const source = preparePluginAccountCollectionContractV1({
+      pluginId: PLUGIN_MANIFEST.id, contribution: retained.collection,
+    }).normalized;
+    const target = preparePluginAccountCollectionContractV1({
+      pluginId: PLUGIN_MANIFEST.id,
+      contribution: CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS.find(collection => collection.id === source.collectionId),
+    }).normalized;
+    // The platform cannot adopt a changed strict nested union at the same
+    // version. A forward migration must retain existing ingress custody.
+    expect(target.schemaVersion).toBeGreaterThan(source.schemaVersion);
+    const chain = resolvePluginCollectionMigrationChainV1({
+      sourceSchemaVersion: source.schemaVersion, targetSchemaVersion: target.schemaVersion,
+      readableSchemaVersions: target.readableSchemaVersions, migrations: target.migrations,
+    });
+    expect(chain?.length).toBeGreaterThan(0);
+    const row = {
+      id: 'A'.repeat(43), 'record-kind': 'ingress-obligation', v: 1,
+      'connection-id': 'connection-1', 'created-at': 1, 'updated-at': 1,
+      'due-at': 100, terminal: false, attention: false,
+      payload: { occurrenceIds: ['provider-observation'], target: null,
+        normalizedIngress: null, observationShell: providerObservationShell,
+        sourceAuthority: { connectionAuthorityEpoch: 1 },
+        lifecycle: { phase: 'retryDue', attemptCount: 1, dueAt: 100 },
+        disposition: null, nonAdmission: null },
+    };
+    expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(source.schema), row)).toBe(true);
+    let migrated: Readonly<Record<string, JsonValue>> = row;
+    for (const edge of chain ?? []) {
+      const callback = CHANNEL_ACCOUNT_COLLECTION_MIGRATIONS['channel-state']?.find(step => step.id === edge.id);
+      if (!callback) throw new Error(`Missing executable migration ${edge.id}`);
+      migrated = await callback.migrate(migrated, { currentRevision: 7 });
+    }
+    expect(migrated).toEqual(row);
+    expect(isValidPluginJsonSchemaValue(compilePluginJsonSchema(target.schema), migrated)).toBe(true);
+  });
+
   it('publishes self-contained ingress above the retained census-backed v19 contract', async () => {
     // Public Data contract captured on QA #86, before census-backed input was
     // removed. Keep negotiation anchored to that producer, not current types.
@@ -786,8 +826,8 @@ describe('Channels collection declarations', () => {
       },
     } as const;
 
-    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(22);
-    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]);
+    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(23);
+    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]);
     expect(JSON.parse(JSON.stringify(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS)))
       .toEqual(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS);
     expect(staticDeclaration?.migrations).toEqual([{
@@ -844,6 +884,8 @@ describe('Channels collection declarations', () => {
       id: 'channel-state-v20-to-v21', fromSchemaVersion: 20, toSchemaVersion: 21,
     }, {
       id: 'channel-state-v21-to-v22', fromSchemaVersion: 21, toSchemaVersion: 22,
+    }, {
+      id: 'channel-state-v22-to-v23', fromSchemaVersion: 22, toSchemaVersion: 23,
     }]);
     expect(staticDeclaration).not.toHaveProperty('migrations.0.migrate');
     expect(censusPayload?.required).toContain('conflict');

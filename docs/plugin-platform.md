@@ -6517,6 +6517,12 @@ references reproduces the V20 document exactly, so validation is unchanged;
 V20→V21 is an identity migration. Root properties, `$ref` targets and
 subschemas holding a `$ref` stay inline.
 
+Channels `channel-state` V23 adopts the changed embedded Action result schemas
+that drifted under V22 in unreleased 0.3 development. Its V22→V23 identity
+migration preserves row values; Data validates them against the target contract
+before promoting the writer through the existing candidate-preparation path.
+Same-version contract conflicts remain refusals.
+
 ### Plugin Collection tables
 
 The Account Collection query owner accepts both `asc` and `desc` keyset order.
