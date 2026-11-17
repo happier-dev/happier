@@ -1111,6 +1111,37 @@ test('generated Action DTO signatures use the canonical SDK public declarations'
   }
 });
 
+test('Action DTO failure causes retain the public errors type identity', () => {
+  const repoRoot = resolve(tmpdir(), 'happier-failure-cause-dto-fixture');
+  const protocolRoot = resolve(repoRoot, 'packages/protocol/src');
+  const catalog = new Map([
+    [resolve(protocolRoot, 'actions/actionIds.ts'), "export const ACTION_ID_FAMILIES_V1 = { fixture: ['fixture.read'] };"],
+    [resolve(protocolRoot, 'actions/pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {};'],
+  ]);
+  const { outputs } = actionTypeMapGenerator.projectActionDtoDeclarations({ repoRoot,
+    declarations: new Map([
+      [resolve(protocolRoot, 'actions/pluginActionDtos.ts'),
+        "import type { ActionExecuteResult } from './pluginActionDtoSupport.js';\n"
+          + 'export type PluginActionInputById = { "fixture.read": {} };\n'
+          + 'export type PluginActionResultById = { "fixture.read": ActionExecuteResult };\n'],
+      [resolve(protocolRoot, 'actions/pluginActionDtoSupport.ts'),
+        'export type ActionFailureCauseV1 = Readonly<{ phase: string }>;\n'
+          + 'export type ActionExecuteResult = { failureCause?: ActionFailureCauseV1 };\n'],
+    ]),
+    readSource: path => {
+      const source = catalog.get(path);
+      assert.ok(source !== undefined, `Unexpected source read: ${path}`);
+      return source;
+    },
+  });
+  const support = outputs.get('packages/plugin-sdk/src/actions/dtos/pluginActionDtoSupport.generated.ts');
+  assert.match(support, /import type \{ ActionFailureCauseV1 \} from '\.\.\/\.\.\/errors\.js';/u);
+  assert.match(support, /export type \{ ActionFailureCauseV1 \} from '\.\.\/\.\.\/errors\.js';/u);
+  for (const output of outputs.values()) {
+    assert.doesNotMatch(output, /export type ActionFailureCauseV1\s*=/u);
+  }
+});
+
 test('Action DTO projection retains named public support roots with canonical generic parameters', () => {
   const repoRoot = resolve(tmpdir(), 'happier-named-support-fixture');
   const protocolRoot = resolve(repoRoot, 'packages/protocol/src');

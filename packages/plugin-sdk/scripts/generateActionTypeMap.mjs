@@ -39,6 +39,9 @@ export function projectActionDtoDeclarations({ repoRoot = REPO_ROOT, recordInput
   canonicalSdkTypes.set('ScmComparisonSource', {
     path: resolve(repoRoot, 'packages/plugin-sdk/src/scm/comparisonSource.ts'), name: 'ScmComparisonSource',
   });
+  canonicalSdkTypes.set('ActionFailureCauseV1', {
+    path: resolve(repoRoot, 'packages/plugin-sdk/src/errors.ts'), name: 'ActionFailureCauseV1',
+  });
   const sources = new Map();
   const sourceTexts = new Map();
   const selected = new Map();
@@ -168,6 +171,8 @@ export function projectActionDtoDeclarations({ repoRoot = REPO_ROOT, recordInput
     const output = [GENERATED_HEADER, '',
       ...[...imports].sort(([a], [b]) => a.localeCompare(b)).map(([specifier, names]) =>
         `import type { ${[...names].sort(([a], [b]) => a.localeCompare(b)).map(([local, exported]) => local === exported ? local : `${exported} as ${local}`).join(', ')} } from '${specifier}';`), '',
+      ...(basename(path).startsWith('pluginActionDtoSupport.') && imports.get('../../errors.js')?.has('ActionFailureCauseV1')
+        ? ["export type { ActionFailureCauseV1 } from '../../errors.js';", ''] : []),
       ...[...declarations.values()].map((node) => printer.printNode(ts.EmitHint.Unspecified, node, source(path))), ''].join('\n');
     validateGeneratedModuleSyntax(output);
     outputs.set(`packages/plugin-sdk/src/actions/${outputNames.get(path)}`, output);
