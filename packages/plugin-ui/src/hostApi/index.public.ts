@@ -28,6 +28,7 @@ export { useHostTaskShareSheet, type HostTaskShareRef, type HostTaskShareSheet }
 export { useHostPeopleDirectory, type HostPeopleDirectory, type HostPeopleDirectoryRequest, type HostPerson } from './peopleDirectory.public.js';
 export { useFindSurfaceRegistration, type FindSurfaceRegistration } from './find.public.js';
 export { useWidgetAreaPort, type PluginUiWidgetAreaPortV1 } from './widgetArea.public.js';
+export { useHostDatabaseWorkbench, type HostDatabaseWorkbench, type HostDatabaseActivityResource, type HostDatabaseLastLook } from './databaseWorkbench.public.js';
 
 export {
   usePluginHostApi,

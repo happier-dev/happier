@@ -201,9 +201,9 @@ export function StagedReview(
 ) {
   const translate = usePluginTranslation();
   const instance = useWorkbenchInstance();
-  const draft = useWorkbenchDraft(instance);
+  const draft = useWorkbenchDraft(instance, props);
   const review = React.useMemo(
-    () => draft.review().filter((group) => group.rows.length > 0),
+    () => draft.review(),
     [draft],
   );
   const descriptor = instance.target(props.targetKey);

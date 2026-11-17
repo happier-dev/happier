@@ -36,6 +36,7 @@ import type { EntityFlatReorderListProps } from '../components/EntityFlatReorder
 import type { PluginUiWidgetAreaPortV1 } from '../hostApi/widgetArea.public.js';
 import type { HostTaskShareSheet } from '../hostApi/taskShareSheet.public.js';
 import type { HostPeopleDirectory, HostPeopleDirectoryRequest } from '../hostApi/peopleDirectory.public.js';
+import type { HostDatabaseWorkbench } from '../hostApi/databaseWorkbench.public.js';
 import type { SetupBlockGridProps, SetupBlockTileProps } from '../components/Setup.js';
 import type { DictationButtonProps, StatusCellProps, VoiceMarkArtProps } from '../components/Voice.js';
 import type { VoicePresenceProps, VoiceMarkProps, VoiceStatusLineProps, VoiceTransportProps, VoiceCompactTranscriptProps, VoiceReadAloudPhase } from '../components/Voice.js';
@@ -253,6 +254,8 @@ export type PluginUiPresentationHost = Readonly<{
   shareSheet?: ShareSheetHost;
   renderCodeEditor?(request: HappierCodeEditorRequest): ReactNode;
   usePeopleDirectory?(request: HostPeopleDirectoryRequest): HostPeopleDirectory | null;
+  /** Same-realm factories reuse the app's Activity and viewer-device last-look owners. */
+  databaseWorkbench?: HostDatabaseWorkbench;
   /** Device-local collection widths, already scoped to this plugin by the host. */
   panelSizing?: Readonly<{
     useWidth(resizeKey: string): Readonly<{

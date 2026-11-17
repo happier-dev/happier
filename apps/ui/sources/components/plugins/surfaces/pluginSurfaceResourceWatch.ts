@@ -112,6 +112,7 @@ export function createPluginContextualResourceWatchClient(input: Readonly<{
         },
         async watchResource(resource, listener, options) {
             const host = 'hostResource' in input.resource ? input.resource.hostResource : null;
+            if (host && options?.input !== undefined) return resourceClientFailure('plugin_resource_request_invalid', 'Host Resource input is part of its reference');
             const hostReference = host ? PluginUiHostReadReferenceV1Schema.safeParse(resource) : null;
             if (host && (!hostReference?.success
                 || pluginUiResourceReferenceKey(hostReference.data, null) !== pluginUiResourceReferenceKey(host, null)))
@@ -139,10 +140,14 @@ export function createPluginContextualResourceWatchClient(input: Readonly<{
             const opened = await owner.open({
                 subscriptionId,
                 resourceId: reference.localId,
+                ...(options?.input === undefined ? {} : { input: options.input }),
                 deliver: event => listener(event.kind === 'pages'
                     ? { ...event, pages: event.pages.map(page => ({ contentType: page.contentType, digest: page.digest,
                         bytes: decodeBase64(page.bytesBase64, 'base64') })) } : event),
                 ...(signal === undefined ? {} : { signal }),
+            }).catch((error: unknown) => {
+                signal?.removeEventListener('abort', onAbort);
+                throw error;
             });
             if (!opened.ok) {
                 signal?.removeEventListener('abort', onAbort);
@@ -163,6 +168,7 @@ export function createPluginContextualResourceWatchClient(input: Readonly<{
                 // this admission boundary. The generic Resource owner uses it
                 // only to prove an in-flight snapshot read already converged;
                 // it never treats this signal as Resource bytes.
+                subscriptionId,
                 admittedDigest: opened.digest,
                 dispose(): void {
                     if (disposed) return;
@@ -219,6 +225,9 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
             }
             const hostReference = PluginUiHostReadReferenceV1Schema.safeParse(parsed.data.resource);
             const readAuthority = PluginUiReadAuthorityReferenceV1Schema.safeParse(parsed.data.resource);
+            if ((hostReference.success || readAuthority.success) && parsed.data.input !== undefined) {
+                return errorPayload('invalid_payload', 'plugin_resource_request_invalid');
+            }
             if (!readAuthority.success && !hostReference.success && input.canWatchPluginResources?.() === false) {
                 return errorPayload('unavailable', 'plugin_resource_transport_unavailable');
             }
@@ -296,6 +305,7 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
                 const opened = await admittedOwner.open({
                     subscriptionId,
                     resourceId: reference.localId,
+                    ...(parsed.data.input === undefined ? {} : { input: parsed.data.input }),
                     ...(readAuthority.success ? { readAuthority: readAuthority.data.readAuthority } : {}),
                     deliver: input.deliver,
                     ...(signal === undefined ? {} : { signal }),

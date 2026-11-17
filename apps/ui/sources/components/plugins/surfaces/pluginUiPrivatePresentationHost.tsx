@@ -19,6 +19,8 @@ import * as React from 'react';
 import { PlanChecklistCard } from '@/components/systemTasks/planChecklist/PlanChecklistCard';
 import { useScmFileViewed } from '@/components/sessions/files/comparison/useScmFileViewed';
 import { usePluginUiPeopleDirectory } from './usePluginUiPeopleDirectory';
+import { createDatabaseActivityController } from '@/hooks/databases/activityController';
+import { createDatabaseStatsLastLook } from '@/sync/domains/databases/lastLook';
 import type { HostTaskShareSheet } from '@happier-dev/plugin-ui/hostApi';
 import { showTaskShareSheet } from '@/components/sharing/tasks/showTaskShareSheet';
 import { PluginUiMenuPresentation } from './pluginUiMenuPresentation';
@@ -366,6 +368,10 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
     return Object.freeze({
     useScmFileViewed,
     usePeopleDirectory: usePluginUiPeopleDirectory,
+    databaseWorkbench: Object.freeze({
+        activityResource: createDatabaseActivityController,
+        lastLook: createDatabaseStatsLastLook,
+    }),
     renderCodeEditor({ editorRef, ...props }: HappierCodeEditorRequest) { return <CodeEditor {...props} ref={editorRef} />; },
     useShareGrantRowPresentation,
     shareSheet: SHARE_SHEET_HOST,

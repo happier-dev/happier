@@ -6,6 +6,8 @@ import {
   type DatabaseTargetsListInputV1,
 } from '@happier-dev/database-protocol';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
+import { databaseStatementRangesV1 } from '@happier-dev/databases/statements';
+import { useHostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
 import {
   createWorkbenchInstance,
   type WorkbenchInstance,
@@ -56,17 +58,6 @@ export function databaseTargetKey(descriptor: DatabaseDescriptorV1): string {
   return JSON.stringify(descriptor.target);
 }
 
-/**
- * Statement ranges come from P1's dialect lexers, which are not yet published on a UI-safe
- * subpath. Until they are, the editor's text is one statement; the producer refuses a
- * multi-statement read with its typed error, which the console shows in place.
- */
-function wholeTextStatement(
-  sql: string,
-): readonly Readonly<{ start: number; end: number }>[] {
-  return sql.trim().length ? [{ start: 0, end: sql.length }] : [];
-}
-
 /** The physical mount owns one workbench instance until it unmounts. */
 export function useWorkbenchMount(
   context: RenderContext,
@@ -75,6 +66,8 @@ export function useWorkbenchMount(
   options: Readonly<{ pageLocation: boolean }>,
 ): WorkbenchInstance | null {
   const { hostApi } = context;
+  const databaseHost = useHostDatabaseWorkbench();
+  const accountScope = context.surface.accountScope;
   const scopeKey = launch ? JSON.stringify(launch.scope) : null;
   const instance = React.useMemo(() => {
     if (!launch || !location) return null;
@@ -86,11 +79,13 @@ export function useWorkbenchMount(
       cataloguePageRows: WORKBENCH_DISPLAY_PAGE_ROWS,
       consoleStorage: (descriptor) =>
         createConsoleDeviceStorage(hostApi, descriptor),
-      statementRanges: wholeTextStatement,
+      statementRanges: databaseStatementRangesV1,
+      activityResource: databaseHost?.activityResource,
+      lastLook: databaseHost && accountScope ? target => databaseHost.lastLook(accountScope, target) : undefined,
     });
     // A new scope is a different workbench; location changes go through the instance's navigation owner.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hostApi, scopeKey, options.pageLocation]);
+  }, [hostApi, scopeKey, options.pageLocation, databaseHost, accountScope?.serverId, accountScope?.accountId]);
   const attached = React.useRef<WorkbenchInstance | null>(null);
   React.useEffect(() => {
     if (!instance) return;

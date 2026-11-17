@@ -1210,6 +1210,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             assertInstalled('readResource');
             const result = await transport.request('readResource', {
                 resource: canonicalResourceReferencePayload(resource),
+                ...(options?.input === undefined ? {} : { input: options.input }),
             }, options?.signal ? { signal: options.signal } : undefined);
             const resourceContent = await readCanonicalResource(result);
             assertDeliveryActive(options?.signal);
@@ -1248,6 +1249,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                 {
                     subscriptionId: randomUUID(),
                     resource: canonicalResourceReferencePayload(resource) as PluginUiResourceSubscriptionRequestV1['resource'],
+                    ...(options?.input === undefined ? {} : { input: options.input }),
                 },
                 deliverDecodedResourceSubscriptionEvents(listener),
                 options?.signal ? { signal: options.signal } : undefined,
@@ -1261,6 +1263,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
             const disposableSubscription = disposable(() => { void subscription.dispose(); });
             return Object.freeze({
                 ...disposableSubscription,
+                subscriptionId: subscription.subscriptionId,
                 ...(subscription.admittedDigest === undefined
                     ? {}
                     : { admittedDigest: subscription.admittedDigest }),

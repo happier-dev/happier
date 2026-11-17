@@ -3272,7 +3272,7 @@ describe('plugin UI domain client transport adapter', () => {
 
         const digest = `sha256:${'a'.repeat(64)}`;
         const admitted = await establish((subscriptionId) => ({ subscriptionId, digest }));
-        expect(admitted).toMatchObject({ admittedDigest: digest });
+        expect(admitted).toMatchObject({ admittedDigest: digest, subscriptionId: 'resource-watch-subscription-1' });
 
         // A host result is only a baseline for the subscription it actually
         // admitted. Keeping either of these would let an unrelated/malformed
@@ -3392,5 +3392,34 @@ describe('finite Resource pages delivery', () => {
         expect(sent.filter(message => message.kind === 'request')).toEqual([]);
         await watch.dispose();
         expect(sent.at(-1)).toMatchObject({ kind: 'disposeHostResource', subscriptionId: 'pages-subscription' });
+    });
+});
+
+
+describe('selected Resource input', () => {
+    it('carries the same selected operand through watch admission and snapshot read', async () => {
+        let receive: ((message: unknown) => void) | undefined;
+        const sent: PluginUiHostApiWireEnvelopeV1[] = [];
+        const api = await createPluginUiHostApiClientFromTransport({ identity, transport: {
+            subscribe(listener) { receive = listener; return { dispose() {} }; },
+            send(message) {
+                sent.push(message);
+                if (message.kind === 'negotiate') receive?.({ wireVersion: 1, kind: 'negotiated', identity,
+                    apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, methods: ['watchResource', 'readResource'] });
+                if (message.kind === 'subscribe') receive?.({ wireVersion: 1, kind: 'result', identity,
+                    requestId: message.requestId, method: message.method, result: { subscriptionId: message.subscriptionId } });
+                if (message.kind === 'request') receive?.({ wireVersion: 1, kind: 'result', identity,
+                    requestId: message.requestId, method: message.method, result: { contentType: 'application/json',
+                        digest: `sha256:${'a'.repeat(64)}`, bytesBase64: 'e30=' } });
+            },
+        } });
+        const input = { operation: 'describe', target: { kind: 'manual', id: 'selected' } };
+        const watch = await api.watchResource('connection', () => {}, { input });
+        await api.readResource('connection', { input });
+        expect(sent.filter(message => message.kind === 'subscribe' || message.kind === 'request')
+            .map(message => message.payload)).toEqual([
+                { resource: 'connection', input }, { resource: 'connection', input },
+            ]);
+        watch.dispose();
     });
 });

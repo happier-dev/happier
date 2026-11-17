@@ -1,11 +1,12 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react';
-import type { DatabaseRelationV1, DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
+import type { DatabaseRelationV1, DatabaseStatsReadV1, DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
 import type { WorkbenchInstance } from './workbench.js';
-import type { WorkbenchChange, WorkbenchLocation, WorkbenchStatus } from './models.js';
+import type { WorkbenchChange, WorkbenchLocation, WorkbenchStatementsObservation, WorkbenchStatus } from './models.js';
 import type { WorkbenchResource } from './resource.js';
 import type { CodeEditorProps, CodeEditorSelectionRange } from '@happier-dev/plugin-ui/presentation';
 import { createDatabaseCompletionSource } from './completions.js';
 import { createWorkbenchPaneState, workbenchPaneKey, type WorkbenchPaneIdentity, type WorkbenchPaneState } from './state.js';
+import { selectRelationChanges } from './apply.js';
 
 const paneState = createWorkbenchPaneState();
 
@@ -84,9 +85,14 @@ export function useDatabaseSchemaRelations(targetKey: string, schema: string, af
     const instance = useWorkbenchInstance();
     const resource = instance.schemaRelations(targetKey, schema, after);
     const snapshot = useResource(resource);
-    return useMemo(() => ({ relations: snapshot.data?.relations ?? emptyRows, completeness: snapshot.data?.completeness,
-        status: projectWorkbenchStatus(snapshot, snapshot.data?.relations.length === 0), error: snapshot.error,
-        refresh: () => resource.invalidate() }), [snapshot, resource]);
+    return useMemo(() => {
+        const completeness = snapshot.data?.completeness;
+        return { relations: snapshot.data?.relations ?? emptyRows, completeness,
+            nextPageAfter: completeness && !completeness.complete && completeness.continuation?.kind === 'catalog'
+                ? completeness.continuation.after : undefined,
+            status: projectWorkbenchStatus(snapshot, snapshot.data?.relations.length === 0), error: snapshot.error,
+            refresh: () => resource.invalidate() };
+    }, [snapshot, resource]);
 }
 export function useRelationPage(location: WorkbenchLocation) {
     const instance = useWorkbenchInstance();
@@ -135,24 +141,34 @@ export function useDatabaseAccess(targetKey: string) {
     const snapshot = useResource(resource);
     return useMemo(() => ({ ...snapshot.data, status: projectWorkbenchStatus(snapshot), error: snapshot.error }), [snapshot]);
 }
-export function useWorkbenchDraft(instance: WorkbenchInstance) {
+export function useWorkbenchDraft(instance: WorkbenchInstance, scope?: Readonly<{ targetKey: string; relation: DatabaseRelationV1 }>) {
     const changes = useSyncExternalStore(instance.drafts.subscribe, instance.drafts.changes, instance.drafts.changes);
-    const select = useCallback((location: WorkbenchLocation) => location.relation ? JSON.stringify([location.targetKey, location.relation]) : '', []);
+    const select = useCallback((location: WorkbenchLocation) => {
+        const targetKey = scope?.targetKey ?? location.targetKey;
+        const relation = scope?.relation ?? location.relation;
+        return relation ? JSON.stringify([targetKey, relation]) : '';
+    }, [scope?.targetKey, scope?.relation]);
     const key = useLocationValue(instance, select);
+    const location = instance.local.get('location');
+    const targetKey = scope?.targetKey ?? location.targetKey;
+    const relation = scope?.relation ?? location.relation;
     const subscribe = useCallback((listener: () => void) => instance.applyOutcomes.subscribe(key, listener), [instance, key]);
     const get = useCallback(() => instance.applyOutcomes.get(key), [instance, key]);
     const outcome = useSyncExternalStore(subscribe, get, get);
-    return useMemo(() => ({
-        counts: { edits: changes.filter(item => item.change.kind === 'update').length, inserts: changes.filter(item => item.change.kind === 'insert').length,
-            removals: changes.filter(item => item.change.kind === 'delete').length },
-        stage: (change: WorkbenchChange) => instance.drafts.stage(instance.draftKey(change), change),
-        takeBack: (change: Pick<WorkbenchChange, 'rowKey' | 'relation' | 'targetKey'>) => instance.drafts.takeBack(instance.draftKey(change)),
-        discard: instance.drafts.discard,
-        cellState: (rowKey: string, column: string) => instance.cellState(rowKey, column),
-        review: instance.review,
-        apply: instance.apply,
-        outcome,
-    }), [changes, instance, outcome]);
+    return useMemo(() => {
+        const selected = selectRelationChanges(changes, targetKey, relation);
+        return {
+            counts: { edits: selected.filter(item => item.change.kind === 'update').length, inserts: selected.filter(item => item.change.kind === 'insert').length,
+                removals: selected.filter(item => item.change.kind === 'delete').length },
+            stage: (change: WorkbenchChange) => instance.drafts.stage(instance.draftKey(change), change),
+            takeBack: (change: Pick<WorkbenchChange, 'rowKey' | 'relation' | 'targetKey'>) => instance.drafts.takeBack(instance.draftKey(change)),
+            discard: () => instance.drafts.takeBackMany(selected.map(instance.draftKey)),
+            cellState: (rowKey: string, column: string) => instance.cellState(rowKey, column),
+            review: () => instance.review(targetKey, relation),
+            apply: instance.apply,
+            outcome,
+        };
+    }, [changes, instance, outcome, targetKey, relation]);
 }
 
 /** Completion reads held metadata only; unopened schemas and columns stay unread. */
@@ -194,4 +210,52 @@ export function useWorkbenchCellState(rowKey: string, column: string) {
     const get = useCallback(() => instance.drafts.get(key), [instance, key]);
     const row = useSyncExternalStore(subscribe, get, get);
     return useMemo(() => instance.cellState(rowKey, column), [instance, row, rowKey, column, key]);
+}
+
+/** Statements, tables or indexes: one read per open or Refresh. Unavailable is an answer, not a failure. */
+export function useDatabaseInsights(targetKey: string, request: Exclude<DatabaseStatsReadV1, { group: 'activity' }>) {
+    const instance = useWorkbenchInstance();
+    const resource = instance.stats(targetKey, request);
+    const snapshot = useResource(resource);
+    return useMemo(() => ({ observation: snapshot.data, status: projectWorkbenchStatus(snapshot), error: snapshot.error,
+        refresh: () => resource.invalidate() }), [snapshot, resource]);
+}
+
+/**
+ * "Since your last look" for the statements on screen (R13). One host lifetime per mounted target: the first
+ * successful sample of this view records the shown rows once; Refresh compares to that held baseline.
+ */
+export function useStatementsLastLook(targetKey: string, observation: WorkbenchStatementsObservation | undefined,
+    shownKeys: readonly string[]) {
+    const instance = useWorkbenchInstance();
+    const lastLook = useMemo(() => {
+        try { return instance.lastLook(targetKey); } catch { return null; }
+    }, [instance, targetKey]);
+    const shown = shownKeys.join('\n');
+    return useMemo(() => observation && lastLook ? lastLook.observe(observation, shownKeys) : null,
+        // The shown keys are compared by value; a new array with the same rows is the same look.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [lastLook, observation, shown]);
+}
+
+/** D21: about 5 s while the Activity view is presented, zero while hidden (owner, 2026-11-16). */
+export const DATABASE_ACTIVITY_REFRESH_MS = 5000;
+const noActivity = { value: null, loading: true, error: null } as const;
+/** Live activity: the host's presented-demand owner refreshes it only while this view is shown. */
+export function useDatabaseActivity(targetKey: string, request: Extract<DatabaseStatsReadV1, { group: 'activity' }>, presented: boolean) {
+    const instance = useWorkbenchInstance();
+    const resource = useMemo(() => {
+        try { return instance.activity(targetKey, request); } catch { return null; }
+        // The request is compared by value.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [instance, targetKey, JSON.stringify(request)]);
+    const subscribe = useCallback((listener: () => void) => resource?.subscribe(listener) ?? (() => undefined), [resource]);
+    const get = useCallback(() => resource?.getSnapshot() ?? noActivity, [resource]);
+    const snapshot = useSyncExternalStore(subscribe, get, get);
+    useEffect(() => {
+        if (!resource || !presented) return;
+        return resource.retainAutoRefresh({ intervalMs: DATABASE_ACTIVITY_REFRESH_MS });
+    }, [resource, presented]);
+    return useMemo(() => ({ observation: snapshot.value ?? undefined, loading: snapshot.loading, error: snapshot.error,
+        supported: resource !== null, refresh: () => resource?.refresh() }), [snapshot, resource]);
 }

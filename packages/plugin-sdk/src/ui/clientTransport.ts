@@ -1031,7 +1031,8 @@ export async function createPluginUiHostApiClientFromTransport(
         },
         readResource: async (resource, requestOptions): Promise<ResourceContent> => {
             const decoded = decodePluginUiResourceContent(
-                await request('readResource', { resource: asJsonResourceReference(resource) }, requestOptions?.signal),
+                await request('readResource', { resource: asJsonResourceReference(resource),
+                    ...(requestOptions?.input === undefined ? {} : { input: requestOptions.input }) }, requestOptions?.signal),
                 decodeBase64,
             );
             if (!decoded.ok) throw new PluginUiHostApiClientError('invalid_payload', decoded.diagnostic);
@@ -1061,7 +1062,8 @@ export async function createPluginUiHostApiClientFromTransport(
         watchResource: async (resource, listener, requestOptions) => {
             const subscription = await subscribe(
                 'watchResource',
-                { resource: asJsonResourceReference(resource) },
+                { resource: asJsonResourceReference(resource),
+                    ...(requestOptions?.input === undefined ? {} : { input: requestOptions.input }) },
                 (value, subscriptionId) => listener(readResourceSubscriptionEvent(value, subscriptionId)),
                 requestOptions?.signal,
             );
@@ -1071,6 +1073,7 @@ export async function createPluginUiHostApiClientFromTransport(
             );
             return Object.freeze({
                 dispose: subscription.dispose,
+                subscriptionId: subscription.subscriptionId,
                 ...(admittedDigest === undefined ? {} : { admittedDigest }),
             });
         },

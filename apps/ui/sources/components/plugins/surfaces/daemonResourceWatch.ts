@@ -1,11 +1,14 @@
 import { projectDatabaseConnectionResourceReadV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 import { PluginUiArtifactDigestV1Schema, type PluginUiResourceSubscriptionEventV1, type PluginUiHostApiErrorPayloadV1 } from '@happier-dev/protocol/plugins/ui';
 import { mapMachinePluginUiResourceTransportFailure, machinePluginUiResourceWatchClose, machinePluginUiResourceWatchNext, machinePluginUiResourceWatchOpen } from '@/sync/ops/machineContributionRegistryProjection';
-import { readPluginResourceStoreSnapshot, type PluginContextualResourceBinding } from './pluginSurfaceResourceRead';
+import { bindPluginSurfaceResourceInput, readPluginResourceStoreSnapshot, type PluginContextualResourceBinding } from './pluginSurfaceResourceRead';
 import { readPluginSurfaceHostApiFailureMetadata } from './createPluginSurfaceHostApi';
 import type { PluginUiReadAuthorityReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { DaemonPluginStructuredMessageActionExecuteRequest } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
+
+import type { PluginResourceContextV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 
 type ActionReadWatch = Readonly<{
     request: DaemonPluginStructuredMessageActionExecuteRequest;
@@ -38,6 +41,8 @@ export function terminalEvent(
 type ActiveWatch = {
     readonly subscriptionId: string;
     readonly resourceId: string;
+    readonly input?: PluginUiJsonValueV1;
+    readonly context?: PluginResourceContextV1;
     readonly readAuthority?: PluginUiReadAuthorityReferenceV1['readAuthority'];
     readonly actionRead?: ActionReadWatch;
     readonly deliver: (event: PluginUiResourceSubscriptionEventV1) => void;
@@ -106,6 +111,7 @@ type ContextualResourceWatchOwner = Readonly<{
     open(params: Readonly<{
         subscriptionId: string;
         resourceId: string;
+        input?: PluginUiJsonValueV1;
         readAuthority?: PluginUiReadAuthorityReferenceV1['readAuthority'];
         actionRead?: ActionReadWatch;
         deliver: (event: PluginUiResourceSubscriptionEventV1) => void;
@@ -153,17 +159,17 @@ export function createContextualResourceWatchOwner(input: Readonly<{
         return { callerPluginId: input.pluginId, expectedCallerOccurrenceId: daemon.expectedCallerOccurrenceId };
     };
 
-    const hostReferenceFor = (resourceId: string) => 'hostResource' in input.resource
+    const hostReferenceFor = (resourceId: string, context = input.resource.context) => 'hostResource' in input.resource
         ? input.resource.hostResource
         : projectDatabaseConnectionResourceReadV1({ ...pluginBinding(),
             resource: { pluginId: pluginBinding().callerPluginId, localId: resourceId },
-            ...(input.resource.context === undefined ? {} : { context: input.resource.context }) });
-    const watchTarget = (resourceId: string) => {
-        const hostReference = hostReferenceFor(resourceId);
+            ...(context === undefined ? {} : { context }) });
+    const watchTarget = (resourceId: string, context = input.resource.context) => {
+        const hostReference = hostReferenceFor(resourceId, context);
         return hostReference ? { resource: hostReference } : pluginBinding();
     };
-    const closeTarget = (resourceId: string) => {
-        const hostReference = hostReferenceFor(resourceId);
+    const closeTarget = (resourceId: string, context = input.resource.context) => {
+        const hostReference = hostReferenceFor(resourceId, context);
         return hostReference ? { resource: hostReference } : { callerPluginId: pluginBinding().callerPluginId };
     };
 
@@ -173,8 +179,9 @@ export function createContextualResourceWatchOwner(input: Readonly<{
         signal?: AbortSignal,
         readAuthority?: PluginUiReadAuthorityReferenceV1['readAuthority'],
         actionRead?: ActionReadWatch,
+        context = input.resource.context,
     ): Promise<WatchOpenResult> {
-        const hostReference = !readAuthority && !actionRead ? hostReferenceFor(resourceId) : null;
+        const hostReference = !readAuthority && !actionRead ? hostReferenceFor(resourceId, context) : null;
         const outcome = await open(requireMachineId(), {
             serverId: daemon.serverId,
             ...accountTarget,
@@ -182,7 +189,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
             ...(hostReference ? { resource: hostReference }
                 : { ...pluginBinding(), resource: actionRead ? { actionRead: actionRead.request }
                     : readAuthority ? { readAuthority } : { pluginId: pluginBinding().callerPluginId, localId: resourceId } }),
-            ...(hostReference || input.resource.context === undefined ? {} : { context: input.resource.context }),
+            ...(hostReference || context === undefined ? {} : { context }),
             ...(input.resource.timeoutMs === undefined ? {} : { timeoutMs: input.resource.timeoutMs }),
             ...(signal === undefined ? {} : { signal }),
         });
@@ -215,14 +222,14 @@ export function createContextualResourceWatchOwner(input: Readonly<{
      * only when the digest it last held actually moved.
      */
     async function resynchronize(watch: ActiveWatch): Promise<'reopened' | 'retry' | 'stop'> {
-        if (input.resource.store) { retireOrdinaryWatches(); return 'stop'; }
+        if (input.resource.store && watch.input === undefined) { retireOrdinaryWatches(); return 'stop'; }
         const reopened = await openAtDaemon(
             watch.subscriptionId,
             watch.resourceId,
-            watch.controller.signal,
+            watch.controller.signal, undefined, undefined, watch.context,
         );
         if (watch.closed || !isCurrent()) return 'stop';
-        if (input.resource.store) { retireOrdinaryWatches(); return 'stop'; }
+        if (input.resource.store && watch.input === undefined) { retireOrdinaryWatches(); return 'stop'; }
         if (!reopened.ok) {
             if (!reopened.terminal) return 'retry';
             watch.closed = true;
@@ -285,7 +292,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                     outcome = await next(requireMachineId(), {
                         serverId: daemon.serverId,
                         ...accountTarget,
-                        ...(watch.readAuthority || watch.actionRead ? pluginBinding() : watchTarget(watch.resourceId)),
+                        ...(watch.readAuthority || watch.actionRead ? pluginBinding() : watchTarget(watch.resourceId, watch.context)),
                         subscriptionId: watch.subscriptionId,
                         signal: poll.signal,
                     });
@@ -296,7 +303,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                 if (watch.closed || !isCurrent()) return;
                 // Cancelled by hide: the top of the loop waits for return, then re-opens.
                 if (poll.signal.aborted) { pausedByInactivity = true; continue; }
-                if (input.resource.store && !watch.readAuthority && !watch.actionRead) { retireOrdinaryWatches(); return; }
+                if (input.resource.store && watch.input === undefined && !watch.readAuthority && !watch.actionRead) { retireOrdinaryWatches(); return; }
 
                 if (outcome.supported && outcome.result.ok) {
                     consecutiveFailures = 0;
@@ -386,7 +393,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
             serverId: daemon.serverId,
             ...accountTarget,
             ...(watch.readAuthority || watch.actionRead ? { callerPluginId: pluginBinding().callerPluginId }
-                : closeTarget(watch.resourceId)),
+                : closeTarget(watch.resourceId, watch.context)),
             subscriptionId,
             ...(input.resource.timeoutMs === undefined ? {} : { timeoutMs: input.resource.timeoutMs }),
         });
@@ -394,7 +401,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
 
     function retireOrdinaryWatches(): void {
         for (const watch of [...watches.values()]) {
-            if (watch.releaseStore || watch.readAuthority || watch.actionRead) continue;
+            if (watch.releaseStore || watch.input !== undefined || watch.readAuthority || watch.actionRead) continue;
             retire(watch.subscriptionId);
             watch.deliver(terminalEvent(watch.subscriptionId, 'unavailable', 'plugin_resource_not_found'));
         }
@@ -409,7 +416,8 @@ export function createContextualResourceWatchOwner(input: Readonly<{
             // Re-establishing an id retires the predecessor first, so one
             // client never runs two pumps for one Resource subscription.
             retire(params.subscriptionId);
-            if (input.resource.store && !params.readAuthority && !params.actionRead) {
+            const context = bindPluginSurfaceResourceInput(input.resource.context, params.input);
+            if (input.resource.store && params.input === undefined && !params.readAuthority && !params.actionRead) {
                 let entry;
                 try { entry = input.resource.store.getEntry({ pluginId: pluginBinding().callerPluginId, localId: params.resourceId }); }
                 catch (error) {
@@ -464,19 +472,19 @@ export function createContextualResourceWatchOwner(input: Readonly<{
             }
             let opened: WatchOpenResult;
             try {
-                opened = await openAtDaemon(params.subscriptionId, params.resourceId, params.signal, params.readAuthority, params.actionRead);
+                opened = await openAtDaemon(params.subscriptionId, params.resourceId, params.signal, params.readAuthority, params.actionRead, context);
             } catch (error) {
                 if (params.signal?.aborted) {
                     return { ok: false, terminal: true, reason: 'plugin_resource_aborted' };
                 }
                 throw error;
             }
-            if (params.signal?.aborted || input.resource.store && !params.readAuthority && !params.actionRead) {
+            if (params.signal?.aborted || input.resource.store && params.input === undefined && !params.readAuthority && !params.actionRead) {
                 if (opened.ok) {
                     void close(requireMachineId(), {
                         serverId: daemon.serverId,
                         ...accountTarget,
-                        ...(params.readAuthority || params.actionRead ? { callerPluginId: pluginBinding().callerPluginId } : closeTarget(params.resourceId)),
+                        ...(params.readAuthority || params.actionRead ? { callerPluginId: pluginBinding().callerPluginId } : closeTarget(params.resourceId, context)),
                         subscriptionId: params.subscriptionId,
                     });
                 }
@@ -487,7 +495,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                 void close(requireMachineId(), {
                     serverId: daemon.serverId,
                     ...accountTarget,
-                    ...(params.readAuthority || params.actionRead ? { callerPluginId: pluginBinding().callerPluginId } : closeTarget(params.resourceId)),
+                    ...(params.readAuthority || params.actionRead ? { callerPluginId: pluginBinding().callerPluginId } : closeTarget(params.resourceId, context)),
                     subscriptionId: params.subscriptionId,
                 });
                 return { ok: false, terminal: true, reason: 'plugin_surface_retired' };
@@ -495,6 +503,8 @@ export function createContextualResourceWatchOwner(input: Readonly<{
             const watch: ActiveWatch = {
                 subscriptionId: params.subscriptionId,
                 resourceId: params.resourceId,
+                ...(params.input === undefined ? {} : { input: params.input }),
+                ...(context === undefined ? {} : { context }),
                 ...(params.readAuthority === undefined ? {} : { readAuthority: params.readAuthority }),
                 ...(params.actionRead === undefined ? {} : { actionRead: params.actionRead }),
                 deliver: params.deliver,

@@ -588,8 +588,12 @@ export interface PluginUiHostApi {
         settlement: PluginUiEphemeralInputSettlementV1,
         options?: PluginCancellationOptions,
     ): Promise<void>;
-    /** Host-read references borrow the Account Resource owner after normal Action caller admission. */
-    readResource(resource: PluginUiResourceReference, options?: PluginCancellationOptions): Promise<ResourceContent>;
+    /**
+     * Host-read references borrow the Account Resource owner after normal Action caller admission.
+     * A daemon-backed surface Resource may select an input operand; watch and read must use the same input.
+     * Omission uses the mount's launch input. Host identity and target remain host-owned.
+     */
+    readResource(resource: PluginUiResourceReference, options?: PluginCancellationOptions & Readonly<{ input?: JsonValue }>): Promise<ResourceContent>;
     /**
      * Read host-derived metadata for the exact opaque workspace-file reference
      * bound to this selected viewer mount. No path-resolution or directory API
@@ -734,11 +738,12 @@ export interface PluginUiHostApi {
      * bytes and reacquire cold, including after a transport gap. Older hosts
      * reject this target rather than qualifying it from display metadata.
      */
+    /** An explicit input selects the same surface Resource operand as readResource. */
     watchResource(
         resource: PluginUiResourceWatchReference,
         listener: (event: ResourceSubscriptionEvent) => void,
-        options?: PluginCancellationOptions,
-    ): Promise<Disposable>;
+        options?: PluginCancellationOptions & Readonly<{ input?: JsonValue }>,
+    ): Promise<Disposable & Readonly<{ subscriptionId: string }>>;
     /**
      * A Composer surface resolves its host-bound opener while that mounted
      * document remains current, even when focus moves into the surface. Other

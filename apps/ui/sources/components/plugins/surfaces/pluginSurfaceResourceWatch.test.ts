@@ -70,8 +70,14 @@ const TARGETED_RESOURCE_CONTEXT: PluginResourceContextV1 = Object.freeze({
     launchInput: { reviewId: 'review-a' },
 });
 
-it('keeps the exact semantic connection selection through open, parked next and disposal', async () => {
+it('keeps the exact semantic connection selection through reconnect, parked next and disposal', async () => {
     const seen: unknown[] = [];
+    let defaultReads = 0;
+    let firstNext = true;
+    const store = createPluginUiResourceStore({ pluginId: DATABASE_PLUGIN_ID_V1, client: { async readResource() {
+        defaultReads++;
+        return { contentType: 'application/json', digest: DIGEST_A, bytes: new TextEncoder().encode('{}') };
+    } } });
     const launchInput = { operation: 'describe', target: { kind: 'managed_deployment',
         environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' },
         targetLinkId: 'selected-link', contribution: { pluginId: 'happier.neon', contributionId: 'database' },
@@ -79,24 +85,28 @@ it('keeps the exact semantic connection selection through open, parked next and 
     const transport: PluginSurfaceResourceWatchTransport = {
         async open(_machine, request) { seen.push(request); return { supported: true,
             result: { ok: true, subscriptionId: request.subscriptionId, digest: DIGEST_A } }; },
-        async next(_machine, request) { seen.push(request); return new Promise(resolve => {
-            request.signal?.addEventListener('abort', () => resolve({ supported: false, reason: 'aborted' }), { once: true });
-        }); },
+        async next(_machine, request) { seen.push(request);
+            if (firstNext) { firstNext = false; return { supported: false, reason: 'error' }; }
+            return new Promise(resolve => {
+                request.signal?.addEventListener('abort', () => resolve({ supported: false, reason: 'aborted' }), { once: true });
+            }); },
         async close(_machine, request) { seen.push(request); },
     };
     const client = createPluginContextualResourceWatchClient({ pluginId: DATABASE_PLUGIN_ID_V1,
-        resource: { machineId: 'machine', serverId: 'home', expectedCallerOccurrenceId: 'occurrence',
-            context: { kind: 'surface', mountInstanceKey: 'selected-surface', launchInput } },
-        subscriptionIdPrefix: 'connection', transport });
-    const subscription = await client.watchResource(DATABASE_CONNECTION_RESOURCE_ID_V1, () => {});
+        resource: { machineId: 'machine', serverId: 'home', expectedCallerOccurrenceId: 'occurrence', store,
+            context: { kind: 'surface', mountInstanceKey: 'selected-surface', launchInput: { scope: 'rail' } } },
+        subscriptionIdPrefix: 'connection', transport, delayMs: async () => {} });
+    const subscription = await client.watchResource(DATABASE_CONNECTION_RESOURCE_ID_V1, () => {}, { input: launchInput });
     try {
-        await vi.waitFor(() => expect(seen).toHaveLength(2));
+        await vi.waitFor(() => expect(seen).toHaveLength(4));
+        expect(subscription).toMatchObject({ subscriptionId: 'connection:1' });
         subscription.dispose();
-        await vi.waitFor(() => expect(seen).toHaveLength(3));
+        await vi.waitFor(() => expect(seen).toHaveLength(5));
         for (const request of seen) expect(request).toMatchObject({ resource: { hostRead: 'database.connection',
             input: { input: launchInput }, binding: { callerPluginId: DATABASE_PLUGIN_ID_V1,
                 expectedCallerOccurrenceId: 'occurrence', context: { kind: 'surface', mountInstanceKey: 'selected-surface', launchInput } } } });
-    } finally { subscription.dispose(); }
+        expect(defaultReads).toBe(0);
+    } finally { subscription.dispose(); store.dispose(); }
 });
 
 type FakeDaemon = Readonly<{
@@ -574,19 +584,21 @@ describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
         }
     });
 
-    it('forwards the exact host-stamped surface context to a targeted Resource watch', async () => {
+    it('binds selected input to a native Resource watch and exposes its admitted subscription id', async () => {
         const daemon = createFakeDaemon();
         const mounted = await createMountedSurface(daemon, TARGETED_RESOURCE_CONTEXT);
-
+        const input = { reviewId: 'selected-review' };
         const subscription = await mounted.adapter.api.watchResource(
             'live-status',
             () => undefined,
+            { input },
         );
 
         expect(daemon.opens).toEqual([expect.objectContaining({
             resource: { pluginId: 'acme.preview', localId: 'live-status' },
-            context: TARGETED_RESOURCE_CONTEXT,
+            context: { ...TARGETED_RESOURCE_CONTEXT, launchInput: input },
         })]);
+        expect(subscription.subscriptionId).toBe(daemon.opens[0]!.subscriptionId);
 
         subscription.dispose();
         await vi.waitFor(() => { expect(daemon.closes).toEqual([daemon.opens[0]!.subscriptionId]); });

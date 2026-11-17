@@ -9,7 +9,7 @@ import { createStagedEdits } from './drafts.js';
 import { projectRelationPage } from './projections.js';
 import { createResource, type WorkbenchResource } from './resource.js';
 import { createKeyedState } from './state.js';
-import { createApplyControl } from './apply.js';
+import { createApplyControl, selectRelationChanges } from './apply.js';
 import { sameRelation, mergeWorkbenchLocation } from './location.js';
 import type {
     DatabaseRelations, DatabaseTargets, WorkbenchApplyOutcome, WorkbenchChange, WorkbenchLocation,
@@ -96,19 +96,16 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
                 ? { kind: 'edited', old: held.change.original.find(value => value.column === column)?.value }
                 : { kind: 'unchanged' };
         },
-        review(): WorkbenchReview {
-            const grouped = new Map<string, { relation: DatabaseRelationV1; rows: WorkbenchReview[number]['rows'][number][] }>();
-            for (const held of drafts.changes()) {
-                const groupKey = key([held.targetKey, held.relation]);
-                let group = grouped.get(groupKey);
-                if (!group) { group = { relation: held.relation, rows: [] }; grouped.set(groupKey, group); }
+        review(targetKey: string, relation: DatabaseRelationV1 | undefined): WorkbenchReview {
+            const selected = selectRelationChanges(drafts.changes(), targetKey, relation);
+            const first = selected[0];
+            return first ? [{ relation: first.relation, rows: selected.map(held => {
                 const change = held.change;
-                group.rows.push({ rowKey: held.rowKey, label: held.label, kind: change.kind,
+                return { rowKey: held.rowKey, label: held.label, kind: change.kind,
                     changes: change.kind === 'delete' ? change.key.map(cell => ({ column: cell.column, old: cell.value }))
                         : change.values.map(value => ({ column: value.column, new: value.value,
-                            ...(change.kind === 'update' ? { old: change.original.find(cell => cell.column === value.column)?.value } : {}) })) });
-            }
-            return [...grouped.values()];
+                            ...(change.kind === 'update' ? { old: change.original.find(cell => cell.column === value.column)?.value } : {}) })) };
+            }) }] : [];
         },
         target,
         /** Account/target retirement shares close's resource cancellation owner. */

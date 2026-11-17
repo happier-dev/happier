@@ -1,3 +1,4 @@
+import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import {
     type PluginUiResourceSubscriptionEventV1,
     type PluginUiSurfaceContextV1,
@@ -326,4 +327,37 @@ describe('mounted plugin surface resource snapshot read (§3.6)', () => {
         });
         expect(host.installedMethods).not.toContain('readResource');
     });
+});
+
+
+it('binds selected Resource reads to the mounted surface without replacing host authority', async () => {
+    const seen: unknown[] = [];
+    let defaultReads = 0;
+    const store = createPluginUiResourceStore({ pluginId: 'acme.preview', client: { async readResource() {
+        defaultReads++;
+        return { contentType: 'application/json', digest: DIGEST, bytes: new TextEncoder().encode('{}') };
+    } } });
+    const host = createPluginSurfaceActionHostApi({ surfaceContext,
+        resourceInvalidation: { deliver: () => {} },
+        resource: { machineId: 'machine-1', expectedCallerOccurrenceId: 'occurrence-7', store,
+            context: { kind: 'surface', mountInstanceKey: 'rail-mount', launchInput: { scope: 'rail' },
+                target: { kind: 'session', sessionId: 'session-1' } },
+            read: async (_machine, options) => {
+                seen.push(options);
+                return { supported: true, result: { ok: true, resource: options.resource, kind: 'config',
+                    contentType: 'application/json', digest: DIGEST, bytesBase64: 'e30=' } };
+            } },
+    });
+    const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: canonicalSurface,
+        requestSurface: surfaceContext, handleRequest: host.handleRequest, installedMethods: host.installedMethods });
+    try {
+        for (const selected of ['first', 'second']) {
+            const input = { operation: 'describe', target: { selected } };
+            await adapter.api.readResource('connection', { input });
+            expect(seen.at(-1)).toMatchObject({ expectedCallerOccurrenceId: 'occurrence-7',
+                callerPluginId: 'acme.preview', context: { kind: 'surface', mountInstanceKey: 'rail-mount',
+                    target: { kind: 'session', sessionId: 'session-1' }, launchInput: input } });
+        }
+        expect(defaultReads).toBe(0);
+    } finally { adapter.dispose(); store.dispose(); }
 });

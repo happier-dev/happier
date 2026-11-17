@@ -3,11 +3,12 @@ import type {
     DatabaseFilterV1, DatabaseOperationInputV1, DatabaseOperationResultV1, DatabaseOrderV1,
     DatabaseRelationV1, DatabaseTargetV1, DatabaseTargetsListInputV1, DatabaseTargetsListResultV1,
     DatabaseValueRangeV1, DatabaseWriteValueV1, DatabaseStatementRunInputV1, DatabaseStatementExplainInputV1, DatabaseEditsApplyInputV1, DatabaseCompletenessV1,
-    DatabaseStatsObservationV1, DatabaseStatsCounterComparisonV1,
+    DatabaseStatsObservationV1,
 } from '@happier-dev/database-protocol';
 import type { SharePrincipalPresentation } from '@happier-dev/plugin-ui/components';
 import type { ConsoleDeviceStorage } from './consoleState.js';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
+import type { HostDatabaseActivityResource, HostDatabaseLastLook } from '@happier-dev/plugin-ui/hostApi';
 
 /** Spread on the existing Action.Control; it contains preparation and settlement, never an executor. */
 export type WorkbenchControlBinding = Readonly<{ action: string; controller: PluginUiActionControlController; signal?: AbortSignal }>;
@@ -16,7 +17,7 @@ export type WorkbenchStatus = 'loading' | 'ready' | 'empty' | 'offline' | 'stale
 export type WorkbenchLocation = Readonly<{
     targetKey: string;
     relation?: DatabaseRelationV1;
-    mode: 'data' | 'structure' | 'console' | 'overview';
+    mode: 'data' | 'structure' | 'console' | 'overview' | 'insights';
     conditions?: DatabaseFilterV1;
     sort: readonly DatabaseOrderV1[];
     columns: readonly string[];
@@ -79,22 +80,10 @@ export interface WorkbenchClient {
     presentDeviceStorageError(error: unknown): void;
 }
 /** The host injects its canonical presented-demand owner; this is the resource, not a wrapper. */
-export type WorkbenchActivityResource<T> = Readonly<{
-    getSnapshot(): Readonly<{ value: T | null; loading: boolean; error: unknown }>;
-    subscribe(listener: () => void): () => void;
-    refresh(): Promise<void>;
-    retainAutoRefresh(demand: Readonly<{ intervalMs: number }>): () => void;
-    invalidate(): void;
-    dispose(): void;
-}>;
+export type WorkbenchActivityResource<T> = HostDatabaseActivityResource<T>;
 export type WorkbenchStatementsObservation = Extract<DatabaseStatsObservationV1, { status: 'available'; group: 'statements' }>
     | Extract<DatabaseStatsObservationV1, { status: 'unavailable' }>;
-export type WorkbenchLastLook = Readonly<{
-    observe(observation: WorkbenchStatementsObservation, shownKeys: readonly string[]): Readonly<{
-        comparison: DatabaseStatsCounterComparisonV1;
-        persistenceError: Error | null;
-    }>;
-}>;
+export type WorkbenchLastLook = HostDatabaseLastLook;
 export type WorkbenchOptions = Readonly<{
     client: WorkbenchClient;
     scope: DatabaseTargetsListInputV1['scope'];

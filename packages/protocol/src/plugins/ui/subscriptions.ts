@@ -1,3 +1,4 @@
+import { PluginUiLaunchInputV1Schema } from './semanticCommands.js';
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
@@ -84,6 +85,7 @@ export type PluginUiResourceSubscriptionTargetV1 =
 export const PluginUiResourceSubscriptionRequestV1Schema = lazyZodSchema(() => z.strictObject({
   subscriptionId: z.string().check(z.trim(), z.minLength(1)),
   resource: PluginUiResourceSubscriptionTargetV1Schema,
+  input: z.optional(PluginUiLaunchInputV1Schema),
 }));
 export type PluginUiResourceSubscriptionRequestV1 =
   z.infer<typeof PluginUiResourceSubscriptionRequestV1Schema>;

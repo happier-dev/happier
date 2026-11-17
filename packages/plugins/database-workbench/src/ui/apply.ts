@@ -14,12 +14,17 @@ type ApplyHost = Readonly<{
     onOutcome(value: WorkbenchApplyOutcome | undefined): void;
 }>;
 
+/** Review, staged counts and Apply share the transaction's exact target/relation membership. */
+export function selectRelationChanges(changes: readonly WorkbenchChange[], targetKey: string, relation: DatabaseRelationV1 | undefined): readonly WorkbenchChange[] {
+    return relation ? changes.filter(item => item.targetKey === targetKey && sameRelation(item.relation, relation)) : [];
+}
+
 export function createApplyControl(host: ApplyHost, targetKey: string, relation: DatabaseRelationV1): WorkbenchControlBinding {
     let submitted: readonly WorkbenchChange[] = [];
     const controller: PluginUiActionControlController = {
         prepare({ signal }) {
             if (host.isClosed() || signal.aborted || submitted.length) return null;
-            submitted = host.drafts.changes().filter(item => item.targetKey === targetKey && sameRelation(item.relation, relation));
+            submitted = selectRelationChanges(host.drafts.changes(), targetKey, relation);
             if (!submitted.length) return null;
             host.onOutcome(undefined);
             return { input: projectNativeJsonValueForTransport({ operation: 'edits.apply', target: host.target(targetKey).target, relation, changes: submitted.map(item => item.change) }) };

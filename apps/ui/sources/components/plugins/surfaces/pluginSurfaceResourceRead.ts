@@ -59,7 +59,8 @@ export type PluginSurfaceResourceBinding = Readonly<{
     expectedCallerOccurrenceId: string;
     /**
      * Host-stamped contextual Resource authority for this exact mounted
-     * consumer. Plugin code cannot supply or rewrite it through a request.
+     * consumer. A request may select launchInput only; scope and identity
+     * remain bound by this host context.
      */
     context?: PluginResourceContextV1;
     timeoutMs?: number;
@@ -73,6 +74,14 @@ export type PluginSurfaceResourceBinding = Readonly<{
     /** Private declaration-owner notification; no Resource bytes or plugin-authored policy. */
     onDeclaredNamespaceAdmission?: (listener: () => void) => () => void;
 }>;
+
+/** Select only the authored operand; scope, mount and target remain host-owned. */
+export function bindPluginSurfaceResourceInput(context: PluginResourceContextV1 | undefined,
+    input: PluginUiJsonValueV1 | undefined): PluginResourceContextV1 | undefined {
+    if (input === undefined) return context;
+    if (context?.kind !== 'surface') throw new PluginError({ code: 'plugin_resource_request_invalid' });
+    return { ...context, launchInput: input };
+}
 
 /** Hold static demand until admitted bytes are available or the read settles. */
 export function readPluginResourceStoreSnapshot(entry: PluginUiResourceEntry, signal?: AbortSignal, refresh = false,
@@ -203,6 +212,7 @@ export function createPluginContextualResourceReadClient(input: Readonly<{
                 const selected = PluginUiHostReadReferenceV1Schema.safeParse(resource);
                 if (!selected.success || pluginUiResourceReferenceKey(selected.data, null) !== pluginUiResourceReferenceKey(held, null))
                     return resourceClientFailure('plugin_resource_request_invalid', 'Host Resource reference is not current');
+                if (options?.input !== undefined) return resourceClientFailure('plugin_resource_request_invalid', 'Host Resource input is part of its reference');
                 const signal = options?.signal;
                 assertCurrentContextualResourceClient(input.isCurrent, signal);
                 if (input.resource.machineId === null) return resourceClientFailure('plugin_resource_transport_unavailable', 'Resource requires a Machine');
@@ -238,7 +248,8 @@ export function createPluginContextualResourceReadClient(input: Readonly<{
                 expectedCallerOccurrenceId: input.resource.expectedCallerOccurrenceId,
                 callerPluginId: input.pluginId,
                 resource: reference,
-                ...(input.resource.context === undefined ? {} : { context: input.resource.context }),
+                ...(input.resource.context === undefined && options?.input === undefined ? {}
+                    : { context: bindPluginSurfaceResourceInput(input.resource.context, options?.input) }),
                 ...(input.resource.timeoutMs === undefined ? {} : { timeoutMs: input.resource.timeoutMs }),
                 ...(signal === undefined ? {} : { signal }),
             });
@@ -304,6 +315,7 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
     ): Promise<PluginUiJsonValueV1> => {
         const payload = readJsonRecord(request.payload);
         const hostReference = PluginUiHostReadReferenceV1Schema.safeParse(payload?.resource);
+        if (hostReference.success && payload?.input !== undefined) return errorPayload('invalid_payload', 'plugin_resource_request_invalid');
         if (hostReference.success && input.hostResourceStore) {
             const merged = mergeAbortSignals([input.lifetimeSignal, options?.signal]);
             try {
@@ -341,7 +353,7 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
         if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
 
         const store = input.resource.store ?? input.resource.contextualFallbackStore;
-        if (store) {
+        if (store && payload?.input === undefined) {
             try {
                 const entry = store.getEntry(reference);
                 await readPluginResourceStoreSnapshot(entry, signal, input.resource.refreshOnRead === true);
@@ -365,7 +377,8 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
                 expectedCallerOccurrenceId: input.resource.expectedCallerOccurrenceId,
                 callerPluginId: input.pluginId,
                 resource: reference,
-                ...(input.resource.context === undefined ? {} : { context: input.resource.context }),
+                ...(input.resource.context === undefined && payload?.input === undefined ? {}
+                    : { context: bindPluginSurfaceResourceInput(input.resource.context, payload?.input) }),
                 ...(input.resource.timeoutMs === undefined ? {} : { timeoutMs: input.resource.timeoutMs }),
                 ...(signal === undefined ? {} : { signal }),
             });
@@ -373,7 +386,7 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
             if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
             throw error;
         }
-        if (signal?.aborted || input.resource.store) return resourceAbortPayload(input.isCurrent);
+        if (signal?.aborted || input.resource.store && payload?.input === undefined) return resourceAbortPayload(input.isCurrent);
         if (!outcome.supported) {
             const failure = mapMachinePluginUiResourceTransportFailure(outcome.reason);
             return createPluginSurfaceHostApiError(failure.code, [failure.code], undefined,

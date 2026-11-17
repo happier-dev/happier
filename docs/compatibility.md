@@ -13193,3 +13193,13 @@ changes only; Git internals/history and ignored files remain in the sandbox.
 Both-changed paths preserve the host by default, with explicit conflict replacement.
 Runtime transfer and loaded journey evidence remain separate from acceptance of
 the authored choice.
+
+Unreleased 0.3 daemon-backed surface Resource reads and watches accept an optional JSON `input`
+operand. The mounted adapter binds only that operand to the existing Resource
+context's `launchInput`; mount, target, Account and occurrence authority remain
+host-owned. Omission preserves the mount's launch input. Explicit operands use
+the same retained context for watch admission, snapshots, reconnect and disposal;
+fixed-context host caches do not alias different selected inputs. The watch
+request remains closed and older strict development readers reject this field,
+so emitting it requires matching development SDK, Protocol and UI source. No
+persisted format, wire epoch or mixed-development adapter changes.
