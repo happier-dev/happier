@@ -49,7 +49,7 @@ export async function executeOriginalAccountCliApprovalRequest(options: Readonly
           if (request.status === 'open') {
             // Deferred proposals are presented after the original HTTP returns.
             // Only a blocking flow needs its person prompted while HTTP waits.
-            if (request.approval.flow === 'blocking') {
+            if ('approval' in request && request.approval.flow === 'blocking') {
               notify({ kind: 'approval_request_created', artifactId, actionId: options.actionId });
             }
             await observation.dispose();

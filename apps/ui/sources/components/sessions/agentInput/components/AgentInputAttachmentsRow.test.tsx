@@ -94,6 +94,7 @@ const { View } = await import('react-native');
 const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
 const { AgentInputAttachmentsRow } = await import('./AgentInputAttachmentsRow');
 const { restoreFocusToBestTarget } = await import('@/keyboard/focusReturn');
+const { Modal } = await import('@/modal');
 
 function flattenStyle(style: unknown): Record<string, unknown> {
   if (!style) return {};
@@ -452,6 +453,21 @@ describe('AgentInputAttachmentsRow', () => {
     expect(onRemove).toHaveBeenCalledWith('issue-42');
     expect(onRemove).toHaveBeenCalledWith('issue-43');
     expect(onPreview).not.toHaveBeenCalled();
+  });
+
+  it('returns from the image stage to the picture that opened it', async () => {
+    const screen = await renderScreen(
+      <AgentInputAttachmentsRow items={['first', 'second'].map((key) => ({
+        kind: 'media', key, label: `${key}.png`, media: 'image',
+        preview: { kind: 'image', uri: `https://example.test/${key}.png` },
+      }))} />,
+    );
+
+    await screen.pressByTestIdAsync('agent-input-attachment-image:second');
+    const modal = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+    expect(modal?.props).toMatchObject({ initialIndex: 1 });
+    expect(restoreFocusToBestTarget(modal?.focusReturnRef)).toBe(true);
+    expect(attachmentRowFocus.focusedTestIDs).toEqual(['agent-input-attachment-image:second']);
   });
 
   it('keeps compact badge/media/surface items in one rail and puts a content surface in the row-owned band', async () => {

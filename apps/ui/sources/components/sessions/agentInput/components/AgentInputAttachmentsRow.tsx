@@ -159,7 +159,7 @@ function TrayPictureTile(props: Readonly<{
     onRemove: (() => void) | undefined;
     removeTestID: string | undefined;
     removeAccessibilityLabel: string;
-    removeRef?: (target: unknown | null) => void;
+    removeRef?: (target: View | null) => void;
     /** The picture carries marks: the pen badge reopens them (lab `ia · I3`). */
     onEditMarks?: () => void;
 }>) {
@@ -503,7 +503,7 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
         top: null,
         width: 0,
     });
-    const { attachmentFocusRef, requestAttachmentRemoval, createFocusReturnRef } = useAttachmentRowFocus(
+    const { attachmentFocusRef, readAttachmentFocusTarget, requestAttachmentRemoval, createFocusReturnRef } = useAttachmentRowFocus(
         props.items, props.onRequestComposerFocus,
     );
     const compactItems = React.useMemo(
@@ -895,7 +895,7 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                 edit: item.edit,
                 ...(annotate && index === openIndex ? { annotate: true } : {}),
                 source: { enabled: true, mimeType: item.mimeType, source: { kind: 'uri' as const, uri: item.uri } },
-                originRef: { current: (attachmentFocusTargetsRef.current.get(item.key) ?? null) as View | null },
+                originRef: { current: readAttachmentFocusTarget(item.key) },
             })), openIndex);
         };
 

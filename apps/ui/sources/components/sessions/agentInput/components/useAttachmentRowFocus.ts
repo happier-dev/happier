@@ -1,6 +1,7 @@
 import * as React from 'react';
+import type { View } from 'react-native';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-import { restoreFocusToBestTarget, type FocusReturnRef, type FocusReturnTarget } from '@/keyboard/focusReturn';
+import { restoreFocusToBestTarget, type FocusReturnRef } from '@/keyboard/focusReturn';
 import { hapticsLight } from '@/components/ui/theme/haptics';
 
 type AttachmentKey = Readonly<{ key: string }>;
@@ -15,7 +16,7 @@ function neighborKeys(items: readonly AttachmentKey[], key: string): readonly st
 
 /** The row owns the same neighbor → Composer return for direct and picker removals. */
 export function useAttachmentRowFocus(items: readonly AttachmentKey[], onRequestComposerFocus?: () => void) {
-    const targets = React.useRef(new Map<string, FocusReturnTarget>());
+    const targets = React.useRef(new Map<string, View>());
     const pending = React.useRef<PendingAttachmentFocus | null>(null);
     const restore = useEventCallback((neighbors: readonly string[]) => {
         for (const key of neighbors) {
@@ -23,7 +24,8 @@ export function useAttachmentRowFocus(items: readonly AttachmentKey[], onRequest
         }
         onRequestComposerFocus?.();
     });
-    const attachmentFocusRef = React.useCallback((key: string, anchorRef?: React.RefObject<unknown>) => (target: FocusReturnTarget): void => {
+    const readAttachmentFocusTarget = React.useCallback((key: string) => targets.current.get(key) ?? null, []);
+    const attachmentFocusRef = React.useCallback((key: string, anchorRef?: React.RefObject<unknown>) => (target: View | null): void => {
         if (anchorRef) (anchorRef as React.MutableRefObject<unknown | null>).current = target;
         if (target === null) targets.current.delete(key);
         else targets.current.set(key, target);
@@ -47,5 +49,5 @@ export function useAttachmentRowFocus(items: readonly AttachmentKey[], onRequest
         pending.current = null;
         restore(removal.neighborKeys);
     }, [items, restore]);
-    return { attachmentFocusRef, requestAttachmentRemoval, createFocusReturnRef };
+    return { attachmentFocusRef, readAttachmentFocusTarget, requestAttachmentRemoval, createFocusReturnRef };
 }

@@ -2,7 +2,8 @@ import fastify from 'fastify';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { buildApprovalRequestArtifactHeaderV1, buildTargetActionApprovalArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { deriveApprovalRequestSourceIdFromIdentityV1 } from '@happier-dev/protocol/approvals/creation';
 import { deriveAccountScopedArtifactIdV1 } from '@happier-dev/protocol/artifacts/idScope';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -11,12 +12,12 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCliApprovalsArtifactStore } from './artifactStore';
 import { executeOriginalAccountCliApprovalRequest } from './originalAccountRequest';
 
-it.each(['deferred', 'blocking'] as const)('presents original Account approval only through its %s flow owner', async flow => {
+it.each(['deferred', 'blocking', 'plugin_target_action'] as const)('presents original Account approval only through its %s flow owner', async flow => {
   const socket = await createRequesterCurrentnessSocketHarness();
   onTestFinished(() => socket.close());
   const app = fastify();
   onTestFinished(() => app.close());
-  const actionId = 'usage.sources.consent.set';
+  const actionId = flow === 'plugin_target_action' ? 'action.invoke' : 'usage.sources.consent.set';
   const target = { kind: 'machine' as const, machineId: 'machine' };
   const accountId = 'owner';
   const homeId = 'srv_home';
@@ -24,7 +25,13 @@ it.each(['deferred', 'blocking'] as const)('presents original Account approval o
   const artifactId = deriveAccountScopedArtifactIdV1(accountId, deriveApprovalRequestSourceIdFromIdentityV1({
     homeId, accountId, requesterId: accountId, requestId, actionId, target,
   }));
-  const request = ApprovalRequestV2Schema.parse({ v: 2, createdAtMs: 1, updatedAtMs: 1,
+  const request = flow === 'plugin_target_action'
+    ? TargetActionApprovalRequestV1Schema.parse({ v: 1, kind: 'plugin_target_action', status: 'open',
+      createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'cli' }, requestedSurface: 'cli',
+      qualifiedActionId: 'acme.native/actions/write', input: { value: 'fixture' },
+      sourceCustody: { kind: 'development', registeredRootId: 'owned-root' },
+      policyFingerprint: 'a'.repeat(64), subjectFingerprint: 'b'.repeat(64), summary: 'Write fixture' })
+    : ApprovalRequestV2Schema.parse({ v: 2, createdAtMs: 1, updatedAtMs: 1,
     createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId,
     actionArgs: { serverId: homeId, machineId: target.machineId, sourceId: 'source' },
     summary: 'Stop usage collection', status: 'open', approval: { flow, result: 'required' },
@@ -37,7 +44,8 @@ it.each(['deferred', 'blocking'] as const)('presents original Account approval o
   socket.server.on('connection', peer => { peer.once('disconnect', observed); });
   app.get('/v1/artifacts/:id', async () => {
     return { id: artifactId, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
-      header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
+      header: encodePlainArtifactStoredContent('kind' in request
+        ? buildTargetActionApprovalArtifactHeaderV1(request) : buildApprovalRequestArtifactHeaderV1(request)),
       body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }),
       dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
       seq: 1, createdAt: 1, updatedAt: 1 };
@@ -60,10 +68,12 @@ it.each(['deferred', 'blocking'] as const)('presents original Account approval o
     // Terminal presentation and the original Home HTTP response are the system
     // boundaries. The observer, Action read and Artifact decoder remain real.
     onApprovalRequested: presented,
-    run: async () => {
+    run: async signal => {
       // Hold Home's response until the observer has consumed the open request.
       // Its actual socket retirement makes this ordering deterministic.
-      await observationFinished;
+      await Promise.race([observationFinished, new Promise<never>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      })]);
       return proposal;
     },
   }));
