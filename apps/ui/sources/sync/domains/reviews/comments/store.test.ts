@@ -44,6 +44,30 @@ function comment(overrides: Partial<ReviewCommentV1> = {}): ReviewCommentV1 {
 }
 
 describe('review comments UI state', () => {
+    it('keeps unchanged rows and containers through refreshes while publishing real changes', () => {
+        const items = [comment({ id: 'c1' }), comment({ id: 'c2' })];
+        const state = applyReviewCommentList(createEmptyReviewCommentsState(), { items, cursor: 'next' });
+        expect(applyReviewCommentList(state, { items: structuredClone(items), cursor: 'next' })).toBe(state);
+        expect(upsertReviewComment(state, structuredClone(items[0]!))).toBe(state);
+
+        // Content can change without a revision advance (for example, a richer opened projection).
+        const changed = { ...items[0]!, body: 'Updated content' };
+        const refreshed = applyReviewCommentList(state, { items: [changed, structuredClone(items[1]!)], cursor: null });
+        expect(refreshed).not.toBe(state);
+        expect(refreshed.ids).toBe(state.ids);
+        expect(refreshed.byId.c1?.body).toBe('Updated content');
+        expect(refreshed.byId.c2).toBe(state.byId.c2);
+        expect(refreshed.cursor).toBeNull();
+
+        const reordered = applyReviewCommentList(refreshed, { items: [items[1]!, changed], cursor: null });
+        expect(reordered.ids).toEqual(['c2', 'c1']);
+        expect(reordered.byId).toBe(refreshed.byId);
+        const upserted = upsertReviewComment(state, changed);
+        expect(upserted.byId.c1?.body).toBe('Updated content');
+        expect(upserted.byId.c2).toBe(state.byId.c2);
+        expect(upserted.ids).toBe(state.ids);
+    });
+
     it('stores durable rows by id and filters by engine run state author and file', () => {
         const state = applyReviewCommentList(createEmptyReviewCommentsState(), {
             items: [
