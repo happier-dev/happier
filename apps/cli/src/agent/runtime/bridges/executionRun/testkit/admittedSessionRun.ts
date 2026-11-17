@@ -42,6 +42,8 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createDaemonControlApp } from '@/daemon/controlServer';
 import { isValidConnectedServiceRunMaterializeToken } from '@/daemon/connectedServices/runs/capabilityToken';
 import { readStoredCredentials, writeCredentialsTokenOnly, writeDaemonState } from '@/persistence';
+import { readOrCreateInstallationIdentitySync } from '@/daemon/identity/store';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { refreshActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
@@ -230,7 +232,8 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
   // A released terminal-session credential is what ordinary CLI sign-in stores;
   // sub-only legacy Account bearers are intentionally invalidated by its reader.
   const token = `header.${Buffer.from(JSON.stringify({ sub: accountId, session: 'run-attribution-terminal' })).toString('base64url')}.signature`;
-  const attribution = { serverId: configuration.activeServerId, accountId, machineId: 'admitted-machine', installationId: 'admitted-installation' };
+  const installationId = options?.parentRuntime ? readOrCreateInstallationIdentitySync().installationId : 'admitted-installation';
+  const attribution = { serverId: configuration.activeServerId, accountId, machineId: 'admitted-machine', installationId };
   const agentPlugin = options ? createTestAgentPlugin(skillsScenario, options) : skillsScenario ? skillsAgentPlugin : testAgentPlugin;
   const agentIdentity = { pluginId: agentPlugin.manifest.id, localId: 'agent' };
   // Vitest is not a Session runner. Substitute only that OS observation while
@@ -355,6 +358,12 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
   home.get('/v1/features/authenticated', async () => features);
   home.get('/v1/account/profile', async () => AccountProfileResponseSchema.parse({ id: accountId }));
   if (options?.parentRuntime) {
+    home.get('/v1/machines/admitted-machine', async () => ({ machine: MachinePublishedRowV1Schema.parse({
+      id: attribution.machineId, installationId: attribution.installationId,
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0, storageMode: 'plain',
+      kind: 'persistent', keyBasis: { dataEncryptionKey: null, metadataVersion: 0, daemonStateVersion: 0 },
+      access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+    }) }));
     home.get('/v1/auth/ping', async () => ({}));
     home.post<{ Params: { runId: string } }>('/v2/sessions/admitted-session/execution-runs/:runId/pending', async request =>
       pendingHome!.enqueue(request.params.runId, request.body));
@@ -649,7 +658,12 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
         processStartTimeMs: identity.processStartTimeMs, processCommandHash: hashProcessCommand(identity.command) });
     }
   }
-  expect((await readStoredCredentials())?.token).toBe(token);
+  const storedCredentials = await readStoredCredentials();
+  expect(storedCredentials?.token).toBe(token);
+  if (options?.parentRuntime) {
+    if (!storedCredentials) throw new Error('Missing stored parent Account credentials');
+    credentials = storedCredentials;
+  }
   // Ordinary Session startup establishes its current Account before registering
   // Run handlers. Complete that real HTTP bootstrap rather than leaving a fast
   // refresh in flight across this fixture's Account/Home teardown.
@@ -885,7 +899,8 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     resolveVoicePromptPreparation: async args => await resolveCliVoicePromptPreparation({ ...args, credentials,
       serverId: attribution.serverId, sessionMetadata: parentMetadata, machineId: attribution.machineId,
       directory, accountEntries: [], profileEntries: [], projectEntries: [] }),
-    sessionInteractionHost: { session, machineId: attribution.machineId, permissionHandler: parentPermissionHandler },
+    sessionInteractionHost: { session, machineId: attribution.machineId, permissionHandler: parentPermissionHandler,
+      readOwnerAccountCredentials: async () => credentials },
     sendAcp: createCommittedExecutionRunTranscriptPublisher({
       enqueueAgentMessageCommitted: session.enqueueAgentMessageCommitted.bind(session),
       readParentToolNormalizationSource: () => null,

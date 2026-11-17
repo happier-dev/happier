@@ -1,9 +1,10 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { watch } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { readMuseRecord } from '../nativeInput.js';
 import { MUSE_MSP_DECISION_PLAYBACK } from './mspDecisionPlayback.js';
 
 export type MuseMspPlaybackStep = Readonly<{
@@ -44,10 +45,32 @@ export async function createMuseMspProcessFixture(options?: Readonly<{
     decisionAckPath?: string;
     cwd?: string;
 }>) {
-    const recordingPath = options?.recordingPath ?? (options?.scenario
+    let recordingPath = options?.recordingPath ?? (options?.scenario
         ? fileURLToPath(new URL(`./fixtures/${options.scenario === 'approval-allow-once' ? 'lifecycle' : options.scenario === 'approval-late-child' ? 'child-follow' : 'advanced'}.json`, import.meta.url))
         : undefined);
-    const recording = recordingPath ? undefined : options?.recording ?? await readMuseLoginRecording();
+    let recording = recordingPath ? undefined : options?.recording ?? await readMuseLoginRecording();
+    if (options?.scenario === 'approval-allow-once' && !options.recordingPath && !options.recording) {
+        // Lifecycle captured a resume, while these callers create a new native
+        // conversation. Reuse the recorded create handshake without changing
+        // the approval/effect/answer/reminder ordering or its playback indices.
+        const lifecycle = readMuseRecord(JSON.parse(await readFile(recordingPath!, 'utf8')));
+        const advanced = readMuseRecord(JSON.parse(await readFile(new URL('./fixtures/advanced.json', import.meta.url), 'utf8')));
+        if (!Array.isArray(lifecycle.rows) || !Array.isArray(advanced.rows)) throw new Error('Missing captured Muse startup');
+        const sessionId = (row: JsonValue | undefined) => readMuseRecord(readMuseRecord(readMuseRecord(readMuseRecord(row).message).result).session).sessionId;
+        const sourceId = sessionId(lifecycle.rows[5]);
+        const targetId = sessionId(advanced.rows[8]);
+        if (typeof sourceId !== 'string' || typeof targetId !== 'string') throw new Error('Missing captured Muse Session identity');
+        recording = { rows: [0, 1, 2, 6, 7, 8].map(index => advanced.rows[index]!)
+            .concat(JSON.parse(JSON.stringify(lifecycle.rows.slice(6)).replaceAll(sourceId, targetId))) };
+        recordingPath = undefined;
+        if (options.auditPath) {
+            // Captures exceed the native launch wire's per-environment value
+            // limit. Keep them beside the caller-owned audit and its cleanup.
+            recordingPath = `${options.auditPath}.recording.json`;
+            await writeFile(recordingPath, JSON.stringify(recording));
+            recording = undefined;
+        }
+    }
     return {
         launch: { executable: { kind: 'systemTool' as const, id: 'muse-cli' },
             env: { MUSE_NO_AUTO_UPDATE: '0', MUSE_TEST_SELECTED_HOME: '/selected/native/home' } },
