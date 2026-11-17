@@ -3,6 +3,8 @@ import axios from 'axios';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { createDaemonSessionAccountActionExecutor } from './agentRuntime/createDaemonSessionAccountActionExecutor';
 import { configuration } from '@/configuration';
 import { AGENT_RUNTIME_DAEMON_SERVICES_PATH, AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
@@ -122,13 +124,21 @@ describe('daemon native Realtime input admission', () => {
       runnerAgentInvocationContext: { cwd: '/workspace', environment: {}, providerBindingActive: false } };
     let currentAction: (() => Promise<boolean>) | undefined;
     const delivered: unknown[] = [];
+    const credentials = { token: 'native-daemon-token', encryption: null } as const;
+    const ownerMetadata = buildSessionMetadataEnvelopeCreateFields({ credentials, accountEncryptionMode: 'plain',
+      storedContentMode: 'plain', metadata: createTestMetadata({ machineId: 'guest' }), agentState: null });
     // Home reads and notification delivery are the genuine external boundaries.
-    const home = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
-      data: { session: createSessionRecordFixture({ id: sessionId, share: null }) } });
+    const home = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (url !== `https://native-home.test/v2/sessions/${sessionId}`) throw new Error('Unexpected native admission Home read');
+      return { status: 200, data: { session: createSessionRecordFixture({ id: sessionId, share: null,
+        encryptionMode: 'plain', metadataLayoutVersion: ownerMetadata.metadataLayoutVersion,
+        metadata: ownerMetadata.sharedMetadata.ciphertext, ownerMetadata: ownerMetadata.ownerMetadata }) } };
+    });
     const execute = createDaemonSessionAccountActionExecutor({
       serverId: 'native-home', serverHttpBaseUrl: 'https://native-home.test', token: 'native-daemon-token',
+      credentials, readAccountEncryptionMode: async () => 'plain',
       createExecutor: () => createActionExecutor({
-        ...createCliActionDeps({ token: 'native-daemon-token', sessionId: '', mode: 'plain', ctx: null }),
+        ...createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null }),
         notificationsNotifyMe: async (input, context) => {
           delivered.push({ input, context });
           return { attemptedChannels: 1, deliveredChannels: 1 };
