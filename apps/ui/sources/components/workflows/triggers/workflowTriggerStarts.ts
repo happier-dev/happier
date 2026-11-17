@@ -249,7 +249,7 @@ export type WorkflowTriggerRowRef =
 /**
  * Applies a card edit to the Account set's draft once the When is complete; `null` while it is not
  * (no Session or Event chosen yet). The card keeps an incomplete When on screen; Save writes only
- * complete ones. Kinds the card lists but does not author are never written here.
+ * complete ones. A Run Event seed already carries its source and condition.
  */
 export function commitWorkflowTriggerWhen(params: Readonly<{
     draft: WorkflowTriggerDraft;
@@ -259,8 +259,6 @@ export function commitWorkflowTriggerWhen(params: Readonly<{
     sessionId?: string | null;
 }>): WorkflowTriggerDraft | null {
     const { when, enabled } = params;
-    const start = readWorkflowTriggerStart(when);
-    if (start === 'runEvent') return null;
     const trigger = buildTriggerDefinition({ when, enabled, sessionId: params.sessionId ?? null });
     if (trigger === null) return null;
     const declaration = when.kind === 'pluginEvent' && when.payloadSchema !== undefined ? { payloadSchema: when.payloadSchema } : {};
