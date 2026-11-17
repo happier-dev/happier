@@ -209,6 +209,7 @@ async function connectAdditionalAppClients() {
     const socketPath = '../../../../apps/ui/sources/sync/api/session/apiSocket';
     const accountPath = '../../../../apps/ui/sources/sync/ops/actions/actionAccountContext';
     const reversePath = '../../../../apps/ui/sources/sync/ops/actions/clientActionReverseDispatch';
+    const encryptionPath = '../../../../apps/ui/sources/sync/encryption/scopedAccountEncryption';
     const constantsPath = 'expo-constants';
     type AppSocket = {
         initialize(config: { endpoint: string; token: string; credentials: typeof uiCredentials; serverId: string;
@@ -220,17 +221,20 @@ async function connectAdditionalAppClients() {
     const { captureLazyActionAccountContext } = await import(accountPath) as {
         captureLazyActionAccountContext(serverId: string): Promise<{ accountId: string; dispose(): void;
             request(path: string, init?: RequestInit): Promise<Response>;
-            resolveAccountEncryption(): Promise<{ encryption: { initializeMachines(keys: Map<string, null>): Promise<void> } }> }>;
+        }>;
     };
     const { createUiClientActionReverseHandler } = await import(reversePath) as {
         createUiClientActionReverseHandler(binding: { serverId: string; accountId: string; machineId: string; isCurrent(): boolean }):
             (raw: unknown, context?: { signal: AbortSignal }) => Promise<unknown>;
     };
     const { default: constants } = await import(constantsPath) as { default: { deviceName: string | null } };
+    const { readScopedAccountEncryption } = await import(encryptionPath) as {
+        readScopedAccountEncryption(serverId: string): { getMachineEncryption(id: string): unknown } | null;
+    };
+    // The mounted App hydrated the enrolled Machine's published resource key.
+    const encryption = readScopedAccountEncryption(ui!.serverId);
+    expect(encryption?.getMachineEncryption(machineId)).toBeTruthy();
     const account = await captureLazyActionAccountContext(ui!.serverId);
-    const { encryption } = await account.resolveAccountEncryption();
-    // The enrolled legacy Machine uses the Account secret, not a fabricated data key.
-    await encryption.initializeMachines(new Map([[machineId, null]]));
     // Reuse the actual socket owner and its handshake, crypto and reverse handler;
     // instantiate it separately because the public app exports its single instance.
     const SocketOwner = apiSocket.constructor as new () => AppSocket;
