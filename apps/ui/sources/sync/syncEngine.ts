@@ -9826,26 +9826,11 @@ class Sync {
             readSelection: () => readThemeProfileReferenceSelection(storage.getState().localSettings.themeProfileSelection),
             readThemePreference: () => storage.getState().localSettings.themePreference,
             writeSelection: async (mode, reference, nextPreference) => {
-                const [{ runThemePreferenceChange }, { getThemeTryOnOwner }, { readReducedMotionPreference },
-                    { readSystemTheme, resolveThemeRuntimeVisualTheme }] = await Promise.all([
-                    import('@/components/settings/appearance/themePreferenceTransition'),
-                    import('@/theme/profiles/themeTryOnRuntime'),
-                    import('@/hooks/ui/useReducedMotionPreference'),
-                    import('@/theme/profiles/themeProfileRuntime'),
-                ]);
-                const preference = storage.getState().localSettings.themePreference;
-                const systemTheme = readSystemTheme();
-                await runThemePreferenceChange({ currentPreference: preference, nextPreference: nextPreference ?? preference,
-                    platform: Platform.OS, reduceMotion: readReducedMotionPreference(), systemTheme,
-                    forceAnimate: getThemeTryOnOwner().read() === null
-                        && mode === resolveThemeRuntimeVisualTheme(preference, systemTheme),
-                    mutation: () => {
-                        throwIfAborted(params.signal);
-                        const current = storage.getState().localSettings.themeProfileSelection ?? { light: null, dark: null };
-                        storage.getState().applyLocalSettings({ themeProfileSelection: { ...current, [mode]: reference },
-                            ...(nextPreference !== undefined ? { themePreference: nextPreference } : {}) });
-                    },
-                });
+                // The shared runtime observer reveals the resulting palette, including preview/Keep.
+                throwIfAborted(params.signal);
+                const current = storage.getState().localSettings.themeProfileSelection ?? { light: null, dark: null };
+                storage.getState().applyLocalSettings({ themeProfileSelection: { ...current, [mode]: reference },
+                    ...(nextPreference !== undefined ? { themePreference: nextPreference } : {}) });
             },
             pluginProfiles: {
                 list: () => projectPluginThemeLibraryEntries(readPluginThemeList()),

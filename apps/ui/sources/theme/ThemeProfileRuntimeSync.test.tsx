@@ -7,9 +7,12 @@ import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { darkTheme, lightTheme, type Theme } from '@/theme';
+import { registerNativeThemePreferenceTransitionController } from '@/components/settings/appearance/themePreferenceTransition';
+import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 
 const shared = vi.hoisted(() => ({
     themes: null as Record<'light' | 'dark', Theme> | null,
+    setTheme: vi.fn(),
     update: vi.fn((name: 'light' | 'dark', updater: (theme: Theme) => Theme) => {
         if (shared.themes) shared.themes[name] = updater(shared.themes[name]);
     }),
@@ -22,11 +25,14 @@ vi.mock('react-native', async () =>
 vi.mock('react-native-unistyles', async () =>
     (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock({ runtime: {
         getTheme: (name: 'light' | 'dark') => shared.themes?.[name], updateTheme: shared.update,
+        setTheme: shared.setTheme,
     } }));
 vi.mock('expo-status-bar', () => ({ setStatusBarStyle: vi.fn() }));
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn(async () => {}) }));
 
 const { ThemeProfileRuntimeSync } = await import('./ThemeProfileRuntimeSync');
+const { initializeArtifactInventoryDemandHarness } = await import('@/dev/testkit/harness/artifactInventoryDemandHarness');
+await initializeArtifactInventoryDemandHarness();
 
 async function setup() {
     const fixture = await createPlainArtifactHomeFixture('https://theme-runtime-sync.test', { currentAccount: true });
@@ -51,6 +57,56 @@ async function setup() {
 }
 
 describe('Artifact-backed theme runtime synchronization', () => {
+    it('reveals Apply once, keeps an already-painted preview without repainting, and preserves the mode transition', async () => {
+        const { createArtifactInventoryDemandHarness } = await import('@/dev/testkit/harness/artifactInventoryDemandHarness');
+        const fixture = await createArtifactInventoryDemandHarness();
+        onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+        const scope = storage.getState().settingsScope;
+        if (!scope) throw new Error('Missing admitted Account');
+        shared.themes = { light: lightTheme, dark: darkTheme };
+        storage.getState().applyLocalSettings({ ...localSettingsDefaults, themePreference: 'light',
+            themeProfileSelection: { light: null, dark: null } });
+        const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
+        const { getThemeTryOnOwner } = await import('./profiles/themeTryOnRuntime');
+        const { getBuiltInThemeProfileDocument } = await import('./profiles/builtInThemeProfiles');
+        const { themeModeStorageBinding } = await import('@/components/settings/appearance/themeModeSettingBinding');
+        const screen = await renderScreen(<ThemeProfileRuntimeSync />);
+        const transition = vi.fn((mutation: () => void) => mutation());
+        const unregister = registerNativeThemePreferenceTransitionController({ run: transition });
+        setReducedMotionPreferenceOverride(false);
+        onTestFinished(() => { unregister(); setReducedMotionPreferenceOverride(null); });
+        shared.update.mockClear();
+        shared.setTheme.mockClear();
+        await act(async () => {
+            await getSyncSingleton().withThemeProfileLibrary(library => library.select({
+                mode: 'light', reference: { kind: 'built-in', presetId: 'premiumLight' },
+            }), { expectedScope: scope });
+        });
+        expect(transition).toHaveBeenCalledTimes(1);
+        expect(shared.setTheme).toHaveBeenCalledTimes(1);
+        expect(shared.update).toHaveBeenCalledTimes(1);
+        const document = getBuiltInThemeProfileDocument('premiumDark');
+        if (!document) throw new Error('Missing built-in fixture');
+        const owner = getThemeTryOnOwner();
+        let receipt!: ReturnType<typeof owner.begin>;
+        await act(async () => { receipt = owner.begin({ document, selection: { kind: 'built-in', presetId: 'premiumDark' },
+            mode: 'dark', origin: { kind: 'editor' } }); });
+        expect(transition).toHaveBeenCalledTimes(2);
+        shared.setTheme.mockClear();
+        shared.update.mockClear();
+        await act(async () => { await owner.keep(receipt.previewRef); });
+        expect(owner.read()).toBeNull();
+        expect(transition).toHaveBeenCalledTimes(2);
+        expect(shared.setTheme).not.toHaveBeenCalled();
+        expect(shared.update).not.toHaveBeenCalled();
+        await act(async () => {
+            await themeModeStorageBinding.commit(storage.getState().localSettings, 'light',
+                delta => storage.getState().applyLocalSettings(delta), { accountScope: scope, isCurrent: () => true });
+        });
+        expect(transition).toHaveBeenCalledTimes(3);
+        expect(shared.setTheme).toHaveBeenCalledTimes(1);
+        await screen.unmount();
+    });
     it('renders the shared preview and restores the latest saved selection when its receipt is released', async () => {
         const fixture = await setup();
         const { getThemeTryOnOwner } = await import('./profiles/themeTryOnRuntime');
@@ -61,9 +117,16 @@ describe('Artifact-backed theme runtime synchronization', () => {
         if (!parsed.ok) throw new Error('Invalid preview fixture');
         const screen = await renderScreen(<ThemeProfileRuntimeSync />);
         const owner = getThemeTryOnOwner();
+        const transition = vi.fn((mutation: () => void) => mutation());
+        const unregister = registerNativeThemePreferenceTransitionController({ run: transition });
+        setReducedMotionPreferenceOverride(false);
+        onTestFinished(() => { unregister(); setReducedMotionPreferenceOverride(null); });
         let receipt!: ReturnType<typeof owner.begin>;
         shared.update.mockClear();
+        shared.setTheme.mockClear();
         await act(async () => { receipt = owner.begin({ document: parsed.document, mode: 'light', origin: { kind: 'editor' } }); });
+        expect(transition).toHaveBeenCalledTimes(1);
+        expect(shared.setTheme).toHaveBeenCalledTimes(1);
         expect(shared.themes!.light.colors.background.canvas).toBe('#123456');
         expect(shared.update).toHaveBeenCalledTimes(1);
         expect(storage.getState().localSettings.themeProfileSelection?.light).toEqual({ kind: 'artifact', id: 'selected' });
@@ -71,10 +134,16 @@ describe('Artifact-backed theme runtime synchronization', () => {
         await act(async () => { storage.getState().updateArtifact(fixture.row('selected', '#ddeeff', 2)); });
         expect(shared.themes!.light.colors.background.canvas).toBe('#123456');
         expect(shared.update).not.toHaveBeenCalled();
+        expect(transition).toHaveBeenCalledTimes(1);
+        shared.setTheme.mockClear();
         await act(async () => { owner.revert(receipt.previewRef); });
+        expect(transition).toHaveBeenCalledTimes(2);
+        expect(shared.setTheme).toHaveBeenCalledTimes(1);
         expect(shared.themes!.light.colors.background.canvas).toBe('#ddeeff');
         expect(shared.update).toHaveBeenCalledTimes(1);
+        setReducedMotionPreferenceOverride(true);
         await act(async () => { receipt = owner.begin({ document: parsed.document, mode: 'light', origin: { kind: 'editor' } }); });
+        expect(transition).toHaveBeenCalledTimes(2);
         await act(async () => { storage.setState({ settingsScope: { ...fixture.scope, accountId: 'another-account' } }); });
         expect(shared.themes!.light.colors.background.canvas).toBe(lightTheme.colors.background.canvas);
         await act(async () => { owner.revert(receipt.previewRef); });

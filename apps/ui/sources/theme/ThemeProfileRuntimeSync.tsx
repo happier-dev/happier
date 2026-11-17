@@ -2,7 +2,9 @@ import * as React from 'react';
 import { useSelectedThemeProfiles } from '@/sync/store/useThemeProfiles';
 import { findActiveThemeProfileForMode } from './profiles/themeProfilePersistence';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
-import { applyThemeRuntimeSelection } from './profiles/themeProfileRuntime';
+import { transitionThemeRuntimeSelection } from './profiles/themeProfileRuntime';
+import { readReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { themeStyleSelectionFromSurfaceFinish } from './themeStyleScales';
 import { getThemeTryOnOwner } from './profiles/themeTryOnRuntime';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -23,7 +25,7 @@ function ThemeProfileRuntimeObserver() {
     const finish = useLocalSetting('uiSurfaceFinish');
     const overrides = useLocalSetting('uiSurfaceFinishOverrides');
     React.useLayoutEffect(() => {
-        applyThemeRuntimeSelection({
+        fireAndForget(transitionThemeRuntimeSelection({
             themePreference,
             preview,
             themeProfiles: {
@@ -31,7 +33,7 @@ function ThemeProfileRuntimeObserver() {
                 profiles: light ? (dark && dark !== light ? [light, dark] : [light]) : dark ? [dark] : [],
             },
             style: themeStyleSelectionFromSurfaceFinish({ uiSurfaceFinish: finish, uiSurfaceFinishOverrides: overrides }),
-        });
+        }, readReducedMotionPreference()), { tag: 'theme.runtime.transition' });
     }, [themePreference, light, dark, finish, overrides, preview]);
     return null;
 }

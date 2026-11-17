@@ -369,7 +369,7 @@ const applyThemesToUnistyles = (
     }
 };
 
-export const applyThemeRuntimeSelection = (requested: ApplyThemeRuntimeSelectionInput): ThemeRuntimeThemes => {
+const prepareThemeRuntimeSelection = (requested: ApplyThemeRuntimeSelectionInput) => {
     const input = requested.preview ? { ...requested, themePreference: requested.preview.mode } : requested;
     acquireNativeCss(input);
     const resolveThemes = input.resolveThemes ?? resolveThemeRuntimeThemes;
@@ -389,6 +389,10 @@ export const applyThemeRuntimeSelection = (requested: ApplyThemeRuntimeSelection
         themes = canonicalBaseThemes;
     }
 
+    return { input, themes };
+};
+
+const applyPreparedThemeRuntimeSelection = ({ input, themes }: ReturnType<typeof prepareThemeRuntimeSelection>): ThemeRuntimeThemes => {
     if (resolveRuntimePlatform(input) === 'web') {
         const visualTheme = resolveThemeRuntimeVisualTheme(input.themePreference, input.systemTheme ?? readSystemTheme());
         applyThemeFontFamilyVariables(themes[visualTheme].typography);
@@ -410,6 +414,34 @@ export const applyThemeRuntimeSelection = (requested: ApplyThemeRuntimeSelection
         if (!input.unistylesRuntime) currentRuntimeSelection = { input, themes: canonicalBaseThemes };
         return canonicalBaseThemes;
     }
+};
+
+export const applyThemeRuntimeSelection = (requested: ApplyThemeRuntimeSelectionInput): ThemeRuntimeThemes => (
+    applyPreparedThemeRuntimeSelection(prepareThemeRuntimeSelection(requested))
+);
+
+/** Every observed palette change uses the appearance reveal; an already-painted mode/Keep is a no-op. */
+export const transitionThemeRuntimeSelection = (requested: ApplyThemeRuntimeSelectionInput, reduceMotion: boolean): Promise<void> => {
+    const prepared = prepareThemeRuntimeSelection(requested);
+    const { input, themes } = prepared;
+    const previous = currentRuntimeSelection;
+    const systemTheme = input.systemTheme ?? readSystemTheme();
+    const mode = resolveThemeRuntimeVisualTheme(input.themePreference, systemTheme);
+    const previousMode = previous ? resolveThemeRuntimeVisualTheme(previous.input.themePreference,
+        previous.input.systemTheme ?? systemTheme) : mode;
+    const css = readRuntimeProfile(input.themeProfiles, mode, input.preview)?.css;
+    const previousCss = previous && readRuntimeProfile(previous.input.themeProfiles, previousMode, previous.input.preview)?.css;
+    const visibleChanged = previous !== null && (previousMode !== mode || previous.themes[previousMode] !== themes[mode] || previousCss !== css);
+    if (previous && !visibleChanged && previous.themes.light === themes.light && previous.themes.dark === themes.dark) {
+        currentRuntimeSelection = { input, themes };
+        return Promise.resolve();
+    }
+    return defaultRunThemePreferenceChange({
+        currentPreference: previousMode, nextPreference: mode, systemTheme,
+        platform: Platform.OS, reduceMotion,
+        forceAnimate: visibleChanged,
+        mutation: () => { applyPreparedThemeRuntimeSelection(prepared); },
+    });
 };
 
 const applyResolvedThemeRuntimeSelection = (
