@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { BUNDLED_PLUGIN_UI_APP_ARTIFACTS, installBundledPluginUiArtifactsForTests } from '@/dev/testkit/mocks/bundledPluginUiAssets';
 
 import type { PluginSelectedArtifactIdentity } from './artifactLease';
 import {
@@ -38,6 +39,19 @@ function createInventory(): BundledPluginUiAppArtifactInventory {
 }
 
 describe('bundled app-exact Plugin UI artifact source', () => {
+    it('serves and restores fixture bytes installed after the app source was created', async () => {
+        const source = createBundledPluginUiAppExactArtifactSourceFromInventory({
+            inventory: BUNDLED_PLUGIN_UI_APP_ARTIFACTS,
+            readBundledAssetBytes: async () => new Uint8Array([1, 2, 3]),
+        });
+        const restore = installBundledPluginUiArtifactsForTests(createInventory());
+        try {
+            await expect(source.fetch({ artifact: INSPECTOR_ARTIFACT }))
+                .resolves.toEqual(new Map([[INSPECTOR_ENTRY_PATH, new Uint8Array([1, 2, 3])]]));
+        } finally { restore(); }
+        await expect(source.fetch({ artifact: INSPECTOR_ARTIFACT })).resolves.toBeNull();
+    });
+
     it('returns unavailable for app bytes absent from the source-test inventory', async () => {
         const source = createBundledPluginUiAppExactArtifactSource();
 

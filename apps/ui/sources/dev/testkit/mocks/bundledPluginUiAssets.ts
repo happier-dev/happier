@@ -2,7 +2,8 @@ import type { BundledPluginPackagedResource, BundledPluginUiAppArtifactInventory
 
 // Package/Expo asset boundary only: this test app contains no preseeded bundle
 // bytes. Artifact selection, source adapters, leases, and catalogs remain real.
-export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = Object.freeze([]) satisfies BundledPluginUiAppArtifactInventory;
+const bundledArtifacts: BundledPluginUiAppArtifactInventory[number][] = [];
+export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS: BundledPluginUiAppArtifactInventory = bundledArtifacts;
 export let BUNDLED_PLUGIN_UI_APP_DECLARATIONS: readonly PluginHostBundledUiDeclaration[] = Object.freeze([]);
 
 /** App package boundary: tests install producer-built declaration facts and restore their prior inventory. */
@@ -10,6 +11,15 @@ export function installBundledPluginUiDeclarationsForTests(declarations: readonl
     const previous = BUNDLED_PLUGIN_UI_APP_DECLARATIONS;
     BUNDLED_PLUGIN_UI_APP_DECLARATIONS = Object.freeze([...declarations]);
     return () => { BUNDLED_PLUGIN_UI_APP_DECLARATIONS = previous; };
+}
+
+/** App package boundary for producer-compiled executable bytes in composed journeys. */
+export function installBundledPluginUiArtifactsForTests(artifacts: BundledPluginUiAppArtifactInventory): () => void {
+    const previous = [...bundledArtifacts];
+    // App sources retain the build inventory at module load, before a journey
+    // installs its compiled bytes. Preserve that physical package identity.
+    bundledArtifacts.splice(0, bundledArtifacts.length, ...artifacts);
+    return () => { bundledArtifacts.splice(0, bundledArtifacts.length, ...previous); };
 }
 export const BUNDLED_PLUGIN_BRAND_MARKS = Object.freeze([]);
 export const BUNDLED_PLUGIN_PACKAGED_RESOURCES = Object.freeze([]) satisfies readonly BundledPluginPackagedResource[];
