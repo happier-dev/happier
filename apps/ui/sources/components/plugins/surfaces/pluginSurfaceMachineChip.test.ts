@@ -15,4 +15,12 @@ describe('who draws a surface Machine chip', () => {
         expect(pluginSurfacePageOwnsMachineChip(placement('rightPane'), false)).toBe(false);
         expect(pluginSurfacePageOwnsMachineChip({ contributionKind: 'composerControl', binding: null }, true)).toBe(false);
     });
+
+    it('leaves it to the host for an inline placement, which runs in its host\'s Machine scope; a widget keeps its own', () => {
+        const inline = { contributionKind: 'surfacePlacement', binding: { kind: 'inline' } };
+        expect(pluginSurfacePageOwnsMachineChip(inline, false, 'agentSettings')).toBe(true);
+        expect(pluginSurfacePageOwnsMachineChip(inline, false, 'sessionInfoSection')).toBe(true);
+        expect(pluginSurfacePageOwnsMachineChip(inline, false, 'widget')).toBe(false);
+        expect(pluginSurfacePageOwnsMachineChip(inline, false, undefined)).toBe(false);
+    });
 });

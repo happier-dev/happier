@@ -2095,9 +2095,10 @@ function PluginSurfaceHostMount(props: Readonly<(
     // Machine (Channels' conversations). One bound only by its plugin's daemon Actions or contributed sources
     // (My tasks: Account tasks) keeps the automatic choice and leaves choosing to the plugin's page, so an
     // Account-backed glance never says "No machine can run it".
-    // An app page draws its Machine chip in its own route controls; every other placement draws it in this band.
+    // An app page draws its Machine chip in its own route controls, and an inline placement's host owns its
+    // Machine scope; every other placement draws the chip in this band.
     const pageOwnsMachineChip = pluginSurfacePageOwnsMachineChip(props.descriptor,
-        React.useContext(PluginCompanionOpenedFromContext) !== null);
+        React.useContext(PluginCompanionOpenedFromContext) !== null, props.inlineMount?.role);
     const showsExecutionOriginSelector = needsMachineExecution && props.descriptor?.contributionKind === 'surfacePlacement'
         && !pageOwnsMachineChip
         && (!insideWidgetFrame || machineDemand === 'data');

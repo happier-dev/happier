@@ -50,7 +50,8 @@ export const SelectionListFilterChip = React.memo(function SelectionListFilterCh
     const commandInvokeRef = React.useRef<SelectionListCommandInvoke | null>(null);
 
     const selected = filter.options?.find((option) => option.id === filter.selectedId) ?? null;
-    const valueLabel = filter.valueLabel ?? selected?.label ?? '';
+    // A chip always says something: with no value yet it names its own field, never an icon and a chevron alone.
+    const valueLabel = filter.valueLabel ?? selected?.label ?? filter.label;
     // A search's scope chip is compact: until it has a value it names the filter, not a placeholder sentence.
     const shownValueLabel = filter.pairsWithSearch && filter.muted ? filter.label
         : props.placement === 'row' ? filter.rowValueLabel ?? valueLabel : valueLabel;
