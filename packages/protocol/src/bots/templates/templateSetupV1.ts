@@ -1,4 +1,5 @@
 import { z } from '../../zodRuntimePolicy.js';
+import { createActionExecuteFailureError } from '../../actions/actionExecutionResult.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { readBuiltInLegacyConnectedAccountServiceKeyIngress,
   type ConnectedServiceBindingsV2 } from '../../connect/connectedServiceBindings.js';
@@ -16,7 +17,7 @@ import { MachineRecipePackageObservationV1Schema } from '../../machines/setup/ma
 import { BotTemplateSetupSelectionsV1Schema, type BotTemplateSetupSelectionsV1 } from './templateSetupSelectionsV1.js';
 export { BotTemplateSetupSelectionsV1Schema, type BotTemplateSetupSelectionsV1 } from './templateSetupSelectionsV1.js';
 const key = () => z.string().check(z.minLength(1));
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 
 /** Selected software uses the ordinary Machine setup preparation and execution owners. */
 export function buildBotTemplateMachineSetupPlanInputV1(target: Readonly<{ homeId: string; machineId: string }>,

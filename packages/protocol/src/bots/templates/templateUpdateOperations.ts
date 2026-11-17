@@ -1,4 +1,5 @@
 import type { ActionExecutorContext, ActionExecuteFailure, ActionExecuteResult, HostReviewedChildrenPreparationV1, HostReviewedChildrenPreparationRequestV1 } from '../../actions/executor/types.js';
+import { createActionExecuteFailureError } from '../../actions/actionExecutionResult.js';
 import { isDeferredApprovalResult, normalizeActionExecutorThrownError } from '../../actions/executor/resultProjection.js';
 import { readActionFailureEnvelope } from '../../actions/executor/actionFailureEnvelope.js';
 import { readRecord } from '../../inputs/inputRecords.js';
@@ -26,7 +27,7 @@ import { applyBotTemplateMcpSetupV1, prepareBotTemplateSetupV1, buildBotTemplate
 import { bestEffortReportBotTemplateAcceptedVersionV1 } from './templateAcceptedVersionsV1.js';
 import { BOT_TEMPLATE_SETUP_APPLY_ROLE_V1 } from './botTemplateActionIdsV1.js';
 
-const fail = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const fail = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 function failure(error: unknown): ActionExecuteFailure {
   const observed = readActionFailureEnvelope(error);
   if (observed) return observed;

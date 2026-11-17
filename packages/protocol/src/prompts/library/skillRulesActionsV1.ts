@@ -1,4 +1,5 @@
 import type { z } from '../../zodRuntimePolicy.js';
+import { createActionExecuteFailureError } from '../../actions/actionExecutionResult.js';
 import { SkillsRulesSetInputV1Schema, type SkillsRulesSetOutputV1Schema } from '../../actions/specs/capabilityRules.js';
 import { applyReachRulesChangeV1, type ReachRulesWriteContextV1 } from '../../reach/reachRulesChangeV1.js';
 import type { ReachRuleV1, SkillRuleV1 } from '../../reach/reachRuleV1.js';
@@ -51,7 +52,7 @@ export async function mutateSkillRulesV1(port: SkillRulesActionPortV1,
   ]);
   assertCurrent();
   const read = readPromptLibraryCatalogRecordV1({ ...projection, key: 'skill-rules' });
-  if (read.status === 'unavailable') throw Object.assign(new Error(read.reason), { code: read.reason });
+  if (read.status === 'unavailable') throw createActionExecuteFailureError({ ok: false, errorCode: read.reason, error: read.reason });
   if (read.record.key !== 'skill-rules'
     || read.authority === 'inactive' && projection.sourceSettingsVersion === undefined) return { ok: false, code: 'catalog_unavailable' };
   const retainedRules = read.record.value.rules;

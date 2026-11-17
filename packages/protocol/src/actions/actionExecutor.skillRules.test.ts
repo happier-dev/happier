@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { createActionExecuteFailureError } from './actionExecutionResult.js';
 import type { ArtifactSavedByV1 } from '../artifacts/artifactBinaryV1.js';
 import type { ArtifactFolderActionPortV1 } from '../prompts/library/promptFolderActionsV1.js';
 import type { SkillRuleV1 } from '../reach/reachRuleV1.js';
@@ -22,7 +23,7 @@ function fixture(options: { unavailable?: boolean; conflict?: boolean; inactive?
   const port = {
     serverId: 'home', assertCurrent: () => {},
     readCatalog: async () => {
-      if (options.readFailure) throw Object.assign(new Error('Home transport failed'), { code: 'forbidden' });
+      if (options.readFailure) throw createActionExecuteFailureError({ ok: false, errorCode: 'forbidden', error: 'Home transport failed' });
       return { catalog: options.unavailable
       ? { status: 'partial' as const, rows: [], tombstones: [], diagnostics: [{ key: 'skill-rules' as const, revision: 3, reason: 'invalid-stored-content' as const }] }
       : { status: 'ready' as const, rows: options.inactive ? [] : [{ record: { key: 'skill-rules' as const, value: { v: 1 as const, rules,
@@ -31,7 +32,7 @@ function fixture(options: { unavailable?: boolean; conflict?: boolean; inactive?
     },
     writeRecord: async (input: Parameters<ArtifactFolderActionPortV1['writeRecord']>[0]) => {
       writes.push(input);
-      if (options.writeFailure) throw Object.assign(new Error('Home transport failed'), { code: 'forbidden' });
+      if (options.writeFailure) throw createActionExecuteFailureError({ ok: false, errorCode: 'forbidden', error: 'Home transport failed' });
       if (options.conflict) return { status: 'conflict' as const, revision: 4 };
       if (input.record.key === 'skill-rules') rules = input.record.value.rules;
       return { status: 'updated' as const, revision: 4, cursor: 1 };

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '../../actions/actionExecutor.js';
+import { createActionExecuteFailureError } from '../../actions/actionExecutionResult.js';
 import { createBotTemplateActionExecuteV1, type BotTemplateOperationPortV1 } from './botTemplateOperations.js';
 import { type BotTemplateReleaseV1, projectBotTemplateArtifactHeaderV1, readBotTemplateReleaseV1 } from './botTemplateV1.js';
 import { type BotTemplateInstanceV1 } from './templateInstanceV1.js';
@@ -110,7 +111,7 @@ async function fixture(options: Pick<ActionExecutorDeps, 'machineSetupPlan' | 'm
     recipient: { readSession: async () => ({ metadata: metadata(), revision,
       executionTarget: { machineId: 'recipient-machine', agentId: 'codex' } }), writeInstance: async () => { throw new Error('birth only'); },
       updateInstance: async (_ref, next, expected) => {
-        if (failSettlement) throw Object.assign(new Error('session_metadata_unavailable'), { code: 'session_metadata_unavailable' });
+        if (failSettlement) throw createActionExecuteFailureError({ ok: false, errorCode: 'session_metadata_unavailable', error: 'session_metadata_unavailable' });
         expect(instance).toEqual(expected); instance = next; instanceWrites++; revision++;
       }, reportAcceptedVersion: async input => { reports.push(input); if (refuseReport) throw new Error('offline'); },
       content: { promptDocGet: input => readPromptDocInLibrary({ store, ...input }), skillActionExecute: skillAction } },

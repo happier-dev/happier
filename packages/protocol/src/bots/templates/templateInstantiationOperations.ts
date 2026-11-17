@@ -1,4 +1,5 @@
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, HostReviewedChildrenPreparationV1, HostReviewedChildrenPreparationRequestV1 } from '../../actions/executor/types.js';
+import { createActionExecuteFailureError } from '../../actions/actionExecutionResult.js';
 import { isDeferredApprovalResult, normalizeActionExecutorThrownError } from '../../actions/executor/resultProjection.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '../../json/strictJsonValue.js';
@@ -31,7 +32,7 @@ export type BotTemplateRecipientPortV1 = BotTemplateAcceptedVersionReporterV1 & 
     expectedInstance: BotTemplateInstanceV1, context: ActionExecutorContext): Promise<void>;
   content?: Pick<ActionExecutorDeps, 'promptDocGet' | 'skillActionExecute'>;
 }>;
-const fail = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const fail = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 function failure(error: unknown): ActionExecuteFailure {
   const observed = readActionFailureEnvelope(error);
   if (observed) return observed;

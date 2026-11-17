@@ -141,7 +141,7 @@ describe('createActionExecutor (prompt library actions)', () => {
       expectedRevision: { headerVersion: 1, bodyVersion: 1 }, text: 'Remember this',
     }, { surface: 'ui', serverId: 'home', authority: 'present_user' });
     expect(result).not.toHaveProperty('details');
-    expect(result).toMatchObject({ ok: false, errorCode: 'code' in error ? error.code : error.rpcErrorCode });
+    expect(result).toMatchObject({ ok: false, errorCode: error instanceof RpcError ? error.rpcErrorCode : 'action_failed' });
   });
 
   it('retains a public Action failure diagnostic through memory admission', async () => {

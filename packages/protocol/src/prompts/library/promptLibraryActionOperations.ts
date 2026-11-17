@@ -28,7 +28,7 @@ import {
 import { PromptDocArtifactHeaderV1Schema, PromptDocBodyV1Schema, type PromptDocBodyV1 } from './promptDocV2.js';
 import { computePromptBundleDigestV1 } from './promptLibraryDigests.js';
 import { SKILL_ACTION_OUTPUT_SCHEMAS_V1, SkillActionFailureResultV1Schema, SkillInstallAcknowledgedEffectsV1Schema } from './skills/skillActionSchemasV1.js';
-import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
+import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '../../actions/actionExecutionResult.js';
 import { MemoryDocArtifactHeaderV1Schema, MemoryDocArtifactHeaderV1StoredSchema, MemoryDocBodyV1Schema, MemoryDocBodyV1StoredSchema,
   MEMORY_ARCHIVE_TOPIC_TITLE_V1, MEMORY_ARCHIVE_TOPIC_SUMMARY_V1, projectMemoryDocIndexV1, readMemoryDocTopicV1,
   type MemoryDocBodyV1, type MemoryDocIndexV1, type MemoryFactV1, type MemoryTopicReadV1 } from './memoryDocV1.js';
@@ -441,12 +441,12 @@ export async function requirePromptArtifactOrganizationV1(store: PromptLibraryAr
   signal?: AbortSignal): Promise<void> {
   if (request.folderId === undefined && request.tags === undefined) return;
   if (!store.organization) {
-    throw Object.assign(new Error('artifact_organization_unavailable'), { code: 'artifact_organization_unavailable' });
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'artifact_organization_unavailable', error: 'artifact_organization_unavailable' });
   }
   const read = await readArtifactFolderCatalogV1({ port: store.organization, signal });
-  if (read.status !== 'ready') throw Object.assign(new Error(read.reason), { code: read.reason });
+  if (read.status !== 'ready') throw createActionExecuteFailureError({ ok: false, errorCode: read.reason, error: read.reason });
   if (request.folderId && !read.value.folders.some(folder => folder.id === request.folderId)) {
-    throw Object.assign(new Error('folder_not_found'), { code: 'folder_not_found' });
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'folder_not_found', error: 'folder_not_found' });
   }
 }
 
@@ -630,7 +630,7 @@ export async function updatePromptDocInLibrary(params: Readonly<{
   if (!artifact) throw new Error('prompt_doc_missing_body');
   const expected = params.request.expectedRevision;
   if (expected && (expected.headerVersion !== artifact.revision.headerVersion || expected.bodyVersion !== artifact.revision.bodyVersion)) {
-    throw Object.assign(new Error('artifact_version_mismatch'), { code: 'version_mismatch' });
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'version_mismatch', error: 'artifact_version_mismatch' });
   }
   const body = parseArtifactBody(artifact.body, (value) => {
     const parsed = PromptDocBodyV1Schema.safeParse(value);
@@ -712,7 +712,7 @@ export async function updatePromptBundleInLibrary(params: Readonly<{
   if (!artifact) throw new Error('prompt_bundle_missing_body');
   const expected = params.request.expectedRevision;
   if (expected && (expected.headerVersion !== artifact.revision.headerVersion || expected.bodyVersion !== artifact.revision.bodyVersion)) {
-    throw Object.assign(new Error('artifact_version_mismatch'), { code: 'version_mismatch' });
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'version_mismatch', error: 'artifact_version_mismatch' });
   }
   const header = PromptBundleArtifactHeaderV1Schema.safeParse(artifact.header);
   if (!header.success) throw Object.assign(new Error('prompt_bundle_invalid_kind'), { code: 'prompt_bundle_invalid_kind' });

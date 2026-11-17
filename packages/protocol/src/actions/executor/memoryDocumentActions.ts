@@ -10,7 +10,7 @@ import type { PromptStackEntryV1 } from '../../prompts/library/promptStacksV1.js
 import { readSessionBotV1 } from '../../sessions/identity/sessionBotV1.js';
 import { MemoryRememberInputV1Schema, MemoryDecisionSaveInputV1Schema, MemoryUpdateInputV1Schema, MemoryForgetInputV1Schema, type MemoryScopeTargetV1,
   type MemoryDuplicateChoiceRequiredV1, MemoryAttachmentFailureV1Schema, type MemoryAttachmentFailureV1 } from '../../prompts/library/memoryActionsV1.js';
-import { readMemoryDocVersionInLibrary, readReviewedMemoryDocInLibrary, readRestorableMemoryFactV1, createMemoryDocInLibrary, rememberMemoryFactInLibrary, updateMemoryFactInLibrary, forgetMemoryFactInLibrary,
+import { MemoryDocFailureV1, readMemoryDocVersionInLibrary, readReviewedMemoryDocInLibrary, readRestorableMemoryFactV1, createMemoryDocInLibrary, rememberMemoryFactInLibrary, updateMemoryFactInLibrary, forgetMemoryFactInLibrary,
   type PromptLibraryArtifactStore, type MemoryDocMutationTargetV1, type MemoryDocMutationReadV1 } from '../../prompts/library/promptLibraryActionOperations.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 
@@ -60,7 +60,7 @@ export function bindMemoryWriteApprovalInputV1(actionId: string, input: unknown,
   const request = (actionId === 'memory.decision.save' ? MemoryDecisionSaveInputV1Schema : MemoryRememberInputV1Schema).parse(input);
   return 'ref' in request ? request : { ...request, reviewedTarget: admission.target };
 }
-function refuse(code: string): never { throw Object.assign(new Error(code), { code }); }
+function refuse(code: string): never { throw new MemoryDocFailureV1(code); }
 export function assertMemoryHomeV1(port: MemoryLibraryActionPortV1, serverId?: string | null): void {
   if (serverId != null && !(port.isSameServerId ? port.isSameServerId(serverId) : serverId === port.serverId)) refuse('server_target_mismatch');
 }

@@ -264,7 +264,7 @@ describe('template instantiation through ordinary creation', () => {
     expect(f.confirmations).toMatchObject([{ actionId: 'template.instantiate', input: { expectedRevision: { headerVersion: 1, bodyVersion: 1 } } }]);
     expect(f.approval()).toBeNull();
   });
-  it('binds an omitted recipient revision before native review so a changed shared release cannot replace reviewed content', async () => {
+  it('keeps the admitted native review content when the shared release changes after review', async () => {
     const f = fixture(false, false, false, false, false, false, false, {}, undefined, false, {
       presentUserActionConfirmation: async () => {
         const stored = f.boundary.rows.get(releaseId)!;
@@ -276,9 +276,13 @@ describe('template instantiation through ordinary creation', () => {
     });
     Reflect.deleteProperty(f.input, 'expectedRevision');
     const result = await f.run(false);
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'version_mismatch' });
-    expect(f.counts()).toEqual({ births: 0, launches: 0 });
-    expect(f.events).toEqual([]);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'success', sessionId } });
+    expect(f.counts()).toEqual({ births: 1, launches: 1 });
+    expect(JSON.parse(f.docs.get('doc-1')!.body!)).toMatchObject({ markdown: release.content.instructions.markdown });
+    expect(f.metadata()).toMatchObject({ work: { templateInstance: {
+      acceptedVersion: release.version, acceptedBase: { serverId: 'home', artifactId: baseId },
+    } } });
+    expect(JSON.parse(f.boundary.rows.get(baseId)!.body!)).toMatchObject({ release });
     expect(f.confirmations).toMatchObject([{ actionId: 'template.instantiate', input: { expectedRevision: { headerVersion: 1, bodyVersion: 1 } } }]);
     expect(f.approval()).toBeNull();
   });
