@@ -115,6 +115,17 @@ describe('buildHappySessionControlArgs', () => {
     });
   });
 
+  it.each([
+    { source: 'native', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'native-model' },
+    { source: 'account_provider_connection', agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_work', modelId: 'provider-model' },
+    { source: 'team_resource', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model', resourceId: 'resource', teamId: 'team', expectedResourceRevision: 7, deliveryMode: 'brokered' },
+  ] as const)('preserves typed $source model identity through daemon runner arguments', ref => {
+    const selection = { v: 2 as const, updatedAt: 457, ref };
+    const parsed = partitionProviderSessionArgs({ args: ['codex', ...buildHappySessionControlArgs({ modelSelection: selection })], providerSubcommand: 'codex' });
+    expect(parsed.modelSelection).toEqual(selection);
+    expect(parsed.providerArgs).toEqual([]);
+  });
+
   it('round-trips configured-target provider identity without collapsing it to a built-in target', () => {
     const selection = SessionModelSelectionV1Schema.parse({
       v: 1,

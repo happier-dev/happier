@@ -27,6 +27,14 @@ describe('resolveSessionStartModelSelection', () => {
     })).toThrowError(expect.objectContaining({ code: 'model_selection_agent_target_mismatch' }));
   });
 
+  it('retains a typed Team source and its exact revision before native runtime admission', () => {
+    const selection = { v: 2 as const, updatedAt: 12, ref: { source: 'team_resource' as const,
+      agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model', resourceId: 'resource',
+      teamId: 'team', expectedResourceRevision: 7, deliveryMode: 'brokered' as const } };
+    expect(resolveSessionStartModelSelection({ backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      canonicalSelection: selection, legacyModelId: 'ignored-native' })).toEqual(selection);
+  });
+
   it('binds separate model and provider-connection flags into one structured selection', () => {
     expect(resolveSessionStartModelSelection({
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
