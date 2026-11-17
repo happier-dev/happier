@@ -1775,7 +1775,11 @@ redeployment rather than silently changing a running container's environment.
 For native Linux Docker, the existing admitted Compose lifecycle creates its
 consumer network before runtime binding materialization. A Node bridge binds that
 network's host gateway only and admits its subnet; it never binds all host
-interfaces. Compose owns network creation and labels, using a zero-replica
+interfaces. This also applies to a same-Machine private share from another
+Environment: its `local` route and an Iroh route use the same bridge, including
+separate host and port bindings. Same-Environment references use Compose service
+DNS; host-network consumers can use the original host endpoint.
+Compose owns network creation and labels, using a zero-replica
 projection without starting a helper container. Docker Desktop, remote/rootless
 gateways outside the daemon's host namespace, unsupported network drivers and
 consumers without a common network return typed unavailability.

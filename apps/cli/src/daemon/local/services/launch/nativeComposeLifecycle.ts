@@ -1065,7 +1065,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
     const prepareReferenceNetwork = async (current: NativeComposeProjectRender, capture: RenderCapture,
         context?: MachineNativeEffectContext, signal?: AbortSignal): Promise<() => Promise<void>> => {
         if (!input.prepareReferenceContainerNetwork || input.phase === 'build') return async () => {};
-        const referenceAddresses = (current.referenceAddresses ?? []).filter(address => address.route?.kind === 'iroh')
+        const referenceAddresses = (current.referenceAddresses ?? []).filter(address => address.route?.kind === 'iroh' || address.route?.kind === 'local')
             .map(address => address.address);
         const consumerServices = capture.telemetryProjection.filter(fact => fact.requiresTelemetryEndpoint).map(fact => fact.service);
         if (!referenceAddresses.length && !consumerServices.length) return async () => {};
