@@ -8,6 +8,7 @@ import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import type { ManagedProvisionerRepairFailure } from './useManagedProvisionerPresentation';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import type { ManagedProvisionerReadiness } from './managedProvisionerReadiness';
 
 /**
  * The display facts the creation surfaces draw (plans 50/51): provisioner cards, the configurator's
@@ -40,6 +41,9 @@ export type ManagedProvisionerCard = Readonly<{
   needsSetup?: true;
   status: Readonly<{ tone: ManagedStatusTone; label: string }>;
   repairFailure?: ManagedProvisionerRepairFailure;
+  /** The native prerequisite's existing installer and review inputs, consumed by Machine Setup. */
+  repairAction?: NonNullable<ManagedProvisionerReadiness['repair']>['action'];
+  setupSources?: NonNullable<ManagedProvisionerReadiness['repair']>['setupSources'];
   /**
    * `choose` opens the configurator; `repair` runs the provisioner's own prerequisite or account step;
    * `handoff` sends the person to the app that can reach the provider (web, Needs the app);

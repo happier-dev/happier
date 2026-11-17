@@ -205,6 +205,8 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
             canSetUpHere: placement.available && !placement.requiresController
                 && (readiness.canConfigure || readiness.kind === 'unavailable' || repairAction !== undefined),
             ...(readiness.kind !== 'ready' ? { needsSetup: true as const } : {}),
+            ...(readiness.repair ? { repairAction: readiness.repair.action,
+                ...(readiness.repair.setupSources ? { setupSources: readiness.repair.setupSources } : {}) } : {}),
             mark: (size: number) => markFor(provisioner, size),
             repairFailure: repairFailure?.id === id && repairFailure.binding === catalog.binding
                 && repairFailure.controller?.machineId === controller?.machineId

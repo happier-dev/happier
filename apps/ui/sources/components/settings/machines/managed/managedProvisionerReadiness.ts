@@ -10,6 +10,7 @@ export type ManagedProvisionerReadiness = Readonly<{
     repair?: Readonly<{
         action: NonNullable<ManagedConfigurationFactsV1['prerequisites'][number]['repairAction']>;
         kind: 'connect' | 'install' | 'setup';
+        setupSources?: ManagedConfigurationFactsV1['prerequisites'][number]['setupSources'];
     }>;
     homeUnreachable: boolean;
     canConfigure: boolean;
@@ -39,11 +40,12 @@ export function describeManagedProvisionerReadiness(input: Readonly<{
         : input.optionStatus === 'unavailable' ? 'unavailable'
         : input.optionStatus === 'loading' ? 'unverified'
         : check.available ? 'ready' : 'needsSetup';
-    const repairAction = prerequisites.find(prerequisite => prerequisite.status !== 'available' && prerequisite.repairAction)?.repairAction;
+    const repair = prerequisites.find(prerequisite => prerequisite.status !== 'available' && prerequisite.repairAction);
     return { kind, prerequisites, status: check?.status, code: check?.code,
         ...(failure ? { failure } : {}),
-        ...(repairAction ? { repair: { action: repairAction,
-            kind: noAccount ? 'connect' : missing ? 'install' : 'setup' } } : {}),
+        ...(repair?.repairAction ? { repair: { action: repair.repairAction,
+            kind: noAccount ? 'connect' : missing ? 'install' : 'setup',
+            ...(repair.setupSources ? { setupSources: repair.setupSources } : {}) } } : {}),
         homeUnreachable,
         canConfigure: !unreadable && !(check?.available === false && missing),
         tone: kind === 'ready' ? 'ready' : kind === 'needsAccount' || kind === 'needsInstall' || !check ? 'none' : 'attention' };
