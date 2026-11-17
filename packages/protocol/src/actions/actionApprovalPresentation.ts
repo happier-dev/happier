@@ -605,6 +605,8 @@ function isEmptyApprovalValue(value: unknown): boolean {
 type ApprovalStructuredReferences = Readonly<{
   path: string;
   fields: ReadonlyMap<string, ActionInputFieldHint | null>;
+  input?: unknown;
+  referenceForField?: NonNullable<ActionSpec['approvalPresentation']>['referenceForField'];
 }>;
 
 function appendApprovalStructuredEntries(
@@ -617,7 +619,8 @@ function appendApprovalStructuredEntries(
   references?: ApprovalStructuredReferences,
 ): void {
   const field = references?.fields.get(references.path);
-  const declaredReference = field ? readApprovalSavedSecretReference('', undefined, value, field.inputType) : undefined;
+  const declaredReference = references?.referenceForField?.(references.path, value, references.input)
+    ?? (field ? readApprovalSavedSecretReference('', undefined, value, field.inputType) : undefined);
   if (declaredReference) {
     output.push({ label, value: formatApprovalEntryValue(key, value), depth, reference: declaredReference });
     return;
@@ -628,7 +631,8 @@ function appendApprovalStructuredEntries(
     return;
   }
   // A declared descendant must be visited even when its containing object or flat list could read as one line.
-  const containsReference = (Array.isArray(value) || isRecord(value)) && references?.fields.has(references.path) === true;
+  const containsReference = (Array.isArray(value) || isRecord(value))
+    && (references?.referenceForField !== undefined || references?.fields.has(references.path) === true);
   if (containsReference) {
     output.push({ label, value: null, depth });
     appendApprovalStructuredMembers(value, depth + 1, output, widgetStructure, references);
@@ -755,7 +759,8 @@ function describeApprovalConnectedServices(value: unknown): readonly ApprovalStr
 /** Readable entries for one structured JSON value; scalars and flat lists read fine as they are. */
 function describeApprovalStructuredValue(values: readonly unknown[], widgetStructure = false,
   references?: ApprovalStructuredReferences): readonly ApprovalStructuredValueEntry[] | undefined {
-  const containsReference = (Array.isArray(values[0]) || isRecord(values[0])) && references?.fields.has(references.path) === true;
+  const containsReference = (Array.isArray(values[0]) || isRecord(values[0]))
+    && (references?.referenceForField !== undefined || references?.fields.has(references.path) === true);
   if (values.length !== 1 || isApprovalScalar(values[0]) && !containsReference) return undefined;
   const output: ApprovalStructuredValueEntry[] = [];
   appendApprovalStructuredMembers(values[0], 0, output, widgetStructure, references);
@@ -1032,7 +1037,9 @@ export function describeApprovalActionFields(input: Readonly<{
         input.actionId.startsWith('widgets.') && (['instance', 'group', 'fragment', 'definition'].includes(field.path)
           || ['surface', 'ref', 'to'].includes(field.path)
             && readWidgetActionSurfaceV1(input.actionArgs)?.owner.kind === 'pluginArea'),
-        referenceFields.has(field.path) ? { path: field.path, fields: referenceFields } : undefined) : undefined;
+        referenceFields.has(field.path) || review?.referenceForField ? {
+          path: field.path, fields: referenceFields, input: presentationInput, referenceForField: review?.referenceForField,
+        } : undefined) : undefined;
     if (input.actionId === 'mcp.servers.tools.set' && field.path === 'tools') {
       const settings: Readonly<Record<string, string>> = { off: 'Off', ask: 'Ask', allow: 'Allow', inherit: 'Use server default' };
       entries = values.flatMap(value => isRecord(value) ? Object.entries(value).map(([name, setting]) => ({

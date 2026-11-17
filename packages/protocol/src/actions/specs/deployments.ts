@@ -9,6 +9,7 @@ import { deploymentBindingSelectionNarrowing } from '../../deployments/deploymen
 import { readRecord } from '../../inputs/inputRecords.js';
 import { actionInputServerId } from './definition.js';
 import { redactObservationInputPaths } from './observationRedaction.js';
+import { readApprovalSavedSecretReference } from '../actionApprovalValueReferences.js';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, isDeploymentTargetLinkActionIdV1, isDeploymentBackupActionIdV1, isDeploymentBackupReadActionIdV1, isDeploymentDataQueryActionIdV1, isDeploymentDomainChildActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 import { isDeploymentNativeReadActionIdV1 } from '../../deployments/deploymentReadAdmissionV1.js';
 import { DEPLOYMENT_BACKUP_CONFIGURE_INTENT_OPTIONS_V1 } from '../../deployments/deploymentBackupConfigureV1.js';
@@ -344,7 +345,8 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
     // Machine placement uses the original Action dispatcher, not a standalone RPC method.
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
     bindings: { mcpToolName: id.replaceAll('.', '_'), ...(id === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 ? { sdkMethod: deploymentActionIds.DEPLOYMENT_PREPARE_PUBLISH_CATALOG_ACTION_ID_V1 } : {}) },
-    cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
+    cli: { acceptsServerId: true, commands: [{ path: id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
+      ? ['deployments', 'environments', 'move-to-repository'] : id.split('.'), visibility: 'canonical' }] },
     ...(path === undefined ? {} : { serverTransport: { method: read ? 'GET' : id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 ? 'PATCH' : 'POST', path, preservePathFieldsInBody: true } }),
     inputSchema: DeploymentActionInputSchemasV1[id], outputSchema: DeploymentActionOutputSchemasV1[id],
     deploymentPreparationScope: declareDeploymentPreparationScopeV1('root'),
@@ -373,10 +375,10 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } },
     } : {}),
     // Review describes the stored ref string; the interactive picker selects a ref/revision pair.
-    ...(secretPath ? { approvalPresentation: { inputHints: { fields: [
-      ...inputHints.fields,
-      { path: secretPath, title: 'Saved Secret', widget: 'text', inputType: { hostType: 'savedSecretReference' } },
-    ] } } } : {}),
+    ...(secretPath ? { approvalPresentation: {
+      referenceForField: (path: string, value: unknown) => path === secretPath
+        ? readApprovalSavedSecretReference('', undefined, value, { hostType: 'savedSecretReference' }) : undefined,
+    } } : {}),
   } as const satisfies DeploymentActionSpec<TId>;
 }
 
