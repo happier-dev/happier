@@ -362,7 +362,7 @@ async function enrollPlatformCredentials() {
     expect(await TokenStorage.setCredentialsForServerUrl(home!.baseUrl, { serverId: ui!.serverId }, uiCredentials)).toBe(true);
 }
 
-async function mountThemeRuntime(platform: 'web' | 'ios') {
+async function mountThemeRuntime(platform: 'web' | 'ios', themePreference?: 'light' | 'dark') {
     // Import through the composed runner's app-aware resolver without making
     // the CLI-oriented test compiler reinterpret the UI's @/* imports.
     const runtimePath = '../../../../apps/ui/sources/theme/ThemeProfileRuntimeSync';
@@ -376,13 +376,13 @@ async function mountThemeRuntime(platform: 'web' | 'ios') {
     const { createElement } = await import(reactPath) as { createElement(component: unknown): unknown };
     const { Platform } = await import(nativePath) as { Platform: { OS: string } };
     type RuntimeTheme = { colors: { background: { canvas: string } };
-        surfaces?: { sidebar?: { root?: { base: { borderRadius?: number } } } } };
+        surfaces?: { sidebar?: { root?: { base: { borderTopLeftRadius?: number } } } } };
     const { UnistylesRuntime } = await import(unistylesPath) as { UnistylesRuntime: {
         getTheme(mode: 'light' | 'dark'): RuntimeTheme;
         updateTheme(mode: 'light' | 'dark', update: (previous: RuntimeTheme) => RuntimeTheme): void;
     } };
     const { storage } = await import(storagePath) as { storage: { getState(): {
-        localSettings: { uiFontScale: number }; applyLocalSettings(input: { uiFontScale: number }): void;
+        localSettings: { uiFontScale: number }; applyLocalSettings(input: { uiFontScale?: number; themePreference?: 'light' | 'dark' }): void;
     } } };
     const descriptor = Object.getOwnPropertyDescriptor(Platform, 'OS');
     Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
@@ -396,10 +396,11 @@ async function mountThemeRuntime(platform: 'web' | 'ios') {
     const systemUiPath = 'expo-system-ui';
     const systemUi = await import(systemUiPath) as { setBackgroundColorAsync(color: string): Promise<void> };
     // Native system paint is an OS boundary unavailable in the headless host.
-    const systemBackground = vi.spyOn(systemUi, 'setBackgroundColorAsync').mockResolvedValue();
+    const systemBackground = vi.spyOn(systemUi, 'setBackgroundColorAsync').mockResolvedValue(undefined);
     let mounted: Awaited<ReturnType<typeof renderer.renderScreen>> | undefined;
     try {
         await enrollPlatformCredentials();
+        if (themePreference) storage.getState().applyLocalSettings({ themePreference });
         mounted = await renderer.renderScreen(createElement(runtime.ThemeProfileRuntimeSync));
         updates.mockClear();
     } catch (error) {
@@ -412,7 +413,7 @@ async function mountThemeRuntime(platform: 'web' | 'ios') {
     return {
         updates,
         readCanvas: (mode: 'light' | 'dark') => registered[mode].colors.background.canvas,
-        readSidebarRadius: (mode: 'light' | 'dark') => registered[mode].surfaces?.sidebar?.root?.base.borderRadius,
+        readSidebarRadius: (mode: 'light' | 'dark') => registered[mode].surfaces?.sidebar?.root?.base.borderTopLeftRadius,
         writeUnrelatedSetting: () => {
             const state = storage.getState();
             state.applyLocalSettings({ uiFontScale: state.localSettings.uiFontScale === 1 ? 1.1 : 1 });
@@ -646,11 +647,12 @@ export async function runF4() {
     // sync, not the app shell: these counts measure updateTheme calls only,
     // and do not claim app-wide React Profiler commits.
     for (const platform of ['web', 'ios'] as const) {
-        const runtime = await mountThemeRuntime(platform);
+        const runtime = await mountThemeRuntime(platform, 'dark');
         console.info(`THEMES F4: mounted ${platform} with Account custody`);
         try {
             if (platform === 'ios') {
                 await waitFor(() => runtime.readSidebarRadius('dark') === 12);
+                console.info('THEMES F4: native selected CSS applied');
                 runtime.updates.mockClear();
             }
             const actPath = 'react-test-renderer';
@@ -660,7 +662,10 @@ export async function runF4() {
                 changed = await theme<Preview>('tryOn', { document: document(`CSS ${platform}`,
                     '[data-surface="sidebar"] { border-radius: 14px; }'), mode: 'dark', origin: { kind: 'editor' } });
             });
-            if (platform === 'ios') await waitFor(() => runtime.readSidebarRadius('dark') === 14);
+            if (platform === 'ios') {
+                await waitFor(() => runtime.readSidebarRadius('dark') === 14);
+                console.info('THEMES F4: native preview CSS applied');
+            }
             expect(runtime.updates).toHaveBeenCalledTimes(platform === 'web' ? 0 : 1);
             runtime.updates.mockClear();
             // A settled React turn, without advancing or inventing a timer.
