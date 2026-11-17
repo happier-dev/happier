@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
@@ -262,12 +263,14 @@ resolveServerFeaturesSnapshot?: () =>
       if (context?.externalActionExecutionAuthorization) {
         const actionSignal = context.signal;
         let origin: CurrentMachineExecutionOriginContext | null = null;
+        let originError: unknown;
         try {
           origin =
             await measureActionStartPhaseV1(context, 'machine_origin', async () =>
               await params.resolveCurrentMachineExecutionOriginContext?.(actionSignal) ?? null);
-        } catch {
+        } catch (error) {
           origin = null;
+          originError = error;
         }
         if (
           !origin ||
@@ -277,11 +280,11 @@ resolveServerFeaturesSnapshot?: () =>
               .serverIdentityId
         ) {
           const cancelled = context.signal?.aborted === true;
-          return {
-            ok: false,
+          return recordFailureCause(originError, 'external_action.machine_origin', {
+            ok: false as const,
             errorCode: cancelled ? 'cancelled' : 'not_authenticated',
             error: cancelled ? 'cancelled' : 'not_authenticated',
-          };
+          });
         }
         observedServerIdentityId = origin.serverIdentityId;
         const binding = context.externalActionExecutionAuthorization.binding;
@@ -346,18 +349,21 @@ resolveServerFeaturesSnapshot?: () =>
       }
       if (requiresPortableSessionSpawnServerIdentity(actionId, input)) {
         let origin: CurrentMachineExecutionOriginContext | null = null;
+        let originError: unknown;
         try {
           origin =
             (await params.resolveCurrentMachineExecutionOriginContext?.(
               context?.signal,
             )) ?? null;
-        } catch {
+        } catch (error) {
           origin = null;
+          originError = error;
         }
         if (!origin || origin.machineId !== params.machineId) {
           const cancelled = context?.signal?.aborted === true;
           return cancelled ? { ok: false, errorCode: 'cancelled', error: 'cancelled' }
-            : actionStartTargetUnavailableV1(context, 'machine_origin', 'target_binding_mismatch');
+            : recordFailureCause(originError, 'external_action.machine_origin',
+              actionStartTargetUnavailableV1(context, 'machine_origin', 'target_binding_mismatch'));
         }
         observedServerIdentityId = origin.serverIdentityId;
         executionContext = {

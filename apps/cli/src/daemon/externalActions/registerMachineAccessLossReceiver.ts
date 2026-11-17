@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import {
   MachineAccessLossCustodyRequestV1Schema,
   MachineAccessLossCustodyResponseV1Schema,
@@ -53,7 +54,7 @@ export function registerMachineAccessLossReceiver(rpc: RpcHandlerRegistrar, opti
         || custody.actorAccountId !== custody.custodianAccountId
         || custody.machineId !== options.machineId
         || !isCurrentInstallation()) return forbidden;
-    } catch { return forbidden; }
+    } catch (error) { return recordFailureCause(error, 'machine_access_loss.admission', forbidden); }
 
     try {
       const stillCurrent = () => !context.signal.aborted && isCurrentInstallation();
@@ -116,6 +117,6 @@ export function registerMachineAccessLossReceiver(rpc: RpcHandlerRegistrar, opti
         : options.cleanupRequesterMachineResources ? resources : terminal.data;
       const parsed = MachineAccessLossCustodyResponseV1Schema.safeParse(outcome);
       return { kind: parsed.success && parsed.data.kind === 'settled' && stillCurrent() ? 'settled' as const : 'incomplete' as const };
-    } catch { return { kind: 'incomplete' as const }; }
+    } catch (error) { return recordFailureCause(error, 'machine_access_loss.cleanup', { kind: 'incomplete' as const }); }
   });
 }

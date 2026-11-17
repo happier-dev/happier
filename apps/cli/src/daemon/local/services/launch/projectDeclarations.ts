@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
 import { composeProjectLaunchEnvironment, prepareProjectLaunchEnvironment, type PreparedProjectLaunchInput } from '@/workspaces/projectSetup/projectLaunchEnvironment';
@@ -564,8 +565,9 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                         if (admittedLease.isCurrent()) return captured.lifecycle.stop(candidate, options);
                         let current: Awaited<ReturnType<typeof resolveCurrentLifecycle>>;
                         try { current = await resolveCurrentLifecycle(); }
-                        catch {
+                        catch (error) {
                             // The retired capture retains only exact-resource Stop, never inspection.
+                            recordFailureCause(error, 'service.lifecycle.current');
                             return captured.lifecycle.stop(candidate, options);
                         }
                         // Recovery observes the incumbent resource before replacement/control retry.

@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { readFile } from 'node:fs/promises';
 import { posix, win32 } from 'node:path';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
@@ -14,7 +15,10 @@ export type NativeComposeDefinitionCapture = Readonly<{
     variables: readonly Readonly<{ name: string; phase: 'runtime'; required: boolean; hasDefault: boolean }>[];
 }>;
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
-function unavailable(): never { throw new PluginError({ code: 'compose_source_unavailable', message: 'The native Compose source is unavailable' }); }
+function unavailable(jsonCause?: unknown): never {
+    const failure = new PluginError({ code: 'compose_source_unavailable', message: 'The native Compose source is unavailable' });
+    throw jsonCause === undefined ? failure : recordFailureCause(jsonCause, 'service.compose_import.json', failure);
+}
 const absolute = (value: string) => posix.isAbsolute(value) || win32.isAbsolute(value);
 
 /** Import mode of the native Compose boundary. No values or default bytes escape this host capture. */
@@ -40,8 +44,10 @@ export async function captureNativeComposeDefinition(input: Readonly<{
         options?.signal?.throwIfAborted();
         if (output.termination.requestedBy.kind !== 'none' || output.termination.observed.kind !== 'exit'
             || output.termination.observed.exitCode !== 0 || output.stdoutTruncated) unavailable();
-        try { const parsed: unknown = JSON.parse(new TextDecoder().decode(output.stdout)); return record(parsed) ? parsed : unavailable(); }
-        catch { return unavailable(); }
+        let parsed: unknown;
+        try { parsed = JSON.parse(new TextDecoder().decode(output.stdout)); }
+        catch (error) { return unavailable(error); }
+        return record(parsed) ? parsed : unavailable();
     };
     const model = await run([...base, 'config', '--format', 'json', '--no-interpolate', '--no-env-resolution']);
     if (!record(model.services)) unavailable();

@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createHash } from 'node:crypto';
 import type { DeploymentExecEnvPortV1, ExecService } from '@happier-dev/plugin-sdk/exec';
@@ -228,16 +229,18 @@ async function execute(capture: CommandCapture): Promise<ServiceCommandResultV1>
             // A failed byte source must never turn pipe teardown into a successful
             // import EOF. Stop the native consumer before closing its transport.
             if (capture.stdinSource) {
-                try { await capture.stopNative?.(); } catch { /* Existing unknown custody below retains the launch. */ }
+                // Existing unknown custody below retains the launch.
+                try { await capture.stopNative?.(); } catch (stopError) { recordFailureCause(stopError, 'service.command.stop'); }
             }
             try { await retireHelperFiles(); }
-            catch {
+            catch (cleanupError) {
                 // Lost physical settlement or private cleanup retains the same
                 // native lease/redactor; it is not successful cancellation.
+                recordFailureCause(cleanupError, 'service.command.cleanup');
             }
             machineNativeEffectAdmission.markUnsettled(capture.context, { releaseAfterNativeSettlement: release,
                 ...(capture.observeNativeSettlement ? { observeNativeSettlement: capture.observeNativeSettlement } : {}) });
-            return { kind: 'outcome_unknown' };
+            return recordFailureCause(error, 'service.command', { kind: 'outcome_unknown' as const });
         }
         await release();
         throw error;

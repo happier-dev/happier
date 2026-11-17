@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentPreviewTemplateV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
@@ -119,7 +120,11 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
                         ...(receiptEvent ? [{ action: receiptEvent.setupAction.identity, role: SETUP_ROLE }] : []), ...enabledChildren,
                     ], prepareExecutionContext };
                 }) ?? { children: enabledChildren, prepareExecutionContext };
-            } catch { return { children: enabledChildren, prepareExecutionContext }; }
+            } catch (error) {
+                // The existing listener set remains the fallback; the credential preparation cause is kept privately.
+                recordFailureCause(error, 'deployment.preview.update_preparation');
+                return { children: enabledChildren, prepareExecutionContext };
+            }
         },
         async completeUpdate(updated: UpdateSuccess, input: UpdateInput, context: ActionExecutorContext): Promise<UpdateSuccess> {
             const edit = (context as PreparedContext)[preparedEdit];

@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
 import { hostname } from 'node:os';
@@ -136,7 +137,9 @@ export async function prepareNativeComposeNormalizationProfileForHost(input: Nor
             let selected = path;
             try { await nativeFs.stat(resolve(input.cwd, path)); }
             catch (error) {
+                // Absence is Docker's own selection fact; another stat failure keeps the path.
                 if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') selected = '';
+                else recordFailureCause(error, 'service.native_engine.certificate');
             }
             append(flag, selected);
         }

@@ -1,4 +1,5 @@
 /** Native Compose owns parsing; the existing attachment owns runtime custody. */
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { DeploymentMissingRequiredSecretsV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
@@ -16,11 +17,14 @@ export type NativeComposeTelemetryProjectionFact = Readonly<{
 }>;
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
-const unavailable = (form: string): never => { throw new PluginError({ code: 'service_admission_unavailable',
-    message: 'The native candidate runtime form is unavailable', details: { reason: 'native_runtime_form_unsupported', form } }); };
+const unavailable = (form: string, cause?: unknown): never => {
+    const failure = new PluginError({ code: 'service_admission_unavailable',
+        message: 'The native candidate runtime form is unavailable', details: { reason: 'native_runtime_form_unsupported', form } });
+    throw cause === undefined ? failure : recordFailureCause(cause, 'service.native_runtime.json', failure);
+};
 const nativeJson = (value: string): unknown => {
     try { return JSON.parse(value); }
-    catch { return unavailable('native_json'); }
+    catch (error) { return unavailable('native_json', error); }
 };
 
 /** Actual normalized P41 phase model, source and command are closed over by its

@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentContentV1, DeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol';
 import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
@@ -28,8 +29,8 @@ export async function preparePreviewForkEligibilityForHost(input: Readonly<{
             } while (cursor);
         }
         return { kind: 'eligible' };
-    } catch {
-        return { kind: 'unavailable', reason: 'inventory_unavailable' };
+    } catch (error) {
+        return recordFailureCause(error, 'deployment.preview.inventory', { kind: 'unavailable' as const, reason: 'inventory_unavailable' as const });
     }
 }
 

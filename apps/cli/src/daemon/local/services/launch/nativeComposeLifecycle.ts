@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { classifyNativeComposeFailure } from './nativeComposeFailure';
 import { readNativeComposeLogsForHost } from './nativeComposeLogs';
 export { readNativeComposeLogsForHost } from './nativeComposeLogs';
@@ -1362,7 +1363,8 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             } catch (error) {
                 if (request.signal?.aborted) throw error;
                 const details = record(error) && record(error.details) ? error.details : undefined;
-                return { kind: 'unknown', reason: typeof details?.reason === 'string' ? details.reason : 'deployment_generation_unavailable' };
+                return recordFailureCause(error, 'service.native.observe_activated', { kind: 'unknown' as const,
+                    reason: typeof details?.reason === 'string' ? details.reason : 'deployment_generation_unavailable' });
             }
         },
         async admitResticCommand(request) {
@@ -1531,12 +1533,12 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                 if (request.signal?.aborted) throw error;
                 const details = record(error) && record(error.details) ? error.details : undefined;
                 const reason = details && typeof details.reason === 'string' ? details.reason : undefined;
-                if (reason === 'deployment_activation_failed') return { status: 'different', health: 'unhealthy' };
-                if (reason === 'deployment_generation_unavailable' || reason === 'deployment_image_identity_mismatch'
-                    || reason === 'deployment_image_platform_mismatch' || reason === 'deployment_image_manifest_mismatch') {
-                    return { status: 'different', health: 'unverified' };
-                }
-                return { status: 'unknown', health: 'unverified' };
+                const observed = reason === 'deployment_activation_failed' ? { status: 'different' as const, health: 'unhealthy' as const }
+                    : reason === 'deployment_generation_unavailable' || reason === 'deployment_image_identity_mismatch'
+                        || reason === 'deployment_image_platform_mismatch' || reason === 'deployment_image_manifest_mismatch'
+                        ? { status: 'different' as const, health: 'unverified' as const }
+                        : { status: 'unknown' as const, health: 'unverified' as const };
+                return recordFailureCause(error, 'service.native.observe', observed);
             }
         },
         async activate(request) {

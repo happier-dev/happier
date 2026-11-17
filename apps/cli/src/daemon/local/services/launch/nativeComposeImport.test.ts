@@ -1,7 +1,9 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { logger } from '@/ui/logger';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { captureNativeComposeDefinition } from './nativeComposeImport';
 
@@ -59,5 +61,24 @@ describe('native Compose adoption source', () => {
                 await expect(captureNativeComposeDefinition({ exec, source, profiles: [] })).rejects.toMatchObject({ code: 'needs_repository' });
             }
         } finally { await rm(root, { recursive: true, force: true }); }
+    });
+
+    it('records only the class and phase when native output that may carry secrets is not JSON', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-compose-import-'));
+        const source = { projectName: 'existing', engineId: 'engine', workingDirectory: root,
+            configFiles: [join(root, 'compose.json')], containerIds: ['a'.repeat(64)] };
+        const boundary = join(root, 'docker.cjs');
+        await writeFile(boundary, `process.stdout.write('{"services": secret-private-payload');`);
+        const exec = createStablePluginExecService({ signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath, args: [boundary] }), resolvePath: async () => root });
+        const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        try {
+            const refused: unknown = await captureNativeComposeDefinition({ exec, source, profiles: [] }).catch(error => error);
+            expect(refused).toMatchObject({ code: 'compose_source_unavailable' });
+            expect(readActionOutputDiagnostic(refused)).toMatchObject({ phase: 'service.compose_import.json',
+                failureCause: { errorClass: 'SyntaxError' } });
+            expect(log).toHaveBeenCalledTimes(1);
+            expect(JSON.stringify([log.mock.calls, readActionOutputDiagnostic(refused)])).not.toMatch(/secret-private-payload/u);
+        } finally { log.mockRestore(); await rm(root, { recursive: true, force: true }); }
     });
 });

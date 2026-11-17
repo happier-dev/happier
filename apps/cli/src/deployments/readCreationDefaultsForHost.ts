@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import axios from '@/api/client/credentialAxios';
 import { ProjectDeploymentDefaultsOutputV1Schema, ProjectDeploymentDefaultsPayloadV1Schema } from '@happier-dev/protocol/projects/projectDeploymentDefaultsV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -124,7 +125,12 @@ export async function readDeploymentCreationDefaultInputsForHost(
                 || artifact.revision.headerVersion !== metadata.content.contentHeaderVersion
                 || artifact.revision.bodyVersion !== metadata.content.contentBodyVersion) return refuse('project_defaults_conflict');
             let body: unknown;
-            try { body = JSON.parse(artifact.body); } catch { return refuse('project_defaults_content_unavailable'); }
+            try { body = JSON.parse(artifact.body); }
+            catch (error) {
+                // Opened content may be private: only the closed parser class is recorded.
+                recordFailureCause(error, 'deployment.creation_defaults.content');
+                return refuse('project_defaults_content_unavailable');
+            }
             const payload = ProjectDeploymentDefaultsPayloadV1Schema.safeParse(body);
             if (!payload.success || payload.data.projectSourceId !== request.projectSourceId) return refuse('project_defaults_content_unavailable');
             projectDefaults = payload.data;

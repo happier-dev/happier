@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { combineDeploymentBackupAttachmentsForHost } from '@/deployments/secrets/deploymentExecEnvPort';
 import { posix, relative, sep } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -320,7 +321,7 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
             if (!construction) return true;
             if (!nativeId) return false;
             try { return (await read(signal)).every(row => ['created', 'exited', 'dead'].includes(String(row.State.Status))); }
-            catch { return false; }
+            catch (error) { recordFailureCause(error, 'service.restic.settlement'); return false; }
         };
         return admitNativeServiceCommandForHost({ context: input.context, ...(signal ? { signal } : {}),
             // P45's builder places --json after its fixed --repo pair for
@@ -340,7 +341,10 @@ export async function admitNativeResticCommand(input: NativeResticCommandInput, 
                 } catch (error) {
                     if (nativeId) {
                         try { await stopNative(); await release(); }
-                        catch { machineNativeEffectAdmission.markUnsettled(input.context, { releaseAfterNativeSettlement: release, observeNativeSettlement }); }
+                        catch (cleanupError) {
+                            recordFailureCause(cleanupError, 'service.restic.cleanup');
+                            machineNativeEffectAdmission.markUnsettled(input.context, { releaseAfterNativeSettlement: release, observeNativeSettlement });
+                        }
                     } else if (constructorDispatched) {
                         // A failed constructor ACK has no settled id. Retain the
                         // original custody, never a successful absent-name probe.

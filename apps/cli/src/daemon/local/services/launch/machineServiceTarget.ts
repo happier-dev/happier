@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionApprovalScopeV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
@@ -127,6 +128,7 @@ async function withColdNativeLogTarget<T>(input: MachineServiceTargetInput,
           prefix: tuple.args, cwd: tuple.cwd!, env, signal })).id;
       } catch (error) {
         if (signal.aborted || !(error instanceof nativeEngine.NativeComposePrerequisiteError)) throw error;
+        recordFailureCause(error, 'service.logs.masking_engine');
         return undefined;
       }
     });
@@ -208,8 +210,9 @@ async function withSelectedMachineServiceTarget<T>(input: MachineServiceTargetIn
       if (!handle.isCurrent() || handle.retirementSignal.aborted || !mounted)
         return retainSettlement ? retainSettlement(result) : refused('service_unavailable');
     } catch (error) {
-      if (retainSettlement) return retainSettlement(result);
-      throw error;
+      if (!retainSettlement) throw error;
+      recordFailureCause(error, 'service.settlement.currentness');
+      return retainSettlement(result);
     }
     return result;
   } finally {

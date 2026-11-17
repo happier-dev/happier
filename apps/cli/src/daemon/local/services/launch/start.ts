@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { DaemonLocalServiceLauncherStartRequestV1, DaemonLocalServiceLauncherStartResponseV1, LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol';
 import type { RpcHandlerContext } from '@/api/rpc/types';
@@ -163,12 +164,12 @@ async function readSnapshot(
         const credentialsUnavailable = error instanceof Error && error.message === 'requester_credentials_unavailable';
         return {
             ok: false,
-            response: response({
+            response: recordFailureCause(error, credentialsUnavailable ? 'service.launch.requester_credentials' : 'service.launch.snapshot', response({
                 request,
                 status: credentialsUnavailable ? 'denied' : 'failed',
                 reasonCode: credentialsUnavailable ? error.message : 'launcher_snapshot_unavailable',
                 snapshot: emptyRequestBoundSnapshot(request, input.now?.() ?? Date.now()),
-            }),
+            })),
         };
     }
 }

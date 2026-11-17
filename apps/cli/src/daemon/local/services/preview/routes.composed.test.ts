@@ -10,6 +10,7 @@ import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner'
 import type { LocalServicePreviewServerInput } from './serverRoutes';
 import { createServer, request as httpRequest } from 'node:http';
 import { once } from 'node:events';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { logger } from '@/ui/logger';
 import { spawn } from 'node:child_process';
 import { readProcessCensus } from '@/processes/census/processCensus';
@@ -511,6 +512,15 @@ describe('createLocalServicePreviewRoutes lifecycle', () => {
             .toEqual({ ok: false, reasonCode: 'requester_credentials_unavailable' });
         expect(await routes.revoke({ machineId: MACHINE_ID, previewId: 'private-preview' }, context))
             .toEqual({ ok: false, reasonCode: 'requester_credentials_unavailable' });
+        // The refusal keeps its closed cause privately and logs it once; the public result above is unchanged.
+        const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const refused = await routes.revoke({ machineId: MACHINE_ID, previewId: 'private-preview' }, context);
+        expect(readActionOutputDiagnostic(refused)).toMatchObject({ phase: 'service.preview.requester_credentials',
+            failureCause: { errorClass: 'Error' } });
+        expect(log).toHaveBeenCalledTimes(1);
+        expect(log.mock.calls[0]![1]).toMatchObject({ phase: 'service.preview.requester_credentials' });
+        expect(JSON.stringify(log.mock.calls)).not.toMatch(/custodian-token|previewToken/u);
+        log.mockRestore();
         expect(httpReached).toBe(false);
         expect(registry.previewsById.has('private-preview')).toBe(true);
         const ownContext: RpcHandlerContext = { ...context,

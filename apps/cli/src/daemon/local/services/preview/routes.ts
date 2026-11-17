@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { isDeepStrictEqual } from 'node:util';
 import axios from '@/api/client/credentialAxios';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -211,7 +212,10 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
         async openOrCreate(request, signal, context) {
             let admission: Admission;
             try { admission = await admitRequest(context, true); }
-            catch { return { ok: false, reasonCode: 'requester_credentials_unavailable' }; }
+            catch (error) {
+                return recordFailureCause(error, 'service.preview.requester_credentials',
+                    { ok: false as const, reasonCode: 'requester_credentials_unavailable' as const });
+            }
             if (input.signal) signal = signal ? AbortSignal.any([input.signal, signal]) : input.signal;
             signal?.throwIfAborted();
             if (request.machineId !== input.machineId) {
@@ -399,7 +403,10 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
         async revoke(request, context) {
             let admission: Awaited<ReturnType<typeof admitRequest>>;
             try { admission = await admitRequest(context, true); }
-            catch { return { ok: false, reasonCode: 'requester_credentials_unavailable' }; }
+            catch (error) {
+                return recordFailureCause(error, 'service.preview.requester_credentials',
+                    { ok: false as const, reasonCode: 'requester_credentials_unavailable' as const });
+            }
             if (request.machineId !== input.machineId) {
                 return { ok: false, reasonCode: 'wrong_machine' };
             }

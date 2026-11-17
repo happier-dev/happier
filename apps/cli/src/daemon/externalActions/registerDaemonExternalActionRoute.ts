@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { Buffer } from 'node:buffer';
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -180,7 +181,8 @@ export function registerDaemonExternalActionRoute(
       if (!input.readEncryptionAccess) return sendExternalActionJson(reply, 409, { error: 'api_token_encryption_unavailable' });
       const result = await input.readEncryptionAccess(token, lifetime.signal);
       return sendExternalActionJson(reply, result.statusCode, result.body);
-    } catch {
+    } catch (error) {
+      recordFailureCause(error, 'external_action.requester_authentication');
       return sendExternalActionJson(reply, 503, { error: 'auth_unavailable' });
     } finally { lifetime.dispose(); }
   });
@@ -221,8 +223,9 @@ export function registerDaemonExternalActionRoute(
           principal,
           lifetime,
         };
-      } catch {
+      } catch (error) {
         lifetime.dispose();
+        recordFailureCause(error, 'external_action.requester_authentication');
         return sendExternalActionHttpError(reply, 'auth_unavailable');
       }
     },

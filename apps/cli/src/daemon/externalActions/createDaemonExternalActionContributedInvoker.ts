@@ -1,3 +1,4 @@
+import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import type { ApprovalRequestV2, TargetActionApprovalRequestV1 } from '@happier-dev/protocol';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -234,8 +235,8 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
         let persisted: TargetActionApprovalRequestV1 | null;
         try {
           persisted = await targetActionApprovals.targetActionApprovalsGet({ artifactId });
-        } catch {
-          return targetActionReplayFailure('approval_unavailable');
+        } catch (error) {
+          return recordFailureCause(error, 'target_action.approval.replay_read', targetActionReplayFailure('approval_unavailable'));
         }
         if (persisted && (persisted.status === 'executed' || persisted.status === 'failed' || persisted.status === 'outcome_unknown')
           && persisted.decision?.kind === 'approve') {
