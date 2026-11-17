@@ -1,4 +1,6 @@
 import { REVIEW_SCM_SCOPE_INPUT_KEY } from '@happier-dev/protocol/reviews/reviewStart';
+import { REVIEW_NEW_ROUND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ReviewRoundBindingV1Schema } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import { ScmDiffSummaryModelOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
@@ -155,6 +157,7 @@ export const ReviewProfile: ExecutionRunIntentProfile = bindScmExecutionRunProfi
     return [
       'review.triage',
       ...(start.retentionPolicy === 'resumable' && !readReviewNarration(start.intentInput) ? ['review.follow_up'] : []),
+      ...(ReviewRoundBindingV1Schema.safeParse(input.reviewRound).success ? [REVIEW_NEW_ROUND_ACTION_ID_V1] : []),
       ...(typeof input.comparisonId === 'string' ? ['review.walkthrough'] : []),
       ...(typeof input.resultId === 'string' ? ['review.explain_findings'] : []),
     ];

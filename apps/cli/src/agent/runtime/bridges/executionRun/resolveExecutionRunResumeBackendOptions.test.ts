@@ -8,7 +8,7 @@ import {
 
 import type { ExecutionRunState } from './executionRunTypes';
 import { resolveExecutionRunResumeBackendOptions } from './resolveExecutionRunResumeBackendOptions';
-import { projectRetainedExecutionRunState } from './retainedState';
+import { projectRetainedExecutionRunState, RetainedExecutionRunRecordSchema } from './retainedState';
 
 const CONNECTED_SELECTION: ConnectedServiceBindingsV2 = {
   v: 2,
@@ -51,6 +51,21 @@ function baseRun(launch: ExecutionRunState['launch']): ExecutionRunState {
 }
 
 describe('resolveExecutionRunResumeBackendOptions', () => {
+  it.each([{
+      outputs: ['walkthrough' as const], narrator: { engineId: 'claude', modelId: 'narration-model' },
+    }, null])('restores the original Review output choice after host recovery: %j', reviewOutputSelection => {
+    const run = { ...baseRun(undefined), intent: 'review' as const,
+      launch: { cwd: '/repo', reviewOutputSelection } };
+    const recovered = RetainedExecutionRunRecordSchema.parse(JSON.parse(JSON.stringify({
+      ownerPid: 123, state: projectRetainedExecutionRunState(run),
+    }))).state;
+
+    expect(resolveExecutionRunResumeBackendOptions({ run: recovered }).start).toMatchObject({
+      reviewOutputSelection,
+    });
+    expect(recovered.intentInput).toBeUndefined();
+  });
+
   it.each(['explicit', 'inherited', 'independent', 'retained'] as const)(
     'projects only proven explicit model intent from a historical %s launch', selectionSource => {
       const run = baseRun({ selectionSource, modelId: 'custom/native' });

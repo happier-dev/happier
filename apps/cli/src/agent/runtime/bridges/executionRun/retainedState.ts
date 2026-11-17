@@ -17,6 +17,7 @@ import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWo
 import { AgentSessionToolPolicyShapeV1 } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { FollowPolicyV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
+import { ReviewOutputSelectionSchema } from '@happier-dev/protocol/reviews/reviewNarration';
 
 /** Private lifecycle custody, independent of the daemon's disposable visibility marker. */
 const RetainedRunStateSchema = z.strictObject({
@@ -34,6 +35,7 @@ const RetainedRunStateSchema = z.strictObject({
   runReportPolicy: z.optional(FollowPolicyV1Schema),
   effectiveEngine: z.optional(z.strictObject({ agentId: z.string().check(z.minLength(1)), modelId: z.optional(z.string()) })),
   launch: z.optional(z.strictObject({
+    reviewOutputSelection: z.optional(z.nullable(ReviewOutputSelectionSchema)),
     ...AgentSessionToolPolicyShapeV1,
     selectionSource: z.optional(z.enum(['explicit', 'inherited', 'independent', 'retained'])),
     cwd: z.optional(z.string()), capabilitySelection: z.optional(SessionCapabilitySelectionV1Schema), acpSessionModeId: z.optional(z.string()),

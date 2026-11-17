@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
 
 import { ReviewRoundBindingV1Schema, type ReviewRoundBindingV1, type ReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { prepareReviewRoundV1 } from '@happier-dev/protocol/reviews/prepareReviewRoundV1';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import { ScmComparisonSourceSchema, type ScmComparison } from '@happier-dev/protocol/scm/comparison';
+import { ReviewPublicationEvidenceSchema } from '@happier-dev/protocol/reviews/reviewPublicationEvidence';
 import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
 import { createReviewFindingIdentityV1, createReviewFindingMessageHashV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
 import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
@@ -12,7 +15,8 @@ import type { ReviewCommentAnchorV1, ReviewCommentCreateRequestV1, ReviewComment
 import type { ReviewCommentActionExecutor } from '@/agent/reviews/comments/executor';
 import { resolveReviewCommentSnapshot } from '@/agent/reviews/comments/snapshots';
 import type { ExecutionRunActionResult, ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
-import { readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
+import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
+import { runWithScmComparisonOperations } from '@/scm/comparisons/comparisonOperations';
 
 export type ReviewRunMaterialization = Readonly<{
   engineId: string;
@@ -65,11 +69,36 @@ export function createReviewRunCommentService(deps: Readonly<{
   cwd: string;
   scope: ReviewCommentScopeV1;
   execute: ReviewCommentActionExecutor;
-  reviewRecords?: Pick<ReviewRecordPortV1, 'settle'>;
+  reviewRecords?: Pick<ReviewRecordPortV1, 'start' | 'settle'>;
   /** Host-bound live Session Agent; absence never falls back to Account user authority. */
   resolveTriageActor?: () => Extract<ReviewCommentPrincipalHeaderV1['actor'], { kind: 'agent' }> | null;
 }>) {
   return {
+    async prepareNewRound(run: ExecutionRunState) {
+      if (!deps.reviewRecords) throw Object.assign(new Error('Review records are unavailable'), { code: 'review_record_unavailable' });
+      const reviewRecords = deps.reviewRecords;
+      const reviewInput = ReviewStartInputSchema.parse(run.intentInput);
+      const reviewRound = ReviewRoundBindingV1Schema.parse(reviewInput.reviewRound);
+      const cwd = run.launch?.cwd ?? deps.cwd;
+      const prepare = async () => {
+        const captured = reviewInput.comparisonId ? await readCapturedScmComparison({ cwd,
+          comparisonId: reviewInput.comparisonId, ...(run.sessionId ? { sessionId: run.sessionId } : {}) }) : null;
+        const source = ScmComparisonSourceSchema.safeParse(reviewInput.source);
+        return await prepareReviewRoundV1({ reviewInput, reviewRound,
+          ...(captured ? { comparison: captured.comparison } : {}),
+          ...(source.success ? { comparisonCapture: { cwd, source: source.data } } : {}),
+          previousRoundContext: {},
+        }, { reviewRecords, cwd, sourceKind: 'direct', startedAt: Date.now(),
+          captureComparison: async input => (await captureScmComparison({ ...input,
+            ...(run.sessionId ? { sessionId: run.sessionId } : {}) })).comparison,
+        });
+      };
+      return run.scmComparisonOperations ? await runWithScmComparisonOperations(run.scmComparisonOperations, prepare) : await prepare();
+    },
+    async failUnstartedRound(reviewRound: ReviewRoundBindingV1): Promise<void> {
+      if (!deps.reviewRecords) throw Object.assign(new Error('Review records are unavailable'), { code: 'review_record_unavailable' });
+      await deps.reviewRecords.settle({ ...reviewRound, outcome: 'failed', finishedAt: Date.now(), runs: [] });
+    },
     async settleRound(run: ExecutionRunState): Promise<void> {
       const input = record(run.intentInput);
       if (run.intent !== 'review' || input?.reviewRoundSettlement !== 'execution') return;
@@ -78,10 +107,13 @@ export function createReviewRunCommentService(deps: Readonly<{
       if (!deps.reviewRecords || !deps.scope.workspace) {
         throw Object.assign(new Error('Artifact content is unavailable'), { code: 'artifact_content_unavailable' });
       }
-      const outcome = record(run.structuredMeta?.payload)?.reviewOutcome ?? record(run.latestToolResult)?.reviewOutcome;
+      const evidence = ReviewPublicationEvidenceSchema.parse(record(run.structuredMeta?.payload) ?? record(run.latestToolResult) ?? {});
+      const outcome = run.status === 'cancelled' ? 'cancelled'
+        : run.status === 'failed' || run.status === 'timeout' ? 'failed' : 'completed';
       await deps.reviewRecords.settle({ ...binding.data,
-        outcome: run.status === 'cancelled' ? 'cancelled' : outcome === 'partial' ? 'partial'
-          : run.status === 'failed' || outcome === 'failed' ? 'failed' : 'completed',
+        outcome,
+        reviewerOutcomes: typeof input.reviewReviewerId === 'string' ? [{ key: input.reviewReviewerId, runId: run.runId,
+          outcome, reviewOutcome: evidence.reviewOutcome, materialization: evidence.materialization }] : [],
         finishedAt: run.finishedAtMs ?? Date.now(), summary: run.summary,
         runs: [{ kind: 'execution', runId: run.runId, machineId: deps.scope.workspace.machineId,
           ...(run.sessionId ? { sessionId: run.sessionId } : {}) }],

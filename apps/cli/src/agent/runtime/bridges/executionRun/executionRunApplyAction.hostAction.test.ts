@@ -223,11 +223,11 @@ describe('applyExecutionRunAction review follow-up admission', () => {
     }
   });
 
-  async function followUp(run: ExecutionRunState, controller?: ExecutionRunController) {
+  async function followUp(run: ExecutionRunState, controller?: ExecutionRunController, actionId = 'review.follow_up') {
     const started: unknown[] = [];
     const result = await applyExecutionRunAction({
       runId: run.runId,
-      params: { actionId: 'review.follow_up', input: { messageMarkdown: 'Why?', findingIds: [] } },
+      params: { actionId, input: actionId === 'review.new_round' ? {} : { messageMarkdown: 'Why?', findingIds: [] } },
       runs: new Map([[run.runId, run]]),
       controllers: new Map(controller ? [[run.runId, controller]] : []),
       voiceAgentManager: {} as VoiceAgentManager,
@@ -244,6 +244,15 @@ describe('applyExecutionRunAction review follow-up admission', () => {
   it.each(['running', 'cancelled', 'failed', 'timeout'] as const)('refuses a %s review without launching a child', async (status) => {
     const { result, started } = await followUp({ ...succeededRun(), status });
     expect(result).toMatchObject({ ok: false, errorCode: status === 'running' ? 'execution_run_busy' : 'review_follow_up_ended' });
+    expect(started).toEqual([]);
+  });
+
+  it.each([
+    { status: 'running', retentionPolicy: 'ephemeral', code: 'execution_run_busy' },
+    { status: 'succeeded', retentionPolicy: 'resumable', code: 'review_follow_up_resume_unavailable' },
+  ] as const)('refuses native New round before preparation when $code', async ({ status, retentionPolicy, code }) => {
+    const { result, started } = await followUp({ ...succeededRun(), status, retentionPolicy }, undefined, 'review.new_round');
+    expect(result).toMatchObject({ ok: false, errorCode: code });
     expect(started).toEqual([]);
   });
 

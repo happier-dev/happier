@@ -8,6 +8,7 @@ import tweetnacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   REVIEW_COMMENT_PRINCIPAL_HEADER_V1,
+  readBackendTargetRefV2,
   ReviewCommentCreateRequestV1Schema,
   ReviewCommentPrincipalHeaderV1Schema,
   ReviewCommentTransitionRequestV1Schema,
@@ -31,15 +32,17 @@ import { publishExecutionRunTurn } from '@/agent/runtime/bridges/executionRun/pu
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import { applyExecutionRunAction } from '@/agent/runtime/bridges/executionRun/executionRunApplyAction';
 import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
-import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
+import type { ExecutionRunManagerStartParams, ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import { createReviewRunCommentService, projectReviewRunTriage } from './reviewComments';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { createExecutionRunRpcActionDeps } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
-import { captureScmComparison } from '@/scm/comparisons/captureScmComparison';
+import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { createReviewRecordPortV1, type ReviewArtifactTransportV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { buildReviewFindingsV2Payload } from '@/agent/reviews/normalize/buildReviewFindingsV2Payload';
+import { ReviewProfile } from './ReviewProfile';
 
 // Only HTTP and environment configuration are substituted. Snapshot, protocol,
 // signing, event envelopes, triage mapping, and terminalization remain real.
@@ -122,6 +125,88 @@ afterEach(async () => {
 });
 
 describe('canonical review Run comments', () => {
+  it.each(['ephemeral', 'resumable', 'fresh', 'launch-failed'] as const)('starts a new native round from the retained launch selection (%s)', async mode => runWithScmAccountScope('new-native-round', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-new-round-' });
+    repositories.push(fixture.rootPath);
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'first round();\n');
+    const first = await captureScmComparison({ cwd: fixture.rootPath, sessionId: 'session-1', source: { kind: 'workingTree' } });
+    let row: Awaited<ReturnType<ReviewArtifactTransportV1['read']>> = null;
+    let creates = 0;
+    let updates = 0;
+    const records = createReviewRecordPortV1({ read: async () => row,
+      create: async input => { creates++; row = { ...input, revision: { headerVersion: 1, bodyVersion: 1 } }; return row; },
+      update: async input => { updates++; row = { ...input, revision: { headerVersion: updates + 1, bodyVersion: updates + 1 } }; return { ok: true, revision: row.revision }; },
+    });
+    const reviewRound = await records.start({ reviewId: 'stable-review', title: 'Review', subjectKind: 'comparison',
+      sourceKind: 'direct', reviewerIds: ['step-1-reviewer-1'], comparisonId: first.comparison.id, startedAt: 1 });
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'second round();\n');
+    const comments = createReviewRunCommentService({ cwd: fixture.rootPath,
+      scope: { workspace: { machineId: 'machine-1', path: fixture.rootPath } }, execute: transport(), reviewRecords: records });
+    const initial: ExecutionRunState = { ...run(), status: 'succeeded',
+      retentionPolicy: mode === 'ephemeral' || mode === 'launch-failed' ? 'ephemeral' : 'resumable',
+      ...(mode === 'resumable' ? { resumeHandle: { kind: 'provider_session.v1',
+        backendTarget: readBackendTargetRefV2({ kind: 'builtInAgent', agentId: 'claude' }), providerSessionId: 'original-conversation' } } : {}),
+      launch: { cwd: fixture.rootPath, modelId: 'selected-model', connectedServicesSelection: null, reviewOutputSelection: null,
+        sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { effort: { updatedAt: 1, value: 'high' } } } },
+      ...(mode === 'fresh' ? {} : { structuredMeta: { kind: 'review_findings.v2', payload: {
+        ...buildReviewFindingsV2Payload({ runId: 'review-run', callId: 'review-call', backendId: 'claude',
+          summary: 'Prior round found missing validation.', findings, generatedAtMs: 2 }), reviewOutcome: 'partial' } } }),
+      intentInput: { instructions: 'Review.', reviewers: [{ kind: 'engine', engineId: 'claude' }],
+        reviewRound, reviewReviewerId: 'step-1-reviewer-1', reviewRoundSettlement: 'execution', comparisonId: first.comparison.id },
+    };
+    const started: ExecutionRunManagerStartParams[] = [];
+    const result = await applyExecutionRunAction({ runId: initial.runId,
+      params: { actionId: 'review.new_round', input: mode === 'fresh' ? { fresh: true } : {} },
+      runs: new Map([[initial.runId, initial]]), controllers: new Map(), parentProvider: 'claude',
+      voiceAgentManager: {} as import('@/agent/voice/agent/VoiceAgentManager').VoiceAgentManager,
+      reviewComments: comments, startRun: async input => { started.push(input);
+        if (mode === 'launch-failed') throw Object.assign(new Error('Provider unavailable'), { code: 'execution_run_failed' });
+        return { runId: 'next-run', callId: 'next-call', sidechainId: 'next-sidechain' }; },
+    });
+    if (mode === 'launch-failed') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'execution_run_failed' });
+      expect((await records.read('stable-review'))?.rounds[1]).toMatchObject({ state: 'failed', runs: [] });
+      expect(started).toHaveLength(1);
+      return;
+    }
+    expect(result).toMatchObject({ ok: true, result: { runId: 'next-run', reviewRound: { reviewId: 'stable-review', roundOrdinal: 2 } } });
+    expect(started).toHaveLength(1);
+    expect(started[0]).toMatchObject({ modelId: 'selected-model', connectedServices: null,
+      sessionConfigOptionOverrides: { overrides: { effort: { value: 'high' } } }, parentRunId: initial.runId,
+      intentInput: { reviewRound: { reviewId: 'stable-review', roundOrdinal: 2 }, reviewReviewerId: 'step-1-reviewer-1', reviewRoundSettlement: 'execution' } });
+    expect(started[0]?.resumeHandle ?? null).toEqual(mode === 'resumable' ? initial.resumeHandle : null);
+    const prompt = ReviewProfile.buildPrompt({ ...initial, intentInput: started[0]?.intentInput });
+    expect(prompt).toContain('"reviewId":"stable-review"');
+    expect(prompt).toContain('"roundOrdinal":1');
+    if (mode === 'fresh') expect(prompt).toContain('"reviewFindings":null');
+    else {
+      expect(prompt).toContain('"runId":"review-run"');
+      expect(prompt).toContain('"reviewOutcome":"partial"');
+      expect(prompt).toContain('Reject invalid input.');
+    }
+    const nextInput = started[0]?.intentInput as { comparisonId: string };
+    expect(nextInput.comparisonId).not.toBe(first.comparison.id);
+    const next = await readCapturedScmComparison({ cwd: fixture.rootPath, sessionId: 'session-1', comparisonId: nextInput.comparisonId });
+    expect(JSON.stringify(next?.comparison.inventory)).toContain('second round();');
+    expect(await records.read('stable-review')).toMatchObject({ rounds: [
+      { ordinal: 1, comparisonId: first.comparison.id }, { ordinal: 2, comparisonId: nextInput.comparisonId },
+    ] });
+    expect({ creates, updates }).toEqual({ creates: 1, updates: 1 });
+  }));
+  it('does not certify a native Review when model output is complete but finding publication failed', async () => {
+    let row: Awaited<ReturnType<ReviewArtifactTransportV1['read']>> = null;
+    const records = createReviewRecordPortV1({ read: async () => row,
+      create: async input => { row = { ...input, revision: { headerVersion: 1, bodyVersion: 1 } }; return row; },
+      update: async input => { row = { ...input, revision: { headerVersion: 2, bodyVersion: 2 } }; return { ok: true, revision: row.revision }; },
+    });
+    const reviewRound = await records.start({ reviewId: 'incomplete-review', title: 'Review', subjectKind: 'repository',
+      sourceKind: 'direct', reviewerIds: ['first'], startedAt: 1 });
+    const comments = createReviewRunCommentService({ cwd: root, scope: { workspace }, execute: transport(), reviewRecords: records });
+    await comments.settleRound({ ...run(), status: 'succeeded', intentInput: {
+      reviewRound, reviewRoundSettlement: 'execution', reviewReviewerId: 'first',
+    }, latestToolResult: { reviewOutcome: 'complete', materialization: { kind: 'failed', errorCode: 'artifact_content_unavailable' } } });
+    expect((await records.read(reviewRound.reviewId))?.rounds[0]?.state).toBe('failed');
+  });
   it('surfaces the Artifact content failure when a bound round cannot be published', async () => {
     const comments = createReviewRunCommentService({ cwd: root, scope: { workspace }, execute: transport() });
     await expect(comments.settleRound({ ...run(), status: 'succeeded', intentInput: {
@@ -138,13 +223,15 @@ describe('canonical review Run comments', () => {
     const reviewRound = await records.start({ reviewId: 'retained-review', title: 'Review', subjectKind: 'repository',
       sourceKind: 'direct', reviewerIds: ['claude'], startedAt: 1 });
     const initial = { ...run(), runClass: 'long_lived' as const, retentionPolicy: 'resumable' as const,
-      intentInput: { reviewRound, reviewRoundSettlement: 'execution' } };
+      intentInput: { reviewRound, reviewRoundSettlement: 'execution', reviewReviewerId: 'claude' } };
     const runs = new Map([[initial.runId, initial]]);
     // Provider identity and output are the native runtime boundary.
     const controller = { kind: 'backend', cancelled: false } as ExecutionRunBackendController;
     const comments = createReviewRunCommentService({ cwd: root, scope: { workspace }, execute: transport(), reviewRecords: records });
     await publishExecutionRunTurn({ runId: initial.runId, turnId: 'review-turn', controller,
-      controllers: new Map([[initial.runId, controller]]), runs, rawText: JSON.stringify({ reviewOutcome: 'complete', summary: 'Clean', overviewMarkdown: 'Clean', findings: [], questions: [], assumptions: [] }),
+      controllers: new Map([[initial.runId, controller]]), runs, rawText: JSON.stringify({
+        reviewOutcome: 'complete', summary: 'Clean', overviewMarkdown: 'Clean', findings: [], questions: [], assumptions: [],
+      }),
       finishedAtMs: 2, parentProvider: 'claude', reviewComments: comments, sendAcp: async () => {
         expect((await records.read(reviewRound.reviewId))?.rounds[0]?.state).toBe('completed');
       } });
@@ -159,7 +246,7 @@ describe('canonical review Run comments', () => {
     });
     const reviewRound = await records.start({ reviewId: 'review-record', title: 'Review', subjectKind: 'comparison',
       sourceKind: 'direct', reviewerIds: ['claude'], startedAt: 1 });
-    const initial = { ...run(), intentInput: { reviewRound, reviewRoundSettlement: 'execution' } };
+    const initial = { ...run(), intentInput: { reviewRound, reviewRoundSettlement: 'execution', reviewReviewerId: 'claude' } };
     const runs = new Map([[initial.runId, initial]]);
     const comments = createReviewRunCommentService({ cwd: root, scope: { workspace }, execute: transport(), reviewRecords: records });
     await finishExecutionRun({ runId: initial.runId, next: { status, finishedAtMs: 2 }, toolResult: { output: { findings: [] } },
@@ -202,6 +289,27 @@ describe('canonical review Run comments', () => {
     expect(runs.get(initial.runId)?.latestToolResult).toMatchObject({ materialization: { kind: 'complete' },
       findings: [{ comment: { id: 'comment-file-finding' } }] });
     expect(runs.get(initial.runId)?.error).toBeUndefined();
+    });
+  });
+
+  it('uses the prepared comparison for a Session finding after the live file is deleted', async () => {
+    return runWithScmAccountScope('account', async () => {
+      const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-session-historical-' });
+      repositories.push(fixture.rootPath);
+      await writeFile(join(fixture.rootPath, fixture.trackedPath), 'historical Session input();\n');
+      const captured = await captureScmComparison({ cwd: fixture.rootPath, sessionId: 'source-session', source: { kind: 'workingTree' } });
+      await rm(join(fixture.rootPath, fixture.trackedPath));
+      const requests: unknown[] = [];
+      vi.mocked(axios.post).mockImplementation(async (_url, body) => {
+        requests.push(body);
+        return { status: 200, data: { comment: commentForCreate(body), replayed: false } };
+      });
+      const result = await service().materialize({ session: { sessionId: 'reviewer-session', localInputId: 'input',
+        workflowRunId: 'workflow', stepId: 'review', invocationId: 'invocation', agentId: 'claude', reviewerId: 'selection', cwd: fixture.rootPath },
+        comparison: captured.comparison, findings: [{ ...findings[0], filePath: fixture.trackedPath }], reviewedFingerprint: null });
+      expect(result).toMatchObject({ status: 'materialized' });
+      expect(requests).toMatchObject([{ anchor: { kind: 'line', filePath: fixture.trackedPath, side: 'after' },
+        snapshot: { kind: 'text', source: 'diffSide', selectedLines: ['historical Session input();'] } }]);
     });
   });
 

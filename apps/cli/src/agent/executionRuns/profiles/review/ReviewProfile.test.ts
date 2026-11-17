@@ -477,7 +477,7 @@ describe('ReviewProfile', () => {
     });
   });
 
-  it('exposes review.follow_up alongside review.triage for review findings payloads', () => {
+  it.each([false, true])('exposes native New round only when the review has an admitted round (bound: %s)', (bound) => {
     return runWithScmAccountScope('account', () => {
     const actionIds = ReviewProfile.listAvailableActionIds?.({
       start: {
@@ -494,6 +494,7 @@ describe('ReviewProfile', () => {
         runClass: 'bounded',
         ioMode: 'streaming',
         startedAtMs: 1,
+        ...(bound ? { intentInput: { reviewRound: { reviewId: 'review-1', roundOrdinal: 1 } } } : {}),
       },
       structuredMeta: {
         kind: 'review_findings.v2',
@@ -514,7 +515,7 @@ describe('ReviewProfile', () => {
       },
     });
 
-    expect(actionIds).toEqual(['review.triage', 'review.follow_up']);
+    expect(actionIds).toEqual(['review.triage', 'review.follow_up', ...(bound ? ['review.new_round'] : [])]);
     });
   });
 

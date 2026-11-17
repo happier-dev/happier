@@ -7,9 +7,12 @@ import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '../backends/ta
 import { ExecutionRunStartRequestSchema } from '../execution/runs/startRequest.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { projectActionWorkflowSelectionInputV1 } from './executor/agentStartAdmission.js';
+import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.testkit.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
+  const reviews = createInMemoryReviewRecordPortV1();
   return {
+    reviewRecords: () => reviews,
     executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'm1' }),
     executionRunStart: vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' })),
     executionRunList: vi.fn(async () => ({})),
@@ -134,7 +137,7 @@ it.each(['review.start', 'subagents.plan.start', 'subagents.delegate.start'] as 
       return { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' };
     } }));
     expect(await executor.execute(actionId, { sessionId: 's1', instructions: 'Inspect the change',
-      ...(actionId === 'review.start' ? { engineIds: [START_TARGET_KEY] } : { backendTargetKeys: [START_TARGET_KEY] }),
+      ...(actionId === 'review.start' ? { scope: 'repository', reviewers: [{ kind: 'engine', engineId: START_TARGET_KEY }] } : { backendTargetKeys: [START_TARGET_KEY] }),
       approvalProfileId: 'custom:proposal',
     }, { ...UI_CALLER, approvalProfileId: 'builtin:apply-safe' })).toMatchObject({ ok: true });
     expect(requests).toEqual([expect.objectContaining({ approvalProfileId: 'custom:proposal' })]);
@@ -182,7 +185,7 @@ it.each([
     const input = actionId === 'execution.run.start' ? { ...RUN_START_BASE, modelSelection: {
       agentTargetKey: START_TARGET_KEY, providerConnectionId: null, modelId: 'chosen-model',
     } } : { sessionId: 's1', instructions: 'Do the work', modelId: 'chosen-model',
-      [actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys']: [START_TARGET_KEY] };
+      ...(actionId === 'review.start' ? { scope: 'repository', reviewers: [{ kind: 'engine', engineId: START_TARGET_KEY }] } : { backendTargetKeys: [START_TARGET_KEY] }) };
     const result = await createActionExecutor(deps).execute(actionId, input, { ...RUN_DISPATCHER_CALLER, surface,
       actionCaller: context.caller, agentStartContext: context });
     expect(result).toMatchObject({ ok: true });
@@ -224,7 +227,7 @@ it('does not turn an omitted attached Review selection into an explicit Account-
       return { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' };
     } });
   expect(await createActionExecutor(deps).execute('review.start', {
-    sessionId: 's1', engineIds: [START_TARGET_KEY], instructions: 'Review',
+    sessionId: 's1', scope: 'repository', reviewers: [{ kind: 'engine', engineId: START_TARGET_KEY }], instructions: 'Review',
   }, { ...RUN_DISPATCHER_CALLER, actionCaller: context.caller, agentStartContext: context })).toMatchObject({ ok: true });
   expect(received).toMatchObject([{ connectedServices }]);
   expect(received[0]).not.toHaveProperty('childSelection');
@@ -270,7 +273,7 @@ it('admits a scalar review engine and qualified Team selection through canonical
     expectedResourceRevision: 3, deliveryMode: 'brokered',
     agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'claude' }), modelId: 'team-model' } as const;
   const result = await createActionExecutor(deps).execute('review.start', {
-    sessionId: 's1', engineIds: ['claude'], instructions: 'Review', modelId: 'team-model', teamCredentialModel: selection,
+    sessionId: 's1', scope: 'repository', reviewers: [{ kind: 'engine', engineId: 'claude' }], instructions: 'Review', modelId: 'team-model', teamCredentialModel: selection,
   }, UI_CALLER);
   expect(result).toMatchObject({ ok: true, result: { results: [{ ok: true }] } });
   expect(vi.mocked(deps.executionRunStart).mock.calls[0]?.[1]).toMatchObject({ teamCredentialModel: selection });
@@ -283,7 +286,8 @@ it.each([{}, { modelId: 'custom-native' }, { modelSelection: null },
     expect(await createActionExecutor(deps).execute('execution.run.start', {
       ...RUN_START_BASE, ...selection,
     }, UI_CALLER)).toMatchObject({ ok: true });
-    expect(deps.executionRunStart).toHaveBeenCalledWith('s1', expect.objectContaining(selection), undefined);
+    expect(deps.executionRunStart).toHaveBeenCalledWith('s1', expect.objectContaining(selection),
+      expect.objectContaining({ approvalProfileTeamOrGroupDerived: false }));
   },
 );
 
@@ -300,7 +304,7 @@ it.each(['review.start', 'subagents.plan.start', 'subagents.delegate.start', 'vo
     const deps = createDeps();
     const result = await createActionExecutor(deps).execute(actionId, {
       sessionId: 's1', instructions: 'Use this model',
-      [actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys']: [actionId === 'review.start' ? 'codex' : START_TARGET_KEY],
+      ...(actionId === 'review.start' ? { scope: 'repository', reviewers: [{ kind: 'engine', engineId: 'codex' }] } : { backendTargetKeys: [START_TARGET_KEY] }),
       modelSelection: { agentTargetKey: START_TARGET_KEY, providerConnectionId: null, modelId: 'native-model', accessToken: 'must-not-cross' },
     }, UI_CALLER);
     expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
@@ -319,7 +323,7 @@ it.each(['execution.run.start', 'review.start', 'subagents.plan.start', 'subagen
     const input = projectActionWorkflowSelectionInputV1(actionId, actionId === 'execution.run.start'
       ? RUN_START_BASE
       : { sessionId: 's1', instructions: 'Use native settings',
-          [actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys']: [actionId === 'review.start' ? 'codex' : START_TARGET_KEY] },
+          ...(actionId === 'review.start' ? { scope: 'repository', reviewers: [{ kind: 'engine', engineId: 'codex' }] } : { backendTargetKeys: [START_TARGET_KEY] }) },
       { modelSelection: null });
     expect(await createActionExecutor(deps).execute(actionId, input, UI_CALLER)).toMatchObject(
       actionId === 'execution.run.start' ? { ok: true } : { ok: true, result: { results: [{ ok: true }] } },
@@ -350,11 +354,12 @@ it.each((['subagents.plan.start', 'subagents.delegate.start', 'voice_agent.start
         identity: agentTarget.identity }] }),
     });
     const executor = createActionExecutor(deps);
-    const fieldPath = actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys';
+    const fieldPath = actionId === 'review.start' ? 'reviewers' : 'backendTargetKeys';
     const options = await executor.execute('action.options.resolve', { actionId, fieldPath, sessionId: 's1' }, UI_CALLER);
     expect(options).toMatchObject({ ok: true, result: { options: [{ value: key }] } });
     const result = await executor.execute(actionId, { sessionId: 's1', instructions: 'Review the plan',
-      [fieldPath]: [key] }, { ...UI_CALLER, agentStartContext: START_CONTEXT });
+      ...(actionId === 'review.start' ? { scope: 'repository' } : {}),
+      [fieldPath]: actionId === 'review.start' ? [{ kind: 'engine', engineId: key }] : [key] }, { ...UI_CALLER, agentStartContext: START_CONTEXT });
     expect(result).toMatchObject({ ok: true, result: { results: [{ ok: true }] } });
     expect(received.map(request => request.backendTarget)).toEqual([agentTarget]);
   },
@@ -468,7 +473,7 @@ it('admits the actual per-engine connected-service selections before fan-out dis
 
 it.each([
   ['execution.run.start', RUN_START_BASE],
-  ['review.start', { sessionId: 's1', engineIds: ['codex'], instructions: 'review' }],
+  ['review.start', { sessionId: 's1', scope: 'repository', reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'review' }],
   ['subagents.plan.start', { sessionId: 's1', backendTargetKeys: [START_TARGET_KEY], instructions: 'plan' }],
   ['subagents.delegate.start', { sessionId: 's1', backendTargetKeys: [START_TARGET_KEY], instructions: 'delegate' }],
   ['voice_agent.start', { sessionId: 's1', backendTargetKeys: [START_TARGET_KEY], instructions: 'assist' }],
@@ -520,7 +525,7 @@ it.each(['execution.run.start', 'review.start', 'subagents.plan.start', 'subagen
       reviewEnginesList: async () => ({ items: [{ id: START_TARGET_KEY, enabled: true }] }),
     });
     const input = actionId === 'execution.run.start' ? RUN_START_BASE
-      : actionId === 'review.start' ? { sessionId: 's1', engineIds: [START_TARGET_KEY], instructions: 'Review' }
+      : actionId === 'review.start' ? { sessionId: 's1', scope: 'repository', reviewers: [{ kind: 'engine', engineId: START_TARGET_KEY }], instructions: 'Review' }
       : { sessionId: 's1', backendTargetKeys: [START_TARGET_KEY], instructions: 'Task' };
     for (const binding of [{ roleId: 'scout' }, { launchProfileId: 'launch-profile' }]) {
       expect(await createActionExecutor(deps).execute(actionId, { ...input, ...binding }, {
@@ -540,7 +545,7 @@ it.each(['execution.run.start', 'review.start', 'subagents.plan.start', 'subagen
     const deps = createDeps({ executionRunCheckProtocolV2: async () => ({ ok: true }),
       reviewEnginesList: vi.fn(async () => ({ items: [{ id: START_TARGET_KEY, enabled: true }] })) });
     const input = actionId === 'execution.run.start' ? RUN_START_BASE
-      : actionId === 'review.start' ? { sessionId: 's1', engineIds: ['codex'], instructions: 'Review' }
+      : actionId === 'review.start' ? { sessionId: 's1', scope: 'repository', reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review' }
       : { sessionId: 's1', backendTargetKeys: [START_TARGET_KEY], instructions: 'Task' };
     const profileSourceCustody = { kind: 'development', registeredRootId: 'execution-profile-root' } as const;
     const result = await createActionExecutor(deps).execute(actionId, { ...input, roleId: role.roleId,
@@ -744,9 +749,8 @@ describe('createActionExecutor run options parity (model + effort)', () => {
 
     expect(res.ok).toBe(true);
     expect(executionRunStart).toHaveBeenCalledWith(
-      's1',
-      expect.objectContaining({ modelId: 'gpt-5.5', sessionConfigOptionOverrides: overrides }),
-      undefined,
+      's1', expect.objectContaining({ modelId: 'gpt-5.5', sessionConfigOptionOverrides: overrides }),
+      expect.objectContaining({ approvalProfileTeamOrGroupDerived: false }),
     );
   });
 
@@ -772,9 +776,8 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     )).resolves.toMatchObject({ ok: true });
 
     expect(executionRunStart).toHaveBeenCalledWith(
-      's1',
-      expect.objectContaining({ launchOrigin }),
-      undefined,
+      's1', expect.objectContaining({ launchOrigin }),
+      expect.objectContaining({ approvalProfileTeamOrGroupDerived: false }),
     );
   });
 
@@ -845,7 +848,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
       details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' },
-        issues: [{ code: 'custom', path: ['sessionId'], message: expect.any(String) }] },
+        issues: [{ code: 'custom', path: ['sessionId'] }] },
     });
     expect(executionRunCheckProtocolV2).not.toHaveBeenCalled();
     expect(executionRunStart).not.toHaveBeenCalled();
@@ -901,7 +904,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
         waitForCompletion: expect.anything(),
         waitTimeoutSeconds: expect.anything(),
       }),
-      { serverId: 'server_1', originSessionId: 's1', surface: 'ui' },
+      expect.objectContaining({ approvalProfileTeamOrGroupDerived: false, serverId: 'server_1', originSessionId: 's1', surface: 'ui' }),
     );
     expect(executionRunWait).toHaveBeenCalledWith(
       null,
@@ -1580,7 +1583,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     expect(executionRunStart).toHaveBeenCalledWith(
       null,
       expect.any(Object),
-      { serverId: 'server_1', originSessionId: 's1', exactMachineId: 'machine_2', surface: 'ui' },
+      expect.objectContaining({ approvalProfileTeamOrGroupDerived: false, serverId: 'server_1', originSessionId: 's1', exactMachineId: 'machine_2', surface: 'ui' }),
     );
     expect(executionRunWait).toHaveBeenCalledWith(
       null,
@@ -1619,7 +1622,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
     expect(executionRunStart).toHaveBeenCalledWith(
       null,
       expect.any(Object),
-      { serverId: 'server_1', targetMachineId: 'machine_mounted', exactMachineId: 'machine_exact', surface: 'ui' },
+      expect.objectContaining({ approvalProfileTeamOrGroupDerived: false, serverId: 'server_1', targetMachineId: 'machine_mounted', exactMachineId: 'machine_exact', surface: 'ui' }),
     );
   });
 
@@ -1795,7 +1798,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
         teamCredentialModel,
         teamCredentialSessionBindingConsent,
       }),
-      { exactMachineId: 'machine-team-capable' },
+      expect.objectContaining({ approvalProfileTeamOrGroupDerived: false, exactMachineId: 'machine-team-capable' }),
     );
     expect(executionRunCheckProtocolV2).toHaveBeenCalledWith(
       's1',
@@ -1815,7 +1818,8 @@ describe('createActionExecutor run options parity (model + effort)', () => {
   it.each([
     ['review.start', {
       sessionId: 's1',
-      engineIds: ['agent:happier.agent.codex/codex'],
+      scope: 'repository',
+      reviewers: [{ kind: 'engine', engineId: 'agent:happier.agent.codex/codex' }],
       instructions: 'review it',
       teamCredentialModel: {
         kind: 'team_credential_provider_model',
@@ -1966,7 +1970,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
       details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' },
-        issues: expect.arrayContaining([{ code: 'invalid_union', path: ['connectedServices'], message: expect.any(String) }]) },
+        issues: expect.arrayContaining([{ code: 'invalid_union', path: ['connectedServices'] }]) },
     });
     expect(executionRunStart).not.toHaveBeenCalled();
   });

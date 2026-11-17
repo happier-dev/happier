@@ -38,6 +38,7 @@ import { isSessionProviderInputOutcomeTerminal, type DurableProviderInputAccepta
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { readActionCompletionRunObservationV1, isActionCompletionRunObservationPendingV1 } from '@happier-dev/protocol/actions/actionCompletion';
+import { REVIEW_NEW_ROUND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 
 import { VoiceAgentError, VoiceAgentManager } from '../../../voice/agent/VoiceAgentManager';
 import type {
@@ -3726,7 +3727,12 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         runs: this.runs,
         controllers: this.controllers,
         voiceAgentManager: this.voiceAgentManager,
-        startRun: async (params) => {
+        startRun: async (startParams) => {
+          if (params.actionId === REVIEW_NEW_ROUND_ACTION_ID_V1 && startParams.resumeHandle === null) {
+            return await this.startWithRetainedRuntime({ ...startParams,
+              ...(opts?.projectLaunchContext ? { projectLaunchContext: opts.projectLaunchContext } : {}),
+            }, undefined, { resolveAccountSettingsSnapshot: accountSnapshotResolver });
+          }
           const parentId = runId;
           // Establish the retained occurrence even for a finished reviewer. Its
           // controller is the one input authority while a child borrows the native conversation.
@@ -3776,7 +3782,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
           };
           try {
             const { start: _start, ...selection } = resolveExecutionRunResumeBackendOptions({ run: parent });
-            const started = await this.startWithRetainedRuntime({ ...params, ...selection,
+            const started = await this.startWithRetainedRuntime({ ...startParams, ...selection,
               ...(opts?.projectLaunchContext ? { projectLaunchContext: opts.projectLaunchContext } : {}),
             }, { runId: parentId, controller }, { resolveAccountSettingsSnapshot: accountSnapshotResolver });
             observeSettlement(started.runId);

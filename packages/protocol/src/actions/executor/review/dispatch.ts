@@ -12,13 +12,13 @@ import { ReviewWalkthroughRequestSchema, ReviewExplainFindingsRequestSchema, Rev
 import { resolveSessionIdFromInput, resolveServerIdForExecutionRunScope } from '../sessionScope.js';
 import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, buildAvailableExecutionBackendOptionKeys, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, classifyExecutionRunStartFailure } from '../executionRuns.js';
 import { readRecord, hasOwn } from '../../../inputs/inputRecords.js';
-import type { ReviewStartInput } from '../../../reviews/reviewStart.js';
+import { requiresReviewWorkflowCompositionV1, reviewReviewerIdForSelectionV1, reviewReviewerIdsForStartV1, type ReviewStartInput } from '../../../reviews/reviewStart.js';
 import { createPermissionPolicyResult, resolveAgentExecutionRunPermission } from '../callerContext.js';
 import { EXECUTION_RUN_ACTION_PERMISSION_MODES } from '../../executionRunActionPermissionMode.js';
 import { tryNormalizeExecutionBackendOptionValue, readReviewNarratorOptions } from '../../../inputs/inputOptions.js';
 import { resolveReviewNarratorPolicy } from '../../../reviews/reviewEngines.js';
 import { bytesToHex, randomBytes } from '@noble/hashes/utils';
-import { withExecutionRunStartFailureDetails } from '../../../execution/runs/responseSchemas.js';
+import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '../../../execution/runs/responseSchemas.js';
 import { type ActionId } from '../../actionIds.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
@@ -242,31 +242,26 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const opts = workflowScope ? { ...baseOptions, workflowScope } : baseOptions;
 
         const reviewInput = data as ReviewStartInput;
-        const engineIds = reviewInput.engineIds;
-        const connectedSelections = resolveFanoutConnectedServicesSelections(reviewInput, engineIds);
-        if (!connectedSelections.ok) {
-          return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+        if (requiresReviewWorkflowCompositionV1(reviewInput)) {
+          return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:review.start' };
         }
-        const teamCredentialModel = resolveFanoutTeamCredentialModel(
-          reviewInput as Readonly<Record<string, unknown>>,
-          engineIds,
-        );
-        if (!teamCredentialModel.ok) {
-          return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+        const engineSelections = reviewInput.reviewers.flatMap((selection, index) => selection.kind === 'engine'
+          ? [{ selection, index, reviewerId: reviewInput.reviewReviewerId ?? reviewReviewerIdForSelectionV1(index) }] : []);
+        const admittedEngineSelections = [];
+        for (const entry of engineSelections) {
+          const hostLaunch = ctx.reviewReviewerLaunchInputs?.[entry.index];
+          const engineInput = { ...reviewInput, ...entry.selection, ...hostLaunch, intent: hostLaunch?.intent };
+          const connections = resolveFanoutConnectedServicesSelections(engineInput, [entry.selection.engineId]);
+          const team = resolveFanoutTeamCredentialModel(engineInput, [entry.selection.engineId]);
+          if (!connections.ok || !team.ok || (engineInput.teamCredentialSessionBindingConsent
+            && engineInput.teamCredentialSessionBindingConsent.sessionId !== sessionId)) {
+            return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          }
+          admittedEngineSelections.push({ ...entry, engineInput,
+            connectedSelection: connections.selections.get(entry.selection.engineId)!, teamCredentialModel: team.selection });
         }
-        if (
-          reviewInput.teamCredentialSessionBindingConsent
-          && reviewInput.teamCredentialSessionBindingConsent.sessionId !== sessionId
-        ) {
-          return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-        }
-        if (reviewInput.profileId && engineIds.length !== 1) {
-          return {
-            ok: false,
-            errorCode: 'execution_run_profile_requires_single_engine',
-            error: 'execution_run_profile_requires_single_engine',
-          };
-        }
+        const selectedById = new Map(admittedEngineSelections.map(entry => [entry.reviewerId, entry]));
+        const engineIds = engineSelections.map(entry => entry.selection.engineId);
         const instructions = reviewInput.instructions.trim();
         const executionRunPermission = resolveAgentExecutionRunPermission(
           ctx,
@@ -291,8 +286,12 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           : opts;
         let executionRunDispatchOpts = executionRunOpts;
         const runScopedAgentBindings = reviewInput.roleId !== undefined || reviewInput.launchProfileId !== undefined
-          || teamCredentialModel.selection !== null;
-        if (detached || reviewInput.secretReferenceOverlay || runScopedAgentBindings) {
+          || reviewInput.teamCredentialModel !== undefined
+          || engineSelections.some(({ selection }) => selection.roleId !== undefined || selection.launchProfileId !== undefined
+            || selection.teamCredentialModel !== undefined);
+        const hasSecretOverlay = reviewInput.secretReferenceOverlay !== undefined
+          || engineSelections.some(({ selection }) => selection.secretReferenceOverlay !== undefined);
+        if (detached || hasSecretOverlay || runScopedAgentBindings) {
           const capability = await checkDetachedExecutionRunProtocolV2(
             deps,
             sessionId,
@@ -300,7 +299,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             {
               startAndWait: false,
               runScopedAgentBindings,
-              secretReferenceOverlay: reviewInput.secretReferenceOverlay !== undefined,
+              secretReferenceOverlay: hasSecretOverlay,
             },
           );
           if (!capability.ok) return classifyExecutionRunStartFailure(capability, 'noRunCreated');
@@ -312,25 +311,45 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           approvalProfileId: _approvalProfileId,
           outputs: _outputs,
           narrator: _narrator,
+          reviewers: _reviewers,
+          steps: _steps,
           ...reviewIntentInput
         } = reviewInput;
         const intentInputBase = { ...reviewIntentInput, permissionMode };
+        const profileSelections = admittedEngineSelections.flatMap(({ selection, engineInput }) =>
+          engineInput.profileId ? [{
+            engineId: selection.engineId,
+            profileId: engineInput.profileId,
+            ...(engineInput.profileSourceCustody ? { profileSourceCustody: engineInput.profileSourceCustody } : {}),
+          }] : []);
         const reviewEngineInventory = await deps.reviewEnginesList({
           sessionId,
           ...(detached && executionRunDispatchOpts?.targetMachineId
             ? { machineId: executionRunDispatchOpts.targetMachineId } : {}),
           includeDisabled: false,
+          ...(profileSelections.length > 0 ? { profileSelections } : {}),
           ...(reviewScopeForInput(reviewInput) ? { scope: 'paths' as const } : {}),
-        });
+        }, ctx);
+        const narratorOptions = readReviewNarratorOptions(reviewEngineInventory);
+        const explicitProfileOptions = readReviewNarratorOptions({ items: readRecord(reviewEngineInventory).selectionItems });
+        const selectedReviewEngineItems = new Map(admittedEngineSelections.map(({ reviewerId, selection, engineInput }) => {
+          const backendKey = normalizeExecutionBackendOptionValue(selection.engineId);
+          const options = engineInput.profileId ? explicitProfileOptions : narratorOptions;
+          const item = options.find((option) => option.value === backendKey
+            && (!engineInput.profileId || option.profileId === engineInput.profileId));
+          return [reviewerId, item] as const;
+        }));
         const availableReviewEngineKeys = buildAvailableExecutionBackendOptionKeys(reviewEngineInventory);
         const narrationRequested = reviewInput.outputs?.includes('walkthrough') === true;
-        const narratorOptions = readReviewNarratorOptions(reviewEngineInventory);
         const narrationPolicy = resolveReviewNarratorPolicy({
-          selectedEngineIds: engineIds.map((engineId) => tryNormalizeExecutionBackendOptionValue(engineId) ?? engineId),
-          engines: narratorOptions,
+          selectedEngineIds: engineSelections.map(entry => entry.reviewerId),
+          engines: engineSelections.flatMap(({ reviewerId }) => {
+            const selected = selectedReviewEngineItems.get(reviewerId);
+            return selected ? [{ ...selected, value: reviewerId }] : [];
+          }),
         });
         const narrator = reviewInput.narrator ?? (narrationPolicy.defaultNarratorEngineId
-          ? { engineId: engineIds.find((engineId) => tryNormalizeExecutionBackendOptionValue(engineId) === narrationPolicy.defaultNarratorEngineId)! }
+          ? { engineId: engineSelections.find(entry => entry.reviewerId === narrationPolicy.defaultNarratorEngineId)!.selection.engineId }
           : undefined);
         if (narrationRequested && !reviewInput.comparisonId) {
           return { ok: false, errorCode: 'review_narration_comparison_required', error: 'review_narration_comparison_required' };
@@ -340,7 +359,9 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           && option.disabled !== true && option.capabilities.structuredNarration))) {
           return { ok: false, errorCode: 'review_narrator_unavailable', error: 'review_narrator_unavailable' };
         }
-        const originalModelId = teamCredentialModel.selection?.modelId ?? (typeof data.modelId === 'string' ? data.modelId : undefined);
+        const originalSelection = engineSelections[0]?.selection;
+        const originalModelId = originalSelection?.teamCredentialModel?.modelId ?? originalSelection?.modelId
+          ?? (typeof data.modelId === 'string' ? data.modelId : undefined);
         const continueSingleReview = narrationRequested && engineIds.length === 1 && !narrationPolicy.requiresSeparateNarrator
           && narrator !== undefined && normalizeExecutionBackendOptionValue(narrator.engineId) === normalizeExecutionBackendOptionValue(engineIds[0]!)
           && (narrator.modelId === undefined || narrator.modelId === originalModelId);
@@ -351,16 +372,19 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const reviewIdHex = bytesToHex(reviewIdBytes);
         const reviewId = `${reviewIdHex.slice(0, 8)}-${reviewIdHex.slice(8, 12)}-${reviewIdHex.slice(12, 16)}-${reviewIdHex.slice(16, 20)}-${reviewIdHex.slice(20)}`;
         const reviewRecords = deps.reviewRecords?.(ctx);
-        const reviewRound = reviewRecords ? await reviewRecords.start({ reviewId, title: 'Code review',
+        if (!reviewInput.reviewRound && !reviewRecords) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:review.start' };
+        const reviewRound = reviewInput.reviewRound ?? await reviewRecords!.start({ reviewId, title: 'Code review',
           subjectKind: reviewInput.comparisonId ? 'comparison' : 'repository',
           sourceKind: ctx.actionCaller?.kind === 'workflowRun' ? 'workflow' : 'direct',
           ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
-          reviewerIds: engineIds, startedAt: Date.now(), signal: ctx.signal }) : undefined;
-        const reviewGroupId = reviewRound?.reviewId ?? `review_${bytesToHex(randomBytes(16))}`;
+          reviewerIds: reviewReviewerIdsForStartV1(reviewInput), startedAt: Date.now(), signal: ctx.signal });
+        const reviewGroupId = reviewRound.reviewId;
         const results = await fanoutStarts({
-          keys: engineIds,
+          keys: engineSelections.map(entry => entry.reviewerId),
           recordActionOutputDiagnostic: deps.recordActionOutputDiagnostic,
-          startOne: async (engineId) => {
+          startOne: async (reviewerId) => {
+            const { selection, engineInput, connectedSelection, teamCredentialModel } = selectedById.get(reviewerId)!;
+            const engineId = selection.engineId;
             const normalizedBackendTargetKey = normalizeExecutionBackendOptionValue(engineId);
             const rawEngineId = normalizeId(engineId);
             if (
@@ -374,61 +398,63 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
                 details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated'),
               };
             }
-            const connectedSelection = connectedSelections.selections.get(engineId)!;
             return startExecutionRunWithSelection(
               sessionId,
               {
-                intent: data.intent ?? 'review',
-                ...(typeof data.roleId === 'string' ? { roleId: data.roleId } : {}),
-                ...(typeof data.launchProfileId === 'string' ? { launchProfileId: data.launchProfileId } : {}),
+                intent: engineInput.intent ?? 'review',
+                ...(engineInput.roleId ? { roleId: engineInput.roleId } : {}),
+                ...(engineInput.launchProfileId ? { launchProfileId: engineInput.launchProfileId } : {}),
                 display: { groupId: reviewGroupId },
                 ...(machineTarget?.project ? { cwd: machineTarget.project.directory }
-                  : detached && typeof reviewInput.cwd === 'string' ? { cwd: reviewInput.cwd } : {}),
+                  : detached && typeof engineInput.cwd === 'string' ? { cwd: engineInput.cwd } : {}),
                 ...(reviewInput.notifyParentOnCompletion !== undefined
                   ? { notifyParentOnCompletion: reviewInput.notifyParentOnCompletion }
                   : {}),
-                backendTarget: data.roleId && data.backendTarget ? data.backendTarget : normalizeExecutionBackendTargetValue(engineId),
+                backendTarget: normalizeExecutionBackendTargetValue(engineId),
                 instructions,
-                ...(reviewInput.childSelection ? { childSelection: reviewInput.childSelection }
-                  : sessionId === null && data.modelId === undefined && data.modelSelection === undefined && !teamCredentialModel.selection
+                reviewOutputSelection: reviewInput.outputs ? { outputs: reviewInput.outputs, narrator } : null,
+                ...(engineInput.childSelection ? { childSelection: engineInput.childSelection }
+                  : sessionId === null && engineInput.modelId === undefined && engineInput.modelSelection === undefined && !teamCredentialModel
                     && connectedSelection.bindings === undefined && connectedSelection.defaultServiceIds.length === 0
-                    && !reviewInput.roleId && !reviewInput.launchProfileId && !reviewInput.profileId
-                    && (!data.intent || data.intent === 'review') ? { childSelection: 'agentDefault' as const } : {}),
-                ...(typeof data.modelId === 'string' ? { modelId: data.modelId } : {}),
-                ...(data.modelSelection !== undefined ? { modelSelection: data.modelSelection } : {}),
-                ...(data.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: data.sessionConfigOptionOverrides } : {}),
+                    && !engineInput.roleId && !engineInput.launchProfileId && !engineInput.profileId
+                    && (!engineInput.intent || engineInput.intent === 'review') ? { childSelection: 'agentDefault' as const } : {}),
+                ...(typeof engineInput.modelId === 'string' ? { modelId: engineInput.modelId } : {}),
+                ...(engineInput.modelSelection !== undefined ? { modelSelection: engineInput.modelSelection } : {}),
+                ...(engineInput.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: engineInput.sessionConfigOptionOverrides } : {}),
                 ...(connectedSelection.bindings !== undefined ? { connectedServices: connectedSelection.bindings } : {}),
                 ...(connectedSelection.defaultServiceIds.length > 0
                   ? { connectedServicesDefaultServiceIds: connectedSelection.defaultServiceIds }
                   : {}),
                 permissionMode,
-                ...(reviewInput.approvalProfileId !== undefined ? { approvalProfileId: reviewInput.approvalProfileId } : {}),
-                retentionPolicy: 'resumable',
+                ...(engineInput.approvalProfileId !== undefined ? { approvalProfileId: engineInput.approvalProfileId } : {}),
+                retentionPolicy: selectedReviewEngineItems.get(reviewerId)?.retentionPolicy ?? 'resumable',
                 runClass: continueSingleReview ? 'long_lived' : 'bounded',
                 // Reviews should stream sidechain progress (and tool traffic) into the parent session.
                 ioMode: 'streaming',
-                ...(teamCredentialModel.selection
+                ...(teamCredentialModel
                   ? {
-                      modelId: teamCredentialModel.selection.modelId,
-                      teamCredentialModel: teamCredentialModel.selection,
-                      ...(reviewInput.teamCredentialSessionBindingConsent
-                        ? { teamCredentialSessionBindingConsent: reviewInput.teamCredentialSessionBindingConsent }
+                      modelId: teamCredentialModel.modelId,
+                      teamCredentialModel,
+                      ...(engineInput.teamCredentialSessionBindingConsent
+                        ? { teamCredentialSessionBindingConsent: engineInput.teamCredentialSessionBindingConsent }
                         : {}),
                     }
                   : {}),
                 launchOrigin: resolveExecutionRunLaunchOrigin(ctx),
-                ...(reviewInput.profileId && reviewInput.profileSourceCustody
+                ...(engineInput.profileId && engineInput.profileSourceCustody
                   ? {
-                      profileId: reviewInput.profileId,
-                      profileSourceCustody: reviewInput.profileSourceCustody,
+                      profileId: engineInput.profileId,
+                      profileSourceCustody: engineInput.profileSourceCustody,
                     }
                   : {}),
-                ...(reviewInput.secretReferenceOverlay
-                  ? { secretReferenceOverlay: reviewInput.secretReferenceOverlay }
+                ...(engineInput.secretReferenceOverlay
+                  ? { secretReferenceOverlay: engineInput.secretReferenceOverlay }
                   : {}),
-                ...(!data.intent || data.intent === 'review' ? { intentInput: {
-                  ...intentInputBase, engineId,
-                  ...(reviewRound ? { reviewRound, reviewReviewerId: engineId, reviewRoundSettlement: engineIds.length === 1 && !workflowScope ? 'execution' : 'workflow' } : {}),
+                ...(!engineInput.intent || engineInput.intent === 'review' ? { intentInput: {
+                  ...intentInputBase, engineId, reviewers: [selection],
+                  engines: { [engineId]: selection.options ?? reviewInput.engines[engineId] ?? {} },
+                  reviewRound, reviewReviewerId: reviewerId,
+                  reviewRoundSettlement: reviewInput.reviewRoundSettlement ?? (engineIds.length === 1 ? 'execution' : 'workflow'),
                   ...(continueSingleReview ? { outputs: ['walkthrough'], narrator } : {}),
                 } } : {}),
               },
@@ -440,8 +466,10 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           },
         });
 
-        if (reviewRound && results.every(result => !result.ok)) await reviewRecords!.settle({ ...reviewRound,
-          outcome: 'failed', finishedAt: Date.now(), runs: [], signal: ctx.signal });
+        if (!reviewInput.reviewRound && results.length > 0 && results.every(result => !result.ok
+          && readExecutionRunStartRunCreation(result.details) === 'noRunCreated')) await reviewRecords!.settle({ ...reviewRound,
+          outcome: ctx.signal?.aborted ? 'cancelled' : 'failed', finishedAt: Date.now(), runs: [],
+          ...(ctx.signal?.aborted ? {} : { signal: ctx.signal }) });
         if (!narrationRequested) return { ok: true, result: { intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}) } };
         const reviewRunIds = results.flatMap((item) => item.ok && typeof readRecord(item.result).runId === 'string'
           ? [String(readRecord(item.result).runId)] : []);
@@ -456,7 +484,8 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           } } };
         }
         const launchFailures = results.flatMap((item) => item.ok ? [] : [{
-          engineId: item.key, errorCode: item.errorCode ?? 'execution_run_failed', error: item.error ?? 'execution_run_failed',
+          engineId: selectedById.get(item.key)!.selection.engineId,
+          errorCode: item.errorCode ?? 'execution_run_failed', error: item.error ?? 'execution_run_failed',
         }]);
         if (!deps.executionRunAction) return { ok: true, result: { intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}),
           narration: { state: 'failed', errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.action' } } };

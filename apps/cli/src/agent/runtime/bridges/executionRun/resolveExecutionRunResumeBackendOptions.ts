@@ -1,7 +1,7 @@
 import type { AcpConfigOptionOverridesV1, ConnectedServiceBindingsV2, ProviderBoundModelRef, SecretReferenceOverlayV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
 
 import type { ExecutionRunBackendStartContext } from '@/agent/executionRuns/registry/executionRunBackendTypes';
-import type { ExecutionRunState } from './executionRunTypes';
+import type { ExecutionRunManagerStartParams, ExecutionRunState } from './executionRunTypes';
 
 /**
  * ONE backend rehydration owner for execution-run resume (LC-F2).
@@ -29,7 +29,7 @@ export type ExecutionRunResumeBackendOptions = Readonly<{
   connectedServices?: ConnectedServiceBindingsV2 | null;
   secretReferenceOverlay?: SecretReferenceOverlayV1;
   /** The run's immutable admitted start intent, rebuilt so a recreated backend is the SAME kind of backend. */
-  start?: ExecutionRunBackendStartContext;
+  start?: ExecutionRunBackendStartContext & Pick<ExecutionRunManagerStartParams, 'reviewOutputSelection'>;
 }>;
 
 export function resolveExecutionRunResumeBackendOptions(args: Readonly<{
@@ -55,6 +55,8 @@ export function resolveExecutionRunResumeBackendOptions(args: Readonly<{
       ? { secretReferenceOverlay: launch.secretReferenceOverlay }
       : {}),
     start: {
+      ...(launch?.reviewOutputSelection !== undefined
+        ? { reviewOutputSelection: launch.reviewOutputSelection } : {}),
       ...(launch?.cwd ? { cwd: launch.cwd } : {}),
       ...(launch?.capabilitySelection ? { capabilitySelection: launch.capabilitySelection } : {}),
       ...(launch?.allowedTools !== undefined ? { allowedTools: launch.allowedTools } : {}),

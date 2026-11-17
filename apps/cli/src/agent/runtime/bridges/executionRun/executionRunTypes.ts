@@ -43,6 +43,8 @@ export type ExecutionRunNativeOfferedModelReader = (request: Readonly<{
 }>, signal?: AbortSignal) => Promise<AgentProbeModel | undefined>;
 
 export type ExecutionRunManagerStartParams = Readonly<{
+  /** Original nonsecret Review output choice, independent of the reviewer's own input. */
+  reviewOutputSelection?: import('@happier-dev/protocol/reviews/reviewNarration').ReviewOutputSelection | null;
   /** Existing Account Voice invocation admitted by the signed Action front door; live only. */
   actionInvocation?: import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1').ExternalActionRequesterInvocationBaseV1;
   /** Host-only caller lifetime for pending Voice initialization; detached after start accepts. */
@@ -238,6 +240,7 @@ export type ExecutionRunState = Readonly<{
    * env values, or closures. Dev materializes the selection daemon-side (fail-closed) at resume.
    */
   launch?: Readonly<{
+    reviewOutputSelection?: ExecutionRunManagerStartParams['reviewOutputSelection'];
     selectionSource?: 'explicit' | 'inherited' | 'independent' | 'retained';
     cwd?: string;
     capabilitySelection?: SessionCapabilitySelectionV1;

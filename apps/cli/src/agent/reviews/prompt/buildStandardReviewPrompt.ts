@@ -145,9 +145,15 @@ export function buildStandardReviewPrompt(params: Readonly<{ instructions: strin
     ].filter((line) => line.length > 0).join('\n');
   }
   const scopeBlock = buildReviewScopeGuidanceBlock(params.intentInput);
+  const input = params.intentInput && typeof params.intentInput === 'object' ? params.intentInput : {};
+  const previousRound = 'previousRoundContext' in input && input.previousRoundContext !== null
+    && input.previousRoundContext !== undefined
+    ? `Previous review round and findings (historical context; inspect the current scope again):\n${JSON.stringify(input.previousRoundContext)}`
+    : null;
   return [
     params.instructions,
     scopeBlock,
+    previousRound,
     buildReviewGuidanceBlock(),
   ].filter((line) => typeof line === 'string' && line.length > 0).join('\n\n');
 }

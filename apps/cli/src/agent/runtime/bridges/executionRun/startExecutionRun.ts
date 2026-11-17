@@ -685,6 +685,8 @@ async function startAdmittedExecutionRunInWorkspace(
       ? args.params.modelId.trim()
       : undefined;
   const launch = {
+    ...(args.params.reviewOutputSelection !== undefined
+      ? { reviewOutputSelection: args.params.reviewOutputSelection } : {}),
     selectionSource: childSelection.selectionSource,
     ...(args.params.cwd ? { cwd: args.params.cwd } : {}),
     ...(args.params.capabilitySelection ? { capabilitySelection: args.params.capabilitySelection } : {}),

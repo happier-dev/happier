@@ -50,6 +50,7 @@ import { PluginSourceCustodyV1Schema } from '../../plugins/runtime/sourceCustody
 import { AgentSessionToolPolicyShapeV1 } from '../../runtime/permissionIntentV1.js';
 import { ApprovalProfileIdV1Schema } from '../../actions/approvalProfiles.js';
 import { ProjectSessionDefaultsContextSelectionV1Schema } from '../../projects/projectSessionDefaultsSelectionV1.js';
+import { ReviewOutputSelectionSchema } from '../../reviews/reviewNarration.js';
 
 export const ExecutionRunTeamCredentialSessionBindingConsentV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -429,6 +430,8 @@ export const ExecutionRunStartRequestBaseSchema = lazyZodSchema(() => z.looseObj
   resumeHandle: z.optional(z.nullable(ExecutionRunResumeHandleSchema)),
   replay: z.optional(ExecutionRunReplaySeedRequestSchema),
   intentInput: z.optional(z.unknown()),
+  /** Nonsecret original Review output choice; separate from the reviewer's turn input. */
+  reviewOutputSelection: z.optional(z.nullable(ReviewOutputSelectionSchema)),
   /** Canonical host-owned structured input for the initial native turn. */
   structuredInput: zMini.optional(HappierStructuredInputV1Schema),
   /** Stable host-authored identity for the initial native input. */

@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import type { BackendTargetRefV1, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import { ReviewFollowUpInputSchema } from '@happier-dev/protocol/reviews/reviewFollowUp';
+import { ReviewNativeNewRoundInputV1Schema } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
+import { REVIEW_NEW_ROUND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ReviewTriageOverlaySchema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
 import { isExecutionRunActive } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
@@ -31,6 +33,7 @@ import type {
 import type { ReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
 import { readRetainedReviewFindings } from '@/agent/reviews/normalize/readRetainedReviewFindings';
 import { readExecutionRunErrorCode } from './errors';
+import { resolveExecutionRunResumeBackendOptions } from './resolveExecutionRunResumeBackendOptions';
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -90,24 +93,70 @@ export async function applyExecutionRunAction(args: Readonly<{
       : { ok: false, errorCode: 'execution_run_host_action_unavailable', error: 'Review narration host services are unavailable' };
   }
 
-  if (run.intent === 'review' && String(args.params.actionId ?? '').trim() === 'review.follow_up') {
+  if (run.intent === 'review' && (args.params.actionId === 'review.follow_up' || args.params.actionId === REVIEW_NEW_ROUND_ACTION_ID_V1)) {
     // This stays runtime-owned because follow-up orchestration needs the live run and
     // startRun/retention plumbing, not just a pure profile transform.
     const current = projectExecutionRunPublicState(run, args.controllers.get(args.runId) ?? null);
     if (isExecutionRunActive(current) || current.lifecycle?.state === 'recovering') {
       return { ok: false, errorCode: 'execution_run_busy', error: 'The review is still running or retiring' };
     }
-    if (run.status === 'cancelled' || run.status === 'failed' || run.status === 'timeout') {
-      return { ok: false, errorCode: 'review_follow_up_ended', error: 'The review ended without a resumable result' };
+    const newRound = args.params.actionId === REVIEW_NEW_ROUND_ACTION_ID_V1
+      ? ReviewNativeNewRoundInputV1Schema.safeParse(args.params.input ?? {}) : null;
+    if (newRound && !newRound.success) {
+      return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid new-round input' };
     }
-    // A live controller owns its conversation directly. A provider resume handle
-    // is needed only when that controller has gone away.
-    const lifecycle = resolveExecutionRunLifecycle(run, args.controllers.get(args.runId) ?? null);
-    if (run.retentionPolicy !== 'resumable' || lifecycle.unavailableReason === 'not_resumable') {
-      return { ok: false, errorCode: 'review_follow_up_not_resumable', error: 'The review was not retained for follow-up' };
+    const continueRetained = !newRound || (newRound.success && !newRound.data.fresh && run.retentionPolicy === 'resumable');
+    if (continueRetained) {
+      if (run.status === 'cancelled' || run.status === 'failed' || run.status === 'timeout') {
+        return { ok: false, errorCode: 'review_follow_up_ended', error: 'The review ended without a resumable result' };
+      }
+      // A live controller owns its conversation directly. A provider resume handle
+      // is needed only when that controller has gone away.
+      const lifecycle = resolveExecutionRunLifecycle(run, args.controllers.get(args.runId) ?? null);
+      if (run.retentionPolicy !== 'resumable' || lifecycle.unavailableReason === 'not_resumable') {
+        return { ok: false, errorCode: 'review_follow_up_not_resumable', error: 'The review was not retained for follow-up' };
+      }
+      if (lifecycle.projection.state !== 'current' && lifecycle.projection.state !== 'recoverable' && lifecycle.projection.state !== 'recoverable_with_input') {
+        return { ok: false, errorCode: 'review_follow_up_resume_unavailable', error: 'The retained reviewer session is unavailable' };
+      }
     }
-    if (lifecycle.projection.state !== 'current' && lifecycle.projection.state !== 'recoverable' && lifecycle.projection.state !== 'recoverable_with_input') {
-      return { ok: false, errorCode: 'review_follow_up_resume_unavailable', error: 'The retained reviewer session is unavailable' };
+
+    if (newRound?.success) {
+      if (!args.reviewComments) return { ok: false, errorCode: 'review_record_unavailable', error: 'Review records are unavailable' };
+      let prepared: Awaited<ReturnType<ReviewRunCommentService['prepareNewRound']>>;
+      try { prepared = await args.reviewComments.prepareNewRound(run); }
+      catch (error) {
+        return { ok: false, errorCode: readExecutionRunErrorCode(error) ?? 'action_failed',
+          error: error instanceof Error ? error.message : 'Review round preparation failed' };
+      }
+      const { start: retainedStart, ...selection } = resolveExecutionRunResumeBackendOptions({ run });
+      const previousInput = run.intentInput && typeof run.intentInput === 'object' ? run.intentInput : {};
+      const previousRoundContext = {
+        reviewRound: 'reviewRound' in previousInput ? previousInput.reviewRound : null,
+        reviewFindings: newRound.data.fresh ? null : readRetainedReviewFindings(run),
+      };
+      try {
+        const started = await args.startRun({ ...retainedStart, ...selection,
+          sessionId: run.sessionId, intent: 'review', backendTarget: run.backendTarget,
+          instructions: run.instructions,
+          intentInput: { ...((run.intentInput && typeof run.intentInput === 'object') ? run.intentInput : {}),
+            ...prepared, previousRoundContext, reviewRoundSettlement: 'execution' },
+          ...(run.runtimeSettings?.accountSettings ? { accountSettings: run.runtimeSettings.accountSettings } : {}),
+          ...(run.display ? { display: run.display } : {}),
+          permissionMode: args.effectiveCallerPermissionMode ?? run.permissionMode,
+          approvalProfileId: run.approvalProfileId ?? null,
+          ...(args.causalPermissionAuthority ? { causalPermissionAuthority: args.causalPermissionAuthority } : {}),
+          retentionPolicy: run.retentionPolicy, runClass: run.runClass, ioMode: run.ioMode,
+          ...(continueRetained ? (run.resumeHandle ? { resumeHandle: run.resumeHandle } : {}) : { resumeHandle: null }),
+          parentRunId: run.runId,
+        });
+        return { ok: true, result: { ...started, reviewRound: prepared.reviewRound,
+          ...(prepared.comparisonId ? { comparisonId: prepared.comparisonId } : {}) } };
+      } catch (error) {
+        await args.reviewComments.failUnstartedRound(prepared.reviewRound);
+        return { ok: false, errorCode: readExecutionRunErrorCode(error) ?? 'action_failed',
+          error: error instanceof Error ? error.message : 'Review launch failed' };
+      }
     }
 
     const parsed = ReviewFollowUpInputSchema.safeParse(args.params.input ?? {});

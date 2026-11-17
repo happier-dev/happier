@@ -1,13 +1,42 @@
-import { createReviewRecordPortV1, type ReviewArtifactTransportV1 } from '../reviews/reviewArtifactV1.js';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor';
+import { createActionExecutor as createCoreActionExecutor, type ActionExecutorDeps } from './actionExecutor';
 import type { AgentStartContextV1 } from '../account/settings/admitAgentStartV1';
 import { ActionIdSchema } from './actionIds';
 import { projectActionWorkflowSelectionInputV1 } from './executor/agentStartAdmission';
 import { ExecutionRunStartRequestSchema } from '../execution/runs/startRequest';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1';
 import { buildAcpConfigOptionOverridesV1 } from '../sessions/metadata/metadataOverridesV1';
+import { createReviewRecordPortV1, type ReviewArtifactTransportV1, type ReviewRecordPortV1 } from '../reviews/reviewArtifactV1.js';
+import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.testkit.js';
+import { ReviewStartInputSchema, reviewReviewerIdForSelectionV1 } from '../reviews/reviewStart.js';
+import { dispatchReviewDispatch2 } from './executor/review/dispatch.js';
+import { startExecutionRunWithSelectionV1 } from './executor/executionRuns.js';
+
+function createActionExecutor(deps: ActionExecutorDeps) {
+  const records = createInMemoryReviewRecordPortV1();
+  const effectiveDeps = { reviewRecords: () => records, ...deps };
+  const core = createCoreActionExecutor(effectiveDeps);
+  return { ...core, execute: async (...args: Parameters<typeof core.execute>) => {
+    const [actionId, input, context = {}] = args;
+    if (actionId !== 'review.start' || !input || typeof input !== 'object' || !('reviewRound' in input)) return core.execute(...args);
+    // Native leaf controls exercise dispatch after the durable round was admitted.
+    const data = ReviewStartInputSchema.parse(input);
+    const result = await dispatchReviewDispatch2({ actionId, parsed: { data }, data, deps: effectiveDeps, ctx: context,
+      workflowSessionScope: null, executeHostChild: (childId, childInput, childContext) => core.execute(childId, childInput, childContext),
+      startExecutionRunWithSelection: (...nativeArgs) => startExecutionRunWithSelectionV1(effectiveDeps, ...nativeArgs) });
+    if (!result) throw new Error('Expected native Review dispatch');
+    return result;
+  } };
+}
+
+// These controls exercise native leaves of an already admitted historical graph.
+// New multi-reviewer authoring is covered at the workflow composition boundary.
+async function admitNativeReviewRound(records: ReviewRecordPortV1, reviewId = 'native-leaf-review') {
+  return records.start({ reviewId, title: 'Native reviewer options', subjectKind: 'comparison',
+    sourceKind: 'workflow', comparisonId: 'comparison-1',
+    reviewerIds: [reviewReviewerIdForSelectionV1(0), reviewReviewerIdForSelectionV1(1)], startedAt: 1 });
+}
 
 const workflowStartContext: AgentStartContextV1 = {
   caller: { kind: 'originless', runId: 'workflow-1', runDepth: 0 },
@@ -16,6 +45,41 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
+  it.each([
+    { runCreation: 'noRunCreated', cancel: false, expectedState: 'failed' },
+    { runCreation: 'outcomeUnknown', cancel: false, expectedState: 'running' },
+    { runCreation: 'noRunCreated', cancel: true, expectedState: 'cancelled' },
+  ] as const)('keeps the durable round consistent with $runCreation launch evidence (cancel=$cancel)', async ({ runCreation, cancel, expectedState }) => {
+    const controller = new AbortController();
+    let row: Awaited<ReturnType<ReviewArtifactTransportV1['read']>> = null;
+    let reviewId = '';
+    const records = createReviewRecordPortV1({
+      read: async () => row,
+      create: async input => {
+        reviewId = input.artifactId;
+        row = { ...input, revision: { headerVersion: 1, bodyVersion: 1 } };
+        return row;
+      },
+      update: async input => {
+        const revision = { headerVersion: input.expectedRevision.headerVersion + 1, bodyVersion: input.expectedRevision.bodyVersion + 1 };
+        row = { ...input, revision };
+        return { ok: true, revision };
+      },
+    });
+    const executor = createActionExecutor({
+      reviewRecords: () => records,
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      executionRunStart: async () => {
+        if (cancel) controller.abort();
+        throw Object.assign(new Error('Launch acknowledgement unavailable'), {
+          details: { executionRunStart: { v: 1, runCreation } },
+        });
+      },
+    } as ActionExecutorDeps);
+    const result = await executor.execute('review.start', { sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex' }], comparisonId: 'comparison-1', instructions: 'Review.' }, { surface: 'ui', signal: controller.signal });
+    if (!cancel) expect(result).toMatchObject({ ok: true, result: { results: [{ ok: false }] } });
+    expect((await records.read(reviewId))?.rounds[0]?.state).toBe(expectedState);
+  });
   it('admits a durable Review before starting reviewers, including clean results', async () => {
     let row: Awaited<ReturnType<ReviewArtifactTransportV1['read']>> = null;
     const records = createReviewRecordPortV1({
@@ -36,9 +100,79 @@ describe('createActionExecutor (review.start)', () => {
         return { runId: 'clean-run', callId: 'call', sidechainId: 'call' };
       },
     } as ActionExecutorDeps);
-    const result = await executor.execute('review.start', { sessionId: 's1', engineIds: ['codex'], instructions: 'Review.' }, { surface: 'ui' });
+    const result = await executor.execute('review.start', { sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex' }], comparisonId: 'comparison-1', instructions: 'Review.' }, { surface: 'ui' });
     expect(result).toMatchObject({ ok: true, result: { reviewRound: binding, results: [{ ok: true }] } });
     expect(binding).toMatchObject({ reviewId: expect.any(String), roundOrdinal: 1 });
+  });
+  it('consumes each review profile retention from the inventory instead of forcing follow-up support', async () => {
+    const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
+    const records = createInMemoryReviewRecordPortV1();
+    const reviewRound = await admitNativeReviewRound(records);
+    const executor = createActionExecutor({ reviewRecords: () => records,
+      executionRunStart: async (_sessionId, input) => {
+        requests.push(ExecutionRunStartRequestSchema.parse(input));
+        return { runId: `review-${requests.length}`, callId: 'call', sidechainId: 'call' };
+      },
+      reviewEnginesList: async () => ({ items: [
+        { value: 'codex', label: 'Codex', retentionPolicy: 'resumable' },
+        { value: 'coderabbit', label: 'CodeRabbit', retentionPolicy: 'ephemeral' },
+      ] }),
+    } as ActionExecutorDeps);
+    expect(await executor.execute('review.start', {
+      sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'coderabbit' }], reviewRound, comparisonId: 'comparison-1', instructions: 'Review.',
+    }, { surface: 'ui' })).toMatchObject({ ok: true, result: { results: [{ ok: true }, { ok: true }] } });
+    expect(requests.map(request => request.retentionPolicy)).toEqual(['resumable', 'ephemeral']);
+  });
+  it('uses the explicitly selected profile retention instead of the same Agent default', async () => {
+    const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
+    const profileSourceCustody = { kind: 'managed', immutableGenerationId: 'one-shot-review', installSource: 'archive' } as const;
+    const executor = createActionExecutor({
+      executionRunStart: async (_sessionId, input) => {
+        requests.push(ExecutionRunStartRequestSchema.parse(input));
+        return { runId: 'one-shot', callId: 'call', sidechainId: 'call' };
+      },
+      reviewEnginesList: async () => ({
+        items: [{ value: 'codex', label: 'Codex', retentionPolicy: 'resumable' }],
+        selectionItems: [{ value: 'codex', label: 'One shot', profileId: 'one-shot-review', retentionPolicy: 'ephemeral' }],
+      }),
+    } as ActionExecutorDeps);
+    expect(await executor.execute('review.start', {
+      sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex', profileId: 'one-shot-review', profileSourceCustody }],
+      comparisonId: 'comparison-1', instructions: 'Review.',
+    }, { surface: 'ui' })).toMatchObject({ ok: true });
+    expect(requests.map(request => request.retentionPolicy)).toEqual(['ephemeral']);
+  });
+  it.each([false, true])('starts separate narration for selected ephemeral or duplicate reviewer instances (duplicate: %s)', async duplicate => {
+    const records = createInMemoryReviewRecordPortV1();
+    const reviewRound = await admitNativeReviewRound(records);
+    const starts: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
+    const narrationInputs: unknown[] = [];
+    const profileSourceCustody = { kind: 'managed', immutableGenerationId: 'selected-review', installSource: 'archive' } as const;
+    const executor = createActionExecutor({ reviewRecords: () => records,
+      reviewEnginesList: async () => ({
+        items: [{ value: 'codex', label: 'Default', retentionPolicy: 'resumable', capabilities: { structuredNarration: true } }],
+        selectionItems: [{ value: 'codex', label: 'Selected', profileId: 'selected-profile',
+          retentionPolicy: duplicate ? 'resumable' : 'ephemeral', capabilities: { structuredNarration: true } }],
+      }),
+      executionRunStart: async (_sessionId, input) => {
+        starts.push(ExecutionRunStartRequestSchema.parse(input));
+        return { runId: `review-${starts.length}`, callId: `call-${starts.length}`, sidechainId: `call-${starts.length}` };
+      },
+      executionRunAction: async (_sessionId, input) => {
+        narrationInputs.push(input);
+        return { runId: 'separate-narrator', mode: 'seeded_narrator', state: 'collecting' };
+      },
+    } as ActionExecutorDeps);
+    const reviewer = { kind: 'engine' as const, engineId: 'codex', profileId: 'selected-profile', profileSourceCustody };
+    expect(await executor.execute('review.start', { sessionId: 's1', reviewRound,
+      reviewers: duplicate ? [reviewer, reviewer] : [reviewer], instructions: 'Review.',
+      comparisonId: 'comparison-1', outputs: ['walkthrough'], narrator: { engineId: 'codex' },
+    }, { surface: 'ui' })).toMatchObject({ ok: true, result: { narration: { runId: 'separate-narrator' } } });
+    expect(starts.map(start => start.runClass)).toEqual(duplicate ? ['bounded', 'bounded'] : ['bounded']);
+    expect(starts.map(start => start.retentionPolicy)).toEqual(duplicate ? ['resumable', 'resumable'] : ['ephemeral']);
+    expect(narrationInputs).toEqual([{ runId: 'review-1', actionId: 'review.walkthrough', input: {
+      reviewRunIds: duplicate ? ['review-1', 'review-2'] : ['review-1'], comparisonId: 'comparison-1', narrator: { engineId: 'codex' },
+    } }]);
   });
   it.each([undefined, 'agentDefault'] as const)('preserves Session Review inheritance and explicit Account-default choice (%s)', async childSelection => {
     const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
@@ -46,7 +180,9 @@ describe('createActionExecutor (review.start)', () => {
       updatedAt: 1,
       overrides: { reasoning_effort: { updatedAt: 1, value: 'low' } },
     });
-    const executor = createActionExecutor({
+    const records = createInMemoryReviewRecordPortV1();
+    const reviewRound = await admitNativeReviewRound(records);
+    const executor = createActionExecutor({ reviewRecords: () => records,
       // The machine transport is the boundary; the Action normalization, fanout
       // and receiver schema stay real so dropping the field changes the result.
       executionRunStart: async (_sessionId, input) => {
@@ -57,7 +193,7 @@ describe('createActionExecutor (review.start)', () => {
       reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }, { value: 'claude', label: 'Claude' }] }),
     } as ActionExecutorDeps);
     expect(await executor.execute('review.start', {
-      sessionId: 's1', engineIds: ['codex', 'claude'], instructions: 'Review.',
+      sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'claude' }], reviewRound, comparisonId: 'comparison-1', instructions: 'Review.',
       sessionConfigOptionOverrides,
       ...(childSelection ? { childSelection } : {}),
     }, { surface: 'ui' })).toMatchObject({ ok: true, result: { results: [{ ok: true }, { ok: true }] } });
@@ -86,7 +222,7 @@ describe('createActionExecutor (review.start)', () => {
       reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
     } as ActionExecutorDeps);
     const input = projectActionWorkflowSelectionInputV1('review.start', {
-      sessionId: 's1', engineIds: ['codex'], instructions: 'Review.',
+      sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex' }], comparisonId: 'comparison-1', instructions: 'Review.',
     }, { connectedServices: selected === 'native' ? null : selected === 'openai-codex:group:pool-X'
       ? { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': {
           source: 'connected', selection: 'group', groupId: 'pool-X',
@@ -106,11 +242,14 @@ describe('createActionExecutor (review.start)', () => {
       requests.push(ExecutionRunStartRequestSchema.parse(input));
       return { runId: 'review-1', callId: 'review-call', sidechainId: 'review-call' };
     };
-    const executor = createActionExecutor({ executionRunStart,
+    const records = createInMemoryReviewRecordPortV1();
+    const reviewRound = await admitNativeReviewRound(records);
+    const executor = createActionExecutor({ reviewRecords: () => records, executionRunStart,
       reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }, { value: 'claude', label: 'Claude' }] }),
     } as ActionExecutorDeps);
-    const input = { sessionId: 's1', engineIds: ['codex', 'claude'], instructions: 'Review.',
-      connectedServices: 'native', connectedServicesByBackendTargetKey: { codex: 'openai-codex:group:pool-X' } };
+    const input = { sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex', connectedServices: 'openai-codex:group:pool-X' },
+        { kind: 'engine', engineId: 'claude', connectedServices: 'native' }], reviewRound, comparisonId: 'comparison-1', instructions: 'Review.',
+      connectedServices: 'native' };
     expect(await executor.execute('review.start', input, { surface: 'ui' })).toMatchObject({ ok: true });
     expect(requests).toMatchObject([
       { connectedServices: { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': {
@@ -120,7 +259,8 @@ describe('createActionExecutor (review.start)', () => {
     ]);
     requests.length = 0;
     expect(await executor.execute('review.start', { ...input,
-      connectedServicesByBackendTargetKey: { codex: 'native', claude: 'unknown-service:group:pool-X' },
+      reviewers: [{ kind: 'engine', engineId: 'codex', connectedServices: 'native' },
+        { kind: 'engine', engineId: 'claude', connectedServices: 'unknown-service:group:pool-X' }],
     }, { surface: 'ui' })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
     expect(requests).toEqual([]);
   });
@@ -137,7 +277,9 @@ describe('createActionExecutor (review.start)', () => {
         cwd: '/repo', resultId: 'result-1', expectedRevision: 2, output: 'walkthrough', stopIds: ['stop-1'], instructions: 'Explain selected finding.',
       } } } } : { ok: true, result: { runId: 'narrator-1', state: 'collecting' } });
     const refinements: unknown[] = [];
-    const executor = createActionExecutor({ executionRunStart, executionRunAction,
+    const records = createInMemoryReviewRecordPortV1();
+    const reviewRound = await admitNativeReviewRound(records);
+    const executor = createActionExecutor({ reviewRecords: () => records, executionRunStart, executionRunAction,
       executionRunCheckProtocolV2: async () => ({ ok: true }), reviewEnginesList: async () => narrationInventory,
       scmActionExecute: async ({ input, context }) => {
         refinements.push({ input, sessionId: context.defaultSessionId, machineId: context.executionRunTargetMachineId });
@@ -146,7 +288,7 @@ describe('createActionExecutor (review.start)', () => {
     } as ActionExecutorDeps);
     const context = { surface: 'ui' as const, defaultSessionId: 'unrelated-session', serverId: 'home-1',
       externalActionTarget: { kind: 'machine' as const, machineId: 'machine-1', project: { machineId: 'machine-1', directory: '/repo' } } };
-    const started = await executor.execute('review.start', { target: { kind: 'detached' }, cwd: '/untrusted-root', engineIds: ['codex', 'claude'],
+    const started = await executor.execute('review.start', { target: { kind: 'detached' }, cwd: '/untrusted-root', reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'claude' }], reviewRound,
       instructions: 'Review.', outputs: ['walkthrough'], comparisonId: 'comparison-1' }, context);
     expect(started).toMatchObject({ ok: true, result: { sessionId: null, narration: { runId: 'narrator-1' } } });
     expect(executionRunStart.mock.calls[0]).toMatchObject([null, { cwd: '/repo' }, { targetMachineId: 'machine-1' }]);
@@ -174,7 +316,7 @@ describe('createActionExecutor (review.start)', () => {
       { value: 'codex' }, { value: 'claude' },
     ] } });
     const reviewers = await executor.execute('action.options.resolve', {
-      actionId: 'review.start', fieldPath: 'engineIds', sessionId: 's1',
+      actionId: 'review.start', fieldPath: 'reviewers', sessionId: 's1',
     }, { surface: 'ui' });
     expect(reviewers).toMatchObject({ ok: true, result: { options: [
       { value: 'codex' }, { value: 'claude' }, { value: 'coderabbit' },
@@ -185,7 +327,7 @@ describe('createActionExecutor (review.start)', () => {
     const executionRunAction = vi.fn<ActionExecutorDeps['executionRunAction']>(async () => ({}));
     const executor = createActionExecutor({ executionRunStart, executionRunAction,
       reviewEnginesList: async () => narrationInventory } as ActionExecutorDeps);
-    expect(await executor.execute('review.start', { sessionId: 's1', engineIds: ['codex'], instructions: 'Review.',
+    expect(await executor.execute('review.start', { sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review.',
       outputs: ['walkthrough'], comparisonId: 'comparison-1' }, { surface: 'ui' })).toMatchObject({
       ok: true, result: { narration: { runId: 'review-1', state: 'collecting' } },
     });
@@ -202,9 +344,11 @@ describe('createActionExecutor (review.start)', () => {
     const executionRunAction = vi.fn<ActionExecutorDeps['executionRunAction']>(async () => ({ ok: true, data: { ok: true, result: {
       runId: 'narrator-1', comparisonId: 'comparison-1', mode: 'seeded_narrator', state: 'collecting',
     } } }));
-    const executor = createActionExecutor({ executionRunStart, executionRunAction,
+    const records = createInMemoryReviewRecordPortV1();
+    const reviewRound = await admitNativeReviewRound(records);
+    const executor = createActionExecutor({ reviewRecords: () => records, executionRunStart, executionRunAction,
       reviewEnginesList: async () => narrationInventory } as ActionExecutorDeps);
-    const result = await executor.execute('review.start', { sessionId: 's1', engineIds: ['codex', 'claude'], instructions: 'Review.',
+    const result = await executor.execute('review.start', { sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'claude' }], reviewRound, instructions: 'Review.',
       outputs: ['walkthrough'], comparisonId: 'comparison-1' }, { surface: 'ui' });
     expect(result).toMatchObject({ ok: true, result: { narration: { runId: 'narrator-1', state: 'collecting' } } });
     expect(executionRunStart.mock.calls.every((call) => call[1].runClass === 'bounded')).toBe(true);
@@ -222,17 +366,17 @@ describe('createActionExecutor (review.start)', () => {
     } }));
     const executor = createActionExecutor({ executionRunStart, executionRunAction,
       reviewEnginesList: async () => narrationInventory } as ActionExecutorDeps);
-    expect(await executor.execute('review.start', { sessionId: 's1', engineIds: ['codex'], instructions: 'Review.',
+    expect(await executor.execute('review.start', { sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review.',
       modelId: 'review-model', outputs: ['walkthrough'], comparisonId: 'comparison-1',
       narrator: { engineId: 'codex', modelId: 'narration-model' } }, { surface: 'ui' }))
       .toMatchObject({ ok: true, result: { narration: { runId: 'narrator-1' } } });
-    expect(executionRunStart.mock.calls[0]?.[1]).toMatchObject({ runClass: 'bounded', modelId: 'review-model' });
+    expect(executionRunStart.mock.calls[0]?.[1]).toMatchObject({ runClass: 'bounded', modelId: 'review-model',
+      reviewOutputSelection: { outputs: ['walkthrough'], narrator: { engineId: 'codex', modelId: 'narration-model' } } });
     expect(executionRunAction.mock.calls[0]?.[1].input).toMatchObject({ narrator: { engineId: 'codex', modelId: 'narration-model' } });
   });
   it.each([
-    { engineIds: ['codex'] },
-    { engineIds: ['coderabbit'], comparisonId: 'comparison-1' },
-    { engineIds: ['codex'], comparisonId: 'comparison-1', narrator: { engineId: 'coderabbit' } },
+    { reviewers: [{ kind: 'engine', engineId: 'coderabbit' }], comparisonId: 'comparison-1' },
+    { reviewers: [{ kind: 'engine', engineId: 'codex' }], comparisonId: 'comparison-1', narrator: { engineId: 'coderabbit' } },
   ])('rejects invalid narration before any reviewer starts: %j', async (selection) => {
     const executionRunStart = vi.fn<ActionExecutorDeps['executionRunStart']>(async () => ({}));
     const executor = createActionExecutor({ executionRunStart, reviewEnginesList: async () => narrationInventory } as ActionExecutorDeps);
@@ -242,10 +386,12 @@ describe('createActionExecutor (review.start)', () => {
   });
   it('keeps failed reviewer launches truthful and does not create narration without a confirmed run', async () => {
     const executionRunAction = vi.fn<ActionExecutorDeps['executionRunAction']>(async () => ({}));
-    const executor = createActionExecutor({ executionRunAction,
+    const records = createInMemoryReviewRecordPortV1();
+    const reviewRound = await admitNativeReviewRound(records);
+    const executor = createActionExecutor({ reviewRecords: () => records, executionRunAction,
       executionRunStart: async () => ({ ok: false, errorCode: 'engine_failed', error: 'Engine failed' }),
       reviewEnginesList: async () => narrationInventory } as ActionExecutorDeps);
-    expect(await executor.execute('review.start', { sessionId: 's1', engineIds: ['codex', 'claude'], instructions: 'Review.',
+    expect(await executor.execute('review.start', { sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'claude' }], reviewRound, instructions: 'Review.',
       outputs: ['walkthrough'], comparisonId: 'comparison-1' }, { surface: 'ui' })).toMatchObject({
       ok: true, result: { results: [{ ok: false }, { ok: false }], narration: { state: 'failed' } },
     });
@@ -277,7 +423,9 @@ describe('createActionExecutor (review.start)', () => {
   });
   it('stamps one fresh group on every engine Run, including detached Workflow fanout', async () => {
     const starts: Array<Record<string, unknown>> = [];
-    const executor = createActionExecutor({
+    const records = createInMemoryReviewRecordPortV1();
+    const reviewRound = await admitNativeReviewRound(records);
+    const executor = createActionExecutor({ reviewRecords: () => records,
       executionRunStart: async (_sessionId, input) => {
         starts.push(input);
         return { runId: `run-${starts.length}`, callId: `call-${starts.length}`, sidechainId: `call-${starts.length}` };
@@ -285,9 +433,9 @@ describe('createActionExecutor (review.start)', () => {
       executionRunCheckProtocolV2: async () => ({ ok: true }),
       reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }, { value: 'claude', label: 'Claude' }] }),
     } as ActionExecutorDeps);
-    const input = { engineIds: ['codex', 'claude'], instructions: 'Review.', display: { groupId: 'caller-forged' } };
+    const input = { reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'claude' }], reviewRound, comparisonId: 'comparison-1', instructions: 'Review.', display: { groupId: 'caller-forged' } };
     await executor.execute('review.start', { ...input, sessionId: 's1' }, { surface: 'ui' });
-    await executor.execute('review.start', input, {
+    await executor.execute('review.start', { ...input, reviewRound: await admitNativeReviewRound(records, 'other-native-review') }, {
       surface: 'agent', defaultSessionId: 'origin-session', executionRunTargetMachineId: 'machine-1',
       agentStartContext: workflowStartContext,
       externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: '/repo' } },
@@ -304,13 +452,15 @@ describe('createActionExecutor (review.start)', () => {
   });
   it.each([true, false])('forwards caller notification %s to every launched review engine', async (notifyParentOnCompletion) => {
     const executionRunStart = vi.fn<ActionExecutorDeps['executionRunStart']>(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
-    const executor = createActionExecutor({
+    const records = createInMemoryReviewRecordPortV1();
+    const reviewRound = await admitNativeReviewRound(records);
+    const executor = createActionExecutor({ reviewRecords: () => records,
       executionRunStart,
       reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }, { value: 'claude', label: 'Claude' }] }),
     } as ActionExecutorDeps);
 
     const result = await executor.execute('review.start', {
-      sessionId: 's1', engineIds: ['codex', 'claude'], instructions: 'Review this.', notifyParentOnCompletion,
+      sessionId: 's1', reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'claude' }], reviewRound, comparisonId: 'comparison-1', instructions: 'Review this.', notifyParentOnCompletion,
     }, { surface: 'ui', defaultSessionId: 's1' });
 
     expect(result.ok).toBe(true);
@@ -331,7 +481,7 @@ describe('createActionExecutor (review.start)', () => {
       reviewEnginesList,
     } as ActionExecutorDeps);
     const result = await executor.execute('review.start', {
-      ...(target && 'sessionId' in target ? target : target ? { target } : {}), engineIds: ['codex'], instructions: 'Review the workspace.',
+      ...(target && 'sessionId' in target ? target : target ? { target } : {}), reviewers: [{ kind: 'engine', engineId: 'codex' }], comparisonId: 'comparison-1', instructions: 'Review the workspace.',
       cwd: '/caller/other-checkout',
       workflowRunId: 'forged-input-id',
     }, {
@@ -344,7 +494,7 @@ describe('createActionExecutor (review.start)', () => {
       } },
     });
     expect(result).toMatchObject({ ok: true, result: { intent: 'review', sessionId: null } });
-    expect(reviewEnginesList).toHaveBeenCalledWith({ sessionId: null, machineId: 'machine-1', includeDisabled: false });
+    expect(reviewEnginesList.mock.calls[0]?.[0]).toEqual({ sessionId: null, machineId: 'machine-1', includeDisabled: false });
     expect(executionRunStart).toHaveBeenCalledWith(null, expect.objectContaining({ intent: 'review', cwd: '/repo' }),
       expect.objectContaining({ workflowRunId: 'workflow-1', targetMachineId: 'machine-1', actionRequestId: 'review-request',
         actionCaller: expect.objectContaining({ kind: 'workflowRun', runId: 'workflow-1' }) }));
@@ -361,7 +511,7 @@ describe('createActionExecutor (review.start)', () => {
 
     await expect(executor.execute('review.start', {
       sessionId: 's1',
-      engineIds: ['codex'],
+      reviewers: [{ kind: 'engine', engineId: 'codex' }], comparisonId: 'comparison-1',
       instructions: 'Review this.',
       runLocation: 'current_session',
       secretReferenceOverlay: {
@@ -370,7 +520,7 @@ describe('createActionExecutor (review.start)', () => {
       },
     }, { surface: 'ui', defaultSessionId: 's1' })).resolves.toMatchObject({
       ok: true,
-      result: { results: [{ key: 'codex', ok: true, result: { runId: 'run-review' } }] },
+      result: { results: [{ key: reviewReviewerIdForSelectionV1(0), ok: true, result: { runId: 'run-review' } }] },
     });
     expect(executionRunCheckProtocolV2).toHaveBeenCalled();
     expect(executionRunStart).toHaveBeenCalledWith('s1', expect.objectContaining({
@@ -388,14 +538,14 @@ describe('createActionExecutor (review.start)', () => {
       'review.start',
       {
         sessionId: 's1',
-        engineIds: ['codex'],
+        reviewers: [{ kind: 'engine', engineId: 'codex' }], comparisonId: 'comparison-1',
         instructions: 'Review this.',
         runLocation: 'current_session',
       },
       { surface: 'ui', defaultSessionId: 's1' },
     )).resolves.toMatchObject({
       ok: true,
-      result: { results: [{ key: 'codex', ok: false }] },
+      result: { results: [{ key: reviewReviewerIdForSelectionV1(0), ok: false }] },
     });
   });
 
@@ -440,23 +590,23 @@ describe('createActionExecutor (review.start)', () => {
       'review.start',
       {
         sessionId: 's1',
-        engineIds: ['codex'],
+        reviewers: [{ kind: 'engine', engineId: 'codex' }], comparisonId: 'comparison-1',
         instructions: 'Review this.',
         runLocation: 'current_session',
         changeType: 'uncommitted',
         base: { kind: 'none' },
       },
       { surface: 'ui', defaultSessionId: 's1' },
-    )).resolves.toEqual({
+    )).resolves.toMatchObject({
       ok: true,
-      result: { intent: 'review', sessionId: 's1', results: [{ key: 'codex', ok: true, result: { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' } }] },
+      result: { intent: 'review', sessionId: 's1', results: [{ key: reviewReviewerIdForSelectionV1(0), ok: true, result: { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' } }] },
     });
 
     expect(executionRunStart).toHaveBeenCalledWith('s1', expect.objectContaining({
       intent: 'review', runClass: 'bounded',
       instructions: 'Review this.',
       backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-    }), {});
+    }), { approvalProfileTeamOrGroupDerived: false });
   });
 
   it('passes the clamped agent permission mode to current-session review Runs', async () => {
@@ -500,7 +650,7 @@ describe('createActionExecutor (review.start)', () => {
       'review.start',
       {
         sessionId: 's1',
-        engineIds: ['codex'],
+        reviewers: [{ kind: 'engine', engineId: 'codex' }], comparisonId: 'comparison-1',
         instructions: 'Review this.',
         runLocation: 'current_session',
         permissionMode: 'safe-yolo',
@@ -565,7 +715,7 @@ describe('createActionExecutor (review.start)', () => {
       'review.start' as any,
       {
         sessionId: 's1',
-        engineIds: [pluginAgentId],
+        reviewers: [{ kind: 'engine', engineId: pluginAgentId }], comparisonId: 'comparison-1',
         instructions: 'Review this.',
         permissionMode: 'read_only',
         changeType: 'committed',
@@ -584,7 +734,7 @@ describe('createActionExecutor (review.start)', () => {
         ioMode: 'streaming',
         intentInput: expect.objectContaining({ engineId: pluginAgentId }),
       }),
-      {},
+      { approvalProfileTeamOrGroupDerived: false },
     );
   });
 
@@ -597,19 +747,19 @@ describe('createActionExecutor (review.start)', () => {
     } as ActionExecutorDeps);
 
     const result = await executor.execute('review.start', {
-      sessionId: 's1', engineIds: [targetKey], instructions: 'Review this.',
+      sessionId: 's1', reviewers: [{ kind: 'engine', engineId: targetKey }], comparisonId: 'comparison-1', instructions: 'Review this.',
     }, { surface: 'ui', defaultSessionId: 's1' });
 
     expect(result).toMatchObject({
       ok: true,
-      result: { results: [{ key: targetKey, ok: true }] },
+      result: { results: [{ key: reviewReviewerIdForSelectionV1(0), ok: true }] },
     });
     expect(executionRunStart).toHaveBeenCalledWith('s1', expect.objectContaining({
       intent: 'review',
       backendTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' },
         definitionId: 'review-bot' },
       retentionPolicy: 'resumable',
-    }), {});
+    }), { approvalProfileTeamOrGroupDerived: false });
   });
 
   it('marks malformed execution-run start payloads as failed fanout items', async () => {
@@ -653,7 +803,7 @@ describe('createActionExecutor (review.start)', () => {
       'review.start' as any,
       {
         sessionId: 's1',
-        engineIds: ['coderabbit'],
+        reviewers: [{ kind: 'engine', engineId: 'coderabbit' }], comparisonId: 'comparison-1',
         instructions: 'Review this.',
         permissionMode: 'read_only',
         changeType: 'committed',
@@ -662,14 +812,14 @@ describe('createActionExecutor (review.start)', () => {
       { surface: 'ui', defaultSessionId: 's1' },
     );
 
-    expect(res).toEqual({
+    expect(res).toMatchObject({
       ok: true,
       result: {
         intent: 'review',
         sessionId: 's1',
         results: [
           {
-            key: 'coderabbit',
+            key: reviewReviewerIdForSelectionV1(0),
             ok: false,
             error: 'Unable to resolve a default base branch for CodeRabbit review.',
             details: { executionRunStart: { v: 1, runCreation: 'outcomeUnknown' } },
@@ -722,7 +872,7 @@ describe('createActionExecutor (review.start)', () => {
       'review.start' as any,
       {
         sessionId: 's1',
-        engineIds: ['coderabbit'],
+        reviewers: [{ kind: 'engine', engineId: 'coderabbit' }], comparisonId: 'comparison-1',
         instructions: 'Review this.',
         permissionMode: 'read_only',
         changeType: 'committed',
@@ -733,19 +883,19 @@ describe('createActionExecutor (review.start)', () => {
     );
 
     expect(executionRunStart).not.toHaveBeenCalled();
-    expect(reviewEnginesList).toHaveBeenCalledWith({
+    expect(reviewEnginesList.mock.calls[0]?.[0]).toEqual({
       sessionId: 's1',
       includeDisabled: false,
       scope: 'paths',
     });
-    expect(res).toEqual({
+    expect(res).toMatchObject({
       ok: true,
       result: {
         intent: 'review',
         sessionId: 's1',
         results: [
           {
-            key: 'coderabbit',
+            key: reviewReviewerIdForSelectionV1(0),
             ok: false,
             errorCode: 'review_engine_unavailable',
             error: 'review_engine_unavailable',

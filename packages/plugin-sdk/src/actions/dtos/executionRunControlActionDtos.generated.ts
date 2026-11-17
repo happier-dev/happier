@@ -99,6 +99,13 @@ export type ExecutionRunControlActionInputById = {
             summaryRunner?: unknown;
         };
         intentInput?: unknown;
+        reviewOutputSelection?: null | undefined | {
+            outputs: 'walkthrough'[];
+            narrator?: undefined | {
+                engineId: string;
+                modelId?: string | undefined;
+            };
+        };
         structuredInput?: undefined | {
             [x: string]: unknown;
             v?: 1 | undefined;
@@ -934,6 +941,13 @@ export type ExecutionRunControlActionInputById = {
                 summaryRunner?: unknown;
             };
             intentInput?: unknown;
+            reviewOutputSelection?: null | undefined | {
+                outputs: 'walkthrough'[];
+                narrator?: undefined | {
+                    engineId: string;
+                    modelId?: string | undefined;
+                };
+            };
             structuredInput?: undefined | {
                 [x: string]: unknown;
                 v?: 1 | undefined;
