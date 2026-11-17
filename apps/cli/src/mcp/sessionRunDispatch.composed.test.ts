@@ -239,7 +239,8 @@ it.each(['account_depth', 'account_agent', 'account_ceiling', 'policy_read_unava
         // The canonical environment guard immediately after policy preparation
         // keeps this regression independent of later launch/default resolution.
         const spawnLeaf = (profileId?: string) => executeSpawnSessionRequest({ options: { directory: h.cwd,
-          environmentVariables: { 'BAD=KEY': 'fixture' }, backendTarget: { kind: 'backend', backendId: 'codex' },
+          environmentVariables: profileId ? { FIXTURE: 'valid' } : { 'BAD=KEY': 'fixture' },
+          agentTarget: { kind: 'agent', identity },
           ...(profileId ? { profileId } : {}),
           requesterSessionBootstrap: workflowRequester.bootstrap },
           requesterSessionRuntimeContext: workflowRequester,
@@ -257,7 +258,8 @@ it.each(['account_depth', 'account_agent', 'account_ceiling', 'policy_read_unava
         expect.soft(profileReads).toBe(0);
         // An explicitly selected Launch Profile must still use its catalog and
         // refuse when that preparation cannot publish a current observation.
-        expect.soft(await spawnLeaf('unavailable-profile')).toMatchObject({ type: 'error',
+        const profileLeaf = await spawnLeaf('unavailable-profile');
+        expect.soft(profileLeaf, JSON.stringify(profileLeaf)).toMatchObject({ type: 'error',
           errorCode: SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE });
         expect.soft(profileReads).toBe(1);
       } finally { settingsChangeDuringProfileRead = false; }

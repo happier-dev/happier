@@ -62,10 +62,11 @@ it('keeps a passive bound Session watch on its saved Home and refuses a foreign 
     for (const serverId of ['local-profile', 'srv_watch_home']) {
       const lifetime = new AbortController();
       const snapshots: unknown[] = [];
-      expect(await executor.execute('wait', { target: { kind: 'session', serverId, sessionId },
+      const observed = await executor.execute('wait', { target: { kind: 'session', serverId, sessionId },
         condition: { kind: 'ready' } }, { signal: lifetime.signal,
-        onWaitSnapshot: snapshot => { snapshots.push(snapshot); lifetime.abort(); } }))
-        .toMatchObject({ ok: true, result: { disposition: 'cancelled' } });
+        onWaitSnapshot: snapshot => { snapshots.push(snapshot); lifetime.abort(); } });
+      expect(observed, JSON.stringify(observed))
+        .toMatchObject({ ok: false, errorCode: 'cancelled' });
       expect(snapshots).toEqual([expect.objectContaining({ awareness: expect.objectContaining({ sessionId, runtime: 'idle' }) })]);
     }
   });
