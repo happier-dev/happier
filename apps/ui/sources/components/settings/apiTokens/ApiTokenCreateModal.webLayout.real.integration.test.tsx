@@ -2,14 +2,18 @@
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { API_TOKEN_FULL_GRANT_V1} from '@happier-dev/protocol/auth/apiTokenGrant';
 import { AccountApiTokenSummaryV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 
 import { measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
 import { CustomModal } from '@/modal/components/CustomModal';
 import { ApiTokenCreateModal } from './ApiTokenCreateModal';
-import { createApiTokenSettingsController } from './apiTokenSettingsController';
+import {
+    apiTokenReadWireFixture,
+    createApiTokenSettingsControllerHarness,
+    disposeApiTokenSettingsControllerHarnesses,
+} from './apiTokenSettingsControllerTestHarness';
 
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
 vi.mock('react-native-reanimated', async () => {
@@ -17,14 +21,13 @@ vi.mock('react-native-reanimated', async () => {
     // real RNW layout instead of the renderer testkit's symbolic element names.
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
     const { View, ScrollView, Text } = await vi.importActual<typeof import('react-native-web')>('react-native-web');
-    const mock = createReanimatedModuleMock();
-    const animated = { ...mock.default, View, ScrollView, Text };
-    return { ...mock, ...animated, default: animated };
+    return createReanimatedModuleMock({ hostComponents: { View, ScrollView, Text } });
 });
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 describe('API token modal browser layout', () => {
+    afterEach(disposeApiTokenSettingsControllerHarnesses);
     it.each([
         { width: 390, height: 844, mode: 'create' as const },
         { width: 1440, height: 1000, mode: 'create' as const },
@@ -42,25 +45,16 @@ describe('API token modal browser layout', () => {
         const previousDescriptors = viewportProperties.map(({ target, key }) => Object.getOwnPropertyDescriptor(target, key));
         for (const { target, key, value } of viewportProperties) Object.defineProperty(target, key, { configurable: true, value });
         window.dispatchEvent(new Event('resize'));
-        const token = AccountApiTokenSummaryV1Schema.parse({
+        // Private labels are read envelopes (263571943a8), and opening them uses
+        // the real Account scope through the shared controller harness.
+        const token = AccountApiTokenSummaryV1Schema.parse(apiTokenReadWireFixture({
             tokenId: '11111111-1111-4111-8111-111111111111',
             label: 'Leads dashboard', displayPrefix: 'hap_v1_11111111',
             createdAt: '2026-08-20T12:00:00.000Z', lastUsedAt: null, expiresAt: null,
             hasEncryptionAccess: false, hasUnattendedTeamAccess: false,
             grant: API_TOKEN_FULL_GRANT_V1, parentTokenId: null, activeChildCount: 2, embedConfig: null,
-        });
-        const controller = createApiTokenSettingsController({
-            // Action transport and Account lifetime are system boundaries. Only the read is admitted.
-            execute: async (actionId) => actionId === 'account.apiTokens.list'
-                ? { ok: true, result: { tokens: [token] } }
-                : { ok: false, errorCode: 'execution_not_available', error: 'Unexpected Action outside the token listing fixture' },
-            captureActiveAccountScopeLifetime: () => ({
-                scope: { serverId: 'home-a', accountId: 'account-a' },
-                isCurrent: () => true,
-                onRetire: () => ({ dispose() {} }),
-            }),
-            now: () => 0,
-        });
+        }));
+        const { controller } = await createApiTokenSettingsControllerHarness({ mode: 'plain', rows: [token] });
         controller.setCreateDraft({ label: 'Leads dashboard', access: 'limited', expiryPreset: '30d' });
         if (viewport.mode === 'editAccess') {
             await controller.refresh();
