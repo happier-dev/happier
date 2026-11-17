@@ -1,4 +1,5 @@
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { RegistryKindV1 } from '@happier-dev/protocol/registries';
 import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
 import { encodeBase64 } from '@/encryption/base64';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
@@ -21,24 +22,27 @@ export { createAccountOutputFixture } from './machineAccountOutputContractFixtur
 export { createUiMachineOutputFixture } from './machinesOutputContractFixture';
 
 /** Real UI client for cross-app journeys; only the platform lock API is substituted. */
-export async function connectUiActionClient(params: Readonly<{ serverUrl: string; publicEndpoint?: string; credentials: AuthCredentials }>) {
+export async function connectUiActionClient(params: Readonly<{ serverUrl: string; publicEndpoint?: string; addressAnchorUrl?: string; credentials: AuthCredentials }>) {
     const locks = installWebLockManagerMock();
-    if (params.publicEndpoint) setRuntimeFetch(createPublishedHomeOutputFetch({
-        publishedOrigin: params.publicEndpoint, loopbackUrl: params.serverUrl }));
+    // A recording proxy carries the Home's bytes; it is not another Home profile.
+    const profileUrl = params.addressAnchorUrl ?? params.serverUrl;
+    const forwardedOrigin = params.addressAnchorUrl ?? params.publicEndpoint;
+    if (forwardedOrigin) setRuntimeFetch(createPublishedHomeOutputFetch({
+        publishedOrigin: forwardedOrigin, loopbackUrl: params.serverUrl }));
     let bridge: Awaited<ReturnType<typeof loadSyncSingletonForTests>> | undefined;
     const close = async () => {
         try {
             if (bridge) await disconnectActiveServerConnection();
         } finally {
             try { await bridge?.dispose(); } finally {
-                if (params.publicEndpoint) resetRuntimeFetch();
+                if (forwardedOrigin) resetRuntimeFetch();
                 locks.restore();
             }
         }
     };
     try {
-        const { id: configuredServerId } = await upsertServerProfile({ name: 'Composed Action client', serverUrl: params.serverUrl });
-        if (!await TokenStorage.setCredentialsForServerUrl(params.serverUrl, { serverId: configuredServerId }, params.credentials)) {
+        const { id: configuredServerId } = await upsertServerProfile({ name: 'Composed Action client', serverUrl: profileUrl });
+        if (!await TokenStorage.setCredentialsForServerUrl(profileUrl, { serverId: configuredServerId }, params.credentials)) {
             throw new Error('UI credential storage failed');
         }
         await setActiveServerId(configuredServerId, { scope: 'device' });
@@ -109,6 +113,63 @@ export async function connectUiPersonActionClient(params: Readonly<{
         requireKeyChallengeV2: true,
         requireExistingAccount: true,
     });
-    return connectUiActionClient({ serverUrl: params.serverUrl,
+    const client = await connectUiActionClient({ serverUrl: params.serverUrl, addressAnchorUrl: params.addressAnchorUrl,
         credentials: { ...credentials, secret: encodeBase64(params.accountSecret) } });
+    let unmount: (() => Promise<void>) | undefined;
+    try {
+        const [{ renderHook }, { createMountedCurrentUiContextWrapper }, { createElement, Fragment },
+            { PluginSurfaceProjectionDemand }, { REGISTRY_SOURCE_PROJECTION_SECTIONS },
+            { useRegistryListSourceSelection }, { REGISTRY_ACTION_IDS_V1, RegistryKindV1Schema }, { waitForTestEvent },
+            { useAppShellPluginUiProjection }, { usePluginUiProjectionCurrentness }] = await Promise.all([
+            import('./hooks/renderHook'), import('./harness/mountedCurrentUiContext'),
+            import('react'), import('@/components/plugins/surfaces/PluginSurfaceProjectionDemand'),
+            import('@/sync/domains/plugins/ui/projectionSections'), import('@/registries/useRegistrySourceRevision'),
+            import('@happier-dev/protocol/registries'), import('./hooks/waitForTestEvent'),
+            import('@/components/appShell/plugins/AppShellPluginUiProjection'),
+            import('@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness'),
+        ]);
+        const AppShell = await createMountedCurrentUiContextWrapper({ withAppShellActions: true });
+        const scope = getActiveServerAccountScope();
+        const shell = await renderHook((kind: RegistryKindV1 | undefined) => {
+            const projection = useAppShellPluginUiProjection();
+            const currentness = usePluginUiProjectionCurrentness({ machineId: projection.machineId,
+                serverId: projection.serverId, load: false });
+            return { selection: useRegistryListSourceSelection(kind), hasMachine: projection.machineId !== null,
+                currentness: { phase: currentness.phase,
+                registrySourcesCurrent: currentness.registrySourcesCurrent, unavailableReasonCode: currentness.unavailableReasonCode } };
+        }, {
+            wrapper: ({ children }) => createElement(AppShell, null, createElement(Fragment, null,
+                createElement(PluginSurfaceProjectionDemand, { accountScope: scope,
+                    presents: 'allInstallations', sections: REGISTRY_SOURCE_PROJECTION_SECTIONS }), children)),
+        });
+        unmount = shell.unmount;
+        const waitForRegistry = async (actionId: string, input: unknown) => {
+            if (REGISTRY_ACTION_IDS_V1.some(id => id === actionId)) {
+                // Foreground bootstrap need not acquire optional Availability;
+                // this presented registry surface joins its real producer.
+                await getSyncSingleton().refreshPluginAccountAvailability();
+                const kind = RegistryKindV1Schema.safeParse(input && typeof input === 'object' && 'kind' in input ? input.kind : undefined);
+                await shell.rerender(kind.success ? kind.data : undefined);
+                const settled = await waitForTestEvent(shell.subscribe, shell.getCurrent, value => !value.selection.resolving
+                    && (!value.hasMachine || value.currentness.registrySourcesCurrent === true || value.currentness.phase !== 'establishing'));
+                if (settled.hasMachine && settled.currentness.registrySourcesCurrent !== true && settled.currentness.phase !== 'current') {
+                    throw new Error(`Person registry fixture projection ${settled.currentness.phase}: ${settled.currentness.unavailableReasonCode}`);
+                }
+            }
+        };
+        const execute: typeof client.execute = async (...args) => {
+            await waitForRegistry(args[0], args[1]);
+            return client.execute(...args);
+        };
+        const executeConfirmed: typeof client.executeConfirmed = async (...args) => {
+            await waitForRegistry(args[0], args[1]);
+            return client.executeConfirmed(...args);
+        };
+        return { ...client, execute, executeConfirmed, async close() {
+            try { await unmount?.(); } finally { await client.close(); }
+        } };
+    } catch (error) {
+        try { await unmount?.(); } finally { await client.close(); }
+        throw error;
+    }
 }

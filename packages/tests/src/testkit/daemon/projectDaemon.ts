@@ -5,6 +5,9 @@ import { pathToFileURL } from 'node:url';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
+import { ApprovalRequestPublicSettlementSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { HomeOwnerClaimCommandOutputV1Schema, HOME_OWNER_CLAIM_COMMAND_ARGUMENT_V1 } from '@happier-dev/protocol/home/governance/claim';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
@@ -73,6 +76,10 @@ export async function startProjectDaemonFixture(params: Readonly<{
       if (!credentials) throw new Error('Project Account terminal credentials unavailable');
       const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
         serverId, serverIdentityId: serverId, serverApiUrl: actionServerApiUrl });
+      const execute = (actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) =>
+        executor.execute(actionId, input, { surface: 'cli', authority: 'present_user',
+          actionCaller: { kind: 'host' }, serverId, serverIdentityId: serverId,
+          actionRequestId: randomUUID(), ...context });
       return { name, auth, credentials,
         uiCredentials: buildTestAccountCliAuthCredentials({ auth, mode: 'dataKey' }),
         replayApprovedApprovalRequest(artifactId: string) {
@@ -88,10 +95,22 @@ export async function startProjectDaemonFixture(params: Readonly<{
           try { return await ui.executeVoiceSpawn(input, randomUUID()); }
           finally { await ui.close(); }
         },
-        execute(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) {
-          return executor.execute(actionId, input, { surface: 'cli', authority: 'present_user',
-            actionCaller: { kind: 'host' }, serverId, serverIdentityId: serverId,
-            actionRequestId: randomUUID(), ...context });
+        execute,
+        /** This fixture person approves the real Inbox request; the retained
+         * execution, including any child Ask, supplies the final typed result. */
+        async executeReviewed(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) {
+          let result = await execute(actionId, input, context);
+          for (;;) {
+            const approval = result.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.result) : null;
+            if (!approval?.success) return result;
+            const decided = await execute('approval.request.decide', { artifactId: approval.data.artifactId, decision: 'approve' });
+            if (!decided.ok) throw new Error(`Journey approval refused (${decided.errorCode})`);
+            const opened = await execute('approval.request.get', { artifactId: approval.data.artifactId });
+            if (!opened.ok) throw new Error(`Journey approval read refused (${opened.errorCode})`);
+            const detail = ApprovalRequestGetResultV1Schema.parse(opened.result);
+            const { execution: { executedAtMs: _executedAtMs, ...execution } } = ApprovalRequestPublicSettlementSchema.parse(detail.request);
+            result = execution.ok ? { ok: true, result: execution.result } : ActionExecuteFailureSchema.parse(execution);
+          }
         },
         async executeAsPerson(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) {
           const ui = await connectUiPersonActionClient({ serverUrl: actionServerApiUrl,
