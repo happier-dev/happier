@@ -3,8 +3,9 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Collection, type CollectionAnatomy, useHappierCollection } from '@happier-dev/plugin-ui';
 
-import { THEME_MINIATURE_CARD_MIN_WIDTH, ThemeMiniaturePreview } from '@/components/settings/appearance/ThemeModePreview';
+import { ThemeMiniaturePreview } from '@/components/settings/appearance/ThemeModePreview';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SelectionTiles, type SelectionTile } from '@/components/ui/forms/SelectionTiles';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -12,18 +13,14 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { WordCrossFade } from '@/components/ui/motion/WordCrossFade';
 import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 
 import type {
   StoreThemeListingFact,
-  StoreThemeListingFace,
   StoreThemeListingViewProps,
 } from './storeThemeViewTypes';
 
-const noFaces: readonly StoreThemeListingFace[] = Object.freeze([]);
-const faceKey = (face: StoreThemeListingFace) => face.id;
 const passThroughScroller = (children: React.ReactNode) => children;
 
 /**
@@ -40,22 +37,12 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
   const trying = props.tryingFaceId !== null;
   const tryingFace =
     props.faces?.find((face) => face.id === props.tryingFaceId) ?? null;
-  const model = useHappierCollection<StoreThemeListingFace>({ items: props.faces ?? noFaces,
-    keyOf: faceKey, openKey: null, onOpenChange: key => { if (key) props.onTryFace(key); } });
-  const anatomy = React.useMemo<CollectionAnatomy<StoreThemeListingFace>>(() => ({
-        glyph: () => null,
-        title: face => face.name,
-        columnTitles: { title: t('themeStore.faces') },
-        where: face =>
-          face.id === props.tryingFaceId
-            ? t('themeStore.tryingNow')
-            : face.mode === 'dark'
-              ? t('themeCard.dark')
-              : t('themeCard.light'),
-        preview: face => <View style={{ aspectRatio: phone ? 1.1 : 1.6 }}><ThemeMiniaturePreview miniature={face.miniature} /></View>,
-        accessibilityLabel: face => face.name,
-        testID: face => `${props.testID ?? 'store-theme'}:face:${face.id}`,
-  }), [phone, props.tryingFaceId, props.testID]);
+  const faceTiles = React.useMemo((): SelectionTile<string>[] => (props.faces ?? []).map(face => ({
+    id: face.id, title: face.name,
+    subtitle: face.id === props.tryingFaceId ? t('themeStore.tryingNow')
+      : face.mode === 'dark' ? t('themeCard.dark') : t('themeCard.light'),
+    preview: <ThemeMiniaturePreview miniature={face.miniature} />,
+  })), [props.faces, props.tryingFaceId]);
   const id = (suffix: string) =>
     props.testID ? `${props.testID}:${suffix}` : undefined;
 
@@ -77,22 +64,19 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
       </View>
 
       {props.faces && props.faces.length > 0 ? (
-        <CoreCollectionScope renderPageScroller={passThroughScroller}>
-        <Collection<StoreThemeListingFace>
-          model={model}
-          anatomy={anatomy}
-          presentation="grid"
-          minCardWidth={THEME_MINIATURE_CARD_MIN_WIDTH}
-          detail="none"
+        <SelectionTiles
+          variant="visual"
           scroll="page"
-          minListWidth={280}
-          minDetailWidth={280}
-          preferredListRatio={1}
-          selection={{ single: { value: props.tryingFaceId, onValueChange: next => { if (next) props.onTryFace(next); } } }}
+          tileSizing="fill"
+          maximumColumns={phone ? 2 : 4}
+          previewAspectRatio={phone ? 1.1 : 1.6}
+          options={faceTiles}
+          value={props.tryingFaceId}
+          onChange={next => { if (next) props.onTryFace(next); }}
+          labelLines={1}
           accessibilityLabel={t('themeStore.faces')}
-          testID={id('faces')}
+          testIdPrefix={id('face')}
         />
-        </CoreCollectionScope>
       ) : (
         <View
           style={[styles.facesPending, { aspectRatio: phone ? 2.2 : 3.2 }]}
@@ -184,19 +168,7 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
         </WordCrossFade>
         {(props.installFailures ?? []).length > 0 ? (
           <View style={styles.failures} testID={id('installFailures')}>
-            {(props.installFailures ?? []).map((failure) => (
-              <Text
-                key={failure.faceName}
-                variant="meta"
-                style={styles.failure}
-              >
-                {t('themeStore.faceFailed', { face: failure.faceName })}
-                <Text
-                  variant="meta"
-                  style={styles.failureCode}
-                >{`  ${failure.code}`}</Text>
-              </Text>
-            ))}
+            <InstallFailures failures={props.installFailures!} testID={id('installFailures')} />
             <View style={styles.retry}>
               <RoundButton
                 size="small"
@@ -221,6 +193,25 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
     </ItemList>
   );
 });
+
+type InstallFailure = NonNullable<StoreThemeListingViewProps['installFailures']>[number] & Readonly<{ key: string }>;
+const failureKey = (failure: InstallFailure) => failure.key;
+const noOpen = () => {};
+function InstallFailures(props: Readonly<{ failures: NonNullable<StoreThemeListingViewProps['installFailures']>; testID?: string }>) {
+  const rows = React.useMemo(() => props.failures.map((failure, index) => ({ ...failure, key: String(index) })), [props.failures]);
+  const model = useHappierCollection({ items: rows, keyOf: failureKey, openKey: null, onOpenChange: noOpen });
+  const anatomy = React.useMemo<CollectionAnatomy<InstallFailure>>(() => ({
+    glyph: () => null, title: failure => t('themeStore.faceFailed', { face: failure.faceName }),
+    where: failure => failure.code, columnTitles: { title: t('themeStore.faces') },
+    accessibilityLabel: failure => `${t('themeStore.faceFailed', { face: failure.faceName })}, ${failure.code}`,
+  }), []);
+  return <CoreCollectionScope renderPageScroller={passThroughScroller}>
+    <Collection model={model} anatomy={anatomy} presentation="list" detail="none" scroll="page"
+      minListWidth={280} minDetailWidth={280} preferredListRatio={1}
+      selection={{ isItemActivatable: () => false }} testID={props.testID}
+      accessibilityLabel={t('themeStore.faces')} />
+  </CoreCollectionScope>;
+}
 
 const FACT_LABEL_KEY = {
   includes: 'themeStore.factIncludes',
@@ -291,13 +282,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   failures: {
     gap: theme.space.s4,
-  },
-  failure: {
-    color: theme.colors.state.danger.textForeground,
-  },
-  failureCode: {
-    color: theme.colors.text.tertiary,
-    ...Typography.mono(),
   },
   retry: {
     flexDirection: 'row',

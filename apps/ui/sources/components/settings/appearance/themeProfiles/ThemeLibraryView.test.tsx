@@ -20,17 +20,18 @@ function document(id: string, name: string) {
     return parsed.document;
 }
 const firstId = '11111111-1111-4111-8111-111111111111';
-it('windows the faces of a 200-theme Store package through the shared Collection', async () => {
+it('windows the faces of a 200-theme Store package through the visual picker page window', async () => {
     const miniature = projectThemeLibraryEntry(document(firstId, 'Preview')).miniature;
+    const onTryFace = vi.fn();
     const screen = await renderSettingsView(<StoreThemeListing name="Theme collection" kicker="Theme" meta="Publisher"
         description={null} faces={Array.from({ length: 200 }, (_, index) => ({ id: `face-${index}`,
             name: `Face ${index}`, mode: 'light', miniature }))}
         facesState="ready" tryingFaceId={null} preferredFaceId="face-0" here="This device" installed={false}
-        facts={[]} busy={null} onTryFace={() => {}} onRevert={() => {}} onInstall={() => {}} onRetryFaces={() => {}}
+        facts={[]} busy={null} onTryFace={onTryFace} onRevert={() => {}} onInstall={() => {}} onRetryFaces={() => {}}
         testID="store-theme-census" />);
     await act(async () => {
         for (const node of screen.tree.root.findAll(node => typeof node.type === 'string'
-            && ['store-theme-census', 'store-theme-census:faces', 'store-theme-census:faces:stage'].includes(node.props.testID)
+            && ['store-theme-census', 'store-theme-census:face'].includes(node.props.testID)
             && typeof node.props.onLayout === 'function')) {
             node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 600 } } });
         }
@@ -39,6 +40,8 @@ it('windows the faces of a 200-theme Store package through the shared Collection
     const previews = screen.findAllByType(ThemeMiniaturePreview);
     expect(previews.length).toBeGreaterThan(0);
     expect(previews.length).toBeLessThan(200);
+    await screen.pressByTestIdAsync('store-theme-census:face:face-0');
+    expect(onTryFace).toHaveBeenCalledExactlyOnceWith('face-0');
 });
 
 it('windows a 200-theme library through the visual picker page window', async () => {
