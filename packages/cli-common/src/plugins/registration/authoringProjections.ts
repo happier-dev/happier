@@ -2,8 +2,8 @@ import { PluginDaemonDatabaseRetentionDeclarationV1Schema } from '@happier-dev/p
 
 type RuntimeCallback = (...args: never[]) => unknown;
 
-type NormalizedPluginDaemonDatabaseDefinition<TUp extends RuntimeCallback, TRun extends RuntimeCallback> =
-    ReturnType<typeof normalizeDaemonDatabaseDefinition<TUp, TRun>>;
+type NormalizedPluginDaemonDatabaseDefinition<TUp extends RuntimeCallback, TRun extends RuntimeCallback, TOnRetention extends RuntimeCallback> =
+    ReturnType<typeof normalizeDaemonDatabaseDefinition<TUp, TRun, TOnRetention>>;
 
 function readDaemonDatabaseDefinitionRecord(
     value: unknown,
@@ -20,7 +20,7 @@ function assertDaemonDatabaseDefinitionKeys(
     localId: string,
 ): void {
     const unknownKeys = Object.keys(value).filter((key) => (
-        key !== 'migrations' && key !== 'incumbentQueryFixture' && key !== 'retention'
+        key !== 'migrations' && key !== 'incumbentQueryFixture' && key !== 'retention' && key !== 'onRetention'
     ));
     if (unknownKeys.length > 0) {
         throw new TypeError(
@@ -29,7 +29,7 @@ function assertDaemonDatabaseDefinitionKeys(
     }
 }
 
-export function normalizeDaemonDatabaseDefinition<TUp extends RuntimeCallback = RuntimeCallback, TRun extends RuntimeCallback = RuntimeCallback>(
+export function normalizeDaemonDatabaseDefinition<TUp extends RuntimeCallback = RuntimeCallback, TRun extends RuntimeCallback = RuntimeCallback, TOnRetention extends RuntimeCallback = RuntimeCallback>(
     value: unknown,
     localId: string,
 ) {
@@ -87,12 +87,17 @@ export function normalizeDaemonDatabaseDefinition<TUp extends RuntimeCallback = 
     if (typeof fixture.run !== 'function') {
         throw new TypeError(`Daemon database '${localId}' incumbent query fixture must provide a run callback`);
     }
+    const onRetention = definition.onRetention;
+    if (onRetention !== undefined && typeof onRetention !== 'function') {
+        throw new TypeError(`Daemon database '${localId}' onRetention must be a callback`);
+    }
     const retention = definition.retention;
     if (retention !== undefined && !Array.isArray(retention)) {
         throw new TypeError(`Daemon database '${localId}' retention must be an array`);
     }
     return Object.freeze({
         migrations: Object.freeze(migrations),
+        ...(onRetention === undefined ? {} : { onRetention: onRetention as TOnRetention }),
         ...(retention === undefined ? {} : {
             retention: Object.freeze(retention.map(entry => (
                 Object.freeze(PluginDaemonDatabaseRetentionDeclarationV1Schema.parse(entry))
@@ -211,14 +216,14 @@ export function normalizePluginAccountCollectionMigrationRuntimeProjection<TMigr
  * with the already parsed static manifest. The returned map retains callback
  * identity but exposes no registration API or host lifecycle authority.
  */
-export function normalizePluginDaemonDatabaseRuntimeProjection<TUp extends RuntimeCallback = RuntimeCallback, TRun extends RuntimeCallback = RuntimeCallback>(
+export function normalizePluginDaemonDatabaseRuntimeProjection<TUp extends RuntimeCallback = RuntimeCallback, TRun extends RuntimeCallback = RuntimeCallback, TOnRetention extends RuntimeCallback = RuntimeCallback>(
     value: unknown,
     declarations: readonly Readonly<{
         id: string;
         migrations: readonly Readonly<{ id: string; version: number }>[];
         incumbentQueryFixtureId: string;
     }>[],
-): Readonly<Record<string, NormalizedPluginDaemonDatabaseDefinition<TUp, TRun>>> {
+): Readonly<Record<string, NormalizedPluginDaemonDatabaseDefinition<TUp, TRun, TOnRetention>>> {
     const definitions = readDaemonDatabaseDefinitions(value);
     const declarationIds = declarations.map((declaration) => declaration.id);
     const unknownIds = Object.keys(definitions).filter((localId) => !declarationIds.includes(localId));
@@ -231,7 +236,7 @@ export function normalizePluginDaemonDatabaseRuntimeProjection<TUp extends Runti
         ].join('; '));
     }
     const normalized = declarations.map((declaration) => {
-        const definition = normalizeDaemonDatabaseDefinition<TUp, TRun>(definitions[declaration.id], declaration.id);
+        const definition = normalizeDaemonDatabaseDefinition<TUp, TRun, TOnRetention>(definitions[declaration.id], declaration.id);
         if (definition.incumbentQueryFixture.id !== declaration.incumbentQueryFixtureId) {
             throw new TypeError(
                 `Daemon database '${declaration.id}' incumbent query fixture does not match the manifest declaration`,

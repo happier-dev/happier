@@ -193,3 +193,14 @@ Reference shape: Paseo `dc07efe937c3160e8fe83d02dc972c8a0b014957`,
 `packages/client/src/daemon-client.ts#sendMessage` delegates to one
 `sendAgentMessage` request and awaits its accepted response. This is source shape,
 not a measured reference-runtime total or an equivalent authorization topology.
+
+### Database capture — P5 (implementation evidence, 2026-11-16)
+
+| Shape id | Contract | Current evidence | Canonical owner |
+| --- | --- | --- | --- |
+| `dbw-capture.launch` | S selected launches × K matching contributions; off reads no private values and binds no listeners; one bind per newly demanded B slot. | Real source contribution/socket probes; A-composed Action gate remains owed. | A private launch composition, B assignments, capture contribution |
+| `dbw-capture.relay` | Bytes relayed once/direction; observer O(bytes + completed executions), no awaited store. | Paired 10k simple/extended pg workloads: relay stores0, observe1batch/4SQL per query. CPU/allocation runs in P5 M4 evidence; loaded PROGRAM run remains owed. | In-daemon proxy/wire tracker |
+| `dbw-capture.ingest` | One admission/decode per HTTP batch; O(decoded events) inserts/upserts; no replay queue; changed-only committed publication. Local observations never await storage; authenticated collector waits before body/decode and acknowledges commit. | Real HTTP/SQLite: concurrent authenticated batches all commit/200 with0loss; quota507, actual I/O503; exporter abort releases writer. Current M6 paired wire benchmark0drops; local held-write loss affects only selected partition. | Shared receiver, single-flight ingest/store |
+| `dbw-capture.selected-reads` | One selected baseline/follow; detail on demand only, no unopened bodies or unrelated-worktree scans. | Real SQLite1000 unrelated partitions; selected reader probe, list SQL excludes detail. Resource/Action integration remains owed. | Capture reader/store, existing Resource demand owner |
+| `dbw-capture.idle-removal` | No capture-owned timers/pollers; ingest causes0 maintenance wakes; removal deletes selected data from A/AE settlement. | Declarative storageMaintenance retention and scoped clear; A/AE removal + loaded idle gate remains owed. | Existing storageMaintenance/logRetention; A/AE settlement |
+| `dbw-capture.recovery` | One explicit Retry or successful scoped Clear; while store held discard/count local observations without blocking relay; no retry timer. Authenticated requests retain HTTP backpressure and native failures until recovery. | Held real SQLite transaction: all10000queries finish,9999local observations dropped; affected loss marker persists on next admitted batch. Authenticated quota failure recovers after successful scoped Clear; aborted waiting request cannot retain writer. | Capture ingest coverage owner |

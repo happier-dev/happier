@@ -15,6 +15,7 @@ import type {
     DaemonDatabaseMigrationTransaction,
     DaemonDatabaseOperationOptions,
     DaemonDatabaseRow,
+    DaemonDatabaseRetentionChange,
     DaemonDatabaseService,
     DaemonDatabaseTransaction,
     DaemonDatabaseValue,
@@ -1344,6 +1345,7 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
     isOccurrenceCurrent: () => boolean;
     limits: PluginDaemonDatabaseLimits;
     declarations: readonly PluginDaemonDatabaseContributionV1[];
+    onRetention?(databaseId: string, change: DaemonDatabaseRetentionChange): void;
     /** Exact adopted prior-generation fixtures, keyed by declared database id. */
     incumbentContracts?: ReadonlyMap<string, PreparedDatabaseContract>;
 }>): PluginDaemonDatabaseOwner {
@@ -1639,7 +1641,8 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
                 if (!entry) continue;
                 await entry.initialized;
                 const pass = await runDatabaseRetention({ database: publicHandle(entry), retention: declaration.retention,
-                    days, nowMs, maximumAffectedRows: limits.maximumAffectedRows, operation });
+                    days, nowMs, maximumAffectedRows: limits.maximumAffectedRows, maximumResultRows: limits.maximumResultRows, operation,
+                    onRetention: change => params.onRetention?.(declaration.id, change) });
                 result.pruned += pass.pruned;
                 if (pass.nextDueAtMs !== null) result.nextDueAtMs = Math.min(result.nextDueAtMs ?? Infinity, pass.nextDueAtMs);
             }
@@ -1802,6 +1805,9 @@ function normalizeRuntimeProjection(params: Readonly<{
             const runtime = params.runtime[declaration.id];
             if (!isNonArrayRecord(runtime) || !Array.isArray(runtime.migrations)) {
                 fail('daemon_database_declaration_mismatch', 'Daemon database runtime callbacks are malformed');
+            }
+            if (runtime.onRetention !== undefined && typeof runtime.onRetention !== 'function') {
+                fail('daemon_database_declaration_mismatch', 'Daemon database retention callback is malformed');
             }
             const fixture = runtime.incumbentQueryFixture;
             if (!isNonArrayRecord(fixture) || typeof fixture.id !== 'string' || typeof fixture.run !== 'function') {
@@ -2017,6 +2023,7 @@ export function createStablePluginDaemonDatabaseHost(params: Readonly<{
                 isOccurrenceCurrent: input.isOccurrenceCurrent,
                 limits,
                 declarations: normalized.map(({ declaration }) => declaration),
+                onRetention: (databaseId, change) => input.runtime[databaseId]?.onRetention?.(change),
                 ...(incumbentContracts.size > 0 ? { incumbentContracts } : {}),
             });
             try {

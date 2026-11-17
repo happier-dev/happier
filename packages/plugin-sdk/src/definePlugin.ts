@@ -39,6 +39,7 @@ import type { ProtocolComposerRefV1 } from './protocol/composerRef.js';
 import type {
     DaemonDatabaseIncumbentQueryFixture,
     DaemonDatabaseMigration,
+    DaemonDatabaseRetentionCallback,
 } from './storage/database.js';
 
 import type {
@@ -703,6 +704,7 @@ export type PluginComposerDefinition = Readonly<{
 export type PluginDaemonDatabaseDefinition = Readonly<{
     migrations?: readonly DaemonDatabaseMigration[];
     incumbentQueryFixture: DaemonDatabaseIncumbentQueryFixture;
+    onRetention?: DaemonDatabaseRetentionCallback;
     /** Machine log retention; table timestamps are epoch milliseconds. */
     retention?: readonly NonNullable<PluginDaemonDatabaseDeclaration['retention']>[number][];
 }>;
@@ -727,6 +729,7 @@ export type PluginDaemonDatabaseRuntimeProjection = Readonly<Record<
     Readonly<{
         migrations: readonly DaemonDatabaseMigration[];
         incumbentQueryFixture: DaemonDatabaseIncumbentQueryFixture;
+        onRetention?: DaemonDatabaseRetentionCallback;
     }>
 >>;
 
@@ -1632,10 +1635,12 @@ const normalizeDaemonDatabaseDefinition:
     (value: unknown, localId: string) => Readonly<{
         migrations: readonly DaemonDatabaseMigration[];
         incumbentQueryFixture: DaemonDatabaseIncumbentQueryFixture;
+        onRetention?: DaemonDatabaseRetentionCallback;
         retention?: readonly NonNullable<PluginDaemonDatabaseDeclaration['retention']>[number][];
     }> = normalizeSharedDaemonDatabaseDefinition<
         DaemonDatabaseMigration['up'],
-        DaemonDatabaseIncumbentQueryFixture['run']
+        DaemonDatabaseIncumbentQueryFixture['run'],
+        DaemonDatabaseRetentionCallback
     >;
 
 function projectPluginAccountCollectionMigrationRuntimeProjection(
@@ -1670,7 +1675,8 @@ export const normalizePluginDaemonDatabaseRuntimeProjection:
     ) => PluginDaemonDatabaseRuntimeProjection =
         normalizeSharedDaemonDatabaseRuntimeProjection<
             DaemonDatabaseMigration['up'],
-            DaemonDatabaseIncumbentQueryFixture['run']
+            DaemonDatabaseIncumbentQueryFixture['run'],
+            DaemonDatabaseRetentionCallback
         >;
 
 function projectDaemonDatabaseDeclarations(

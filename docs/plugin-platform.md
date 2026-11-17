@@ -1,4 +1,58 @@
 # Plugin platform and SDK ownership
+### Database capture development source
+
+The unreleased `packages/plugins/telemetry` implementation composes one
+`store/capture.ts` persistence owner and ingestion pipeline through `runtime.ts`
+for PostgreSQL wire observations and OTLP. The local Machine role participates
+in `workspaces` (R22); its background owner admits local listeners. The
+service-launch contribution checks the capture
+preference, requests worktree listener ports, then binds loopback proxies and an
+OTLP receiver through `launch.ts`. Project still owns environment composition.
+Existing explicit OTLP endpoints are preserved. P6's standalone telemetry
+collector helpers use the same runtime with assignment-token admission; their
+host activation is separate from the local role and remains integration work.
+
+`otlp/receiver.ts` accepts HTTP JSON or protobuf traces and logs, with optional
+gzip, on `/v1/traces` and `/v1/logs`. Generated OpenTelemetry protobuf definitions
+own the wire schema. The receiver bounds both compressed and decompressed request
+bodies to 64 MiB by default, following the
+[OTLP 1.11.1 HTTP request contract](https://opentelemetry.io/docs/specs/otlp/#otlphttp-request);
+an ingress resource owner can supply its own bound. Overflow returns permanent
+HTTP 413. Local admission uses the loopback context; the collector supplies
+token-hash admission through the same receiver callback.
+
+The shared PostgreSQL observation normalizer owns SQL classification and masking.
+It masks SQL literals, sensitive parameter fields and credential URLs, including
+URLs in binary wire parameters, before persistence; database span names use the
+normalized shape.
+Unsupported SQL retains timing with an unknown classification. Summary reads
+exclude detail bodies; detail is loaded only on demand and visibly truncated
+against daemon-database input/result bounds. `read.ts` pages selected-worktree
+summaries, while `analysis/requests.ts` owns request ancestry, explicit execution
+correlation and cautious repeated-SELECT evidence. Raw URL paths never substitute
+for `http.route`, and timing or matching SQL shapes never establish correlation.
+
+Ingestion admits one persistence batch at a time, without a replay queue. Local
+capture never waits for storage: busy or failed storage produces partition-scoped
+loss notifications, and local HTTP partial success reports refused records.
+Authenticated collector requests wait for the same writer before reading their
+bodies and acknowledge only committed batches. Native allocation failure returns
+HTTP 507 with `collector storage full`; an actual store failure returns HTTP 503.
+A disconnected waiting exporter releases its turn without retaining the writer.
+An explicit Retry or successful scoped Clear clears the retained native failure. A later admitted batch
+persists the current coverage marker. Daemon storage owns quotas and row/byte
+limits; ingestion starts no retention or maintenance work. Repeated-query evidence does not prove an ORM
+association problem. General application log bodies are retained as supplied,
+and application/wire pairing requires explicit producer identity. These source
+contracts and focused boundary tests do not establish activation, a loaded
+development-stack journey, or released availability.
+
+A retention entry may also name a textual `changeKeyColumn`. The matching
+runtime database definition may provide `onRetention({ table, keys })`; the
+existing pruner pages those keys within the owner's result bounds for the same
+DELETE chunk and invokes the callback after its transaction commits. Empty
+passes publish nothing. Capture uses `worktree` keys and its existing selected
+Resource publisher, including when recording is stopped.
 
 ## Private service launch preparation (unreleased 0.3)
 

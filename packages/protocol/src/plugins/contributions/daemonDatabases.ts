@@ -16,6 +16,7 @@ export type PluginDaemonDatabaseMigrationDeclarationV1 =
 export const PluginDaemonDatabaseRetentionDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   table: z.string().check(z.minLength(1)),
   timeColumn: z.string().check(z.minLength(1)),
+  changeKeyColumn: z.optional(z.string().check(z.minLength(1))),
 }));
 
 /**

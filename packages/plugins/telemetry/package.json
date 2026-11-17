@@ -29,17 +29,11 @@
     "@happier-dev/plugin-sdk": "0.0.0",
     "@happier-dev/databases": "0.0.0",
     "@happier-dev/database-protocol": "0.0.0",
-    "@happier-dev/protocol": "0.0.0",
     "protobufjs": "7.6.6"
   },
   "devDependencies": {
     "@types/node": "^22.19.3",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
-  },
-  "happier": {
-    "pluginScaffold": {
-      "shipping": "reservation_only"
-    }
   }
 }

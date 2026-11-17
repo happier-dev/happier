@@ -142,6 +142,58 @@ describe('plugin daemon database owner', () => {
         } finally { await host.close(); await rm(home, { recursive: true, force: true }); }
     });
 
+    it('publishes committed retention changes only to affected active capture subscribers', async () => {
+        const { localCaptureBackground: publisher } = await import('@happier-dev/plugins-telemetry');
+        const { DATABASE_CAPTURE_PLUGIN } = await import('@happier-dev/plugins-telemetry/manifest');
+        const definition = DATABASE_CAPTURE_PLUGIN.daemonDatabases.capture;
+        const home = await makeHappyHome();
+        const limits = { maximumDatabaseBytes: 1_048_576, maximumInputBytes: 16_384,
+            maximumResultBytes: 16_384, maximumResultRows: 100,
+            maximumAffectedRows: 1_000, maximumElapsedMs: 5_000 } as const;
+        const host = createStablePluginDaemonDatabaseHost({ paths: resolvePluginStorePaths({ happyHomeDir: home }),
+            daemonDatabaseLimits: { protocolMaximumDatabaseBytes: limits.maximumDatabaseBytes, resolvePluginLimits: () => limits } });
+        const controller = new AbortController();
+        const changed: string[][] = [];
+        const lastPageChanged: string[][] = [];
+        const unchanged: string[][] = [];
+        const publishedReads: Promise<readonly import('@happier-dev/plugin-sdk/storage').DaemonDatabaseRow[]>[] = [];
+        let database!: import('@happier-dev/plugin-sdk/storage').DaemonDatabase;
+        const unsubscribeChanged = publisher.subscribe('expired-1', partitions => {
+            changed.push([...partitions]);
+            publishedReads.push(database.query('SELECT COUNT(*) AS count FROM captureSummaries WHERE worktree = ?', ['expired-1']));
+        });
+        const unsubscribeLastPage = publisher.subscribe('expired-999', partitions => lastPageChanged.push([...partitions]));
+        const unsubscribeUnchanged = publisher.subscribe('recent', partitions => unchanged.push([...partitions]));
+        const errors: unknown[] = [];
+        try {
+            await host.prepare({ pluginId: DATABASE_CAPTURE_PLUGIN.manifest.id, occurrenceId: 'retention',
+                signal: controller.signal, isOccurrenceCurrent: () => true, runtime: { capture: definition },
+                declarations: DATABASE_CAPTURE_PLUGIN.manifest.contributes.daemonDatabases });
+            database = await host.bind({ pluginId: DATABASE_CAPTURE_PLUGIN.manifest.id, occurrenceId: 'retention',
+                signal: controller.signal, isOccurrenceCurrent: () => true }).database('capture', definition);
+            await database.execute("WITH RECURSIVE batch(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM batch WHERE n<1000) INSERT INTO captureSummaries(id,worktree,kind,source,at) SELECT 'event', CASE WHEN n BETWEEN 2 AND 220 THEN 'expired-' || n || '-' || printf('%0200d',n) ELSE 'expired-' || n END, 'span', 'otlp', 0 FROM batch");
+            await database.execute("INSERT INTO captureSummaries(id,worktree,kind,source,at) VALUES ('event','expired-1001','span','otlp',0),('event','recent','span','otlp',86400000)");
+            const retention = createLogRetentionOwner({ happyHomeDir: home, currentLogPaths: () => [],
+                daemonDatabases: host, onError: error => errors.push(error) });
+            expect(await retention.run(1, 86399999)).toMatchObject({ pruned: 0 });
+            expect(changed).toEqual([]);
+            expect(unchanged).toEqual([]);
+            expect(await retention.run(1, 86400000)).toMatchObject({ pruned: 1001, nextDueAtMs: 172800000 });
+            expect(errors).toEqual([]);
+            expect(changed).toEqual([['expired-1']]);
+            expect(await Promise.all(publishedReads)).toEqual([[{ count: 0 }]]);
+            expect(lastPageChanged).toEqual([['expired-999']]);
+            expect(unchanged).toEqual([]);
+            expect(await database.query('SELECT worktree FROM captureSummaries')).toEqual([{ worktree: 'recent' }]);
+            expect(await retention.run(1, 86400000)).toMatchObject({ pruned: 0 });
+            expect(changed).toEqual([['expired-1']]);
+            expect(unchanged).toEqual([]);
+        } finally {
+            unsubscribeChanged(); unsubscribeLastPage(); unsubscribeUnchanged();
+            await host.close(); await rm(home, { recursive: true, force: true });
+        }
+    });
+
     it('expires declared telemetry in bounded chunks only on the existing log-retention pass', async () => {
         const happyHomeDir = await makeHappyHome();
         const limits = {

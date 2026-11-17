@@ -1,4 +1,5 @@
 export type { DaemonDatabase } from './database.js';
+export type { DaemonDatabaseRetentionChange, DaemonDatabaseRetentionCallback } from './database.js';
 export type { DaemonDatabaseExecutionResult } from './database.js';
 export type { DaemonDatabaseIncumbentQueryFixture } from './database.js';
 export type { DaemonDatabaseMigration } from './database.js';
@@ -24,3 +25,5 @@ export type { StorageService } from '../storage.js';
 export type { StorageTransaction } from '../storage.js';
 export { requireAccountStorage } from '../storage.js';
 export { PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 } from '../storage.js';
+/** Host-owned operation/allocation bounds, shared by plugin paging and detail projection. */
+export { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/protocol/plugins/data/daemonDatabaseLimitsV1';

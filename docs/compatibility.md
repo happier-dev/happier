@@ -9505,6 +9505,9 @@ the existing maintenance owner; no database format, migration identity, runtime
 ABI epoch or separate policy changes. A preceding strict development reader
 rejects the new field, so declarations using it require matching development
 Protocol, SDK and daemon readers; there is no mixed-development adapter.
+The optional retention `changeKeyColumn` and runtime-only `onRetention`
+callback follow that same matching-development contract. Callbacks stay out of
+the portable manifest; existing declarations and callbacks may omit both.
 
 
 Unreleased 0.3 member SCM Actions admit the native owner's existing pre-operation

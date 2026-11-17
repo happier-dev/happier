@@ -70,7 +70,7 @@ describe('daemon database manifest declarations', () => {
   });
 
   it('preserves declarative Machine-policy retention without introducing a plugin policy', () => {
-    const declaration = { ...declaredDatabase, retention: [{ table: 'observations', timeColumn: 'at' }] };
+    const declaration = { ...declaredDatabase, retention: [{ table: 'observations', timeColumn: 'at', changeKeyColumn: 'partition' }] };
     expect(PluginContributesV2Schema.parse({ daemonDatabases: [declaration] }).daemonDatabases)
       .toEqual([declaration]);
     expect(() => PluginDaemonDatabaseContributionV1Schema.parse({

@@ -3022,9 +3022,6 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
-      '@happier-dev/protocol':
-        specifier: 0.0.0
-        version: link:../../protocol
       protobufjs:
         specifier: 7.6.6
         version: 7.6.6

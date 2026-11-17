@@ -4,6 +4,7 @@
  * Cross-plugin contribution authoring lives on the sibling `/contributions`
  * entrypoint so the two public owners remain disjoint.
  */
+export { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 export type {
     EnvVarRequirement,
     EnvVarRequirementInput,

@@ -14,6 +14,10 @@ export type DaemonDatabaseOperationOptions = Readonly<{
     signal?: AbortSignal;
 }>;
 
+/** A committed retention chunk; keys are the declared textual change-key values. */
+export type DaemonDatabaseRetentionChange = Readonly<{ table: string; keys: readonly string[] }>;
+export type DaemonDatabaseRetentionCallback = (change: DaemonDatabaseRetentionChange) => void;
+
 export type DaemonDatabaseExecutionResult = Readonly<{
     changes: number;
     lastInsertRowId?: number | bigint;
