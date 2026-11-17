@@ -2,6 +2,7 @@ import type { RpcHandlerContext, RpcHandlerInvoker, RpcHandlerRegistrar } from '
 import { configuration } from '@/configuration';
 import { createTransferRecipientKeyPair } from '@happier-dev/transfers/node';
 import { logger } from '@/ui/logger';
+import { carryActionFailureDiagnostic, readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 
 import { TransferSessionStore } from '@happier-dev/transfers/node';
 import type { UploadTransferTarget } from '@happier-dev/transfers/node';
@@ -102,7 +103,7 @@ export function registerUploadTransferLifecycleHandlers<TInitResponse, TFinalize
 
   const chunk = async (raw: unknown): Promise<UploadChunkResponse> => {
     const data = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
-    return await writeUploadTransferChunk({
+    const result = await writeUploadTransferChunk({
       lifecycle,
       uploadId: typeof data?.uploadId === 'string' ? data.uploadId : '',
       index: typeof data?.index === 'number' ? data.index : Number(data?.index),
@@ -112,6 +113,9 @@ export function registerUploadTransferLifecycleHandlers<TInitResponse, TFinalize
         ? data.encryptedDataKeyEnvelopeBase64
         : undefined,
     });
+    const cause = readActionOutputDiagnostic(result)?.failureCause;
+    if (cause) logger.warnLocalFile('[TRANSFER] Upload chunk write failed', cause);
+    return result;
   };
 
   const finalize = async (data: unknown): Promise<TFinalizeResponse> => {
@@ -136,7 +140,10 @@ export function registerUploadTransferLifecycleHandlers<TInitResponse, TFinalize
       if (finalized.error === 'Upload hash mismatch') {
         return params.buildFinalizeHashMismatchResponse();
       }
-      return params.buildFinalizeFailureResponse(finalized.error, finalized.errorCode, params.store.getUploadSession(uploadId)?.expiresAt);
+      const response = params.buildFinalizeFailureResponse(finalized.error, finalized.errorCode, params.store.getUploadSession(uploadId)?.expiresAt);
+      const cause = readActionOutputDiagnostic(finalized)?.failureCause;
+      if (cause) logger.warnLocalFile('[TRANSFER] Upload finalization failed', cause);
+      return response !== null && typeof response === 'object' ? carryActionFailureDiagnostic(response, finalized) : response;
     }
 
     return params.buildFinalizeSuccessResponse({

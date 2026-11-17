@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 
 import { createEncryptedTransferChunkEnvelope, decryptEncryptedTransferChunkEnvelope } from './transferChunkEncryption.js';
 import { writeFileHandleFully } from './writeFileHandleFully.js';
@@ -216,7 +218,10 @@ export function createTransferSessionLifecycle(params: Readonly<{
                     params.store.refreshUploadExpiry(input.uploadId);
                     return { success: true };
                 } catch (error) {
-                    return { success: false, error: error instanceof Error ? error.message : 'Failed to write chunk' };
+                    return withActionFailureCauseDiagnostic({ success: false as const,
+                        error: error instanceof Error ? error.message : 'Failed to write chunk' },
+                        { failureCause: projectActionFailureCauseV1(error, 'transfer.upload.write_chunk', { allowUnknownErrorCode: false }) },
+                        'transfer.upload.write_chunk');
                 }
             } finally {
                 activeOperation.release();
@@ -270,7 +275,9 @@ export function createTransferSessionLifecycle(params: Readonly<{
                     const errorCode = readUploadTransferFinalizeErrorCode('errorCode' in coded ? coded.errorCode : undefined)
                         ?? readUploadTransferFinalizeErrorCode('code' in coded ? coded.code : undefined)
                         ?? 'TRANSFER_FINALIZE_FAILED';
-                    return { success: false, error: 'Failed to finalize upload', errorCode };
+                    return withActionFailureCauseDiagnostic({ success: false as const, error: 'Failed to finalize upload', errorCode },
+                        { failureCause: projectActionFailureCauseV1(error, 'transfer.upload.finalize', { allowUnknownErrorCode: false }) },
+                        'transfer.upload.finalize');
                 }
             } finally {
                 activeOperation.release();

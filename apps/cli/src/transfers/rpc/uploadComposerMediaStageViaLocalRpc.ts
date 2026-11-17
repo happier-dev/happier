@@ -1,6 +1,7 @@
 import { ComposerContentHandleV1Schema } from '@happier-dev/protocol/runtime/input/composerContentV1';
 import type { ComposerContentHandleV1, ComposerContentMediaKindV1, ComposerContentMimeTypeV1, PluginContributionIdentityV1, SessionExecutionTargetV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 
 import type { RpcHandlerInvoker } from '@/api/rpc/types';
 import { createEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
@@ -154,7 +155,7 @@ export async function uploadBytesViaLocalRpc(input: Readonly<{
     );
     if (input.signal?.aborted) return { success: false, code: 'aborted' };
     const initialized = readInitSuccess(init);
-    if (!initialized) return { success: false, code: 'transfer_failed' };
+    if (!initialized) return carryActionFailureDiagnostic({ success: false as const, code: 'transfer_failed' as const }, init);
     uploadId = initialized.uploadId;
 
     for (let index = 0, offset = 0; offset < input.bytes.byteLength; index += 1) {
@@ -178,7 +179,7 @@ export async function uploadBytesViaLocalRpc(input: Readonly<{
         input.signal ? { signal: input.signal } : undefined,
       );
       if (input.signal?.aborted) return { success: false, code: 'aborted' };
-      if (!isTransferSuccess(wroteChunk)) return { success: false, code: 'transfer_failed' };
+      if (!isTransferSuccess(wroteChunk)) return carryActionFailureDiagnostic({ success: false as const, code: 'transfer_failed' as const }, wroteChunk);
       offset += chunkLength;
     }
 
@@ -189,7 +190,7 @@ export async function uploadBytesViaLocalRpc(input: Readonly<{
       input.signal ? { signal: input.signal } : undefined,
     );
     if (input.signal?.aborted) return { success: false, code: 'aborted' };
-    if (!isTransferSuccess(finalized)) return { success: false, code: 'transfer_failed' };
+    if (!isTransferSuccess(finalized)) return carryActionFailureDiagnostic({ success: false as const, code: 'transfer_failed' as const }, finalized);
     uploadId = null;
     return { success: true, response: finalized };
   } catch {
