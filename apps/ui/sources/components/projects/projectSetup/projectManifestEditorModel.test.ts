@@ -59,10 +59,14 @@ describe('project manifest editor model', () => {
   it('edits typed runtime and port settings while preserving unrelated declaration fields', () => {
     const model = createProjectManifestEditorModel({ workspace, expectedAccountId: 'alice',
       definition: present('{"version":1,"services":{"web":{"source":{"kind":"command","command":"serve"},"future":true}}}'), actions: boundary().actions });
+    expect(model.getSnapshot()).toMatchObject({ worktreePortSlots: null });
     expect(model.setWorktreePorts({ enabled: true, slots: 2 })).toBe(true);
+    expect(model.getSnapshot()).toMatchObject({ worktreePortSlots: 2 });
     expect(model.setServiceRuntime('web', { portSlot: 0, primary: true, terminal: true, title: 'Web', autostart: true })).toBe(true);
     expect(model.getSnapshot().draft).toMatchObject({ status: 'valid', manifest: { worktreePorts: { enabled: true, slots: 2 },
       services: { web: { runtime: { portSlot: 0, primary: true, terminal: true, title: 'Web', autostart: true } } } } });
+    expect(model.setWorktreePorts({ enabled: false })).toBe(true);
+    expect(model.getSnapshot()).toMatchObject({ worktreePortSlots: null });
     expect(JSON.parse(model.getSnapshot().draft.bytes).services.web.future).toBe(true);
     expect(model.setServiceRuntime('missing', { terminal: true })).toBe(false);
     expect(model.setServiceRuntime('web', undefined)).toBe(true);

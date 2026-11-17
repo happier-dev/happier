@@ -4,6 +4,7 @@ import { configuration } from '@/configuration';
 import { createProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { buildLocalServiceDeclarationPreviewLandingUrlV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
+import { readProjectWorktreePortSlotsV1 } from '@happier-dev/protocol/workspaces/projectSetup/worktreePortsV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { getHostWorktreePortsOwner, type WorktreePortAssignment } from './worktreePorts';
 
@@ -20,8 +21,10 @@ export function isProjectWorktreeRuntimeVariable(name: string): boolean {
 
 /** Port defaults only. A's launch composer owns every environment precedence decision. */
 export function projectWorktreeRuntimeEnvironment(input: RuntimeInput & Readonly<{ assignment: WorktreePortAssignment }>): Record<string, string> {
-    if (!input.manifest?.worktreePorts?.enabled) return {};
-    const ports = input.assignment.ports.slice(0, input.manifest.worktreePorts.slots);
+    if (!input.manifest) return {};
+    const slots = readProjectWorktreePortSlotsV1(input.manifest);
+    if (slots === null) return {};
+    const ports = input.assignment.ports.slice(0, slots);
     const primary = ports[0];
     if (primary === undefined) return {};
     const name = posix.basename(input.workspace.rootPath.replaceAll('\\', '/')).toLowerCase()
@@ -51,7 +54,7 @@ export async function prepareProjectWorktreeRuntime(input: RuntimeInput & Readon
     listenerKeys?: readonly string[];
     signal?: AbortSignal;
 }>) {
-    const slots = input.manifest?.worktreePorts?.enabled ? input.manifest.worktreePorts.slots : undefined;
+    const slots = readProjectWorktreePortSlotsV1(input.manifest) ?? undefined;
     const result = await getHostWorktreePortsOwner().assign({ rootPath: input.workspace.rootPath,
         slots, listenerKeys: input.listenerKeys, signal: input.signal });
     if (result.kind !== 'ready') return result;

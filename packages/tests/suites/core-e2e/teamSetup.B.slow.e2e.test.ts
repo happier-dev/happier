@@ -445,7 +445,7 @@ it('TS.B.environment: two opted-in worktrees receive distinct retained ports and
     expect(physicalRoots.map(root => retained.assignments[root]?.ports.length)).toEqual([1, 1]);
     for (const [index, started] of [first, second].entries()) {
         expect(started.target.portSource).toBe('assigned');
-        expect(started.result.snapshot.worktreePorts).toMatchObject({ rootPath: physicalRoots[index],
+        expect(started.result.snapshot.worktreePorts).toMatchObject({ rootPath: physicalRoots[index], declaredSlots: 1,
             result: { kind: 'ready', assignment: retained.assignments[physicalRoots[index]!] } });
     }
     // These are real unrelated encrypted records delivered by the same Home,

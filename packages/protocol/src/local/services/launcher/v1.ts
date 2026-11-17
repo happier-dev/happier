@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { WorktreePortsResultV1Schema, WorktreePortsUnavailableV1Schema } from '../../../workspaces/projectSetup/worktreePortsV1.js';
+import { WorktreePortsResultV1Schema, WorktreePortsUnavailableV1Schema, ProjectWorktreePortSlotsV1Schema } from '../../../workspaces/projectSetup/worktreePortsV1.js';
 import { z } from '../../../zodRuntimePolicy.js';
 
 import { BrowserViewTargetV1Schema } from '../../../browser/target/v1.js';
@@ -219,6 +219,7 @@ export const LocalServiceLauncherSnapshotV1Schema = lazyZodSchema(() => z.strict
     targets: z.array(LocalServiceLaunchTargetV1Schema),
     /** One selected worktree only; host assignment ledger and sibling roots stay private. */
     worktreePorts: z.optional(z.strictObject({ rootPath: WorkspaceRefV1WriteSchema.shape.rootPath,
+      declaredSlots: z.optional(ProjectWorktreePortSlotsV1Schema),
       result: WorktreePortsResultV1Schema })),
   }));
 export type LocalServiceLauncherSnapshotV1 = z.infer<typeof LocalServiceLauncherSnapshotV1Schema>;

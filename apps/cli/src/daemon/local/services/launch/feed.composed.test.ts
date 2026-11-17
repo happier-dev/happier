@@ -80,13 +80,14 @@ describe('createLocalServiceLauncherFeed', () => {
             const sibling = join(directory, 'sibling');
             await Promise.all([fs.mkdir(selected), fs.mkdir(sibling)]);
             const owner = createWorktreePortsOwner({ statePath: join(directory, 'ports.json') });
-            const assignment = await owner.assign({ rootPath: selected, slots: 2 });
+            // Retained assignments may exceed today's declaration; named listeners are separate.
+            const assignment = await owner.assign({ rootPath: selected, slots: 4, listenerKeys: ['capture'] });
             await owner.assign({ rootPath: sibling, slots: 1 });
             const feed = createLocalServiceLauncherFeed({ machineId: 'machine-a',
                 inventoryRegistry: createLocalServiceInventoryRegistry(), previewRegistry: createLocalServicePreviewRegistry(),
-                runTargets: () => ({ targets: [], worktreePortRoots: [selected] }), worktreePorts: owner });
+                runTargets: () => ({ targets: [], worktreePortDefinitions: [{ rootPath: selected, slots: 2 }] }), worktreePorts: owner });
             const snapshot = LocalServiceLauncherSnapshotV1Schema.parse(await feed.getSnapshot({ scope: 'workspace', workspaceRoot: selected }));
-            expect(snapshot.worktreePorts).toEqual({ rootPath: selected, result: assignment });
+            expect(snapshot.worktreePorts).toEqual({ rootPath: selected, declaredSlots: 2, result: assignment });
             expect(JSON.stringify(snapshot)).not.toContain(sibling);
             await fs.writeFile(join(directory, 'ports.json'), '{damaged');
             expect((await feed.getSnapshot({ scope: 'workspace', workspaceRoot: selected })).worktreePorts)
@@ -859,7 +860,7 @@ describe('createLocalServiceLauncherFeed', () => {
                 inventoryRegistry,
                 previewRegistry,
                 now: () => 3_000,
-                runTargets: async () => ({ targets: await runTargets, worktreePortRoots: [] }),
+                runTargets: async () => ({ targets: await runTargets, worktreePortDefinitions: [] }),
             });
 
             let settled = false;

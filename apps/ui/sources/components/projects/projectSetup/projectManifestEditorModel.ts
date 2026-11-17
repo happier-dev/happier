@@ -19,6 +19,7 @@ import {
   type ProjectNativeRefV1,
 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { readProjectWorktreePortSlotsV1 } from '@happier-dev/protocol/workspaces/projectSetup/worktreePortsV1';
 import type { ProjectDefinitionWorkspace } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { EnvVarRequirementSchema, type EnvVarRequirement } from '@happier-dev/protocol/profiles/environmentVariables';
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
@@ -53,6 +54,7 @@ export type PersonalProjectManifestEditorActions = Readonly<{
 }>;
 export type ProjectManifestEditorSnapshot = Readonly<{
   draft: ProjectManifestDocument;
+  worktreePortSlots: number | null;
   mode: 'form' | 'raw';
   formEnabled: boolean;
   dirty: boolean;
@@ -111,6 +113,7 @@ export function createProjectManifestEditorModel(
   );
   let snapshot: ProjectManifestEditorSnapshot = {
     draft,
+    worktreePortSlots: readProjectWorktreePortSlotsV1(draft.status === 'valid' ? draft.manifest : null),
     mode: draft.status === 'valid' ? 'form' : 'raw',
     formEnabled: draft.status === 'valid',
     dirty:
@@ -124,7 +127,7 @@ export function createProjectManifestEditorModel(
   const listeners = new Set<() => void>();
   function publish(next: ProjectManifestEditorSnapshot) {
     if (next === snapshot) return;
-    snapshot = next;
+    snapshot = { ...next, worktreePortSlots: readProjectWorktreePortSlotsV1(next.draft.status === 'valid' ? next.draft.manifest : null) };
     for (const listener of listeners) listener();
   }
   function persist() {

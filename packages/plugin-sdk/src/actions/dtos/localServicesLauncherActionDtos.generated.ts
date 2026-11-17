@@ -318,6 +318,7 @@ export type LocalServicesLauncherActionResultById = {
                 reason: 'active' | 'activity_unavailable' | 'cancelled' | 'port_selection_failed' | 'root_unavailable' | 'state_corrupt' | 'state_read_failed' | 'state_write_failed';
                 causeCode?: string | undefined;
             };
+            declaredSlots?: number | undefined;
         };
     };
     readonly "localServices.launcher.start": {
@@ -549,6 +550,7 @@ export type LocalServicesLauncherActionResultById = {
                     reason: 'active' | 'activity_unavailable' | 'cancelled' | 'port_selection_failed' | 'root_unavailable' | 'state_corrupt' | 'state_read_failed' | 'state_write_failed';
                     causeCode?: string | undefined;
                 };
+                declaredSlots?: number | undefined;
             };
         };
         reasonCode?: string | undefined;
@@ -1042,6 +1044,7 @@ export type LocalServicesLauncherActionResultById = {
                     reason: 'active' | 'activity_unavailable' | 'cancelled' | 'port_selection_failed' | 'root_unavailable' | 'state_corrupt' | 'state_read_failed' | 'state_write_failed';
                     causeCode?: string | undefined;
                 };
+                declaredSlots?: number | undefined;
             };
         };
     };

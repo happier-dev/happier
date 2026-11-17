@@ -74,7 +74,7 @@ it('serves Machine service Actions and accepted Project Starts through the insta
     let client: ApiMachineClient | undefined;
     const services = createLocalServicesDaemonRuntime({ machineId: 'machine', accountId: 'owner', startLoop: false,
         inventoryEnabled: () => true, projectManagedServices: owner,
-        runTargets: () => ({ targets: [], worktreePortRoots: [] }),
+        runTargets: () => ({ targets: [], worktreePortDefinitions: [] }),
         scan: async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }) });
     try {
         const profile = await addServerProfile({ name: 'services', serverUrl: 'https://services.invalid', webappUrl: 'https://services.invalid' });

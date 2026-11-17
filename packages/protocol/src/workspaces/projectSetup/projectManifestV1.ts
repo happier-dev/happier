@@ -6,6 +6,7 @@ import { PluginContributionIdentityV1Schema } from '../../plugins/contributionId
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { EnvVarRequirementSchema } from '../../profiles/environmentVariables.js';
 import { ProjectMemoryDemandV1Schema } from './projectMemoryDemandV1.js';
+import { ProjectWorktreePortSlotsV1Schema } from './worktreePortsV1.js';
 
 export { ProjectMemoryDemandV1Schema, type ProjectMemoryDemandV1 } from './projectMemoryDemandV1.js';
 
@@ -61,7 +62,7 @@ export type ProjectDevcontainerSelectionV1 = z.infer<typeof ProjectDevcontainerS
 /** Deliberate Project intent; absent preserves fixed-port behavior. */
 export const ProjectWorktreePortsV1Schema = z.discriminatedUnion('enabled', [
   z.strictObject({ enabled: z.literal(false) }),
-  z.strictObject({ enabled: z.literal(true), slots: z.number().check(z.int(), z.minimum(1)) }),
+  z.strictObject({ enabled: z.literal(true), slots: ProjectWorktreePortSlotsV1Schema }),
 ]);
 export type ProjectWorktreePortsV1 = z.infer<typeof ProjectWorktreePortsV1Schema>;
 export const ProjectServiceRuntimeV1Schema = z.strictObject({

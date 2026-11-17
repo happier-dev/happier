@@ -1,5 +1,13 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import type { ProjectManifestV1 } from './projectManifestV1.js';
+
+export const ProjectWorktreePortSlotsV1Schema = z.number().check(z.int(), z.minimum(1));
+
+/** Ordinary slots are declared intent, independent of retained/named listener assignments. */
+export function readProjectWorktreePortSlotsV1(definition: Pick<ProjectManifestV1, 'worktreePorts'> | null | undefined): number | null {
+    return definition?.worktreePorts?.enabled === true ? definition.worktreePorts.slots : null;
+}
 
 const port = z.number().check(z.int(), z.minimum(1), z.maximum(65535));
 

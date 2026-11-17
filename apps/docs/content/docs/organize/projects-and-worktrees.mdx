@@ -115,6 +115,11 @@ Worktree port allocation is opt-in in the Project definition. This development
 implementation is still undergoing integrated validation; it is not a released
 availability claim.
 
+`slots` declares exactly how many ordinary ports each workspace receives. There
+is no automatic count inferred from detected services or previously assigned
+ports. Declare the count when enabling this option; named listener ports remain
+separate from these slots.
+
 For example, two listening services can select separate slots:
 
 ```json

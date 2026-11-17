@@ -51,6 +51,8 @@ export type LocalServiceLiveFeedsInput = Readonly<{
 export type LocalServiceLiveFeeds = Readonly<{
     inventoryState: LocalServiceInventoryState;
     launcherState: LocalServiceLauncherState | null;
+    /** Effective definition's ordinary slots; null means no declaration was supplied. */
+    worktreePortSlots: number | null;
     /** Undefined when the inventory is supplied rather than live. */
     refresh: (() => Promise<void>) | undefined;
     applyLauncherSnapshot: ReturnType<typeof useLocalServiceLauncherStateController>['applySnapshot'] | undefined;
@@ -97,6 +99,7 @@ export function useLocalServiceLiveFeeds(input: LocalServiceLiveFeedsInput): Loc
     return React.useMemo(() => ({
         inventoryState,
         launcherState,
+        worktreePortSlots: launcherState?.worktreePorts?.declaredSlots ?? null,
         refresh,
         applyLauncherSnapshot,
     }), [applyLauncherSnapshot, bindings.refresh, inventoryState, launcherState, refresh]);

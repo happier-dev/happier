@@ -35,6 +35,13 @@ This development-source implementation has composed PostgreSQL,
 daemon and native-launch validation pending; it does not establish release
 availability.
 
+The effective Project definition declares the ordinary slot count in
+`worktreePorts.slots`. `readProjectWorktreePortSlotsV1` is the shared read owner;
+disabled or absent configuration supplies no count. Discovery retains that count
+with each opted-in root and the selected launcher snapshot exposes `declaredSlots`.
+L8's live feed and Project-file editor expose `worktreePortSlots`; they never infer
+it from the retained assignment or named listener ports, and supply no default.
+
 ## Unconfirmed SSH transitions (0.3 development)
 
 An unconfirmed SSH transition retains its native failure kind, reason, step and

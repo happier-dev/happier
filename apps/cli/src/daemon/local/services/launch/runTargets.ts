@@ -6,6 +6,7 @@ import { readProjectManifest } from '@/workspaces/projectSetup/projectManifestFi
 import { readProjectEffectiveDefinition } from '@/workspaces/projectSetup/projectEffectiveDefinition';
 import type { ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import type { ProjectEffectiveDefinitionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
+import { readProjectWorktreePortSlotsV1 } from '@happier-dev/protocol/workspaces/projectSetup/worktreePortsV1';
 import { inspectProjectDefinitions, inspectProjectDefinitionFiles, NATIVE_PROJECT_DEFINITION_FILES } from '@/workspaces/projectSetup/nativeDefinitionInspection';
 import { collectNativePackageDirectories, readNativePackage, resolveNativePackageManager, type NativePackageManager } from '@/workspaces/projectSetup/nativePackageScripts';
 import { projectNativeSourceKey, resolveNativePackageScript } from '@/workspaces/projectSetup/projectNativeResolution';
@@ -53,7 +54,7 @@ export type LocalServiceLauncherRunTarget = LocalServiceRunTarget | LocalService
 export type LocalServiceRunTargetDiscovery<T extends LocalServiceLauncherRunTarget = LocalServiceLauncherRunTarget> = Readonly<{
     targets: readonly T[];
     /** Opted-in roots observed by the same manifest read, including roots with no Services. */
-    worktreePortRoots: readonly string[];
+    worktreePortDefinitions: readonly Readonly<{ rootPath: string; slots: number }>[];
 }>;
 
 function declarationTarget(workspace: WorkspaceRefV1, selection: ProjectServiceDeclarationRefV1['selection']): LocalServiceDeclarationRunTarget {
@@ -180,7 +181,7 @@ export async function discoverLocalServiceRunTargets(input: Readonly<{
         definitionsByRoot.set(root, { manifest, detected, packageManagers });
     }
     const declarations: LocalServiceDeclarationRunTarget[] = [];
-    const worktreePortRoots = new Set<string>();
+    const worktreePortDefinitions = new Map<string, number>();
     for (const workspace of input.acceptedWorkspaceRefs ?? []) {
         const { manifest, detected, packageManagers } = definitionsByRoot.get(workspace.rootPath)!;
         const effective = input.effectiveDefinitions?.get(workspace) ?? (input.projectDefinitionAccount && workspace.projectKey
@@ -189,7 +190,8 @@ export async function discoverLocalServiceRunTargets(input: Readonly<{
             : undefined);
         const effectiveManifest = effective ? effective.effectiveManifest : manifest.document?.status === 'valid' ? manifest.document.manifest : null;
         const manifestServices = effectiveManifest?.services ?? {};
-        if (effectiveManifest?.worktreePorts?.enabled === true) worktreePortRoots.add(workspace.rootPath);
+        const slots = readProjectWorktreePortSlotsV1(effectiveManifest);
+        if (slots !== null) worktreePortDefinitions.set(workspace.rootPath, slots);
         const declaredSources = new Set(Object.values(manifestServices).flatMap(service => service.source.kind === 'command'
             ? [] : [projectNativeSourceKey(workspace.rootPath, service.source)]));
         const isDeclared = (source: Extract<ProjectServiceDeclarationRefV1['selection'], { kind: 'native' }>['source']) =>
@@ -219,6 +221,6 @@ export async function discoverLocalServiceRunTargets(input: Readonly<{
     const unqualified = packageTargets.filter(target => !target.workspace).map(target => target.target);
     return {
         targets: [...withStableRunTargetIds(unqualified), ...declarations],
-        worktreePortRoots: [...worktreePortRoots],
+        worktreePortDefinitions: [...worktreePortDefinitions].map(([rootPath, slots]) => ({ rootPath, slots })),
     };
 }

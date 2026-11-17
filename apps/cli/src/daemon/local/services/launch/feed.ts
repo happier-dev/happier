@@ -162,8 +162,8 @@ async function resolveRunTargets(
     workspaceRoots?: readonly string[],
     options?: LocalServiceRunTargetDiscoveryOptions,
 ): Promise<LocalServiceRunTargetDiscovery | undefined> {
-    if (!value) return { targets: [], worktreePortRoots: [] };
-    if (typeof value !== 'function') return { targets: value, worktreePortRoots: [] };
+    if (!value) return { targets: [], worktreePortDefinitions: [] };
+    if (typeof value !== 'function') return { targets: value, worktreePortDefinitions: [] };
 
     try {
         return await value(workspaceRoots, options);
@@ -211,7 +211,7 @@ export function createLocalServiceLauncherFeed(
     // checkout × script collection, including after a Workspace read or watch update.
     let observedDeclarations: readonly LocalServiceLauncherRunTarget[] = [];
     let observedPackageScripts: readonly LocalServiceLauncherRunTarget[] = [];
-    let observedWorktreePortRoots: readonly string[] = [];
+    let observedWorktreePortDefinitions: LocalServiceRunTargetDiscovery['worktreePortDefinitions'] = [];
     // Record which scopes have their first observation; the collections above remain
     // the sole data owner. An unscoped read does not admit a later, newly requested root.
     const declarationScopes = new Set<string | undefined>();
@@ -242,10 +242,10 @@ export function createLocalServiceLauncherFeed(
                     ...next.filter(target => workspaceRoots.some(root => isWorkspacePathWithin(root, target.cwd))),
                 ] : next;
                 observedDeclarations = replaceObservation(observedDeclarations, declarations);
-                observedWorktreePortRoots = workspaceRoots ? [
-                    ...observedWorktreePortRoots.filter(observed => !workspaceRoots.some(root => isWorkspacePathWithin(root, observed))),
-                    ...result.worktreePortRoots.filter(observed => workspaceRoots.some(root => isWorkspacePathWithin(root, observed))),
-                ] : result.worktreePortRoots;
+                observedWorktreePortDefinitions = workspaceRoots ? [
+                    ...observedWorktreePortDefinitions.filter(observed => !workspaceRoots.some(root => isWorkspacePathWithin(root, observed.rootPath))),
+                    ...result.worktreePortDefinitions.filter(observed => workspaceRoots.some(root => isWorkspacePathWithin(root, observed.rootPath))),
+                ] : result.worktreePortDefinitions;
                 for (const root of workspaceRoots ?? [undefined]) declarationScopes.add(root);
                 // A declarations-only read has no new observation of Workspace suggestions.
                 if (options?.includePackageScripts !== false) {
@@ -285,8 +285,9 @@ export function createLocalServiceLauncherFeed(
                 await refreshRunTargets(workspaceScopePaths, request?.signal, { includePackageScripts }, true);
             }
             const selectedRoot = !bindingsOnly && workspaceScopePaths?.length === 1 ? workspaceScopePaths[0] : undefined;
-            const worktreePorts = selectedRoot && observedWorktreePortRoots.some(root => canonicalAbsolutePathsEqual(root, selectedRoot))
-                ? { rootPath: selectedRoot, result: await (input.worktreePorts ?? getHostWorktreePortsOwner()).read({ rootPath: selectedRoot }) }
+            const declaredPorts = selectedRoot ? observedWorktreePortDefinitions.find(definition => canonicalAbsolutePathsEqual(definition.rootPath, selectedRoot)) : undefined;
+            const worktreePorts = selectedRoot && declaredPorts
+                ? { rootPath: selectedRoot, declaredSlots: declaredPorts.slots, result: await (input.worktreePorts ?? getHostWorktreePortsOwner()).read({ rootPath: selectedRoot }) }
                 : undefined;
             const runTargets = bindingsOnly ? [] : includePackageScripts
                 ? [...observedDeclarations, ...observedPackageScripts] : observedDeclarations;

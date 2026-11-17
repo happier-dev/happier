@@ -29,9 +29,9 @@ describe('discoverLocalServiceRunTargets', () => {
             const input = { roots: [root], acceptedWorkspaceRefs: [workspace], includePackageScripts: false };
             const enabled = await discoverLocalServiceRunTargets(input);
             expect(enabled.targets).toEqual([]);
-            expect(enabled.worktreePortRoots).toEqual([root]);
+            expect(enabled).toMatchObject({ worktreePortDefinitions: [{ rootPath: root, slots: 2 }] });
             await writeJson(manifestPath, { version: 1, worktreePorts: { enabled: false } });
-            expect((await discoverLocalServiceRunTargets(input)).worktreePortRoots).toEqual([]);
+            expect((await discoverLocalServiceRunTargets(input)).worktreePortDefinitions).toEqual([]);
         } finally { await rm(root, { recursive: true, force: true }); }
     });
     it('reads each package tree once, retaining declared Workspace services and one implicit script per physical package', async () => {
