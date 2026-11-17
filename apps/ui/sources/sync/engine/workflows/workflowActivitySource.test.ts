@@ -97,7 +97,9 @@ it('shares acquisition across hosts, publishes only changed facts and releases t
     const session = createSessionFixture({ id: 'arrived', seq: 2, createdAt: Date.now(), updatedAt: Date.now() });
     storage.getState().applySessions([session]);
     storage.getState().applySessions([session]);
-    expect(column.filter(row => row.kind === 'session')).toHaveLength(1);
+    storage.getState().applySessions([{ ...session, latestTurnId: 'real-control-turn', latestTurnStatus: 'in_progress',
+        latestTurnStatusObservedAt: Date.now() }]);
+    expect(column.filter(row => row.kind === 'session').map(row => row.event)).toEqual(['started', 'turn_started']);
     const run = createWorkflowRunSummaryFixture({ id: 'arriving-attention', ownerAccountId: 'activity-account', updatedAt: new Date().toISOString(),
         // The shared row may carry opened detail; activity publishes public membership only.
         heldStep: null, where: null, startedBy: null, stepProgress: null, stepProgressCurrentness: null });

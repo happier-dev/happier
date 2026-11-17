@@ -68,9 +68,9 @@ describe('Workflow activity through the Account Action executor', () => {
       expect(fixture.takeRequestObservations().filter(request => request.path === '/v3/automations/runs/workflow-storage'))
         .toHaveLength(1); // Explicit Retry reads once without republishing the unchanged page.
       const created = await fixture.assertKnownGoodSessionControl(account, machine);
-      await waitFor(() => column.some(row => row.kind === 'session' && row.sessionId === created.sessionId), { timeoutMs: 60_000 });
+      await waitFor(() => column.some(row => row.kind === 'session' && row.event === 'started' && row.sessionId === created.sessionId), { timeoutMs: 60_000 });
       expect(companion).toEqual(column);
-      expect(column.filter(row => row.kind === 'session' && row.sessionId === created.sessionId)).toHaveLength(1);
+      expect(column.filter(row => row.kind === 'session' && row.event === 'started' && row.sessionId === created.sessionId)).toHaveLength(1);
       // Both hosts consume the same pushed row object; neither asks HTTP for its body.
       expect(companion.at(-1)).toBe(column.at(-1));
       expect(fixture.takeRequestObservations().filter(request => request.path === '/v3/automations/runs/workflow-storage'))
@@ -97,13 +97,15 @@ describe('Workflow activity through the Account Action executor', () => {
       await waitFor(async () => {
         const read = await source.readPage({ automationId: set.automationId });
         const runs = WorkflowRunListResultV1Schema.parse(read).runs;
-        occurrenceId = runs[0]?.id;
+        const run = runs[0];
+        // The accepted snapshot exists once the Workflow execution owner initializes the Run.
+        occurrenceId = run && (run.state === 'running' || run.state === 'succeeded') ? run.id : undefined;
         expect(JSON.stringify(read)).not.toContain(privateDocument);
         return occurrenceId !== undefined;
       }, { timeoutMs: 60_000 });
       if (!occurrenceId) throw new Error('Daemon-backed occurrence unavailable');
       const detail = await account.execute('workflow.run.get', { runId: occurrenceId });
-      expect(detail.ok).toBe(true);
+      expect(detail.ok, detail.ok ? undefined : detail.errorCode).toBe(true);
       if (!detail.ok) throw new Error(detail.errorCode);
       const opened = WorkflowRunGetResultV1Schema.parse(detail.result);
       expect(opened.run.origin).toMatchObject({ kind: 'automation', automationId: set.automationId, cause: { kind: 'manual' } });
@@ -136,9 +138,9 @@ describe('Workflow activity through the Account Action executor', () => {
       await source.retry();
       expect(reopened).toEqual([]); // Reattaching the same Account's unchanged facts is not a new occurrence.
       const afterReconnect = await fixture.assertKnownGoodSessionControl(account, machine);
-      await waitFor(() => reopened.some(row => row.kind === 'session' && row.sessionId === afterReconnect.sessionId),
+      await waitFor(() => reopened.some(row => row.kind === 'session' && row.event === 'started' && row.sessionId === afterReconnect.sessionId),
         { timeoutMs: 60_000 });
-      expect(reopened.filter(row => row.kind === 'session' && row.sessionId === afterReconnect.sessionId)).toHaveLength(1);
+      expect(reopened.filter(row => row.kind === 'session' && row.event === 'started' && row.sessionId === afterReconnect.sessionId)).toHaveLength(1);
     } finally {
       for (const release of releases) release();
       await ui.close();
