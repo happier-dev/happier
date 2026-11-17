@@ -88,6 +88,7 @@ export const themeSurfaces = {
     columnSource: "Quelle",
     columnModes: "Modi",
     anyMode: "Alle",
+    lightAndDark: "Hell und dunkel",
     modeFilter: "Welche Modi",
     title: "Themes",
     description: "Looks für Happier aus dem Happier-Katalog, Open VSX und deinen Plugins. Probiere eins aus, bevor du es installierst.",

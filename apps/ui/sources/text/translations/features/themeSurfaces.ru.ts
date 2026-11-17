@@ -88,6 +88,7 @@ export const themeSurfaces = {
     columnSource: "Источник",
     columnModes: "Режимы",
     anyMode: "Любые",
+    lightAndDark: "Светлая и тёмная",
     modeFilter: "Какие режимы",
     title: "Темы",
     description: "Оформление Happier из каталога Happier, Open VSX и ваших плагинов. Примерьте тему перед установкой.",

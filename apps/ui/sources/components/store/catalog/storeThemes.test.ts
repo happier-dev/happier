@@ -58,6 +58,15 @@ describe('Store theme metadata projection', () => {
     });
 });
 
+describe('Store theme modes', () => {
+    it('says a two-face listing covers light and dark once, not as two facts', () => {
+        const both = { ...summary, themeMetadata: { includes: [{ key: 'day', label: 'Day', mode: 'light' as const }, { key: 'night', label: 'Night', mode: 'dark' as const }] } };
+        expect(projectStoreThemeCard(both, 'Open VSX').summary).toBe(t('themeStore.lightAndDark'));
+        const dark = { ...summary, themeMetadata: { includes: [{ key: 'night', label: 'Night', mode: 'dark' as const }] } };
+        expect(projectStoreThemeCard(dark, 'Open VSX').summary).toBe(t('themeCard.dark'));
+    });
+});
+
 describe('Store theme listing coverage facts', () => {
     it('says a colours-only theme works everywhere, without zero rule counts', () => {
         const facts = projectStoreThemeCoverageFacts({ total: 0, native: 0, webOnly: 0, affectedSurfaces: [] });

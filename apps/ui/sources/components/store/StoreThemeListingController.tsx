@@ -13,7 +13,7 @@ import { getThemeRegistryLifecycle, getThemeTryOnOwner } from '@/theme/profiles/
 import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
 import { resolveThemeRuntimeVisualTheme } from '@/theme/profiles/themeProfileRuntime';
 import { t } from '@/text';
-import { projectStoreThemeCoverageFacts } from './catalog/storeThemes';
+import { describeStoreThemeModes, projectStoreThemeCoverageFacts } from './catalog/storeThemes';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { Modal } from '@/modal';
 import type { StoreThemeListingViewProps } from './storeThemeViewTypes';
@@ -102,7 +102,7 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     const install = () => matching ? run('install', THEME_ACTION_IDS.keep, { previewRef: matching.previewRef })
         : run('install', THEME_ACTION_IDS.install, { listing });
     return props.children({
-        name: opened?.listing.summary.title ?? '', kicker: t('settingsAppearance.theme'),
+        name: opened?.listing.summary.title ?? '', kicker: [t('settingsAppearance.theme'), describeStoreThemeModes(faces?.map(face => face.mode) ?? [])].filter(Boolean).join(' · '),
         meta: opened ? [opened.listing.summary.publisher?.name, sources.sources.find(source => source.id === sourceId)?.title,
             opened.listing.pointer.version].filter(Boolean).join(' · ') : '',
         description: opened?.listing.summary.description ?? null,

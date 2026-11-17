@@ -88,6 +88,7 @@ export const themeSurfaces = {
     columnSource: "來源",
     columnModes: "模式",
     anyMode: "全部",
+    lightAndDark: "淺色和深色",
     modeFilter: "適用模式",
     title: "主題",
     description: "來自 Happier 目錄、Open VSX 和你的外掛的 Happier 外觀。安裝前可以先試用。",

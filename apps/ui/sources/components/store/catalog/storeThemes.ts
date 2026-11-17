@@ -13,13 +13,20 @@ export function themeSummaryMatchesMode(item: RegistryCatalogItemSummary, mode: 
     return mode === null || item.themeMetadata?.includes.some(face => face.mode === mode) === true;
 }
 
+/** Which modes a listing covers, said once (lab C1/C2 "Light and dark"), for its card and its listing kicker. */
+export function describeStoreThemeModes(modes: Iterable<ThemeProfileMode>): string {
+    const covered = new Set(modes);
+    if (covered.has('light') && covered.has('dark')) return t('themeStore.lightAndDark');
+    if (covered.has('light')) return t('themeCard.light');
+    return covered.has('dark') ? t('themeCard.dark') : '';
+}
+
 export function projectStoreThemeCard(item: RegistryCatalogItemSummary, sourceTitle: string): StoreThemeCardView {
     return {
         key: `theme|${item.sourceId}|${item.itemId}`,
         name: item.title,
         byline: item.publisher ? `${item.publisher.name} · ${sourceTitle}` : sourceTitle,
-        summary: [...new Set(item.themeMetadata?.includes.flatMap(face => face.mode ? [face.mode] : []))]
-            .map(mode => t(mode === 'light' ? 'themeCard.light' : 'themeCard.dark')).join(' · '),
+        summary: describeStoreThemeModes(item.themeMetadata?.includes.flatMap(face => face.mode ? [face.mode] : []) ?? []),
         faces: item.themeMetadata?.preview ?? NO_FACES,
         ...(item.brandMark ? { mark: item.brandMark } : {}),
     };

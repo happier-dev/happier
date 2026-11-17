@@ -88,6 +88,7 @@ export const themeSurfaces = {
     columnSource: "提供元",
     columnModes: "モード",
     anyMode: "すべて",
+    lightAndDark: "ライトとダーク",
     modeFilter: "対応モード",
     title: "テーマ",
     description: "Happierカタログ、Open VSX、プラグインからHappierの見た目を選べます。インストール前に試せます。",

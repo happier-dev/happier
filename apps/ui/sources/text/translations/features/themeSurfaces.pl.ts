@@ -88,6 +88,7 @@ export const themeSurfaces = {
     columnSource: "Źródło",
     columnModes: "Tryby",
     anyMode: "Wszystkie",
+    lightAndDark: "Jasny i ciemny",
     modeFilter: "Które tryby",
     title: "Motywy",
     description: "Wygląd Happier z katalogu Happier, Open VSX i Twoich wtyczek. Przymierz motyw przed instalacją.",
