@@ -225,12 +225,13 @@ export function isRequesterAccountEncryptionCurrentnessObserved(scope: Scope, ex
 }
 
 /** One exact Account/Home observation shared by live finite and Session custody. */
-/** Every follow reader below classifies only Account, Session and Share rows. */
+/** The incumbent follow readers consume Account, Session and Share rows. */
 const FOLLOW_CHANGE_KINDS: ReadonlySet<string> = new Set(['account', 'session', 'share']);
 
-function isAccountWakeOutsideFollowKinds(body: unknown): boolean {
+function isAccountWakeOutsideFollowKinds(body: unknown, machineAvailabilityDemanded: boolean): boolean {
     const kinds = body && typeof body === 'object' && 'changeKinds' in body ? body.changeKinds : undefined;
-    return Array.isArray(kinds) && kinds.length > 0 && kinds.every(kind => typeof kind === 'string' && !FOLLOW_CHANGE_KINDS.has(kind));
+    return Array.isArray(kinds) && kinds.length > 0 && kinds.every(kind => typeof kind === 'string'
+        && !FOLLOW_CHANGE_KINDS.has(kind) && !(machineAvailabilityDemanded && kind === 'machine'));
 }
 
 export function acquireRequesterAccountEncryptionCurrentness(scope: Scope): Observation {
@@ -403,7 +404,7 @@ function createObservation(scope: Scope): SharedObservation {
         for (const listener of connectedAccountListeners) listener(event);
     };
     const hasFollowDemand = () => followListeners.size > 0 || sourceListeners.size > 0 || connectedAccountListeners.size > 0
-        || inventoryListeners.size > 0 || environmentAccessListeners.size > 0;
+        || inventoryListeners.size > 0 || environmentAccessListeners.size > 0 || runAvailabilityListeners.size > 0;
     const publishSettings = (event: RequesterAccountSettingsObservation) => {
         // Reconnect invalidates existing publications. A newly admitted holder
         // already bootstrapped Settings after its fresh witness and must not
@@ -417,6 +418,7 @@ function createObservation(scope: Scope): SharedObservation {
         if (changes.some(change => change.kind === 'account'
             && readSessionFollowChangeHintV1(change.hint) !== null)) publishFollow();
         for (const change of changes) {
+            if (change.kind === 'machine') publishRunAvailability({ kind: 'machine', machineId: change.entityId });
             if (environmentAccessListeners.size > 0) {
                 const deployment = readDeploymentAccountChangeV1(change);
                 if (deployment && deployment.deploymentId === undefined) page.environmentIds.add(deployment.environmentId);
@@ -590,7 +592,7 @@ function createObservation(scope: Scope): SharedObservation {
                         // plugin availability claims) carries nothing here; the cursor stays where it is,
                         // and the next relevant wake reads from it. Unrouted wakes stay coarse.
                         // An attached same-process feed owner reads this wake and hands its page over.
-                        if (feedOwners === 0 && parsed.success && !isAccountWakeOutsideFollowKinds(parsed.data.body)) {
+                        if (feedOwners === 0 && parsed.success && !isAccountWakeOutsideFollowKinds(parsed.data.body, runAvailabilityListeners.size > 0)) {
                             syncFollowChanges(Number.isSafeInteger(parsed.data.seq) && parsed.data.seq >= 0
                                 ? parsed.data.seq : undefined);
                         }
@@ -708,7 +710,9 @@ function createObservation(scope: Scope): SharedObservation {
             return () => { followListeners.delete(listener); };
         },
         subscribeRunFollowAvailability(listener) {
+            const alreadyDemanded = hasFollowDemand();
             runAvailabilityListeners.add(listener);
+            if (!alreadyDemanded) syncFollowChanges();
             return () => { runAvailabilityListeners.delete(listener); };
         },
         subscribeSessionFollowSources(listener, receiverRecovery) {

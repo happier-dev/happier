@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createSocketTransportAdapter } from '@happier-dev/sync-client';
+import type { ChangeEntry } from '@happier-dev/protocol/changes';
 
 import { createApiSessionSocketStub, type ApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 
@@ -42,11 +43,11 @@ describe('requester Account follow observation wakes', () => {
       await vi.waitFor(() => expect(feedReads()).toBeGreaterThan(0));
       await new Promise<void>(resolve => setTimeout(resolve, 10));
       const baseline = feedReads();
-      // First-boot plugin availability claims: one pluginDomain wake each.
+      // Plugin availability and Machine writes do not affect connected-account readers.
       for (let n = 0; n < 5; n += 1) {
         cursor += 1;
         socket!.trigger('update', { id: `wake-${n}`, seq: cursor, createdAt: 1,
-          body: { t: 'account-change', changeKinds: ['pluginDomain'], entityIds: [`pluginDomain/p${n}/availability`] } });
+          body: { t: 'account-change', changeKinds: [n === 4 ? 'machine' : 'pluginDomain'], entityIds: [`pluginDomain/p${n}/availability`] } });
         await new Promise<void>(resolve => setTimeout(resolve, 5));
       }
       expect(feedReads() - baseline).toBe(0);
@@ -56,6 +57,59 @@ describe('requester Account follow observation wakes', () => {
       await vi.waitFor(() => expect(feedReads() - baseline).toBe(1));
     } finally {
       release();
+      await observation.dispose();
+    }
+  });
+
+  it('demands and classifies durable Machine changes for availability readers on the shared Account cursor', async () => {
+    let socket: ApiSessionSocketStub | undefined;
+    sockets.connect.mockImplementation(() => {
+      socket = createApiSessionSocketStub({ connected: true });
+      return { socket, transport: createSocketTransportAdapter(socket) };
+    });
+    const changes: ChangeEntry[] = [];
+    const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      if (url.includes('/v2/changes')) {
+        const after = Number(new URL(url).searchParams.get('after') ?? 0);
+        return { status: 200, data: { changes: changes.filter(change => change.cursor > after), nextCursor: changes.length } };
+      }
+      throw new Error(`Unexpected boundary read: ${url}`);
+    });
+    const feedReads = () => get.mock.calls.filter(([url]) => String(url).includes('/v2/changes')).length;
+    const observation = acquireRequesterAccountEncryptionCurrentness({
+      accountId: 'account-machine-assignment-wakes', token: 'token-machine-assignment-wakes', serverBaseUrl: 'http://home.test',
+    });
+    const machines: string[] = [];
+    const release = observation.subscribeRunFollowAvailability(change => {
+      if (change.kind === 'machine') machines.push(change.machineId);
+    });
+    let detachOwner: (() => void) | undefined;
+    function publish(kind: ChangeEntry['kind'], entityId: string) {
+      const cursor = changes.length + 1;
+      const change = { cursor, kind, entityId, changedAt: cursor };
+      changes.push(change);
+      socket!.trigger('update', { id: `assignment-${cursor}`, seq: cursor, createdAt: cursor,
+        body: { t: 'account-change', changeKinds: [kind], entityIds: [entityId] } });
+      return change;
+    }
+    try {
+      await vi.waitFor(() => expect(socket).toBeDefined());
+      socket!.trigger('connect');
+      await vi.waitFor(() => expect(feedReads()).toBe(1));
+      publish('account', 'unrelated-account-write');
+      await vi.waitFor(() => expect(feedReads()).toBe(2));
+      publish('machine', 'collector-a');
+      await vi.waitFor(() => expect(machines).toEqual(['collector-a']));
+      const readsBeforeOwnedPage = feedReads();
+      detachOwner = observation.attachFeedOwner();
+      const after = changes.length;
+      const change = publish('machine', 'collector-b');
+      observation.consumeOwnedFeedPage({ after, nextCursor: change.cursor, changes: [change] });
+      expect(machines).toEqual(['collector-a', 'collector-b']);
+      expect(feedReads()).toBe(readsBeforeOwnedPage);
+    } finally {
+      release();
+      detachOwner?.();
       await observation.dispose();
     }
   });
