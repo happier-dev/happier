@@ -9,11 +9,11 @@ import {
   APP_RAIL_WIDTH_PX,
 } from '@/components/navigation/shell/appRail/appRailMetrics';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { Icon } from '@/components/ui/icons/Icon';
-import { Item } from '@/components/ui/lists/Item';
+import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import {
   CollectionList,
   CollectionListGroupLabel,
+  CollectionNavigationRow,
   CollectionShellColumnSurfaceContext,
 } from '@/components/ui/lists/collection/CollectionList';
 import {
@@ -51,6 +51,20 @@ const SPACES: readonly CollectionSpacesStripItem[] = [
 type Grouping = 'all' | 'project' | 'type';
 const NOOP = () => {};
 const GUIDE_COUNT = 10;
+
+/** A column row as the shell's columns draw them: the navigation row with its glyph (Settings, Machines). */
+function SpecimenRow(props: Readonly<{ id: string; title: string; icon: IconName; selected?: boolean }>) {
+  return (
+    <CollectionNavigationRow
+      rowRole="item"
+      testID={`shell-column-specimen-${props.id}`}
+      title={props.title}
+      icon={<Icon name={props.icon} size={ICON_SIZE.md} />}
+      selected={props.selected === true}
+      onPress={NOOP}
+    />
+  );
+}
 
 function ShellColumnFrame(props: Readonly<{ frame: Frame }>) {
   const [space, setSpace] = React.useState('mine');
@@ -129,31 +143,11 @@ function ShellColumnFrame(props: Readonly<{ frame: Frame }>) {
             }}
             {...(strip ? { strip } : {})}
           >
-            <Item
-              title="Overview"
-              density="compact"
-              showChevron={false}
-              onPress={NOOP}
-            />
-            <Item
-              title="Activity"
-              density="compact"
-              showChevron={false}
-              onPress={NOOP}
-            />
+            <SpecimenRow id={`${props.frame.id}:overview`} title="Overview" icon="squares-four" selected />
+            <SpecimenRow id={`${props.frame.id}:activity`} title="Activity" icon="clock" />
             <CollectionListGroupLabel title="Your machines" />
-            <Item
-              title="Build box"
-              density="compact"
-              showChevron={false}
-              onPress={NOOP}
-            />
-            <Item
-              title="MacBook Pro"
-              density="compact"
-              showChevron={false}
-              onPress={NOOP}
-            />
+            <SpecimenRow id={`${props.frame.id}:build-box`} title="Build box" icon="desktop" />
+            <SpecimenRow id={`${props.frame.id}:macbook`} title="MacBook Pro" icon="desktop" />
           </CollectionList>
         </CollectionShellColumnSurfaceContext.Provider>
       </View>

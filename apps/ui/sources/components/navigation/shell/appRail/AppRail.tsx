@@ -437,6 +437,9 @@ const AppRailMore = React.memo(function AppRailMore(props: Readonly<{
                     else footerActions.current.get(id)?.();
                 }}
                 placement="right"
+                // The rail's dock menu, like its other popovers, centres on its trigger and may use the window's whole
+                // height; the start alignment is for a submenu beside its row, which scrolls instead (SHELL-ACCEPT-1116).
+                popoverAnchorAlignVertical="center"
                 variant="slim"
                 matchTriggerWidth={false}
                 popoverPortalWebTarget="body"
