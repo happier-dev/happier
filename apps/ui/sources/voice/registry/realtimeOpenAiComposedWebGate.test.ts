@@ -11,7 +11,7 @@ import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plu
 
 import { log } from '@/log';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
@@ -90,7 +90,7 @@ import {
 import { getCurrentBundledConversationRuntimeHost } from './bundledConversationRuntimeHost';
 
 import { getExternalVoiceProviderRegistration, subscribeExternalVoiceProviderRegistrations } from './externalVoiceProviderRegistrations';
-import { subscribeToVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
+import { getVoiceSessionSnapshot, subscribeToVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -583,9 +583,11 @@ describe('realtime_openai source-composed WebRTC gate', () => {
       expect(readOpenAiFunctionCallOutputIds(browser.peer.channel.sent))
         .toEqual(functionCallOutputIdsBeforeRetirement);
       expect(openSurface).not.toHaveBeenCalled();
-      await waitForTestEvent(controller.subscribe!, () => {
+      // AppShell may replace its retired controller. Observe the published
+      // Voice state rather than the disposed controller's retained snapshot.
+      await waitForTestEvent(subscribeToVoiceSessionSnapshot, () => {
         expect(browser.micTrack.stop).toHaveBeenCalledTimes(1);
-        expect(controller.getSnapshot().status).toBe('disconnected');
+        expect(getVoiceSessionSnapshot().status).toBe('disconnected');
       });
 
       accountB = await restoreServerAccountForTest({
@@ -2755,6 +2757,12 @@ describe('realtime_openai source-composed WebRTC gate', () => {
         }),
       },
     }) as never);
+    const carrier = storage.getState().sessions[recreatedCarrierId]!;
+    sessionHttp.replaceSession(recreatedCarrierId, createPlainSessionCurrentProjectionRecordFixture({
+      id: carrier.id, seq: carrier.seq, createdAt: carrier.createdAt, updatedAt: carrier.updatedAt,
+      active: carrier.active, activeAt: carrier.activeAt, metadata: carrier.metadata,
+      metadataVersion: carrier.metadataVersion, agentStateVersion: carrier.agentStateVersion,
+    }));
     const browser = installVoiceWebRtcBrowserBoundary();
     const composed = await environment.createRuntime(browser, {
       initialConversationSessionId: recreatedCarrierId,
@@ -2920,8 +2928,10 @@ describe('realtime_openai source-composed WebRTC gate', () => {
 
       releaseTypedAcceptance.resolve();
       await expect(typedTurn).rejects.toThrow('voice_service_unavailable');
-      await waitForTestEvent(environment.subscribeNetwork, () => expect(transcriptWrites).toHaveLength(2));
+      // The response is intentionally held: its completion notification cannot
+      // announce arrival. Observe the existing HTTP boundary's write signal.
       await aCorrectionWriteStarted.promise;
+      expect(transcriptWrites).toHaveLength(2);
 
       let oldStopSettled = false;
       oldStopping = composed.runtime.adapter.stop({

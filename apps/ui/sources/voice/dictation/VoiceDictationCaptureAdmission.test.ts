@@ -136,13 +136,15 @@ describe('Dictation capture admission integration', () => {
         expect(admission.acquire('conversation').status).toBe('acquired');
     });
 
-    it('abandons a never-settling stop, permits Conversation Voice immediately, and cleans one late artifact once', async () => {
+    it('returns cancellation promptly, retains admission until recording retires, and cleans one late artifact once', async () => {
         let resolveStop!: (uri: string) => void;
         const stopEntered = createDeferred<void>();
-        const rawCaptureOwner = createCaptureBoundary(() => {
+        const stopRecording = vi.fn(async (): Promise<string | null> => null);
+        stopRecording.mockImplementationOnce(() => {
             stopEntered.resolve();
             return new Promise<string>(resolve => { resolveStop = resolve; });
         });
+        const rawCaptureOwner = createCaptureBoundary(stopRecording);
         const admission = createVoiceCaptureAdmissionController();
         const captureOwner = createVoiceCaptureAdmissionBinding({
             admission,
@@ -177,13 +179,15 @@ describe('Dictation capture admission integration', () => {
         await expect(completion).resolves.toEqual({ kind: 'cancelled' });
 
         expect(rawCaptureOwner.stopSession).toHaveBeenCalledWith('dictation-session');
+        expect(admission.acquire('conversation').status).toBe('busy');
+        resolveStop('file:///late-dictation.m4a');
+        await rawCaptureOwner.stopSession.mock.results[0]?.value;
+        await deleted.promise;
         const conversation = admission.acquire('conversation');
         expect(conversation.status).toBe('acquired');
         if (conversation.status === 'acquired') conversation.lease.release();
 
         await expect(controller.toggle('dictation-session-2')).resolves.toEqual({ kind: 'started' });
-        resolveStop('file:///late-dictation.m4a');
-        await deleted.promise;
         expect(deleteRecordedAudio).toHaveBeenCalledTimes(1);
         expect(deleteRecordedAudio).toHaveBeenCalledWith('file:///late-dictation.m4a');
         expect(controller.getSnapshot()).toMatchObject({
@@ -191,5 +195,6 @@ describe('Dictation capture admission integration', () => {
             status: 'listening',
         });
         await controller.cancel('dictation-session-2');
+        await rawCaptureOwner.stopSession.mock.results[1]?.value;
     });
 });

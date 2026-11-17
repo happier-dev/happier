@@ -3,6 +3,7 @@ import 'fake-indexeddb/auto';
 import {
     getStorage, loadLocalVoiceEngineWithCompatState, localVoiceHomeId, machineRpcWithServerScope,
     localVoiceSpeechOutputBoundary, registerLocalVoiceEngineHarnessHooks,
+    disconnectLocalVoiceSocketsForTest,
     setPlatformOs, warmLocalVoiceEngineHarnessGraph, waitForLocalVoiceBoundaryEvent,
 } from '@/voice/local/localVoiceEngine.testHarness';
 import { createReactNativeAppStateEmitter } from '@/dev/testkit/mocks/reactNative';
@@ -516,6 +517,8 @@ describe('voice session lifecycle edge contracts', () => {
             expect(localVoiceSpeechOutputBoundary.fileRecording.stop).not.toHaveBeenCalled();
             appState.emit('background');
             expect(isServerReachabilityNetworkAllowed()).toBe(true);
+            disconnectLocalVoiceSocketsForTest();
+            expect(isServerReachabilityNetworkAllowed()).toBe(true);
             if (status === 'connecting') {
                 rejectRecording?.(new Error('Native recording unavailable'));
                 await start.catch(() => {});
@@ -661,6 +664,8 @@ describe('voice session lifecycle edge contracts', () => {
             expect(localVoiceSpeechOutputBoundary.fileRecording.start).toHaveBeenCalledTimes(1);
             appState.emit('background');
             expect(isServerReachabilityNetworkAllowed()).toBe(true);
+            disconnectLocalVoiceSocketsForTest();
+            expect(isServerReachabilityNetworkAllowed()).toBe(true);
             await controller.stop(target.sessionId);
             expect(controller.getSnapshot().canStop).toBe(false);
             expect(localVoiceSpeechOutputBoundary.fileRecording.stop).toHaveBeenCalledTimes(1);
@@ -689,6 +694,8 @@ describe('voice session lifecycle edge contracts', () => {
             // Republish that actual initial snapshot while Start owns its lease.
             expect(getVoiceAdapterRegistry().get('local_direct')?.getSnapshot().status).toBe('disconnected');
             appState.emit('background');
+            expect(isServerReachabilityNetworkAllowed()).toBe(true);
+            disconnectLocalVoiceSocketsForTest();
             expect(isServerReachabilityNetworkAllowed()).toBe(true);
             controller.setConfiguredProviderId('local_direct');
             expect(controller.getSnapshot().status).toBe('disconnected');

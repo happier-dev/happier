@@ -326,10 +326,12 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   }] });
   const spawnSession = (raw: unknown) => {
     const request = SessionSpawnNewInputV2Schema.parse(raw);
-    if (!('path' in request.directory)) throw new Error('Expected actual Global absolute directory');
+    // The daemon resolves managed placement; this HTTP fixture supplies its
+    // resulting directory without requiring a user-authored absolute path.
+    const path = request.directory.kind === 'path' ? request.directory.path : '/managed/voice';
     const sessionId = `mounted-codex-global-${Object.keys(daemonSessions).length + 1}`;
     daemonSessions[sessionId] = createSessionFixture({ id: sessionId, serverId: request.executionTarget.serverId, active: true, encryptionMode: 'plain',
-      metadata: { machineId, path: request.directory.path, host: 'test', flavor: 'codex', connectedServices: request.connectedServices },
+      metadata: { machineId, path, host: 'test', flavor: 'codex', connectedServices: request.connectedServices },
       permissionMode: request.permissionMode,
     });
     sessionHttp.replaceSession(sessionId, createPlainSessionCurrentProjectionRecordFixture({
@@ -343,6 +345,8 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
   const actionHttp = input.codex ? await (await import('@/dev/testkit/harness/externalActionAccountHttpBoundary'))
     .createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId: 'srv_voice-mounted-runtime',
       accountId: 'account-a', machineId, actionId: 'session.spawn_new', tokenEpoch: 0,
+      // Native setup may carry the present person's reviewed invocation.
+      requesterInvocation: 'optional',
       execute: raw => projectSessionSpawnNewActionResultV1(spawnSession(admitSessionSpawnNewActionInputV2(SessionSpawnNewActionInputV2Schema.parse(raw)))),
     }) : null;
   const settingsHttp = createAccountSettingsHttpBoundary({ serverUrl, initialAccounts: [{ accountId: 'account-a',
@@ -446,7 +450,7 @@ async function prepareGeneratedVoiceRuntime(input: Readonly<{ currentUi?: boolea
       });
       if (input.coldSavedCredential && path === '/v1/account/saved-secrets/resources/materials') return Response.json(coldCredentialMaterials);
       if (input.coldSavedCredential && path === '/v1/convai/agents/agent-cold-start') return Response.json({
-        agent_id: 'agent-cold-start', tags: ['happier_voice_config_v1'],
+        agent_id: 'agent-cold-start', tags: ['happier_voice_config_v2'],
         conversation_config: { conversation: { client_events: ELEVENLABS_AGENT_CLIENT_EVENTS } },
         platform_settings: {
           auth: { enable_auth: true }, overrides: { conversation_config_override: {
@@ -677,6 +681,8 @@ async function mountGeneratedLocalRuntime(selectedProviderId: 'local_direct' | '
   if (!accountConnection) throw new Error('Native Voice Account unavailable');
   const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
   const target = { serverId: resolveServerProfileScopeIdForIdentifier(accountConnection.home.id), sessionId: 'mounted-native-session' };
+  const { sync } = await import('@/sync/sync');
+  await sync.ensureSessionVisibleForMessageRoute(target.sessionId, { serverId: target.serverId });
   await act(async () => { await (await import('./voiceSession')).voiceSessionManager.toggle(target); });
   expect(mounted.lifecycle.getSnapshot()).toMatchObject({ adapterId: selectedProviderId,
     sessionId: target.sessionId, status: 'connected', canStop: true,
@@ -1059,7 +1065,7 @@ describe('VoiceSessionRuntime', () => {
     const { voiceHooks } = await import('@/voice/context/voiceHooks');
     const { getDeviceAnalyticsId } = await import('@/track/settingsAnalytics/deviceAnalyticsIdentity');
     const { syncPersistedVoiceConversationBindings, voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
-    const { setVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
+    const { acknowledgeVoiceSessionRuntimeReady, setVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
     const binding = getVoiceSessionPresentedBinding();
     if (!binding) throw new Error('Expected the admitted local binding');
     const attemptId = getVoiceSessionAttemptId();
@@ -1122,6 +1128,9 @@ describe('VoiceSessionRuntime', () => {
     await act(async () => { voiceHooks.onMessages(conversation, received); });
     expect(mounted.lifecycle.getSnapshot().status).toBe('connected');
     setVoiceSessionLifecycleController(mounted.lifecycle);
+    // Restoring the test's removed runtime registration also restores the
+    // readiness admission that registration withdrawal cleared.
+    acknowledgeVoiceSessionRuntimeReady(true);
     await act(async () => { voiceHooks.onMessages(conversation, received); });
     await waitForTestEvent(mounted.lifecycle.subscribe, () => mounted.lifecycle.getSnapshot(), snapshot => snapshot.status === 'disconnected');
     expect(mounted.lifecycle.getSnapshot().status).toBe('disconnected');
@@ -2139,8 +2148,8 @@ describe('VoiceSessionRuntime', () => {
       await waitForSdkCall('endSession', 1);
       expect(sdk.endSession).toHaveBeenCalledOnce();
       expect(sdk.startSession).toHaveBeenCalledOnce();
-      // Teardown keeps Stop and does not announce a new connection (`ending` projects as connected).
-      expect(getVoiceSessionSnapshot()).toEqual(active);
+      // Teardown keeps Stop while the canonical owner publishes Ending.
+      expect(getVoiceSessionSnapshot()).toEqual({ ...active, presentationState: 'ending' });
       await act(async () => {
         stopped.resolve();
         await stopped.promise;

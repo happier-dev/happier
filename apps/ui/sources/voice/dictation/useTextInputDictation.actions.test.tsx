@@ -189,13 +189,14 @@ describe('mounted field Dictation Actions', () => {
         let words = 'draft';
         const field = await renderHook(() => {
             const [enabled, setEnabled] = React.useState(true);
+            const [presented, setPresented] = React.useState(true);
             const other = useTextInputDictation({ controlId: 'other-mounted-field', enabled: true,
                 presented: true, editable: true, transcriptionSessionId: null, onTranscription: () => {} });
             return { ...useTextInputDictation({ controlId: 'mounted-field', enabled,
-            presented: true, editable: true, transcriptionSessionId: null, onTranscription: text => {
+            presented, editable: true, transcriptionSessionId: null, onTranscription: text => {
                 words = applyDictationToComposer({ input: null,
                     state: { text: words, selection: { start: words.length, end: words.length } }, text }).text;
-            } }), other, setEnabled };
+            } }), other, setEnabled, setPresented };
         }, { wrapper });
         let focused: Promise<boolean> | undefined;
         await act(async () => { focused = field.getCurrent().onFocus(); });
@@ -324,6 +325,15 @@ describe('mounted field Dictation Actions', () => {
         expect(discarded)
             .toMatchObject({ ok: true, result: { status: 'completed', dictationStatus: 'idle', inserted: false } });
         expect(voiceDictationController.getSnapshot()).toEqual({ sessionId: null, status: 'idle' });
+        expect(words === `draft ${dictatedWords}`).toBe(true);
+        await act(async () => { await field.getCurrent().onPress(); });
+        expect(voiceDictationController.getSnapshot()).toMatchObject({ sessionId: 'mounted-field', status: 'listening' });
+        const stopsBeforeHide = recording.stops;
+        await act(async () => { field.getCurrent().setPresented(false); });
+        await waitForHomeGovernance(() => {
+            expect(voiceDictationController.getSnapshot()).toEqual({ sessionId: null, status: 'idle' });
+            expect(recording.stops).toBe(stopsBeforeHide + 1);
+        });
         expect(words === `draft ${dictatedWords}`).toBe(true);
         await act(async () => { field.getCurrent().setEnabled(false); });
         expect(await execute('ui.current_context.read', {}, ui)).toMatchObject({ ok: true, result: { entity: pageEntity } });

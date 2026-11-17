@@ -48,7 +48,6 @@ const { getVoiceSessionLifecycleController, setVoiceSessionLifecycleController }
 const { voiceSessionManager } = await import('@/voice/session/voiceSession');
 const { getVoiceConversationRuntimeSnapshot } = await import('@/voice/runtime/machine/voiceConversationRuntimeStore');
 const { readDaemonSpeechStreamQaRouteRequirement } = await import('@/voice/runtime/daemonInference/daemonSpeechStreamQaRouteRequirement');
-const { createSessionMetadataHttpBoundary } = await import('@/dev/testkit/harness/sessionMetadataHttpBoundary');
 const { useVoiceTargetStore } = await import('@/voice/runtime/voiceTargetStore');
 const { voiceAgentSessions } = await import('@/voice/agent/voiceAgentSessions');
 
@@ -323,6 +322,7 @@ describe('voiceQaController', () => {
       // from that settled tuple instead of returning a stale pre-start version.
       const target = storage.getState().sessions.s1;
       const remoteTarget = createSessionFixture({ ...target, updatedAt: Date.now(),
+        seq: target.seq + 1, pendingCount: 1, pendingVersion: (target.pendingVersion ?? 0) + 1,
         agentStateVersion: (target.agentStateVersion ?? 0) + 1, agentState: {
           requests: { actual_question: { kind: 'user_action', tool: 'AskUserQuestion',
             arguments: { questions: [{ question: 'Continue?', options: [{ label: 'Yes' }, { label: 'No' }] }] }, createdAt: 1,
@@ -508,18 +508,22 @@ describe('voiceQaController', () => {
 
 
   it('forces a target-session refresh when the known session state is stale before building local QA context', async () => {
-    const target = storage.getState().sessions.s1;
-    const remoteTarget = createSessionFixture({ ...target, updatedAt: Date.now(),
-      agentStateVersion: (target.agentStateVersion ?? 0) + 1,
-      agentState: { requests: { req_question: {
-        tool: 'AskUserQuestion', kind: 'user_action', createdAt: 1,
-        arguments: { questions: [{ question: 'Continue with local voice QA?', options: [{ label: 'Yes' }, { label: 'No' }] }] },
-      } }, completedRequests: {} },
+    const targetRefresh = vi.fn<NonNullable<Parameters<typeof setLocalVoiceHttpResponder>[0]>>(request => {
+      if (request.method !== 'GET' || request.path !== '/v2/sessions/s1'
+        || useVoiceQaStore.getState().status !== 'running') return undefined;
+      // Start can update the owner tuple. Publish the later request from that
+      // settled version so the real hydration owner admits it as a new arrival.
+      const target = storage.getState().sessions.s1;
+      const remoteTarget = createSessionFixture({ ...target, updatedAt: Date.now(),
+        seq: target.seq + 1, pendingCount: 1, pendingVersion: (target.pendingVersion ?? 0) + 1,
+        agentStateVersion: (target.agentStateVersion ?? 0) + 1,
+        agentState: { requests: { req_question: {
+          tool: 'AskUserQuestion', kind: 'user_action', createdAt: 1,
+          arguments: { questions: [{ question: 'Continue with local voice QA?', options: [{ label: 'Yes' }, { label: 'No' }] }] },
+        } }, completedRequests: {} },
+      });
+      return Response.json(createPlainSessionByIdResponseFixture(remoteTarget));
     });
-    const remote = createSessionMetadataHttpBoundary(() => ({ s1: remoteTarget }));
-    const targetRefresh = vi.fn<NonNullable<Parameters<typeof setLocalVoiceHttpResponder>[0]>>(request => request.method === 'GET' && request.path === '/v2/sessions/s1'
-      && useVoiceQaStore.getState().status === 'running'
-      ? remote.handle('https://local-voice-actions.example.test/v2/sessions/s1') ?? undefined : undefined);
     setLocalVoiceHttpResponder(targetRefresh);
     const controller = prepareLocalQaSession();
     onTestFinished(async () => {
@@ -672,7 +676,7 @@ describe('voiceQaController', () => {
     ).toBe(true);
   });
 
-  it('updates the QA target session after a global local-voice retarget even if the binding store lags behind', async () => {
+  it('preserves the bound global QA target when ambient session focus changes', async () => {
     const getVoiceTargetState = vi
       .fn()
       .mockReturnValueOnce({ primaryActionSessionAddress: qaAddress('s1'), lastFocusedSessionAddress: null })
@@ -719,7 +723,9 @@ describe('voiceQaController', () => {
       autoStart: false,
     });
 
-    expect(useVoiceQaStore.getState().targetSessionAddress).toEqual(qaAddress('session_matrix'));
+    // The live binding owns working scope, including its explicit Global null
+    // target (7b2821dab23); ambient focus does not retarget an admitted turn.
+    expect(useVoiceQaStore.getState().targetSessionAddress).toBeNull();
     expect(useVoiceQaStore.getState().runtimeSessionId).toBe('voice-hidden-s1');
   });
 
@@ -1038,34 +1044,29 @@ describe('voiceQaController', () => {
         },
       },
     } as any);
-    vi.spyOn(sync, 'sendMessage').mockResolvedValue(undefined as any);
-    // The singleton's encryption owner is replaced only for this case and restored after it.
-    const previousEncryption = Reflect.get(sync, 'encryption');
-    onTestFinished(() => { Reflect.set(sync, 'encryption', previousEncryption); });
-    Reflect.set(sync, 'encryption', { getSessionEncryption: vi.fn(() => ({ encryptRawRecord: vi.fn() })) });
 
     // Action-bearing text is not a spoken answer; only the follow-up after the tool result is.
     const sendLocalTurn = vi.fn(async () => ({
       assistantText: '',
       actions: [
-        {
+        attachVoiceAgentActionEffectId({
           t: 'sendSessionMessage',
           args: {
             sessionId: 's1',
             message: 'Ask me which color I prefer using a structured question with Red and Blue options.',
           },
-        },
+        }, 'qa-send-message-effect'),
       ],
     })).mockResolvedValueOnce({
       assistantText: '',
       actions: [
-        {
+        attachVoiceAgentActionEffectId({
           t: 'sendSessionMessage',
           args: {
             sessionId: 's1',
             message: 'Ask me which color I prefer using a structured question with Red and Blue options.',
           },
-        },
+        }, 'qa-send-message-effect'),
       ],
     }).mockResolvedValueOnce({
       assistantText: 'The message was sent to the coding assistant. Waiting for it to respond with the structured question.',
@@ -1110,6 +1111,8 @@ describe('voiceQaController', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
+    expect(readLocalVoiceHttpRequests().some(request => request.method === 'POST'
+      && request.path === '/v2/sessions/s1/pending')).toBe(true);
     expect(waitForInterruptedLocalAssistantTurn).toHaveBeenCalledWith({
       conversationSessionId: 'voice-hidden-s1',
       timeoutMs: 15_000,
@@ -1118,13 +1121,9 @@ describe('voiceQaController', () => {
         baselineIds: expect.any(Set),
       },
     });
-    expect(
-      useVoiceQaStore.getState().entries.some(
-        (entry) =>
-          entry.kind === 'assistant'
-          && entry.text === 'The message was sent to the coding assistant. Waiting for it to respond with the structured question.',
-      ),
-    ).toBe(true);
+    // The mutation owner supplies the acknowledgement; provider prose must not
+    // override its real settlement (298b4336222).
+    expect(useVoiceQaStore.getState().entries.filter(entry => entry.kind === 'assistant')).toHaveLength(2);
     expect(
       useVoiceQaStore.getState().entries.some(
         (entry) =>

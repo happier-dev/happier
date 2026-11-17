@@ -1607,7 +1607,7 @@ describe('createVoiceSessionLifecycleController', () => {
             const state = await getStorage();
             const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
             const { createVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleController');
-            const { setVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
+            const { acknowledgeVoiceSessionRuntimeReady, setVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
             const { getVoiceSessionPresentedAttemptId, setVoiceSessionSnapshot } = await import('./voiceSessionStore');
             const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
             const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
@@ -1625,6 +1625,8 @@ describe('createVoiceSessionLifecycleController', () => {
             const { SESSION_RPC_METHODS } = await import('@happier-dev/protocol/rpc');
             const { z } = await import('zod/mini');
             const { localVoicePendingEnqueue, setLocalVoiceHttpResponder } = await import('@/voice/local/localVoiceEngine.testHarness');
+            const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+            const { Modal } = await import('@/modal');
             const settings = state.getState().settings;
             const config = readLocalConversationVoiceSettings(settings.voice);
             state.__setState({ settings: { ...settings, voice: { ...settings.voice, providerId: 'local_conversation',
@@ -1636,10 +1638,14 @@ describe('createVoiceSessionLifecycleController', () => {
             const controller = createVoiceSessionLifecycleController();
             controller.setConfiguredProviderId('local_conversation');
             setVoiceSessionLifecycleController(controller);
+            acknowledgeVoiceSessionRuntimeReady(true);
             const unsubscribe = controller.subscribe(() => setVoiceSessionSnapshot(controller.getSnapshot()));
-            // The person confirms the normal Action prompt; admission and
-            // execution remain the production executor's responsibility.
-            const executor = createDefaultActionExecutor({ presentUserActionConfirmation: async () => true });
+            // Answer the person's native presentation boundary, including the
+            // carrier review opened by its own real nested Action executor.
+            const modalBoundary = createModalModuleMock({ confirmResult: true });
+            const confirm = vi.spyOn(Modal, 'confirm').mockImplementation(modalBoundary.module.Modal.confirm);
+            const show = vi.spyOn(Modal, 'show').mockImplementation(modalBoundary.module.Modal.show);
+            const executor = createDefaultActionExecutor();
             const actionContext = { surface: 'ui' as const, serverId: localVoiceHomeId };
             const target = { serverId: localVoiceHomeId, sessionId: 's1' };
             try {
@@ -1734,6 +1740,8 @@ describe('createVoiceSessionLifecycleController', () => {
                 await controller.dispose();
                 unsubscribe();
                 setVoiceSessionLifecycleController(null);
+                confirm.mockRestore();
+                show.mockRestore();
             }
         });
 
@@ -1744,6 +1752,7 @@ describe('createVoiceSessionLifecycleController', () => {
             const state = await getStorage();
             const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
             const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+            const { SessionSpawnNewResultV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');
             const { renderHook, renderScreen } = await import('@/dev/testkit');
             const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
             const { getVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
@@ -1765,7 +1774,8 @@ describe('createVoiceSessionLifecycleController', () => {
             await loadLocalVoiceEngineWithCompatState();
             const incumbent = machineRpcWithServerScope.getMockImplementation()!;
             machineRpcWithServerScope.mockImplementation((request: Readonly<{ method: string }>) => request.method === RPC_METHODS.SESSION_SPAWN_NEW
-                ? Promise.resolve({ type: 'error', errorCode: 'agent_signed_out', errorMessage: 'agent_signed_out' }) : incumbent(request));
+                ? Promise.resolve(SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'agent_signed_out',
+                    retryable: false, agentId })) : incumbent(request));
             const runtime = await renderScreen(React.createElement(VoiceSessionRuntime));
             const controller = getVoiceSessionLifecycleController();
             if (!controller) throw new Error('Mounted Voice lifecycle unavailable');
@@ -1799,6 +1809,7 @@ describe('createVoiceSessionLifecycleController', () => {
             const state = await getStorage();
             const { readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
             const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+            const { SessionSpawnNewResultV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');
             const { renderScreen } = await import('@/dev/testkit');
             const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
             const { getVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
@@ -1823,7 +1834,8 @@ describe('createVoiceSessionLifecycleController', () => {
                 if (request.method !== RPC_METHODS.SESSION_SPAWN_NEW) return incumbent(request);
                 spawnChoices.push(request.payload);
                 return spawnChoices.length === 1
-                    ? Promise.resolve({ type: 'error', errorCode: 'agent_signed_out', errorMessage: 'agent_signed_out' }) : incumbent(request);
+                    ? Promise.resolve(SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'agent_signed_out',
+                        retryable: false, agentId: 'codex' })) : incumbent(request);
             });
             const runtime = await renderScreen(React.createElement(VoiceSessionRuntime));
             const controller = getVoiceSessionLifecycleController();
@@ -1903,7 +1915,7 @@ describe('createVoiceSessionLifecycleController', () => {
                 sessionAddress: { serverId: localVoiceHomeId, sessionId: 's1' } }));
             const cleanupReached = createDeferred<void>();
             const cleanupRelease = createDeferred<void>();
-            let ending: Promise<unknown> | undefined;
+            let ending: ReturnType<ReturnType<typeof useVoiceAttemptControl>['onPrimaryAction']> | undefined;
             try {
                 await act(async () => { await controller.toggle({ serverId: localVoiceHomeId, sessionId: 's1' }); });
                 localVoiceSpeechOutputBoundary.fileRecording.stop.mockImplementationOnce(async () => {

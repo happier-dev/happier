@@ -412,6 +412,7 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
         },
         confirmListeningStarted,
         transitionToConnected: ({ controlSessionId, adapterId, attemptId }) => {
+            cancelActiveListeningAttemptIfOwned({ controlSessionId, adapterId, attemptId });
             applyStateTransition({ controlSessionId, toState: 'connected', clearError: true, adapterId, attemptId });
         },
         transitionToListening: ({ controlSessionId, adapterId, attemptId }) => {

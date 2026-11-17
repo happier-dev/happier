@@ -9,6 +9,7 @@ import type { RecordedAudioTranscriptionRequest } from '@/voice/runtime/input/re
 import { DaemonVoiceSpeechTranscribeUploadFinalizeResponseSchema, DaemonVoiceSpeechTranscribeResponseSchema } from '@happier-dev/protocol/daemon/voiceSpeech';
 import { MachineLiveStreamRelayCapsV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { createTransferRecipientKeyPair } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption';
+import { publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 
 import { createVoiceCaptureAdmissionBinding } from '@/voice/runtime/input/VoiceCaptureAdmissionBinding';
 import { createVoiceCaptureAdmissionController } from '@/voice/runtime/input/VoiceCaptureAdmissionController';
@@ -134,6 +135,7 @@ function createTranscriptionProbe(reply: (observed: RecordedAudioTranscriptionRe
             const unavailable = { ...current, active: false, activeAt: 0 };
             storage.setState({ machines: { [unavailable.id]: unavailable },
                 machineListByServerId: { [speechHome.home.id]: [unavailable] } });
+            publishMachineActivityForTest([unavailable]);
         }
         speechReply = () => { entered.resolve(); return reply(request); };
         return await recordedAudioTranscriptionController.transcribe(request);
@@ -176,7 +178,7 @@ beforeEach(async ({ task }) => {
         },
     });
     const machine = createMachineFixture({ id: 'machine-ready-at-start', activeAt: Date.now() });
-    storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [speechHome.home.id]: [machine] } });
+    await publishMachineInventoryForTest({ serverId: speechHome.home.id, accountId: 'artifact-account' }, [machine]);
     storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ experiments: true, featureToggles: {
         voice: true, 'execution.runs': true, 'voice.agent': true, 'voice.daemonInference': true },
         voice: { ...storage.getState().settings.voice, executionMachine: { mode: 'fixed', machineId: machine.id } } }, storage.getState().settings));
@@ -834,7 +836,8 @@ describe('createVoiceDictationController', () => {
     it('removes a recorded-audio artifact that settles after cancellation', async () => {
         let resolveStoppedCapture!: (uri: string) => void;
         const captureOwner = createRealCaptureBoundary({ stop: () => new Promise<string>(resolve => { resolveStoppedCapture = resolve; }) });
-        const deleteRecordedAudio = vi.fn(async () => {});
+        const deleted = createDeferred<void>();
+        const deleteRecordedAudio = vi.fn(async () => { deleted.resolve(); });
         const controller = createVoiceDictationController({
             captureOwner,
             getSettings: () => ({
@@ -860,6 +863,7 @@ describe('createVoiceDictationController', () => {
         resolveStoppedCapture('file:///late-dictation.m4a');
 
         await expect(completion).resolves.toEqual({ kind: 'cancelled' });
+        await deleted.promise;
         expect(deleteRecordedAudio).toHaveBeenCalledOnce();
         expect(deleteRecordedAudio).toHaveBeenCalledWith('file:///late-dictation.m4a');
     });
@@ -1415,8 +1419,9 @@ describe('createVoiceDictationController', () => {
             expect(controller.getSnapshot()).toEqual({ sessionId: 'session-1', status: 'transcribing' });
 
             await controller.cancel('session-1');
-            await completion;
+            await vi.advanceTimersByTimeAsync(0);
             expect(completionSettled).toBe(true);
+            await completion;
             expect(completionResult).toEqual({ kind: 'cancelled' });
             expect(captureOwner.startCapture).toHaveBeenCalledWith(expect.objectContaining({
                 signal: expect.objectContaining({ aborted: true }),
@@ -1453,8 +1458,10 @@ describe('createVoiceDictationController', () => {
             stop: async () => ++stopCount === 1 ? await firstStop : null,
         });
         const deleted = createDeferred<void>();
+        const releaseDeletion = createDeferred<void>();
         const deleteRecordedAudio = vi.fn(async () => {
             deleted.resolve();
+            await releaseDeletion.promise;
             throw new Error('stale_recording_delete_failed');
         });
         const controller = createVoiceDictationController({
@@ -1481,13 +1488,19 @@ describe('createVoiceDictationController', () => {
         await captureOwner.stopCaptureEntered;
         await controller.cancel('session-1');
         await expect(staleCompletion).resolves.toEqual({ kind: 'cancelled' });
+        const retry = controller.toggle('session-1');
 
-        await expect(controller.toggle('session-1')).resolves.toEqual({ kind: 'started' });
+        // Physical retirement belongs to the recorder; only artifact deletion
+        // may still be pending when a same-session retry acquires the microphone.
+        resolveFirstStop('file:///stale-dictation.m4a');
+        await deleted.promise;
+        await captureOwner.stopSession.mock.results[0]?.value;
+        await expect(retry).resolves.toEqual({ kind: 'started' });
         await controller.cancel('session-1');
         expect(captureOwner.stopSession).toHaveBeenCalledTimes(2);
 
-        resolveFirstStop('file:///stale-dictation.m4a');
-        await deleted.promise;
+        releaseDeletion.resolve();
+        await vi.advanceTimersByTimeAsync(0);
         expect(deleteRecordedAudio).toHaveBeenCalledTimes(1);
         expect(controller.getSnapshot()).toEqual({
             sessionId: null,

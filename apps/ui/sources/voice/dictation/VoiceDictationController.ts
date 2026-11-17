@@ -218,8 +218,8 @@ export function createVoiceDictationController(deps: Readonly<{
             .then(async () => {
                 // Terminal capture ownership is independent from artifact
                 // finalization. The recorder may yield its URI later; its
-                // attempt-local cleanup remains fenced below while session and
-                // product admission are released immediately.
+                // attempt-local cleanup remains fenced below while the capture
+                // owner retires physical input and releases product admission.
                 await deps.captureOwner.stopSession(attempt.sessionId);
             })
             .catch(() => {});
@@ -253,24 +253,28 @@ export function createVoiceDictationController(deps: Readonly<{
             // bounded failure only while no replacement has become current.
             active = null;
             if (attempt.stopCaptureSettled) {
-                const cleanupResult = await artifactCleanup;
-                if (
-                    cleanupResult.kind === 'failed'
-                    && latestAttemptGeneration === attempt.generation
-                    && active === null
-                    && !snapshot.failure
-                ) {
-                    publish({
-                        sessionId: null,
-                        status: 'idle',
-                        failure: {
-                            id: nextFailureId++,
-                            sessionId: attempt.sessionId,
-                            kind: 'provider_error',
-                            reason: 'capture_failed',
-                        },
-                    });
-                }
+                const artifactSettled = artifactCleanup.then(cleanupResult => {
+                    if (
+                        cleanupResult.kind === 'failed'
+                        && latestAttemptGeneration === attempt.generation
+                        && active === null
+                        && !snapshot.failure
+                    ) {
+                        publish({
+                            sessionId: null,
+                            status: 'idle',
+                            failure: {
+                                id: nextFailureId++,
+                                sessionId: attempt.sessionId,
+                                kind: 'provider_error',
+                                reason: 'capture_failed',
+                            },
+                        });
+                    }
+                });
+                // A retry already waiting for physical teardown must not also
+                // wait for the retired recording's independent file deletion.
+                if (!attempt.cancelled) await artifactSettled;
             } else {
                 void artifactCleanup;
             }
@@ -474,7 +478,7 @@ export function createVoiceDictationController(deps: Readonly<{
                     publish({ sessionId: null, status: 'idle', failure: { ...snapshot.failure, canRetry: true } });
                 }
             } else {
-                if (attempt.failed && !attempt.stopCaptureSettled) {
+                if ((attempt.failed || attempt.cancelled) && !attempt.stopCaptureSettled) {
                     // A capture provider may still be finalizing a late URI. Its
                     // attempt-owned cleanup retains that URI/session work without
                     // keeping this cancellation result pending indefinitely.

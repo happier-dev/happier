@@ -69,6 +69,14 @@ vi.mock('socket.io-client', async (importOriginal) => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
 ).createSocketIoClientBoundary(importOriginal));
 const localVoiceSockets = new Set<Socket>();
+/** Native background connectivity ends only after the retained socket is lost. */
+export function disconnectLocalVoiceSocketsForTest(): void {
+    for (const socket of localVoiceSockets) {
+        if (!socket.connected) continue;
+        socket.connected = false;
+        for (const listener of socket.listeners('disconnect')) listener('transport close');
+    }
+}
 const localVoiceRemoteMessages = new Map<string, SessionMessageV1[]>();
 const localVoiceRemoteTurns = new Map<string, SessionTurnsProjectionV1>();
 type LocalVoiceBoundaryEvent = 'agent-start' | 'stream-start' | 'speech' | 'recognizer-start'

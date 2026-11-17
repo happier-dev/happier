@@ -126,6 +126,22 @@ describe('VoiceConversationRuntimeMachine', () => {
         expect(readPresentation().labelKey).toBe('voiceAssistant.label');
     });
 
+    it('retiring input to connected cancels its pending listening attempt', async () => {
+        const machine = createVoiceConversationRuntimeMachine();
+        machine.transitionToConnected({ controlSessionId: 's1' });
+        const capture = createDeferred<void>();
+        let signal: AbortSignal | undefined;
+        const starting = machine.rearmListening({ controlSessionId: 's1', startListening: next => {
+            signal = next;
+            return capture.promise;
+        } });
+        machine.transitionToConnected({ controlSessionId: 's1' });
+        expect(signal?.aborted).toBe(true);
+        capture.resolve();
+        await starting;
+        expect(machine.getSnapshot()).toMatchObject({ controlSessionId: 's1', state: 'connected' });
+    });
+
     it('keeps three consecutive turn rearms connected until capture is ready', async () => {
         const machine = createVoiceConversationRuntimeMachine();
         machine.transitionToListening({ controlSessionId: 's1' });

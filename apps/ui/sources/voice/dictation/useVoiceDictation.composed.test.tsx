@@ -7,6 +7,7 @@ import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionAc
 
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import {
     createMachineFixture,
@@ -141,7 +142,7 @@ describe('useVoiceDictation composed daemon readiness', () => {
         }
     });
 
-    it('does not report Ready when the real controller will fail the daemon feature gate before RPC', async () => {
+    it('does not report Ready when local feature policy blocks daemon Dictation before RPC', async () => {
         const executionMachineId = 'machine-ready-at-start';
         const installedFetch = vi.spyOn(runtimeFetchAdapter, 'setRuntimeFetch');
         let respondHome: Parameters<typeof setRuntimeFetch>[0] | null = null;
@@ -164,17 +165,6 @@ describe('useVoiceDictation composed daemon readiness', () => {
         });
         storage.setState({
             ...storage.getState(),
-            machineListByServerId: { [account.home.id]: [createMachineFixture({ id: executionMachineId, active: true, activeAt: Date.now() })] },
-            machines: {
-                [executionMachineId]: createMachineFixture({
-                    id: executionMachineId,
-                    active: true,
-                    // Voice execution-machine resolution fails closed on a stale
-                    // heartbeat, so a machine this test calls "ready at start"
-                    // must carry a live `activeAt` rather than the epoch default.
-                    activeAt: Date.now(),
-                }),
-            },
             settings: {
                 ...storage.getState().settings,
                 experiments: true,
@@ -207,6 +197,9 @@ describe('useVoiceDictation composed daemon readiness', () => {
                 },
             },
         });
+        await publishMachineInventoryForTest({ serverId: account.home.id, accountId: 'artifact-account' }, [
+            createMachineFixture({ id: executionMachineId, active: true, activeAt: Date.now() }),
+        ]);
         primeServerFeaturesSnapshot({
             serverId: account.home.id,
             snapshot: {
@@ -259,15 +252,15 @@ describe('useVoiceDictation composed daemon readiness', () => {
         });
         expect(hook.getCurrent().failure).toMatchObject({
             kind: 'provider_error',
-            reason: 'transcription_failed',
+            reason: 'provider_unavailable',
         });
 
         expect(readinessMachineId).toBe(executionMachineId);
         expect(startMachineIds).toEqual([executionMachineId]);
         expect(machineRpcWithServerScopeSpy).not.toHaveBeenCalled();
         expect(readiness).toMatchObject({
-            status: 'unavailable',
-            code: 'server_feature_disabled',
+            status: 'needs_setup',
+            code: 'feature_policy_disabled',
         });
 
         storage.setState({
@@ -316,28 +309,5 @@ describe('useVoiceDictation composed daemon readiness', () => {
         expect(stopRecording).toHaveBeenCalledTimes(2);
         await expect(hook.getCurrent().toggle()).resolves.toEqual({ kind: 'cancelled' });
 
-        // A plugin-owned field consumes the same singleton capture admission and
-        // independent Dictation configuration, without inventing a Session id.
-        await act(async () => {
-            primeServerFeaturesSnapshot({
-                snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse({
-                    features: { voice: { enabled: true, happierVoice: { enabled: false } } },
-                }) },
-            });
-        });
-        const { useTextInputDictation } = await import('./useTextInputDictation');
-        const delivered = vi.fn();
-        const field = await renderHook(({ presented }: { presented: boolean }) => useTextInputDictation({
-            controlId: 'plugin-owned-text-field', enabled: true, presented, editable: true,
-            transcriptionSessionId: null, onTranscription: delivered,
-        }), { initialProps: { presented: true }, wrapper: AuthenticatedHookBoundary });
-        await act(async () => { await field.getCurrent().onPress(); });
-        expect(field.getCurrent().status).toBe('listening');
-        await field.rerender({ presented: false });
-        await waitForTestEvent(field.subscribe, field.getCurrent, current => current.status === 'idle');
-        expect(field.getCurrent().status).toBe('idle');
-        expect(stopRecording).toHaveBeenCalledTimes(3);
-        expect(delivered).not.toHaveBeenCalled();
-        await field.unmount();
     });
 });
