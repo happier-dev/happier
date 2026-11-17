@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { getActionSpec, listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { serializeActionSpec } from '@happier-dev/protocol/actions/actionCatalog';
 import { isWorkflowRunSummaryActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { createDailyHealthDigestWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/backupExamples';
@@ -177,5 +178,14 @@ describe('workflow executing-machine Action catalog', () => {
         expect(listActionSpecs().filter(spec => spec.sideEffectClass === 'read').some(spec => before.some(entry => entry.id === spec.id))).toBe(false);
         // Completion changes when After runs, not which hookable Actions can be authored (PROGRAM R25).
         expect(after.map(spec => spec.id)).toEqual(before.map(spec => spec.id));
+    });
+    it('names each before/after Action\'s declared primary operand and no kind for an Action without one', () => {
+        const before = listWorkflowStepActionSpecs(null, null, undefined, undefined, 'before');
+        // B1 e414f7ee433: session.stop is about a Session, machines.services.control about a Machine.
+        expect(before.find(spec => spec.id === 'session.stop')?.operand).toEqual({ kind: { kind: 'session' } });
+        expect(before.find(spec => spec.id === 'machines.services.control')?.operand).toEqual({ kind: { kind: 'machine' } });
+        const undeclared = before.filter(spec => serializeActionSpec(getActionSpec(spec.id as Parameters<typeof getActionSpec>[0]), { includeOutputSchema: false }).automation?.primarySubject === undefined);
+        expect(undeclared.length).toBeGreaterThan(0);
+        expect(undeclared.every(spec => spec.operand === undefined)).toBe(true);
     });
 });

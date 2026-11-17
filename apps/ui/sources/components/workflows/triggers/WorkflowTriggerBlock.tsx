@@ -37,6 +37,7 @@ import { workflowSessionOptionRow } from '@/components/workflows/presentation/wo
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useWorkflowActionCatalog } from '@/components/workflows/presentation/useWorkflowActionCatalog';
+import { ActionSubjectSelect, formatActionOperand, isActionOperandSubject, readSubjectOperand } from './ActionSubjectSelect';
 import { t } from '@/text';
 
 import {
@@ -347,6 +348,10 @@ function ActionTrackRows(
     when.phase,
   );
   const selectedId = when.actionIds.length === 1 ? (when.actionIds[0] ?? null) : null;
+  // A saved subject of another matching kind (a resource's Link) reads as its own kind rather than as Any.
+  const declared = catalog.specs.find((spec) => spec.id === selectedId)?.operand;
+  const operand = when.subject !== undefined && !isActionOperandSubject(declared, when.subject)
+    ? readSubjectOperand(when.subject) : declared;
   const items = React.useMemo<ValueFieldSelectItem[]>(() => {
     const offered = catalog.specs.map((spec) => ({
       id: spec.id,
@@ -383,10 +388,36 @@ function ActionTrackRows(
               : catalog.phase === 'error' ? t('common.requestFailed')
               : catalog.phase === 'loading' ? t('workflows.triggers.card.actionsLoading')
               : t('common.unavailable')}
-            onSelect={(id) => props.onChange({ ...when, actionIds: [id] })}
+            onSelect={(id) => {
+              // A chosen resource stays only while the new Action is about the same kind.
+              const { subject, ...rest } = when;
+              const next = catalog.specs.find((spec) => spec.id === id)?.operand;
+              props.onChange(subject !== undefined && isActionOperandSubject(next, subject)
+                ? { ...rest, actionIds: [id], subject } : { ...rest, actionIds: [id] });
+            }}
           />
         </View>
       </TrackRow>
+      {operand === undefined ? null : (
+        <TrackRow
+          label={formatActionOperand(operand).label}
+          trackKey={`${props.testID}-subject`}
+        >
+          <View style={styles.selectBox}>
+            <ActionSubjectSelect
+              testID={`${props.testID}-subject`}
+              operand={operand}
+              subject={when.subject}
+              machineId={props.machineId}
+              serverId={props.serverId}
+              onChange={(subject) => {
+                const { subject: _previous, ...rest } = when;
+                props.onChange(subject === undefined ? rest : { ...rest, subject });
+              }}
+            />
+          </View>
+        </TrackRow>
+      )}
       <ActionWaitPolicyRows testID={props.testID} when={when} onChange={props.onChange} />
     </>
   );

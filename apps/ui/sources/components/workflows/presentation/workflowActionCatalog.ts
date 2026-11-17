@@ -14,6 +14,8 @@ import { resolveWorkflowActionDescription, resolveWorkflowActionTitle } from '@/
 import { t } from '@/text';
 import { localizeBuiltinInputHints } from '@/text/builtinInputPrompts';
 import type { IconName } from '@/components/ui/icons/Icon';
+import type { AutomationSubjectKind } from '@happier-dev/plugin-sdk/automations';
+import type { PluginAutomationSubjectKindDeclarationV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
 
 export type WorkflowActionSpec = Readonly<Pick<ActionSpec, 'title' | 'description' | 'inputHints'> & {
     id: string;
@@ -28,7 +30,24 @@ export type WorkflowActionSpec = Readonly<Pick<ActionSpec, 'title' | 'descriptio
     /** Public discovery facts; potential operands do not grant management permission. */
     automation?: ActionDiscoveryDefinitionSummaryV1['automation'];
     approvalScope?: ActionDiscoveryDefinitionSummaryV1['approvalScope'];
+    /** The one resource kind a before/after trigger on this Action is about, as its declaration states it. */
+    operand?: WorkflowActionOperand;
 }>;
+
+/**
+ * An Action's declared operand: the native declaration's primary subject, or a plugin Action's own subject kind with
+ * its localized name and the declaration its picker reads. Context kinds (Session, approval profile) are never it.
+ */
+export type WorkflowActionOperand = Readonly<{
+    kind: AutomationSubjectKind;
+    label?: string;
+    declaration?: PluginAutomationSubjectKindDeclarationV1;
+}>;
+
+function readPrimaryOperand(automation: ActionDiscoveryDefinitionSummaryV1['automation'] | undefined): WorkflowActionOperand | undefined {
+    const kind = automation?.primarySubject?.kind;
+    return kind === undefined || kind === 'plugin' ? undefined : { kind: { kind } as AutomationSubjectKind };
+}
 
 /** Resolve an authored id without replacing it when the current catalog lacks it. */
 export function findWorkflowActionSpec(actionId: string, catalog: readonly WorkflowActionSpec[] = listWorkflowStepActionSpecs()): WorkflowActionSpec | null {
@@ -58,8 +77,10 @@ export function projectWorkflowHostActionSpecs(specs: readonly ActionSpec[], sel
         .map(spec => {
             const automation = discovery ? discovery.get(spec.id)?.automation
                 : purpose === 'workflowStep' ? undefined : serializeActionSpec(spec, { includeOutputSchema: false }).automation;
+            const operand = readPrimaryOperand(automation);
             const presentation = { id: spec.id, title: resolveWorkflowActionTitle(spec.id, spec),
             ...(automation === undefined ? {} : { automation }),
+            ...(operand === undefined ? {} : { operand }),
             ...resolveHostActionPickerPresentation(spec.id),
             ...(spec.description === undefined ? {} : { description: resolveWorkflowActionDescription(spec.id, spec) }) };
             return projectWorkflowAction(() => {
@@ -96,11 +117,18 @@ export function listWorkflowStepActionSpecs(projection?: PluginProjectionV2 | nu
             || action.execution.target !== 'daemon' || !action.surfaces.includes('agent')) return [];
         const declaration = discovered?.get(actionId);
         const automation = declaration?.automation;
+        const subjectKind = purpose === 'workflowStep' ? undefined : readPluginActionApprovalScopeSubjectKindV1({
+            declaration: action.approvalScope, pluginId: action.pluginId, subjectKinds });
+        const pluginKind = subjectKind?.ok === true && subjectKind.subjectKind?.kind === 'plugin' ? subjectKind.subjectKind : null;
+        const operand: WorkflowActionOperand | undefined = pluginKind === null ? readPrimaryOperand(automation) : {
+            kind: { kind: 'plugin', pluginId: pluginKind.pluginId, subjectKindId: pluginKind.subjectKindId },
+            ...(localize === undefined ? {} : { label: localize(pluginKind.pluginId, pluginKind.definition.label) }),
+            declaration: { pluginId: pluginKind.pluginId, definition: pluginKind.definition } };
         const present = (resolved: ResolvedPluginProjectedActionPresentation): WorkflowActionSpec => ({ id: actionId, title: resolved.title,
             ...(automation === undefined ? {} : { automation }),
             ...(declaration?.approvalScope === undefined ? {} : { approvalScope: declaration.approvalScope }),
-            ...(purpose === 'workflowStep' ? {} : { subjectKind: readPluginActionApprovalScopeSubjectKindV1({
-                declaration: action.approvalScope, pluginId: action.pluginId, subjectKinds }) }),
+            ...(subjectKind === undefined ? {} : { subjectKind }),
+            ...(operand === undefined ? {} : { operand }),
             plugin: { id: action.pluginId, title: projection?.installedPackagesById?.[action.pluginId]?.displayName ?? t('workflows.plugins.fromPlugins'),
                 ...(action.icon === undefined ? {} : { icon: action.icon }) },
             ...(resolved.description === null ? {} : { description: resolved.description }),
