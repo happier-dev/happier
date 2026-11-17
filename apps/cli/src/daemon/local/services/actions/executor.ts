@@ -1,5 +1,7 @@
 import type { LocalServiceActionRequestV1, RuntimeActionExecuteArgs } from '@happier-dev/protocol';
 import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 
@@ -34,6 +36,7 @@ export async function stopProjectManagedService(handle: ProjectManagedServiceHan
         return stopped.status === 'stopped' ? { status: 'succeeded' }
             : { status: 'denied', reasonCode: 'managed_service_stop_unconfirmed' };
     } catch (error) {
+        logger.warnLocalFile('[Local service] Stop failed', projectActionFailureCauseV1(error, 'local_service.stop'));
         return { status: 'failed', reasonCode: error instanceof Error && 'code' in error && typeof error.code === 'string'
             ? error.code : 'managed_service_stop_unconfirmed' };
     }
@@ -98,7 +101,8 @@ export async function executeLocalServiceAction(input: Readonly<{
                     entry: input.target.entry,
                     now: input.now,
                 });
-            } catch {
+            } catch (error) {
+                logger.warnLocalFile('[Local service] Termination failed', projectActionFailureCauseV1(error, 'local_service.terminate.execute'));
                 return { status: 'failed', reasonCode: 'terminate_detected_executor_failed' };
             }
         }

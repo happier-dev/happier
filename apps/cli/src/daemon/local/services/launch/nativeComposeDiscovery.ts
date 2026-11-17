@@ -2,6 +2,8 @@ import { readNativeComposeLogTargetForHost, type NativeComposeActivatedServiceFa
 import { projectNativeComposeReview } from '@/workspaces/projectSetup/nativeComposeReview';
 import { isNativeDefinitionRecord as record } from '@/workspaces/projectSetup/nativePackageScripts';
 import { readNativeComposePorts } from './nativeComposePorts';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 
 type ColdTarget = NonNullable<ReturnType<typeof readNativeComposeLogTargetForHost>> & Readonly<{
     configuration: NativeComposeActivatedServiceFacts['configuration'] | undefined;
@@ -54,7 +56,10 @@ export async function readColdNativeComposeTargetsForHost(input: Readonly<{
     const inspected = await input.run(['inspect', '--type', 'container', ...ids]);
     if (inspected.exitCode !== 0) return null;
     let rows: unknown;
-    try { rows = JSON.parse(inspected.stdout); } catch { return null; }
+    try { rows = JSON.parse(inspected.stdout); } catch (error) {
+        logger.warnLocalFile('[Native Compose] Discovery parse failed', projectActionFailureCauseV1(error, 'native_compose.discovery.parse'));
+        return null;
+    }
     if (!Array.isArray(rows)) return null;
     const inspectedRows: readonly unknown[] = rows;
     const targets = input.composeServices.map(composeService => {

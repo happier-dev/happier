@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LocalServiceActionRequestV1 } from '@happier-dev/protocol';
 
 import { createProcessTreeTerminator } from '@/processes/terminate/terminateProcessTree';
@@ -6,6 +6,9 @@ import { readLinuxCensus } from '@/processes/census/linux';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
 import { localServiceProcfsFixture } from '../inventory/platform/censusFixture.testkit';
 import { createTerminateDetectedService, type TerminateListenerProbeResult } from './terminate';
+import { executeLocalServiceAction } from './executor';
+import { createLocalServiceInventoryRegistry } from '../inventory/registry';
+import { logger } from '@/ui/logger';
 
 const PID = 4321;
 const CHILD = 4322;
@@ -29,7 +32,7 @@ const request: LocalServiceActionRequestV1 = {
     target: { kind: 'inventory_entry', machineId: 'machine-a', inventoryEntryId: 'entry-a' },
 };
 
-async function harness(input: Readonly<{ resistantChild?: boolean; survive?: boolean; signalError?: string; readFailure?: boolean; finalVerificationFailure?: boolean; absentRoot?: boolean }> = {}) {
+async function harness(input: Readonly<{ resistantChild?: boolean; survive?: boolean; signalError?: string; readFailure?: boolean; finalVerificationFailure?: boolean; absentRoot?: boolean; waitError?: Error }> = {}) {
     const live = new Set(input.absentRoot ? [] : [PID, CHILD]);
     let emptyReads = 0;
     const fixture = () => localServiceProcfsFixture([...live].map(pid => ({ pid, ppid: pid === CHILD && live.has(PID) ? PID : 1 })));
@@ -61,13 +64,39 @@ async function harness(input: Readonly<{ resistantChild?: boolean; survive?: boo
     });
     const control = {
         probeListener,
-        terminateTree: createProcessTreeTerminator({ platform: 'linux', kill, censusDependencies: { platform: 'linux', linuxBoundary: boundary } }),
+        terminateTree: createProcessTreeTerminator({ platform: 'linux', kill, censusDependencies: { platform: 'linux', linuxBoundary: boundary },
+            ...(input.waitError ? { wait: async () => { throw input.waitError; } } : {}) }),
     };
     const run = (target = entry(start)) => createTerminateDetectedService(control, { graceMs: 1 })({ request, entry: target, now: 3000 });
-    return { run, probeListener, kill, live, start, held };
+    return { run, probeListener, kill, live, start, held, control };
 }
 
 describe('createTerminateDetectedService', () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it('retains a thrown process wait cause locally while preserving the signal failure result', async () => {
+        const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const h = await harness({ survive: true, waitError: Object.assign(new Error('private native wait text'), { code: 'EIO' }) });
+        await expect(h.run()).resolves.toEqual({ status: 'failed', reasonCode: 'terminate_signal_failed' });
+        expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+            phase: 'local_service.terminate.signal', errorClass: 'Error', errorCode: 'EIO', httpStatus: null,
+        }));
+        expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private native wait text');
+    });
+
+    it('retains a thrown listener probe cause at the Action executor without disclosing its message', async () => {
+        const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const h = await harness();
+        h.probeListener.mockRejectedValue(Object.assign(new Error('private listener text'), { code: 'EIO' }));
+        const result = await executeLocalServiceAction({ request, target: { kind: 'inventory_entry', entry: entry(h.start) },
+            inventoryRegistry: createLocalServiceInventoryRegistry(), terminateDetectedService: createTerminateDetectedService(h.control), now: 3000 });
+        expect(result).toEqual({ status: 'failed', reasonCode: 'terminate_detected_executor_failed' });
+        expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+            phase: 'local_service.terminate.execute', errorClass: 'Error', errorCode: 'EIO', httpStatus: null,
+        }));
+        expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private listener text');
+        expect(h.kill).not.toHaveBeenCalled();
+    });
     it('interrupts the tree and forces its resistant child before confirming port release', async () => {
         const h = await harness({ resistantChild: true });
         await expect(h.run()).resolves.toEqual({ status: 'succeeded' });

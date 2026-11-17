@@ -8,6 +8,8 @@ import type { DeploymentExecEnvPortV1 } from '@happier-dev/plugin-sdk/exec';
 import { createFileTransferPayloadSource, resolveTransferPayloadManifestHash } from '@/machines/transfer/transferPayloadSource';
 import type { MachineNativeEffectContext } from './machineNativeEffectAdmission';
 import { MachineNativeEffectAdmissionError } from './machineNativeEffectAdmission';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 
 /** Host-only custody from the containing native admission, never receipt data. */
 export type NativeComposeEffectAuthority = Readonly<{
@@ -137,6 +139,7 @@ function readNativeImageJson(text: string): unknown {
     try { return JSON.parse(text); }
     catch (error) {
         if (!(error instanceof SyntaxError)) throw error;
+        logger.warnLocalFile('[Native Compose] Image parse failed', projectActionFailureCauseV1(error, 'native_compose.image.parse'));
         return refuse('deployment_image_identity_unavailable');
     }
 }
@@ -415,7 +418,10 @@ export function createNativeComposeImageIdentity(input: Readonly<{
             }
             const parse = (raw: string): Record<string, unknown> => {
                 let value: unknown;
-                try { value = JSON.parse(raw); } catch { return refuse('deployment_image_manifest_mismatch'); }
+                try { value = JSON.parse(raw); } catch (error) {
+                    logger.warnLocalFile('[Native Compose] Image manifest parse failed', projectActionFailureCauseV1(error, 'native_compose.image.manifest.parse'));
+                    return refuse('deployment_image_manifest_mismatch');
+                }
                 if (!record(value) || value.schemaVersion !== 2) return refuse('deployment_image_manifest_mismatch');
                 return value;
             };

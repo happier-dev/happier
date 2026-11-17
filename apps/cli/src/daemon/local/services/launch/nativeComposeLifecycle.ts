@@ -1,7 +1,8 @@
 import { classifyNativeComposeFailure } from './nativeComposeFailure';
 import { readNativeComposeLogsForHost } from './nativeComposeLogs';
 export { readNativeComposeLogsForHost } from './nativeComposeLogs';
-import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 import { readSQLiteRuntimeAvailabilityV1 } from '@happier-dev/deployments';
 import type { ManagedServiceNativeObservationV1 } from '@happier-dev/plugin-sdk/managed-services';
 import { tmpdir } from 'node:os';
@@ -271,7 +272,10 @@ function nativeAccounting(stdout: string, containers: readonly ProjectNativeCont
                 networkSentBytes: nativeBytes(typeof row.NetIO === 'string' ? row.NetIO.split('/')[1] : null),
                 restartCount: restarts.get(row.ID) ?? null });
         }
-    } catch { return { kind: 'unavailable', reason: 'unavailable' }; }
+    } catch (error) {
+        logger.warnLocalFile('[Native Compose] Accounting parse failed', projectActionFailureCauseV1(error, 'native_compose.accounting.parse'));
+        return { kind: 'unavailable', reason: 'unavailable' };
+    }
     // Docker omits stopped containers. Absence is unknown usage, never zero.
     return { kind: 'sample', samples: ids.map(id => samples.get(id) ?? { nativeResourceId: id, cpuPercent: null, memoryBytes: null,
         networkReceivedBytes: null, networkSentBytes: null, restartCount: restarts.get(id) ?? null }) };
@@ -318,7 +322,10 @@ function containers(stdout: string, project?: string): readonly Container[] | nu
                 health: record(item.State.Health) ? String(item.State.Health.Status) : '', ports: item.NetworkSettings.Ports ?? {} });
         }
         return new Set(result.map(item => item.id)).size === result.length ? result : null;
-    } catch { return null; }
+    } catch (error) {
+        logger.warnLocalFile('[Native Compose] Container parse failed', projectActionFailureCauseV1(error, 'native_compose.containers.parse'));
+        return null;
+    }
 }
 
 /** Cold logs consume native routing labels, never source or control custody. */
@@ -455,6 +462,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
             if (error !== null && typeof error === 'object' && 'code' in error
                 && error.code === 'plugin_exec_termination_incomplete') throw error;
             signal.throwIfAborted();
+            logger.warnLocalFile('[Native Compose] Accounting read failed', projectActionFailureCauseV1(error, 'native_compose.accounting'));
             return { kind: 'unavailable', reason: 'unavailable' };
         }
     });
@@ -516,6 +524,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                 prefix, cwd: launch.cwd, env, signal })).id === input.engineId;
         } catch (error) {
             if (signal?.aborted) throw error;
+            logger.warnLocalFile('[Native Compose] Captured engine read failed', projectActionFailureCauseV1(error, 'native_compose.engine.observe'));
             return false;
         }
     };
@@ -524,6 +533,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
         try { return await read(signal); }
         catch (error) {
             if (signal?.aborted) throw error;
+            logger.warnLocalFile('[Native Compose] Removal observation failed', projectActionFailureCauseV1(error, 'native_compose.removal.observe'));
             return null;
         }
     };
@@ -619,7 +629,10 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                     // Docker returns an array of the remaining members with exit 1
                     // when an admitted container has gone. That is not engine loss.
                     try { const value: unknown = JSON.parse(output.stdout); return Array.isArray(value) ? value : null; }
-                    catch { return null; }
+                    catch (error) {
+                        logger.warnLocalFile('[Native Compose] Engine inspection parse failed', projectActionFailureCauseV1(error, 'native_compose.inspect.parse'));
+                        return null;
+                    }
                 },
                 configurationMatches(row) {
                     return record(row) && typeof row.Id === 'string'
@@ -690,7 +703,9 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                 }
                 await subscription.dispose();
             };
-            const onAbort = () => { void dispose().catch(() => {}); };
+            const onAbort = () => { void dispose().catch(error => {
+                logger.warnLocalFile('[Native Compose] Observation disposal failed', projectActionFailureCauseV1(error, 'native_compose.observe.dispose'));
+            }); };
             options?.signal?.addEventListener('abort', onAbort, { once: true });
             if (options?.signal?.aborted) { await dispose(); options.signal.throwIfAborted(); }
             await subscription.ready;
@@ -709,7 +724,11 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
             if (cleared) return stopped;
             if (engineSubscription) { options?.signal?.throwIfAborted(); return observe(engineRows); }
             try { return observe(await read(options?.signal)); }
-            catch (error) { if (options?.signal?.aborted) throw error; return unknown; }
+            catch (error) {
+                if (options?.signal?.aborted) throw error;
+                logger.warnLocalFile('[Native Compose] Inspection failed', projectActionFailureCauseV1(error, 'native_compose.inspect'));
+                return unknown;
+            }
         },
         ...(input.environment ? {
             start: (options?: Readonly<{ signal?: AbortSignal }>) => controlExisting('start', options),
@@ -754,6 +773,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                 return { status: (await afterControl(options?.signal)).phase === 'stopped' ? 'stopped' : 'termination_incomplete' };
             } catch (error) {
                 if (options?.signal?.aborted) throw error;
+                logger.warnLocalFile('[Native Compose] Stop failed', projectActionFailureCauseV1(error, 'native_compose.stop'));
                 if (observedEmpty && !ids?.length && !starterStarted) { cleared = true; return { status: 'stopped' }; }
                 return { status: 'termination_incomplete' };
             }
@@ -790,7 +810,10 @@ function nativeRefusal(reason: string, step = 'deployment.native', errorCode: st
 
 function nativeModel(stdout: string): Record<string, unknown> {
     let value: unknown;
-    try { value = JSON.parse(stdout); } catch { return nativeRefusal('native_compose_configuration_invalid'); }
+    try { value = JSON.parse(stdout); } catch (error) {
+        logger.warnLocalFile('[Native Compose] Configuration parse failed', projectActionFailureCauseV1(error, 'native_compose.configuration.parse'));
+        return nativeRefusal('native_compose_configuration_invalid');
+    }
     if (!record(value) || !record(value.services)) return nativeRefusal('native_compose_configuration_invalid');
     return value;
 }

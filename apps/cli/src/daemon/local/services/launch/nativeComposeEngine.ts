@@ -1,4 +1,5 @@
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as nativeFs from 'node:fs/promises';
@@ -220,6 +221,7 @@ export async function readNativeComposeEngine(input: EngineReadInput): Promise<N
         // Unsettled probe-process custody is not a native prerequisite refusal.
         if (code === 'plugin_exec_termination_incomplete') throw error;
         assertNotCancelled();
+        logger.warnLocalFile('[Native Compose] Engine read failed', projectActionFailureCauseV1(error, 'native_compose.engine.read'));
         throw new NativeComposePrerequisiteError(dockerFailureCause('', code));
     }
     assertNotCancelled();

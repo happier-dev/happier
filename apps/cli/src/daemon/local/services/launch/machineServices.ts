@@ -2,7 +2,8 @@ import type { MachineManagedServicesSummaryV1 } from '@happier-dev/protocol/mach
 import type { EnvironmentServiceRecoveryRow, EnsureEnvironmentServices, EnvironmentServiceRecoveryScope } from '@/plugins/runtime/invocation/services/environmentServiceRecovery';
 import type { MachineServiceUsageV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
-import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { createHash, randomUUID } from 'node:crypto';
 import { MACHINE_SERVICE_ACTION_INPUT_SCHEMAS, MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS, MachineServiceDiscoveryCandidateV1Schema, MachineServiceAccountingV1Schema, type MachineServiceRowV1, type MachineServiceActionOutput, type MachineServiceDiscoveryCandidateV1, type MachineServicesDiscoveryResultV1, type MachineServiceAccountingV1, type MachineServicesListInputV1 } from '@happier-dev/protocol/actions/specs/machine/services';
@@ -190,6 +191,7 @@ export function createMachineServicesRuntime(input: Readonly<{
                     adoptedHandles.set(watch.watchId, established);
                 } catch (error) {
                     preserveUnconfirmedNativeProcess(error);
+                    logger.warnLocalFile('[Machine service] Establishment failed', projectActionFailureCauseV1(error, 'machine_service.establish'));
                     // Saved intent stays visible as unknown; no failed or healthy native fact is invented.
                 }
             }
@@ -314,6 +316,7 @@ export function createMachineServicesRuntime(input: Readonly<{
             } catch (error) {
                 preserveUnconfirmedNativeProcess(error);
                 signal?.throwIfAborted();
+                logger.warnLocalFile('[Machine service] Discovery failed', projectActionFailureCauseV1(error, 'machine_service.discovery'));
                 failures.push({ adapter: reference, code: 'native_adapter_unavailable' });
             }
         }
@@ -336,6 +339,7 @@ export function createMachineServicesRuntime(input: Readonly<{
             return MachineServiceAccountingV1Schema.parse({ kind: 'sample', samples });
         } catch (error) {
             preserveUnconfirmedNativeProcess(error);
+            if (!signal?.aborted) logger.warnLocalFile('[Machine service] Accounting failed', projectActionFailureCauseV1(error, 'machine_service.accounting'));
             return unavailable(signal?.aborted ? 'cancelled' : 'unavailable');
         }
     }
@@ -490,7 +494,10 @@ export function createMachineServicesRuntime(input: Readonly<{
                     else if ('candidateId' in parsed.data) {
                         const watchInput = parsed.data;
                         let identity: unknown;
-                        try { identity = JSON.parse(watchInput.candidateId); } catch { return unavailable('unavailable'); }
+                        try { identity = JSON.parse(watchInput.candidateId); } catch (error) {
+                            logger.warnLocalFile('[Machine service] Watch candidate parse failed', projectActionFailureCauseV1(error, 'machine_service.watch.parse'));
+                            return unavailable('unavailable');
+                        }
                         if (!Array.isArray(identity) || identity.length !== 3) return unavailable('unavailable');
                         const adapter = MachineServiceWatchV1Schema.shape.adapter.safeParse({ pluginId: identity[0], localId: identity[1] });
                         const nativeResourceId = MachineServiceWatchV1Schema.shape.nativeResourceId.safeParse(identity[2]);

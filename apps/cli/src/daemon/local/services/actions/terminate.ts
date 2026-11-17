@@ -1,4 +1,6 @@
 import type { LocalServiceActionRequestV1 } from '@happier-dev/protocol';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 
 import type { ProcessTreeTerminationInput, ProcessTreeTerminationOutcome, ProcessTreeTerminationResult } from '@/processes/terminate/terminateProcessTree';
 import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner';
@@ -109,7 +111,8 @@ export function createTerminateDetectedService(
                         && (!execution.authorizeSignal || await execution.authorizeSignal()) && !execution.signal?.aborted } : {}),
                 ...(config.graceMs === undefined ? {} : { graceMs: config.graceMs }),
             });
-        } catch {
+        } catch (error) {
+            logger.warnLocalFile('[Local service] Native termination failed', projectActionFailureCauseV1(error, 'local_service.terminate.signal'));
             return { status: 'failed', reasonCode: 'terminate_signal_failed' };
         }
         const refused = result.outcomes.find(outcome => outcome.outcome === 'refused');
