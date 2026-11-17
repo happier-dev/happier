@@ -46,7 +46,7 @@ describe('theme proposal card controller', () => {
         const messages = [];
         for (const name of ['A', 'B', 'C']) {
             const parsed = parseThemeProfileDocument({ ...themeActionDocument(name).raw,
-                css: `.dark [data-surface="composer"] { height: ${name === 'A' ? 12 : 28}px; }` });
+                css: `.dark [data-surface="composer"] { height: ${name === 'A' ? 12 : 28}px; } .dark [data-surface="session-row"] { padding: 8px; } .dark [data-surface="user-bubble"] { display: none; }` });
             if (!parsed.ok) throw new Error('Invalid CSS proposal');
             const input = ThemeActionInputSchemas[THEME_ACTION_IDS.tryOn].parse({ document: parsed.document,
                 mode: 'dark', origin: { kind: 'agent' }, group: 'options' });
@@ -77,6 +77,8 @@ describe('theme proposal card controller', () => {
         });
         expect(vi.mocked(parse).mock.calls.length, 'the card consumes the preview owner table without parsing CSS').toBe(parsesBeforeCard);
         expect(hook.getCurrent()?.options?.map(option => option.miniature.mode)).toEqual(['dark', 'dark', 'dark']);
+        expect(hook.getCurrent()?.reshapes).toContain('session list');
+        expect(hook.getCurrent()?.hides).toContain('user messages');
         expect(hook.getCurrent()?.options?.map(option => option.description)).toEqual(Array(3).fill(t('settingsAppearance.themeProfiles.sourceYours')));
         hook.getCurrent()!.onEdit!();
         expect(edit).toHaveBeenCalledWith({ kind: 'document', document: presentation.options.at(-1)!.call.input.document });

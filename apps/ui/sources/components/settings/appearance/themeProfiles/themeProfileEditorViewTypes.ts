@@ -1,6 +1,7 @@
 import type { BundledTypefaceChoice } from '@/constants/bundledFonts';
 import type * as React from 'react';
 import type { ThemeRadiusScaleName } from '@happier-dev/protocol/account/settings/themeProfiles';
+import type { SurfaceId, ThemeSurfaceReference } from '@happier-dev/plugin-sdk/ui';
 
 import type { ThemePreviewPalette } from '@/components/settings/appearance/ThemeModePreview';
 import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
@@ -36,11 +37,7 @@ export type ThemeEditorColorGroup = Readonly<{
 }>;
 
 /** A surface a theme's CSS can address, from the CSS surface registry. */
-export type ThemeSurfaceReferenceEntry = Readonly<{
-  id: string;
-  label: string;
-  parts: readonly string[];
-}>;
+export type ThemeSurfaceReferenceEntry = Pick<ThemeSurfaceReference, 'id' | 'parts'>;
 
 export type ThemeProfileEditorViewProps = Readonly<{
   header: Readonly<{
@@ -103,7 +100,7 @@ export type ThemeProfileEditorViewProps = Readonly<{
     active: boolean;
     onToggle: () => void;
     /** What the last pick found: the surface and the colour role it paints with (its id shows only here). */
-    target?: Readonly<{ surfaceLabel: string; roleLabel: string; roleId: string }> | null;
+    target?: Readonly<{ surface: SurfaceId; roleLabel: string; roleId: string }> | null;
   }>;
   style: Readonly<{
     radius: ThemeRadiusScaleName;

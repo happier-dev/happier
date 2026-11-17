@@ -104,11 +104,26 @@ inside the encrypted request payload. The public Open VSX source keeps its
 existing direct/browser and native/daemon placements. Opening an unversioned theme
 resolves latest in the acquisition itself, without a preceding metadata read.
 
+Theme cards use published summary miniatures when available. Otherwise, the
+existing measured near-viewport owner admits package acquisition as a card
+approaches the visible page. The theme registry lifecycle reuses acquisitions
+by Home, Account, source, item and package version, including concurrent card and
+listing reads. Scrolling back does not reacquire the package. Pending cards keep
+their preview geometry; failed acquisitions retain the icon and name without
+retrying on scroll-back. Opening the listing or explicitly trying again can
+recover a failed acquisition through the same owner.
+
+Versioned `appearance.themes.store.get` inputs require matching unreleased 0.3
+UI and Protocol readers; older development readers reject the added version.
+Omitting the version continues to resolve latest within acquisition.
+
 The Store's existing listing controller and body present acquired theme faces in
-both pane and page layouts. Closing the listing releases its acquisition but
-retains the local try-on; one shell host presents its origin-aware Keep/Install
-and Revert controls. Installing the inspected preview uses Keep and its acquired
-package, while an explicit Install resolves latest. Installed faces expose the
+both pane and page layouts. Opening a versioned listing reuses its card's
+acquisition. Closing the listing releases the open-listing reference but retains
+the versioned acquisition and local try-on; one shell host presents its
+origin-aware Keep/Install and Revert controls. Installing the inspected preview
+uses Keep and its acquired package, while an explicit Install resolves latest.
+Installed faces expose the
 canonical Uninstall Action and its approval. Removing them preserves user-owned
 copies; a missing selected Artifact renders the mode's base without rewriting
 the saved preference.

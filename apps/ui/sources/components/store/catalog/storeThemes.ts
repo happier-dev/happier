@@ -2,13 +2,14 @@ import type { ThemeRegistryItemKey } from '@happier-dev/protocol/actions/themeAc
 import type { ThemeLibraryEntry, ThemeMiniatureData, ThemeProfileMode } from '@happier-dev/protocol/account/settings/themeProfiles';
 import type { RegistryCatalogItemSummary } from '@/registries/registryBrandMark';
 import { t } from '@/text';
+import { themeSurfaceLabel } from '@/theme/css/themeSurfaceLabels';
 import { joinList } from '@/utils/text/joinList';
 import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { StoreThemeCardView } from '../storeThemeViewTypes';
 
 const NO_FACES: readonly ThemeMiniatureData[] = [];
 
-/** A browse summary never acquires a package to discover modes or draw a preview. */
+/** Mode filtering consumes only facts already present in the browse summary. */
 export function themeSummaryMatchesMode(item: RegistryCatalogItemSummary, mode: ThemeProfileMode | null): boolean {
     return mode === null || item.themeMetadata?.includes.some(face => face.mode === mode) === true;
 }
@@ -28,6 +29,7 @@ export function projectStoreThemeCard(item: RegistryCatalogItemSummary, sourceTi
         byline: item.publisher ? `${item.publisher.name} · ${sourceTitle}` : sourceTitle,
         summary: describeStoreThemeModes(item.themeMetadata?.includes.flatMap(face => face.mode ? [face.mode] : []) ?? []),
         faces: item.themeMetadata?.preview ?? NO_FACES,
+        ...(item.version ? { listing: { sourceId: item.sourceId, itemId: item.itemId, version: item.version } } : {}),
         ...(item.brandMark ? { mark: item.brandMark } : {}),
     };
 }
@@ -41,7 +43,7 @@ export function projectStoreThemeCoverageFacts(coverage: Readonly<{
 }>): Readonly<{ changes: string; worksOn: Readonly<{ value: string; note?: string }> }> {
     return {
         changes: coverage.affectedSurfaces.length === 0 ? t('themeStore.colorsOnly')
-            : `${t('themeStore.colors')} · ${t('themeCard.reshapes', { areas: joinList(coverage.affectedSurfaces.map(address => address.surface)) })}`,
+            : `${t('themeStore.colors')} · ${t('themeCard.reshapes', { areas: joinList(coverage.affectedSurfaces.map(address => themeSurfaceLabel(address.surface))) })}`,
         worksOn: coverage.webOnly > 0
             ? { value: t('themeStore.everywhere'), note: t('themeCard.coverage', { native: coverage.native, total: coverage.total }) }
             : { value: t('themeStore.everywhere') },

@@ -119,7 +119,7 @@ export const ThemeActionInputSchemas = {
   [THEME_ACTION_IDS.apply]: z.strictObject({ ref: z.nullable(ThemeReferenceSchema), mode, clientId: z.optional(identifier) }),
   [THEME_ACTION_IDS.undo]: z.strictObject({ undoHandle: identifier }),
   [THEME_ACTION_IDS.delete]: referenceInput,
-  [THEME_ACTION_IDS.storeGet]: z.strictObject({ listing: ThemeRegistryItemKeySchema }),
+  [THEME_ACTION_IDS.storeGet]: z.strictObject({ listing: z.partial(RegistryItemPointerV1Schema, { version: true }) }),
   [THEME_ACTION_IDS.install]: z.strictObject({ listing: ThemeRegistryItemKeySchema, faceIds: z.optional(z.array(identifier)) }),
   [THEME_ACTION_IDS.uninstall]: z.strictObject({ listing: ThemeRegistryItemKeySchema }),
   [THEME_ACTION_IDS.import]: z.strictObject({ file }),

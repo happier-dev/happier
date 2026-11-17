@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { themeSurfaceLabel } from '@/theme/css/themeSurfaceLabels';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ThemeLibraryEntry, ThemeProfileDocument, ThemeProfileMode, ThemeReference } from '@/theme/profiles/themeProfileTypes';
@@ -108,7 +109,7 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
         const document = input.selectedDocuments?.[input.showing];
         const areas = document ? [...new Set(prepareThemeProfileCss(document.profile).coverage.hides
             .filter(hidden => hidden.mode === 'both' || hidden.mode === input.showing)
-            .map(hidden => hidden.address.surface))] : [];
+            .map(hidden => hidden.address.surface))].map(themeSurfaceLabel) : [];
         if (areas.length) result.push({ kind: 'hides', name: title(activeOption(input.showing)), areas,
             onUseBuiltIn: () => {
                 void execute(THEME_ACTION_IDS.apply, { ref: null, mode: input.showing }).catch(error => input.onFailure?.(error));

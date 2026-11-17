@@ -141,6 +141,19 @@ it('admits selected Store acquisition and face retry inputs while uninstall keep
   }
 });
 
+it('retains the selected Store package version through Action admission while mutations keep latest-item keys', () => {
+  const listing = { sourceId: 'open-vsx', itemId: 'publisher.paper', version: '1.2.3' };
+  const read = getActionSpec(THEME_ACTION_IDS.storeGet).inputSchema;
+  expect(read.parse({ listing })).toEqual({ listing });
+  expect(read.parse({ listing: { sourceId: listing.sourceId, itemId: listing.itemId } }))
+    .toEqual({ listing: { sourceId: listing.sourceId, itemId: listing.itemId } });
+  expect(read.safeParse({ listing: { ...listing, version: '' } }).success).toBe(false);
+  expect(read.safeParse({ listing: { ...listing, url: 'https://unselected.example.test/theme' } }).success).toBe(false);
+  for (const actionId of [THEME_ACTION_IDS.install, THEME_ACTION_IDS.uninstall]) {
+    expect(getActionSpec(actionId).inputSchema.safeParse({ listing }).success, actionId).toBe(false);
+  }
+});
+
 it('publishes selected Store CSS coverage by face without changing preview documents', () => {
   const listing = { sourceId: 'catalog', itemId: 'paper' };
   const coverage = { total: 0, native: 0, webOnly: 0, affectedSurfaces: [], hides: [] };

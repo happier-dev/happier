@@ -1,5 +1,26 @@
 // Themes surfaces: the agent theme card, the connected-device picker and Store → Themes (THEMES-1116 UI-B).
 export const themeSurfaces = {
+  themeSurfaceLabels: {
+    sidebar: "侧边栏",
+    sessionRow: "会话列表",
+    userBubble: "你的消息",
+    assistantText: "助手消息",
+    codeBlock: "代码块",
+    toolRow: "工具调用",
+    composer: "消息编辑器",
+    chatHeader: "聊天标题栏",
+    tabBar: "标签栏",
+    button: "按钮",
+    modelPicker: "模型选择器",
+    projectPicker: "项目选择器",
+    menu: "菜单",
+    input: "输入框",
+    dialog: "对话框",
+    switch: "开关",
+    tooltip: "提示信息",
+    inlineCode: "行内代码",
+    unknown: "未知区域",
+  },
   themePalette: {
     change: "更改主题",
     undo: "撤销上次主题更改",

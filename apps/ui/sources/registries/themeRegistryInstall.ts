@@ -6,10 +6,12 @@ import type { RegistryThemeAcquisitionV1 } from '@happier-dev/protocol/registrie
 import type { ThemeTryOnSnapshot } from '@/theme/profiles/themeTryOn';
 import type { ThemeInstallFaceOutcome, ThemeInstallResult, ThemeRegistryItemKey } from '@happier-dev/protocol/actions/themeActionFamily';
 import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { serverAccountScopedResourceKey } from '@/sync/domains/scope/serverAccountScope';
 export type { ThemeInstallFaceOutcome, ThemeInstallResult, ThemeRegistryItemKey } from '@happier-dev/protocol/actions/themeActionFamily';
 
 export type AcquiredRegistryTheme = RegistryThemeAcquisitionV1;
 export type ThemeRegistryOperationOptions = Readonly<{ expectedScope: AccountSettingsScope | null; signal?: AbortSignal }>;
+type CachedRegistryThemeAcquisition = { promise: Promise<AcquiredRegistryTheme>; failed: boolean };
 
 /** Registry admission/acquisition and MODEL persistence retain their own authorities. */
 export function createThemeRegistryLifecycle(deps: Readonly<{
@@ -19,6 +21,7 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
     revertStorePreview(listing: ThemeRegistryItemKey): void;
 }>) {
     let opened: Readonly<{ acquired: AcquiredRegistryTheme; expectedScope: AccountSettingsScope | null }> | null = null;
+    const previewAcquisitions = new Map<string, CachedRegistryThemeAcquisition>();
     const matches = (acquired: AcquiredRegistryTheme, listing: ThemeRegistryItemKey & Partial<Pick<RegistryItemPointerV1, 'version'>>) =>
         acquired.item.summary.sourceId === listing.sourceId && acquired.item.summary.itemId === listing.itemId
         && (listing.version === undefined || acquired.item.summary.version === listing.version);
@@ -31,8 +34,31 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
         } } };
         return sourced;
     };
+    const acquirePreview = (listing: ThemeRegistryItemKey & Pick<RegistryItemPointerV1, 'version'>, options: ThemeRegistryOperationOptions): Promise<AcquiredRegistryTheme> => {
+        if (!options.expectedScope) return acquire(listing, options);
+        const key = serverAccountScopedResourceKey(options.expectedScope, listing.sourceId, listing.itemId, listing.version);
+        const retained = previewAcquisitions.get(key);
+        if (retained) return retained.promise;
+        // One finite acquisition serves cards and opened listings; a card unmount only ends its publication.
+        const pending = { promise: acquire(listing, { expectedScope: options.expectedScope }), failed: false };
+        pending.promise = pending.promise.catch(error => {
+            pending.failed = true;
+            throw error;
+        });
+        previewAcquisitions.set(key, pending);
+        return pending.promise;
+    };
+    const acquireForPreview = (listing: ThemeRegistryItemKey & Partial<Pick<RegistryItemPointerV1, 'version'>>, options: ThemeRegistryOperationOptions) => {
+        if (listing.version === undefined) return acquire(listing, options);
+        if (options.expectedScope) {
+            const key = serverAccountScopedResourceKey(options.expectedScope, listing.sourceId, listing.itemId, listing.version);
+            // Opening a listing or explicitly trying again may recover a failure; scrolling cards never retries it.
+            if (previewAcquisitions.get(key)?.failed) previewAcquisitions.delete(key);
+        }
+        return acquirePreview({ ...listing, version: listing.version }, options);
+    };
     const get = async (listing: ThemeRegistryItemKey & Partial<Pick<RegistryItemPointerV1, 'version'>>, options: ThemeRegistryOperationOptions) => {
-        const acquired = await acquire(listing, options);
+        const acquired = await acquireForPreview(listing, options);
         if (!options.signal?.aborted) opened = { acquired, expectedScope: options.expectedScope };
         return acquired;
     };
@@ -41,7 +67,7 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
     };
     const prepareStorePreview = (listing: ThemeRegistryItemKey & Partial<Pick<RegistryItemPointerV1, 'version'>>, options: ThemeRegistryOperationOptions) =>
         opened && areAccountSettingsScopesEqual(opened.expectedScope, options.expectedScope) && matches(opened.acquired, listing)
-            ? Promise.resolve(opened.acquired) : acquire(listing, options);
+            ? Promise.resolve(opened.acquired) : acquireForPreview(listing, options);
     const installFaces = (input: Readonly<{
         listing: ThemeRegistryItemKey;
         acquired: AcquiredRegistryTheme;
@@ -105,7 +131,7 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
         }
         return { removedFaces };
     }, options);
-    return { get, releaseOpened, prepareStorePreview, install, uninstall, keepStore };
+    return { acquirePreview, get, releaseOpened, prepareStorePreview, install, uninstall, keepStore };
 }
 
 export type ThemeRegistryLifecycle = ReturnType<typeof createThemeRegistryLifecycle>;

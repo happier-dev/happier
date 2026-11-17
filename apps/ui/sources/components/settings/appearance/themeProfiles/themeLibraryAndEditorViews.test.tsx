@@ -2,6 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act, renderScreen, renderSettingsView } from '@/dev/testkit';
 import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
+import { t } from '@/text';
 
 // The web code field reads the page's editor global; a bare window stands in for the browser host.
 (globalThis as unknown as { window: Window & typeof globalThis }).window ??= {
@@ -44,6 +45,23 @@ const menuActions = (
     );
 
 describe('theme library and editor views', () => {
+  it('uses the surface registry names for picked targets and the CSS reference', async () => {
+    const picking = await renderScreen(<ThemeLibrarySpecimen scene="D2" />);
+    const pickText = picking.tree.findAll(node => typeof node.type === 'string').flatMap(node => node.children).join(' ');
+    expect(pickText).toContain(t('settingsAppearance.themeProfiles.pickTarget', {
+      surface: t('themeSurfaceLabels.composer'), role: 'Base surface',
+    }));
+    await picking.unmount();
+    // renderScreen releases its browser globals on unmount; the CSS scene opens the real editor again.
+    vi.stubGlobal('window', { innerWidth: 1440 });
+    const reference = await renderScreen(<ThemeLibrarySpecimen scene="D4" />);
+    const row = reference.findByTestId('settings-theme-surface-session-row');
+    expect(row).not.toBeNull();
+    const rowText = row!.findAll(node => typeof node.type === 'string').flatMap(node => node.children).join(' ');
+    expect(rowText).toContain(t('themeSurfaceLabels.sessionRow'));
+    await reference.unmount();
+    vi.unstubAllGlobals();
+  });
   it('windows the editor start-from library through the visual picker in its page', async () => {
     const { ThemeProfileEditorView } = await import('./ThemeProfileEditorView');
     const specimen = await renderScreen(<ThemeLibrarySpecimen scene="D1" />);

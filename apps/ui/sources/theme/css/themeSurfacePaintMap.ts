@@ -15,6 +15,7 @@ import { resolveSelectionListPaint } from '@/components/ui/selectionList/selecti
 import { resolveThemeProfileWithPaint, type ResolvedThemeProfile } from '../profiles/resolveThemeProfile';
 import type { ThemePaintFacets } from '../profiles/themePaint';
 import type { ThemeProfileDocument, ThemeProfileMode } from '../profiles/themeProfileTypes';
+import { themeSurfaceLabel } from './themeSurfaceLabels';
 
 export type ThemeSurfacePaintContext = Readonly<{
     composerSurfaceStyle?: ComposerSurfaceStyle;
@@ -107,7 +108,7 @@ export function projectThemeSurfacePaintMap(document: ThemeProfileDocument, mode
     context: ThemeSurfacePaintContext = {}): readonly ThemeSurfacePaintDescriptor[] {
     const resolved = resolveThemeProfileWithPaint({ profile: document.profile, mode });
     return getThemeSurfacePaintMap(address => ({
-        label: `${address.surface}.${address.part}`,
+        label: `${themeSurfaceLabel(address.surface)} · ${address.part}`,
         paintRoles: resolvePaintRoles(address, resolved, context),
     }));
 }

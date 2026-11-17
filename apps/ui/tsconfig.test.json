@@ -4364,6 +4364,7 @@
     "sources/components/store/inventory/managedEnvironmentActions.test.ts",
     "sources/components/store/inventory/managedOperationalInventory.test.tsx",
     "sources/components/store/inventory/useManagedInventory.test.tsx",
+    "sources/components/store/storeThemeCardAnatomy.test.tsx",
     "sources/components/store/updates/storeUpdatesModel.test.ts",
     "sources/components/store/updates/storeUpdatesSummary.test.tsx",
     "sources/components/stream/LiveStreamPlayer.test.tsx",

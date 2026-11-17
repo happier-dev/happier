@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { themeSurfaceLabel } from '@/theme/css/themeSurfaceLabels';
 import {
     THEME_ACTION_IDS, type ThemeActionOutput,
 } from '@happier-dev/protocol/actions/themeActionFamily';
@@ -62,6 +63,8 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
         return current?.previewRef === previewRef ? current : null;
     }, [facts.preview, previewRef]);
     const preview = React.useSyncExternalStore(subscribePreview, readPreview, readPreview);
+    React.useLayoutEffect(() => presented && preview?.origin.kind === 'agent' ? facts.preview.present(preview.previewRef) : undefined,
+        [facts.preview, presented, preview?.previewRef, preview?.origin.kind]);
     // The retained preview is the compiler identity; transcript inputs rebuild documents.
     const surfaceStyles = React.useMemo(() => preview?.document ? prepareThemeProfileCss(preview.document.profile)[preview.mode] : undefined, [preview]);
     const [currentOptionKey, setCurrentOptionKey] = React.useState(() => input.options.at(-1)?.id ?? null);
@@ -151,8 +154,8 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
         created: facts.created }, phase, busy, here: facts.here,
         before: facts.before?.miniature, beforeSurfaceStyles: facts.before?.surfaceStyles,
         options, currentOptionKey, coverage,
-        reshapes: coverage?.affectedSurfaces.map(address => address.surface),
-        hides: coverage?.hides.map(hidden => hidden.address.surface),
+        reshapes: coverage?.affectedSurfaces.map(address => themeSurfaceLabel(address.surface)),
+        hides: coverage?.hides.map(hidden => themeSurfaceLabel(hidden.address.surface)),
         onTryOption, onKeep, onUndo, onRedo, onRetry,
         onEdit: facts.onEdit && editTarget ? () => facts.onEdit!(editTarget) : undefined,
         onUseOtherDevices: facts.onUseOtherDevices && deviceTarget ? () => facts.onUseOtherDevices!(deviceTarget) : undefined,

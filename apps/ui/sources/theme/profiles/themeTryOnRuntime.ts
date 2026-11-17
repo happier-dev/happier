@@ -43,6 +43,7 @@ export function getThemeRegistryLifecycle() { return registry; }
 /** Bind only this operation's authority; the lifecycle and its selected acquisition stay shared. */
 export function bindThemeRegistryLifecycle(options: ThemeRegistryOperationOptions): BoundThemeRegistryLifecycle {
     return {
+        acquirePreview: input => registry.acquirePreview(input, options),
         get: input => registry.get(input, options),
         releaseOpened: input => registry.releaseOpened(input, options),
         prepareStorePreview: input => registry.prepareStorePreview(input, options),

@@ -20,7 +20,7 @@ import { Modal } from '@/modal';
 import type { StoreThemeListingViewProps } from './storeThemeViewTypes';
 
 type Opened = ThemeActionOutput<typeof THEME_ACTION_IDS.storeGet>;
-type Listing = Readonly<{ sourceId: string; itemId: string }>;
+type Listing = Readonly<{ sourceId: string; itemId: string; version?: string }>;
 const noInstalledEntries: readonly InstalledStoreThemeEntry[] = [];
 
 /** Selected acquisition, Actions and the shared overlay feed the existing Store listing presentation. */
@@ -30,7 +30,7 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     const scope = useAccountSettingsScope();
     const { execute, ready } = useMountedActionExecution(scope);
     const owner = getThemeTryOnOwner();
-    const { sourceId, itemId } = props.listing;
+    const { sourceId, itemId, version } = props.listing;
     const subscribePreview = React.useCallback((listener: () => void) => presented ? owner.subscribe(listener) : () => {}, [presented, owner]);
     const readPreview = React.useCallback(() => {
         const current = owner.read();
@@ -44,7 +44,7 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     const sources = useRegistrySources('theme', presented);
     const preference = useLocalSetting('themePreference');
     const mode = resolveThemeRuntimeVisualTheme(preference, useColorScheme());
-    const listing = React.useMemo(() => ({ sourceId, itemId }), [sourceId, itemId]);
+    const listing = React.useMemo(() => ({ sourceId, itemId, ...(version ? { version } : {}) }), [sourceId, itemId, version]);
     const [opened, setOpened] = React.useState<Opened | null>(null);
     const [failed, setFailed] = React.useState<string | null>(null);
     const [busy, setBusy] = React.useState<StoreThemeListingViewProps['busy']>(null);

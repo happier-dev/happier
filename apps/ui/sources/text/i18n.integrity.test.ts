@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getThemeSurfaceReference } from '@happier-dev/plugin-sdk/ui';
 import { ACTION_ID_FAMILIES_V1, type ActionIdFamilyV1 } from '@happier-dev/protocol/actions/actionIds';
 import { actionIdFamilyTitleKey } from '@/components/settings/actions/actionSettingsFamily';
 
@@ -1227,6 +1228,15 @@ function callSampledTranslation(value: unknown, args: readonly unknown[]): strin
 }
 
 describe('i18n integrity', () => {
+    it('resolves every surface registry label in all public locale roots', () => {
+        for (const surface of getThemeSurfaceReference()) {
+            for (const [code, root] of Object.entries({ en, ca, de, es, fr, it: itLocale, ja, pl, pt, ru, zhHans, zhHant })) {
+                const label = readTranslationLeaf(root, surface.labelKey);
+                expect(typeof label, `${code}: ${surface.id}`).toBe('string');
+                expect(label, `${code}: ${surface.id}`).not.toBe('');
+            }
+        }
+    });
     it('resolves every canonical Action family title at each public locale root', () => {
         for (const family of Object.keys(ACTION_ID_FAMILIES_V1) as ActionIdFamilyV1[]) {
             const key = actionIdFamilyTitleKey(family);

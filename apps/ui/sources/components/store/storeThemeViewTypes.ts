@@ -21,6 +21,8 @@ export type StoreThemeCardView = Readonly<{
   summary: string;
   /** The faces' miniatures when known without opening (catalog, plugin); empty for Open VSX until opened. */
   faces: readonly ThemeMiniatureData[];
+  /** Exact browse version, reused by near-viewport and opened-listing acquisition. */
+  listing?: Readonly<{ sourceId: string; itemId: string; version: string }>;
   /** The registry's own mark for a listing whose faces are not known until it is opened (Open VSX). */
   mark?: HostCatalogMark | null;
 }>;

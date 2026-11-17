@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { themeSurfaceLabel } from '@/theme/css/themeSurfaceLabels';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ThemeRadiusScaleName } from '@happier-dev/protocol/account/settings/themeProfiles';
@@ -233,7 +234,7 @@ function PreviewAside(
           {props.picker?.active
             ? props.picker.target
               ? t('settingsAppearance.themeProfiles.pickTarget', {
-                  surface: props.picker.target.surfaceLabel,
+                  surface: themeSurfaceLabel(props.picker.target.surface),
                   role: props.picker.target.roleLabel,
                 })
               : t('settingsAppearance.themeProfiles.pickInstructionPointer')
@@ -275,7 +276,7 @@ function PickBar(props: Readonly<{ picker: NonNullable<ThemeProfileEditorViewPro
     <View testID="settings-theme-profile-pick-bar" accessibilityRole="summary" style={stylesheet.pickBar}>
       <Text variant="body" style={stylesheet.pickBarText}>
         {target
-          ? t('settingsAppearance.themeProfiles.pickTarget', { surface: target.surfaceLabel, role: target.roleLabel })
+          ? t('settingsAppearance.themeProfiles.pickTarget', { surface: themeSurfaceLabel(target.surface), role: target.roleLabel })
           : t('settingsAppearance.themeProfiles.pickInstructionTouch')}
       </Text>
       <TextLinkButton
@@ -675,7 +676,7 @@ function SurfaceReference(
         <Item
           key={surface.id}
           testID={`settings-theme-surface-${surface.id}`}
-          title={surface.label}
+          title={themeSurfaceLabel(surface.id)}
           subtitle={
             surface.parts.length > 0
               ? `${surface.id} · ${surface.parts.join(', ')}`

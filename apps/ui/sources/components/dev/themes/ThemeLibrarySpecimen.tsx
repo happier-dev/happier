@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { getThemeSurfaceReference } from '@happier-dev/plugin-sdk/ui';
 
 import { ThemeLibraryView } from '@/components/settings/appearance/themeProfiles/ThemeLibraryView';
 import type {
@@ -339,7 +340,7 @@ function EditorScene(props: Readonly<{ scene: string }>) {
     picker: {
       active: picking,
       onToggle: () => setPicking((current) => !current),
-      target: picking ? { surfaceLabel: 'Composer', roleLabel: 'Base surface', roleId: 'surface.base' } : null,
+      target: picking ? { surface: 'composer', roleLabel: 'Base surface', roleId: 'surface.base' } : null,
     },
     style: {
       radius,
@@ -358,11 +359,7 @@ function EditorScene(props: Readonly<{ scene: string }>) {
       },
       webOnlyRules: [{ line: 8, selector: '[data-surface="composer"]' }],
       onRevealLine: NOOP,
-      surfaces: [
-        { id: 'session-row', label: 'Session row', parts: ['root'] },
-        { id: 'user-bubble', label: 'Your message', parts: ['root'] },
-        { id: 'composer', label: 'Composer', parts: ['root', 'toolbar'] },
-      ],
+      surfaces: getThemeSurfaceReference(),
     },
   };
   return <ThemeProfileEditorView {...viewProps} />;

@@ -75,8 +75,8 @@ describe('Store theme listing coverage facts', () => {
     });
 
     it('names what CSS reshapes and counts phone rules only when some stay on web and desktop', () => {
-        const reshaping = projectStoreThemeCoverageFacts({ total: 14, native: 11, webOnly: 3, affectedSurfaces: [{ surface: 'sidebar' }] });
-        expect(reshaping.changes).toContain(t('themeCard.reshapes', { areas: 'sidebar' }));
+        const reshaping = projectStoreThemeCoverageFacts({ total: 14, native: 11, webOnly: 3, affectedSurfaces: [{ surface: 'session-row' }] });
+        expect(reshaping.changes).toContain(t('themeCard.reshapes', { areas: 'session list' }));
         expect(reshaping.worksOn).toEqual({ value: t('themeStore.everywhere'), note: t('themeCard.coverage', { native: 11, total: 14 }) });
         const portable = projectStoreThemeCoverageFacts({ total: 2, native: 2, webOnly: 0, affectedSurfaces: [{ surface: 'composer' }] });
         expect(portable.worksOn).toEqual({ value: t('themeStore.everywhere') });

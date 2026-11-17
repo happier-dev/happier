@@ -104,7 +104,7 @@ describe('theme library recovery facts', () => {
     it('reads partial support and mode-specific hides from the selected document and repairs through apply', async () => {
         const harness = createThemeActionHarness();
         const document = mergeThemeProfileDocumentEdit(themeActionDocument('00000000-0000-4000-8000-000000000019'), {
-            css: '.dark [data-surface="sidebar"][data-part="root"] { display: none; } .future-effect { filter: blur(1px); }',
+            css: '.dark [data-surface="session-row"][data-part="root"] { display: none; } .future-effect { filter: blur(1px); }',
             requiresAppVersion: '99.0.0',
         });
         await harness.library.save({ document });
@@ -126,7 +126,7 @@ describe('theme library recovery facts', () => {
         expect(hook.getCurrent().facts).toEqual(expect.arrayContaining([
             expect.objectContaining({ kind: 'partial', requiresAppVersion: '99.0.0',
                 unsupportedPaths: expect.arrayContaining(['style.futurePresentation']), webOnlyRules: 1, onUpdate: expect.any(Function) }),
-            expect.objectContaining({ kind: 'hides', areas: ['sidebar'] }),
+            expect.objectContaining({ kind: 'hides', areas: ['session list'] }),
         ]));
         const hidden = hook.getCurrent().facts?.find(fact => fact.kind === 'hides');
         if (hidden?.kind !== 'hides') throw new Error('Expected hidden surface metadata');

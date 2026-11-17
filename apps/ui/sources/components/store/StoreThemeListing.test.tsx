@@ -27,6 +27,9 @@ const { projectInstalledStoreThemeRows } = await import('./catalog/storeThemes')
 const { presentInventoryRow } = await import('./inventory/inventoryRows');
 const { readStoreListingRoute } = await import('@/components/settings/plugins/model/pluginsSurfaceRoutes');
 const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+const { useStoreThemeCardAnatomy } = await import('./storeThemeCardAnatomy');
+const { projectStoreThemeCard } = await import('./catalog/storeThemes');
+const { ThemeMiniaturePreview } = await import('@/components/settings/appearance/ThemeModePreview');
 await initializeArtifactInventoryDemandHarness();
 
 it('opens one theme acquisition through the shared listing body and retries Keep without losing the tried face', async () => {
@@ -34,17 +37,21 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     const contentUrl = 'https://theme-listing.example.test/palette.json';
     const sourceId = deriveMarketplaceSourceId(indexUrl);
     const includes = (['dark', 'light'] as const).map(mode => ({ key: mode, label: mode, mode }));
+    const preview = includes.map(({ mode }) => ({ mode, canvas: mode === 'dark' ? '#112233' : '#eefaff',
+        raised: '#334455', text: '#ffffff', mutedText: '#aabbcc', accent: '#9988ff', border: '#556677', radius: 'soft' as const }));
     const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources', value: { v: 2,
         disabledSourceIds: [], sources: [{ id: sourceId, title: 'Themes catalog', url: indexUrl,
             format: 'happier-catalog', kinds: ['theme'], enabled: true, addedAt: 1 }] } }] });
     let acquisitions = 0;
+    let catalogReads = 0;
     let failLight = true;
     const fixture = await createArtifactInventoryDemandHarness({ handleRequest: async (url, init) => {
         const config = await catalog.handle(`${url.pathname}${url.search}`, init);
         if (config) return config;
-        if (url.href === indexUrl) return Response.json({ source: { id: sourceId, title: 'Themes catalog', sourceUrl: indexUrl, kind: 'user' },
+        if (url.href === indexUrl) { catalogReads++;
+            return Response.json({ source: { id: sourceId, title: 'Themes catalog', sourceUrl: indexUrl, kind: 'user' },
             freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], picks: [], diagnostics: [], themes: [{ itemId: 'palette',
-                title: 'Palette', version: '1.0.0', listing: { includes, license: 'Custom' }, contentUrl }] });
+                title: 'Palette', version: '1.0.0', listing: { includes, preview, license: 'Custom' }, contentUrl }] }); }
         if (url.href === contentUrl) {
             acquisitions += 1;
             return Response.json({ themes: includes.map(face => ({ ...face, document: { schemaVersion: 1,
@@ -71,6 +78,13 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     const browse = await renderHook(() => useRegistryItems({ kind: 'theme', sourceIds: [sourceId] }));
     await vi.waitFor(() => expect(browse.getCurrent().items).toHaveLength(1));
     expect(acquisitions).toBe(0);
+    const anatomy = await renderHook(() => useStoreThemeCardAnatomy());
+    const card = projectStoreThemeCard(browse.getCurrent().items[0]!, 'Themes catalog');
+    const gallery = await renderScreen(<>{anatomy.getCurrent().preview?.(card)}</>);
+    expect(gallery.findAllByType(ThemeMiniaturePreview).map(node => node.props.miniature)).toEqual(preview);
+    await gallery.update(<>{anatomy.getCurrent().preview?.(card)}</>);
+    expect(acquisitions, 'drawing and redrawing summary miniatures never acquires content').toBe(0);
+    expect(catalogReads, 'drawing summary miniatures reuses the one browse response').toBe(1);
     const summary = storeKinds.theme.summary(browse.getCurrent().items[0]!);
     const picked = summary.ref;
     if (picked.kind !== 'theme') throw new Error('Expected the theme browse reference');

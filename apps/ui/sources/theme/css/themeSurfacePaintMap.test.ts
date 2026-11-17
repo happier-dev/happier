@@ -38,6 +38,12 @@ const solidComposerMaterial: GlassSurfaceCompositionContext = {
 };
 
 describe('projectThemeSurfacePaintMap', () => {
+    it('names addressed paint with the readable surface name for inspector captions', async () => {
+        const { projectThemeSurfacePaintMap } = await import('./themeSurfacePaintMap');
+        expect(projectThemeSurfacePaintMap(document(), 'light').find(entry =>
+            entry.address.surface === 'session-row' && entry.address.part === 'title')?.label).toBe('session list · title');
+    });
+
     it('does not claim a solid token is the final composer paint when the material context is unknown', async () => {
         const { projectThemeSurfacePaintMap } = await import('./themeSurfacePaintMap');
         expect(roles(projectThemeSurfacePaintMap(document(), 'light'),

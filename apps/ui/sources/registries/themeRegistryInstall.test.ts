@@ -20,6 +20,7 @@ function setup(acquisitionGate?: Promise<void>) {
     const rows = new Map<string, { document: ReturnType<typeof document>; revision: number; headerVersion: number }>();
     const selection = { light: null as ThemeReference | null, dark: null as ThemeReference | null };
     const failed = new Set<string>();
+    let acquisitionFailure: Error | undefined;
     const savedFaces: string[] = [];
     let acquisitions = 0, selections = 0, generated = 0;
     const artifacts: ThemeProfileArtifactAdapter = {
@@ -63,11 +64,18 @@ function setup(acquisitionGate?: Promise<void>) {
         acquire: async (key, operation) => {
             acquisitions++;
             await acquisitionGate;
+            operation.signal?.throwIfAborted();
+            if (acquisitionFailure) {
+                const error = acquisitionFailure;
+                acquisitionFailure = undefined;
+                throw error;
+            }
             return { ...upstream, item: { ...upstream.item, summary: { ...upstream.item.summary, ...key } },
                 provenance: { ...upstream.provenance, sourceId: key.sourceId, itemId: key.itemId,
                     ...(operation.expectedScope?.accountId === 'account-b' ? { sourceUrl: 'https://themes.example.test/account-b/catalog' } : {}) } };
         }, revertStorePreview: key => { reverted.push(key); } });
     return { lifecycle, library, rows, listing, options, failed, savedFaces, acquired, selection, reverted,
+        failNextAcquisition: (error: Error) => { acquisitionFailure = error; },
         publishVersion: (version: string) => { upstream = { ...acquired,
             item: { ...acquired.item, summary: { ...acquired.item.summary, version },
                 payload: { ...acquired.item.payload, version, ref: { kind: 'version', version } } },
@@ -76,6 +84,67 @@ function setup(acquisitionGate?: Promise<void>) {
 }
 
 describe('Store theme lifecycle through the MODEL library', () => {
+    it('acquires each visible package version once and reuses it after listing close and scroll-back', async () => {
+        const state = setup();
+        const listing = { ...state.listing, version: '1.0.0' };
+        const acquired = await state.lifecycle.acquirePreview(listing, state.options);
+        const sibling = { ...listing, itemId: 'sibling' };
+        await state.lifecycle.acquirePreview(sibling, state.options);
+        expect(await state.lifecycle.get({ ...listing }, state.options)).toBe(acquired);
+        state.lifecycle.releaseOpened(listing, state.options);
+        expect(await state.lifecycle.acquirePreview({ ...listing }, state.options)).toBe(acquired);
+        expect(await state.lifecycle.prepareStorePreview(listing, state.options)).toBe(acquired);
+        expect(state.counts()).toEqual({ acquisitions: 2, selections: 0, writes: 0 });
+        state.publishVersion('2.0.0');
+        expect((await state.lifecycle.acquirePreview({ ...listing, version: '2.0.0' }, state.options)).item.payload.version).toBe('2.0.0');
+        expect(await state.lifecycle.acquirePreview(listing, state.options)).toBe(acquired);
+        await state.lifecycle.install({ listing: state.listing }, state.options);
+        expect(state.counts()).toEqual({ acquisitions: 4, selections: 1, writes: 2 });
+        expect([...state.rows.values()][0]?.document.profile.source).toMatchObject({ provenance: { ref: { version: '2.0.0' } } });
+    });
+
+    it('joins an in-flight card acquisition when its listing opens, independently of card unmount', async () => {
+        let finishAcquisition!: () => void;
+        const state = setup(new Promise<void>(resolve => { finishAcquisition = resolve; }));
+        const listing = { ...state.listing, version: '1.0.0' };
+        const controller = new AbortController();
+        const card = state.lifecycle.acquirePreview(listing, { ...state.options, signal: controller.signal });
+        const opening = state.lifecycle.get(listing, state.options);
+        controller.abort();
+        finishAcquisition();
+        const [cardAcquired, opened] = await Promise.all([card, opening]);
+        expect(opened).toBe(cardAcquired);
+        expect(await state.lifecycle.prepareStorePreview(listing, state.options)).toBe(opened);
+        expect(state.counts()).toEqual({ acquisitions: 1, selections: 0, writes: 0 });
+    });
+
+    it('isolates cached package versions by Account, Home and registry source', async () => {
+        const state = setup();
+        const listing = { ...state.listing, version: '1.0.0' };
+        const acquired = await state.lifecycle.acquirePreview(listing, state.options);
+        const anotherAccount = { expectedScope: { serverId: 'server', accountId: 'account-b' } };
+        expect((await state.lifecycle.get(listing, anotherAccount)).provenance.sourceUrl).toContain('account-b');
+        await state.lifecycle.acquirePreview(listing, { expectedScope: { serverId: 'another-server', accountId: 'account-a' } });
+        await state.lifecycle.acquirePreview({ ...listing, sourceId: 'another-source' }, state.options);
+        expect(await state.lifecycle.acquirePreview({ ...listing }, { expectedScope: { ...state.options.expectedScope } })).toBe(acquired);
+        await state.lifecycle.acquirePreview(listing, { expectedScope: null });
+        await state.lifecycle.acquirePreview(listing, { expectedScope: null });
+        expect(state.counts()).toEqual({ acquisitions: 6, selections: 0, writes: 0 });
+    });
+
+    it('retains failed card acquisitions on scroll-back while explicit listing recovery can retry', async () => {
+        const state = setup();
+        const listing = { ...state.listing, version: '1.0.0' };
+        state.failNextAcquisition(Object.assign(new Error('Registry unavailable'), { code: 'registry_unavailable' }));
+        await expect(state.lifecycle.acquirePreview(listing, state.options)).rejects.toMatchObject({ code: 'registry_unavailable' });
+        await expect(state.lifecycle.acquirePreview({ ...listing }, state.options)).rejects.toMatchObject({ code: 'registry_unavailable' });
+        expect(state.counts()).toEqual({ acquisitions: 1, selections: 0, writes: 0 });
+        const acquired = await state.lifecycle.get(listing, state.options);
+        expect(await state.lifecycle.acquirePreview(listing, state.options)).toBe(acquired);
+        expect(await state.lifecycle.get(listing, state.options)).toBe(acquired);
+        expect(state.counts()).toEqual({ acquisitions: 2, selections: 0, writes: 0 });
+    });
+
     it('reuses opened content for preview, installs every face and publishes nothing on an unchanged repeat', async () => {
         const state = setup();
         const acquired = await state.lifecycle.get(state.listing, state.options);
@@ -145,7 +214,7 @@ describe('Store theme lifecycle through the MODEL library', () => {
         controller.abort();
         state.lifecycle.releaseOpened(state.listing, options);
         finishAcquisition();
-        await opening;
+        await expect(opening).rejects.toMatchObject({ name: 'AbortError' });
         state.publishVersion('2.0.0');
         expect((await state.lifecycle.prepareStorePreview(state.listing, state.options)).item.payload.version).toBe('2.0.0');
         expect(state.counts().acquisitions).toBe(2);
