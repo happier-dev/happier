@@ -50,7 +50,7 @@ describe('useNewSessionAuthoringState', () => {
             const rawTeam = { ...liveTeam, ref: { ...liveTeam.ref, resourceId: 'chosen-resource', modelId: 'chosen' } };
             params = { ...params, modelSelectionForPersistence: { value: rawTeam } };
             await hook.rerender();
-            expect(hook.getCurrent().buildCurrentPersistedDraft()).toMatchObject({ modelSelection: null,
+            expect(hook.getCurrent().buildCurrentPersistedDraft()).toMatchObject({ modelSelection: rawTeam,
                 teamCredentialBindings: [serviceBinding, sessionModelSelectionV2TeamBindingIntent(rawTeam)] });
             expect(hook.getCurrent().currentAuthoringDraft.modelSelection).toEqual(liveModel);
             expect(hook.getCurrent().currentAuthoringDraft.teamCredentialBindings)

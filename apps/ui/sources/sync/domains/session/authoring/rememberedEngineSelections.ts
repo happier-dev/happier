@@ -1,20 +1,20 @@
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { AcpConfigOptionOverridesV1Schema, type AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { buildBackendTargetKeyV2, BackendTargetKeyV2Schema, parseBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2Input, type BackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionSchema, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { z } from 'zod/mini';
 import * as zMini from 'zod/mini';
 
 const RememberedEngineSelectionV1Schema = z.strictObject({
     v: z.literal(1),
-    modelSelection: zMini.nullable(SessionModelSelectionV1Schema),
+    modelSelection: zMini.nullable(SessionModelSelectionSchema),
     acpSessionModeId: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
     sessionConfigOptionOverrides: zMini.optional(zMini.nullable(AcpConfigOptionOverridesV1Schema)),
     updatedAt: z.number().check(z.nonnegative()),
 });
 const StoredRememberedEngineSelectionV1Schema = createStoredReadSchema(RememberedEngineSelectionV1Schema);
-const StoredSessionModelSelectionV1Schema = createStoredReadSchema(SessionModelSelectionV1Schema);
+const StoredSessionModelSelectionSchema = createStoredReadSchema(SessionModelSelectionSchema);
 
 export type RememberedEngineSelectionV1 = z.infer<typeof RememberedEngineSelectionV1Schema>;
 
@@ -56,7 +56,7 @@ function normalizeRememberedSelectionForScope(scopeKey: string, raw: unknown): u
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
     const record = raw as Record<string, unknown>;
     if (record.modelSelection !== undefined) {
-        const parsed = StoredSessionModelSelectionV1Schema.safeParse(record.modelSelection);
+        const parsed = StoredSessionModelSelectionSchema.safeParse(record.modelSelection);
         if (!parsed.success) return raw;
         const targetKey = readTargetKeyFromScopeKey(scopeKey);
         if (!targetKey) return raw;
@@ -183,7 +183,7 @@ export function upsertRememberedEngineSelection(params: Readonly<{
     serverId: string | null | undefined;
     backendTarget: PersistedBackendTargetRefV2;
     selection: Readonly<{
-        modelSelection: SessionModelSelectionV1 | null;
+        modelSelection: SessionModelSelection | null;
         acpSessionModeId?: string | null;
         sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
     }>;
@@ -197,7 +197,7 @@ export function upsertRememberedEngineSelection(params: Readonly<{
     const agentTargetKey = buildBackendTargetKeyV2(params.backendTarget);
     const modelSelection = params.selection.modelSelection === null
         ? null
-        : SessionModelSelectionV1Schema.parse(params.selection.modelSelection);
+        : SessionModelSelectionSchema.parse(params.selection.modelSelection);
     if (modelSelection && modelSelection.ref.agentTargetKey !== agentTargetKey) {
         throw new Error('Remembered engine model selection target mismatch');
     }

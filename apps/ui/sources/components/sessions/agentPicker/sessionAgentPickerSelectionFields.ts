@@ -2,7 +2,7 @@ import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 
 import { buildSessionModelSelectionForAgentTarget } from '@/components/sessions/authoring/sessionModelSelectionValue';
@@ -10,7 +10,7 @@ import { buildSessionModelSelectionForAgentTarget } from '@/components/sessions/
 import type { SessionAgentPickerSelection } from './buildSessionAgentPickerDetailContent';
 
 export type SessionAgentPickerSelectionFields = Readonly<{
-    modelSelection: SessionModelSelectionV1 | null;
+    modelSelection: SessionModelSelection | null;
     acpSessionModeId: string | null;
     sessionConfigOptionOverrides: AcpConfigOptionOverridesV1 | null;
 }>;
@@ -32,7 +32,7 @@ export function resolveSessionAgentPickerSelectionFields(params: Readonly<{
     const targetKey = typeof params.agentTarget === 'string' ? params.agentTarget : buildBackendTargetKeyV2(params.agentTarget);
     const structured = selection.modelSelection?.ref.agentTargetKey === targetKey && selection.modelSelection.ref.modelId === selection.modelId
         ? selection.modelSelection : null;
-    const modelSelection = structured && !(selection.modelId === 'default' && structured.ref.providerConnectionId === null)
+    const modelSelection = structured && !(selection.modelId === 'default' && (structured.v === 2 ? structured.ref.source === 'native' : structured.ref.providerConnectionId === null))
         ? structured
         : buildSessionModelSelectionForAgentTarget({ agentTarget: params.agentTarget, modelId: selection.modelId, updatedAt });
     const overrides = {

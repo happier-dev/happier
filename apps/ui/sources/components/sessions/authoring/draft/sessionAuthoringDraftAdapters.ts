@@ -16,7 +16,7 @@ import { ManagedAcquireAgentStartV1Schema, type ManagedAcquireAgentStartV1 } fro
 import { RawIngressStructuredInputV1Schema, type RawIngressStructuredInputV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { buildSessionConfigOptionOverridesFromServerStart } from '@happier-dev/protocol/workflows/workflowSessionAuthoringV1';
 import type { SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
-import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionSchema, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { readRuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
@@ -296,13 +296,13 @@ export function resolveDraftBackendTarget(draft: Pick<SessionAuthoringDraft, 'ag
 
 function buildCanonicalDraftModelSelection(params: Readonly<{
     agentTarget: AgentExecutionTargetV1 | null | undefined;
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: SessionModelSelection | null;
     legacyModelId?: string | null;
     legacyUpdatedAt?: number | null;
-}>): SessionModelSelectionV1 | null {
+}>): SessionModelSelection | null {
     const targetKey = params.agentTarget ? buildBackendTargetKeyV2(params.agentTarget) : null;
     if (params.modelSelection) {
-        const selection = SessionModelSelectionV1Schema.parse(params.modelSelection);
+        const selection = SessionModelSelectionSchema.parse(params.modelSelection);
         if (!targetKey || selection.ref.agentTargetKey !== targetKey) {
             throw new Error('Session authoring model selection target mismatch');
         }
@@ -314,7 +314,7 @@ function buildCanonicalDraftModelSelection(params: Readonly<{
     if (!targetKey) {
         throw new Error('Session authoring model selection requires backend target');
     }
-    return SessionModelSelectionV1Schema.parse({
+    return SessionModelSelectionSchema.parse({
         v: 1,
         updatedAt: normalizeOptionalNumber(params.legacyUpdatedAt) ?? 0,
         ref: {
@@ -326,11 +326,11 @@ function buildCanonicalDraftModelSelection(params: Readonly<{
 }
 
 export function rekeyCompatibilityModelSelection(
-    selection: SessionModelSelectionV1 | null | undefined,
+    selection: SessionModelSelection | null | undefined,
     agentTarget: AgentExecutionTargetV1 | null,
-): SessionModelSelectionV1 | null | undefined {
+): SessionModelSelection | null | undefined {
     if (!selection || !agentTarget) return selection;
-    return SessionModelSelectionV1Schema.parse({
+    return SessionModelSelectionSchema.parse({
         ...selection,
         ref: {
             ...selection.ref,
@@ -361,7 +361,7 @@ type NewSessionAuthoringDraftParams = Omit<
     'targetType' | 'existingSessionId' | 'sessionEncryptionMode' | 'sessionEncryptionKeyBase64' | 'sessionEncryptionVariant' | 'windowsTerminalWindowName' | 'modelSelection' | 'modelId' | 'modelUpdatedAt'
 > & Readonly<{
     windowsTerminalWindowName?: SessionAuthoringDraft['windowsTerminalWindowName'];
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: SessionModelSelection | null;
     modelId?: string | null;
     modelUpdatedAt?: number | null;
 }>;
@@ -461,7 +461,7 @@ type ResolvedNewSessionAuthoringDraftInputs = Readonly<{
     resumeSessionId?: SessionAuthoringDraft['resumeSessionId'];
     permissionMode?: SessionAuthoringDraft['permissionMode'];
     permissionModeUpdatedAt?: SessionAuthoringDraft['permissionModeUpdatedAt'];
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: SessionModelSelection | null;
     modelId?: SessionAuthoringDraft['modelId'];
     modelUpdatedAt?: SessionAuthoringDraft['modelUpdatedAt'];
     capabilitySelection?: SessionAuthoringDraft['capabilitySelection'];

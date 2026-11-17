@@ -1,18 +1,19 @@
 import { readTeamCredentialProviderModelSelection } from '@/sync/domains/teams/teamCredentialProviderModelSelection';
 import * as React from 'react';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { SessionTeamCredentialBindingIntentListV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 
 type TeamModelDraft = Readonly<{
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: SessionModelSelection | null;
     teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
 }>;
 
 /** Source-backed Team choices cannot be remembered as native model tuples. */
 export function canRetainNewSessionModelSelection(
     team: TeamCredentialProviderModelSelectionV1 | null,
-    selection: SessionModelSelectionV1 | null,
+    selection: SessionModelSelection | null,
 ): boolean {
+    if (selection?.v === 2) return selection.ref.source !== 'team_resource';
     return !team || (selection !== null && (selection.ref.providerConnectionId !== null
         || selection.ref.agentTargetKey !== team.agentTargetKey || selection.ref.modelId !== team.modelId));
 }
@@ -45,7 +46,7 @@ export function useRetireNewSessionTeamCredentialModel(input: Readonly<{
     selection: TeamCredentialProviderModelSelectionV1 | null;
     agentTargetKey: string;
     setSelection: (selection: TeamCredentialProviderModelSelectionV1 | null) => void;
-    setModelSelectionForBackendTarget: (agentTargetKey: string, selection: SessionModelSelectionV1 | null) => void;
+    setModelSelectionForBackendTarget: (agentTargetKey: string, selection: SessionModelSelection | null) => void;
 }>) {
     React.useEffect(() => {
         if (!input.selection || input.selection.agentTargetKey === input.agentTargetKey) return;

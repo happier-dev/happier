@@ -1,5 +1,6 @@
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 /**
@@ -13,7 +14,8 @@ import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/execut
 
 /** `null` when the choice is the Agent's own default, i.e. no explicit selection. */
 export function buildSessionModelSelectionForAgentTarget(params: Readonly<{
-    agentTarget: AgentExecutionTargetV1 | null | undefined;
+    /** The Agent target, or its already-built key (a catalog entry carries one). */
+    agentTarget: AgentExecutionTargetV1 | string | null | undefined;
     modelId: string;
     updatedAt: number;
 }>): SessionModelSelectionV1 | null {
@@ -23,7 +25,7 @@ export function buildSessionModelSelectionForAgentTarget(params: Readonly<{
         v: 1,
         updatedAt: params.updatedAt,
         ref: {
-            agentTargetKey: buildBackendTargetKeyV2(params.agentTarget),
+            agentTargetKey: typeof params.agentTarget === 'string' ? params.agentTarget : buildBackendTargetKeyV2(params.agentTarget),
             providerConnectionId: null,
             modelId: params.modelId,
         },
@@ -32,7 +34,7 @@ export function buildSessionModelSelectionForAgentTarget(params: Readonly<{
 
 /** The model-option id a selection corresponds to; `default` when unset. */
 export function readSessionModelSelectionOptionId(
-    selection: SessionModelSelectionV1 | null | undefined,
+    selection: SessionModelSelection | null | undefined,
 ): string {
     return selection?.ref.modelId ?? 'default';
 }

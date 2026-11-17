@@ -4,8 +4,20 @@ import { type CodexBackendMode } from '@happier-dev/protocol/sessions/metadata/o
 
 import { deriveSessionAuthoringSnapshot } from './deriveSessionAuthoringSnapshot';
 import { projectComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 
 describe('deriveSessionAuthoringSnapshot', () => {
+    it('retains the exact Team model source for existing-Session authoring and ignores a departing Agent selection', () => {
+        const modelSelection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 123,
+            ref: { source: 'team_resource', teamId: 'team-a', resourceId: 'model-a', expectedResourceRevision: 4,
+                deliveryMode: 'brokered', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'review-model' } });
+        const session = { id: 'team-session', encryptionMode: 'plain' as const,
+            metadata: { agent: 'codex', path: '/work', host: 'host-a', modelSelectionIntentV2: modelSelection },
+            modelMode: 'other-model', modelModeUpdatedAt: 456 };
+        expect(deriveSessionAuthoringSnapshot({ session }).modelSelection).toEqual(modelSelection);
+        expect(deriveSessionAuthoringSnapshot({ session: { ...session,
+            metadata: { ...session.metadata, agent: 'claude' }, modelMode: 'default' } }).modelSelection).toBeNull();
+    });
     it('reads renewed permission intent without promoting the frame to an owner', () => {
         const session = { id: 'frame', encryptionMode: 'e2ee' as const, metadataLayoutVersion: 1,
             metadata: { path: '/', host: '', flavor: 'codex' }, ownerMetadataView: null,

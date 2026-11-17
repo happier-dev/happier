@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
-import { projectSessionModelSelectionV2ToV1 } from '@happier-dev/protocol/providers/selection/v2';
+import { sessionModelPickerValueFromRef, isTeamCredentialProviderModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import type { ManagedSessionDefaultsV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
@@ -444,16 +444,9 @@ const ModelDefaultRow = React.memo(function ModelDefaultRow(
   const { state } = props;
   const key = props.entry.backendTargetKey!;
   const stored = state.defaults.modelByAgentTargetKey?.[key];
-  const selected = stored
-    ? stored.v === 1
-      ? stored.ref
-      : (projectSessionModelSelectionV2ToV1(stored)?.ref ?? null)
-    : null;
-  const selectedTeamCredentialModel = React.useMemo<TeamCredentialProviderModelSelectionV1 | null>(() => {
-    if (stored?.v !== 2 || stored.ref.source !== 'team_resource') return null;
-    const { source: _source, ...ref } = stored.ref;
-    return { kind: 'team_credential_provider_model', ...ref };
-  }, [stored]);
+  const pickerSelection = React.useMemo(() => sessionModelPickerValueFromRef(stored?.ref), [stored]);
+  const selected = isTeamCredentialProviderModelPickerValue(pickerSelection) ? null : pickerSelection;
+  const selectedTeamCredentialModel = isTeamCredentialProviderModelPickerValue(pickerSelection) ? pickerSelection : null;
   const placement = state.defaults.placement;
   const machineId = placement?.kind === 'machine' && placement.target.serverId === state.serverId
     ? placement.target.machineId : null;

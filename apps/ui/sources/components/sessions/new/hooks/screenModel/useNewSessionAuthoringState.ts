@@ -19,8 +19,8 @@ import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSe
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { AgentExecutionTargetV1} from '@happier-dev/protocol/agents/executionTargetV1';
 import type { BackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { SessionModelSelectionV1} from '@happier-dev/protocol/providers/selection/v1';
-import { projectSessionModelSelectionV2ToV1, sessionModelSelectionV2TeamBindingIntent, type SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
+import type { SessionModelSelection} from '@happier-dev/protocol/providers/selection/v2';
+import { sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
 import type { SessionOrganizationPlacementV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
@@ -86,8 +86,8 @@ export function useNewSessionAuthoringState(params: Readonly<{
     permissionMode: PermissionMode;
     permissionModeForPersistence?: PermissionMode;
     permissionModeExplicit?: boolean;
-    modelSelection: SessionModelSelectionV1 | null;
-    modelSelectionForPersistence?: Readonly<{ value: SessionModelSelectionV1 | SessionModelSelectionV2 | null | undefined }>;
+    modelSelection: SessionModelSelection | null;
+    modelSelectionForPersistence?: Readonly<{ value: SessionModelSelection | null | undefined }>;
     placementForPersistence?: NewSessionPlacementForPersistence;
     capabilitySelection: BuildResolvedInputs['capabilitySelection'];
     agentNewSessionOptions: Record<string, unknown> | null;
@@ -292,7 +292,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
                 : null;
             draft = {
                 ...draft,
-                modelSelection: selection?.v === 2 ? projectSessionModelSelectionV2ToV1(selection) : selection,
+                modelSelection: selection,
                 teamCredentialBindings: teamBinding ? [...(otherBindings ?? []), teamBinding] : otherBindings,
             };
         }

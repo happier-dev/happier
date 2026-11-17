@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import type { PersistedBackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
+import type { NewSessionDraftAgentIntent } from '@happier-dev/protocol/actions/appShellActionFamily';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import {
@@ -30,18 +30,7 @@ import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAc
  * New Session projects this into authoring state; the in-session picker keeps it
  * as the target-Agent part of an armed continuation until the message is sent.
  */
-export type SessionAgentPickerSelection = Readonly<{
-    modelId: string;
-    modelSelection?: SessionModelSelectionV1 | null;
-    /**
-     * What the pane called {@link modelId}, or null while the row is still on the
-     * Agent's own settings. Carried rather than re-derived so the composer's engine
-     * chip can name an armed model in the exact words the reader just selected.
-     */
-    modelLabel?: string | null;
-    sessionModeId: string | null;
-    configOverrides: Readonly<Record<string, string>>;
-}>;
+export type SessionAgentPickerSelection = Readonly<Extract<NewSessionDraftAgentIntent, { kind: 'picker' }>['selection']>;
 
 type SessionAgentPickerDetailContentParams = Readonly<{
     backendTarget: PersistedBackendTargetRefV2;

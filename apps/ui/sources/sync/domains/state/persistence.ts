@@ -59,7 +59,7 @@ import { readSessionInstructionsAuthoringDraft, type SessionInstructionsAuthorin
 import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { ComposerAttachmentDraftV1Schema, type ComposerAttachmentAuthorValueV1, MAX_COMPOSER_ATTACHMENT_INSTANCES_V1, type ComposerAttachmentDraftV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import { ExternalSessionRefreshCursorV1Schema } from '@happier-dev/protocol/sessions/external/secureRefreshV1';
-import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionSchema, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { readCapabilitySelectionCarrierV1, type SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import { SessionExecutionTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import { SessionAuthoringExecutionTargetV2Schema, TemporaryComputerActivationRefV1Schema } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
@@ -246,7 +246,7 @@ export interface NewSessionDraft {
     backendTarget?: BackendTargetRefV2 | null;
     transcriptStorage?: 'persisted' | 'direct';
     permissionMode: PermissionMode;
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: SessionModelSelection | null;
     /** Read-only compatibility input. New writes persist `modelSelection` only. */
     modelMode?: ModelMode;
     /**
@@ -743,7 +743,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
             );
             const rawCanonicalSelection = (parsed as any).modelSelection;
             if (rawCanonicalSelection === null) return null;
-            const canonical = createStoredReadSchema(SessionModelSelectionV1Schema).safeParse(rawCanonicalSelection);
+            const canonical = createStoredReadSchema(SessionModelSelectionSchema).safeParse(rawCanonicalSelection);
             if (canonical.success) {
                 const canonicalSelectionTargetKey = (() => {
                     if (canonical.data.ref.agentTargetKey === targetKey) return targetKey;
@@ -777,7 +777,7 @@ export function loadNewSessionDraft(scope?: ServerAccountScope | null): NewSessi
                 ? String(parsed.modelMode).trim()
                 : 'default';
             if (legacyModelMode === 'default') return null;
-            return SessionModelSelectionV1Schema.parse({
+            return SessionModelSelectionSchema.parse({
                 v: 1,
                 updatedAt: typeof parsed.updatedAt === 'number' && Number.isFinite(parsed.updatedAt)
                     ? Math.max(0, parsed.updatedAt)

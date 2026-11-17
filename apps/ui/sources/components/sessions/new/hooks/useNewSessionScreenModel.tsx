@@ -1,3 +1,4 @@
+import { sessionModelPickerValueFromRef, isTeamCredentialProviderModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { createApprovalProfileComposerChip } from '@/components/approvals/createApprovalProfileComposerChip';
 import { resolveApprovalProfileMachineDefault, useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
@@ -144,7 +145,7 @@ import { MachinePoolSelectionOriginV1Schema } from '@happier-dev/protocol/machin
 import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { SessionAuthoringValueV1Schema } from '@happier-dev/protocol/sessions/authoring/index';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
 import type { WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode';
 import type {
@@ -412,7 +413,7 @@ function buildNewSessionScreenAuthoringDraftSignature(draft: NewSessionDraft | n
 
 type EngineSelectionRememberPatch = Readonly<{
     modelMode?: ModelMode;
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: SessionModelSelection | null;
     acpSessionModeId?: string | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
 }>;
@@ -1613,7 +1614,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         input?.temporaryComputerCreatorDependencies ?? composedTemporaryComputerCreator.dependencies;
     useRetireNewSessionTeamCredentialModel({ selection: storedTeamCredentialModel, agentTargetKey: selectedBackendTargetKey,
         setSelection: setSelectedTeamCredentialModel, setModelSelectionForBackendTarget });
-    const canRetainModelSelection = React.useCallback((selection: SessionModelSelectionV1 | null) => {
+    const canRetainModelSelection = React.useCallback((selection: SessionModelSelection | null) => {
         return canRetainNewSessionModelSelection(teamCredentialModelRef.current, selection);
     }, [teamCredentialModelRef]);
     const rememberRetainableEngineSelection = useDeferredRememberedEngineSelection({
@@ -1670,11 +1671,12 @@ export function useNewSessionScreenModel(input?: Readonly<{
         setModelMode(value);
         rememberCurrentEngineSelection({ modelMode: value });
     }, [currentEngineSelectionRef, rememberCurrentEngineSelection, setModelMode]);
-    const setModelSelectionAndRemember = React.useCallback((selection: SessionModelSelectionV1 | null) => {
+    const setModelSelectionAndRemember = React.useCallback((selection: SessionModelSelection | null) => {
         setSelectedTeamCredentialModel(null);
         setModelSelection(selection);
         rememberCurrentEngineSelection({ modelSelection: selection });
     }, [rememberCurrentEngineSelection, setModelSelection, setSelectedTeamCredentialModel]);
+    const pickerModelSelection = React.useMemo(() => sessionModelPickerValueFromRef(modelSelection?.ref), [modelSelection]);
     const providerModelProjection = useProviderModelProjection({
         // A machine RPC: an embedded composer asks only once the person reaches for it.
         enabled: providersFeatureEnabled && selectedMachineId !== null && hostDemanded,
@@ -1682,7 +1684,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         serverId: capabilityServerId,
         agentTargetKey: selectedBackendTargetKey,
         favoriteSelections: favoriteModelSelections.map(favorite => favorite.selection.ref).filter(ref => ref.agentTargetKey === selectedBackendTargetKey),
-        ...(modelSelection ? { currentSelection: modelSelection.ref } : {}),
+        ...(pickerModelSelection ? { currentSelection: pickerModelSelection } : {}),
     });
     const confirmExperimentalProviderModel = useConfirmExperimentalProviderModel({
         enabled: providersFeatureEnabled,
@@ -1986,7 +1988,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
 
     React.useEffect(() => {
         if (modelIsManagedDefault || modelOptionsProbeState.phase !== 'idle' || modelOptionsProbeState.failed
-            || modelSelection?.ref.providerConnectionId || selectedTeamCredentialModel) return;
+            || (modelSelection?.v === 2 ? modelSelection.ref.source === 'account_provider_connection' : modelSelection?.ref.providerConnectionId) || selectedTeamCredentialModel) return;
         const reconciled = resolveCanonicalModelOptionId(modelOptions, modelMode, preflightModels);
         if (reconciled === modelMode) return;
         setModelMode(reconciled);
@@ -1998,7 +2000,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         const acceptedSnapshot = preflightModels && preflightModels.unavailable !== true
             && modelOptionsProbeState.phase === 'idle' && !modelOptionsProbeState.failed
             && !acpConfigOptionsProbeState.failed && !acpConfigOptionsUnavailable
-            && !modelSelection?.ref.providerConnectionId && !selectedTeamCredentialModel;
+            && !(modelSelection?.v === 2 ? modelSelection.ref.source === 'account_provider_connection' : modelSelection?.ref.providerConnectionId) && !selectedTeamCredentialModel;
         if (acpConfigOptionsProbeState.phase !== 'idle' || (!acpConfigOptionsProbeState.rejectedConfigOptionOverrides && !acceptedSnapshot)
             || !acpConfigOptions || !sessionConfigOptionOverrides) return;
         const current = sessionConfigOptionOverrides.overrides;
@@ -2294,7 +2296,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         const modelId = typeof next === 'function' ? next(currentEngineSelectionRef.current.modelMode) : next;
         void draftActions.setModel({ kind: 'mode', modelId });
     }, [currentEngineSelectionRef, draftActions.setModel]);
-    const setDraftModelSelection = React.useCallback((selection: SessionModelSelectionV1 | null) => {
+    const setDraftModelSelection = React.useCallback((selection: SessionModelSelection | null) => {
         void draftActions.setModel({ kind: 'selection', ref: selection?.ref ?? null });
     }, [draftActions.setModel]);
     const setDraftPathWithAction = React.useCallback<React.Dispatch<React.SetStateAction<string>>>((next) => {
@@ -2319,18 +2321,19 @@ export function useNewSessionScreenModel(input?: Readonly<{
             retryProjection: hostCatalog ? null : providerModelProjection.refresh,
             projectionApproval: hostCatalog ? null : providerModelProjection.pendingApproval,
             currentSelectionRecovery: projection?.currentSelectionRecovery ?? null,
-            selected: modelSelection?.ref ?? null,
+            selected: pickerModelSelection,
             probe: hostCatalog ? undefined : modelOptionsProbeState,
             experimentalConfirmation: hostBoundMachineId === null ? confirmExperimentalProviderModel : undefined,
             canEnterCustomNativeValue: supportsFreeformModelSelectionForSession(selectedUiAgentType, null),
             onSelect: selectCreationModel,
         };
     }, [connectedServicesBindingsPayload, providersFeatureEnabled, capabilityServerId, agentCatalogMachineId, currentProjectionInputs?.pluginProjectionV2, selectedMachineId, creationProfile, confirmExperimentalProviderModel, hiddenNativeModelKeys, hostBoundMachineId, modelOptions,
-        modelOptionsProbeState, modelSelection, providerModelProjection.data, providerModelProjection.error,
+        modelOptionsProbeState, pickerModelSelection, providerModelProjection.data, providerModelProjection.error,
         providerModelProjection.pendingApproval, providerModelProjection.refresh, providerModelProjection.refreshFailures, providerModelProjection.status,
         selectCreationModel, selectedBackendTargetKey, selectedUiAgentType]);
     const modelPickerPresentation = React.useMemo<React.ComponentProps<typeof AgentInput>['modelPickerPresentation']>(() => {
-        if (!modelSelection?.ref.providerConnectionId) return undefined;
+        if (!pickerModelSelection || isTeamCredentialProviderModelPickerValue(pickerModelSelection)
+            || !pickerModelSelection.providerConnectionId) return undefined;
         const picker = creationModelPickerProps;
         return {
             agentTargetKey: selectedBackendTargetKey,
@@ -2340,7 +2343,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             hiddenNativeModelKeys,
             providerProjectionAuthoritative: picker?.providerProjectionAuthoritative ?? providerModelProjection.status === 'success',
             providerProjectionFailed: providerModelProjection.status === 'error',
-            selected: modelSelection.ref,
+            selected: pickerModelSelection,
             currentSelectionRecovery: picker?.currentSelectionRecovery ?? providerModelProjection.data?.currentSelectionRecovery,
             fallbackLabel: t('agentInput.model.unavailable'),
             fieldLabel: t('newSession.selectModelTitle'),

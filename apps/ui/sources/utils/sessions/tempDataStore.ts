@@ -12,7 +12,7 @@ import type {
 import type {
     SessionCapabilitySelectionV1} from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import type {
-    SessionModelSelectionV1} from '@happier-dev/protocol/providers/selection/v1';
+    SessionModelSelection} from '@happier-dev/protocol/providers/selection/v2';
 import type {
     SessionSpawnSourceContextV1} from '@happier-dev/protocol/sessions/creation/sessionSpawnSourceContextV1';
 import type {
@@ -76,7 +76,7 @@ export interface NewSessionData {
     approvalProfileId?: string | null;
     transcriptStorage?: 'persisted' | 'direct';
     permissionMode?: PermissionMode;
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: SessionModelSelection | null;
     /** Read-only compatibility input. New temp-data writers use `modelSelection`. */
     modelMode?: ModelMode;
     acpSessionModeId?: string | null;

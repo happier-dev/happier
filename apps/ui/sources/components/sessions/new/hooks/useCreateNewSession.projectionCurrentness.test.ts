@@ -409,7 +409,7 @@ describe('shared guest Send through the screen action caller', () => {
         const { useNewSessionConnectedServicesAgentOptions } = await import('./screenModel/useNewSessionConnectedServicesAgentOptions');
         const { applyConnectedAccountCatalogSnapshot } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
         const { TeamCredentialResourceCatalogEntryV1Schema } = await import('@happier-dev/protocol/teams');
-        const { SessionModelSelectionV2Schema, projectSessionModelSelectionV2ToV1, sessionModelSelectionV2TeamBindingIntent } = await import('@happier-dev/protocol/providers/selection/v2');
+        const { SessionModelSelectionV2Schema, sessionModelSelectionV2TeamBindingIntent } = await import('@happier-dev/protocol/providers/selection/v2');
         const target = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
         const targetKey = 'agent:happier.agent.codex/codex';
         const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
@@ -432,7 +432,7 @@ describe('shared guest Send through the screen action caller', () => {
         applyConnectedAccountCatalogSnapshot({ serverId: runtime.serverId, accountId: 'account-a' }, 'purposes',
             { status: 'unavailable', reason: 'forbidden' }, true);
         const draft = buildNewSessionAuthoringDraftFromResolvedInputs({ directory: '/home/member/workspace', prompt: 'Ready',
-            agentTarget: target, modelSelection: projectSessionModelSelectionV2ToV1(modelSelection),
+            agentTarget: target, modelSelection: modelSelection,
             teamCredentialBindings: [teamBinding], connectedServices: null });
         const hook = await mount(inputs, false, {
             selectedMachine: createMachineFixture({ id: 'm1', isShared: true, access: {

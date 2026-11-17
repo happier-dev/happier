@@ -2,13 +2,13 @@ import * as React from 'react';
 import { describe, expect, it } from 'vitest';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams';
-import { SessionModelSelectionV2Schema, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { useNewSessionTeamCredentialModelState } from './useNewSessionTeamCredentialModelState';
 
 describe('New Session Team model intent', () => {
-    it.each(['brokered', 'vendor-native'] as const)('reopens a %s Team model from its source-bearing binding without a V1 carrier', async (deliveryMode) => {
+    it.each(['brokered', 'vendor-native'] as const)('reopens a %s Team model from its canonical source-bearing model selection', async (deliveryMode) => {
         const nativeDelivery = deliveryMode === 'vendor-native' ? {
             managedId: 'managed', controllerInstallationId: 'controller', guestInstallationId: 'guest',
             bindingKey: 'binding', placeholderRef: 'reference', sourceRevision: 'source:1', providerTicket: 'a'.repeat(43),
@@ -18,12 +18,9 @@ describe('New Session Team model intent', () => {
             deliveryMode, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-model',
             ...(nativeDelivery ? { nativeDelivery } : {}),
         } });
-        const teamCredentialBindings = SessionTeamCredentialBindingIntentsV1Schema.parse([
-            sessionModelSelectionV2TeamBindingIntent(selection),
-        ]);
         const props: Parameters<typeof useNewSessionTeamCredentialModelState>[0] = {
             serverId: 'home-a', accountId: 'account-a', draftId: 'draft-a',
-            draft: { modelSelection: null, teamCredentialBindings },
+            draft: { modelSelection: selection },
         };
         const hook = await renderHook(useNewSessionTeamCredentialModelState, { initialProps: props });
         try {

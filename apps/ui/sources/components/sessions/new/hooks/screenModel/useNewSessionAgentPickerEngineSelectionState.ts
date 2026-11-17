@@ -1,10 +1,11 @@
+import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
 import * as React from 'react';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { NewSessionDraftAgentIntent } from '@happier-dev/protocol/actions/appShellActionFamily';
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 
 import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { resolveSessionAgentPickerSelectionFields } from '@/components/sessions/agentPicker/sessionAgentPickerSelectionFields';
 
@@ -48,10 +49,10 @@ type UseNewSessionAgentPickerEngineSelectionStateParams = Readonly<{
     selectedBackendEntry: ResolvedBackendCatalogEntry | null;
     selectedBackendTargetKey: string;
     modelMode: ModelMode;
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: SessionModelSelection | null;
     modelSelectionIsExplicit: boolean;
-    /** Source identities absent from V1 must not be retained as native tuples. */
-    canRetainModelSelection?: (selection: SessionModelSelectionV1 | null) => boolean;
+    /** A source-backed model is retained only through its complete selection. */
+    canRetainModelSelection?: (selection: SessionModelSelection | null) => boolean;
     acpSessionModeId: string | null;
     sessionConfigOptionOverrides: AcpConfigOptionOverridesV1 | null;
     setBackendTarget: React.Dispatch<React.SetStateAction<PersistedBackendTargetRefV2>>;
@@ -61,7 +62,7 @@ type UseNewSessionAgentPickerEngineSelectionStateParams = Readonly<{
     setEngineSelectionForBackendTarget?: (backendTargetKey: string, selection: {
         applyModel?: boolean;
         modelMode: ModelMode;
-        modelSelection?: SessionModelSelectionV1 | null;
+        modelSelection?: SessionModelSelection | null;
         acpSessionModeId: string | null;
         sessionConfigOptionOverrides: AcpConfigOptionOverridesV1 | null;
     }) => void;
@@ -69,7 +70,7 @@ type UseNewSessionAgentPickerEngineSelectionStateParams = Readonly<{
     rememberedEngineSelectionsByScope?: RememberedEngineSelectionsByScopeV1 | null;
     rememberedEngineSelectionServerId?: string | null;
     onRememberEngineSelection?: (backendTarget: PersistedBackendTargetRefV2, selection: {
-        modelSelection: SessionModelSelectionV1 | null;
+        modelSelection: SessionModelSelection | null;
         acpSessionModeId: string | null;
         sessionConfigOptionOverrides: AcpConfigOptionOverridesV1 | null;
     }) => void;
@@ -95,9 +96,7 @@ function areEngineSelectionsEqual(
     const leftRef = a.modelSelection?.ref ?? null;
     const rightRef = b.modelSelection?.ref ?? null;
     return a.modelId === b.modelId
-        && leftRef?.agentTargetKey === rightRef?.agentTargetKey
-        && leftRef?.providerConnectionId === rightRef?.providerConnectionId
-        && leftRef?.modelId === rightRef?.modelId
+        && areAccountSettingsJsonValuesEqual(leftRef, rightRef)
         && a.sessionModeId === b.sessionModeId
         && areConfigOverridesEqual(a.configOverrides, b.configOverrides);
 }

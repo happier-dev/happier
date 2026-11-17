@@ -5,7 +5,7 @@ import { renderHook } from '@/dev/testkit';
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
-import { projectSessionModelSelectionV2ToV1, SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 
 import { useNewSessionAgentPickerEngineSelectionState as useActualNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
 import { canRetainNewSessionModelSelection } from './useNewSessionTeamCredentialModelState';
@@ -65,7 +65,7 @@ describe('useNewSessionAgentPickerEngineSelectionState', () => {
             await hook.rerender({ ...baseProps, modelMode: team.modelId,
                 sessionConfigOptionOverrides: { v: 1, updatedAt: 124,
                     overrides: { reasoning_effort: { value: 'high', updatedAt: 124 } } },
-                modelSelection: projectSessionModelSelectionV2ToV1(sourceSelection) });
+                modelSelection: sourceSelection });
             team = null;
             await hook.rerender({ ...baseProps, selectedBackendEntry: claudeEntry,
                 selectedBackendTargetKey: claudeEntry.backendTargetKey, modelMode: 'default', modelSelection: null });

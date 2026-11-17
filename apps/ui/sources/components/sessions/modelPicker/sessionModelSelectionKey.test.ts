@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
-import { sessionModelSelectionKey } from './sessionModelSelectionKey';
+import { sessionModelSelectionKey, sessionModelPickerValueFromRef } from './sessionModelSelectionKey';
 
 describe('sessionModelSelectionKey', () => {
+    it('retains the qualified source when projecting a canonical Team ref into the picker', () => {
+        const ref = { source: 'team_resource' as const, teamId: 'team-a', resourceId: 'resource-a', expectedResourceRevision: 7,
+            deliveryMode: 'brokered' as const, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'same' };
+        const value = sessionModelPickerValueFromRef(ref);
+        expect(value).toEqual({ kind: 'team_credential_provider_model', teamId: 'team-a', resourceId: 'resource-a',
+            expectedResourceRevision: 7, deliveryMode: 'brokered', agentTargetKey: ref.agentTargetKey, modelId: 'same' });
+        expect(sessionModelSelectionKey(value)).not.toBe(sessionModelSelectionKey({ agentTargetKey: ref.agentTargetKey,
+            providerConnectionId: null, modelId: 'same' }));
+        expect(sessionModelSelectionKey(value)).not.toBe(sessionModelSelectionKey(sessionModelPickerValueFromRef({ ...ref, teamId: 'team-b' })));
+    });
+
     it('matches a native default sentinel to Automatic while retaining exact Provider and Team defaults', () => {
         const native = { agentTargetKey: 'agent:happier.agent.grok/grok', providerConnectionId: null, modelId: 'default' };
         expect(sessionModelSelectionKey(native)).toBe(sessionModelSelectionKey(null));

@@ -3,7 +3,7 @@ import type {
     SessionTeamCredentialBindingIntentV1,
     TeamCredentialProviderModelSelectionV1,
 } from '@happier-dev/protocol/teams';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 export type AssignedProviderModelCredentialBinding = Extract<
     SessionTeamCredentialBindingIntentV1,
@@ -21,9 +21,14 @@ export function findAssignedProviderModelCredentialBinding(
 
 /** Restore the authored source; the catalog separately owns whether it can execute. */
 export function readTeamCredentialProviderModelSelection(input: Readonly<{
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: SessionModelSelection | null;
     teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
 }> | null | undefined): TeamCredentialProviderModelSelectionV1 | null {
+    if (input?.modelSelection?.v === 2) {
+        if (input.modelSelection.ref.source !== 'team_resource') return null;
+        const { source: _source, ...ref } = input.modelSelection.ref;
+        return { kind: 'team_credential_provider_model', ...ref };
+    }
     const binding = findAssignedProviderModelCredentialBinding(input?.teamCredentialBindings);
     const legacyRef = input?.modelSelection?.ref;
     const ref = legacyRef ?? binding?.providerModelSelection;

@@ -6,8 +6,8 @@ import { coerceNewSessionModelMode } from '@/components/sessions/new/hooks/newSe
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { buildAcpConfigOptionOverridesV1, type AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { SessionCapabilitySelectionV1Schema, type SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
-import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
-import { projectSessionModelSelectionV2ToV1, type SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
+import { SessionModelSelectionSchema, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { type SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 import { resolveManagedSessionDefaults, type ManagedSessionDefaultsContext, type TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
@@ -18,7 +18,7 @@ import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCat
 type PersistedAuthoringDraftLike = Readonly<{
     agentTarget?: AgentExecutionTargetV1 | null;
     modelId?: string | null;
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: SessionModelSelection | null;
     acpSessionModeId?: string | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
     capabilitySelection?: unknown;
@@ -28,7 +28,7 @@ type PersistedAuthoringDraftLike = Readonly<{
 type TempAuthoringDraftLike = Readonly<{
     agentTarget?: AgentExecutionTargetV1 | null;
     modelId?: string | null;
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: SessionModelSelection | null;
     acpSessionModeId?: string | null;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1 | null;
     capabilitySelection?: unknown;
@@ -77,7 +77,7 @@ function useTargetScopedAuthoringState<Value>(backendTargetKey: string | null, r
 type TargetScopedEngineSelection = Readonly<{
     applyModel?: boolean;
     modelMode: ModelMode;
-    modelSelection?: SessionModelSelectionV1 | null;
+    modelSelection?: SessionModelSelection | null;
     acpSessionModeId: string | null;
     sessionConfigOptionOverrides: AcpConfigOptionOverridesV1 | null;
 }>;
@@ -108,17 +108,17 @@ function resolveTargetScopedAuthoringDraft<Draft extends TempAuthoringDraftLike 
 
 type ResolvedAuthoringModelState = Readonly<{
     modelMode: ModelMode;
-    modelSelection: SessionModelSelectionV1 | null;
+    modelSelection: SessionModelSelection | null;
 }>;
 
 function readDraftModelSelection(params: Readonly<{
     draft: TempAuthoringDraftLike | PersistedAuthoringDraftLike;
     agentTargetKey: string;
-}>): Readonly<{ present: boolean; selection: SessionModelSelectionV1 | null }> {
+}>): Readonly<{ present: boolean; selection: SessionModelSelection | null }> {
     if (!params.draft) return { present: false, selection: null };
     if (params.draft.modelSelection !== undefined) {
         if (params.draft.modelSelection === null) return { present: true, selection: null };
-        const selection = SessionModelSelectionV1Schema.parse(params.draft.modelSelection);
+        const selection = SessionModelSelectionSchema.parse(params.draft.modelSelection);
         if (!backendTargetKeysMatch(selection.ref.agentTargetKey, params.agentTargetKey)) {
             throw new Error('Session authoring model selection target mismatch');
         }
@@ -128,7 +128,7 @@ function readDraftModelSelection(params: Readonly<{
             // target so exactly one key spelling flows through authoring state.
             selection: selection.ref.agentTargetKey === params.agentTargetKey
                 ? selection
-                : SessionModelSelectionV1Schema.parse({
+                : SessionModelSelectionSchema.parse({
                     ...selection,
                     ref: { ...selection.ref, agentTargetKey: params.agentTargetKey },
                 }),
@@ -139,7 +139,7 @@ function readDraftModelSelection(params: Readonly<{
     if (!modelId || modelId === 'default') return { present: true, selection: null };
     return {
         present: true,
-        selection: SessionModelSelectionV1Schema.parse({
+        selection: SessionModelSelectionSchema.parse({
             v: 1,
             updatedAt: 0,
             ref: {
@@ -157,7 +157,7 @@ function resolveAuthoringModelState(params: Readonly<{
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;
     rememberedEngineSelection?: RememberedEngineSelectionV1 | null;
-    implicitProfileModelSelection?: SessionModelSelectionV1 | null;
+    implicitProfileModelSelection?: SessionModelSelection | null;
 }>): ResolvedAuthoringModelState {
     const core = isBundledAgentId(params.agentType) ? getAgentCore(params.agentType) : null;
     const temp = readDraftModelSelection({
@@ -194,7 +194,7 @@ function resolveAuthoringModelState(params: Readonly<{
         modelMode,
         modelSelection: candidate
             && candidate.ref.modelId === modelMode
-            && (modelMode !== 'default' || candidate.ref.providerConnectionId !== null)
+            && (modelMode !== 'default' || (candidate.v === 2 ? candidate.ref.source !== 'native' : candidate.ref.providerConnectionId !== null))
             ? candidate
             : null,
     };
@@ -204,7 +204,7 @@ function resolveAuthoringAcpSessionModeId(params: Readonly<{
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;
     rememberedEngineSelection?: RememberedEngineSelectionV1 | null;
-    implicitProfileModelSelection?: SessionModelSelectionV1 | null;
+    implicitProfileModelSelection?: SessionModelSelection | null;
 }>): string | null {
     if (typeof params.hydratedTempAuthoringDraft?.acpSessionModeId === 'string') {
         const trimmed = params.hydratedTempAuthoringDraft.acpSessionModeId.trim();
@@ -231,19 +231,19 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     hydratedTempAuthoringDraft: TempAuthoringDraftLike;
     hydratedPersistedAuthoringDraft: PersistedAuthoringDraftLike;
     rememberedEngineSelection?: RememberedEngineSelectionV1 | null;
-    implicitProfileModelSelection?: SessionModelSelectionV1 | null;
+    implicitProfileModelSelection?: SessionModelSelection | null;
     managedDefaults?: ManagedSessionDefaultsContext;
     explicitTeamCredentialModel?: TeamCredentialProviderModelSelectionV1 | null;
 }>): Readonly<{
     modelMode: ModelMode;
     setModelMode: React.Dispatch<React.SetStateAction<ModelMode>>;
-    modelSelection: SessionModelSelectionV1 | null;
+    modelSelection: SessionModelSelection | null;
     modelSelectionV2: SessionModelSelectionV2 | null;
-    modelSelectionForPersistence: SessionModelSelectionV1 | SessionModelSelectionV2 | null | undefined;
+    modelSelectionForPersistence: SessionModelSelection | null | undefined;
     modelIsManagedDefault: boolean;
     teamCredentialModel: TeamCredentialProviderModelSelectionV1 | null;
-    setModelSelection: (selection: SessionModelSelectionV1 | null) => void;
-    setModelSelectionForBackendTarget: (backendTargetKey: string, selection: SessionModelSelectionV1 | null) => void;
+    setModelSelection: (selection: SessionModelSelection | null) => void;
+    setModelSelectionForBackendTarget: (backendTargetKey: string, selection: SessionModelSelection | null) => void;
     /** The layer the model came from, for the picker row's provenance. */
     modelSource: ReturnType<typeof resolveManagedSessionDefaults>['model']['source'];
     acpSessionModeId: string | null;
@@ -301,7 +301,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         effectiveModelTargetKey,
         params.agentType,
         params.rememberedEngineSelection?.modelSelection?.ref.modelId,
-        params.rememberedEngineSelection?.modelSelection?.ref.providerConnectionId,
+        params.rememberedEngineSelection?.modelSelection,
         params.rememberedEngineSelection?.modelSelection?.updatedAt,
         targetScopedImplicitProfileModelSelection,
         targetScopedPersistedAuthoringDraft?.modelId,
@@ -313,7 +313,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     const explicitTeam = params.explicitTeamCredentialModel;
     const explicitTeamSelection: SessionModelSelectionV2 | undefined = explicitTeam
         && explicitTeam.agentTargetKey === effectiveModelTargetKey
-        && (!modelAuthored || (currentModelState.modelSelection?.ref.providerConnectionId === null
+        && (!modelAuthored || (currentModelState.modelSelection && (currentModelState.modelSelection.v === 2 ? currentModelState.modelSelection.ref.source === 'native' : currentModelState.modelSelection.ref.providerConnectionId === null)
             && currentModelState.modelMode === explicitTeam.modelId))
         ? { v: 2, updatedAt: currentModelState.modelSelection?.updatedAt ?? 0, ref: {
             source: 'team_resource', teamId: explicitTeam.teamId, resourceId: explicitTeam.resourceId,
@@ -347,7 +347,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     const modelSelection = modelDecision.source === 'explicit' && !explicitTeamSelection
         ? currentModelState.modelSelection
         : managedModel
-            ? managedModel.v === 1 ? managedModel : projectSessionModelSelectionV2ToV1(managedModel)
+            ? managedModel
             : currentModelState.modelSelection;
     const modelMode = managedModel?.ref.modelId ?? currentModelState.modelMode;
     const teamRef = modelSelectionV2?.ref.source === 'team_resource' ? modelSelectionV2.ref : null;
@@ -375,7 +375,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
                         ? null
                         : preserveSelection
                             ? currentValue.modelSelection
-                            : SessionModelSelectionV1Schema.parse({
+                            : SessionModelSelectionSchema.parse({
                                 v: 1,
                                 updatedAt: Date.now(),
                                 ref: {
@@ -389,8 +389,8 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         });
     }, [currentBackendTargetKey, effectiveModelTargetKey, resolvedModelState]);
 
-    const setModelSelection = React.useCallback((selection: SessionModelSelectionV1 | null) => {
-        const parsed = selection === null ? null : SessionModelSelectionV1Schema.parse(selection);
+    const setModelSelection = React.useCallback((selection: SessionModelSelection | null) => {
+        const parsed = selection === null ? null : SessionModelSelectionSchema.parse(selection);
         if (parsed && !backendTargetKeysMatch(parsed.ref.agentTargetKey, effectiveModelTargetKey)) {
             throw new Error('Session authoring model selection target mismatch');
         }
@@ -405,13 +405,13 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
 
     const setModelSelectionForBackendTarget = React.useCallback((
         backendTargetKey: string,
-        selection: SessionModelSelectionV1 | null,
+        selection: SessionModelSelection | null,
     ) => {
         const targetKey = backendTargetKey.trim();
         if (!targetKey) {
             throw new Error('Session authoring model selection requires backend target');
         }
-        const parsed = selection === null ? null : SessionModelSelectionV1Schema.parse(selection);
+        const parsed = selection === null ? null : SessionModelSelectionSchema.parse(selection);
         if (parsed && !backendTargetKeysMatch(parsed.ref.agentTargetKey, targetKey)) {
             throw new Error('Session authoring model selection target mismatch');
         }
@@ -494,7 +494,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
             const nextModelSelection = selection.modelSelection === undefined
                 ? selection.modelMode === 'default'
                     ? null
-                    : SessionModelSelectionV1Schema.parse({
+                    : SessionModelSelectionSchema.parse({
                         v: 1,
                         updatedAt: Date.now(),
                         ref: {

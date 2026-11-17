@@ -7,7 +7,7 @@ import type { VoiceAgentSelectionObserver } from '@/voice/binding/voiceConversat
 import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
-import { projectSessionModelSelectionV2ToV1, SessionModelSelectionV2Schema, sessionModelSelectionV2TeamBindingIntent, type SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
+import { SessionModelSelectionV2Schema, sessionModelSelectionV2TeamBindingIntent, type SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
 import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
@@ -532,7 +532,6 @@ async function spawnVoiceConversationSession(params: Readonly<{
     } else if (!modelSelection && configuredModelRef) {
         modelSelection = SessionModelSelectionV1Schema.parse({ v: 1, ref: configuredModelRef, updatedAt: Date.now() });
     }
-    const spawnModelSelection = modelSelection?.v === 2 ? projectSessionModelSelectionV2ToV1(modelSelection) : modelSelection;
     const teamBinding = modelSelection?.v === 2 && modelSelection.ref.source === 'team_resource'
         ? sessionModelSelectionV2TeamBindingIntent(modelSelection) : null;
     let input: StrictSessionSpawnNewInput = {
@@ -545,7 +544,7 @@ async function spawnVoiceConversationSession(params: Readonly<{
         agentTarget,
         permissionMode: params.permissionMode,
         transcriptStorage: 'persisted',
-        ...(spawnModelSelection ? { modelSelection: spawnModelSelection } : {}),
+        ...(modelSelection ? { modelSelection } : {}),
         ...(teamBinding ? { teamCredentialBindings: [teamBinding] } : {}),
         ...(params.connectedServices
             ? { connectedServices: params.connectedServices }

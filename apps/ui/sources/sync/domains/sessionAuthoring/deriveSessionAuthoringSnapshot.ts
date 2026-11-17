@@ -1,5 +1,5 @@
-import { resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readSessionModelSelectionV2FromMetadata, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
+import { backendTargetKeysMatch, buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import { readSessionCapabilitySelectionFromMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 
@@ -48,8 +48,11 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
     const metadataModelIntent = agentTargetKey
         ? readSessionModelSelectionIntentFromMetadata(metadata, agentTargetKey)
         : null;
+    const currentModelSelection = readSessionModelSelectionV2FromMetadata(metadata);
     const modelSelection = agentTargetKey
-        ? getModelOverrideForSpawn(params.session as Session, agentTargetKey)?.modelSelection ?? null
+        ? currentModelSelection && backendTargetKeysMatch(currentModelSelection.ref.agentTargetKey, agentTargetKey)
+            ? currentModelSelection
+            : getModelOverrideForSpawn(params.session as Session, agentTargetKey)?.modelSelection ?? null
         : null;
     const capabilitySelection = readSessionCapabilitySelectionFromMetadataV1(metadata);
 
