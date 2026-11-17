@@ -312,6 +312,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   machineWorkSummary?: MachineWorkSummaryRpcOwner;
   nativeUsage?: Omit<NativeUsageDaemonRuntimeInput, 'observation' | 'budgetRegistry'>;
   executionBudgetRegistry?: ReturnType<typeof createExecutionBudgetRegistry>;
+  readRequesterNativeOfferedModel?: Parameters<typeof registerExecutionRunHandlers>[1]['readRequesterNativeOfferedModel'];
   /** Exact installed daemon owners plus current authenticated requester material. */
   createProjectFiniteRuntime?: (ports: Readonly<{
     operationRuntime: ProjectTerminalRuntime['operationRuntime'];
@@ -659,6 +660,9 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     ...(sessionDelete ? { sessionDelete } : {}),
     ...(params.deps?.actionOperations?.attachOwner ? { attachActionOperationOwner: params.deps.actionOperations.attachOwner } : {}),
     budgetRegistry: executionBudgetRegistry,
+    ...(params.deps?.readRequesterNativeOfferedModel
+      ? { readRequesterNativeOfferedModel: params.deps.readRequesterNativeOfferedModel }
+      : {}),
     serverId: params.deps?.currentServerId ?? configuration.activeServerId,
     ...(params.deps?.executionRunRuntimeAccountId
       ? { runtimeAccountId: params.deps.executionRunRuntimeAccountId }

@@ -67,6 +67,8 @@ import type { ExecutionRunTeamCredentialProviderBindingPreparer } from '@/agent/
 import { createReviewRunCommentService } from '@/agent/executionRuns/profiles/review/reviewComments';
 import { resolveCliVoicePromptPreparation } from '@/agent/prompts/library/resolveCliVoicePromptStackBlocks';
 import { registerSessionAgentStartSelectionRpc } from '../../../session/actions/agentStartSelectionRpc';
+import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
+import type { ExecutionRunNativeOfferedModelReader } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 
 export type ExecutionRunRpcHandlerContext = Readonly<{
   attachActionOperationOwner?: import('@/daemon/actionOperations/createHostActionOperationRuntime').HostActionOperationRuntime['attachOwner'];
@@ -86,6 +88,9 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   sessionList?: ActionExecutorDeps['sessionList'];
   resolveAgentStartContext?: ActionExecutorDeps['resolveAgentStartContext'];
   readPromptCredentials?: () => Promise<import('@/persistence').StoredCredentials | null>;
+  /** The daemon borrows the admitted Workflow requester for native catalog admission. */
+  readRequesterNativeOfferedModel?: (bootstrap: AdmittedRequesterSessionBootstrap,
+    ...args: Parameters<ExecutionRunNativeOfferedModelReader>) => ReturnType<ExecutionRunNativeOfferedModelReader>;
   /** Host-private Account read; callers cannot inject this policy in a Run request. */
   resolveRunReportPolicy?: (signal?: AbortSignal) => Promise<import('@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1').FollowPolicyV1>;
   grantAttachedRunTeamVisibility?: GrantAttachedRunTeamVisibility;

@@ -578,6 +578,7 @@ export type ApiMachineClientLifecycleDependencies = Readonly<{
     /** Pure observation of the daemon's incumbent Project admission. */
     readProjectFiniteLoad?: MachineWorkSummaryRpcOwner['readFiniteLoad'];
     createProjectFiniteRuntime?: MachineRpcHandlerDeps['createProjectFiniteRuntime'];
+    readRequesterNativeOfferedModel?: MachineRpcHandlerDeps['readRequesterNativeOfferedModel'];
     /** Reference to the daemon's incumbent prepared-transfer lifecycle, never a second owner. */
     directPeerServerLifecycle?: DirectTransferServerLifecycle;
     /** The authenticated ApiClient owns published-key resolution and decoding. */
@@ -2378,6 +2379,9 @@ export class ApiMachineClient {
                             };
                         },
                     } satisfies ManagedActivityRpcOwner,
+                } : {}),
+                ...(this.lifecycleDependencies.readRequesterNativeOfferedModel ? {
+                    readRequesterNativeOfferedModel: this.lifecycleDependencies.readRequesterNativeOfferedModel,
                 } : {}),
                 ...(this.lifecycleDependencies.createProjectFiniteRuntime ? {
                     createProjectFiniteRuntime: this.lifecycleDependencies.createProjectFiniteRuntime,

@@ -2544,6 +2544,7 @@ export async function startDaemon(
       installExternalSessionHostOperations,
       readMaterializedStateObservationBinding,
       resolveExecutionRunLiveBrokerAuthority,
+      readRequesterNativeOfferedModel,
       providerAccountUsageStore,
       resolveProviderAccountUsageStore,
       flushProviderAccountUsagePersistence,
@@ -3735,6 +3736,7 @@ export async function startDaemon(
         resolveCurrentServerIdentityId: resolveBoundHomeServerIdentityId,
         resolveRequesterSessionRuntimeContext,
         resolveExecutionRunLiveBrokerAuthority,
+        readRequesterNativeOfferedModel,
         onActivationRejected: async event => { await guardSessionRestoration?.onActivationRejected(event); },
         readRequesterSessionCredentialBindings: async () => {
           const installation = readInstallationIdentityIfExistsSync();

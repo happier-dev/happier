@@ -1,4 +1,7 @@
 import { stageObservedExit } from '@/daemon/sessions/stageObservedExit';
+import { readNativeExecutionRunOfferedModel } from '@/agent/runtime/bridges/executionRun/structuredOutputAdmission';
+import { resolveExecutionRunRuntimeBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
+import { withAgentPreflightCatalog } from '@/capabilities/probes/withAgentPreflightCatalog';
 import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createSparedHeldAgentCustody } from '@/daemon/processSupervision/sparedHeldAgents';
@@ -1447,6 +1450,7 @@ export async function startDaemonSessionControlRuntime(
 ): Promise<
   Readonly<{
     executeGuardLeftBehindAction: ReturnType<typeof createGuardLeftBehindActionExecutor>;
+    readRequesterNativeOfferedModel: NonNullable<MachineRpcHandlerDeps['readRequesterNativeOfferedModel']>;
     resolveExecutionRunLiveBrokerAuthority: NonNullable<MachineRpcHandlerDeps['resolveExecutionRunLiveBrokerAuthority']>;
     guardSources: Required<Pick<import('../guard/readGuardFacts').ReadGuardFactsDependencies, 'readBrowsers' | 'readServices' | 'readServiceTargets'>>;
     sessionLiveWorkProducer: ReturnType<typeof createSessionLiveWorkProducer>;
@@ -9317,6 +9321,19 @@ export async function startDaemonSessionControlRuntime(
     assertSession: assertSessionAccountCurrent,
     createRequester: params.createRequesterSessionRuntimeContext,
   });
+  const readRequesterNativeOfferedModel: NonNullable<MachineRpcHandlerDeps['readRequesterNativeOfferedModel']> =
+    async (bootstrap, request, signal) => await executionRunAccountAccess.withContext(null, async context => {
+      // Supplying a bootstrap makes the account access owner either borrow its
+      // requester runtime or throw; it never selects the daemon's Account.
+      const requester = context!;
+      return await withSessionAccountHome(requester, () => withAgentPreflightCatalog({
+        agentId: resolveExecutionRunRuntimeBackendId(request.backendTarget), signal,
+      }, catalog => readNativeExecutionRunOfferedModel({ ...request, ...catalog, signal,
+        promptCredentials: requester.bootstrap.credentials, accountSettings: requester.readAccountSettingsSnapshot().settings,
+        preflightDependencies: { createApiClient: async () => requester.api,
+          activatePurposeBindings: requester.activatePurposeBindings, connectedAccountsOwner: requester.connectedAccountsOwner },
+      })));
+    }, undefined, signal, bootstrap);
   const resolveDaemonAuthBridge = async (
     serviceId: ConnectedAccountServiceKey,
     requesterSessionBootstrap?: import('../sessionEncryption/requesterSessionCredentials').AdmittedRequesterSessionBootstrap,
@@ -15598,6 +15615,7 @@ export async function startDaemonSessionControlRuntime(
   });
   return {
     executeGuardLeftBehindAction,
+    readRequesterNativeOfferedModel,
     async materializeSessionProcessEnvironment(input: SessionConnectedAccountProcessEnvironmentInput) {
       const context = await resolveSessionAccountContext(input.sessionId);
       try {

@@ -190,6 +190,7 @@ type ExecutionRunRpcActionContext = Readonly<{
   /** Exact target-host role/context owner for a present-user start. */
   resolveAgentStartContext?: ActionExecutorDeps['resolveAgentStartContext'];
   readPromptCredentials?: () => Promise<import('@/persistence').StoredCredentials | null>;
+  readRequesterNativeOfferedModel?: ExecutionRunRpcHandlerContext['readRequesterNativeOfferedModel'];
   readRequesterWorkAttributionV1?: () => Promise<import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1 | null>;
   /** Session access owner for a Run's consented Team visibility requirement. */
   grantAttachedRunTeamVisibility?: GrantAttachedRunTeamVisibility;
@@ -526,13 +527,15 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         ? await params.context.readRequesterWorkAttributionV1()
         : actionOptions?.requesterWorkAttributionV1;
       const requesterAccountContext = readRequesterAccountActionContext(actionOptions?.externalActionExecutionAuthorization);
-      // Detached signed work consumes finite requester custody. Attached work
+      const requesterBootstrap = sessionId === null ? params.context.projectLaunchContext?.requester?.bootstrap : undefined;
+      const readRequesterNativeOfferedModel = params.context.readRequesterNativeOfferedModel;
+      // Detached work consumes its admitted requester custody. Attached work
       // keeps the incumbent reader bound to its owning Session.
       let promptCredentials = (sessionId !== null || parsed.data.roleId
         || parsed.data.intent === 'review' || parsed.data.intent === 'scm_diff_summary')
         ? sessionId === null && actionOptions?.externalActionExecutionAuthorization
           ? requesterAccountContext?.credentials
-          : await params.context.readPromptCredentials?.() ?? undefined
+          : requesterBootstrap?.credentials ?? await params.context.readPromptCredentials?.() ?? undefined
         : undefined;
       if (sessionId !== null && promptCredentials && !promptCredentials.requesterSessionCredentialScope) {
         // Ordinary Session credentials also need their captured Home. Missing
@@ -562,7 +565,13 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         promptCredentials,
         // Detached admission uses the accepted requester's private catalog owner.
         // Attached Runs acquire their reader from the retained Session snapshot.
-        readNativeOfferedModel: sessionId === null ? requesterAccountContext?.readNativeOfferedModel : undefined,
+        readNativeOfferedModel: sessionId === null
+          ? actionOptions?.externalActionExecutionAuthorization
+            ? requesterAccountContext?.readNativeOfferedModel
+            : requesterBootstrap && readRequesterNativeOfferedModel
+              ? (request, signal) => readRequesterNativeOfferedModel(requesterBootstrap, request, signal)
+              : undefined
+          : undefined,
         workspaceWrites: actionOptions?.workspaceWrites,
         workDepth: actionOptions?.workDepth ?? 0,
         // The outer Action/RPC scope is authoritative; a passthrough field in
