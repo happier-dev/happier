@@ -153,6 +153,10 @@ export function decodeAutomationRunCause(row: CauseRow): AutomationRunCause | nu
         return AutomationRunCauseSchema.parse({ ...common, triggerKind: "runLifecycle",
             evidence: JSON.parse(required(row.causeRunLifecycleEvidenceJson, "causeRunLifecycleEvidenceJson")) });
     }
+    if (row.causeTriggerKind === "action") {
+        return AutomationRunCauseSchema.parse({ ...common, triggerKind: "action",
+            evidence: JSON.parse(required(row.causeActionEvidenceJson, "causeActionEvidenceJson")) });
+    }
     throw new Error("Automation trigger cause has no valid trigger kind");
 }
 
@@ -225,6 +229,7 @@ export function encodeAutomationRunCause(causeInput: AutomationRunCause) {
         causeTriggerKind: cause.triggerKind,
         causeTriggerRevision: cause.triggerRevision,
         causeRunLifecycleEvidenceJson: cause.triggerKind === "runLifecycle" ? JSON.stringify(cause.evidence) : null,
+        ...(cause.triggerKind === "action" ? { causeActionEvidenceJson: JSON.stringify(cause.evidence) } : {}),
         causeOriginRunId: cause.triggerKind === "sessionLifecycle" && cause.evidence.event === "sessionArchived"
             ? cause.evidence.originRunId ?? null : null,
         causeOccurredAt: new Date(cause.occurredAt),
