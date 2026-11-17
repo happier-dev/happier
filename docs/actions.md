@@ -6409,6 +6409,18 @@ Offline or failed reads retain visible data. Retry failure and recovery come fro
 the acquisition owner, including recovery whose retained rows did not change;
 the adapter does not add a second retry policy or a persisted Event history.
 
+In unreleased 0.3 source, a Run fact seeds the existing `runLifecycle` trigger
+with its exact Run source and observed condition. Events detail's **Automate
+this…** and the editor companion's Add path share this seed owner;
+Machine facts remain unsupported until declaration-owned setup is available.
+The selected-detail presentation also exposes `runsStarted` from the already
+demanded retained Run page. It compares immutable trigger occurrence keys
+through the canonical occurrence owner, never event proximity. These are known
+positive associations, not an exhaustive history: paging, a later source revision
+coalescing the admitted revision, or a newly admitted Run absent from the retained
+page can omit a match. The data intake does not itself render a Started link or
+acquire missing Runs.
+
 Saved Secret MCP sharing is selectively projected for `secrets.shared.promote`
 and `secrets.shared.grants.set`; this is not a Home-family-wide exposure. The
 existing human approval default retains the exact envelope and audience input
