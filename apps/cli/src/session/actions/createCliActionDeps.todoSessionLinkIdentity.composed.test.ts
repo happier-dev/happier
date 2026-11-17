@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { TODO_LABEL_CATALOG_KEY_V1, TodoItemV1Schema, resolveTodoStateV1, type TodoItemV1 } from '@happier-dev/protocol/todos/todoSessionLinkV1';
 
 import { projectInternalTaskSessionLinks } from '../../../../../packages/plugins/triage/src/internalTasks/source';
@@ -22,6 +23,10 @@ it('persists the portable Home identity so a Task started through a local CLI pr
     vi.spyOn(axios, 'request').mockImplementation(async request => {
         const url = new URL(request.url!);
         expect(url.origin).toBe('https://task-home.test');
+        if (url.pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+            expect(request.method).toBe('GET');
+            return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+        }
         expect(url.pathname).toMatch(/^\/v1\/tasks\//);
         return { status: 404, data: { statusCode: 404, error: 'Not Found', message: `Route GET:${url.pathname} not found` } };
     });
