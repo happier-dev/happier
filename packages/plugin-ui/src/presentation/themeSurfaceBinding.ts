@@ -24,9 +24,10 @@ export function resolveThemeSurfaceState<S extends SurfaceId>(surface: S, facts:
 export function resolveThemeSurfaceAddress<A extends SurfaceAddress>(
   address: A,
   facts: ThemeSurfaceStateFacts,
-): Extract<SurfaceAddress, { surface: A['surface'] }> {
+): Extract<SurfaceAddress, { surface: A['surface'] }>;
+export function resolveThemeSurfaceAddress(address: SurfaceAddress, facts: ThemeSurfaceStateFacts): SurfaceAddress {
   const semantic = address.state === undefined ? facts : { ...facts, [address.state]: true };
-  return { ...address, state: resolveThemeSurfaceState(address.surface, semantic) } as Extract<SurfaceAddress, { surface: A['surface'] }>;
+  return { ...address, state: resolveThemeSurfaceState(address.surface, semantic) } as SurfaceAddress;
 }
 
 const ThemeSurfaceOverridesContext = createContext(true);
