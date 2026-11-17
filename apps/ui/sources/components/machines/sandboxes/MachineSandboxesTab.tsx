@@ -14,6 +14,8 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { describeMachineIsolationAvailability, MachineIsolationOfflineLine, type MachineIsolationAvailability } from '@/components/machines/security/isolation/MachineIsolationAvailability';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 
 /**
@@ -30,21 +32,24 @@ export function MachineSandboxesTab(props: MachinePageTabBodyProps) {
     // Every door opens the one add flow, on the Isolation page, for sessions you start (lab J1 `tab`).
     const openIsolation = React.useCallback(() => setParams({ id: 'security', page: 'isolation', add: 'sessions' }), [setParams]);
     if (!machine) return null;
+    // The Isolation door's own decision: the invite never leads where nothing can be added.
+    const availability = describeMachineIsolationAvailability(machine, props.online, target.machineSentenceName);
+    const empty = <MachineSandboxesEmpty serverId={props.serverId} machine={machine} machineName={target.machineSentenceName}
+        availability={availability} onOpenIsolation={openIsolation} />;
     return (
         <View testID="machine-sandboxes-tab">
-            {controller ? <MachineHostSandboxes serverId={props.serverId} controller={controller} machineName={target.machineSentenceName}
-                onOpenIsolation={openIsolation} /> : <MachineSandboxesEmpty machineName={target.machineSentenceName} onOpenIsolation={openIsolation} />}
+            {controller ? <MachineHostSandboxes serverId={props.serverId} controller={controller} empty={empty} /> : empty}
         </View>
     );
 }
 
 function MachineHostSandboxes(props: Readonly<{
-    serverId: string; controller: ManagedControllerV1; machineName: string; onOpenIsolation: () => void;
+    serverId: string; controller: ManagedControllerV1; empty: React.ReactElement;
 }>) {
     const host = useHostMachineSandboxes({ serverId: props.serverId, controller: props.controller });
     const live = React.useMemo(() => host.sandboxes.filter(sandbox => sandbox.archivedAt === undefined), [host.sandboxes]);
     if (host.firstAnswerPending && live.length === 0) return <SkeletonRows testID="machine-sandboxes-loading" rows={3} />;
-    if (live.length === 0) return <MachineSandboxesEmpty machineName={props.machineName} onOpenIsolation={props.onOpenIsolation} />;
+    if (live.length === 0) return props.empty;
     return (
         <>
             <MachineTabSubHead title={null} back={null} description={t('machineDetailPage.isolation.host.count', { count: host.count })} />
@@ -74,12 +79,24 @@ const NO_SANDBOXES_SCENE = defineHappierScene({
     name: 'happier.machines.no-sandboxes', horizon: 'land', moment: 'predawn', planet: 'resting', props: [{ prop: 'crate', x: 104 }],
 });
 
-function MachineSandboxesEmpty(props: Readonly<{ machineName: string; onOpenIsolation: () => void }>) {
+function MachineSandboxesEmpty(props: Readonly<{
+    serverId: string; machine: Machine; machineName: string; availability: MachineIsolationAvailability; onOpenIsolation: () => void;
+}>) {
+    const { readOnlyReason, offline } = props.availability;
     return (
-        <EmptyState testID="machine-sandboxes-empty" layout="page" scene={NO_SANDBOXES_SCENE}
-            title={t('machineDetailPage.isolation.host.emptyTitle', { machine: props.machineName })}
-            subtitle={t('machineDetailPage.isolation.host.emptyReason', { machine: props.machineName })}
-            primaryAction={{ label: t('machineDetailPage.isolation.host.emptyAction'), onPress: props.onOpenIsolation,
-                testID: 'machine-sandboxes-empty-add' }} />
+        <>
+            {/* Offline: the same one line the Isolation page says, with its Retry; the invite waits for the Machine. */}
+            {offline && readOnlyReason ? (
+                <MachineTabSubHead title={null} back={null} notice={<MachineIsolationOfflineLine testID="machine-sandboxes-offline"
+                    serverId={props.serverId} machine={props.machine} reason={readOnlyReason} />} />
+            ) : null}
+            <EmptyState testID="machine-sandboxes-empty" layout="page" scene={NO_SANDBOXES_SCENE}
+                title={t('machineDetailPage.isolation.host.emptyTitle', { machine: props.machineName })}
+                subtitle={t('machineDetailPage.isolation.host.emptyReason', { machine: props.machineName })}
+                // Someone who doesn't manage the Machine reads why, in the action's place.
+                {...(readOnlyReason !== null && !offline ? { actionUnavailableReason: readOnlyReason } : {
+                    primaryAction: { label: t('machineDetailPage.isolation.host.emptyAction'), onPress: props.onOpenIsolation,
+                        disabled: offline, testID: 'machine-sandboxes-empty-add' } })} />
+        </>
     );
 }

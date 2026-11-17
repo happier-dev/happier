@@ -52,3 +52,34 @@ it('keeps an unopened preset sandbox visible and openable beside a named sandbox
     await screen.pressByTestIdAsync('machine-sandbox-row-sealed');
     expect(router.push).toHaveBeenCalledWith(`/settings/machines/managed/sealed?serverId=${encodeURIComponent(serverId)}`);
 });
+
+it('takes the Isolation door’s one availability decision: offline it says so once and the invite waits; a non-manager reads why', async () => {
+    const setParams = vi.fn();
+    function Route(props: Readonly<{ machine: ReturnType<typeof createMachineFixture>; online: boolean }>) {
+        const state = { target: { machineId: props.machine.id, requestedServerId: 'server-a', serverId: 'server-a', activeServerId: 'server-a',
+            machine: props.machine, machineName: 'Host', machineSentenceName: 'Host', isServerSwitching: false,
+            isHydratingMachine: false, switchReady: true }, managedEnrolled: null, refreshKey: 0,
+            reload: async () => {} } as unknown as MachinePageState;
+        return <MachinePageStateContext.Provider value={state}>
+            <MachineSandboxesTab serverId="server-a" machineId={props.machine.id} machineName="Host" online={props.online}
+                params={{ id: 'sandboxes' }} setParams={setParams} />
+        </MachinePageStateContext.Provider>;
+    }
+    const managed = createMachineFixture({ id: 'host', isShared: false });
+    const offline = await renderScreen(<Route machine={managed} online={false} />);
+    expect(offline.findByTestId('machine-sandboxes-offline')).not.toBeNull();
+    await offline.pressByTestIdAsync('machine-sandboxes-empty-add');
+    expect(setParams).not.toHaveBeenCalled();
+    await standardCleanup();
+
+    const online = await renderScreen(<Route machine={managed} online />);
+    expect(online.findByTestId('machine-sandboxes-offline')).toBeNull();
+    await online.pressByTestIdAsync('machine-sandboxes-empty-add');
+    expect(setParams).toHaveBeenCalledWith({ id: 'security', page: 'isolation', add: 'sessions' });
+    await standardCleanup();
+
+    setParams.mockClear();
+    const shared = await renderScreen(<Route machine={createMachineFixture({ id: 'host', isShared: true })} online />);
+    expect(shared.findByTestId('machine-sandboxes-empty-add')).toBeNull();
+    expect(shared.getTextContent()).toContain(t('machineDetailPage.isolation.notManager'));
+});

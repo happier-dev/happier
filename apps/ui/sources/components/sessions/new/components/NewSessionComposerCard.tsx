@@ -18,7 +18,7 @@ import { resolveAvailablePanelHeight } from '@/components/sessions/keyboardAvoid
 import { useComposerAvailablePanelHeight } from '@/components/sessions/keyboardAvoidance/useComposerAvailablePanelHeight';
 import { computeNewSessionComposerPanelMaxHeight } from '@/components/sessions/agentInput/inputMaxHeight';
 import { NewSessionProviderLaunchError } from '@/components/sessions/new/components/NewSessionProviderLaunchError';
-import { SessionIsolationOutcomeLine } from '@/components/sessions/new/placement/SessionIsolationOutcomeLine';
+import { SessionIsolationOutcomeLine, sessionIsolationOutcomeSaysOffline } from '@/components/sessions/new/placement/SessionIsolationOutcomeLine';
 import { NewSessionRequesterFolderHint } from '@/components/sessions/new/components/NewSessionRequesterFolderHint';
 import { NewSessionCreationReviewLine } from '@/components/sessions/new/components/NewSessionCreationReviewLine';
 import { NewSessionLaunchApprovalNotice } from '@/components/sessions/new/components/NewSessionLaunchApprovalNotice';
@@ -131,6 +131,12 @@ export function NewSessionComposerCard(input: Readonly<{
     const workflowStart = useNewSessionWorkflowStart({ panelProps: props, prompt: props.promptStore, surfaceGroup: input.surfaceGroup,
         host: { connectionStatus, contentPaddingHorizontal: 0, ...(embedded ? { maxWidthCap: null } : {}) } });
     const workflowSelected = workflowStart.composer !== null;
+    // One cause, one line: when the outcome line under the composer says the Machine is offline (and what happens to
+    // the draft), the status line above says nothing more about the Machine. A chosen workflow shows no outcome line,
+    // so its composer keeps the status.
+    const outcomeSaysOffline = !workflowSelected && props.sessionIsolation !== undefined
+        && sessionIsolationOutcomeSaysOffline(props.sessionIsolation);
+    const sessionConnectionStatus = outcomeSaysOffline && connectionStatus?.recovery === 'machine' ? undefined : connectionStatus;
     React.useLayoutEffect(() => {
         input.onWorkflowSelectionChange?.(workflowSelected);
     }, [input.onWorkflowSelectionChange, workflowSelected]);
@@ -269,7 +275,7 @@ export function NewSessionComposerCard(input: Readonly<{
                         acpConfigOptionOverridesOverride={props.acpConfigOptionOverrides ?? null}
                         onAcpConfigOptionChange={props.setAcpConfigOptionOverride}
                         // A machine that cannot start a session says so above the card; a ready one is quiet.
-                        connectionStatus={connectionStatus}
+                        connectionStatus={sessionConnectionStatus}
                         statusBadges={props.statusBadges}
                         statusTrailingActions={props.statusTrailingActions}
                         showStatusPermissionMode={false}

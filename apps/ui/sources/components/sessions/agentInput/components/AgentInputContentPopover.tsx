@@ -11,7 +11,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
 import { AgentInputPopoverSurface } from './AgentInputPopoverSurface';
-import { AgentInputDocumentPanelContext } from '@/components/sessions/agentInput/selection/useAgentInputPopoverLayout';
+import { AGENT_INPUT_POPOVER_WIDTH_PX, AgentInputDocumentPanelContext } from '@/components/sessions/agentInput/selection/useAgentInputPopoverLayout';
 import { useContainingGlassSurfaceGroup } from '@/components/ui/glass/GlassSurface';
 
 const MOBILE_WEB_AGENT_INPUT_POPOVER_VIEWPORT_MARGIN = 12;
@@ -101,7 +101,7 @@ export function AgentInputContentPopover(props: AgentInputContentPopoverProps) {
     const maxWidthCap = React.useMemo(() => {
         // A field-anchored picker takes its field's width (the layout matches the anchor), so no chip cap applies.
         const baseMaxWidthCap = spansFloatingFormColumn ? Number.MAX_SAFE_INTEGER
-            : props.maxWidthCap ?? (props.anchor === 'field' ? Number.MAX_SAFE_INTEGER : 420);
+            : props.maxWidthCap ?? (props.anchor === 'field' ? Number.MAX_SAFE_INTEGER : AGENT_INPUT_POPOVER_WIDTH_PX);
         if (!usesMobileWebBoundaryLayout) {
             return baseMaxWidthCap;
         }

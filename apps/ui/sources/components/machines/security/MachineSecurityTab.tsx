@@ -10,6 +10,7 @@ import { MachineNetworkSection } from '@/components/machines/security/network/Ma
 import { describeNetworkRowSummary, useMachineNetworkLead, useMachineNetworkRowFacts } from '@/components/machines/security/network/useMachineNetworkLead';
 import { MachineSecuritySection } from '@/components/machines/security/MachineSecuritySection';
 import { MachineRolesSection } from '@/components/machines/security/MachineRolesSection';
+import { describeMachineIsolationAvailability, MachineIsolationOfflineLine } from '@/components/machines/security/isolation/MachineIsolationAvailability';
 import { MachineIsolationPage } from '@/components/machines/security/isolation/MachineIsolationPage';
 import { MachineIsolationSummaryRow } from '@/components/machines/security/isolation/MachineIsolationSummaryRow';
 import { useMachineIsolationSummary } from '@/components/machines/security/isolation/useMachineIsolationSummary';
@@ -21,8 +22,6 @@ import { MachineWorkSummaryReader } from '@/components/sharing/machines/MachineW
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
-import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useActiveServerAccountScope, useMachineField } from '@/sync/store/hooks';
@@ -232,6 +231,7 @@ function MachineSecurityIsolationPage(props: PushedPageProps & Readonly<{
   const { policy } = useMachineIsolationPolicy({ serverId: props.serverId, machine: props.machine });
   // Nothing set up yet: the lead goes on to say what a sandbox would change (lab scene 1 `unset`).
   const unset = policy !== null && Object.keys(policy.configuredSandboxes).length === 0;
+  const availability = describeMachineIsolationAvailability(props.machine, props.online, props.machineName);
   const continuation = detail.length > 0 ? detail.join(' ') : unset ? t('machineDetailPage.isolation.leadInvite') : null;
   return (
     <View testID="machine-security-isolation-page">
@@ -241,11 +241,8 @@ function MachineSecurityIsolationPage(props: PushedPageProps & Readonly<{
         back={props.back}
         lead={statement ? { statement, detail: continuation } : null}
         // Offline: what it uses stays shown; one line says so, as of when it was last seen, with the one Retry (lab scene 1 `offline`).
-        notice={props.online === true || !canManageMachine(props.machine) ? null : <SurfaceFreshnessLine
-          testID="machine-isolation-offline" glyph="cloud-slash"
-          asOf={props.machine.activeAt}
-          reason={t('machineDetailPage.isolation.offline', { machine: props.machineName })}
-          action={{ label: t('common.retry'), onPress: () => { void getSyncSingleton().refreshMachines({ serverId: props.serverId }).catch(() => {}); } }} />}
+        notice={availability.offline && availability.readOnlyReason ? <MachineIsolationOfflineLine testID="machine-isolation-offline"
+          serverId={props.serverId} machine={props.machine} reason={availability.readOnlyReason} /> : null}
       />
       <MachineIsolationPage serverId={props.serverId} machine={props.machine} machineName={props.machineName} online={props.online}
         {...(props.addFor ? { addFor: props.addFor } : {})} onAddHandled={props.onAddHandled} />

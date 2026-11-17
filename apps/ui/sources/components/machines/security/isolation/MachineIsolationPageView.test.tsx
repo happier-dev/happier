@@ -4,6 +4,7 @@ import type { MachineIsolationPolicyV1 } from '@happier-dev/protocol/machines/ma
 
 import { findTestInstanceByTypeWithProps, renderScreen } from '@/dev/testkit';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Switch } from '@/components/ui/forms/Switch';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { Item } from '@/components/ui/lists/Item';
@@ -108,8 +109,8 @@ describe('Machine isolation page', () => {
         const onAdd = vi.fn();
         // Nothing added yet: the invitation's one action; with sandboxes added, the add row under them.
         const empty = await render({ onAdd });
-        const inviteAction = (screen: typeof empty.screen) => findTestInstanceByTypeWithProps(screen, SurfaceStateCard,
-            { testID: 'machine-isolation-sandboxes-empty' })?.props.action;
+        const inviteAction = (screen: typeof empty.screen) => findTestInstanceByTypeWithProps(screen, EmptyState,
+            { testID: 'machine-isolation-sandboxes-empty' })?.props.primaryAction;
         expect(inviteAction(empty.screen)?.disabled).toBeFalsy();
         await inviteAction(empty.screen)?.onPress();
         expect(onAdd).toHaveBeenCalledOnce();

@@ -393,6 +393,8 @@ describe('workflow project target control', () => {
             expect(screen.findByTestId('workflow-editor-project-checkout')).not.toBeNull();
         });
         expect(new Set(rows)).toEqual(new Set(['machine', 'folder', 'workspace']));
+        // Under the Machine, the line saying where the workflow's work runs there (lab J6).
+        expect(screen.findByTestId('session-placement-isolation-outcome')).not.toBeNull();
 
         await screen.pressByTestIdAsync('workflow-editor-project-checkout');
         let popover = screen.findAllByType(AgentInputSelectionListPopover).find(node => node.props.open)!;

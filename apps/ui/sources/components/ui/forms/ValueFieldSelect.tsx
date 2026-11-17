@@ -1,10 +1,13 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_SEGMENTED_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { DropdownMenu, type DropdownMenuSelection } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
+
+const TRIGGER_STYLE = { justifyContent: 'center' } as const;
+const DISABLED_TRIGGER_STYLE = { justifyContent: 'center', opacity: HAPPIER_SEGMENTED_METRICS.disabledOpacity } as const;
 
 export type ValueFieldSelectItem = Readonly<{
     id: string;
@@ -104,7 +107,9 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
                     accessibilityLabel={`${props.label}: ${selectedTitle}`}
                     expanded={open}
                     hasPopup="menu"
-                    style={{ justifyContent: 'center' }}
+                    // A field that cannot change now paints at the disabled step its row's segmented choice uses, so
+                    // the row reads as held, not merely unresponsive.
+                    style={props.disabled ? DISABLED_TRIGGER_STYLE : TRIGGER_STYLE}
                 >
                     {renderDropdownItemTriggerRightElement({
                         detail: selectedTitle,

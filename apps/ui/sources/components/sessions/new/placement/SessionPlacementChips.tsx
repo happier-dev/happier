@@ -277,10 +277,11 @@ export function SessionPlacementChips(
     const folderTitle = t('newSession.wizardSection.folder');
     return (
       <>
-        {props.renderFieldRow('machine', machineTitle,
+        {/* The outcome line says where the work runs under the Machine it depends on (lab J6), on the field's edge. */}
+        {props.renderFieldRow('machine', machineTitle, withOutcome(outcomeLine,
           <PlacementField anchorRef={machineAnchor} testID="agent-input-machine-chip" span="column"
             label={machineTitle} value={machineLabel} placeholder={t('agentInput.runOn')}
-            open={open === 'machine'} disabled={!machineChoosable} onPress={() => setOpen('machine')} />)}
+            open={open === 'machine'} disabled={!machineChoosable} onPress={() => setOpen('machine')} />))}
         {props.renderFieldRow('folder', folderTitle,
           <PlacementField anchorRef={folderAnchor} testID="agent-input-path-chip" span="column"
             label={folderTitle} value={folderLabel} placeholder={folderLabel}

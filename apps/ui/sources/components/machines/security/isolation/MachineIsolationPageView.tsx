@@ -8,6 +8,7 @@ import type {
 } from '@happier-dev/protocol/machines/machineIsolationV1';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
 import {
@@ -230,17 +231,17 @@ export function MachineIsolationPageView(props: MachineIsolationPageViewProps) {
           />
         ))}
         {entries.length === 0 ? (
-          // Nothing added yet: the same invitation the Sandboxes tab makes, with its one action.
-          <SurfaceStateCard
+          // Nothing added yet: the same invitation the Sandboxes tab makes, with its one action. Emptiness is the
+          // empty state's, whose inline layout owns the section-scale inset inside the sheet (lab scene 1 `unset`).
+          <EmptyState
             testID="machine-isolation-sandboxes-empty"
-            // Section scale, beside the rows it will hold: the inline invite, not a whole-pane state.
             layout="inline"
-            kind="empty"
+            iconName="cube"
             title={t('machineDetailPage.isolation.host.emptyTitle', { machine: machineName })}
-            reason={t('machineDetailPage.isolation.host.emptyReason', { machine: machineName })}
+            subtitle={t('machineDetailPage.isolation.host.emptyReason', { machine: machineName })}
             {...(props.onAdd
               ? {
-                  action: {
+                  primaryAction: {
                     label: t('machineDetailPage.isolation.host.emptyAction'),
                     onPress: props.onAdd,
                     disabled,

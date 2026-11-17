@@ -43,6 +43,11 @@ export type PopoverPortalOptions = Readonly<{
      */
     matchAnchorWidth?: boolean;
     /**
+     * With `matchAnchorWidth`, the narrowest the popover opens: a narrow field still hangs a picker wide enough
+     * for its rows from its own edge (within the max-width cap and the boundary). Omitted: exactly the anchor's width.
+     */
+    anchoredMinWidth?: number;
+    /**
      * Horizontal alignment relative to the anchor for top/bottom placements.
      * Defaults to 'start' to preserve historical behavior. `auto` hangs from the edge facing the larger
      * side of the boundary (start for a trigger on the left, end for one on the right).

@@ -34,7 +34,8 @@ const { OverlayPortalProvider, OverlayPortalHost } = await import('./OverlayPort
 const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarget');
 
 /** A fixed-width picker (520 wide) hung from a chip, as the composer's list pickers are. */
-async function renderPicker(anchor: AnchorRect, anchorAlign: 'start' | 'end' | 'auto', onAnchorHidden?: () => void) {
+async function renderPicker(anchor: AnchorRect, anchorAlign: 'start' | 'end' | 'auto', onAnchorHidden?: () => void,
+    portalOverride?: Readonly<{ matchAnchorWidth: boolean; anchoredMinWidth?: number }>) {
     const portalRootNode = {
         measureInWindow: (cb: any) => cb(0, 0, 1000, 800),
         measure: (cb: any) => cb(0, 0, 1000, 800, 0, 0),
@@ -49,7 +50,7 @@ async function renderPicker(anchor: AnchorRect, anchorAlign: 'start' | 'end' | '
                     onRequestClose={onAnchorHidden}
                     backdrop={false}
                     anchor={{ kind: 'rect', rect: anchor }}
-                    portal={{ native: true, matchAnchorWidth: false, anchorAlign }}
+                    portal={{ native: true, matchAnchorWidth: false, anchorAlign, ...portalOverride }}
                     placement="bottom"
                     gap={8}
                     maxHeightCap={300}
@@ -108,5 +109,16 @@ describe('Popover: an auto-aligned popover opens toward the open side of the win
     it('hangs from the end edge of an anchor on the right, as a page header\'s Share does', async () => {
         const { left, width } = await renderPicker({ left: 480, top: 400, width: 120, height: 32 }, 'auto');
         expect(left + width).toBe(600);
+    });
+});
+
+describe('Popover: a field-width picker keeps a readable minimum', () => {
+    it('opens a narrow field\'s picker at the minimum from the field\'s own edge, and a wide field\'s at its width', async () => {
+        const narrow = await renderPicker({ left: 200, top: 100, width: 280, height: 32 }, 'start', undefined,
+            { matchAnchorWidth: true, anchoredMinWidth: 420 });
+        expect(narrow).toEqual({ left: 200, width: 420 });
+        const wide = await renderPicker({ left: 100, top: 100, width: 480, height: 32 }, 'start', undefined,
+            { matchAnchorWidth: true, anchoredMinWidth: 420 });
+        expect(wide).toEqual({ left: 100, width: 480 });
     });
 });

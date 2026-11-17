@@ -1794,7 +1794,7 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
                         return Math.min(computed.maxWidth, Math.floor(boundaryRect.width));
                     }
                     return matchAnchorWidthOnPortal
-                        ? Math.min(computed.maxWidth, Math.floor(anchorRectState.width))
+                        ? Math.min(computed.maxWidth, Math.max(Math.floor(anchorRectState.width), props.portal?.anchoredMinWidth ?? 0))
                         : computed.maxWidth;
                 }
                 // For left/right, menus are typically content-sized; use computed maxWidth.

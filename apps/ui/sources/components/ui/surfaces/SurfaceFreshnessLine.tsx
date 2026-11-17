@@ -156,7 +156,7 @@ export function SurfaceFreshnessLine(props: Readonly<{
                 <View testID={props.testID ? `${props.testID}-text` : undefined} accessible accessibilityLabel={text}>
                     <HappierFreshnessClauses
                         asOf={<Text style={stylesheet.text} numberOfLines={1}>{parts.asOf}</Text>}
-                        reason={parts.reason ? <Text style={stylesheet.text}>{renderEmphasis(parts.reason, props.emphasis)}</Text> : null}
+                        reason={parts.reason ? <Text style={[stylesheet.text, stylesheet.reasonText]}>{renderEmphasis(parts.reason, props.emphasis)}</Text> : null}
                         separator={(hidden) => (
                             <Text style={[stylesheet.text, hidden ? stylesheet.hiddenSeparator : null]} aria-hidden
                                 accessibilityElementsHidden importantForAccessibility="no">{' · '}</Text>
@@ -199,6 +199,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...HAPPIER_FRESHNESS_LINE_METRICS.text,
         color: theme.colors.text.secondary,
         fontVariant: ['tabular-nums'],
+    },
+    // Tabular figures keep a changing time from jittering; a reason is prose ("NLDW6-3-11-20 is offline"), set in
+    // proportional figures so a name with digits never reads as an id.
+    reasonText: {
+        fontVariant: ['proportional-nums'],
     },
     // Hidden, not removed: the dot keeps its width so the clauses never re-flow when it goes.
     hiddenSeparator: {

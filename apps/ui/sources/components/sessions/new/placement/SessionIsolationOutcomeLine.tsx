@@ -20,6 +20,18 @@ export type SessionIsolationOutcome = ReturnType<
 >;
 
 /**
+ * Whether the outcome line says the chosen Machine is offline (with what happens to the draft, lab case 9). The
+ * composer's status line then says nothing more about it: one cause, one line.
+ */
+export function sessionIsolationOutcomeSaysOffline(input: Readonly<{
+  machineName: string | null;
+  snapshot: MachineIsolationGetResultV1;
+  offline?: boolean;
+}>): boolean {
+  return input.offline === true && Boolean(input.machineName) && input.snapshot.status === 'ready';
+}
+
+/**
  * What Send will do on the chosen Machine (lab machine-sandboxes-1115 scene 2 and J6): one quiet line from the
  * isolation owner's proposed outcome, shared by New Session and the workflow editor so both say it the same way.
  * "Run directly this time" appears only when the host passes `onOverrideChange` (an interactive Manage start);
@@ -47,7 +59,7 @@ export function SessionIsolationOutcomeLine(
   const preset = usePreset(props.serverId, presetId);
   if (!machineName || snapshot.status !== 'ready') return null;
   const machine = machineName;
-  if (props.offline)
+  if (sessionIsolationOutcomeSaysOffline(props))
     return (
       <OutcomeRow
         testID={testID}

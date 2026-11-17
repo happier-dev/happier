@@ -583,3 +583,24 @@ describe('New workflow entry', () => {
         expect(hook.getCurrent().composer).toBeNull();
     });
 });
+
+describe('new session composer offline cause', () => {
+    it('says an offline Machine once, on the outcome line under the composer, not again in the status line', async () => {
+        const policy = { configuredSandboxes: {}, workKinds: { sessions: { kind: 'directly' }, botsChannels: { kind: 'directly' },
+            automationsWorkflows: { kind: 'directly' } } } as const;
+        const isolation = (offline: boolean) => ({ snapshot: { status: 'ready', source: 'default', policy, metadataVersion: 1 } as const,
+            serverId: null, machineName: 'devbox', offline, override: undefined });
+        const offlineStatus = { text: 'Machine is offline', color: 'red', dotColor: 'red', recovery: 'machine' as const };
+        const element = (offline: boolean) => <NewSessionComposerCard
+            panelProps={{ ...panelProps(), connectionStatus: offlineStatus, sessionIsolation: isolation(offline) } as NewSessionSimplePanelProps}
+            layout="embedded" attachments={false} voiceAffordance="none" />;
+        const screen = await renderScreen(element(true));
+        try {
+            expect(screen.findByTestId('session-isolation-outcome')).not.toBeNull();
+            expect(screen.findByTestId('agent-input-connection-status-text')).toBeNull();
+            // Without the line saying it (the Machine's state is unknown, so the line is quiet), the status line keeps the cause.
+            await screen.update(element(false));
+            expect(screen.findByTestId('agent-input-connection-status-text')).not.toBeNull();
+        } finally { await screen.unmount(); }
+    });
+});

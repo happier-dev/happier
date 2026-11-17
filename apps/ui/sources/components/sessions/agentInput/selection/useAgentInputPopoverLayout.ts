@@ -29,6 +29,9 @@ const AGENT_INPUT_CARET_MENU_ROOMIER_SIDE_WINS = Number.POSITIVE_INFINITY;
  * The composer a caret-anchored menu belongs to. That menu opens beyond the composer's edge, never
  * over the text being written. Chip pickers ignore it: they hang directly above their chip.
  */
+/** A chip's picker width (New Session's Machine, folder and Agent pickers); a field's picker opens at least this wide. */
+export const AGENT_INPUT_POPOVER_WIDTH_PX = 420;
+
 export const AgentInputPopoverClearanceContext = React.createContext<React.RefObject<any> | undefined>(undefined);
 
 /**
@@ -205,8 +208,9 @@ export function useAgentInputPopoverLayout(input: Readonly<{
             flip: true,
             gap: DEFAULT_POPOVER_GAP,
             edgePadding,
-            // A field's picker opens at the field's own width and edge, as a field select's menu does.
-            portal: { ...portal, matchAnchorWidth: true },
+            // A field's picker opens from the field's own edge at the field's width, never narrower than New Session's
+            // chip picker, so a narrow field (a workflow's Machine) does not wrap every row.
+            portal: { ...portal, matchAnchorWidth: true, anchoredMinWidth: AGENT_INPUT_POPOVER_WIDTH_PX },
             ...(pickerWidth === 'window' ? {} : { horizontalBoundaryRef: columnRef }),
         };
     }

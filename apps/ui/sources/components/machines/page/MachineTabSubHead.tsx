@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HappierPressable, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { HappierPageSectionContext, HappierPressable, happierPageTextMetrics, type HappierPageSection } from '@happier-dev/plugin-ui/presentation';
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -77,7 +77,9 @@ export function MachineTabSubHead(props: Readonly<{
                     {props.aside ? <Text style={styles.aside}>{props.aside}</Text> : null}
                 </View>
             )}
-            {props.notice ?? null}
+            {/* The notice spans the column the sections' sheets stand in (lab scene 1 `offline`): it is the page's own
+                line, not a row inside a list, so it takes the sheets' edge rather than a list's tool inset. */}
+            {props.notice ? <HappierPageSectionContext.Provider value={NOTICE_ON_SHEET_EDGE}>{props.notice}</HappierPageSectionContext.Provider> : null}
             {props.description ? <Text style={styles.description}>{props.description}</Text> : null}
             {props.lead ? (
                 <LeadSentence testID={props.testID ? `${props.testID}-lead` : undefined} style={styles.lead}
@@ -87,6 +89,9 @@ export function MachineTabSubHead(props: Readonly<{
         </ItemGroup>
     );
 }
+
+/** A head's notice stands on the sheets' edge: no row inset of its own. */
+const NOTICE_ON_SHEET_EDGE: HappierPageSection = { rowDividerColor: 'transparent', rowInsetPx: 0 };
 
 const styles = StyleSheet.create((theme) => ({
     back: {

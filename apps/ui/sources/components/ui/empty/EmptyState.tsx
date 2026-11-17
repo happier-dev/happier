@@ -274,17 +274,21 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
 
     if (props.layout === 'inline') {
         return (
-            <View testID={props.testID} style={[stylesheet.inline, frame, !actionContent ? { flexWrap: 'nowrap' } : null, props.paddingHorizontal != null ? { paddingHorizontal: props.paddingHorizontal } : null, props.paddingVertical != null ? { paddingVertical: props.paddingVertical } : null]}>
+            <View testID={props.testID} style={[stylesheet.inline, frame, props.paddingHorizontal != null ? { paddingHorizontal: props.paddingHorizontal } : null, props.paddingVertical != null ? { paddingVertical: props.paddingVertical } : null]}>
                 {glyph ? <View style={stylesheet.inlineMark}>{glyph}</View> : null}
-                <View style={stylesheet.inlineCopy}>
-                    <Text testID={props.titleTestID} style={stylesheet.inlineTitle}>{props.titleContent ?? props.title}</Text>
-                    {props.subtitle ? (
-                        <Text testID={props.subtitleTestID} style={stylesheet.inlineSubtitle}>{props.subtitle}</Text>
+                {/* The mark keeps its own column; the copy and its action wrap within the rest, so an action that
+                    moves beneath the copy (a phone, a narrow pane) stands on the copy's edge, not under the mark. */}
+                <View style={stylesheet.inlineBody}>
+                    <View style={stylesheet.inlineCopy}>
+                        <Text testID={props.titleTestID} style={stylesheet.inlineTitle}>{props.titleContent ?? props.title}</Text>
+                        {props.subtitle ? (
+                            <Text testID={props.subtitleTestID} style={stylesheet.inlineSubtitle}>{props.subtitle}</Text>
+                        ) : null}
+                    </View>
+                    {actionContent !== null && actionContent !== undefined ? (
+                        <View testID={props.actionTestID}>{actionContent}</View>
                     ) : null}
                 </View>
-                {actionContent !== null && actionContent !== undefined ? (
-                    <View testID={props.actionTestID}>{actionContent}</View>
-                ) : null}
             </View>
         );
     }
@@ -398,10 +402,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     inline: {
         flexDirection: 'row',
-        flexWrap: 'wrap',
         alignItems: 'center',
         columnGap: theme.space.s16,
-        rowGap: theme.space.s12,
         paddingVertical: theme.space.s16,
         paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx + 2,
     },
@@ -409,6 +411,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s6,
+    },
+    inlineBody: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        columnGap: theme.space.s16,
+        rowGap: theme.space.s12,
     },
     inlineCopy: {
         flexGrow: 1,

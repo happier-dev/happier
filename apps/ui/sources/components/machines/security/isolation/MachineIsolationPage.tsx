@@ -33,6 +33,7 @@ import {
   type MachineIsolationPageViewProps,
 } from './MachineIsolationPageView';
 import { useMachineIsolationPresets } from './useMachineIsolationSummary';
+import { describeMachineIsolationAvailability } from './MachineIsolationAvailability';
 import { MachineIsolationAddSandboxModal, type MachineIsolationAddedSandbox } from './MachineIsolationAddSandboxModal';
 import { randomUUID } from '@/platform/randomUUID';
 
@@ -71,11 +72,7 @@ export function MachineIsolationPage(
         : undefined,
     [machine.id, machine.installationId],
   );
-  const readOnlyReason = !canManageMachine(machine)
-    ? t('machineDetailPage.isolation.notManager')
-    : props.online !== true
-      ? t('machineDetailPage.isolation.offline', { machine: machineName })
-      : null;
+  const { readOnlyReason, offline } = describeMachineIsolationAvailability(machine, props.online, machineName);
 
   const save = React.useCallback(
     async (next: MachineIsolationPolicyV1) => {
@@ -194,7 +191,7 @@ export function MachineIsolationPage(
     status: isolation.snapshot.status,
     policy,
     readOnlyReason,
-    offline: canManageMachine(machine) && props.online !== true,
+    offline,
     busy: isolation.saving,
     saveFailure,
     onRetryRead,
