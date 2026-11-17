@@ -67,6 +67,27 @@ const definition = createWorkflowDefinitionFixture({
   ],
 });
 
+/**
+ * Every Run has one root invocation; its steps are its members. Without it each step projects
+ * as the Run itself and every Activity row reads "Untitled run".
+ */
+function rootInvocation(lifecycle: 'completed' | 'failed') {
+  return createWorkflowInvocationIndexFixture({
+    id: 'inv-root',
+    sequence: '0',
+    memberOrdinal: '0',
+    lifecycle,
+  });
+}
+
+const rootProgress = WorkflowProgressEnvelopeV1Schema.parse({
+  kind: 'happier.workflow-progress.v1',
+  invocationPath: { blockId: '$root', scope: [] },
+  blockKind: 'root',
+  attempt: '0',
+  logicalInvocationRecordId: 'inv-root',
+});
+
 function progress(
   blockId: string,
   invocationId: string,
@@ -103,14 +124,17 @@ function offlineSceneData() {
       availability: { pause: false, cancel: false },
     }),
     invocations: [
+      rootInvocation('failed'),
       createWorkflowInvocationIndexFixture({
         id: 'inv-close',
-        sequence: '0',
+        parentRecordId: 'inv-root',
+        sequence: '1',
         memberOrdinal: '0',
         lifecycle: 'failed',
       }),
     ],
     byId: new Map<string, WorkflowProgressEnvelopeV1>([
+      ['inv-root', rootProgress],
       [
         'inv-close',
         WorkflowProgressEnvelopeV1Schema.parse({
@@ -133,26 +157,31 @@ function sceneData(scene: WorkflowRunSpecimenScene) {
   if (scene === 'offline') return offlineSceneData();
   const failed = scene === 'failed';
   const invocations = [
+    rootInvocation(failed ? 'failed' : 'completed'),
     createWorkflowInvocationIndexFixture({
       id: 'inv-gather',
-      sequence: '0',
+      parentRecordId: 'inv-root',
+      sequence: '1',
       memberOrdinal: '0',
       lifecycle: 'completed',
     }),
     createWorkflowInvocationIndexFixture({
       id: 'inv-tests',
-      sequence: '1',
+      parentRecordId: 'inv-root',
+      sequence: '2',
       memberOrdinal: '1',
       lifecycle: failed ? 'failed' : 'completed',
     }),
     createWorkflowInvocationIndexFixture({
       id: 'inv-publish',
-      sequence: '2',
+      parentRecordId: 'inv-root',
+      sequence: '3',
       memberOrdinal: '2',
       lifecycle: failed ? 'skipped' : 'completed',
     }),
   ];
   const byId = new Map<string, WorkflowProgressEnvelopeV1>([
+    ['inv-root', rootProgress],
     [
       'inv-gather',
       progress('gather', 'inv-gather', {
