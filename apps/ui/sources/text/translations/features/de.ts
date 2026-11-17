@@ -19519,6 +19519,7 @@ const de = translated(workflowValueReferenceTranslations.de, {
         addLoop: 'Wiederholen',
         addIf: 'Wenn',
         targetRequired: 'Wähle den Computer und den Projektordner für diesen Workflow.',
+        stepsRequired: 'Füge einen Schritt hinzu, um diesen Workflow auszuführen.',
         targetNotChosen: 'Noch keine Maschine gewählt',
         targetOtherMachine: 'Die Maschine einer anderen Person',
         loadingTitle: 'Workflow wird geöffnet …',
@@ -19612,10 +19613,11 @@ const de = translated(workflowValueReferenceTranslations.de, {
 
     finalOutput: {
         title: 'Endergebnis',
-        none: 'Kein Endergebnis ausgewählt',
+        none: 'Nichts',
         change: 'Ändern',
         clear: 'Auswahl aufheben',
         fieldPath: 'Feldpfad',
+        wholeResult: 'Das ganze Ergebnis',
         explain: 'Was dieser Workflow beim Abschluss zurückgibt.',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: 'Meldet',

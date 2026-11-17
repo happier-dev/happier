@@ -169,7 +169,7 @@ export function WorkflowCardGutterRow(props: Readonly<{
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const grid = useWorkflowDocumentGridStyles();
-    if (props.icon === null) return <View testID={props.testID}>{props.children}</View>;
+    if (props.icon === null) return <View testID={props.testID} style={grid.cardAlone}>{props.children}</View>;
     return (
         <View testID={props.testID} style={grid.blockColumn}>
             <View style={[grid.heading, workflowEditorStyles.cardGutterRow]}>

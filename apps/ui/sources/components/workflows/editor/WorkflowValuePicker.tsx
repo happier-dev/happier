@@ -50,7 +50,8 @@ export function WorkflowReferenceRawPathInput<Reference extends Extract<Workflow
         value={buffer.value}
         autoCapitalize="none" autoCorrect={false}
         accessibilityLabel={t('workflows.finalOutput.fieldPath')}
-        placeholder={t('workflows.finalOutput.fieldPath')}
+        // An empty path is the result itself, so the empty field says so (lab round 1116c `svr-f`).
+        placeholder={t('workflows.finalOutput.wholeResult')}
         onChangeText={(value) => {
             const path = parseWorkflowFieldPath(value);
             setBuffer({ source: JSON.stringify([sourceIdentity, path]), value });

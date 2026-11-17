@@ -19959,6 +19959,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         addLoop: '繰り返し',
         addIf: '条件分岐',
         targetRequired: 'このワークフローのマシンとプロジェクトフォルダを選択してください。',
+        stepsRequired: 'このワークフローを実行するにはステップを追加してください。',
         targetNotChosen: 'マシンはまだ選ばれていません',
         targetOtherMachine: 'ほかの人のマシン',
         loadingTitle: 'ワークフローを開いています…',
@@ -20052,10 +20053,11 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
 
     finalOutput: {
         title: '最終出力',
-        none: '最終出力が選択されていません',
+        none: 'なし',
         change: '変更',
         clear: '選択を解除',
         fieldPath: 'フィールドのパス',
+        wholeResult: '結果全体',
         explain: 'このワークフローが終了したときに返すもの。',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: '報告する内容',

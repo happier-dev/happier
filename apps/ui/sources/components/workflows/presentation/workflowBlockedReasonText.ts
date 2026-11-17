@@ -72,6 +72,8 @@ export function describeWorkflowCommandBlockedReason(params: Readonly<{
             return null;
         case 'target_required':
             return t('workflows.editor.targetRequired');
+        case 'steps_required':
+            return t('workflows.editor.stepsRequired');
         case 'name_required':
             return t('workflows.save.nameRequired');
         case 'unsupported_persisted_attachment':

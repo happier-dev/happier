@@ -20039,6 +20039,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         addLoop: 'Repeteix',
         addIf: 'Si',
         targetRequired: 'Tria la màquina i la carpeta del projecte per a aquest flux de treball.',
+        stepsRequired: 'Afegeix un pas per executar aquest flux de treball.',
         targetNotChosen: 'Encara no s’ha triat cap màquina',
         targetOtherMachine: 'La màquina d’una altra persona',
         loadingTitle: 'S’està obrint el flux de treball…',
@@ -20132,10 +20133,11 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
 
     finalOutput: {
         title: 'Resultat final',
-        none: 'No s’ha seleccionat cap resultat final',
+        none: 'Res',
         change: 'Canvia',
         clear: 'Esborra la selecció',
         fieldPath: 'Camí del camp',
+        wholeResult: 'Tot el resultat',
         explain: 'El que retorna aquest flux de treball quan acaba.',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: 'Informa',

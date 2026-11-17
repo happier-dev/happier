@@ -467,12 +467,13 @@ function WorkflowEditorPageTabs(props: Readonly<{
 }>): React.ReactElement | null {
     const navigationShown = useWorkflowPageNavigationShown(props.navigation, props.phone);
     const labels = useWorkflowEditorHistoryLabels(props.history);
-    const historyShown = props.history !== undefined && (labels.undoLabel !== null || labels.redoLabel !== null);
+    // A phone's Undo and Redo ride its navigation bar (`navigationTrailing`), so they never stand alone here.
+    const historyShown = !props.phone && props.history !== undefined && (labels.undoLabel !== null || labels.redoLabel !== null);
     if (!navigationShown && !historyShown) return null;
     return (
         <View testID={`${props.testIDPrefix}-page-tabs`} style={[styles.pageTabs, styles.pageTabsRow, props.onMark ? styles.pageTabsOnMark : null]}>
             <WorkflowPageNavigation navigation={props.navigation} phone={props.phone} onSelect={props.onSelect} testIDPrefix={`${props.testIDPrefix}-view`} />
-            <WorkflowEditorHistoryIcons testIDPrefix={props.testIDPrefix} history={props.history} />
+            {props.phone ? null : <WorkflowEditorHistoryIcons testIDPrefix={props.testIDPrefix} history={props.history} />}
         </View>
     );
 }
@@ -582,7 +583,7 @@ function readWorkflowCommandFacts(draft: WorkflowEditorDraft, validation: Workfl
     const blockingIssue = firstBlockingWorkflowIssue(validation);
     const describe = (reason: WorkflowCommandBlockedReason | null) => describeWorkflowCommandBlockedReason({ reason, blockingIssue, draft });
     const runBlockedReason = resolveWorkflowRunBlockedReason({
-        validation, targetResolved: input.targetResolved,
+        draft, validation, targetResolved: input.targetResolved,
         ...(input.runPending === undefined ? {} : { pending: input.runPending }),
     });
     const saveBlockedReason = input.documentEditable ? resolveWorkflowSaveBlockedReason({ draft, validation }) : null;
@@ -977,6 +978,9 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     }), sameRetainedValue);
     const { blockingIssue, blockingIssueBlockId, runBlockedReason, errorCount, runReason, saveReason, exportReason } = commandFacts;
     const runDisabled = runBlockedReason !== null;
+    // With no steps there is nothing to run, so Run now draws disabled (lab states-v-empty, UI refinements 11-18);
+    // every other reason keeps it pressable so the press can name the repair.
+    const runUnavailable = runPending === true || runBlockedReason === 'steps_required';
     const saveDisabled = savePending === true || commandFacts.saveBlockedReason !== null;
     const exportDisabled = commandFacts.exportBlockedReason !== null;
 
@@ -1039,6 +1043,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         whereRef.current.openPicker();
     }, [howWhereExpanded]);
     const submitRun = React.useCallback(() => {
+        if (runBlockedReason === 'steps_required') { refuse(runReason); return; }
         // Run now is never a dead end for a missing machine: it opens the Where
         // owner's picker in How and where it runs, and choosing continues here.
         if (documentEditable && projectUnresolved && props.onChangeProjectTarget !== undefined && runPending !== true) {
@@ -1051,7 +1056,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         }
         if (runDisabled) { refuse(runReason); return; }
         onRunNow?.();
-    }, [documentEditable, onRunNow, projectUnresolved, props.onChangeProjectTarget, refuse, runDisabled, runPending, runReason, setCardExpanded]);
+    }, [documentEditable, onRunNow, projectUnresolved, props.onChangeProjectTarget, refuse, runBlockedReason, runDisabled, runPending, runReason, setCardExpanded]);
     const submitSave = React.useCallback(() => {
         if (saveDisabled) { refuse(saveReason); return; }
         onSave?.();
@@ -1432,7 +1437,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             title={t('workflows.editor.runNow')}
             accessibilityLabel={t('workflows.editor.runNow')}
             {...(runReason === null ? {} : { accessibilityHint: runReason })}
-            disabled={runPending === true}
+            disabled={runUnavailable}
             leading={<Icon name="play" size={14} color={theme.colors.button.primary.tint} />}
             {...(runKeyHint === undefined ? {} : { trailing: <Text style={styles.keyHint}>{runKeyHint}</Text> })}
             onPress={submitRun}
@@ -1441,8 +1446,13 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     ));
 
     const phoneRunNowAction = compactLayout && hasPageCommands && onRunNow !== undefined && props.runNowAction === undefined ? {
-        title: t('workflows.editor.runNow'), onPress: submitRun, disabled: runPending === true, testID: `${testIDPrefix}-run-now`,
+        title: t('workflows.editor.runNow'), onPress: submitRun, disabled: runUnavailable, testID: `${testIDPrefix}-run-now`,
     } : undefined;
+    // A phone's Undo and Redo: frequent controls at the navigation bar's trailing edge (WAVE-ACCEPT-1117C), one stable
+    // element so the bar is not re-published per edit; the icons subscribe to the history themselves.
+    const phoneHistoryIcons = React.useMemo(() => !phoneNavigation || !hasPageCommands || props.history === undefined ? null
+        : <WorkflowEditorHistoryIcons testIDPrefix={testIDPrefix} history={props.history} />,
+    [hasPageCommands, phoneNavigation, props.history, testIDPrefix]);
     const phonePageControls = compactLayout && (props.runNowAction !== undefined || duplicateButton !== null)
         ? <>{duplicateButton}{props.runNowAction ?? null}</> : null;
 
@@ -1483,6 +1493,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 // A phone's navigation bar carries what it can describe (Run now, the menu); a host-drawn
                 // control (a built-in's session chooser) and Duplicate stay on the page's title row.
                 ...(phoneRunNowAction === undefined ? {} : { primaryAction: phoneRunNowAction }),
+                ...(phoneHistoryIcons === null ? {} : { navigationTrailing: phoneHistoryIcons }),
                 ...(phonePageControls === null ? {} : { actionsPlacement: 'page' as const }),
                 actions: !hasPageCommands ? menu : compactLayout ? (phonePageControls === null ? menu : (
                     <View style={styles.headerActionRow}>{menu}{phonePageControls}</View>

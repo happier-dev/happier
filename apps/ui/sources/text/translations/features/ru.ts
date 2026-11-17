@@ -20053,6 +20053,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         addLoop: 'Повторять',
         addIf: 'Если',
         targetRequired: 'Выберите компьютер и папку проекта для этого рабочего процесса.',
+        stepsRequired: 'Добавьте шаг, чтобы запустить этот рабочий процесс.',
         targetNotChosen: 'Машина ещё не выбрана',
         targetOtherMachine: 'Машина другого человека',
         loadingTitle: 'Открываем рабочий процесс…',
@@ -20146,10 +20147,11 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
 
     finalOutput: {
         title: 'Итоговый результат',
-        none: 'Итоговый результат не выбран',
+        none: 'Ничего',
         change: 'Изменить',
         clear: 'Очистить выбор',
         fieldPath: 'Путь к полю',
+        wholeResult: 'Весь результат',
         explain: 'То, что рабочий процесс возвращает по завершении.',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: 'Сообщает',

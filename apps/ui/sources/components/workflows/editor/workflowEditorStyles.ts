@@ -303,6 +303,10 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
     blockCard: {
         minWidth: 0,
     },
+    /** A card drawn with no number column (`WorkflowCardGutterRow` without a mark): on its host's edge. */
+    cardAlone: {
+        minWidth: 0,
+    },
     /**
      * A block heading (lab `.uwe-sh`, `.uwe-ch`): ordinal, then the name line, then `⋯`, each on the
      * first line. The name line wraps its trailing consequence beneath it when the row is narrow
@@ -947,6 +951,9 @@ const compactDocumentGrid = StyleSheet.create({
     // A phone gives a block's card the whole width: it runs under the number column (FIN 2026-11-13),
     // so its value boxes are not squeezed by the gutter; the name keeps its column.
     blockCard: { marginLeft: -COMPACT_GUTTER_PX },
+    // A card with no number column has nothing to run under: its host's edge cancels the run-under, so the card
+    // keeps the page inset and the phone width its rows wrap at (WAVE-ACCEPT-1117C: x≈0, label-left form).
+    cardAlone: { paddingLeft: COMPACT_GUTTER_PX },
 });
 /** The grid-dependent rows of the wide document, named one by one from the authored styles. */
 const WIDE_GRID_STYLES = {
@@ -961,6 +968,7 @@ const WIDE_GRID_STYLES = {
     laneJoinBend: workflowEditorStyles.laneJoinBend,
     heading: workflowEditorStyles.heading,
     blockCard: workflowEditorStyles.blockCard,
+    cardAlone: workflowEditorStyles.cardAlone,
 };
 /**
  * The same rows with the compact overrides layered on, key for key (the compiler checks every key). Each pair is a
@@ -978,6 +986,7 @@ const COMPACT_GRID_STYLES: { readonly [Key in keyof typeof WIDE_GRID_STYLES]: [(
     laneJoinBend: [workflowEditorStyles.laneJoinBend, compactDocumentGrid.laneJoinBend],
     heading: [workflowEditorStyles.heading, compactDocumentGrid.heading],
     blockCard: [workflowEditorStyles.blockCard, compactDocumentGrid.blockCard],
+    cardAlone: [workflowEditorStyles.cardAlone, compactDocumentGrid.cardAlone],
 };
 
 /** The grid-dependent document styles for the grid the editor publishes (stable per grid). */

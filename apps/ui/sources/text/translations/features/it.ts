@@ -20025,6 +20025,7 @@ const it = translated(workflowValueReferenceTranslations.it, {
         addLoop: 'Ripeti',
         addIf: 'Se',
         targetRequired: 'Scegli il computer e la cartella del progetto per questo flusso di lavoro.',
+        stepsRequired: 'Aggiungi un passaggio per eseguire questo flusso di lavoro.',
         targetNotChosen: 'Nessuna macchina scelta',
         targetOtherMachine: 'La macchina di un’altra persona',
         loadingTitle: 'Apertura del flusso di lavoro…',
@@ -20118,10 +20119,11 @@ const it = translated(workflowValueReferenceTranslations.it, {
 
     finalOutput: {
         title: 'Risultato finale',
-        none: 'Nessun risultato finale selezionato',
+        none: 'Niente',
         change: 'Cambia',
         clear: 'Annulla la selezione',
         fieldPath: 'Percorso del campo',
+        wholeResult: 'L’intero risultato',
         explain: 'Ciò che questo flusso di lavoro restituisce quando finisce.',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: 'Riporta',

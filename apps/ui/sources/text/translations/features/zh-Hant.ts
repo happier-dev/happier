@@ -19899,6 +19899,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         addLoop: '重複',
         addIf: '條件',
         targetRequired: '請為此工作流程選擇機器與專案資料夾。',
+        stepsRequired: '新增一個步驟以執行此工作流程。',
         targetNotChosen: '尚未選擇機器',
         targetOtherMachine: '他人的機器',
         loadingTitle: '正在開啟工作流程…',
@@ -19992,10 +19993,11 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
 
     finalOutput: {
         title: '最終輸出',
-        none: '尚未選擇最終輸出',
+        none: '無',
         change: '變更',
         clear: '清除選擇',
         fieldPath: '欄位路徑',
+        wholeResult: '整個結果',
         explain: '這個工作流程結束時回傳的內容。',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: '報告',

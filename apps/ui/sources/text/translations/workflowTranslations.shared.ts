@@ -414,6 +414,7 @@ export const en = {
         addLoop: 'Repeat',
         addIf: 'If',
         targetRequired: 'Choose the machine and project folder for this workflow.',
+        stepsRequired: 'Add a step to run this workflow.',
         targetNotChosen: 'No machine chosen yet',
         targetOtherMachine: 'Someone else’s machine',
         loadingTitle: 'Opening workflow…',
@@ -511,10 +512,12 @@ export const en = {
 
     finalOutput: {
         title: 'Final output',
-        none: 'No final output selected',
+        none: 'Nothing',
         change: 'Change',
         clear: 'Clear selection',
         fieldPath: 'Field path',
+        /** An empty field path: the result itself (the Result picker's field placeholder). */
+        wholeResult: 'The whole result',
         explain: 'What this workflow returns when it finishes.',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: 'Reports',

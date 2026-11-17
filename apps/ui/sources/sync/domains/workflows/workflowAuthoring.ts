@@ -566,15 +566,20 @@ export type WorkflowCommandBlockedReason =
   /** No exact Machine and project folder has been resolved for this draft. */
   | 'target_required'
   /** The same command is already in flight; duplicate submission is refused. */
-  | 'pending';
+  | 'pending'
+  /** The workflow has no steps yet: there is nothing to run (Run now draws disabled, lab states-v-empty). */
+  | 'steps_required';
 
 export function resolveWorkflowRunBlockedReason(params: Readonly<{
+  draft: Pick<WorkflowEditorDraft, 'blocks'>;
   validation: WorkflowDraftValidation;
   /** True only when an exact Machine and a non-empty project directory exist. */
   targetResolved: boolean;
   pending?: boolean;
 }>): WorkflowCommandBlockedReason | null {
   if (params.pending === true) return 'pending';
+  // Before the Machine: with no steps, choosing where to run would lead nowhere.
+  if (params.draft.blocks.length === 0) return 'steps_required';
   if (!params.targetResolved) return 'target_required';
   return params.validation.valid ? null : 'definition_invalid';
 }

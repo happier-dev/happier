@@ -2105,6 +2105,23 @@ describe('workflow editor body', () => {
         expect(undo).toHaveBeenCalledTimes(1);
     });
 
+    it('carries Undo and Redo in the phone navigation bar, never as an orphan row above the page (WAVE-ACCEPT-1117C)', async () => {
+        viewport.window = { width: 390, height: 700 };
+        paneState.detailsAvailable = false;
+        const harness = await loadHarness();
+        const undo = vi.fn();
+        const screen = await renderBody(harness, { onRunNow: () => {}, onSave: () => {},
+            history: { undoLabel: 'Rename step', redoLabel: null, undo, redo: () => {} } });
+        // The phone's pages live in the bottom bar, so with Undo and Redo moved out the row is not drawn.
+        expect(screen.findHostByTestId('workflow-editor-page-tabs')).toBeNull();
+        const { NavigationHeaderActions } = await import('@/components/ui/layout/NavigationHeaderActions');
+        const trailing = screen.findAllByType(NavigationHeaderActions).map((node) => node.props.trailing).find((node) => node != null);
+        expect(trailing).toBeDefined();
+        const bar = await renderScreen(<>{trailing}</>);
+        await bar.pressByTestIdAsync('workflow-editor-undo');
+        expect(undo).toHaveBeenCalledTimes(1);
+    });
+
     it('ends the phone page above the floating tab bar instead of under it', async () => {
         viewport.window = { width: 390, height: 700 };
         paneState.detailsAvailable = false;
@@ -2327,6 +2344,20 @@ describe('workflow editor body', () => {
         await act(async () => { expect(executeWorkflowCommand('workflow.run')).toBe(true); });
         expect(ran).toHaveBeenCalledTimes(1);
         expect(announcementWrites).not.toHaveBeenCalled();
+    });
+
+    it('disables Run now while the workflow has no steps, and its shortcut runs nothing (lab states-v-empty)', async () => {
+        const harness = await loadHarness();
+        const ran = vi.fn();
+        const screen = await renderBody(harness, {
+            draft: { ...buildDraft(harness), blocks: [] },
+            projectTarget: { machineId: 'machine-1', directory: '/Users/me/project' },
+            onRunNow: ran,
+            onSave: () => {},
+        });
+        expect(screen.findHostByTestId('workflow-editor-run-now')?.props.accessibilityState?.disabled).toBe(true);
+        await act(async () => { executeWorkflowCommand('workflow.run'); });
+        expect(ran).not.toHaveBeenCalled();
     });
 
     it('ignores a shortcut repeat while its command is pending, without a second submission', async () => {

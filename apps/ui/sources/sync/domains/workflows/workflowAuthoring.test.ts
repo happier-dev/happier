@@ -390,9 +390,20 @@ describe('command eligibility', () => {
       code: 'invalid_max_concurrent',
       path: `/blocks/0/maxConcurrent`,
     });
-    expect(resolveWorkflowRunBlockedReason({ validation, targetResolved: true })).toBe('definition_invalid');
+    expect(resolveWorkflowRunBlockedReason({ draft, validation, targetResolved: true })).toBe('definition_invalid');
     expect(resolveWorkflowSaveBlockedReason({ draft, validation })).toBe('definition_invalid');
     expect(resolveWorkflowExportBlockedReason({ validation })).toBe('definition_invalid');
+  });
+});
+
+describe('Run now with no steps', () => {
+  it('reads a workflow with no steps as steps_required, ahead of its Machine and folder', () => {
+    const draft = createWorkflowEditorDraft({ draftId: 'draft-empty', name: 'Empty', blocks: [] });
+    const validation = validateWorkflowEditorDraft(draft);
+    expect(resolveWorkflowRunBlockedReason({ draft, validation, targetResolved: false })).toBe('steps_required');
+    expect(resolveWorkflowRunBlockedReason({ draft, validation, targetResolved: true })).toBe('steps_required');
+    // A command already in flight still answers first.
+    expect(resolveWorkflowRunBlockedReason({ draft, validation, targetResolved: true, pending: true })).toBe('pending');
   });
 });
 

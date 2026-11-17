@@ -20011,6 +20011,7 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         addLoop: 'Repetir',
         addIf: 'Se',
         targetRequired: 'Escolha a máquina e a pasta do projeto para este fluxo de trabalho.',
+        stepsRequired: 'Adicione um passo para executar este fluxo de trabalho.',
         targetNotChosen: 'Nenhuma máquina escolhida ainda',
         targetOtherMachine: 'A máquina de outra pessoa',
         loadingTitle: 'A abrir o fluxo de trabalho…',
@@ -20104,10 +20105,11 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
 
     finalOutput: {
         title: 'Resultado final',
-        none: 'Nenhum resultado final selecionado',
+        none: 'Nada',
         change: 'Alterar',
         clear: 'Limpar a seleção',
         fieldPath: 'Caminho do campo',
+        wholeResult: 'O resultado inteiro',
         explain: 'O que este fluxo de trabalho devolve quando termina.',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: 'Reporta',

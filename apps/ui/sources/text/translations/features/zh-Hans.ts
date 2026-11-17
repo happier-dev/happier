@@ -19899,6 +19899,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         addLoop: '重复',
         addIf: '条件',
         targetRequired: '请为该工作流选择机器和项目文件夹。',
+        stepsRequired: '添加一个步骤以运行此工作流。',
         targetNotChosen: '尚未选择机器',
         targetOtherMachine: '他人的机器',
         loadingTitle: '正在打开工作流…',
@@ -19992,10 +19993,11 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
 
     finalOutput: {
         title: '最终输出',
-        none: '尚未选择最终输出',
+        none: '无',
         change: '更改',
         clear: '清除选择',
         fieldPath: '字段路径',
+        wholeResult: '整个结果',
         explain: '这个工作流结束时返回的内容。',
         /** The page-foot Result row's label: what the workflow returns. */
         reports: '报告',
