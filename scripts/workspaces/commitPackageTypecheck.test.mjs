@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { commitPackageTypecheckRefuses, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
+import { attributeRollingRange, commitPackageTypecheckRefuses, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
 
 async function workspace(t) {
   const repo = await mkdtemp(join(tmpdir(), 'happier-commit-package-typecheck-'));
@@ -194,6 +194,44 @@ test('a red rolling pass bisects only the packages that carry a new error', asyn
   const probes = compiled.filter(entry => !/^c[04]:/u.test(entry));
   assert.ok(probes.length > 0, 'the pass bisected');
   assert.deepEqual(probes.filter(entry => !entry.endsWith(':packages/leaf')), [], `bisection recompiled green packages: ${probes}`);
+});
+
+test('a red range records its verdict before attribution compiles any intermediate commit', async t => {
+  // 2026-11-16 09:33Z-11-17 01:25Z: no verdict for 16 h. Each loop restart spent hours bisecting the
+  // packages range (packages/tests 8-25 min per probe) before recording anything, and apps/* waited.
+  const { repo } = await workspace(t);
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const state = await mkdtemp(join(tmpdir(), 'happier-rolling-typecheck-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  t.after(() => { try { git('worktree', 'unlock', join(state, 'worktree')); git('worktree', 'remove', '--force', join(state, 'worktree')); } catch {} });
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const step = async (label, files) => {
+    for (const [path, content] of Object.entries(files)) await writeFile(join(repo, path), content);
+    await writeFile(join(repo, '.tree-marker'), `${label}\n`);
+    git('add', '-A');
+    git('commit', '--quiet', '-m', label);
+    return git('rev-parse', 'HEAD');
+  };
+  const compiled = [];
+  const posts = [];
+  const options = { repo, env, compile: fakeCompiler(compiled), bootstrap: () => {}, post: entry => posts.push(entry), boardPaths: [], log: () => {} };
+  await step('c0', { 'packages/leaf/src/index.ts': 'export const value = 0;\n' });
+  await rollingHeadTypecheckPass({ ...options, attribute: false });
+  await step('c1', { 'packages/leaf/src/index.ts': 'export const value = 1;\n' });
+  const c2 = await step('c2', { 'packages/leaf/src/index.ts': 'export const value: string = 2;\n', 'packages/leaf/errors.txt': '1:2322:Type number is not assignable to type string.\n' });
+  await step('c3', { 'packages/leaf/src/index.ts': '// a\nexport const value: string = 2;\n', 'packages/leaf/errors.txt': '2:2322:Type number is not assignable to type string.\n' });
+  const c4 = await step('c4', { 'packages/leaf/src/index.ts': '// b\n// a\nexport const value: string = 2;\n', 'packages/leaf/errors.txt': '3:2322:Type number is not assignable to type string.\n' });
+  compiled.length = 0;
+  const verdict = await rollingHeadTypecheckPass({ ...options, attribute: false });
+  assert.deepEqual(compiled, ['c4'], 'the verdict compiles only the new HEAD');
+  assert.equal(readFileSync(join(state, 'rolling-head'), 'utf8').trim(), c4);
+  assert.match(readFileSync(join(state, 'verdicts.log'), 'utf8'), new RegExp(`ROLLING-RED scope=packages base=\\w+ head=${c4} .* new=1 `, 'u'));
+  assert.deepEqual(verdict.attributions, []);
+  assert.equal(posts.length, 0);
+  const attributed = await attributeRollingRange(options);
+  assert.deepEqual(attributed.attributions.map(entry => entry.commit), [c2]);
+  assert.equal(posts.length, 1);
+  assert.equal(await attributeRollingRange(options), null, 'an attributed range is cleared');
 });
 
 test('apps/server, apps/cli and apps/ui are selected when the range touches the app or a package it depends on', async t => {

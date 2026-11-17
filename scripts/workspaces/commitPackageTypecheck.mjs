@@ -431,22 +431,25 @@ function rollingBase(repo, recorded, head) {
  * The caller holds the worktree lock and, when anything compiles, compiler admission.
  */
 export async function rollingHeadTypecheckPass({ repo, env = process.env, log = message => process.stderr.write(`${message}\n`),
-  compile, bootstrap, post = entry => postBoardEntry(repo, entry), boardPaths = [join(repo, BOARD)], scope = 'packages' }) {
+  compile, bootstrap, post = entry => postBoardEntry(repo, entry), boardPaths = [join(repo, BOARD)], scope = 'packages',
+  attribute = true, pending = null }) {
   const started = Date.now();
   const git = gitAt(repo);
   const state = commitPackageTypecheckStateDir(repo, env);
   mkdirSync(state, { recursive: true });
-  const head = git(['rev-parse', 'HEAD']).trim();
+  const head = pending?.head ?? git(['rev-parse', 'HEAD']).trim();
   const recordedPath = rollingHeadPath(state, scope);
-  const recorded = existsSync(recordedPath) ? readFileSync(recordedPath, 'utf8').trim() : '';
+  const recorded = pending ? pending.base : existsSync(recordedPath) ? readFileSync(recordedPath, 'utf8').trim() : '';
   const result = { scope, base: recorded, head, attributions: [], incomplete: [], unavailable: [], packages: [] };
   if (recorded === head) return result;
-  const base = rollingBase(repo, recorded, head);
+  const base = pending ? pending.base : rollingBase(repo, recorded, head);
   result.base = base;
   const record = verdict => {
-    writeFileSync(`${recordedPath}.tmp`, head);
-    renameSync(`${recordedPath}.tmp`, recordedPath);
-    appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} ROLLING-${verdict} scope=${scope} base=${base} head=${head} packages=${result.packages.join(',') || '-'} new=${result.attributions.reduce((sum, entry) => sum + entry.rows.length, 0)} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} ${((Date.now() - started) / 1000).toFixed(1)}s${result.attributions.map(entry => ` | ${entry.commit.slice(0, 11)}: ${entry.rows.length}`).join('')}\n`);
+    if (!pending) {
+      writeFileSync(`${recordedPath}.tmp`, head);
+      renameSync(`${recordedPath}.tmp`, recordedPath);
+    }
+    appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} ROLLING-${verdict} scope=${scope} base=${base} head=${head} packages=${result.packages.join(',') || '-'} new=${result.fresh ?? result.attributions.reduce((sum, entry) => sum + entry.rows.length, 0)} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} ${((Date.now() - started) / 1000).toFixed(1)}s${result.attributions.map(entry => ` | ${entry.commit.slice(0, 11)}: ${entry.rows.length}`).join('')}\n`);
   };
   const packages = rollingScopeDirs({ repo, base, head, scope });
   result.packages = packages;
@@ -459,6 +462,20 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
   result.incomplete = compared.incomplete;
   result.unavailable = compared.unavailable;
   if (!compared.fresh.length) { record(compared.incomplete.length ? 'INCOMPLETE' : 'ok'); return result; }
+  // The verdict is decided here. Attribution compiles intermediate commits and can take hours on a
+  // long range, so the rolling loop records every scope's verdict first and attributes afterwards
+  // (2026-11-16: one packages bisection held every verdict, apps/* included, for 16 h).
+  if (!attribute) {
+    result.fresh = compared.fresh.length;
+    // An unattributed earlier range coalesces with this one: attribution runs once, from the oldest
+    // unattributed base to the newest RED head, for the errors still present there.
+    const path = rollingPendingPath(state, scope);
+    const earlier = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null;
+    writeFileSync(`${path}.tmp`, JSON.stringify({ base: earlier?.base ?? base, head }));
+    renameSync(`${path}.tmp`, path);
+    record('RED');
+    return result;
+  }
   // Bisect, only when red. A diagnostic exists at a commit when it is not new at HEAD relative to that commit.
   const commits = git(['rev-list', '--first-parent', '--reverse', `${base}..${head}`]).split('\n').filter(Boolean);
   // A probe compiles only the packages that still carry an unattributed error; the green ones
@@ -488,7 +505,19 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
     try { post(urgentEntry({ ...entry, subject, lane: commitLane(entry.commit, boardPaths), base, head })); }
     catch (error) { log(`[rolling-head-typecheck] board post failed for ${entry.commit.slice(0, 11)}: ${error?.message ?? error}`); }
   }
-  record('RED');
+  record(pending ? 'ATTRIBUTED' : 'RED');
+  return result;
+}
+
+const rollingPendingPath = (state, scope) => join(state, `attribution-pending-${scope.replaceAll('/', '__')}.json`);
+
+/** Attributes a range whose RED verdict was recorded earlier (bisects and posts), then clears it. */
+export async function attributeRollingRange({ repo, env = process.env, scope = 'packages', ...options }) {
+  const path = rollingPendingPath(commitPackageTypecheckStateDir(repo, env), scope);
+  if (!existsSync(path)) return null;
+  const pending = JSON.parse(readFileSync(path, 'utf8'));
+  const result = await rollingHeadTypecheckPass({ repo, env, scope, ...options, pending });
+  rmSync(path, { force: true });
   return result;
 }
 
@@ -554,6 +583,18 @@ async function rolling(repo) {
           // A round that could record nothing must not spin on the same HEAD; the next commit kicks again.
           if (!progressed) return;
         }
+        // Every scope has its verdict for the newest HEAD; attribute recorded RED ranges now. A HEAD
+        // move meanwhile is picked up by the outer loop, verdicts first again.
+        for (const scope of scopes) {
+          if (!existsSync(rollingPendingPath(state, scope))) continue;
+          ensureWorktree(repo, worktree);
+          const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_ROLLING: '1', HAPPIER_COMMIT_TYPECHECK_REPO: repo,
+            HAPPIER_COMMIT_TYPECHECK_LOCKED: '1', HAPPIER_COMMIT_TYPECHECK_SCOPE: scope, HAPPIER_COMMIT_TYPECHECK_PHASE: 'attribute' };
+          const command = admittedCommand(repo, payload, false, scope === 'packages' ? undefined : scope);
+          const result = spawnSync(command[0], command.slice(1), { cwd: worktree, env, stdio: 'inherit' });
+          if (result.error) throw result.error;
+          if (behind().length) break;
+        }
       }, { lockPath: join(state, 'worktree.lock'), timeoutMs: null, wait: false });
     } catch (error) {
       if (error?.code === WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE) return 0; // the holder re-reads HEAD before releasing
@@ -567,8 +608,10 @@ async function rolling(repo) {
 async function main(argv) {
   for (const name of ['GIT_INDEX_FILE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR']) delete process.env[name];
   if (argv.includes('--compiler-admitted') && process.env.HAPPIER_COMMIT_TYPECHECK_ROLLING === '1') {
-    const result = await rollingHeadTypecheckPass({ repo: process.env.HAPPIER_COMMIT_TYPECHECK_REPO,
-      scope: process.env.HAPPIER_COMMIT_TYPECHECK_SCOPE || 'packages' });
+    const options = { repo: process.env.HAPPIER_COMMIT_TYPECHECK_REPO, scope: process.env.HAPPIER_COMMIT_TYPECHECK_SCOPE || 'packages' };
+    const result = process.env.HAPPIER_COMMIT_TYPECHECK_PHASE === 'attribute'
+      ? await attributeRollingRange(options) : await rollingHeadTypecheckPass({ ...options, attribute: false });
+    if (!result) return 0;
     console.log(`[rolling-head-typecheck] ${result.scope} ${result.base.slice(0, 11)}..${result.head.slice(0, 11)} packages=${result.packages.length} attributions=${result.attributions.map(entry => `${entry.commit.slice(0, 11)}:${entry.rows.length}`).join(',') || 'none'}`);
     return 0;
   }
