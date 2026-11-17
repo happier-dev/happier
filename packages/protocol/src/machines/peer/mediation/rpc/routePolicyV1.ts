@@ -15,7 +15,7 @@ import { PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '../../../../actions/pr
 import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS } from '../../../../local/services/actionIdsV1.js';
 import { ACTION_INVOKE_ACTION_ID_V1, isExecutionRunStartActionIdV1, isWorkspaceSyncRelationshipWriteActionId, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS, type WorkflowActionIdV1 } from '../../../../actions/actionIds.js';
-import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '../../../../daemon/agentSignIn.js';
+import { AGENT_SIGN_IN_STATUS_RPC_METHOD } from '../../../../daemon/agentSignInMethods.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../rpc/methods.js';
 import { isApprovalDecisionReviewerBindingV1 } from '../../../../actions/externalActionBindingAuthority.js';
 

@@ -4,8 +4,7 @@ import { ConnectedAccountAttemptResponseSchema, ConnectedAccountDaemonCommandSch
 import { DaemonTerminalLaunchIntentSchema } from './terminal.js';
 import { DaemonTerminalCloseResponseSchema } from './terminal.js';
 
-export const AGENT_SIGN_IN_PREPARE_RPC_METHOD = 'daemon.agents.signIn.prepare';
-export const AGENT_SIGN_IN_STATUS_RPC_METHOD = 'daemon.agents.signIn.status';
+export { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD } from './agentSignInMethods.js';
 
 export const AgentSignInStatusRequestSchema = lazyZodSchema(() => z.strictObject({ agentId: z.string().check(z.trim(), z.minLength(1)) }));
 export const AgentSignInPrepareRequestSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AgentSignInStatusRequestSchema, {
