@@ -1,8 +1,8 @@
 import type { HomeRuntimeRestartInputV1, HomeRuntimeRestartOutputV1 } from '../../home/runtime/actionsV1.js';
 import { SystemTaskResultSchema } from '../../system/tasks/spec.js';
-import type { ActionExecuteResult } from '../actionExecutionResult.js';
+import { projectActionFailureCauseV1, type ActionExecuteResult } from '../actionExecutionResult.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
-import { withActionFailureCauseDiagnostic } from './actionFailureDiagnostic.js';
+import { carryActionFailureDiagnostic, withActionFailureCauseDiagnostic } from './actionFailureDiagnostic.js';
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -59,11 +59,16 @@ export async function executeHomeRuntimeRestart(
     }
     return complete({ status: 'completed', taskId, result: terminal.data });
   } catch (error) {
+    if (!startIssued && context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    const phase = startIssued
+      ? taskId ? 'home.runtime.restart.wait' : 'home.runtime.restart.start'
+      : 'home.runtime.restart.detect';
+    const diagnostic = carryActionFailureDiagnostic({
+      failureCause: projectActionFailureCauseV1(error, phase, { allowUnknownErrorCode: false }),
+    }, error);
     if (startIssued) return withActionFailureCauseDiagnostic(
-      complete({ status: 'outcome_unknown', ...(taskId ? { taskId } : {}) }), error,
-      taskId ? 'home.runtime.restart.wait' : 'home.runtime.restart.start');
-    if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+      complete({ status: 'outcome_unknown', ...(taskId ? { taskId } : {}) }), diagnostic, phase);
     return withActionFailureCauseDiagnostic(complete({ status: 'unavailable', reason: 'system_tasks_unavailable' }),
-      error, 'home.runtime.restart.detect');
+      diagnostic, phase);
   }
 }

@@ -98,7 +98,7 @@ import type { ReviewCommentV1 } from '../reviews/comments/v1.js';
 import { buildAcceptedReviewFindingsForVerifyV1,
   REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsForVerifyV1 } from '../reviews/reviewFindingsApplyInputV1.js';
 import { ReviewCommentGetResponseV1Schema } from '../reviews/comments/actions.js';
-import { isActionOutcomeUnknownErrorCodeV1, projectApprovalExecutionOutcomeUnknownV1, projectActionExecuteFailure, parseActionExecuteFailure } from './actionExecutionResult.js';
+import { isActionOutcomeUnknownErrorCodeV1, projectApprovalExecutionOutcomeUnknownV1, projectActionExecuteFailure, parseActionExecuteFailure, projectActionFailureCauseV1 } from './actionExecutionResult.js';
 import { createApprovalReplay } from './executor/approvalReplay.js';
 import { createBlockingApprovalDecisionResolver } from './executor/blockingApprovalDecision.js';
 import { approvalReadFailure as approvalContextUnavailable } from './executor/approvalRead.js';
@@ -195,6 +195,7 @@ import {
 import { isSessionStateFieldActionId, resolveSessionStateFieldActionWrite } from './sessionStateFieldActions.js';
 import { SessionCoordinatorEnableInputV1Schema } from '../sessions/follow/sessionCoordinatorActionsV1.js';
 import { executeSessionCoordinatorEnableV1 } from './executor/sessionCoordinator.js';
+import { withActionFailureCauseDiagnostic } from './executor/actionFailureDiagnostic.js';
 import { isProjectDefinitionActionId } from './projectDefinitionActionFamily.js';
 import { AccountHomeContinuationInputV1Schema } from './accountHomeContinuationV1.js';
 import { bytesToHex, randomBytes } from '@noble/hashes/utils';
@@ -887,8 +888,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   ): readonly ActionDefinitionSummaryV1[] => {
     try {
       return deps.listContributedActionDefinitions?.(selection) ?? [];
-    } catch {
-      throw new ActionCatalogUnavailableError();
+    } catch (error) {
+      const phase = 'action.catalog.contributed';
+      const diagnostic = carryActionFailureDiagnostic({
+        failureCause: projectActionFailureCauseV1(error, phase, { allowUnknownErrorCode: false }),
+      }, error);
+      throw withActionFailureCauseDiagnostic(new ActionCatalogUnavailableError(), diagnostic, phase);
     }
   };
   const isContributedActionDefinitionEnabled = (

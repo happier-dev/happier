@@ -15,6 +15,7 @@ import { SessionArchiveResultSchema, SessionArchiveActionInputV1Schema, SessionA
 import { parseSessionListQueryActionResultV1 } from '../../../sessions/awareness/action.js';
 import { SESSION_LIST_PAGE_MAX_LIMIT } from '../../../sessions/listing/query.js';
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
+import { withActionFailureCauseDiagnostic } from '../actionFailureDiagnostic.js';
 import { readSessionManagerSessionIdV1 } from '../../../sessions/follow/sessionManagerV1.js';
 import type { ActionExecuteResult, ActionExecutorContext } from '../types.js';
 import { ActionApprovalRequestCreatedResultSchema } from '../../actionExecutionResult.js';
@@ -343,8 +344,9 @@ export async function dispatchSessionLifecycle2(inv: Pick<CoreInvocation, 'actio
           if (failure) return failure;
           try {
             return completeActionResult(parseSessionReadStateActionResponse(actionId, input, result));
-          } catch {
-            return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+          } catch (error) {
+            return withActionFailureCauseDiagnostic({ ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' },
+              error, 'action.session_read_state.output');
           }
         }
   return null;

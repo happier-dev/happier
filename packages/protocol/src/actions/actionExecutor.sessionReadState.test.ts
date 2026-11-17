@@ -152,13 +152,15 @@ describe('Session read-state Action vertical', () => {
   });
 
   it('rejects malformed input and malformed success output at the Action boundary', async () => {
+    const diagnostics: unknown[] = [];
     const sessionReadStateAction = vi.fn(async () => ({
       success: true,
       state: 'read',
       lastViewedSessionSeq: 7,
-      didChange: 'yes',
+      didChange: 'PRIVATE_READ_STATE_RESPONSE',
     }));
-    const executor = createActionExecutor({ sessionReadStateAction } as unknown as ActionExecutorDeps);
+    const executor = createActionExecutor({ sessionReadStateAction,
+      recordActionOutputDiagnostic: diagnostic => diagnostics.push(diagnostic) });
 
     await expect(executor.execute('session.read_state.set', {
       sessionId: 'session-1',
@@ -186,6 +188,9 @@ describe('Session read-state Action vertical', () => {
       errorCode: 'invalid_action_output',
       error: 'invalid_action_output',
     });
+    expect(diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ source: 'action.session_read_state.output',
+      issues: expect.arrayContaining([expect.objectContaining({ path: ['didChange'], code: 'invalid_type' })]) })]));
+    expect(JSON.stringify(diagnostics)).not.toContain('PRIVATE_');
   });
 
   it('projects only exact route failures into the closed Action vocabulary', () => {

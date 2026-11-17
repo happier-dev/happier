@@ -2,6 +2,21 @@ import { expect, it } from 'vitest';
 import { createActionExecutor } from '../actionExecutor.js';
 import type { ActionOutputDiagnostic } from './actionFailureDiagnostic.js';
 
+it('withholds arbitrary external codes from private restart diagnostics', async () => {
+  const diagnostics: ActionOutputDiagnostic[] = [];
+  const executor = createActionExecutor({
+    recordActionOutputDiagnostic: diagnostic => diagnostics.push(diagnostic),
+    homeRuntimeTaskRpc: async () => { throw Object.assign(new TypeError('PRIVATE_RESTART_RESPONSE'), { code: 'PRIVATE_EXTERNAL_CODE' }); },
+  });
+  const result = await executor.execute('home.runtime.restart', { machineId: 'machine' }, {
+    surface: 'cli', authority: 'present_user', bypassApprovals: true,
+  });
+  expect(result).toEqual({ ok: true, result: { status: 'unavailable', reason: 'system_tasks_unavailable' } });
+  expect(diagnostics).toMatchObject([{ source: 'home.runtime.restart.detect',
+    failureCause: { errorClass: 'TypeError', errorCode: null } }]);
+  expect(JSON.stringify([result, diagnostics])).not.toContain('PRIVATE_');
+});
+
 it('preserves the exact cancelled restart result when capability detection aborts', async () => {
   const controller = new AbortController();
   const executor = createActionExecutor({
