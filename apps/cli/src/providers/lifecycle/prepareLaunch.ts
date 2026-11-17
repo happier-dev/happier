@@ -111,16 +111,14 @@ export async function prepareProviderLaunch<PrerequisiteFailure extends Readonly
     ) {
       return null;
     }
-    const canonicalSelection =
-      normalizedSelectionTargetKey.data === selection.ref.agentTargetKey
-        ? selection
-        : {
-            ...selection,
-            ref: {
-              ...selection.ref,
-              agentTargetKey: normalizedSelectionTargetKey.data,
-            },
-          };
+    let canonicalSelection = selection;
+    if (normalizedSelectionTargetKey.data !== selection.ref.agentTargetKey) {
+      canonicalSelection = { ...selection };
+      canonicalSelection.ref = {
+        ...selection.ref,
+        agentTargetKey: normalizedSelectionTargetKey.data,
+      };
+    }
 
     return { agentTargetKey, selection: canonicalSelection };
   };

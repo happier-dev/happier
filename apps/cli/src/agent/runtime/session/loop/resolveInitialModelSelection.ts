@@ -18,11 +18,7 @@ export function resolveInitialHostSessionModelSelection(params: Readonly<{
   }
   if (normalizedTargetKey.data === selection.ref.agentTargetKey) return selection;
 
-  return {
-    ...selection,
-    ref: {
-      ...selection.ref,
-      agentTargetKey: normalizedTargetKey.data,
-    },
-  };
+  const canonicalSelection = { ...selection };
+  canonicalSelection.ref = { ...selection.ref, agentTargetKey: normalizedTargetKey.data };
+  return canonicalSelection;
 }
