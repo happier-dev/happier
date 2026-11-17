@@ -509,7 +509,7 @@ import {
   awaitTrackedRunnerAgentSessionOpen,
   recordTrackedRunnerAgentSessionOpenAttestation,
 } from '../agentRuntime/runnerAgentSessionOpenAttestation';
-import { authorizeRunnerAgentNewTurn, authorizeRunnerAgentTurnAdmission } from '../agentRuntime/runnerAgentTurnAdmission';
+import { authorizeRunnerAgentNewTurn, authorizeRunnerAgentTurnAdmission, type RunnerSessionBrokeredTeamEndpoint } from '../agentRuntime/runnerAgentTurnAdmission';
 import { attestRetainedAgentForVoice, createRunnerAgentDaemonFacetService } from '../agentRuntime/runnerAgentDaemonFacetService';
 import { projectRunnerDaemonPluginServicesFailure, projectRunnerDaemonPluginServicesFailureDiagnostic } from '../agentRuntime/runnerDaemonPluginServicesHost';
 
@@ -11985,6 +11985,16 @@ export async function startDaemonSessionControlRuntime(
       managedConsumerCredential?: string;
     }>
   >();
+  // A brokered Session endpoint is this daemon process's tunnel listener,
+  // pinned to the resource revision it opened at. Absent: never opened here.
+  const sessionBrokeredTeamEndpointCurrentness = new WeakMap<TrackedSession, 'current' | 'not_current'>();
+  const readSessionBrokeredTeamEndpoint = (tracked: TrackedSession | null | undefined): RunnerSessionBrokeredTeamEndpoint => {
+    const binding = tracked?.spawnOptions?.teamCredentialBindings?.find((candidate) => candidate.slot.kind === 'provider_model');
+    if (!tracked || !binding || binding.resourceId === null || binding.deliveryMode !== 'brokered') return 'not_brokered';
+    // A runner retained across a daemon restart still holds its predecessor's endpoint.
+    return sessionBrokeredTeamEndpointCurrentness.get(tracked)
+      ?? (tracked.reattachedFromDiskMarker === true ? 'not_current' : 'current');
+  };
   type ManagedRunBindingOpen = Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'provider_managed.binding.open' }>;
   type ManagedRunBindingProof = Omit<ManagedRunBindingOpen, 'kind' | 'requestId'>;
   type ManagedRunBindingResult = Extract<Extract<AgentRuntimeDaemonServiceResponseV1, { ok: true }>['result'], { kind: 'provider_managed.binding' }>;
@@ -12916,7 +12926,8 @@ export async function startDaemonSessionControlRuntime(
             };
           }
           if (request.operation.kind === 'turn.admission.authorize') {
-            return await authorizeRunnerAgentTurnAdmission({ retainedAgent, witness: request.operation.witness });
+            return await authorizeRunnerAgentTurnAdmission({ retainedAgent, witness: request.operation.witness,
+              ...(executionRunSnapshotId ? {} : { brokeredTeamEndpoint: readSessionBrokeredTeamEndpoint(trackedSession) }) });
           }
           if (request.operation.kind === 'session.open.attest') {
             const tracked = trackedSession;
@@ -13101,7 +13112,15 @@ export async function startDaemonSessionControlRuntime(
                       isCurrent: () => isCurrentTrackedSession(params.trackedSessionsByKey, tracked),
                     });
                     return {
-                      beginBrokerRequest: () => sessionEvidence().beginRequest(),
+                      beginBrokerRequest: () => {
+                        const recordOutcome = sessionEvidence().beginRequest();
+                        return (denial: Parameters<typeof recordOutcome>[0]) => {
+                          // Home moved the resource past this binding's pinned
+                          // revision; only a new binding can serve the Session.
+                          if (denial?.reasonCode === 'resource_changed') sessionBrokeredTeamEndpointCurrentness.set(tracked, 'not_current');
+                          recordOutcome(denial);
+                        };
+                      },
                       observeBrokerCarrierFailure: (read: () => Promise<import('@/daemon/peer/iroh/machineCarrier').MachineCarrierFailureDiagnostic | undefined>) =>
                         sessionEvidence().observeCarrierFailure(read),
                     };
@@ -13169,6 +13188,8 @@ export async function startDaemonSessionControlRuntime(
               await opened.cleanup();
               throw new SessionTeamCredentialLaunchUnavailableError();
             }
+            // This daemon now holds the Session's endpoint; read only for a brokered binding.
+            if (!bindingId) sessionBrokeredTeamEndpointCurrentness.set(tracked, 'current');
             if (bindingId)
               providerBrokerBindingReleaseById.set(bindingId, {
                 sessionId,

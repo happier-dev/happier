@@ -72,6 +72,11 @@ export {
 export const AGENT_RUNTIME_DAEMON_SERVICES_PATH =
   '/agent-runtime/session/services/v1';
 
+/** New-turn admission refusal: the runtime's brokered Team endpoint is not a
+ * current binding of this daemon. Recoverable by reopening the runtime. */
+export const TURN_ADMISSION_TEAM_CREDENTIAL_BINDING_NOT_CURRENT =
+  'team_credential_binding_not_current';
+
 const OpaqueIdSchema = z.string().check(z.trim(), z.minLength(1), z.maxLength(512));
 // Host-private projection: never transport the requester's Account document.
 const AgentStartPolicyV1Schema = z.strictObject({

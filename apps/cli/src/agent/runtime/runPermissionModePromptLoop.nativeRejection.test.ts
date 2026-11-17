@@ -433,8 +433,11 @@ describe('native prompt loop non-admission recovery', () => {
     );
 });
 
-it.each(['admission', 'runtime_event', 'clear'] as const)('reopens the retained Team broker job after two turns, withdrawal and restoration (%s)', async (recoveryPath) => {
+it.each(['admission', 'runtime_event', 'clear', 'daemon_restart'] as const)('reopens the retained Team broker job after two turns, withdrawal and restoration (%s)', async (recoveryPath) => {
     const refusalDelivery = recoveryPath === 'runtime_event' ? 'runtime_event' : 'admission';
+    // A daemon identity restart keeps access but ends the predecessor's
+    // broker endpoint; its successor refuses the retained runtime typed.
+    let daemonRestartedWithoutReopen = false;
     const abort = new AbortController();
     const agentId = 'acme-team-recovery';
     const contributions = createExternalContributionFixtures(agentId);
@@ -471,12 +474,15 @@ it.each(['admission', 'runtime_event', 'clear'] as const)('reopens the retained 
         authorizeNewTurn: async () => {
             if (!available && refusalDelivery === 'admission') throw new SessionTurnPublicationRejectedError({
                 code: 'session_team_credential_binding_rejected', reason: 'access_removed' });
+            if (daemonRestartedWithoutReopen) throw Object.assign(createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect'), {
+                failureCause: { code: 'team_credential_binding_not_current', phase: 'turn_start', failureReason: 'unknown', retryable: true } });
             return { status: 'admitted' };
         },
         // Daemon RPC is the process boundary. A fresh open uses its current catalog,
         // while each external Agent below retains the signed job it received.
         prepareTeamCredentialProviderBinding: async () => {
             if (!available) throw new Error('resource_forbidden');
+            daemonRestartedWithoutReopen = false;
             admittedRevisions.push(revision);
             return { providerBinding: { source: { kind: 'team_resource', resourceId: 'resource', resourceRevision: revision },
                 model: { id: 'model', name: 'Model' }, materialization: { v: 1, kind: 'spawnEnv' },
@@ -533,8 +539,9 @@ it.each(['admission', 'runtime_event', 'clear'] as const)('reopens the retained 
             messageBuffer: new MessageBuffer(), shouldExit: () => abort.signal.aborted, getAbortSignal: () => abort.signal,
             keepAlive() {}, setThinking() {}, sendReady() {
                 index++;
-                if (index === 2) { revision = 5; available = false; }
-                if (index === 3) { revision = 6; available = true; }
+                if (index === 2 && recoveryPath === 'daemon_restart') daemonRestartedWithoutReopen = true;
+                else if (index === 2) { revision = 5; available = false; }
+                if (index === 3 && recoveryPath !== 'daemon_restart') { revision = 6; available = true; }
                 const prompts = recoveryPath === 'clear'
                     ? ['first', 'second', 'withdrawn', '/clear', 'restored']
                     : ['first', 'second', 'withdrawn', 'restored'];
@@ -546,7 +553,7 @@ it.each(['admission', 'runtime_event', 'clear'] as const)('reopens the retained 
             onPromptFailure: async error => { failures.push(error); },
         });
         expect(completed).toEqual(['first', 'second', 'restored']);
-        expect(admittedRevisions).toEqual([4, 6]);
+        expect(admittedRevisions).toEqual(recoveryPath === 'daemon_restart' ? [4, 4] : [4, 6]);
         // A runtime diagnostic is already surfaced; an admission throw is published by the loop.
         expect(failures).toHaveLength(refusalDelivery === 'admission' ? 1 : 0);
         expect(opens).toEqual(['create', recoveryPath === 'clear' ? 'create' : 'resume']);

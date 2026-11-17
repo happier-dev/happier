@@ -430,6 +430,7 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
   let workerRuntime: DaemonMachineIrohRuntime | undefined;
   let dropRequesterContext = false;
   let laterRefusal = false;
+  let refreshRefusalCode: 'resource_changed' | null = null;
   let disconnectUpstream = false;
   let holdNextRefresh: (() => Promise<void>) | undefined;
   let daemonAccount: 'custodian' | 'requester' = 'custodian';
@@ -619,6 +620,7 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
           holdNextRefresh = undefined;
           await heldRefresh?.();
           if (laterRefusal) return { status: 200, data: { ok: false, reasonCode: 'resource_forbidden' } };
+          if (refreshRefusalCode) return { status: 200, data: { ok: false, reasonCode: refreshRefusalCode } };
         }
         return { status: 200, data: signedBrokerResponse(request) };
       }
@@ -783,9 +785,21 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
     const readTeamCredentialFailureEvidence = source.daemonTurnContributionsBridge.readTeamCredentialFailureEvidence;
     onTestFinished(() => source.retire?.());
     bindingSetupStage = 'Team binding';
-    const opened = await source.prepareTeamCredentialProviderBinding({ sessionId: h.sessionId,
+    // The daemon's new-turn admission is the one place that decides whether a
+    // retained runtime's brokered endpoint is current in this daemon.
+    const admitTurn = async (turnId: string) => await h.dispatch({ kind: 'turn.admission.authorize', requestId: `admit-${turnId}`,
+      witness: { turnId, inputId: `input-${turnId}`, userMessageSeq: null, userMessageSeqs: [] } });
+    const turnAdmitted = { ok: true, result: { kind: 'turn.admission', status: 'admitted' } };
+    const bindingNotCurrent = { ok: true, result: { kind: 'turn.admission', status: 'denied',
+      reason: 'team_credential_binding_not_current' } };
+    // A runner retained across a daemon restart holds an endpoint of the
+    // predecessor's tunnel; this daemon never opened it (COR6-171).
+    await expect(admitTurn('before-open')).resolves.toMatchObject(reattached ? bindingNotCurrent : turnAdmitted);
+    const openBinding = async () => await source.prepareTeamCredentialProviderBinding!({ sessionId: h.sessionId,
       resourceId: 'resource', expectedResourceRevision: 2, agentTargetKey, modelId: model.descriptor.id,
       signal: h.signal });
+    const opened = await openBinding();
+    await expect(admitTurn('after-open')).resolves.toMatchObject(turnAdmitted);
     expect(opened.providerBinding).toMatchObject({ source: { kind: 'team_resource', resourceId: 'resource' },
       upstream: { normalizedUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/v1$/u) } });
     expect(parseCodexProviderBindingEngineConfigV1(opened.providerBinding)).not.toBeNull();
@@ -814,12 +828,12 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
     expect(consentCatalogReads, consentCatalogReadStacks.join('\n')).toBe(0);
     expect(catalogApplications).toEqual(applications);
     expect(brokerOpens).toBe(2);
-    const credential = opened.environmentOverlay.find(entry => entry.name === 'HAPPIER_CODEX_PROVIDER_API_KEY')?.value;
-    if (!credential) throw new Error('Missing scoped native carrier credential');
     // Fresh admission belongs to each native TCP stream. Never reuse the
     // already-admitted endpoint-discovery connection for this request.
-    const requestApplication = () => new Promise<{ status: number; body: string }>((resolve, reject) => {
-      const request = requestHttp(opened.providerBinding.upstream.normalizedUrl, {
+    const requestApplicationThrough = (binding: typeof opened) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const credential = binding.environmentOverlay.find(entry => entry.name === 'HAPPIER_CODEX_PROVIDER_API_KEY')?.value;
+      if (!credential) throw new Error('Missing scoped native carrier credential');
+      const request = requestHttp(binding.providerBinding.upstream.normalizedUrl, {
         agent: false,
         // Match Codex: one bearer capability. Native rejects duplicate capability transports.
         headers: { authorization: `Bearer ${credential}` },
@@ -832,6 +846,7 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
       request.on('error', reject);
       request.end();
     });
+    const requestApplication = () => requestApplicationThrough(opened);
     h.tracked.activeTurnId = 'later-refusal-turn';
     if (reattached) {
       const accepted = await requestApplication();
@@ -893,6 +908,24 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
     const accepted = await requestApplication();
     expect(accepted.status).toBe(204);
     expect(await readCurrentRunnerTeamCredentialBrokerFailureEvidence({ authority, turnId: 'later-refusal-turn' })).toMatchObject({ denial: null });
+    // A withdrawn share stays forbidden at its pinned binding; that refusal
+    // does not by itself make the binding stale.
+    laterRefusal = true;
+    await requestApplication().catch(() => null);
+    await expect(admitTurn('after-withdrawal')).resolves.toMatchObject(turnAdmitted);
+    laterRefusal = false;
+    // Restored past the pinned revision: Home refuses the pinned refresh
+    // `resource_changed`. The next turn reopens a NEW binding (the catalog's
+    // current revision) instead of retrying the pinned one.
+    refreshRefusalCode = 'resource_changed';
+    await requestApplication().catch(() => null);
+    await expect(admitTurn('after-revision-moved')).resolves.toMatchObject(bindingNotCurrent);
+    refreshRefusalCode = null;
+    const reopenOpens = brokerOpens;
+    const reopened = await openBinding();
+    expect(brokerOpens).toBeGreaterThan(reopenOpens);
+    await expect(admitTurn('after-reopen')).resolves.toMatchObject(turnAdmitted);
+    await expect(requestApplicationThrough(reopened)).resolves.toMatchObject({ status: 204 });
     // A Home read that outlives this turn cannot attribute its denial to the successor.
     let notifyRefreshStarted = () => {};
     let releaseRefresh = () => {};

@@ -1,18 +1,30 @@
 import {
   AgentSessionRunnerBindingV1Schema,
 } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
-import type { AgentRuntimeDaemonServiceRequestV1, AgentRuntimeDaemonServiceResponseV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import {
+  TURN_ADMISSION_TEAM_CREDENTIAL_BINDING_NOT_CURRENT,
+  type AgentRuntimeDaemonServiceRequestV1,
+  type AgentRuntimeDaemonServiceResponseV1,
+} from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+
+/**
+ * Whether a Session runtime's brokered Team endpoint is a current binding of
+ * this daemon. The endpoint is a loopback listener of the daemon process that
+ * opened it, pinned to the resource revision it opened at.
+ */
+export type RunnerSessionBrokeredTeamEndpoint = 'not_brokered' | 'current' | 'not_current';
 
 export type RunnerAgentNewTurnAdmissionDecision =
   | Readonly<{ status: 'admitted' }>
   | Readonly<{
       status: 'denied';
-      reason: 'retained_agent_binding_invalid';
+      reason: 'retained_agent_binding_invalid' | typeof TURN_ADMISSION_TEAM_CREDENTIAL_BINDING_NOT_CURRENT;
     }>;
 
 export function evaluateRunnerAgentNewTurnAdmission(
   input: Readonly<{
     retainedAgent: unknown;
+    brokeredTeamEndpoint?: RunnerSessionBrokeredTeamEndpoint;
   }>,
 ): RunnerAgentNewTurnAdmissionDecision {
   try {
@@ -22,6 +34,13 @@ export function evaluateRunnerAgentNewTurnAdmission(
       status: 'denied',
       reason: 'retained_agent_binding_invalid',
     });
+  }
+
+  // No effect yet: a runtime whose Agent would dial a dead or pinned-stale
+  // broker endpoint is refused before input reaches it; reopening it opens a
+  // fresh binding through Home admission.
+  if (input.brokeredTeamEndpoint === 'not_current') {
+    return Object.freeze({ status: 'denied', reason: TURN_ADMISSION_TEAM_CREDENTIAL_BINDING_NOT_CURRENT });
   }
 
   // A retained Session is admitted by its exact daemon-service authority and
@@ -37,19 +56,20 @@ export function evaluateRunnerAgentNewTurnAdmission(
 export async function authorizeRunnerAgentNewTurn(
   input: Readonly<{
     retainedAgent: unknown;
+    brokeredTeamEndpoint?: RunnerSessionBrokeredTeamEndpoint;
   }>,
 ): Promise<RunnerAgentNewTurnAdmissionDecision> {
-  return evaluateRunnerAgentNewTurnAdmission({
-    retainedAgent: input.retainedAgent,
-  });
+  return evaluateRunnerAgentNewTurnAdmission(input);
 }
 
 /** The private service publishes the same retained-Agent decision with its exact input witness. */
 export async function authorizeRunnerAgentTurnAdmission(input: Readonly<{
   retainedAgent: unknown;
+  brokeredTeamEndpoint?: RunnerSessionBrokeredTeamEndpoint;
   witness: Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'turn.admission.authorize' }>['witness'];
 }>): Promise<AgentRuntimeDaemonServiceResponseV1> {
-  const decision = await authorizeRunnerAgentNewTurn(input);
+  const decision = await authorizeRunnerAgentNewTurn({ retainedAgent: input.retainedAgent,
+    ...(input.brokeredTeamEndpoint ? { brokeredTeamEndpoint: input.brokeredTeamEndpoint } : {}) });
   return { ok: true, result: decision.status === 'admitted'
     ? { kind: 'turn.admission', status: 'admitted', witness: input.witness }
     : { kind: 'turn.admission', status: 'denied', reason: decision.reason } };

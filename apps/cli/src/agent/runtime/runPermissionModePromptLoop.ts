@@ -56,6 +56,7 @@ import {
 import type { UnsettledReplaySeedRetirement } from '@/agent/runtime/replaySeed/unsettledReplaySeedRetirement';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
 import { readSessionRuntimeFailureCause } from '@/agent/runtime/session/errors/readSessionRuntimeFailureCause';
+import { TURN_ADMISSION_TEAM_CREDENTIAL_BINDING_NOT_CURRENT } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { isAgentNativeResumeIdentityMismatchError } from '@/session/agentTransition/agentNativeReturn';
 import {
   createSessionProviderInputConsumer,
@@ -683,8 +684,11 @@ export async function runPermissionModePromptLoop(opts: {
   let runtimeNeedsTeamBindingRecovery = false;
   const observeTeamBindingRefusal = (error: unknown): void => {
     const cause = readSessionRuntimeFailureCause(error);
-    if (cause?.code === 'session_team_credential_binding_rejected'
-      && cause.phase === 'turn_start' && cause.providerErrorCode === 'access_removed') {
+    // Withdrawn Team access, or a brokered endpoint the daemon no longer holds
+    // (daemon restart, resource moved past the pinned revision): the next input
+    // reopens the runtime through a fresh binding admission.
+    if (cause?.phase === 'turn_start' && ((cause.code === 'session_team_credential_binding_rejected'
+      && cause.providerErrorCode === 'access_removed') || cause.code === TURN_ADMISSION_TEAM_CREDENTIAL_BINDING_NOT_CURRENT)) {
       runtimeNeedsTeamBindingRecovery = true;
     }
   };

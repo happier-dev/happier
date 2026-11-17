@@ -33,6 +33,7 @@ import {
     AgentRuntimeDaemonTurnPayloadV1Schema,
     ComposerStagedMediaAdmissionSettlementV1Schema,
 } from './agentRuntimeRunnerProtocol';
+import { TURN_ADMISSION_TEAM_CREDENTIAL_BINDING_NOT_CURRENT } from './agentRuntimeDaemonServiceProtocol';
 import type {
     SessionModelTransitionProviderTargetAuthorizer,
 } from '@/providers/sessions/authorizeSessionModelTransitionTarget';
@@ -1921,9 +1922,17 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                     status: 'admitted' as const,
                 });
             }
+            // The daemon refused this runtime's brokered Team endpoint before any
+            // effect; the Session reopens the runtime through a fresh binding.
+            const bindingNotCurrent = response.ok && response.result.kind === 'turn.admission'
+                && response.result.status === 'denied'
+                && response.result.reason === TURN_ADMISSION_TEAM_CREDENTIAL_BINDING_NOT_CURRENT;
             throw Object.assign(createNativeAgentSessionEffectBoundaryError(
                 'authority_unavailable_before_effect',
-            ), response.ok ? {} : { failureCause: projectDaemonServiceRefusalCause(response.error) });
+            ), bindingNotCurrent
+                ? { failureCause: { code: TURN_ADMISSION_TEAM_CREDENTIAL_BINDING_NOT_CURRENT, phase: 'turn_start' as const,
+                    failureReason: 'unknown' as const, retryable: true } }
+                : response.ok ? {} : { failureCause: projectDaemonServiceRefusalCause(response.error) });
         },
         async attestSessionOpen(params) {
             await attestCurrentRunnerAgentSessionOpen({
