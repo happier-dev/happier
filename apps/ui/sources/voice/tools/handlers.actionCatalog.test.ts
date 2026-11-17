@@ -17,6 +17,10 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { buildReviewCommentFixture, storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
 import { listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { PROJECT_DEFINITION_ACTION_SPECS } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import { MACHINE_ADMIN_ACCESS_ACTION_SPECS } from '@happier-dev/protocol/actions/specs/machine/adminAccess';
+import { PROJECT_READINESS_ACTION_SPECS_V1 } from '@happier-dev/protocol/actions/specs/projectReadiness';
+import { PROJECT_CONTEXT_ACTION_SPECS } from '@happier-dev/protocol/actions/specs/projects';
 import { createVoiceMachineError } from '@/voice/runtime/machine/voiceMachineError';
 
 import {
@@ -44,13 +48,30 @@ const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 await loadSyncSingletonForTests();
 const { createVoiceToolHandlers, resolveVoiceToolEffectClass } = await import('./handlers');
-const { resolveVoiceActionExecution } = await import('./voiceActionExecution');
+const { resolveVoiceActionExecution, decodeVoiceToolInput } = await import('./voiceActionExecution');
 const { createArtifactActionsClient } = await import('@/components/artifacts/artifactActionsClient');
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 
 describe('Voice Action reference catalog', () => {
   beforeEach(async () => { await home.reset(); });
   afterEach(async () => { await home.reset(); });
+  it('registers declared Project and administrator Voice entry points through the shared catalog', () => {
+    const handlers = createVoiceToolHandlers({ resolveSessionId: () => null });
+    const control = { actionId: 'projects.list', input: {} };
+    expect(resolveVoiceActionExecution(control)?.spec.id).toBe(control.actionId);
+    expect(decodeVoiceToolInput('action_execute', control).ok).toBe(true);
+
+    const specs = [
+      ...PROJECT_DEFINITION_ACTION_SPECS, ...MACHINE_ADMIN_ACCESS_ACTION_SPECS,
+      ...PROJECT_READINESS_ACTION_SPECS_V1, ...PROJECT_CONTEXT_ACTION_SPECS,
+    ].map(spec => getActionSpec(spec.id)).filter(spec => spec.surfaces.voice);
+    const missing = specs.flatMap(spec => {
+      // Routing precedes domain input validation; no effect is invoked by this census.
+      const target = resolveVoiceActionExecution({ actionId: spec.id, input: {} });
+      return target?.spec.id === spec.id && typeof handlers[target.toolName] === 'function' ? [] : [spec.id];
+    });
+    expect(missing).toEqual([]);
+  });
   it('applies the person’s waiting-sound toggle without a consequential read-back', async () => {
     const serverId = await home.addHome({ name: 'Waiting sound', serverUrl: 'https://waiting-sound.test',
       accountId: 'alice', currentAccount: true });

@@ -10,7 +10,7 @@ export const PROJECT_READINESS_ACTION_SPECS_V1 = lazyActionSpecArray(() => [{
   originalExecution: { daemonIngressSurfaces: ['cli', 'ui'] },
   inputSchema: ProjectReadinessReadInputV1Schema, outputSchema: ProjectReadinessReadResultV1Schema,
   placements: [], surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false },
-  bindings: { mcpToolName: 'projects_readiness_read' },
+  bindings: { mcpToolName: 'projects_readiness_read', voiceClientToolName: 'projects_readiness_read' },
   invocationServerIdForInput: actionInputServerId(ProjectReadinessReadInputV1Schema, input => input.serverId),
   cli: { acceptsServerId: true, commands: [{ path: ['projects', 'readiness', 'read'], visibility: 'canonical' }] },
 } as const satisfies PreNormalizedActionSpec]);

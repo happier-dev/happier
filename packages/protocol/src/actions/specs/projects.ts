@@ -54,7 +54,7 @@ function createProjectContextActionSpecs() {
     automationPrimarySubject: { kind: 'project', field: 'projectRef' },
     approvalScope: { subjectKinds: ['project'], project: (input) => ({ subjects: [{ kind: 'project', ...ProjectSetupSetInputV1Schema.parse(input).projectRef }] }) },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
-    bindings: { mcpToolName: 'projects_setup_set' },
+    bindings: { mcpToolName: 'projects_setup_set', voiceClientToolName: 'projects_setup_set' },
     cli: { commands: [{ path: ['projects', 'setup', 'set'], visibility: 'canonical' }] },
     inputSchema: lazyZodSchema(() => ProjectSetupSetInputV1Schema), outputSchema: lazyZodSchema(() => ProjectSetupSetOutputV1Schema),
     invocationServerIdForInput: actionInputServerId(lazyZodSchema(() => ProjectSetupSetInputV1Schema), input => input.projectRef.serverId),
@@ -71,7 +71,7 @@ function createProjectContextActionSpecs() {
     description: 'Read the selected Project private defaults, its admitted linked Source defaults and the effective Team or Home context.',
     sideEffectClass: 'read', safety: 'safe', executionPlacement: 'account', placements: [],
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
-    bindings: { mcpToolName: 'projects_session_defaults_get' },
+    bindings: { mcpToolName: 'projects_session_defaults_get', voiceClientToolName: 'projects_session_defaults_get' },
     cli: { commands: [{ path: ['projects', 'session-defaults', 'get'], visibility: 'canonical' }] },
     inputSchema: lazyZodSchema(() => ProjectSessionDefaultsGetInputV1Schema),
     invocationServerIdForInput: actionInputServerId(lazyZodSchema(() => ProjectSessionDefaultsGetInputV1Schema),
@@ -124,7 +124,7 @@ function createProjectContextActionSpecs() {
     executionPlacement: 'account',
     placements: [],
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
-    bindings: { mcpToolName: 'projects_context_update' },
+    bindings: { mcpToolName: 'projects_context_update', voiceClientToolName: 'projects_context_update' },
     cli: { commands: [{ path: ['projects', 'context', 'update'], visibility: 'canonical' }] },
     // Project owners and the catalog share an import cycle.
     // Publish deferred carriers, not values captured during that import cycle.
