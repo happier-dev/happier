@@ -54,107 +54,53 @@ function findKind(
  * a kind its owner could not read says so in its row rather than disappearing. The Machine setup is
  * named once its own owner opens it, and the Project Sources by their names.
  */
-export const TeamJoinedSummary = React.memo(function TeamJoinedSummary(
-  props: Readonly<{
-    testID: string;
-    context: TeamSetupResourceContext;
-  }>,
-) {
-  const { theme } = useUnistyles();
-  const resources = useTeamSetupResources(props.context);
-  const { kinds, status } = resources.sharedResources;
-  const presetName =
-    resources.preset?.state.value && 'name' in resources.preset.state.value
-      ? String(resources.preset.state.value.name)
-      : null;
-  const sourceNames = React.useMemo(
-    () =>
-      resources.sources.state.rows
-        .slice(0, NAMED_SOURCES)
-        .map((source) => source.name),
-    [resources.sources.state.rows],
-  );
+export type TeamJoinedSummaryRow = Readonly<{ kind: SummaryKind; title: string; detail: string | null; count?: number }>;
 
-  const rows = SUMMARY_KINDS.flatMap<Readonly<{
-    kind: SummaryKind; title: string; detail: string | null; count?: number;
-  }>>((kind) => {
-    const row = findKind(kinds, kind);
+/** What the Team already shares, as rows: a kind it shares nothing of is left out; one its owner could not read says so. */
+export function buildTeamJoinedSummaryRows(input: Readonly<{
+  kinds: readonly TeamSharedResourceSummaryRowV1[];
+  presetName: string | null;
+  sourceNames: readonly string[];
+  teamName: string;
+}>): readonly TeamJoinedSummaryRow[] {
+  return SUMMARY_KINDS.flatMap((kind): TeamJoinedSummaryRow[] => {
+    const row = findKind(input.kinds, kind);
     if (!row) return [];
     if (row.status === 'unavailable') {
-      return [
-        {
-          kind,
-          title: UNAVAILABLE_TITLE[kind](),
-          detail: t('teams.join.summary.unavailable'),
-        },
-      ];
+      return [{ kind, title: UNAVAILABLE_TITLE[kind](), detail: t('teams.join.summary.unavailable') }];
     }
     if (row.count === 0) return [];
     switch (kind) {
       case 'sessions':
-        return [
-          {
-            kind,
-            title: t('teams.join.summary.sessions', { count: row.count }),
-            detail: t('teams.join.summary.sessionsDetail'),
-          },
-        ];
+        return [{ kind, title: t('teams.join.summary.sessions', { count: row.count }), detail: t('teams.join.summary.sessionsDetail') }];
       case 'machinePresets':
-        return [
-          {
-            kind,
-            title:
-              presetName ??
-              t('teams.join.summary.presets', { count: row.count }),
-            detail: t('teams.join.summary.presetsDetail'),
-          },
-        ];
+        return [{ kind, title: input.presetName ?? t('teams.join.summary.presets', { count: row.count }), detail: t('teams.join.summary.presetsDetail') }];
       case 'projectSources': {
-        const named = sourceNames.join(', ');
-        const detail =
-          named && row.count > sourceNames.length ? `${named}, …` : named;
-        return [
-          {
-            kind,
-            title: t(TEAM_SHARED_KIND_PRESENTATION.projectSources.title),
-            detail: detail || null,
-            count: row.count,
-          },
-        ];
+        const named = input.sourceNames.join(', ');
+        const detail = named && row.count > input.sourceNames.length ? `${named}, …` : named;
+        return [{ kind, title: t(TEAM_SHARED_KIND_PRESENTATION.projectSources.title), detail: detail || null, count: row.count }];
       }
       case 'credentials':
-        return [
-          {
-            kind,
-            title: t('teams.join.summary.keys', { count: row.count }),
-            detail: t('teams.join.summary.keysDetail', {
-              team: props.context.team.name,
-            }),
-          },
-        ];
+        return [{ kind, title: t('teams.join.summary.keys', { count: row.count }), detail: t('teams.join.summary.keysDetail', { team: input.teamName }) }];
     }
   });
+}
 
-  // The summary is shown whole once it answers, never row by row: one height change, not five.
-  if (status !== 'ready' || rows.length === 0) return null;
+/** The rows drawn as one quiet group between the name field and the way on. */
+export const TeamJoinedSummaryView = React.memo(function TeamJoinedSummaryView(props: Readonly<{
+  testID: string;
+  rows: readonly TeamJoinedSummaryRow[];
+}>) {
+  const { theme } = useUnistyles();
+  if (props.rows.length === 0) return null;
   return (
-    <ItemGroup
-      testID={props.testID}
-      surface="none"
-      title={t('teams.join.summary.title')}
-    >
-      {rows.map((row) => (
+    <ItemGroup testID={props.testID} surface="none" title={t('teams.join.summary.title')}>
+      {props.rows.map((row) => (
         <Item
           key={row.kind}
           testID={`${props.testID}-${row.kind}`}
           density="tight"
-          icon={
-            <Icon
-              name={ICONS[row.kind]}
-              size={18}
-              color={theme.colors.text.secondary}
-            />
-          }
+          icon={<Icon name={ICONS[row.kind]} size={18} color={theme.colors.text.secondary} />}
           title={row.title}
           subtitle={row.detail ?? undefined}
           detail={row.count === undefined ? undefined : String(row.count)}
@@ -163,6 +109,28 @@ export const TeamJoinedSummary = React.memo(function TeamJoinedSummary(
       ))}
     </ItemGroup>
   );
+});
+
+export const TeamJoinedSummary = React.memo(function TeamJoinedSummary(
+  props: Readonly<{
+    testID: string;
+    context: TeamSetupResourceContext;
+  }>,
+) {
+  const resources = useTeamSetupResources(props.context);
+  const { kinds, status } = resources.sharedResources;
+  const presetName =
+    resources.preset?.state.value && 'name' in resources.preset.state.value
+      ? String(resources.preset.state.value.name)
+      : null;
+  const sourceRows = resources.sources.state.rows;
+  const rows = React.useMemo(() => buildTeamJoinedSummaryRows({
+    kinds, presetName, teamName: props.context.team.name,
+    sourceNames: sourceRows.slice(0, NAMED_SOURCES).map((source) => source.name),
+  }), [kinds, presetName, props.context.team.name, sourceRows]);
+  // The summary is shown whole once it answers, never row by row: one height change, not five.
+  if (status !== 'ready') return null;
+  return <TeamJoinedSummaryView testID={props.testID} rows={rows} />;
 });
 
 /**
