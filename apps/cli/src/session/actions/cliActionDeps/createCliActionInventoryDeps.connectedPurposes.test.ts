@@ -15,6 +15,7 @@ import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemo
 import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ScmDiffSummaryModelCatalogObservationV1Schema } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
+import { projectAgentConnectedAccounts } from '@/plugins/projection/registry/projection/v2';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
@@ -115,6 +116,10 @@ describe('direct CLI and Action inventory purpose authority', () => {
       contributions: readCurrentContributionRegistry() })?.authorizedPurposes.find(scope => scope.serviceRefs[0]?.localId === 'openai-codex');
     if (!declaration?.serviceRefs[0]) throw new Error('Missing current declared Codex purpose');
     const service = declaration.serviceRefs[0];
+    const agent = readCurrentContributionRegistry().agentDefinitionsById.get('codex');
+    if (!agent) throw new Error('Missing current declared Codex Agent');
+    const declaredServiceIds = [...new Set(projectAgentConnectedAccounts(agent)
+      .map(({ service }) => `${service.pluginId}/${service.localId}`))];
     const snapshot = { source: 'network' as const, scopeKey: resolveAccountSettingsScopeKey(credentials),
       settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 7, loadedAtMs: Date.now(), settingsSecretsReadKeys: [] };
     setActiveAccountSettingsSnapshot(snapshot);
@@ -148,13 +153,14 @@ describe('direct CLI and Action inventory purpose authority', () => {
           error: 'connected_account_purpose_catalog_unavailable', details: {
             v: 1, source: 'account_default', reason: 'connected_account_purpose_catalog_unavailable',
             phase: 'purpose_binding',
+            catalogReason: 'unreachable',
           } });
       expect((operationContext?.readSnapshot() ?? getActiveAccountSettingsSnapshot())?.connectedPurposeCatalog)
         .toMatchObject({ status: 'unavailable', reason: 'unreachable' });
       const beforeExplicitDiscovery = purposeReads;
       expect(await executor.execute('sessions.spawn.connected_services.list',
         { agentId: 'codex', includeDefaults: false }, { surface: 'cli' }))
-        .toMatchObject({ ok: true, result: { supportedServiceIds: [`${service.pluginId}/${service.localId}`] } });
+        .toMatchObject({ ok: true, result: { supportedServiceIds: declaredServiceIds } });
       expect(purposeReads).toBe(beforeExplicitDiscovery);
       reachable = true;
       expect(await executor.execute('sessions.spawn.connected_services.list', { agentId: 'codex' }, { surface: 'cli' }))

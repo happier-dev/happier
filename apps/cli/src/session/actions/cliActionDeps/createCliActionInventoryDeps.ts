@@ -938,7 +938,8 @@ export function createCliActionInventoryDeps(params: Readonly<{
       await assertCurrent();
       if (purposeCatalog && (purposeCatalog.status !== 'ready' || purposeCatalog.record.key !== 'purposes')) {
         const { ConnectedServicesDefaultUnavailableError } = await import("@/session/services/spawnConnectedServicesDefaults");
-        throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable');
+        throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding',
+          purposeCatalog.status === 'unavailable' ? purposeCatalog.reason : undefined);
       }
       const accountProfile = await runWithServerHttpBaseUrl(store.serverHttpBaseUrl, () => fetchAccountProfile({ token: credentials.token,
           signal: context?.signal, authorizeRequest }));
