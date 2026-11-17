@@ -25,12 +25,12 @@ export type ReviewCommentCreateOperationParams = ReviewCommentPrincipal & Readon
     input: ReviewCommentCreateRequestV1;
 }>;
 
-export type ReviewCommentGetOperationParams = Pick<ReviewCommentPrincipal, "accountId"> & Partial<Pick<ReviewCommentPrincipal, "actor" | "workflowOriginSessionId" | "workflowScope" | "ledSubtreeSessionIds" | "storageMode">> & Readonly<{
+export type ReviewCommentGetOperationParams = Pick<ReviewCommentPrincipal, "accountId"> & Partial<Pick<ReviewCommentPrincipal, "actor" | "workflowOriginSessionId" | "workflowScope" | "ledSubtreeSessionIds" | "storageMode" | "reviewAccess">> & Readonly<{
     accountId: string;
     input: ReviewCommentGetRequestV1;
 }>;
 
-export type ReviewCommentListOperationParams = Pick<ReviewCommentPrincipal, "accountId"> & Partial<Pick<ReviewCommentPrincipal, "actor" | "workflowOriginSessionId" | "workflowScope" | "ledSubtreeSessionIds" | "storageMode">> & Readonly<{
+export type ReviewCommentListOperationParams = Pick<ReviewCommentPrincipal, "accountId"> & Partial<Pick<ReviewCommentPrincipal, "actor" | "workflowOriginSessionId" | "workflowScope" | "ledSubtreeSessionIds" | "storageMode" | "reviewAccess">> & Readonly<{
     accountId: string;
     input: ReviewCommentListRequestV1;
 }>;
@@ -59,8 +59,9 @@ export interface ReviewCommentOperations {
     ): Promise<ReviewCommentPublicationTransportResponseV1>;
 }
 
-async function requireComment(store: ReviewCommentStore, accountId: string, commentId: string): Promise<ReviewCommentV1> {
-    const comment = await store.get({ accountId, commentId });
+async function requireComment(store: ReviewCommentStore, principal: ReviewCommentGetOperationParams): Promise<ReviewCommentV1> {
+    const commentId = principal.input.commentId;
+    const comment = await store.get({ ...principal, commentId });
     if (!comment) {
         throw new ReviewCommentOperationError("review_comment_not_found", `Review comment not found: ${commentId}`);
     }
@@ -152,7 +153,7 @@ export function createReviewCommentOperations(
         prepareMutation: (params) => canonical.prepare(params, params.input),
         commitMutation: (params) => canonical.commit(params, params.input),
         async getStored(params) {
-            const comment = await store.getSource({ accountId: params.accountId, commentId: params.input.commentId });
+            const comment = await store.getSource({ ...params, commentId: params.input.commentId });
             if (!comment) throw new ReviewCommentOperationError("review_comment_not_found", "Review comment not found");
             assertReviewCommentOrdinarySourceAdmission(comment, params.storageMode ?? "plain");
             if (params.actor) assertReviewCommentSessionScope({ ...params, actor: params.actor }, comment.structural.sessionId);
@@ -161,7 +162,7 @@ export function createReviewCommentOperations(
         async listStored(params) {
             const sessionId = params.input.sessionId ?? (params.actor ? reviewCommentPrincipalSessionId({ ...params, actor: params.actor }) : undefined);
             if (params.actor && params.input.sessionId !== undefined) assertReviewCommentSessionScope({ ...params, actor: params.actor }, params.input.sessionId);
-            const result = await store.listSources({ accountId: params.accountId, filters: { ...params.input, ...(sessionId ? { sessionId: params.input.sessionId ?? sessionId } : {}) } });
+            const result = await store.listSources({ ...params, filters: { ...params.input, ...(sessionId ? { sessionId: params.input.sessionId ?? sessionId } : {}) } });
             for (const item of result.items) {
                 assertReviewCommentOrdinarySourceAdmission(item, params.storageMode ?? "plain");
             }
@@ -177,12 +178,12 @@ export function createReviewCommentOperations(
             assertPlainReadMode(params.storageMode);
             const sessionId = params.input.sessionId ?? (params.actor ? reviewCommentPrincipalSessionId({ ...params, actor: params.actor }) : undefined);
             if (params.actor && params.input.sessionId !== undefined) assertReviewCommentSessionScope({ ...params, actor: params.actor }, params.input.sessionId);
-            const result = await store.list({ accountId: params.accountId, filters: { ...params.input, ...(sessionId ? { sessionId: params.input.sessionId ?? sessionId } : {}) } });
+            const result = await store.list({ ...params, filters: { ...params.input, ...(sessionId ? { sessionId: params.input.sessionId ?? sessionId } : {}) } });
             return { items: [...result.items], cursor: result.cursor };
         },
         async get(params) {
             assertPlainReadMode(params.storageMode);
-            const comment = await requireComment(store, params.accountId, params.input.commentId);
+            const comment = await requireComment(store, params);
             if (params.actor) assertReviewCommentSessionScope({ ...params, actor: params.actor }, comment.sessionId);
             return { comment };
         },
@@ -197,9 +198,10 @@ export function createReviewCommentOperations(
             params: ReviewCommentMutationOperationParams<ReviewCommentPublicationTransportRequestV1>,
         ): Promise<ReviewCommentPublicationTransportResponseV1> {
             if (params.actor.kind === "workflow") throw new ReviewCommentOperationError("review_comment_permission_denied", "Workflow review authority does not include publication");
+            if (params.reviewAccess?.level === "view") throw new ReviewCommentOperationError("review_comment_permission_denied", "Review Edit access is required to publish findings");
             const input = ReviewCommentPublicationTransportRequestV1Schema.parse(params.input);
             for (const entry of input.entries) {
-                const comment = await store.getSource({ accountId: params.accountId, commentId: entry.happierCommentId });
+                const comment = await store.getSource({ ...params, commentId: entry.happierCommentId });
                 if (!comment) throw new ReviewCommentOperationError("review_comment_not_found", "Review comment not found");
                 assertReviewCommentSessionScope(params, comment.structural.sessionId);
             }
@@ -210,6 +212,7 @@ export function createReviewCommentOperations(
             }));
             const claim = await store.claimPublicationDispatch({
                 accountId: params.accountId,
+                ...(params.reviewAccess ? { reviewAccess: params.reviewAccess } : {}),
                 storageMode: input.mode,
                 contentPublicKeyFingerprint: input.contentPublicKeyFingerprint,
                 entries: input.entries.map((entry, index) => ({

@@ -7,6 +7,7 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { ChangeKindSchema, readAccountSettingsVersionChangeV1, readArtifactKindsV1, readArtifactKindsChangeHintV1, type ChangeKind } from '@happier-dev/protocol/changes';
 import { PluginDomainChangeHintSchema, buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
 import { AccountKvChangeHintV1Schema } from '@happier-dev/protocol/changes/accountKv';
+import { mergeReviewCommentChangesHintV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { DISCUSSION_CHANGE_HINT_V1, readDiscussionChangeHintV1, type DiscussionChangeHintV1 } from '@happier-dev/protocol/discussions';
 import { isSessionSystemRecordUnchangedHintV1, readSessionSystemRecordChangeV1, type SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import { readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
@@ -311,6 +312,8 @@ async function coalesceArtifactChangeHintInTx(
     const retainedKinds = previous ? readArtifactKindsChangeHintV1(previous.hint) : [];
     const base = hint !== null && typeof hint === 'object' && !Array.isArray(hint)
         ? Object.fromEntries(Object.entries(hint).filter(([key]) => key !== 'artifactKinds')) : {};
+    const reviewComments = mergeReviewCommentChangesHintV1(previous?.hint, hint);
+    if (reviewComments) base.reviewComments = reviewComments;
     // A coalesced row covers every unconsumed change. An older unknown cannot
     // be made precise by a later known write, including after delete/recreate.
     return kinds && retainedKinds

@@ -74,6 +74,17 @@ afterEach(() => {
 });
 
 describe("Review Comment SQL write currentness", () => {
+    it('requests only a structural SQL candidate window with one lookahead row', async () => {
+        await createSqlReviewCommentStore().listSources({ accountId: 'account-1', filters: {
+            projectId: 'project-1', states: [], taxonomyIds: [], includeHistory: true, limit: 2,
+        } });
+        const query = tx.$queryRaw.mock.calls.at(-1)?.[0];
+        if (!query || 'raw' in query) throw new Error('Missing comment SQL request');
+        // SQL is the persistent-system boundary: the database must own the page window.
+        expect(query.sql).toMatch(/LIMIT\s+\?/);
+        expect(query.values.at(-1)).toBe(3);
+    });
+
     it.each(["plain", "e2ee"] as const)("admits %s content after an unrelated Account cursor advance", async (mode) => {
         currentAccount.encryptionMode = mode;
         const input = mutation(mode);

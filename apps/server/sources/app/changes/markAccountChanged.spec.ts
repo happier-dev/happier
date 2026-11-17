@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { createFakeSocket } from '@/app/api/testkit/socketHarness';
@@ -54,6 +56,26 @@ describe("markAccountChanged", () => {
     afterEach(() => {
         process.env.HAPPIER_DB_PROVIDER = originalDbProvider;
         eventRouter.clearIo();
+    });
+
+    it('retains every changed Review finding when Artifact publications coalesce', async () => {
+        process.env.HAPPIER_DB_PROVIDER = 'sqlite';
+        let hint: unknown;
+        let seq = 0;
+        const tx = {
+            artifact: { findUnique: vi.fn(async () => ({ kind: deriveArtifactStoredKindV1({ kind: REVIEW_ARTIFACT_KIND_V1 }) })) },
+            account: { update: vi.fn(async () => ({ seq: ++seq })) },
+            accountChange: {
+                findUnique: vi.fn(async () => hint === undefined ? null : { hint }),
+                upsert: vi.fn(async (input: { update: { hint: unknown } }) => { hint = input.update.hint; return {}; }),
+            },
+        };
+        const first = { commentId: 'finding-a', serverRevision: 2, state: 'dismissed', reviewTriageStatus: 'reject' };
+        const second = { commentId: 'finding-b', serverRevision: 1, state: 'open' };
+        const publication = (changes: unknown[]) => ({ artifactKinds: [deriveArtifactStoredKindV1({ kind: REVIEW_ARTIFACT_KIND_V1 })], reviewComments: { v: 1, changes } });
+        await runMarkAccountChanged(tx, { accountId: 'a1', kind: 'artifact', entityId: 'review-1', hint: publication([first]) });
+        await runMarkAccountsChanged(tx, { accountIds: ['a1'], kind: 'artifact', entityId: 'review-1', hint: publication([second]) });
+        expect(hint).toEqual(publication([first, second]));
     });
 
     it.each(['covered-only', 'covered-first', 'uncovered-first'] as const)(

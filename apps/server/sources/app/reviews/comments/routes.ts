@@ -20,8 +20,9 @@ import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/acco
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import { db } from "@/storage/db";
 import { ReviewCommentOperationError } from "./errors";
-import type { ReviewCommentPrincipal } from "./permissions";
-import { createSqlReviewCommentStore } from "./store";
+import type { ReviewAccessCapability, ReviewCommentPrincipal } from "./permissions";
+import { createSqlReviewCommentStore, readReviewCommentReviewIds } from "./store";
+import { resolveReviewAccessInTx } from '../reviewAccess';
 import { resolveTrustedPluginPermissionGrants } from "@/app/plugins/permissions/resolve";
 import { workflowRunIdentityWhere } from "@/app/workflows/workflowRunService";
 import { resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
@@ -268,7 +269,7 @@ async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePri
     const mode = account
         ? resolveEffectiveAccountEncryptionModeFromAccountRow(account)
         : null;
-    if (!account || mode?.status !== "ready" || currentness?.status !== "ready") {
+    if (!account) {
         throw new ReviewCommentOperationError(
             "review_comment_encryption_mode_mismatch",
             "Review comments are unavailable until Account encryption state is consistent",
@@ -287,6 +288,12 @@ async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePri
     const actor = verifiedHeaderPrincipal?.actor ?? defaultActorForUser(request.userId);
     const canonicalRequest = readCanonicalMutationRequest(request.userId, request.path, request.body);
     const createBody = canonicalRequest?.mutation.actionId === "reviews.comments.create" ? canonicalRequest.mutation.input : request.body;
+    const commitReceipt = request.path === "/v1/reviews/comments/mutations/commit"
+        ? readReviewCommentPreparationReceipt(request.userId, ReviewCommentCommitMutationRequestV1Schema.parse(request.body).receipt) : null;
+    const reviewAccess = commitReceipt?.reviewAccess ?? await resolveRequestReviewAccess(request, canonicalRequest?.mutation.input);
+    if (!reviewAccess && (mode?.status !== "ready" || currentness?.status !== "ready")) {
+        throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Account encryption state is unavailable");
+    }
     if (verifiedHeaderPrincipal?.currentIntent?.kind === "review_findings_materialization") {
         const body = canonicalRequest?.mutation.actionId === "reviews.comments.create" ? canonicalRequest.mutation.input : ReviewCommentCreateRequestV1Schema.parse(request.body);
         if (body.workspace && body.workspace.machineId !== verifiedHeaderPrincipal.machineId) {
@@ -336,7 +343,7 @@ async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePri
         }
     }
     let ledSubtreeSessionIds: string[] | undefined;
-    if (actor.kind === "agent" || actor.kind === "workflow") {
+    if (!reviewAccess && (actor.kind === "agent" || actor.kind === "workflow")) {
         if ((!scopeSessionId && !workflowScope?.sessions.length && !workflowMaterialization) || !request.authAuthority) {
             throw new ReviewCommentOperationError("review_comment_permission_denied", "Verified Session review authority is unavailable");
         }
@@ -381,7 +388,7 @@ async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePri
         ? actor.pluginId
         : verifiedHeaderPrincipal?.currentIntent?.kind === "execution_run_host_action"
             ? verifiedHeaderPrincipal.currentIntent.pluginId : undefined;
-    const trustedGrants = grantPluginId
+    const trustedGrants = grantPluginId && !commitReceipt
         ? await resolveTrustedPluginPermissionGrants({
             accountId: request.userId,
             machineId: verifiedHeaderPrincipal?.machineId,
@@ -395,15 +402,37 @@ async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePri
     return {
         accountId: request.userId,
         actor,
+        ...(reviewAccess ? { reviewAccess } : {}),
         ...(actor.kind === "workflow" && scopeSessionId ? { workflowOriginSessionId: scopeSessionId } : {}),
         ...(actor.kind === "workflow" && workflowScope ? { workflowScope } : {}),
         ...(ledSubtreeSessionIds ? { ledSubtreeSessionIds } : {}),
         grants: trustedGrants.map((grant) => grant.capability),
         ...(verifiedHeaderPrincipal?.currentIntent ? { currentIntent: verifiedHeaderPrincipal.currentIntent } : {}),
-        storageMode: mode.mode,
+        storageMode: reviewAccess?.encryptionMode ?? (mode?.status === "ready" ? mode.mode : undefined),
         accountVersion: account.seq,
-        accountEncryptionCurrentness: currentness.currentness,
+        ...(currentness?.status === "ready" && !reviewAccess ? { accountEncryptionCurrentness: currentness.currentness } : {}),
     };
+}
+
+/** Resolve structural membership, then consume the Artifact owner's one access decision. */
+async function resolveRequestReviewAccess(request: Parameters<ReviewCommentRoutePrincipalResolver>[0], mutationInput?: unknown): Promise<ReviewAccessCapability | undefined> {
+    const input = mutationInput ?? (request.method === "GET" ? request.query : request.body);
+    const fields = input && typeof input === "object" ? input as Record<string, unknown> : {};
+    const params = request.params && typeof request.params === "object" ? request.params as Record<string, unknown> : {};
+    const commentIds = Array.isArray(fields.entries) ? fields.entries.flatMap(entry => entry && typeof entry === 'object'
+        && 'happierCommentId' in entry && typeof entry.happierCommentId === 'string' ? [entry.happierCommentId] : [])
+        : Array.isArray(fields.commentIds) ? fields.commentIds.filter((id): id is string => typeof id === "string")
+        : [params.commentId ?? fields.commentId ?? fields.parentCommentId].filter((id): id is string => typeof id === "string");
+    const memberships = await readReviewCommentReviewIds(commentIds);
+    const explicit = typeof fields.reviewId === "string" ? fields.reviewId : undefined;
+    const bound = [...memberships.values()].filter((id): id is string => id !== null);
+    const reviewId = explicit ?? bound[0];
+    if (!reviewId) return undefined;
+    if ([...memberships.values()].some(id => id !== reviewId)) throw new ReviewCommentOperationError("review_comment_permission_denied", "Comment targets must belong to one Review");
+    const access = await resolveReviewAccessInTx(db, { actorAccountId: request.userId, reviewId });
+    if (!access) throw new ReviewCommentOperationError("review_comment_not_found", "Review not found");
+    if (!access.encryptionMode) throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Review encryption state is unavailable");
+    return access;
 }
 
 function readReviewCommentCreateTargetScope(body: unknown): { kind: "project"; projectId: string } | null {
@@ -467,6 +496,7 @@ function parseReviewCommentRouteQuery(query: unknown): unknown {
     if (decoded.includeHistory === "true") decoded.includeHistory = true;
     if (decoded.includeHistory === "false") decoded.includeHistory = false;
     if (typeof decoded.limit === "string" && /^\d+$/.test(decoded.limit)) decoded.limit = Number(decoded.limit);
+    if (typeof decoded.roundOrdinal === "string" && /^\d+$/.test(decoded.roundOrdinal)) decoded.roundOrdinal = Number(decoded.roundOrdinal);
     if (decoded["states[]"] !== undefined) {
         if (decoded.states !== undefined) throw new ReviewCommentOperationError("review_comment_invalid_filter", "Review states query cannot use conflicting encodings");
         decoded.states = decoded["states[]"];

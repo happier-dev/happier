@@ -5,8 +5,8 @@ import { type ReviewCommentStoredSourceV1, reviewCommentActorsEqualV1 } from '@h
 
 import type { AccountEncryptionCurrentness } from "@/app/encryption/accountContentKeyAdmission";
 import { ReviewCommentOperationError } from "./errors";
-import type { ReviewAccessCapability } from "../reviewAccess";
-export type { ReviewAccessCapability } from "../reviewAccess";
+import type { ReviewAccessCapability } from '../reviewAccess';
+export type { ReviewAccessCapability } from '../reviewAccess';
 
 export type ReviewCommentPrincipal = Readonly<{
     accountId: string;
@@ -23,17 +23,18 @@ export type ReviewCommentPrincipal = Readonly<{
     ledSubtreeSessionIds?: readonly string[];
 }>;
 
-/** Ordinary CRUD may expose only canonical encrypted records; legacy split recovery belongs to Account migration. */
+/** Ordinary CRUD consumes the admitted mode; legacy private rows belong to Account migration. */
 export function assertReviewCommentOrdinarySourceAdmission(source: ReviewCommentStoredSourceV1, mode: "plain" | "e2ee"): void {
     const actualMode = source.source.layout === "canonical_v1"
         ? source.source.envelope.t === "plain" ? "plain" : "e2ee"
         : source.source.sourceMode;
     if (actualMode !== mode || (mode === "e2ee" && source.source.layout !== "canonical_v1")) {
-        throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Review Comment content requires canonical Account encryption migration");
+        throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Review Comment content does not match its admitted encryption mode");
     }
 }
 
-export function reviewCommentPrincipalSessionId(principal: Pick<ReviewCommentPrincipal, "actor" | "workflowOriginSessionId" | "workflowScope">): string | undefined {
+export function reviewCommentPrincipalSessionId(principal: Pick<ReviewCommentPrincipal, "actor" | "workflowOriginSessionId" | "workflowScope" | "reviewAccess">): string | undefined {
+    if (principal.reviewAccess) return undefined;
     if (principal.actor.kind === "agent") return principal.actor.sessionId;
     if (principal.actor.kind === "workflow") {
         if (principal.workflowScope?.sessions.length === 1) return principal.workflowScope.sessions[0]!.sessionId;
@@ -43,7 +44,8 @@ export function reviewCommentPrincipalSessionId(principal: Pick<ReviewCommentPri
     return undefined;
 }
 
-export function assertReviewCommentSessionScope(principal: Pick<ReviewCommentPrincipal, "actor" | "workflowOriginSessionId" | "workflowScope" | "ledSubtreeSessionIds">, sessionId: string | undefined): void {
+export function assertReviewCommentSessionScope(principal: Pick<ReviewCommentPrincipal, "actor" | "workflowOriginSessionId" | "workflowScope" | "ledSubtreeSessionIds" | "reviewAccess">, sessionId: string | undefined): void {
+    if (principal.reviewAccess) return;
     if (principal.actor.kind === "workflow") {
         if (isWorkflowSessionScopeTargetV1({ originSessionId: principal.workflowOriginSessionId,
             scope: principal.workflowScope, sessionId })) return;
@@ -75,19 +77,21 @@ export function isSameReviewCommentActor(left: ReviewCommentActorRefV1, right: R
 
 export function assertReviewCommentUserOrOriginalAuthor(params: Readonly<{
     actor: ReviewCommentActorRefV1;
+    reviewAccess?: ReviewAccessCapability;
     comment: Pick<ReviewCommentV1, "author">;
 }>): void {
-    if (params.actor.kind === "user" || isSameReviewCommentActor(params.actor, params.comment.author)) {
+    if ((!params.reviewAccess && params.actor.kind === "user") || isSameReviewCommentActor(params.actor, params.comment.author)) {
         return;
     }
     throw new ReviewCommentOperationError(
         "review_comment_permission_denied",
-        "Only user principals and original authors may mutate this review comment",
+        "Only the original author may change this Review comment",
     );
 }
 
 export function assertReviewCommentTransitionActorAllowed(params: Readonly<{
     actor: ReviewCommentActorRefV1;
+    reviewAccess?: ReviewAccessCapability;
     comment: Pick<ReviewCommentV1, "author" | "sessionId">;
     fromState: ReviewCommentStateV1;
     toState: ReviewCommentStateV1;
@@ -95,6 +99,10 @@ export function assertReviewCommentTransitionActorAllowed(params: Readonly<{
     workflowScope?: ReviewCommentPrincipalHeaderV1["workflowScope"];
     ledSubtreeSessionIds?: readonly string[];
 }>): void {
+    if (params.reviewAccess) {
+        if (params.reviewAccess.level === "view") throw new ReviewCommentOperationError("review_comment_permission_denied", "Review Edit access is required to decide findings");
+        return;
+    }
     if (params.actor.kind === "user") return;
     if (params.actor.kind === "agent" || params.actor.kind === "workflow") {
         assertReviewCommentSessionScope(params, params.comment.sessionId);
@@ -113,7 +121,11 @@ export function assertReviewCommentTransitionActorAllowed(params: Readonly<{
     );
 }
 
-export function assertReviewCommentRedactionActorAllowed(actor: ReviewCommentActorRefV1): void {
+export function assertReviewCommentRedactionActorAllowed(actor: ReviewCommentActorRefV1, reviewAccess?: ReviewAccessCapability, author?: ReviewCommentActorRefV1): void {
+    if (reviewAccess) {
+        if (reviewAccess.level === "view" && (!author || !isSameReviewCommentActor(actor, author))) throw new ReviewCommentOperationError("review_comment_permission_denied", "Review Edit access is required to redact another author's comment");
+        return;
+    }
     if (actor.kind === "user") return;
     throw new ReviewCommentOperationError(
         "review_comment_permission_denied",

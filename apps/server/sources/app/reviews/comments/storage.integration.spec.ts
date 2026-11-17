@@ -578,7 +578,7 @@ describe("review comment durable storage", () => {
         const body = { workspace: { machineId: "machine-host-review", path: "/repo" }, sessionId: "session-host-review",
             runId: "review-round-1", engineId: "codex", findingId: "finding-1", findingIdentity: "c".repeat(64),
             anchor: { kind: "file" as const, filePath: "src/example.ts" }, snapshot: textSnapshot(),
-            body: "Guard this value", metadata: { reviewGroupIds: ["host-panel-1"] }, authorIntent: "propose" as const, clientMutationId: "host-finding-1" };
+            body: "Guard this value", authorIntent: "propose" as const, clientMutationId: "host-finding-1" };
         const header = createSignedPrincipalHeader({ actor: { kind: "agent", agentId: "codex", sessionId: body.sessionId },
             currentIntent: { v: 1, kind: "review_findings_materialization", actionId: "reviews.comments.create",
                 sessionId: body.sessionId, runId: body.runId, callId: "call-review-1", agentId: "codex", workspace: body.workspace,
@@ -587,7 +587,7 @@ describe("review comment durable storage", () => {
         const request = { userId: account.id, authAuthority: "present_user" as const, headers: { [REVIEW_COMMENT_PRINCIPAL_HEADER_V1]: header }, body };
         const comment = ReviewCommentCreateResponseV1Schema.parse(await create(request, createReplyStub())).comment;
         expect(comment).toMatchObject({ state: "proposed", workspace: body.workspace, findingIdentity: body.findingIdentity });
-        expect((await createSqlReviewCommentStore().get({ accountId: account.id, commentId: comment.id }))?.metadata?.reviewGroupIds).toEqual(["host-panel-1"]);
+        expect((await createSqlReviewCommentStore().get({ accountId: account.id, commentId: comment.id }))?.findingIdentity).toEqual(body.findingIdentity);
         const denied = createReplyStub();
         // Invoke the post-auth boundary directly: the route harness otherwise supplies present_user.
         await getRouteEntry(app, "POST", "/v1/reviews/comments").handler({ ...request, authAuthority: undefined }, denied);

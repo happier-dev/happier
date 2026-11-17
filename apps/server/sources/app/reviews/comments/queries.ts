@@ -66,7 +66,7 @@ function assertCursorFiltersMatch(params: Readonly<{
     }
 }
 
-function commentPosition(comment: ReviewCommentQueryRecordV1): ReviewCommentListPosition {
+function commentPosition(comment: ReviewCommentListPosition): ReviewCommentListPosition {
     return {
         updatedAt: comment.updatedAt,
         serverRevision: comment.serverRevision,
@@ -83,20 +83,20 @@ function comparePositionToComment(left: ReviewCommentQueryRecordV1, right: Revie
     });
 }
 
-export function applyReviewCommentListQuery<T extends ReviewCommentQueryRecordV1>(
-    comments: readonly T[],
-    filters: ReviewCommentListRequestV1,
-): ReviewCommentListResult<T> {
+export function readReviewCommentListCursorPosition(filters: ReviewCommentListRequestV1): ReviewCommentListPosition | null {
     const normalized = normalizeReviewCommentListFilters(filters);
     const cursor = normalized.cursor ? decodeCursorPayload(normalized.cursor) : null;
     if (cursor) assertCursorFiltersMatch({ cursor, filters: normalized });
+    return cursor?.position ?? null;
+}
 
-    const filtered = comments
-        .filter((comment) => matchesReviewCommentListFilters(comment, normalized))
-        .sort(compareReviewCommentListOrder)
-        .filter((comment) => !cursor || comparePositionToComment(comment, cursor.position) > 0);
-    const page = filtered.slice(0, normalized.limit);
-    const hasMore = filtered.length > normalized.limit;
+export function pageReviewCommentListCandidates<T extends ReviewCommentListPosition>(
+    candidates: readonly T[],
+    filters: ReviewCommentListRequestV1,
+): ReviewCommentListResult<T> {
+    const normalized = normalizeReviewCommentListFilters(filters);
+    const page = candidates.slice(0, normalized.limit);
+    const hasMore = candidates.length > normalized.limit;
     const last = page[page.length - 1];
 
     return {
@@ -109,4 +109,17 @@ export function applyReviewCommentListQuery<T extends ReviewCommentQueryRecordV1
             })
             : null,
     };
+}
+
+export function applyReviewCommentListQuery<T extends ReviewCommentQueryRecordV1>(
+    comments: readonly T[],
+    filters: ReviewCommentListRequestV1,
+): ReviewCommentListResult<T> {
+    const normalized = normalizeReviewCommentListFilters(filters);
+    const position = readReviewCommentListCursorPosition(normalized);
+    const candidates = comments
+        .filter((comment) => matchesReviewCommentListFilters(comment, normalized))
+        .sort(compareReviewCommentListOrder)
+        .filter((comment) => !position || comparePositionToComment(comment, position) > 0);
+    return pageReviewCommentListCandidates(candidates, normalized);
 }

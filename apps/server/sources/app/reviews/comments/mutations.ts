@@ -22,12 +22,15 @@ const ReceiptV1Schema = z.strictObject({
     v: z.literal(1), accountId: z.string(), actor: ReviewCommentPrincipalHeaderV1Schema.shape.actor,
     mode: z.enum(["plain", "e2ee"]), accountVersion: z.optional(z.number().check(z.int())),
     contentPublicKeyFingerprint: z.nullable(z.string()),
+    reviewAccess: z.optional(z.strictObject({ reviewId: z.string(), ownerAccountId: z.string(),
+        level: z.enum(["owner", "view", "edit", "admin"]), encryptionMode: z.nullable(z.enum(["plain", "e2ee"])) })),
     request: ReviewCommentPrepareMutationRequestV1Schema,
     prepared: omit(ReviewCommentPrepareMutationResponseV1Schema, { receipt: true }),
-    now: z.number().check(z.int(), z.nonnegative()), ids: z.array(z.strictObject({ prefix: z.string(), id: z.string() })),
 });
 
-export function readReviewCommentPreparationReceipt(accountId: string, receipt: string) {
+export type ReviewCommentPreparationReceipt = z.infer<typeof ReceiptV1Schema>;
+
+export function readReviewCommentPreparationReceipt(accountId: string, receipt: string): ReviewCommentPreparationReceipt {
     try { return ReceiptV1Schema.parse(JSON.parse(decryptString(["review-comment-mutation-preparation", "v1", accountId], privacyKit.decodeBase64(receipt)))); }
     catch { throw new ReviewCommentOperationError("review_comment_invalid_request", "Invalid Review Comment preparation"); }
 }
@@ -51,7 +54,7 @@ export function createReviewCommentCanonicalMutations(store: ReviewCommentStore,
         const sources: ReviewCommentStoredSourceV1[] = [];
         const failed: ReviewCommentPrepareMutationResponseV1['failed'] = [];
         for (const id of ids) {
-            const source = await store.getSource({ accountId: principal.accountId, commentId: id });
+            const source = await store.getSource({ ...principal, commentId: id });
             if (source) {
                 assertReviewCommentOrdinarySourceAdmission(source, principal.storageMode ?? "plain");
                 sources.push(source);
@@ -60,6 +63,7 @@ export function createReviewCommentCanonicalMutations(store: ReviewCommentStore,
             }
         }
         if (mutation.actionId === "reviews.comments.create") {
+            if (mutation.input.reviewId !== principal.reviewAccess?.reviewId) throw new ReviewCommentOperationError("review_comment_permission_denied", "Review comment requires its admitted Review capability");
             if (principal.actor.kind === "workflow" && principal.currentIntent?.kind !== "review_findings_materialization") throw new ReviewCommentOperationError("review_comment_permission_denied", "Workflow principals cannot create review comments");
             if (principal.actor.kind !== "user" && (mutation.input.authorIntent === "open" || principal.actor.kind === "agent" || principal.actor.kind === "workflow")) {
                 if (principal.currentIntent?.kind !== "review_findings_materialization") assertReviewCommentDirectWriteGrant(principal);
@@ -71,6 +75,7 @@ export function createReviewCommentCanonicalMutations(store: ReviewCommentStore,
         for (const source of [...sources]) {
             try {
             const current = source.structural;
+            if (current.reviewId !== principal.reviewAccess?.reviewId) throw new ReviewCommentOperationError("review_comment_permission_denied", "Review comment is outside the admitted Review");
             assertReviewCommentSessionScope(principal, current.sessionId);
             switch (mutation.actionId) {
                 case "reviews.comments.transition": case "reviews.comments.bulkTransition":
@@ -79,14 +84,14 @@ export function createReviewCommentCanonicalMutations(store: ReviewCommentStore,
                     break;
                 case "reviews.comments.edit":
                     if (principal.actor.kind === "workflow" || current.flags.redacted) throw new ReviewCommentOperationError("review_comment_permission_denied", "Review comment edit is not permitted");
-                    assertReviewCommentUserOrOriginalAuthor({ actor: principal.actor, comment: current }); break;
+                    assertReviewCommentUserOrOriginalAuthor({ ...principal, comment: current }); break;
                 case "reviews.comments.reply":
                     if (principal.actor.kind === "workflow") throw new ReviewCommentOperationError("review_comment_permission_denied", "Workflow review authority does not include replies");
                     break;
-                case "reviews.comments.redact": assertReviewCommentRedactionActorAllowed(principal.actor); break;
+                case "reviews.comments.redact": assertReviewCommentRedactionActorAllowed(principal.actor, principal.reviewAccess, current.author); break;
                 case "reviews.comments.attachEvidence":
                     if (principal.actor.kind === "workflow") throw new ReviewCommentOperationError("review_comment_permission_denied", "Workflow review authority does not include evidence writes");
-                    assertReviewCommentUserOrOriginalAuthor({ actor: principal.actor, comment: current }); break;
+                    assertReviewCommentUserOrOriginalAuthor({ ...principal, comment: current }); break;
             }
             } catch (error) {
                 if (mutation.actionId !== "reviews.comments.bulkTransition" || !(error instanceof ReviewCommentOperationError)) throw error;
@@ -100,7 +105,9 @@ export function createReviewCommentCanonicalMutations(store: ReviewCommentStore,
     async function prepareInternal(principal: ReviewCommentPrincipal, request: ReviewCommentPrepareMutationRequestV1, derivationRuntime: ReviewCommentOperationRuntime) {
         const { sources, failed } = await readCurrent(principal, request.mutation);
         let derived;
-        try { derived = deriveReviewCommentStructuralMutationV1({ ...principal, mutation: request.mutation, current: sources.map((item) => item.structural), runtime: derivationRuntime }); }
+        try { derived = deriveReviewCommentStructuralMutationV1({ ...principal,
+            accountId: principal.reviewAccess?.ownerAccountId ?? principal.accountId,
+            mutation: request.mutation, current: sources.map((item) => item.structural), runtime: derivationRuntime }); }
         catch (error) { translateError(error); }
         const records = derived.records.map((record) => ({ ...record,
             ...(sources.find((item) => item.structural.id === (request.mutation.actionId === "reviews.comments.reply" ? request.mutation.input.parentCommentId : record.structural.id))
@@ -108,7 +115,7 @@ export function createReviewCommentCanonicalMutations(store: ReviewCommentStore,
         }));
         if (request.mutation.actionId === "reviews.comments.create") {
             if (!request.createRequestFingerprint) throw new ReviewCommentOperationError("review_comment_invalid_request", "Create equivalence commitment is required");
-            const existing = await store.findCreate({ accountId: principal.accountId,
+            const existing = await store.findCreate({ ...principal,
                 createClientMutationId: request.mutation.input.clientMutationId, createRequestFingerprint: request.createRequestFingerprint,
                 structural: records[0]!.structural });
             if (existing) {
@@ -121,78 +128,62 @@ export function createReviewCommentCanonicalMutations(store: ReviewCommentStore,
     }
 
     async function prepare(principal: ReviewCommentPrincipal, input: ReviewCommentPrepareMutationRequestV1) {
-        if (principal.storageMode !== "e2ee") throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Prepared encrypted mutations require an E2EE Account");
+        if (principal.storageMode !== "e2ee" && !principal.reviewAccess) throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Prepared mutations require admitted resource content or an E2EE Account");
         const request = ReviewCommentPrepareMutationRequestV1Schema.parse(input);
         if (request.mutation.actionId === "reviews.comments.create" && principal.actor.kind !== "user" && (request.mutation.input.authorIntent === "open" || principal.actor.kind === "agent" || principal.actor.kind === "workflow")) {
             assertReviewCommentCurrentIntent({ ...principal, input: request.mutation.input, contentCommitment: request.contentCommitment });
         }
         const now = runtime.now();
-        const ids: Array<{ prefix: string; id: string }> = [];
-        const prepared = await prepareInternal(principal, request, { now: () => now, createId: (prefix) => {
-            const id = runtime.createId(prefix); ids.push({ prefix, id }); return id;
-        } });
+        const prepared = await prepareInternal(principal, request, { now: () => now, createId: (prefix) => runtime.createId(prefix) });
         const receipt = ReceiptV1Schema.parse({ v: 1, accountId: principal.accountId, actor: principal.actor,
             mode: principal.storageMode, accountVersion: principal.accountVersion,
+            ...(principal.reviewAccess ? { reviewAccess: principal.reviewAccess } : {}),
             contentPublicKeyFingerprint: principal.accountEncryptionCurrentness?.contentPublicKeyFingerprint ?? null,
-            request, prepared, now, ids });
+            request, prepared });
         return ReviewCommentPrepareMutationResponseV1Schema.parse({ ...prepared,
             receipt: privacyKit.encodeBase64(encryptString(["review-comment-mutation-preparation", "v1", principal.accountId], JSON.stringify(receipt))) });
     }
 
-    async function commit(principal: ReviewCommentPrincipal, input: ReviewCommentCommitMutationRequestV1) {
+    async function commit(currentPrincipal: ReviewCommentPrincipal, input: ReviewCommentCommitMutationRequestV1) {
         const request = ReviewCommentCommitMutationRequestV1Schema.parse(input);
-        const receipt = readReviewCommentPreparationReceipt(principal.accountId, request.receipt);
+        const receipt = readReviewCommentPreparationReceipt(currentPrincipal.accountId, request.receipt);
+        const principal = { ...currentPrincipal, reviewAccess: receipt.reviewAccess };
         if (receipt.accountId !== principal.accountId || stringifyReviewCommentPrincipalCanonicalJsonV1(receipt.actor) !== stringifyReviewCommentPrincipalCanonicalJsonV1(principal.actor)
             || receipt.mode !== principal.storageMode || receipt.contentPublicKeyFingerprint !== (principal.accountEncryptionCurrentness?.contentPublicKeyFingerprint ?? null)) throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Review Comment preparation is no longer current");
-        if (receipt.request.mutation.actionId === "reviews.comments.create" && principal.actor.kind !== "user" && (receipt.request.mutation.input.authorIntent === "open" || principal.actor.kind === "agent" || principal.actor.kind === "workflow")) {
-            assertReviewCommentCurrentIntent({ ...principal, input: receipt.request.mutation.input, contentCommitment: receipt.request.contentCommitment });
+        const prepared = receipt.prepared;
+        if (prepared.replayed) {
+            if (receipt.request.mutation.actionId === "reviews.comments.create" && receipt.request.mutation.input.appearance) {
+                const root = prepared.records[0]!.structural;
+                if (root.reviewId) await store.recordAppearance({ ...receipt.request.mutation.input.appearance, reviewId: root.reviewId, commentId: root.id });
+            }
+            return ReviewCommentCommitMutationResponseV1Schema.parse({ v: 1, comments: prepared.records.map((record) => record.previous), replayed: true, failed: [] });
         }
-        const bulk = receipt.request.mutation.actionId === "reviews.comments.bulkTransition";
-        let index = 0;
-        const prepared = bulk ? receipt.prepared : await prepareInternal(principal, receipt.request, { now: () => receipt.now, createId: (prefix) => {
-            const item = receipt.ids[index++];
-            if (!item || item.prefix !== prefix) throw new ReviewCommentOperationError("review_comment_invalid_request", "Invalid Review Comment preparation identities");
-            return item.id;
-        } });
-        if (!prepared.replayed && stringifyReviewCommentPrincipalCanonicalJsonV1(prepared) !== stringifyReviewCommentPrincipalCanonicalJsonV1(receipt.prepared)) throw new ReviewCommentOperationError("review_comment_conflict", "Review Comment preparation currentness changed");
-        if (prepared.replayed) return ReviewCommentCommitMutationResponseV1Schema.parse({ v: 1, comments: prepared.records.map((record) => record.previous), replayed: true, failed: [] });
         const submitted = new Map(request.records.map((record) => [record.commentId, record]));
         if (submitted.size !== request.records.length || submitted.size !== prepared.records.length) throw new ReviewCommentOperationError("review_comment_invalid_request", "Review Comment prepared records did not match commit");
         const comments: ReviewCommentStoredSourceV1[] = [];
         const failed = [...prepared.failed];
         for (const record of prepared.records) {
             const candidate = submitted.get(record.structural.id);
-            if (!candidate || candidate.sensitiveEnvelope.t !== "encrypted" || candidate.eventEnvelope?.t !== "encrypted"
+            const expectedType = receipt.mode === "plain" ? "plain" : "encrypted";
+            if (!candidate || candidate.sensitiveEnvelope.t !== expectedType || candidate.eventEnvelope?.t !== expectedType
+                || (!record.structural.reviewId && (candidate.sensitiveEnvelope.t !== "encrypted" || candidate.eventEnvelope.t !== "encrypted"
                 || !isAccountScopedBlobCiphertextForKind({ ciphertext: candidate.sensitiveEnvelope.c, kind: "review_comment_sensitive" })
-                || !isAccountScopedBlobCiphertextForKind({ ciphertext: candidate.eventEnvelope.c, kind: "review_comment_event_sensitive" })) throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Review Comment record and event require canonical encrypted envelopes");
+                || !isAccountScopedBlobCiphertextForKind({ ciphertext: candidate.eventEnvelope.c, kind: "review_comment_event_sensitive" })))) throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Review Comment record and event must match the admitted content mode");
         }
         for (const record of prepared.records) {
             const candidate = submitted.get(record.structural.id);
-            if (!candidate || candidate.sensitiveEnvelope.t !== "encrypted" || candidate.eventEnvelope?.t !== "encrypted" || !record.event) throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Review Comment record and event require encrypted envelopes");
+            if (!candidate || !candidate.eventEnvelope || !record.event) throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Review Comment record and event envelopes are required");
             const persist = { ...principal, accountVersion: receipt.accountVersion, comment: record.structural,
                 ...(receipt.request.mutation.actionId === "reviews.comments.reply" ? { parentCurrentness: { commentId: receipt.request.mutation.input.parentCommentId, serverRevision: receipt.request.mutation.input.expectedParentServerRevision } } : {}),
                 sensitiveEnvelope: candidate.sensitiveEnvelope, event: record.event, eventEnvelope: candidate.eventEnvelope,
                 requestBinding: buildReviewCommentEventRequestBindingV1({ accountId: principal.accountId,
-                    projectId: record.structural.projectId, workspace: record.structural.workspace, actor: principal.actor,
+                    reviewId: record.structural.reviewId, projectId: record.structural.projectId, workspace: record.structural.workspace, actor: principal.actor,
                     actionId: receipt.request.mutation.actionId, input: receipt.request.mutation.input }),
             };
             try {
-                if (receipt.request.mutation.actionId === "reviews.comments.bulkTransition") {
-                    const id = record.structural.id;
-                    const single = await prepareInternal(principal, { ...receipt.request, mutation: { actionId: "reviews.comments.bulkTransition", input: { ...receipt.request.mutation.input, commentIds: [id], bulkActionId: prepared.bulkActionId } } }, {
-                        now: () => receipt.now,
-                        createId: (prefix) => {
-                            const transition = record.structural.transitionHistory[record.structural.transitionHistory.length - 1];
-                            if (prefix === "review-comment-transition" && transition) return transition.transitionId;
-                            if (prefix === "review-comment-event" && record.event) return record.event.eventId;
-                            throw new ReviewCommentOperationError("review_comment_invalid_request", "Invalid bulk preparation identity");
-                        },
-                    });
-                    if (!single.records[0]) { failed.push(...single.failed); continue; }
-                    if (stringifyReviewCommentPrincipalCanonicalJsonV1(single.records[0]) !== stringifyReviewCommentPrincipalCanonicalJsonV1(record)) throw new ReviewCommentOperationError("review_comment_conflict", "Review Comment preparation currentness changed");
-                }
                 if (receipt.request.mutation.actionId === "reviews.comments.create") {
                     const result = await store.createCanonical({ ...persist,
+                        appearance: receipt.request.mutation.input.appearance,
                         createClientMutationId: receipt.request.mutation.input.clientMutationId,
                         createRequestFingerprint: receipt.request.createRequestFingerprint! });
                     assertReviewCommentOrdinarySourceAdmission(result.comment, principal.storageMode ?? "plain");
@@ -219,7 +210,11 @@ export function createReviewCommentCanonicalMutations(store: ReviewCommentStore,
             if (opened && opened.status !== "available") throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Plain review record could not be opened");
             const previous = opened?.status === "available" ? opened.comment : undefined;
             if (mutation.actionId === "reviews.comments.reply") parent = previous;
-            if (prepared.replayed) { if (!previous) throw new ReviewCommentOperationError("review_comment_not_found", "Replay comment missing"); comments.push(previous); continue; }
+            if (prepared.replayed) {
+                if (!previous) throw new ReviewCommentOperationError("review_comment_not_found", "Replay comment missing");
+                if (mutation.actionId === "reviews.comments.create" && mutation.input.appearance && previous.reviewId) await store.recordAppearance({ ...mutation.input.appearance, reviewId: previous.reviewId, commentId: previous.id });
+                comments.push(previous); continue;
+            }
             let sensitive;
             try { sensitive = applyReviewCommentPreparedSensitiveMutationV1({ mutation, input, prepared: record, previous }); }
             catch (error) { translateError(error); }
@@ -232,10 +227,10 @@ export function createReviewCommentCanonicalMutations(store: ReviewCommentStore,
                 event: { ...record.event!, event: { ...reviewCommentMutationInputWithoutEventEnvelopeV1(input), ...(prepared.bulkActionId ? { bulkActionId: prepared.bulkActionId } : {}) } },
                 ...(mutation.actionId === "reviews.comments.reply" ? { parentCurrentness: { commentId: mutation.input.parentCommentId, serverRevision: mutation.input.expectedParentServerRevision } } : {}),
                 eventEnvelope,
-                requestBinding: buildReviewCommentEventRequestBindingV1({ accountId: principal.accountId, projectId: record.structural.projectId, workspace: record.structural.workspace, actor: principal.actor, actionId: mutation.actionId, input }),
+                requestBinding: buildReviewCommentEventRequestBindingV1({ accountId: principal.accountId, reviewId: record.structural.reviewId, projectId: record.structural.projectId, workspace: record.structural.workspace, actor: principal.actor, actionId: mutation.actionId, input }),
             };
             if (mutation.actionId === "reviews.comments.create") {
-                const result = await store.createCanonical({ ...persist, createClientMutationId: mutation.input.clientMutationId, createRequestFingerprint: createRequestFingerprint! });
+                const result = await store.createCanonical({ ...persist, appearance: mutation.input.appearance, createClientMutationId: mutation.input.clientMutationId, createRequestFingerprint: createRequestFingerprint! });
                 const openedResult = await openReviewCommentSensitiveMigrationSourceV1(result.comment);
                 if (openedResult.status !== "available") throw new ReviewCommentOperationError("review_comment_encryption_mode_mismatch", "Create replay mode mismatch");
                 comments.push(openedResult.comment);

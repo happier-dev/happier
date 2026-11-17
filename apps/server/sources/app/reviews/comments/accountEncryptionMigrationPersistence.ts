@@ -20,6 +20,7 @@ export const REVIEW_COMMENT_CANONICAL_SENSITIVE_LAYOUT_MARKER_JSON =
 export type ReviewCommentMigrationStorageCommentRow = {
     id: string;
     account_id: string;
+    review_id?: string | null;
     project_id: string | null;
     workspace_json?: string | null;
     finding_identity?: string | null;
@@ -58,6 +59,7 @@ export type ReviewCommentMigrationStorageEventRow = {
     event_id: string;
     comment_id: string;
     account_id: string;
+    review_id?: string | null;
     project_id: string | null;
     workspace_json?: string | null;
     event_kind: string;
@@ -182,6 +184,7 @@ export function buildReviewCommentStructuralFromStorageRow(
         v: 1,
         id: row.id,
         accountId: row.account_id,
+        reviewId: row.review_id ?? undefined,
         projectId: row.project_id ?? undefined,
         workspace: row.workspace_json ? parseJson(row.workspace_json) : undefined,
         findingIdentity: row.finding_identity ?? undefined,
@@ -270,6 +273,7 @@ function eventFromStorageRow(
         eventId: row.event_id,
         commentId: row.comment_id,
         accountId: row.account_id,
+        reviewId: row.review_id ?? undefined,
         projectId: row.project_id ?? undefined,
         workspace: row.workspace_json ? parseJson(row.workspace_json) : undefined,
         eventKind: row.event_kind,
@@ -551,13 +555,14 @@ export function createReviewCommentAccountEncryptionMigrationPersistenceInTx(
             const commentRows = await tx.$queryRaw<ReviewCommentMigrationStorageCommentRow[]>(Prisma.sql`
                 SELECT ${Prisma.raw(COMMENT_MIGRATION_SELECT_COLUMNS)}
                 FROM review_comments
-                WHERE account_id = ${accountId}
+                WHERE account_id = ${accountId} AND review_id IS NULL
                 ORDER BY id ASC
             `);
             const eventRows = await tx.$queryRaw<ReviewCommentMigrationStorageEventRow[]>(Prisma.sql`
                 SELECT ${Prisma.raw(EVENT_MIGRATION_SELECT_COLUMNS)}
                 FROM review_comment_events
                 WHERE account_id = ${accountId}
+                    AND comment_id IN (SELECT id FROM review_comments WHERE review_id IS NULL)
                 ORDER BY comment_id ASC, server_revision ASC, event_id ASC
             `);
             return buildReviewCommentAccountEncryptionMigrationInventory({
@@ -573,6 +578,7 @@ export function createReviewCommentAccountEncryptionMigrationPersistenceInTx(
                 SELECT COUNT(*) AS count
                 FROM review_comment_publication_correlations
                 WHERE account_id = ${accountId}
+                    AND comment_id IN (SELECT id FROM review_comments WHERE review_id IS NULL)
             `);
             return toNumber(rows[0]?.count ?? 0);
         },

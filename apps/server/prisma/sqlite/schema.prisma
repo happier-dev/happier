@@ -3668,6 +3668,7 @@ model ReviewMetadata {
 }
 
 model Artifact {
+    reviewComments ReviewComment[]
     requestedReviewers ReviewRequestedReviewer[]
     reviewVerdicts ReviewVerdict[]
     resourceSpaceMemberships ResourceSpaceMembership[]
@@ -4786,6 +4787,7 @@ model PluginCollectionRelation {
 model ReviewComment {
     id                   String   @id
     accountId            String   @map("account_id")
+    reviewId             String?  @map("review_id")
     projectId            String?  @map("project_id")
     workspaceJson        String?  @map("workspace_json")
     workspaceId          String?  @map("workspace_id")
@@ -4825,9 +4827,13 @@ model ReviewComment {
     updatedAt            BigInt   @map("updated_at")
 
     account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    review Artifact? @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+    appearances ReviewCommentAppearance[]
     events  ReviewCommentEvent[]
     publicationCorrelations ReviewCommentPublicationCorrelation[]
 
+    @@unique([reviewId, findingIdentity], map: "review_comments_review_finding_identity_key")
+    @@index([reviewId, state, updatedAt])
     @@index([projectId, state, updatedAt])
     @@index([projectId, runId, updatedAt])
     @@index([projectId, engineId, updatedAt])
@@ -4835,6 +4841,22 @@ model ReviewComment {
     @@unique([accountId, createClientMutationId], map: "review_comments_account_create_mutation_key")
     @@unique([accountId, findingScopeKey], map: "review_comments_account_finding_scope_key")
     @@map("review_comments")
+}
+
+model ReviewCommentAppearance {
+    reviewId String @map("review_id")
+    commentId String @map("comment_id")
+    roundOrdinal Int @map("round_ordinal")
+    sourceKey String @map("source_key")
+    runId String @map("run_id")
+    reviewerId String @map("reviewer_id")
+    machineId String? @map("machine_id")
+    sessionId String? @map("session_id")
+    comment ReviewComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+    @@id([commentId, roundOrdinal, sourceKey])
+    @@index([reviewId, roundOrdinal])
+    @@map("review_comment_appearances")
 }
 
 model ReviewCommentEvent {

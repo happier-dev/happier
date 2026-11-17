@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 import type { Prisma as PrismaTypes } from "@prisma/client";
-import type { ReviewCommentEventV1, ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import type { ReviewCommentAppearanceInputV1, ReviewCommentAppearanceV1, ReviewCommentEventV1, ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import type { ReviewCommentEventRequestBindingV1 } from '@happier-dev/protocol/reviews/comments/content';
 import type { ReviewCommentListRequestV1, ReviewCommentPublicationDispatchInstructionV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import type { ReviewCommentPublicationTransportResultV1 } from '@happier-dev/protocol/reviews/comments/publicationTransport';
 import type { StoredJsonContentEnvelope } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 import { BoundReviewCommentEventSensitiveEnvelopeV1Schema, ReviewCommentStructuralV1Schema, splitReviewCommentV1, sealReviewCommentSensitiveEnvelopeV1, openReviewCommentSensitiveMigrationSourceV1, openStoredReviewCommentV1, type ReviewCommentStructuralV1 } from '@happier-dev/protocol/reviews/comments/content';
-import { ReviewCommentEventV1Schema, ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
+import { ReviewCommentEventV1Schema, ReviewCommentV1Schema, type ReviewCommentChangesHintV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewCommentPublicationTransportResultV1Schema } from '@happier-dev/protocol/reviews/comments/publicationTransport';
 import { StoredJsonContentEnvelopeSchema } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 import { type ReviewCommentStoredSourceV1 } from '@happier-dev/protocol/reviews/comments/mutation';
@@ -29,6 +29,11 @@ import {
     prismaRuntime as Prisma,
 } from "@/storage/prisma";
 import { ReviewCommentOperationError } from "./errors";
+import type { ReviewAccessCapability } from "./permissions";
+import { resolveArtifactAudienceInTx } from "@/app/artifacts/artifactAccessService";
+import { markAccountsChanged } from "@/app/changes/markAccountChanged";
+import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import {
     bindReviewCommentEventSensitiveForStorage,
     decodeReviewCommentEventSensitiveFromStorage,
@@ -37,20 +42,25 @@ import {
     applyReviewCommentListQuery,
     matchesReviewCommentListFilters,
     normalizeReviewCommentListFilters,
+    pageReviewCommentListCandidates,
+    readReviewCommentListCursorPosition,
     type ReviewCommentListResult,
 } from "./queries";
 
 export type ReviewCommentStoreListParams = Readonly<{
+    reviewAccess?: ReviewAccessCapability;
     accountId: string;
     filters: ReviewCommentListRequestV1;
 }>;
 
 export type ReviewCommentStoreCommentParams = Readonly<{
+    reviewAccess?: ReviewAccessCapability;
     accountId: string;
     commentId: string;
 }>;
 
 export type ReviewCommentStoreCommitParams = Readonly<{
+    reviewAccess?: ReviewAccessCapability;
     accountId: string;
     comment: ReviewCommentV1;
     event: ReviewCommentEventV1;
@@ -62,6 +72,7 @@ export type ReviewCommentStoreCommitParams = Readonly<{
 }>;
 
 export type ReviewCommentStoreCreateParams = ReviewCommentStoreCommitParams & Readonly<{
+    appearance?: ReviewCommentAppearanceInputV1;
     createClientMutationId: string;
     createRequestFingerprint: string;
 }>;
@@ -76,10 +87,11 @@ export type ReviewCommentCanonicalCommitParams = Omit<ReviewCommentStoreCommitPa
     sensitiveEnvelope: StoredJsonContentEnvelope;
     parentCurrentness?: Readonly<{ commentId: string; serverRevision: number }>;
 }>;
-export type ReviewCommentCanonicalCreateParams = ReviewCommentCanonicalCommitParams & Pick<ReviewCommentStoreCreateParams, "createClientMutationId" | "createRequestFingerprint">;
+export type ReviewCommentCanonicalCreateParams = ReviewCommentCanonicalCommitParams & Pick<ReviewCommentStoreCreateParams, "createClientMutationId" | "createRequestFingerprint" | "appearance">;
 export type ReviewCommentCanonicalCreateResult = Readonly<{ comment: ReviewCommentStoredSourceV1; replayed: boolean }>;
 
 export type ReviewCommentStorePublicationClaimParams = Readonly<{
+    reviewAccess?: ReviewAccessCapability;
     accountId: string;
     entries: readonly Readonly<{
         commentId: string;
@@ -111,9 +123,11 @@ export type ReviewCommentStorePublicationClaimResult = Readonly<{
 }>;
 
 export interface ReviewCommentStore {
+    recordAppearance(appearance: ReviewCommentAppearanceV1): Promise<void>;
+    listAppearances(params: Readonly<{ reviewId: string; roundOrdinal?: number }>): Promise<readonly ReviewCommentAppearanceV1[]>;
     getSource(params: ReviewCommentStoreCommentParams): Promise<ReviewCommentStoredSourceV1 | null>;
     listSources(params: ReviewCommentStoreListParams): Promise<ReviewCommentListResult<ReviewCommentStoredSourceV1>>;
-    findCreate(params: Readonly<{ accountId: string; createClientMutationId: string; createRequestFingerprint: string; structural?: ReviewCommentStructuralV1 }>): Promise<ReviewCommentStoredSourceV1 | null>;
+    findCreate(params: Readonly<{ reviewAccess?: ReviewAccessCapability; accountId: string; createClientMutationId: string; createRequestFingerprint: string; structural?: ReviewCommentStructuralV1 }>): Promise<ReviewCommentStoredSourceV1 | null>;
     createCanonical(params: ReviewCommentCanonicalCreateParams): Promise<ReviewCommentCanonicalCreateResult>;
     commitCanonical(params: ReviewCommentCanonicalCommitParams): Promise<void>;
     get(params: ReviewCommentStoreCommentParams): Promise<ReviewCommentV1 | null>;
@@ -129,6 +143,7 @@ export interface ReviewCommentStore {
 type ReviewCommentRow = {
     id: string;
     account_id: string;
+    review_id: string | null;
     project_id: string | null;
     workspace_json: string | null;
     workspace_id: string | null;
@@ -167,6 +182,7 @@ type ReviewCommentRow = {
 };
 
 type ReviewCommentEventRow = {
+    review_id?: string | null;
     event_id: string;
     comment_id: string;
     account_id: string;
@@ -186,6 +202,7 @@ type ReviewCommentEventRow = {
 const COMMENT_SELECT_COLUMNS = [
     "id",
     "account_id",
+    "review_id",
     "project_id",
     "workspace_id",
     "workspace_json",
@@ -540,6 +557,7 @@ function rowToComment(row: ReviewCommentRow): ReviewCommentV1 {
         v: 1,
         id: row.id,
         accountId: row.account_id,
+        reviewId: row.review_id ?? undefined,
         projectId: row.project_id ?? undefined,
         workspace: row.workspace_json ? parseJson(row.workspace_json) : undefined,
         workspaceId: row.workspace_id ?? undefined,
@@ -580,6 +598,7 @@ function rowToEvent(row: ReviewCommentEventRow): ReviewCommentEventV1 {
         eventId: row.event_id,
         commentId: row.comment_id,
         accountId: row.account_id,
+        reviewId: row.review_id ?? undefined,
         projectId: row.project_id ?? undefined,
         workspace: row.workspace_json ? parseJson(row.workspace_json) : undefined,
         eventKind: row.event_kind,
@@ -654,13 +673,19 @@ function resolveCanonicalCreateReplay(
     return { comment: rowToSource(row), replayed: true };
 }
 
-function findingScopeKey(comment: Pick<ReviewCommentStructuralV1, "findingIdentity" | "parentCommentId" | "workspace" | "projectId" | "sessionId">): string | null {
+function findingScopeKey(comment: Pick<ReviewCommentStructuralV1, "reviewId" | "findingIdentity" | "parentCommentId" | "workspace" | "projectId" | "sessionId">): string | null {
     if (!comment.findingIdentity || comment.parentCommentId) return null;
     return createHash("sha256").update(JSON.stringify(reviewCommentFindingScopeV1(comment))).digest("hex");
 }
 
-function findingLookupQuery(accountId: string, key: string): PrismaTypes.Sql {
+function findingLookupQuery(accountId: string, key: string, comment?: ReviewCommentStructuralV1): PrismaTypes.Sql {
+    if (comment?.reviewId) return Prisma.sql`SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)} FROM review_comments WHERE review_id = ${comment.reviewId} AND finding_identity = ${comment.findingIdentity} AND parent_comment_id IS NULL LIMIT 1`;
     return Prisma.sql`SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)} FROM review_comments WHERE account_id = ${accountId} AND finding_scope_key = ${key} LIMIT 1`;
+}
+
+function commentAccessPredicate(params: Readonly<{ accountId: string; reviewAccess?: ReviewAccessCapability }>): PrismaTypes.Sql {
+    return params.reviewAccess ? Prisma.sql`review_id = ${params.reviewAccess.reviewId}`
+        : Prisma.sql`account_id = ${params.accountId} AND review_id IS NULL`;
 }
 
 function createMutationLookupQuery(accountId: string, createClientMutationId: string): PrismaTypes.Sql {
@@ -672,25 +697,90 @@ function createMutationLookupQuery(accountId: string, createClientMutationId: st
     `;
 }
 
+function appearanceSourceKey(appearance: ReviewCommentAppearanceInputV1): string {
+    return createHash("sha256").update(JSON.stringify([appearance.runId, appearance.reviewerId, appearance.machineId ?? null, appearance.sessionId ?? null])).digest("hex");
+}
+
+async function recordAppearanceInTx(tx: Tx, appearance: ReviewCommentAppearanceV1, publish = true): Promise<void> {
+    const insert = Prisma.sql`INSERT INTO review_comment_appearances (review_id, comment_id, round_ordinal, source_key, run_id, reviewer_id, machine_id, session_id)
+        VALUES (${appearance.reviewId}, ${appearance.commentId}, ${appearance.roundOrdinal}, ${appearanceSourceKey(appearance)}, ${appearance.runId}, ${appearance.reviewerId}, ${appearance.machineId ?? null}, ${appearance.sessionId ?? null})`;
+    const inserted = await tx.$executeRaw(getDbProviderFromEnv(process.env, "postgres") === "mysql"
+        ? Prisma.sql`${insert} ON DUPLICATE KEY UPDATE source_key = source_key`
+        : Prisma.sql`${insert} ON CONFLICT (comment_id, round_ordinal, source_key) DO NOTHING`);
+    if (inserted > 0 && publish) {
+        const rows = await tx.$queryRaw<ReviewCommentRow[]>(Prisma.sql`SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)} FROM review_comments WHERE id = ${appearance.commentId} LIMIT 1`);
+        if (rows[0]) await publishReviewCommentChangeInTx(tx, rowToSource(rows[0]).structural);
+    }
+}
+
+/** Changed Review facts use the Artifact audience and its typed Review-kind invalidation. */
+export async function publishReviewChangeInTx(tx: Tx, input: Readonly<{
+    reviewId: string;
+    commentChanges?: ReviewCommentChangesHintV1['changes'];
+}>): Promise<void> {
+    const accountIds = await resolveArtifactAudienceInTx(tx, input.reviewId);
+    await markAccountsChanged(tx, { accountIds, kind: 'artifact', entityId: input.reviewId,
+        hint: { artifactKinds: [deriveArtifactStoredKindV1({ kind: REVIEW_ARTIFACT_KIND_V1 })],
+            ...(input.commentChanges ? { reviewComments: { v: 1, changes: input.commentChanges } } : {}) } });
+}
+
+async function publishReviewCommentChangeInTx(tx: Tx, comment: ReviewCommentStructuralV1): Promise<void> {
+    if (!comment.reviewId) return;
+    await publishReviewChangeInTx(tx, { reviewId: comment.reviewId, commentChanges: [{
+        commentId: comment.id, serverRevision: comment.serverRevision, state: comment.state,
+        ...(comment.reviewTriageStatus ? { reviewTriageStatus: comment.reviewTriageStatus } : {}),
+    }] });
+}
+
+/** Structural membership lookup for the Artifact admission owner; this grants no access. */
+export async function readReviewCommentReviewIds(commentIds: readonly string[]): Promise<ReadonlyMap<string, string | null>> {
+    if (commentIds.length === 0) return new Map();
+    const rows = await db.$queryRaw<Array<{ id: string; review_id: string | null }>>(Prisma.sql`SELECT id, review_id FROM review_comments WHERE id IN (${Prisma.join(commentIds)})`);
+    return new Map(rows.map((row) => [row.id, row.review_id]));
+}
+
+export async function readReviewCommentReviewId(commentId: string): Promise<string | null> {
+    return (await readReviewCommentReviewIds([commentId])).get(commentId) ?? null;
+}
+
 export function createInMemoryReviewCommentStore(): ReviewCommentStore {
+    const appearances = new Map<string, ReviewCommentAppearanceV1>();
+    const recordAppearance = async (appearance: ReviewCommentAppearanceV1) => {
+        appearances.set(JSON.stringify([appearance.reviewId, appearance.commentId, appearance.roundOrdinal, appearanceSourceKey(appearance)]), appearance);
+    };
     const comments = new Map<string, ReviewCommentStructuralV1>();
     const sources = new Map<string, ReviewCommentStoredSourceV1>();
     const events = new Map<string, ReviewCommentEventV1[]>();
     const creates = new Map<string, Readonly<{ commentId: string; requestFingerprint: string }>>();
     const publicationClaims = new Map<string, ReviewCommentStoredPublicationClaim>();
-    const getSource = async (params: ReviewCommentStoreCommentParams) => sources.get(`${params.accountId}:${params.commentId}`) ?? null;
-    function findCreate(params: Readonly<{ accountId: string; createClientMutationId: string; createRequestFingerprint: string; structural?: ReviewCommentStructuralV1 }>) {
-        const existing = creates.get(`${params.accountId}:${params.createClientMutationId}`);
+    const projectAppearances = (items: readonly ReviewCommentStoredSourceV1[]) => {
+        const grouped = new Map<string, ReviewCommentAppearanceInputV1[]>();
+        for (const { reviewId: _reviewId, commentId, ...appearance } of appearances.values()) {
+            const group = grouped.get(commentId) ?? [];
+            group.push(appearance);
+            grouped.set(commentId, group);
+        }
+        return items.map(item => item.structural.reviewId ? { ...item, structural: { ...item.structural, appearances: grouped.get(item.structural.id) ?? [] } } : item);
+    };
+    const readSource = (params: ReviewCommentStoreCommentParams) => params.reviewAccess
+        ? [...sources.values()].find((item) => item.structural.id === params.commentId && item.structural.reviewId === params.reviewAccess!.reviewId) ?? null
+        : sources.get(`${params.accountId}:${params.commentId}`)?.structural.reviewId ? null : sources.get(`${params.accountId}:${params.commentId}`) ?? null;
+    const getSource = async (params: ReviewCommentStoreCommentParams) => {
+        const item = readSource(params);
+        return item ? projectAppearances([item])[0]! : null;
+    };
+    function findCreate(params: Readonly<{ reviewAccess?: ReviewAccessCapability; accountId: string; createClientMutationId: string; createRequestFingerprint: string; structural?: ReviewCommentStructuralV1 }>) {
+        const existing = creates.get(`${params.reviewAccess?.ownerAccountId ?? params.accountId}:${params.createClientMutationId}`);
         if (existing) {
             if (existing.requestFingerprint !== params.createRequestFingerprint) throw new ReviewCommentOperationError("review_comment_idempotency_conflict", "Create mutation was already used for another request");
-            return sources.get(`${params.accountId}:${existing.commentId}`) ?? null;
+            return sources.get(`${params.reviewAccess?.ownerAccountId ?? params.accountId}:${existing.commentId}`) ?? null;
         }
         const key = params.structural ? findingScopeKey(params.structural) : null;
-        return key ? [...sources.values()].find((item) => item.structural.accountId === params.accountId && findingScopeKey(item.structural) === key) ?? null : null;
+        return key ? [...sources.values()].find((item) => (params.structural?.reviewId || item.structural.accountId === params.accountId) && findingScopeKey(item.structural) === key) ?? null : null;
     }
     function persistCommit(params: ReviewCommentCanonicalCommitParams) {
-        if (params.parentCurrentness && sources.get(`${params.accountId}:${params.parentCurrentness.commentId}`)?.structural.serverRevision !== params.parentCurrentness.serverRevision) throw new ReviewCommentOperationError("review_comment_conflict", "Review comment parent revision is stale");
-        const key = `${params.accountId}:${params.comment.id}`;
+        if (params.parentCurrentness && [...sources.values()].find((item) => item.structural.id === params.parentCurrentness!.commentId)?.structural.serverRevision !== params.parentCurrentness.serverRevision) throw new ReviewCommentOperationError("review_comment_conflict", "Review comment parent revision is stale");
+        const key = `${params.comment.accountId}:${params.comment.id}`;
         const existing = sources.get(key);
         if ((existing && existing.structural.serverRevision !== params.comment.serverRevision - 1) || (!existing && params.comment.serverRevision !== 1)) throw new ReviewCommentOperationError("review_comment_conflict", "Review comment revision is stale");
         canonicalCommentValues(params.comment, params.sensitiveEnvelope, storageMode(params));
@@ -701,28 +791,38 @@ export function createInMemoryReviewCommentStore(): ReviewCommentStore {
     }
     async function persistCreate(params: ReviewCommentCanonicalCreateParams): Promise<ReviewCommentCanonicalCreateResult> {
         const replay = findCreate({ ...params, structural: params.comment });
-        if (replay) return { comment: replay, replayed: true };
+        if (replay) {
+            if (params.appearance && replay.structural.reviewId) await recordAppearance({ ...params.appearance, reviewId: replay.structural.reviewId, commentId: replay.structural.id });
+            return { comment: replay, replayed: true };
+        }
         persistCommit(params);
-        creates.set(`${params.accountId}:${params.createClientMutationId}`, { commentId: params.comment.id, requestFingerprint: params.createRequestFingerprint });
+        creates.set(`${params.reviewAccess?.ownerAccountId ?? params.accountId}:${params.createClientMutationId}`, { commentId: params.comment.id, requestFingerprint: params.createRequestFingerprint });
+        if (params.appearance && params.comment.reviewId) await recordAppearance({ ...params.appearance, reviewId: params.comment.reviewId, commentId: params.comment.id });
         return { comment: canonicalSource(params), replayed: false };
     }
     return {
+        recordAppearance,
+        async listAppearances(params) { return [...appearances.values()].filter((item) => item.reviewId === params.reviewId && (params.roundOrdinal === undefined || item.roundOrdinal === params.roundOrdinal)); },
         getSource,
         findCreate: async (params) => findCreate(params),
         createCanonical: persistCreate,
         commitCanonical: async (params) => persistCommit(params),
         async listSources(params) {
             if (params.filters.filePath || params.filters.folderPath || params.filters.severity || params.filters.taxonomyIds?.length) throw new ReviewCommentOperationError("review_comment_invalid_filter", "Sensitive filters require client-side opening");
-            const visible = [...sources.values()].filter((item) => item.structural.accountId === params.accountId);
+            const visible = projectAppearances([...sources.values()].filter((item) => params.reviewAccess ? item.structural.reviewId === params.reviewAccess.reviewId : !item.structural.reviewId && item.structural.accountId === params.accountId));
             const result = applyReviewCommentListQuery(visible.map((item) => ({ ...item.structural, anchor: {} })), params.filters);
-            return { items: result.items.map((item) => sources.get(`${params.accountId}:${item.id}`)!), cursor: result.cursor };
+            const byId = new Map(visible.map(item => [item.structural.id, item]));
+            return { items: result.items.map((item) => byId.get(item.id)!), cursor: result.cursor };
         },
         async get(params) { const item = await getSource(params); return item ? await openPlainSource(item) : null; },
         async list(params) {
-            const opened = await Promise.all([...sources.values()].filter((item) => item.structural.accountId === params.accountId).map(openPlainSource));
+            const opened = await Promise.all(projectAppearances([...sources.values()].filter((item) => params.reviewAccess ? item.structural.reviewId === params.reviewAccess.reviewId : !item.structural.reviewId && item.structural.accountId === params.accountId)).map(openPlainSource));
             return applyReviewCommentListQuery(opened, params.filters);
         },
-        async listEvents(params) { return events.get(`${params.accountId}:${params.commentId}`) ?? []; },
+        async listEvents(params) {
+            const source = await getSource(params);
+            return source ? events.get(`${source.structural.accountId}:${params.commentId}`) ?? [] : [];
+        },
         async create(params) {
             const result = await persistCreate({ ...canonicalizePlainCommit(params), createClientMutationId: params.createClientMutationId, createRequestFingerprint: params.createRequestFingerprint });
             return { comment: await openPlainSource(result.comment), replayed: result.replayed };
@@ -810,7 +910,9 @@ export function createInMemoryReviewCommentStore(): ReviewCommentStore {
                 );
             }
             for (const expected of params.entries) {
-                const comment = comments.get(`${params.accountId}:${expected.commentId}`);
+                const comment = params.reviewAccess
+                    ? [...comments.values()].find(item => item.id === expected.commentId && item.reviewId === params.reviewAccess!.reviewId)
+                    : comments.get(`${params.accountId}:${expected.commentId}`);
                 if (!comment || comment.serverRevision !== expected.serverRevision) {
                     throw new ReviewCommentOperationError(
                         "review_comment_conflict",
@@ -838,31 +940,85 @@ function eventClientMutationId(event: ReviewCommentEventV1): string | null {
     return typeof value === "string" ? value : null;
 }
 
+function structuralJsonText(column: "author_json" | "flags_json", key: string): PrismaTypes.Sql {
+    const provider = getDbProviderFromEnv(process.env, "postgres");
+    const field = Prisma.raw(column);
+    if (provider === "sqlite") return Prisma.sql`json_extract(${field}, ${`$.${key}`})`;
+    if (provider === "mysql") return Prisma.sql`JSON_UNQUOTE(JSON_EXTRACT(${field}, ${`$.${key}`}))`;
+    return Prisma.sql`CAST(${field} AS jsonb)->>${key}`;
+}
+
 function buildWhere(params: ReviewCommentStoreListParams): PrismaTypes.Sql[] {
     const filters = normalizeReviewCommentListFilters(params.filters);
-    const where = [Prisma.sql`account_id = ${params.accountId}`];
-    if (filters.projectId) where.push(Prisma.sql`project_id = ${filters.projectId}`);
-    if (filters.workspace) where.push(Prisma.sql`workspace_json = ${stringifyJson({ machineId: filters.workspace.machineId, path: filters.workspace.path })}`);
+    const where = [commentAccessPredicate(params)];
+    if (filters.reviewId) where.push(Prisma.sql`review_id = ${filters.reviewId}`);
+    const byAppearance = Boolean(params.reviewAccess && (filters.roundOrdinal || filters.runId || filters.sessionId || filters.engineId));
+    if (filters.roundOrdinal && !params.reviewAccess) where.push(Prisma.sql`1 = 0`);
+    if (!byAppearance && filters.projectId) where.push(Prisma.sql`project_id = ${filters.projectId}`);
+    if (!byAppearance && filters.workspace) where.push(Prisma.sql`workspace_json = ${stringifyJson({ machineId: filters.workspace.machineId, path: filters.workspace.path })}`);
     if (filters.workspaceId) where.push(Prisma.sql`workspace_id = ${filters.workspaceId}`);
-    if (filters.sessionId) where.push(Prisma.sql`session_id = ${filters.sessionId}`);
-    if (filters.runId) where.push(Prisma.sql`run_id = ${filters.runId}`);
-    if (filters.engineId) where.push(Prisma.sql`engine_id = ${filters.engineId}`);
+    if (byAppearance) {
+        const appearanceWhere = [Prisma.sql`appearance.comment_id = review_comments.id`];
+        if (filters.roundOrdinal) appearanceWhere.push(Prisma.sql`appearance.round_ordinal = ${filters.roundOrdinal}`);
+        if (filters.runId) appearanceWhere.push(Prisma.sql`appearance.run_id = ${filters.runId}`);
+        if (filters.sessionId) appearanceWhere.push(Prisma.sql`appearance.session_id = ${filters.sessionId}`);
+        if (filters.engineId) appearanceWhere.push(Prisma.sql`appearance.reviewer_id = ${filters.engineId}`);
+        if (filters.workspace) appearanceWhere.push(Prisma.sql`appearance.machine_id = ${filters.workspace.machineId}`);
+        where.push(Prisma.sql`EXISTS (SELECT 1 FROM review_comment_appearances appearance WHERE ${Prisma.join(appearanceWhere, ' AND ')})`);
+    } else {
+        if (filters.sessionId) where.push(Prisma.sql`session_id = ${filters.sessionId}`);
+        if (filters.runId) where.push(Prisma.sql`run_id = ${filters.runId}`);
+        if (filters.engineId) where.push(Prisma.sql`engine_id = ${filters.engineId}`);
+    }
     if (filters.states.length === 1) {
         where.push(Prisma.sql`state = ${filters.states[0]}`);
     } else if (filters.states.length > 1) {
         where.push(Prisma.sql`state IN (${Prisma.join(filters.states)})`);
     }
+    if (!filters.includeHistory) {
+        where.push(Prisma.sql`state NOT IN ('resolved', 'dismissed') AND tombstone_json IS NULL`);
+        const redacted = structuralJsonText("flags_json", "redacted");
+        where.push(getDbProviderFromEnv(process.env, "postgres") === "sqlite"
+            ? Prisma.sql`COALESCE(${redacted}, 0) <> 1`
+            : Prisma.sql`COALESCE(${redacted}, 'false') <> 'true'`);
+    }
+    if (filters.authorKind) where.push(Prisma.sql`${structuralJsonText("author_json", "kind")} = ${filters.authorKind}`);
+    if (filters.authorId) where.push(Prisma.sql`COALESCE(${structuralJsonText("author_json", "userId")}, ${structuralJsonText("author_json", "pluginId")}, ${structuralJsonText("author_json", "agentId")}, ${structuralJsonText("author_json", "runId")}) = ${filters.authorId}`);
     return where;
 }
 
 async function readCommentRows(params: ReviewCommentStoreListParams): Promise<ReviewCommentRow[]> {
+    const filters = normalizeReviewCommentListFilters(params.filters);
+    const position = readReviewCommentListCursorPosition(filters);
     const where = buildWhere(params);
+    if (position) where.push(Prisma.sql`(updated_at < ${position.updatedAt}
+        OR (updated_at = ${position.updatedAt} AND server_revision < ${position.serverRevision})
+        OR (updated_at = ${position.updatedAt} AND server_revision = ${position.serverRevision} AND id < ${position.id}))`);
     return await db.$queryRaw<ReviewCommentRow[]>(Prisma.sql`
         SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)}
         FROM review_comments
         WHERE ${Prisma.join(where, " AND ")}
         ORDER BY updated_at DESC, server_revision DESC, id DESC
+        LIMIT ${filters.limit + 1}
     `);
+}
+
+async function sourcesWithAppearances(rows: readonly ReviewCommentRow[]): Promise<ReviewCommentStoredSourceV1[]> {
+    const sources = rows.map(rowToSource);
+    const ids = sources.filter(source => source.structural.reviewId).map(source => source.structural.id);
+    if (ids.length === 0) return sources;
+    const appearances = await db.reviewCommentAppearance.findMany({ where: { commentId: { in: ids } },
+        select: { commentId: true, roundOrdinal: true, runId: true, reviewerId: true, machineId: true, sessionId: true },
+        orderBy: [{ roundOrdinal: 'asc' }, { sourceKey: 'asc' }] });
+    const byComment = new Map<string, ReviewCommentAppearanceInputV1[]>();
+    for (const appearance of appearances) {
+        const entries = byComment.get(appearance.commentId) ?? [];
+        entries.push({ roundOrdinal: appearance.roundOrdinal, runId: appearance.runId, reviewerId: appearance.reviewerId,
+            ...(appearance.machineId ? { machineId: appearance.machineId } : {}), ...(appearance.sessionId ? { sessionId: appearance.sessionId } : {}) });
+        byComment.set(appearance.commentId, entries);
+    }
+    return sources.map(source => source.structural.reviewId
+        ? { ...source, structural: { ...source.structural, appearances: byComment.get(source.structural.id) ?? [] } } : source);
 }
 
 export function createSqlReviewCommentStore(): ReviewCommentStore {
@@ -880,36 +1036,43 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
             try {
                 return await inTx(async (tx) => {
                     await assertReviewCommentAccountWriteCurrentnessInTx(tx, {
-                        accountId: params.accountId,
+                        accountId: params.reviewAccess?.ownerAccountId ?? params.accountId,
                         storageMode: mode,
                         accountVersion: params.accountVersion,
                         accountEncryptionCurrentness:
-                            params.accountEncryptionCurrentness,
+                            params.reviewAccess ? undefined : params.accountEncryptionCurrentness,
                     });
                     const existingRows = await tx.$queryRaw<ReviewCommentRow[]>(
-                        createMutationLookupQuery(params.accountId, params.createClientMutationId),
+                        createMutationLookupQuery(params.reviewAccess?.ownerAccountId ?? params.accountId, params.createClientMutationId),
                     );
                     const existing = existingRows[0];
                     if (existing) {
-                        return resolveCanonicalCreateReplay(existing, params.createRequestFingerprint);
+                        const replay = resolveCanonicalCreateReplay(existing, params.createRequestFingerprint);
+                        if (params.appearance && replay.comment.structural.reviewId) await recordAppearanceInTx(tx, { ...params.appearance, reviewId: replay.comment.structural.reviewId, commentId: replay.comment.structural.id });
+                        return replay;
                     }
 
                     const key = findingScopeKey(comment);
                     if (key) {
-                        const rows = await tx.$queryRaw<ReviewCommentRow[]>(findingLookupQuery(params.accountId, key));
-                        if (rows[0]) return { comment: rowToSource(rows[0]), replayed: true };
+                        const rows = await tx.$queryRaw<ReviewCommentRow[]>(findingLookupQuery(params.accountId, key, comment));
+                        if (rows[0]) {
+                            const found = rowToSource(rows[0]);
+                            if (params.appearance && found.structural.reviewId) await recordAppearanceInTx(tx, { ...params.appearance, reviewId: found.structural.reviewId, commentId: found.structural.id });
+                            return { comment: found, replayed: true };
+                        }
                     }
                     await tx.reviewComment.create({
                         data: {
                             id: comment.id,
-                            accountId: params.accountId,
+                            accountId: comment.accountId,
+                            reviewId: comment.reviewId,
                             projectId: comment.projectId ?? null,
                             workspaceJson: stringifyOptionalJson(comment.workspace),
                             findingIdentity: comment.findingIdentity,
                             findingSeverity: comment.findingSeverity,
                             reviewedFingerprint: comment.reviewedFingerprint,
                             reviewTriageStatus: comment.reviewTriageStatus,
-                            findingScopeKey: key,
+                            findingScopeKey: comment.reviewId ? null : key,
                             workspaceId: comment.workspaceId,
                             sessionId: comment.sessionId,
                             runId: comment.runId,
@@ -948,28 +1111,36 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                             bulk_action_id, client_mutation_id, actor_json, author_device_id, client_lamport,
                             server_revision, created_at
                         ) VALUES (
-                            ${event.eventId}, ${event.commentId}, ${params.accountId}, ${event.projectId ?? null}, ${stringifyOptionalJson(event.workspace)},
+                            ${event.eventId}, ${event.commentId}, ${event.accountId}, ${event.projectId ?? null}, ${stringifyOptionalJson(event.workspace)},
                             ${event.eventKind}, ${eventEnvelopeJson}, ${event.bulkActionId ?? null},
                             ${eventClientMutationId(event)}, ${stringifyJson(event.actor)},
                             ${event.authorDeviceId ?? null}, ${event.clientLamport ?? null},
                             ${event.serverRevision}, ${event.createdAt}
                         )
                     `);
+                    if (params.appearance && comment.reviewId) await recordAppearanceInTx(tx, { ...params.appearance, reviewId: comment.reviewId, commentId: comment.id }, false);
+                    await publishReviewCommentChangeInTx(tx, comment);
                     return { comment: canonicalSource(params), replayed: false };
                 });
             } catch (error) {
                 if (!isPrismaErrorCode(error, "P2002")) throw error;
                 const racedRows = await db.$queryRaw<ReviewCommentRow[]>(
-                    createMutationLookupQuery(params.accountId, params.createClientMutationId),
+                    createMutationLookupQuery(params.reviewAccess?.ownerAccountId ?? params.accountId, params.createClientMutationId),
                 );
                 const raced = racedRows[0];
                 if (!raced) {
                     const key = findingScopeKey(comment);
-                    const rows = key ? await db.$queryRaw<ReviewCommentRow[]>(findingLookupQuery(params.accountId, key)) : [];
-                    if (rows[0]) return { comment: rowToSource(rows[0]), replayed: true };
+                    const rows = key ? await db.$queryRaw<ReviewCommentRow[]>(findingLookupQuery(params.accountId, key, comment)) : [];
+                    if (rows[0]) {
+                        const found = rowToSource(rows[0]);
+                        if (params.appearance && found.structural.reviewId) await inTx((tx) => recordAppearanceInTx(tx, { ...params.appearance!, reviewId: found.structural.reviewId!, commentId: found.structural.id }));
+                        return { comment: found, replayed: true };
+                    }
                     throw error;
                 }
-                return resolveCanonicalCreateReplay(raced, params.createRequestFingerprint);
+                const replay = resolveCanonicalCreateReplay(raced, params.createRequestFingerprint);
+                if (params.appearance && replay.comment.structural.reviewId) await inTx((tx) => recordAppearanceInTx(tx, { ...params.appearance!, reviewId: replay.comment.structural.reviewId!, commentId: replay.comment.structural.id }));
+                return replay;
             }
     }
 
@@ -979,20 +1150,20 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
             await inTx(async (tx) => {
                 const mode = storageMode(params);
                 await assertReviewCommentAccountWriteCurrentnessInTx(tx, {
-                    accountId: params.accountId,
+                    accountId: params.reviewAccess?.ownerAccountId ?? params.accountId,
                     storageMode: mode,
                     accountVersion: params.accountVersion,
                     accountEncryptionCurrentness:
-                        params.accountEncryptionCurrentness,
+                        params.reviewAccess ? undefined : params.accountEncryptionCurrentness,
                 });
                 if (params.parentCurrentness) {
-                    const parents = await tx.$queryRaw<Array<{ server_revision: number | bigint }>>(Prisma.sql`SELECT server_revision FROM review_comments WHERE account_id = ${params.accountId} AND id = ${params.parentCurrentness.commentId} LIMIT 1`);
+                    const parents = await tx.$queryRaw<Array<{ server_revision: number | bigint }>>(Prisma.sql`SELECT server_revision FROM review_comments WHERE ${commentAccessPredicate(params)} AND id = ${params.parentCurrentness.commentId} LIMIT 1`);
                     if (!parents[0] || toNumber(parents[0].server_revision) !== params.parentCurrentness.serverRevision) throw new ReviewCommentOperationError("review_comment_conflict", "Review comment parent revision is stale");
                 }
                 const existingRows = await tx.$queryRaw<Array<{ server_revision: number | bigint }>>(Prisma.sql`
                     SELECT server_revision
                     FROM review_comments
-                    WHERE account_id = ${params.accountId} AND id = ${comment.id}
+                    WHERE ${commentAccessPredicate(params)} AND id = ${comment.id}
                     LIMIT 1
                 `);
                 const existing = existingRows[0];
@@ -1014,7 +1185,8 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                 if (existing) {
                     const updated = await tx.$executeRaw(Prisma.sql`
                         UPDATE review_comments
-                        SET project_id = ${comment.projectId ?? null},
+                        SET review_id = ${comment.reviewId ?? null},
+                            project_id = ${comment.projectId ?? null},
                             workspace_json = ${stringifyOptionalJson(comment.workspace)},
                             finding_identity = ${comment.findingIdentity ?? null},
                             finding_severity = ${comment.findingSeverity ?? null},
@@ -1047,20 +1219,20 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                             tombstone_json = ${values.tombstoneJson},
                             server_revision = ${comment.serverRevision},
                             updated_at = ${comment.updatedAt}
-                        WHERE account_id = ${params.accountId} AND id = ${comment.id} AND server_revision = ${comment.serverRevision - 1}
+                        WHERE ${commentAccessPredicate(params)} AND id = ${comment.id} AND server_revision = ${comment.serverRevision - 1}
                     `);
                     if (updated !== 1) throw new ReviewCommentOperationError("review_comment_conflict", "Review comment serverRevision changed before persistence");
                 } else {
                     await tx.$executeRaw(Prisma.sql`
                         INSERT INTO review_comments (
-                            id, account_id, project_id, workspace_json, finding_identity, finding_severity, reviewed_fingerprint, review_triage_status, workspace_id, session_id, run_id, engine_id,
+                            id, account_id, review_id, project_id, workspace_json, finding_identity, finding_severity, reviewed_fingerprint, review_triage_status, workspace_id, session_id, run_id, engine_id,
                             finding_id, thread_id, parent_comment_id, state, flags_json, anchor_json,
                             anchor_file_path, anchor_folder_path, snapshot_envelope_json, body_envelope_json,
                             body_version, author_json, edits_json, dispositions_json, evidence_json,
                             transitions_json, fingerprint_json, linked_refs_json, suggested_fix_json,
                             metadata_json, tombstone_json, server_revision, created_at, updated_at
                         ) VALUES (
-                            ${comment.id}, ${params.accountId}, ${comment.projectId ?? null}, ${stringifyOptionalJson(comment.workspace)},
+                            ${comment.id}, ${comment.accountId}, ${comment.reviewId ?? null}, ${comment.projectId ?? null}, ${stringifyOptionalJson(comment.workspace)},
                             ${comment.findingIdentity ?? null}, ${comment.findingSeverity ?? null}, ${comment.reviewedFingerprint ?? null}, ${comment.reviewTriageStatus ?? null}, ${comment.workspaceId ?? null},
                             ${comment.sessionId ?? null}, ${comment.runId ?? null}, ${comment.engineId ?? null},
                             ${comment.findingId ?? null}, ${comment.threadId}, ${comment.parentCommentId ?? null},
@@ -1081,7 +1253,7 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                         bulk_action_id, client_mutation_id, actor_json, author_device_id, client_lamport,
                         server_revision, created_at
                     ) VALUES (
-                        ${event.eventId}, ${event.commentId}, ${params.accountId}, ${event.projectId ?? null}, ${stringifyOptionalJson(event.workspace)},
+                        ${event.eventId}, ${event.commentId}, ${event.accountId}, ${event.projectId ?? null}, ${stringifyOptionalJson(event.workspace)},
                         ${event.eventKind}, ${stringifyJson(bindReviewCommentEventSensitiveForStorage({
                             event,
                             requestBinding: params.requestBinding,
@@ -1092,44 +1264,53 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                         ${event.clientLamport ?? null}, ${event.serverRevision}, ${event.createdAt}
                     )
                 `);
+                await publishReviewCommentChangeInTx(tx, comment);
             });
     }
 
     return {
+        recordAppearance: (appearance) => inTx((tx) => recordAppearanceInTx(tx, appearance)),
+        async listAppearances(params) {
+            const rows = await db.$queryRaw<Array<{ review_id: string; comment_id: string; round_ordinal: number; run_id: string; reviewer_id: string; machine_id: string | null; session_id: string | null }>>(Prisma.sql`
+                SELECT review_id, comment_id, round_ordinal, run_id, reviewer_id, machine_id, session_id FROM review_comment_appearances
+                WHERE review_id = ${params.reviewId} ${params.roundOrdinal === undefined ? Prisma.empty : Prisma.sql`AND round_ordinal = ${params.roundOrdinal}`}
+                ORDER BY round_ordinal, comment_id, source_key`);
+            return rows.map((row) => ({ reviewId: row.review_id, commentId: row.comment_id, roundOrdinal: row.round_ordinal,
+                runId: row.run_id, reviewerId: row.reviewer_id, ...(row.machine_id ? { machineId: row.machine_id } : {}), ...(row.session_id ? { sessionId: row.session_id } : {}) }));
+        },
         async getSource(params) {
-            const rows = await db.$queryRaw<ReviewCommentRow[]>(Prisma.sql`SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)} FROM review_comments WHERE account_id = ${params.accountId} AND id = ${params.commentId} LIMIT 1`);
-            return rows[0] ? rowToSource(rows[0]) : null;
+            const rows = await db.$queryRaw<ReviewCommentRow[]>(Prisma.sql`SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)} FROM review_comments WHERE ${commentAccessPredicate(params)} AND id = ${params.commentId} LIMIT 1`);
+            return (await sourcesWithAppearances(rows))[0] ?? null;
         },
         async listSources(params) {
             if (params.filters.filePath || params.filters.folderPath || params.filters.severity || params.filters.taxonomyIds?.length) throw new ReviewCommentOperationError("review_comment_invalid_filter", "Sensitive filters require client-side opening");
-            const sources = (await readCommentRows(params)).map(rowToSource);
+            const sources = await sourcesWithAppearances(await readCommentRows(params));
             const views = sources.map((item) => ({ ...item.structural, anchor: {} }));
-            const result = applyReviewCommentListQuery(views, params.filters);
+            const result = pageReviewCommentListCandidates(views, params.filters);
             const byId = new Map(sources.map((item) => [item.structural.id, item]));
             return { items: result.items.map((item) => byId.get(item.id)!), cursor: result.cursor };
         },
         async findCreate(params) {
-            const rows = await db.$queryRaw<ReviewCommentRow[]>(createMutationLookupQuery(params.accountId, params.createClientMutationId));
+            const rows = await db.$queryRaw<ReviewCommentRow[]>(createMutationLookupQuery(params.reviewAccess?.ownerAccountId ?? params.accountId, params.createClientMutationId));
             if (rows[0]) return resolveCanonicalCreateReplay(rows[0], params.createRequestFingerprint).comment;
             const key = params.structural ? findingScopeKey(params.structural) : null;
-            const findings = key ? await db.$queryRaw<ReviewCommentRow[]>(findingLookupQuery(params.accountId, key)) : [];
+            const findings = key ? await db.$queryRaw<ReviewCommentRow[]>(findingLookupQuery(params.accountId, key, params.structural)) : [];
             return findings[0] ? rowToSource(findings[0]) : null;
         },
         async get(params) {
             const rows = await db.$queryRaw<ReviewCommentRow[]>(Prisma.sql`
                 SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)}
                 FROM review_comments
-                WHERE account_id = ${params.accountId} AND id = ${params.commentId}
+                WHERE ${commentAccessPredicate(params)} AND id = ${params.commentId}
                 LIMIT 1
             `);
             const row = rows[0];
-            return row ? rowToComment(row) : null;
+            return row ? openPlainSource((await sourcesWithAppearances([row]))[0]!) : null;
         },
         async list(params) {
             const rows = await readCommentRows(params);
-            return applyReviewCommentListQuery(rows
-                .map(rowToComment)
-                .filter((comment) => matchesReviewCommentListFilters(comment, params.filters)), params.filters);
+            const page = pageReviewCommentListCandidates(await Promise.all((await sourcesWithAppearances(rows)).map(openPlainSource)), params.filters);
+            return { items: page.items.filter((comment) => matchesReviewCommentListFilters(comment, params.filters)), cursor: page.cursor };
         },
         async listEvents(params) {
             // SQLite stores int64 values even in an INTEGER-declared column, but Prisma
@@ -1138,11 +1319,11 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                 ? Prisma.sql`CAST(created_at AS REAL) AS created_at`
                 : Prisma.sql`created_at`;
             const rows = await db.$queryRaw<ReviewCommentEventRow[]>(Prisma.sql`
-                SELECT event_id, comment_id, account_id, project_id, workspace_json, event_kind, event_envelope_json,
+                SELECT event_id, comment_id, account_id, (SELECT review_id FROM review_comments WHERE id = comment_id) AS review_id, project_id, workspace_json, event_kind, event_envelope_json,
                     bulk_action_id, client_mutation_id, actor_json, author_device_id, client_lamport,
                     server_revision, ${createdAt}
                 FROM review_comment_events
-                WHERE account_id = ${params.accountId} AND comment_id = ${params.commentId}
+                WHERE comment_id = ${params.commentId} AND comment_id IN (SELECT id FROM review_comments WHERE ${commentAccessPredicate(params)})
                 ORDER BY server_revision ASC
             `);
             return rows.map(rowToEvent);
@@ -1283,7 +1464,7 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                         const matched = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
                             SELECT id
                             FROM review_comments
-                            WHERE account_id = ${params.accountId}
+                            WHERE ${commentAccessPredicate(params)}
                                 AND (${expectedRows})
                             ${lockClause}
                         `);
