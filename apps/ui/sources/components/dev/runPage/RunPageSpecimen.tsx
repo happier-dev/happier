@@ -9,6 +9,7 @@ import { ExecutionRunStopFailedState } from '@/components/sessions/runs/details/
 import { SessionExecutionRunInfoCard } from '@/components/sessions/runs/details/SessionExecutionRunInfoCard';
 import { ExecutionRunChildChoiceCard } from '@/components/sessions/runs/launcher/ExecutionRunChildChoiceCard';
 import { ExecutionRunLauncherOptions } from '@/components/sessions/runs/launcher/ExecutionRunLauncherOptions';
+import type { ExecutionRunLauncherProfileChoice } from '@/components/sessions/runs/launcher/resolveExecutionRunLauncherProfileChoices';
 import { GitCleanState } from '@/components/sessions/panes/git/GitCleanState';
 import { projectExecutionRunChildChoiceV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -54,6 +55,14 @@ const styles = StyleSheet.create((theme) => ({
 
 const noop = () => {};
 const NOW = Date.now();
+
+/** Two review profiles, one unavailable: the launcher offers them as one segmented choice beside Permissions. */
+const PROFILE_DEFAULTS = { retention: 'resumable', runClass: 'bounded', io: 'streaming' } as const;
+const PROFILE_CUSTODY = { kind: 'managed', immutableGenerationId: 'g1', installSource: 'archive' } as const;
+const LAUNCHER_PROFILES: readonly ExecutionRunLauncherProfileChoice[] = [
+    { id: 'review.coderabbit/review', intent: 'review', title: 'CodeRabbit', compatibleAgentIds: ['coderabbit'], compatibleAgentId: 'coderabbit', sourceCustody: PROFILE_CUSTODY, available: true, disabled: false, defaults: PROFILE_DEFAULTS },
+    { id: 'review.deepsec/audit', intent: 'review', title: 'DeepSec Audit', compatibleAgentIds: ['deepsec'], compatibleAgentId: null, sourceCustody: PROFILE_CUSTODY, available: false, unavailableCode: 'missing_tool', disabled: true, defaults: PROFILE_DEFAULTS },
+];
 
 const reviewRun = {
     runId: 'run_7f3a91c2',
@@ -227,8 +236,8 @@ export function RunPageSpecimen(props: Readonly<{ frame: string | null }>) {
                     <ExecutionRunLauncherOptions
                         backendChoices={backendChoices as never}
                         selectedBackendTargetKeys={['agent:claude', 'agent:codex']}
-                        profileChoices={[]}
-                        selectedProfileId=""
+                        profileChoices={LAUNCHER_PROFILES}
+                        selectedProfileId={LAUNCHER_PROFILES[0]!.id}
                         selectedPermissionMode="read-only"
                         permissionModeOptions={[{ value: 'read-only', label: 'Read-only' }, { value: 'default', label: 'Default' }] as never}
                         fields={[]}
