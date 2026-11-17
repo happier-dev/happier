@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createDbMaintenanceClient, getDbProviderFromEnv } from '@/storage/prisma';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
+import { readDeploymentAppEnrollmentsForMachinesInTx } from './deploymentAppEnrollment';
 
 const provider = getDbProviderFromEnv(process.env, 'postgres');
 
@@ -19,7 +22,6 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('App enrollment
             expect(await client.machine.findUnique({ where: { id: machine.id } })).toMatchObject({
                 id: machine.id, accountId: account.id, metadata: '{}',
             });
-            const { readDeploymentAppEnrollmentsForMachinesInTx } = await import('./deploymentAppEnrollment');
             const requests: { model?: string; action: string; args: unknown }[] = [];
             let stop = observePrismaRequests(client, { before: request => { requests.push(request); } });
             try {
@@ -30,7 +32,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('App enrollment
             const source = await client.projectSource.create({ data: { createdByAccountId: account.id,
                 name: 'Native App association', owner: { kind: 'account', accountId: account.id }, audience: [], attachments: [] } });
             const artifact = await client.artifact.create({ data: { id: randomUUID(), accountId: account.id,
-                header: new Uint8Array(), body: new Uint8Array() } });
+                header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
             const content = { contentArtifactId: artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
             const environment = await client.deploymentEnvironment.create({ data: { projectSourceId: source.id,
                 createdByAccountId: account.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
