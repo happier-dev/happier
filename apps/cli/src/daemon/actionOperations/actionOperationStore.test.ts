@@ -59,6 +59,34 @@ describe('action operation store', () => {
     expect(JSON.stringify(outcomes)).not.toContain('Private native output');
   });
 
+  it('recovers safe backup outcomes from retained native input without another Account or native output', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'backup-outcome-recovery-'));
+    try {
+      // Real native receipt persistence proves recovery without a successful live publication.
+      const open = () => prepareProjectOpenReceiptPersistence({ directory: join(directory, 'receipts'),
+        keyPath: join(directory, 'key.json'), accountId: ACCOUNT_SCOPE.accountId, machineId: ACCOUNT_SCOPE.machineId });
+      const first = createActionOperationStore({ projectOpenReceiptPersistence: await open(), now: () => 100 });
+      const input = buildDeploymentBackupActionInputV1('deployments.backups.run', {
+        serverId: 'home', environmentId: 'environment', machineId: ACCOUNT_SCOPE.machineId,
+        installationId: 'installation', targetLinkId: 'target', deploymentId: 'deployment', expectedRevision: 1, configRevision: 1,
+      });
+      first.create({ operationId: 'first-failure', scope: ACCOUNT_SCOPE, actionId: 'deployments.backups.run',
+        title: 'Backup', cancellation: 'unsupported', inputIdentity: JSON.stringify(input) });
+      first.markRunning('first-failure');
+      first.fail('first-failure', { errorCode: 'backup_failed', error: 'PRIVATE_NATIVE_OUTPUT' });
+      const restarted = createActionOperationStore({ projectOpenReceiptPersistence: await open(), now: () => 101 });
+      const requestedProjection = { ...ACCOUNT_SCOPE, machineOutcomes: true as const };
+      const recovered = restarted.list(requestedProjection);
+      expect(recovered).toMatchObject({ machineOutcomes: [{ kind: 'backup', serverId: 'home',
+        machineId: ACCOUNT_SCOPE.machineId, environmentId: 'environment', operationId: 'first-failure',
+        state: 'failed', occurredAt: 100, errorCode: 'backup_failed' }] });
+      expect(JSON.stringify('machineOutcomes' in recovered && recovered.machineOutcomes)).not.toContain('PRIVATE_NATIVE_OUTPUT');
+      expect(restarted.list(ACCOUNT_SCOPE)).not.toHaveProperty('machineOutcomes');
+      expect(restarted.list({ ...requestedProjection, accountId: 'another-account' }))
+        .toMatchObject({ items: [], machineOutcomes: [] });
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
   it('retains a shared Machine requester capture in the custodian partition without disclosing it to another Account', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'backup-receipt-scope-'));
     try {

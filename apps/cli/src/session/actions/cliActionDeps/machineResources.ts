@@ -6,6 +6,7 @@ import type { CliMachineActionCall, CliMachineActionServerScopeCurrent } from '.
 import { executeCapturedMachineAction } from '@/api/machine/capturedMachineAction';
 import { MACHINE_VITALS_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineVitals';
 import { MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineResources';
+import { MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineResourcesActionIdsV1';
 import { MACHINE_ROLES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineRoles';
 import { MACHINE_ISOLATION_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineIsolation';
 import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
@@ -34,13 +35,15 @@ import { MACHINE_SERVICE_LOGS_READ_ACTION_ID } from '@happier-dev/protocol/local
 import type { CliDeploymentEnvironmentAccessRead, CliDeploymentEnvironmentAccessObserve } from '@/deployments/createCliDeploymentActionDeps';
 export function createCliMachineResourceActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'isCredentialCurrent' | 'token' | 'externalActionMachineInstallationId' | 'externalActionMachineRequestPrivateKey' | 'serverIdentityId' | 'machineActionDirectTargetTransport' | 'machineGuardAction' | 'savedSecretOperationContext' | 'serverHttpBaseUrl'>,
-  { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, readEnvironmentAccess, observeEnvironmentAccessChanges, executionRunActionFailure, machineRebootReferences }: Readonly<{
+  { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, readEnvironmentAccess, observeEnvironmentAccessChanges, executionRunActionFailure, machineRebootReferences, resolveServerRequestHeaders }: Readonly<{
     projectHomeAdmission: CliProjectAdmission['projectHomeAdmission'];
     callMachineAction: CliMachineActionCall;
     assertProjectRequesterCurrent: CliProjectAdmission['assertProjectRequesterCurrent'];
     projectAccountAdmission: CliProjectAdmission['projectAccountAdmission'];
     withProjectHome: CliProjectAdmission['withProjectHome'];
     projectHomeId: string;
+    resolveServerRequestHeaders: (context: ActionExecutorContext | undefined, actionId: string,
+      request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
     machineRebootReferences?: ActionExecutorDeps['machineRebootReferences'];
     readEnvironmentAccess: CliDeploymentEnvironmentAccessRead;
     observeEnvironmentAccessChanges: CliDeploymentEnvironmentAccessObserve;
@@ -487,6 +490,19 @@ export function createCliMachineResourceActionDeps(
       };
       const execute = async () => {
         if (!await current()) return { status: 'unavailable' };
+        if (actionId === MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1) {
+          if (!params.credentials) return { status: 'unavailable' };
+          const request = MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS[actionId].parse(input);
+          const { createCliAccountKvJsonCollectionTransport } = await import('@/api/client/accountKvJsonTransport');
+          const { readMachineOutcomeSummaries } = await import('@happier-dev/protocol/machines/resources/machineOutcomeSummaryV1');
+          const transport = createCliAccountKvJsonCollectionTransport({ credentials: params.credentials,
+            serverBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(), ...(signal ? { signal } : {}),
+            shouldContinue: () => !signal?.aborted,
+            resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, actionId, request) });
+          const outcomes = await readMachineOutcomeSummaries(transport, request.keys);
+          if (!await current()) return { status: 'unavailable' };
+          return { status: 'ready', outcomes: outcomes.filter(outcome => outcome.serverId === serverId) };
+        }
         if (actionId === 'machines.resources.policy.set') {
           const request = MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS[actionId].parse(input);
           const { executeCapturedMachineAction } = await import("@/api/machine/capturedMachineAction");

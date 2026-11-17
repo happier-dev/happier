@@ -287,6 +287,46 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         }
     }
 
+    it('republishes a missing native pressure summary on reconnect using the latest retained transition and its original since', async () => {
+        await withRealCheckpoint(async storage => {
+            const credentials = { token: 'token', encryption: null } as const;
+            await storage.writeStoredCredentialsForServerId(configuration.activeServerId, credentials);
+            const rows = new Map<string, { key: string; value: string; version: number }>();
+            mockAccountGet(async url => {
+                if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'coalesce-account' } };
+                if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+                    mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+                } };
+                const key = decodeURIComponent(new URL(url).pathname.slice('/v1/kv/'.length));
+                const row = rows.get(key);
+                return row ? { status: 200, data: row } : { status: 404 };
+            });
+            let unavailable = true;
+            // HTTP publication is the failure boundary; native recovery, Account
+            // mode, credentials, summary folding and sealing remain real.
+            axiosPost.mockImplementation(async (_url, body: { mutations: { key: string; value: string; version: number }[] }) => {
+                if (unavailable) throw new Error('Home disconnected before summary publication');
+                const mutation = body.mutations[0]!;
+                rows.set(mutation.key, { ...mutation, version: mutation.version + 1 });
+                return { status: 200, data: { success: true,
+                    results: [{ key: mutation.key, version: mutation.version + 1 }] } };
+            });
+            const client = new ApiMachineClient(credentials.token, { id: 'pressure-machine', encryptionMode: 'plain', metadata: null,
+                metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+            const fired = { kind: 'pressure', serverId: 'home', machineId: 'pressure-machine', since: 90,
+                episode: { kind: 'alert', rule: 'memory', state: 'fired', at: 100 } } as const;
+            const recovered = { ...fired, episode: { ...fired.episode, state: 'recovered', at: 200 } } as const;
+            try {
+                await expect(client.publishMachineResourceOutcome(fired)).rejects.toThrow('Home disconnected');
+                expect(rows.size).toBe(0);
+                unavailable = false;
+                await client.replayMachineResourceOutcomes([fired, recovered]);
+                expect([...rows.values()].map(row => JSON.parse(Buffer.from(row.value, 'base64').toString())))
+                    .toEqual([{ t: 'plain', v: { v: 1, outcomes: [recovered] } }]);
+            } finally { await client.shutdown(); }
+        });
+    });
+
     it.each(['complete', 'failed-tail', 'cancelled-tail', 'cursor-gone'] as const)(
         'publishes one real checkpoint at catch-up exit with the last materialized page (%s)', async mode => {
             await withRealCheckpoint(async storage => {

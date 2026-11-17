@@ -93,6 +93,8 @@ import { sameProviderConnectionsDirectMaterial } from '@/providers/lifecycle/cur
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
+import { latestMachineOutcomeSummaries, retainMachineOutcomeSummary, type MachineResourceOutcomeV1 } from '@happier-dev/protocol/machines/resources/machineOutcomeSummaryV1';
+import { createCliAccountKvJsonCollectionTransport } from './client/accountKvJsonTransport';
 import { readStoredCredentials, readStoredCredentialsForServerId, sameStoredCredentials, type StoredCredentials } from '@/persistence';
 import { createExecutionRunRpcApprovalDeps } from '@/rpc/handlers/executionRuns/createExecutionRunRpcApprovalDeps';
 import { createAccountScopedProviderModelProjectionReader } from '@/providers/modelManagement/remoteProjection';
@@ -1218,6 +1220,30 @@ export class ApiMachineClient {
         return this.actionOperationRuntime.readDeploymentBackupOperations(request);
     }
 
+    async publishMachineResourceOutcome(payload: MachineResourceOutcomeV1): Promise<void> {
+        const isCurrent = () => !this.projectionSchedulingClosed && configuration.activeServerId === this.machineRuntimeServerId;
+        if (!isCurrent()) return;
+        publishDaemonHostEvent({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1,
+            scope: { kind: 'account' }, payload }, () => !isCurrent());
+        const credentials = await readStoredCredentialsForServerId(this.machineRuntimeServerId);
+        if (!isCurrent()) return;
+        if (!credentials || credentials.token !== this.token) throw new PluginError({ code: 'credential_unavailable',
+            message: 'Machine outcome Account credentials are unavailable.', retryable: false });
+        const transport = createCliAccountKvJsonCollectionTransport({ credentials,
+            serverBaseUrl: this.machineRuntimeServerHttpBaseUrl, shouldContinue: isCurrent,
+            resolveAuthorizationHeaders: () => ({ Authorization: `Bearer ${credentials.token}` }) });
+        await retainMachineOutcomeSummary(transport, payload);
+    }
+
+    async replayMachineResourceOutcomes(pressure: readonly MachineResourceOutcomeV1[] = []): Promise<void> {
+        const accountId = await this.getAccountId();
+        if (!accountId) return;
+        const retained = this.actionOperationRuntime.store.list({ accountId, machineId: this.machine.id, machineOutcomes: true });
+        for (const outcome of latestMachineOutcomeSummaries([...(retained.machineOutcomes ?? []), ...pressure])) {
+            await this.publishMachineResourceOutcome(outcome);
+        }
+    }
+
     async acquireDeploymentRestoreUpload(input: Readonly<{ transferId: string; environmentId: string }>,
         context: import('@happier-dev/protocol').ActionExecutorContext) {
         const accountId = context.externalActionExecutionAuthorization?.binding.accountId ?? context.runtimeAccountId;
@@ -1810,10 +1836,9 @@ export class ApiMachineClient {
                 ? { onInspection: this.lifecycleDependencies.onProjectOperationInspection } : {}),
             onBackupOutcome: (payload, scope) => {
                 // Account-scoped broker facts must stay with the connection Account.
-                void this.getAccountId().then(accountId => {
+                void this.getAccountId().then(async accountId => {
                     if (accountId !== scope.accountId) return;
-                    publishDaemonHostEvent({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1,
-                        scope: { kind: 'account' }, payload }, () => this.projectionSchedulingClosed);
+                    await this.publishMachineResourceOutcome(payload);
                 }).catch(error => logger.warn('Backup outcome event publication failed', error));
             },
             publishSnapshot: actionOperationPublisher,

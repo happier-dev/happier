@@ -26,7 +26,7 @@ export function createMachineVitalsAlerts(input: Readonly<{
         episodes: input.historyStore.alerts(), now: minute.t, disk: sample.disk });
       for (const transition of transitions) {
         // Retain suppression before delivery within this daemon lifetime; restart begins fresh.
-        await input.historyStore.appendAlert(transition.episode);
+        await input.historyStore.appendAlert(transition.episode, transition.since);
         try { input.emit?.(transition); } catch (error) { input.onError?.(error); }
         try { await input.notify(transition, sample, snapshot.policy); } catch (error) { input.onError?.(error); }
       }

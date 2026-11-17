@@ -10,6 +10,7 @@ import type { StoredCredentials } from '@/persistence';
 import tweetnacl from 'tweetnacl';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { machineOutcomeSummaryAddress, readMachineOutcomeSummaries, retainMachineOutcomeSummary } from '@happier-dev/protocol/machines/resources/machineOutcomeSummaryV1';
 
 afterEach(() => vi.restoreAllMocks());
 it('writes, reads and lists keyless plain rows through protocol-admitted Account KV HTTP', async () => {
@@ -149,6 +150,22 @@ it('writes from recovery-secret credentials using the data key', async () => {
     const row = legacyAccountKvVectors[0];
     await expect(http.transport(legacy, row.key).compareAndSet(row.value, -1)).resolves.toEqual({ success: true, version: 0 });
     await expect(http.transport(dataKey, row.key).read()).resolves.toEqual({ value: row.value, version: 0 });
+});
+
+it('keeps retained Machine outcomes encrypted across the existing Account KV writer and keyholding reader', async () => {
+    const http = accountKvHttp([]);
+    const failed = { kind: 'backup', serverId: 'home', machineId: 'machine', environmentId: 'environment',
+        operationId: 'native-failure', state: 'failed', occurredAt: 100, errorCode: 'backup_failed' } as const;
+    const transport = (credentials: StoredCredentials) => createCliAccountKvJsonCollectionTransport({ credentials,
+        serverBaseUrl: 'https://task-home.test', resolveAuthorizationHeaders: () => ({ Authorization: 'Bearer token' }) });
+    await retainMachineOutcomeSummary(transport(legacy), failed);
+    const key = machineOutcomeSummaryAddress(failed).key;
+    const stored = http.rows.get(key)!;
+    expect(decryptResult(machineKey, 'dataKey', decodeBase64(stored.value)))
+        .toEqual({ status: 'authenticated', value: { v: 1, outcomes: [failed] } });
+    await expect(readMachineOutcomeSummaries(transport(dataKey), [key])).resolves.toEqual([failed]);
+    await expect(readMachineOutcomeSummaries(transport({ token: 'token', encryption: null }), [key]))
+        .rejects.toMatchObject({ code: 'account_storage_currentness_unavailable' });
 });
 
 it('does not overwrite a concurrent winner while re-sealing and returns its value/version', async () => {

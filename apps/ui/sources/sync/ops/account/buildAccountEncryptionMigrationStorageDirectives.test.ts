@@ -168,16 +168,25 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
         const value = { v: 1, suppressions: [{ kind: 'dismissed', evidenceKey: 'dismissed' },
             { kind: 'snoozed', evidenceKey: 'snoozed', untilMs: 3 }] };
         const encoded = await encodeAccountStoredJsonContent({ mode: fromMode, value, encryption });
+        const { machineOutcomeSummaryAddress } = await import('@happier-dev/protocol/machines/resources/machineOutcomeSummaryV1');
+        const outcome = { kind: 'backup', serverId: 'home', machineId: 'machine', environmentId: 'environment',
+            operationId: 'native-failure', state: 'failed', occurredAt: 100, errorCode: 'backup_failed' } as const;
+        const summaryKey = machineOutcomeSummaryAddress(outcome).key;
+        const summary = { v: 1, outcomes: [outcome] };
+        const summaryEncoded = await encodeAccountStoredJsonContent({ mode: fromMode, value: summary, encryption });
         const result = await buildAccountEncryptionMigrationStorageDirectives({ ...emptyTransitionInventories,
             fromMode, toMode, sourceEncryption: fromMode === 'e2ee' ? encryption : null,
             targetEncryption: toMode === 'e2ee' ? encryption : null,
-            machines: [], todos: [], workspace: [{ key: 'workspace:usage-coach:suppressions', version: 9, value: encoded }], artifacts: [], sessions: [],
+            machines: [], todos: [], workspace: [{ key: 'workspace:usage-coach:suppressions', version: 9, value: encoded },
+                { key: summaryKey, version: 4, value: summaryEncoded }], artifacts: [], sessions: [],
             sessionSourceCredentials: fromMode === 'e2ee' ? legacyCredentials : tokenOnlyCredentials,
             sessionTargetCredentials: toMode === 'e2ee' ? legacyCredentials : null,
         });
-        expect(result.workspace).toMatchObject({ action: 'migrate', items: [{ key: 'workspace:usage-coach:suppressions', expectedVersion: 9 }] });
+        expect(result.workspace).toMatchObject({ action: 'migrate', items: [
+            { key: 'workspace:usage-coach:suppressions', expectedVersion: 9 }, { key: summaryKey, expectedVersion: 4 }] });
         if (result.workspace?.action !== 'migrate') throw new Error('Expected Coach conversion');
         expect(await decodeAccountStoredJsonContent({ encoded: result.workspace.items[0]!.value, expectedMode: toMode, encryption })).toEqual(value);
+        expect(await decodeAccountStoredJsonContent({ encoded: result.workspace.items[1]!.value, expectedMode: toMode, encryption })).toEqual(summary);
     });
 
     it('opens shared Todo content with its resource key and emits explicit target envelopes during Account conversion', async () => {

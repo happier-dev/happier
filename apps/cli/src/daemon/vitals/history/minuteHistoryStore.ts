@@ -5,9 +5,10 @@ import { createDayPartitionedJsonl } from '../../persistence/dayPartitionedJsonl
 
 export type MinuteHistoryStore = Readonly<{
   append: (record: MachineVitalsMinuteRecordV1) => Promise<boolean>;
-  appendAlert: (episode: MachineVitalsAlertEpisodeV1) => Promise<void>;
+  appendAlert: (episode: MachineVitalsAlertEpisodeV1, since: number) => Promise<void>;
   minutes: (sinceMs: number) => readonly MachineVitalsMinuteRecordV1[];
   alerts: () => readonly MachineVitalsAlertEpisodeV1[];
+  alertTransitions: () => readonly Readonly<{ episode: MachineVitalsAlertEpisodeV1; since: number }>[];
   read: (sinceMs: number) => Promise<readonly MachineVitalsMinuteRecordV1[]>;
   prune: () => Promise<void>;
 }>;
@@ -26,7 +27,7 @@ export async function createMinuteHistoryStore(input: Readonly<{
       return minute.success ? minute.data : null;
     } });
   let records: MachineVitalsMinuteRecordV1[] = [];
-  let episodes: MachineVitalsAlertEpisodeV1[] = [];
+  let transitions: Readonly<{ episode: MachineVitalsAlertEpisodeV1; since: number }>[] = [];
   let lastMinute = -Infinity;
   // Retired alert/checkpoint rows are ignored; suppression is local to this daemon lifetime.
   for (const row of await journal.read(nowMs() - retentionMs)) {
@@ -45,8 +46,8 @@ export async function createMinuteHistoryStore(input: Readonly<{
   function trimCache() {
     const cutoff = nowMs() - retentionMs;
     records = records.filter((record) => record.t >= cutoff);
-    const latest = new Map(episodes.map(episode => [episodeKey(episode), episode]));
-    episodes = episodes.filter((episode) => episode.at >= cutoff
+    const latest = new Map(transitions.map(({ episode }) => [episodeKey(episode), episode]));
+    transitions = transitions.filter(({ episode }) => episode.at >= cutoff
       || latest.get(episodeKey(episode)) === episode && episode.state === 'fired');
   }
   async function prune() {
@@ -73,12 +74,13 @@ export async function createMinuteHistoryStore(input: Readonly<{
       records.push(canonical);
       return true;
     }),
-    appendAlert: (episode) => serialize(async () => {
+    appendAlert: (episode, since) => serialize(async () => {
       await pruneAtRollover();
-      episodes.push(episode);
+      transitions.push({ episode, since });
     }),
     minutes,
-    alerts: () => { trimCache(); return episodes.slice(); },
+    alerts: () => { trimCache(); return transitions.map(({ episode }) => episode); },
+    alertTransitions: () => { trimCache(); return transitions.slice(); },
     read: (sinceMs) => serialize(async () => minutes(sinceMs)),
     prune: () => serialize(prune),
   };

@@ -87,6 +87,8 @@ type ListActionOperationsInput = ActionOperationQueryScope & Readonly<{
   actorAccountId?: ActionOperationListV2Request['actorAccountId'];
   createdAtFromMs?: ActionOperationListV2Request['createdAtFromMs'];
   createdAtToMs?: ActionOperationListV2Request['createdAtToMs'];
+  /** Safe native projection; callers cannot manufacture outcomes from history. */
+  machineOutcomes?: true;
 }>;
 
 function isTerminal(snapshot: ActionOperationSnapshotV1): boolean {
@@ -204,16 +206,22 @@ export function createActionOperationStore(options?: Readonly<{
     }
   };
 
-  const emitBackupOutcome = (snapshot: ActionOperationSnapshotV1, previous?: ActionOperationSnapshotV1): void => {
+  const projectBackupOutcome = (snapshot: ActionOperationSnapshotV1): BackupOutcomeEventV1 | null => {
     const backup = invocationMetadata.get(snapshot.operationId)?.backupInput;
-    if (snapshot.actionId === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 && backup && previous && !isTerminal(previous)
-      && (snapshot.state === 'succeeded' || snapshot.state === 'failed') && snapshot.settledAt !== undefined) {
-      try {
-        options?.onBackupOutcome?.({ kind: 'backup', serverId: backup.serverId, machineId: snapshot.scope.machineId,
-          environmentId: backup.environmentId, operationId: snapshot.operationId, state: snapshot.state,
-          ...(snapshot.originRunId ? { originRunId: snapshot.originRunId } : {}),
-          occurredAt: snapshot.settledAt, errorCode: snapshot.error?.errorCode ?? null }, snapshot.scope);
-      } catch { /* Observation cannot change the retained backup result. */ }
+    if (snapshot.actionId !== DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 || !backup
+      || snapshot.state !== 'succeeded' && snapshot.state !== 'failed' || snapshot.settledAt === undefined) return null;
+    return { kind: 'backup', serverId: backup.serverId, machineId: snapshot.scope.machineId,
+      environmentId: backup.environmentId, operationId: snapshot.operationId, state: snapshot.state,
+      ...(snapshot.originRunId ? { originRunId: snapshot.originRunId } : {}),
+      occurredAt: snapshot.settledAt, errorCode: snapshot.error?.errorCode ?? null };
+  };
+
+  const emitBackupOutcome = (snapshot: ActionOperationSnapshotV1, previous?: ActionOperationSnapshotV1): void => {
+    if (!previous || isTerminal(previous)) return;
+    const outcome = projectBackupOutcome(snapshot);
+    if (outcome) {
+      try { options?.onBackupOutcome?.(outcome, snapshot.scope); }
+      catch { /* Observation cannot change the retained backup result. */ }
     }
   };
 
@@ -669,6 +677,7 @@ export function createActionOperationStore(options?: Readonly<{
     list(input: ListActionOperationsInput): Readonly<{
       items: readonly ActionOperationSnapshotV1[];
       nextCursor: string | null;
+      machineOutcomes?: readonly BackupOutcomeEventV1[];
     }> {
       prune();
       assertReceiptHistoryReadable();
@@ -700,6 +709,10 @@ export function createActionOperationStore(options?: Readonly<{
           return summary === snapshot ? snapshot : freezeSnapshot(summary);
         }),
         nextCursor: null,
+        ...(input.machineOutcomes ? { machineOutcomes: page.flatMap(snapshot => {
+          const outcome = projectBackupOutcome(snapshot);
+          return outcome ? [outcome] : [];
+        }) } : {}),
       };
     },
 

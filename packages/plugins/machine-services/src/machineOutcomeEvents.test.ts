@@ -43,7 +43,7 @@ it('offers settled machine events and their setup Actions through the existing W
         const event = PLUGIN_MANIFEST.contributes.events?.find(row => row.id === localId);
         expect(event && 'automation' in event && event.automation).toMatchObject({ completionOutcome });
     }
-    for (const localId of ['backup-failed', 'backup-succeeded', 'machine-pressure-changed', 'worktree.removed']) {
+    for (const localId of ['backup-failed', 'backup-succeeded', 'machine-pressure-changed', 'worktree-removed']) {
         const event = PLUGIN_MANIFEST.contributes.events?.find(row => row.id === localId);
         expect(event?.kind).toBe('event');
         expect(event && 'automation' in event && event.automation).toMatchObject({ eligible: true,
@@ -125,7 +125,7 @@ it('projects each matched settled run and pressure transition once, retains arri
     // Authenticated host-event transport is the boundary; the adapter and schemas remain real.
     const host = { subscribe(_target: unknown, callback: typeof listener) { listener = callback; return { dispose() { disposed = true; } }; } } as unknown as BackgroundServiceContext['services']['events']['host'];
     const adapter = createMachineOutcomeEventSourceAdapter(host, () => 200);
-    const definitions = ['backup-failed', 'backup-succeeded', 'machine-pressure-changed', 'worktree.removed'].map(definition);
+    const definitions = ['backup-failed', 'backup-succeeded', 'machine-pressure-changed', 'worktree-removed'].map(definition);
     const context = { signal: new AbortController().signal } as BackgroundServiceContext;
     const observe = async (definition: PluginCheckpointedEventSourceDefinitionV1) => {
         const decoded = adapter.decode(definition);

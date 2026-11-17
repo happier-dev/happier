@@ -4018,6 +4018,38 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     }, 420_000);
 
+    it('admits retained Machine summary reads through the personal Action without unrelated Account KV access', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const { app } = await createApp(fixture.team.id);
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const homeId = await getOrCreateServerIdentityId();
+        const actionId = 'machines.resources.outcomes.read';
+        try {
+            const root = await mint(app, fixture, actionId, { ...fixture.envelope, input: { serverId: homeId } }, token);
+            const request = (method: 'GET' | 'POST', path: string, body?: unknown) => app.inject({ method, url: path,
+                ...(body === undefined ? {} : { payload: body }), headers: machineHeaders({ authorizationToken: root.token,
+                    effectActionId: actionId, method, path, body, privateKey: fixture.keyPair.secretKey }) });
+            const currentness = await request('GET', '/v1/account/encryption/currentness');
+            expect(currentness.statusCode, currentness.body).toBe(200);
+            const prefix = 'workspace:machine-outcome:v1:';
+            const list = await request('GET', `/v1/kv?${new URLSearchParams({ prefix, limit: '1000' })}`);
+            expect(list.statusCode, list.body).toBe(200);
+            expect(list.json()).toEqual({ items: [] });
+            expect((await request('GET', `/v1/kv/${encodeURIComponent(prefix + 'missing')}`)).statusCode).toBe(404);
+            for (const path of ['/v1/kv', '/v1/kv/todo.private', '/v1/kv?prefix=todo.',
+                `/v1/kv?prefix=${encodeURIComponent(prefix)}&accountId=other`, '/v2/account/settings']) {
+                expect((await request('GET', path)).statusCode, path).toBe(401);
+            }
+            expect((await request('POST', '/v1/kv', { mutations: [{ key: prefix + 'forged', value: 'e30=', version: -1 }] })).statusCode).toBe(401);
+            const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+            await db.machine.update({ where: { id: fixture.machine.id }, data: { accountId: custodian.id } });
+            await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: fixture.machine.id,
+                principal: { kind: 'account', accountId: fixture.account.id }, level: 'admin' }));
+            expect(await resolveMachineAdmission({ actorAccountId: fixture.account.id, machineId: fixture.machine.id, actionId }))
+                .toMatchObject({ kind: 'denied' });
+        } finally { await app.close(); }
+    });
+
     it.each(['scm.diffSummary.reviewed.mark', 'scm.diffSummary.reviewed.unmark',
         'scm.diffSummary.result.delete', 'scm.diffSummary.result.clear'] as const)(
     'admits personal reviewed-mark currentness and CAS without granting unrelated Account access for %s', async actionId => {

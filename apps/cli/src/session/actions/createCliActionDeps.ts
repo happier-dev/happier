@@ -1026,6 +1026,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
 
   const projectDeps = createCliProjectActionDeps(params, { readAdmittedProjectRows, actionOperationAction: machineDeps.actionOperationAction!, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome });
   const machineResourceDeps = createCliMachineResourceActionDeps(params, { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, machineRebootReferences,
+    resolveServerRequestHeaders,
     readEnvironmentAccess: deploymentStorageDeps.readEnvironmentAccess,
     observeEnvironmentAccessChanges: deploymentStorageDeps.observeEnvironmentAccessChanges, executionRunActionFailure });
   const connectionsDeps = createCliConnectionsActionDeps(params, { callMachineAction, connectedServiceAction, projectHomeId,

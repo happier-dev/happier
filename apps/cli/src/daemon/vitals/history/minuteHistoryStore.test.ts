@@ -26,8 +26,9 @@ describe('minute history store', () => {
     const file = join(directory, 'minutes-2026-10-10.jsonl');
     const beforeAlert = await readFile(file, 'utf8');
     const alert = { kind: 'alert' as const, rule: 'memory' as const, state: 'fired' as const, at: now - 120_000 };
-    await store.appendAlert(alert);
+    await store.appendAlert(alert, now - 180_000);
     expect(store.alerts()).toEqual([alert]);
+    expect(store.alertTransitions()).toEqual([{ episode: alert, since: now - 180_000 }]);
     expect(await readFile(file, 'utf8')).toBe(beforeAlert);
     expect(await store.append(minute(now - 120_000))).toBe(true);
     expect(await store.append(minute(now - 180_000))).toBe(false);
@@ -36,6 +37,7 @@ describe('minute history store', () => {
     const restored = await createMinuteHistoryStore({ directory, nowMs: () => now });
     expect(restored.minutes(0)).toEqual([first, minute(now - 120_000), minute(now - 60_000)]);
     expect(restored.alerts()).toEqual([]);
+    expect(restored.alertTransitions()).toEqual([]);
     expect(await restored.append(minute(now - 180_000))).toBe(false);
     expect(await restored.append(minute(now))).toBe(true);
     expect(await restored.read(now - 60_000)).toEqual([minute(now - 60_000), minute(now)]);
@@ -67,9 +69,9 @@ describe('minute history store', () => {
     const store = await createMinuteHistoryStore({ directory, nowMs: () => now });
     const open = { kind: 'alert' as const, rule: 'disk' as const, volumeId: 'data', state: 'fired' as const, at: now };
     await store.append(minute(now));
-    await store.appendAlert(open);
-    await store.appendAlert({ ...open, volumeId: 'closed' });
-    await store.appendAlert({ ...open, volumeId: 'closed', state: 'recovered', at: now + 60_000 });
+    await store.appendAlert(open, now);
+    await store.appendAlert({ ...open, volumeId: 'closed' }, now);
+    await store.appendAlert({ ...open, volumeId: 'closed', state: 'recovered', at: now + 60_000 }, now);
     now += 8 * 86_400_000;
     await store.prune();
     expect(store.alerts()).toEqual([open]);
@@ -87,7 +89,7 @@ describe('minute history store', () => {
     expect(recovery).toHaveLength(1);
     const recovered = MachineVitalsAlertEpisodeV1Schema.parse(recovery[0].episode);
     expect(recovered).toEqual({ ...open, state: 'recovered', at: now });
-    await store.appendAlert(recovered);
+    await store.appendAlert(recovered, recovery[0].since);
     expect(store.alerts().at(-1)).toEqual(recovered);
     const restarted = await createMinuteHistoryStore({ directory, nowMs: () => now });
     expect(restarted.alerts()).toEqual([]);

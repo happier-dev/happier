@@ -6,3 +6,6 @@ export type { MachineServiceObservationV1, WorktreeRemovedEventV1, GuardStoppedE
 
 export { SCM_WORKTREE_REMOVE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/scmActionIdsV1';
 export { PROJECT_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
+export { MACHINE_OUTCOME_SUMMARY_PREFIX, machineOutcomeSummaryAddress } from '@happier-dev/protocol/machines/resources/machineOutcomeSummaryV1';
+export type { MachineResourceOutcomeV1 } from '@happier-dev/protocol/machines/resources/machineOutcomeSummaryV1';
+export { MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineResourcesActionIdsV1';

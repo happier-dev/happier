@@ -30,6 +30,8 @@ import { ExternalActionManagedControlAdmissionV1Schema, isExternalActionRequestV
 import { personalSavedSecretResourceMutationActionIdV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionIdsV1';
 import { PROJECT_READINESS_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import { isMachineSetupCombinedRunHttpPurpose } from '@/app/auth/externalActionMachineSetupWorkflowPurpose';
+import { MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineResourcesActionIdsV1';
+import { MACHINE_OUTCOME_SUMMARY_PREFIX } from '@happier-dev/protocol/machines/resources/machineOutcomeSummaryV1';
 import { readManagedBoundSessionHttpPurpose } from './externalActionManagedSessionPurpose';
 import { isExternalActionConnectedAccountInventoryHttpPurpose } from './externalActionConnectedAccountInventoryPurpose';
 import { isExternalActionConnectedSubscriptionPriceHttpPurpose } from './externalActionConnectedMetadataPurpose';
@@ -2414,6 +2416,27 @@ function isScmReviewedMarksHttpPurpose(proof: ExternalActionExecutionRequestProo
     } catch { return false; }
 }
 
+/** Native resource observers read only their retained Account-mode projection. */
+function isMachineOutcomeSummaryHttpPurpose(proof: ExternalActionExecutionRequestProof): boolean {
+    if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
+    if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
+    const url = new URL(proof.path, 'http://home.invalid');
+    if (url.hash !== '') return false;
+    if (url.pathname === '/v1/kv') {
+        const keys = [...url.searchParams.keys()];
+        return new Set(keys).size === keys.length
+            && keys.every(key => key === 'prefix' || key === 'limit' || key === 'afterKey')
+            && url.searchParams.get('prefix') === MACHINE_OUTCOME_SUMMARY_PREFIX;
+    }
+    if (url.search !== '' || !url.pathname.startsWith('/v1/kv/')) return false;
+    try {
+        const key = decodeURIComponent(url.pathname.slice('/v1/kv/'.length));
+        return url.pathname === '/v1/kv/' + encodeURIComponent(key)
+            && key.startsWith(MACHINE_OUTCOME_SUMMARY_PREFIX)
+            && key.length > MACHINE_OUTCOME_SUMMARY_PREFIX.length;
+    } catch { return false; }
+}
+
 function isSelectedProjectSourceReadHttpPurpose(homeId: string, proof: ExternalActionExecutionRequestProof): boolean {
     if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
     const url = new URL(proof.path, 'http://home.invalid');
@@ -4232,6 +4255,9 @@ export async function verifyExternalActionDomainExecutionRequest(
         if (verified.effectActionId !== verified.binding.actionId
             || verified.binding.accountId !== verified.binding.custodianAccountId
             || !isScmReviewedMarksHttpPurpose(proof)) return refuse('verification_purpose');
+    } else if (verified.binding.actionId === MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1) {
+        if (verified.effectActionId !== verified.binding.actionId
+            || !isMachineOutcomeSummaryHttpPurpose(proof)) return refuse('verification_purpose');
     } else if (nativePurpose === 'session_board_write') {
         const target = verified.binding.target;
         const origin = verified.binding.sessionActionOrigin;

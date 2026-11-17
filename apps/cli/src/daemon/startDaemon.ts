@@ -1211,9 +1211,10 @@ export async function startDaemon(
         const target = machineResourceTarget();
         const serverId = resolveBoundHomeServerIdentityId();
         if (!target || !serverId) throw new Error('machine_vitals_event_account_unavailable');
-        publishDaemonHostEvent({ eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' },
-          payload: { kind: 'pressure', serverId, machineId: target.machineId,
-            episode: transition.episode, since: transition.since } }, () => homeTransportCancellation.signal.aborted);
+        if (!apiMachine) throw new Error('machine_vitals_event_account_unavailable');
+        void apiMachine.publishMachineResourceOutcome({ kind: 'pressure', serverId, machineId: target.machineId,
+          episode: transition.episode, since: transition.since })
+          .catch(error => logger.warn('[DAEMON RUN] Machine pressure summary publication failed', error));
       },
       notify: async (transition, sample, policy) => {
         const target = machineResourceTarget();
@@ -4629,6 +4630,16 @@ export async function startDaemon(
           await managedMachinePolicyRuntime?.stop();
           managedMachinePolicyRuntime = null;
           apiMachine = attemptedApiMachine;
+          attemptedApiMachine?.onConnectionStateChange(state => {
+            if (state.phase !== 'online' || homeTransportCancellation.signal.aborted) return;
+            const target = machineResourceTarget();
+            const serverId = resolveBoundHomeServerIdentityId();
+            if (!target || !serverId) return;
+            const pressure = machineVitalsHistory.alertTransitions().map(transition => ({ kind: 'pressure' as const,
+              serverId, machineId: target.machineId, episode: transition.episode, since: transition.since }));
+            void attemptedApiMachine.replayMachineResourceOutcomes(pressure)
+              .catch(error => logger.warn('[DAEMON RUN] Machine outcome replay failed', error));
+          });
           await machineResourcesPolicy?.reload();
           await machineRoles?.reload();
           if (homeTransportReplacementPending && attemptedApiMachine) {

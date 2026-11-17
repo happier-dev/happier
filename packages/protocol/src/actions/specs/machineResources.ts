@@ -1,9 +1,10 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { MACHINE_RESOURCES_ACTION_IDS } from './machineResourcesActionIdsV1.js';
+import { MACHINE_RESOURCES_ACTION_IDS, MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1 } from './machineResourcesActionIdsV1.js';
 export { MACHINE_RESOURCES_ACTION_IDS } from './machineResourcesActionIdsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { MachineResourcesPolicyMutationV1Schema, MachineResourcesPolicyGetResultV1Schema, MachineResourcesPolicyMutationResultV1Schema } from '../../machines/resources/machineResourcesPolicyV1.js';
+import { MachineResourcesOutcomesReadInputV1Schema, MachineResourcesOutcomesReadResultV1Schema } from '../../machines/resources/machineOutcomeSummaryV1.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { actionInputServerId } from './definition.js';
@@ -23,6 +24,7 @@ export function bindMachineResourcesPolicySetCliInput(value: unknown): unknown {
 export const MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS = {
   'machines.resources.policy.get': MachineResourcesPolicyGetInputV1Schema,
   'machines.resources.policy.set': MachineResourcesPolicySetInputV1Schema,
+  [MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1]: MachineResourcesOutcomesReadInputV1Schema,
 } as const;
 export type MachineResourcesActionInput = z.infer<(typeof MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS)[MachineResourcesActionId]>;
 const fields = [{ path: 'serverId', title: 'Home ID', widget: 'text', required: false },
@@ -30,6 +32,18 @@ const fields = [{ path: 'serverId', title: 'Home ID', widget: 'text', required: 
 const surfaces = { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false } as const;
 function createMachineResourcesActionSpecs() {
   return [
+  {
+    id: MACHINE_RESOURCES_OUTCOMES_READ_ACTION_ID_V1, approval: { result: 'required' }, title: 'Read retained Machine outcomes',
+    toolExposure: { agent: 'discoverable_only' },
+    description: 'Reads safe latest backup and pressure facts in the current Account.',
+    safety: 'safe', sideEffectClass: 'read', executionPlacement: 'account', placements: [], surfaces: { ...surfaces, voice: false },
+    bindings: { mcpToolName: 'machines_resources_outcomes_read' },
+    inputSchema: MachineResourcesOutcomesReadInputV1Schema, outputSchema: MachineResourcesOutcomesReadResultV1Schema,
+    invocationServerIdForInput: actionInputServerId(MachineResourcesOutcomesReadInputV1Schema, input => input.serverId),
+    cli: { acceptsServerId: true, commands: [{ path: ['machines', 'resources', 'outcomes', 'read'], visibility: 'canonical' }] },
+    inputHints: { fields: [{ path: 'serverId', title: 'Home ID', widget: 'text', required: true },
+      { path: 'keys', title: 'Changed summary keys', widget: 'json' }] },
+  },
   {
     id: 'machines.resources.policy.get', approval: {result: 'required'}, title: 'Read resource settings',
     toolExposure: { agent: 'discoverable_only' },

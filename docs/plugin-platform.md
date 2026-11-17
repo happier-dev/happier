@@ -617,12 +617,44 @@ scripts, configuration, registry URLs and private evidence remain outside Events
 committed timeout and recovery decisions. The nullable `Machine.presenceTransitions`
 field retains the latest offline/online pair with stable revision identities;
 enrollment captures the current revision and emits no initial-state Event.
-`machines.presence.read` uses existing Machine access for owners and grantees.
+In unreleased 0.3, the native transition selects eligible triggers by their
+server-readable Event kind and optional Machine subject. Recipient-specific
+selector references travel on the existing Account change feed to the trigger
+owner's keyholding client. Its adopted Event definition evaluates the private
+filter before ordinary Event admission; the server never opens that filter.
+The Machine's existing visibility decides recipients, and the hint grants no
+additional access. A daemon presence observer is no longer involved.
+`machines.presence.read` uses existing Machine access for owners and grantees
+and returns the same retained candidate facts for known-key reconnect replay.
+Replay reads only demanded Machine keys; an any-Machine subscription consumes
+future native pushes without scanning Machine inventory.
 The source stack database owner must deploy the append-only
 `20261102101034_add_machine_presence_transitions` migration before loading the
-producer and catalog. The retained pair does not recover overwritten cycles.
+producer and catalog. The retained pair does not recover overwritten cycles
+or promise durable delivery while the keyholding client is absent.
 Backup failure/missed
 production remains with P45.
+
+In unreleased 0.3, native backup settlements and Machine pressure transitions
+also publish a latest-fact projection through the existing Account-mode KV
+owner under `workspace:machine-outcome:v1:`. The existing workspace JSON census
+and Account-mode migration retain these generic envelopes. The Home stores ciphertext for E2EE Accounts and explicit plain envelopes
+for plain Accounts. Keys retain the producing Home and Machine, plus the backup
+Environment; pressure rules and volumes retain independent latest facts. A
+Home-wide source can observe these facts from another Machine in the same
+Account without replacing their resource subjects. Adoption reads this namespace
+once, then Account key-change hints select the affected rows. The personal
+`machines.resources.outcomes.read` Action permits only these reads and Account
+encryption currentness, with ordinary Event admission still owning filtering
+and replay deduplication.
+
+Producer reconnect republishes the latest native backup history and pressure
+transitions retained by the existing process. Successfully published summaries
+remain in Account KV across observer restarts. Pressure transition history is
+in memory; this does not promise reconstruction after a producer restart or
+recovery of overwritten intermediate outcomes. A failed summary publication is
+logged and retried on producer reconnect. There is no new polling or journal,
+and this projection does not provide cross-Account delivery.
 
 Environment/Domain checks use that same saved-check admission owner. Setup
 requires the Environment's existing management capability; finite reads open the
