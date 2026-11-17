@@ -155,7 +155,7 @@ const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(
         }
       : null;
   const emptyCatalog =
-    state.status === 'ready' && !retained && !query.trim() && !creating;
+    state.status === 'ready' && !retained && !query.trim() && !creating && selectedId === null;
   // The empty page has no list beside it: on a phone it stands alone, so it carries the page Back like its other states.
   const emptyStandsAlone = useViewportClass() === 'compact';
   const leaveEmpty = usePageBackControl('projects.sources.back', () =>

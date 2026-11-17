@@ -28,6 +28,7 @@ import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/act
 const shared = vi.hoisted(() => ({
   calls: [] as Array<{ actionId: string; input: any }>,
   sources: [] as unknown[],
+  listedSources: null as unknown[] | null,
   routes: { params: {} as Record<string, string> },
   navigation: [] as unknown[],
   createOutcomes: [] as Array<'unknown'>,
@@ -49,7 +50,7 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOrigina
     if (actionId === 'projects.sources.list')
       return {
           ok: true,
-          sources: shared.sources,
+          sources: shared.listedSources ?? shared.sources,
           coverage: { complete: true, nextCursor: null },
       };
     if (actionId === 'projects.sources.read') {
@@ -170,6 +171,7 @@ afterEach(() => {
   publishAppliedActiveServerSnapshot(previousAppliedServer, previousRuntimeAvailable);
   shared.calls = [];
   shared.sources = [];
+  shared.listedSources = null;
   shared.navigation = [];
   shared.routes.params = {};
   shared.createOutcomes = [];
@@ -192,6 +194,38 @@ function signIn() {
 }
 
 describe('Projects › Sources', () => {
+  it('keeps a selected Source visible when the ordinary catalog is empty', async () => {
+    const homes = await serveAccountHomes({ homes: [
+      { key: 'home', serverUrl: 'https://selected-source-empty.test', accountId: 'account-1' },
+    ], route: request => { throw new Error(`Unexpected Home request: ${request.path}`); } });
+    try {
+      shared.listedSources = [];
+      shared.sources = [{ id: 'selected-source', revision: 1, name: 'Selected outside the catalog',
+        audience: [], createdByAccountId: 'account-1' }];
+      const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+      const lifetime = captureActiveServerAccountScopeLifetime();
+      if (!lifetime) throw new Error('Served Home Account did not bind');
+      const { readProjectSourcesCatalog } = await import('./projectSourcesCatalog');
+      const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+      const owner = readProjectSourcesCatalog(lifetime, createFrontDoorActionExecute());
+      const catalog = owner.read('', undefined);
+      await catalog.load();
+      expect(catalog.getSnapshot()).toMatchObject({ status: 'ready', rows: [] });
+      const detail = owner.readSource('selected-source').controller;
+      await detail.select('selected-source');
+      expect(detail.getSnapshot()).toMatchObject({ detailStatus: 'ready', current: { id: 'selected-source' } });
+
+      shared.routes.params = { source: 'selected-source' };
+      const screen = await renderScreen(<ProjectSourcesScreen />);
+      try {
+        await vi.waitFor(() => expect(screen.findByTestId('projects.sources.detail.header')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('Selected outside the catalog');
+        expect(screen.findByTestId('projects.sources.empty')).toBeNull();
+        expect(catalog.getSnapshot()).toMatchObject({ status: 'ready', rows: [] });
+      } finally { await screen.unmount(); }
+    } finally { await homes.dispose(); }
+  });
+
   it('keeps Project chrome on the standalone Deployments entry without inventing a checkout', async () => {
     const homes = await serveAccountHomes({ homes: [
       { key: 'source', serverUrl: 'https://standalone-deployments.example', accountId: 'account-1' },
