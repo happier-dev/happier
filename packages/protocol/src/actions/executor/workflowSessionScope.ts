@@ -9,6 +9,7 @@ import type { ActionId } from '../actionIds.js';
 import type { WorkflowMaterializedLeafV1 } from '../../workflows/workflowDefinitionV1.js';
 import { readWorkflowCurrentInvocationAncestryV1 } from '../../workflows/workflowInvocationMembersV1.js';
 import { createActionExecuteFailureError } from '../actionExecutionResult.js';
+import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 
 type WorkflowActionInvocationContextV1 = Readonly<{
   opened: ReturnType<typeof WorkflowRunGetResultV1Schema.parse>;
@@ -35,7 +36,12 @@ export async function readActionWorkflowInvocationContextV1(
   const identity = readWorkflowActionInvocationV1(caller.runId, context.actionRequestId ?? undefined);
   if (!identity) return null;
   const workflowAction = deps.workflowAction;
-  const invoke = async (request: Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0]) => workflowAction(request);
+  const invoke = async (request: Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0]) => {
+    const result = await workflowAction(request);
+    const failure = readActionFailureEnvelope(result);
+    if (failure) throw createActionExecuteFailureError(failure);
+    return result;
+  };
   const common = { context, ...(context.signal ? { signal: context.signal } : {}) };
   try {
     const opened = WorkflowRunGetResultV1Schema.parse(await invoke({ ...common,

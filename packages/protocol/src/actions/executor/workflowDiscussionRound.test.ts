@@ -4,6 +4,7 @@ import { WorkflowDiscussionRoundProjectResultV1Schema } from '../../workflows/wo
 import { resolveActionCurrentSessionScopeFailure } from './sessionListAccess.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actionExecutor.js';
 import { createActionExecuteFailureError } from '../actionExecutionResult.js';
+import { normalizeWorkflowActionThrownError } from './workflowAccountActions.js';
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const participantCount = process.env.HAPPIER_WORKFLOW_SCALE_MEASUREMENT === '1' ? 500 : 24;
@@ -12,16 +13,27 @@ describe('Discussion round projection demand', () => {
   it.each(['frame', 'descendants'] as const)('preserves a typed storage refusal while reading %s', async stage => {
     const f = await fixture('projector-in-if');
     const round = f.rounds[2]!;
+    // The CLI Workflow port normalizes storage exceptions into returned failures.
+    // Keep that real projection between the storage boundary and scope reader.
+    const executor = createActionExecutor({ ...f.deps, workflowAction: async args => {
+      try { return await f.deps.workflowAction(args); }
+      catch (error) { return normalizeWorkflowActionThrownError(error, undefined, false, args.actionId); }
+    } } as unknown as ActionExecutorDeps);
+    await expect(executor.execute('workflow.discussion.round.project',
+      { collections: ['speakers'], preparationBlockId: 'context' }, f.context(round.complete)))
+      .resolves.toMatchObject({ ok: true });
     f.failStorage(operation => {
       if (stage === 'frame' ? operation.operation === 'get'
         : operation.operation === 'invocations.list' && operation.parentRecordIds?.includes(round.collection)) {
-        throw Object.assign(new Error('run_access_denied'), { code: 'run_access_denied' });
+        throw Object.assign(new Error('run_access_denied'), { code: 'run_access_denied',
+          response: { status: 403, data: { error: 'run_access_denied' } } });
       }
     });
-    await expect(f.executor.execute('workflow.discussion.round.project',
+    await expect(executor.execute('workflow.discussion.round.project',
       { collections: ['speakers'], preparationBlockId: 'context' }, f.context(round.complete)))
       .resolves.toMatchObject({ ok: false, errorCode: 'run_access_denied',
-        failureCause: { errorCode: 'run_access_denied' } });
+        failureCause: { errorCode: 'run_access_denied', httpStatus: 403,
+          phase: stage === 'frame' ? 'workflow.run.get' : 'workflow.run.invocations.list' } });
   });
 
   it('preserves a Session read failure instead of claiming the admitted review scope is missing', async () => {
