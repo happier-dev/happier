@@ -7249,7 +7249,10 @@ terminal's active server (R10 D3). `packages/cli-common/src/systemTasks/executor
 the scope: `readLocalServerProfileScope` resolves the Home's saved profile read-only
 (`server list --json`, which lists each profile's recorded `homeServerIdentityId`) — by identity
 when the task names one, else the single profile on that URL; an ambiguous match fails
-`server_profile_ambiguous` — and `resolveServerScopeTargetMode` picks the service from the OS service
+`server_profile_ambiguous`. In 0.3 development, saved-profile parsing and identity selection live in
+`packages/cli-common/src/systemTasks/executors/serverProfileScope.ts` through
+`readLocalServerProfileIdentity`. Browser enrollment consumes this pure reader; Node service scope
+and disconnect use the same result before observing host services. The Node scope selects from the OS service
 inventory: the Home's own pinned service if it exists, else the default-following service when it
 already serves that Home, else a new pinned one. Commands then run as `--server <id>` with
 `HAPPIER_DAEMON_SERVICE_TARGET_MODE`. Setup saves the profile with `server set --no-use` only after
