@@ -1294,7 +1294,7 @@ export const de: TranslationStructure = {
       stopTurnDescription: "Sie arbeitet noch. Endet der Beitrag, kann die Rolle greifen.",
       roleHeldNote: "Alles andere ist erledigt. Versuche es erneut, um die Rolle anzuwenden.",
       done: ({ name }: { name: string }) => `${name} ist jetzt ein Koordinator`,
-      doneNoRule: ({ name }: { name: string }) => `${name} ist eingerichtet. Sie wird zum Koordinator, sobald sie eine Sitzung verwaltet oder einer Regel folgt.`,
+      doneNoRule: ({ name }: { name: string }) => `${name} ist bereit. Gib ihr eine Sitzung oder eine Regel, damit sie zu koordinieren beginnt.`,
     },
     menu: {
       make: "Zum Koordinator machen…",

@@ -1537,7 +1537,7 @@ export const pt: TranslationStructure = {
       stopTurnDescription: "Ainda está a trabalhar. Quando o turno terminar, a função pode ser aplicada.",
       roleHeldNote: "Tudo o resto está feito. Tente novamente para aplicar a função.",
       done: ({ name }: { name: string }) => `${name} é agora coordenadora`,
-      doneNoRule: ({ name }: { name: string }) => `${name} está pronta. Passa a ser coordenadora quando gerir uma sessão ou seguir uma regra.`,
+      doneNoRule: ({ name }: { name: string }) => `${name} está pronta. Dá-lhe uma sessão ou uma regra para começar a coordenar.`,
     },
     menu: {
       make: "Tornar coordenadora…",

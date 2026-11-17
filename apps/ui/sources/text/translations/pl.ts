@@ -1515,7 +1515,7 @@ export const pl: TranslationStructure = {
       stopTurnDescription: "Wciąż pracuje. Po zakończeniu tury rola będzie mogła zadziałać.",
       roleHeldNote: "Reszta jest gotowa. Spróbuj ponownie, aby zastosować rolę.",
       done: ({ name }: { name: string }) => `${name} jest teraz koordynatorem`,
-      doneNoRule: ({ name }: { name: string }) => `${name} jest gotowa. Zostanie koordynatorem, gdy zacznie zarządzać sesją lub podążać za regułą.`,
+      doneNoRule: ({ name }: { name: string }) => `${name} jest gotowa. Daj jej sesję lub regułę, aby zaczęła koordynować.`,
     },
     menu: {
       make: "Ustaw jako koordynatora…",

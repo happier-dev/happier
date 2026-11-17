@@ -14864,7 +14864,6 @@ const ca: typeof en = {
     subtitle: {
         sessions: ({ count }) => (count === 1 ? '1 sessió' : `${count} sessions`),
         runs: ({ count }) => (count === 1 ? '1 execució' : `${count} execucions`),
-        nothingStarted: 'Encara no s’ha iniciat res',
         archived: ({ count }) => (count === 1 ? '1 arxivada' : `${count} arxivades`),
     },
     states: {

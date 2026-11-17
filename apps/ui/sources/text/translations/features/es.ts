@@ -14764,7 +14764,6 @@ const es: typeof en = {
     subtitle: {
         sessions: ({ count }) => (count === 1 ? '1 sesión' : `${count} sesiones`),
         runs: ({ count }) => (count === 1 ? '1 ejecución' : `${count} ejecuciones`),
-        nothingStarted: 'Aún no se ha iniciado nada',
         archived: ({ count }) => (count === 1 ? '1 archivada' : `${count} archivadas`),
     },
     states: {

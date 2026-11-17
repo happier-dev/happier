@@ -14754,7 +14754,6 @@ const zhHant: typeof en = {
     subtitle: {
         sessions: ({ count }) => `${count} 個工作階段`,
         runs: ({ count }) => `${count} 次執行`,
-        nothingStarted: '尚未開始任何工作',
         archived: ({ count }) => `${count} 個已封存`,
     },
     states: {

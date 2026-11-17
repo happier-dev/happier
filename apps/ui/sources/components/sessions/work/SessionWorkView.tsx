@@ -425,8 +425,9 @@ export const SessionWorkView = React.memo((props: Readonly<{
         showPutUnderSessionModal({ sessionId: props.sessionId, serverId: sessionServerId });
     }, [props.sessionId, sessionServerId]);
     const headerLine = React.useMemo(
-        () => ({ segments: stepRunId ? [t('sessionWork.step.drivenBy')] : liveLine.length > 0 ? liveLine : nothingStarted ? [t('sessionWork.subtitle.nothingStarted')] : [] }),
-        [liveLine, nothingStarted, stepRunId],
+        () => ({ segments: stepRunId ? [t('sessionWork.step.drivenBy')] : liveLine.length > 0 ? liveLine : [] }),
+        // Nothing started says so once, in the pane's own empty state, not again in the header line.
+        [liveLine, stepRunId],
     );
     usePaneHeaderSlotContent(React.useMemo(
         () => ({ line: headerLine, action: headerAction, menuActions }),

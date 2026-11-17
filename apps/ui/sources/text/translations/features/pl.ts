@@ -14894,7 +14894,6 @@ const pl: typeof en = {
     subtitle: {
         sessions: ({ count }) => (count === 1 ? '1 sesja' : `${count} sesje`),
         runs: ({ count }) => (count === 1 ? '1 uruchomienie' : `${count} uruchomienia`),
-        nothingStarted: 'Nic jeszcze nie uruchomiono',
         archived: ({ count }) => (count === 1 ? '1 zarchiwizowana' : `${count} zarchiwizowane`),
     },
     states: {

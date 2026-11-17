@@ -1484,7 +1484,7 @@ export const ja: TranslationStructure = {
       stopTurnDescription: "まだ作業中です。ターンが終わるとロールを適用できます。",
       roleHeldNote: "ほかはすべて完了しました。もう一度試すとロールが適用されます。",
       done: ({ name }: { name: string }) => `${name} はコーディネーターになりました`,
-      doneNoRule: ({ name }: { name: string }) => `${name} の準備ができました。セッションを管理するか、ルールに従うと、コーディネーターになります。`,
+      doneNoRule: ({ name }: { name: string }) => `${name} の準備ができました。セッションかルールを渡すと、コーディネートを始めます。`,
     },
     menu: {
       make: "コーディネーターにする…",

@@ -1459,7 +1459,7 @@ export const fr: TranslationStructure = {
       stopTurnDescription: "Elle travaille encore. Une fois le tour terminé, le rôle peut s’appliquer.",
       roleHeldNote: "Tout le reste est fait. Réessayez pour appliquer le rôle.",
       done: ({ name }: { name: string }) => `${name} est maintenant un coordinateur`,
-      doneNoRule: ({ name }: { name: string }) => `${name} est prête. Elle devient un coordinateur dès qu’elle gère une session ou suit une règle.`,
+      doneNoRule: ({ name }: { name: string }) => `${name} est prête. Donnez-lui une session ou une règle pour qu’elle commence à coordonner.`,
     },
     menu: {
       make: "Faire coordinateur…",

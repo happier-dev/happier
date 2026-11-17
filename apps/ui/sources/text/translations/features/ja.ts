@@ -14810,7 +14810,6 @@ const ja: typeof en = {
     subtitle: {
         sessions: ({ count }) => `${count} 件のセッション`,
         runs: ({ count }) => `${count} 件の実行`,
-        nothingStarted: 'まだ何も開始していません',
         archived: ({ count }) => `アーカイブ済み ${count} 件`,
     },
     states: {

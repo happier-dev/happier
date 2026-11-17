@@ -14755,7 +14755,6 @@ const zhHans: typeof en = {
     subtitle: {
         sessions: ({ count }) => `${count} 个会话`,
         runs: ({ count }) => `${count} 次运行`,
-        nothingStarted: '尚未开始任何工作',
         archived: ({ count }) => `${count} 个已归档`,
     },
     states: {

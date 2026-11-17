@@ -54,7 +54,6 @@ export const en = {
     subtitle: {
         sessions: ({ count }: { count: number }) => (count === 1 ? '1 session' : `${count} sessions`),
         runs: ({ count }: { count: number }) => (count === 1 ? '1 run' : `${count} runs`),
-        nothingStarted: 'Nothing started',
         archived: ({ count }: { count: number }) => `${count} archived`,
     },
     states: {

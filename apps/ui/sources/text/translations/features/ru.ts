@@ -14895,7 +14895,6 @@ const ru: typeof en = {
     subtitle: {
         sessions: ({ count }) => `Сессий: ${count}`,
         runs: ({ count }) => `Запусков: ${count}`,
-        nothingStarted: 'Пока ничего не запущено',
         archived: ({ count }) => `В архиве: ${count}`,
     },
     states: {

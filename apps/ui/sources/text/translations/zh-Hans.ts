@@ -1500,7 +1500,7 @@ export const zhHans: TranslationStructure = {
       stopTurnDescription: "它仍在工作。轮次结束后即可应用该角色。",
       roleHeldNote: "其余均已完成。重试即可应用该角色。",
       done: ({ name }: { name: string }) => `${name} 现在是协调者`,
-      doneNoRule: ({ name }: { name: string }) => `${name} 已设置好。当它管理会话或遵循规则时，就会成为协调者。`,
+      doneNoRule: ({ name }: { name: string }) => `${name} 已就绪。给它一个会话或一条规则，即可开始协调。`,
     },
     menu: {
       make: "设为协调者…",

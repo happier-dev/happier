@@ -83,7 +83,7 @@ function buildModel(scene: InboxStatesSpecimenScene): InboxModel {
     mention({
       id: 'm-agent',
       title: 'Checkout UI retry states',
-      source: 'Daily coordinator',
+      source: 'checkout',
       at: now - 50 * 60 * MINUTE,
       author: { name: 'Daily coordinator' },
       excerpt: '“Can you confirm the webkit e2e run before I merge?”',

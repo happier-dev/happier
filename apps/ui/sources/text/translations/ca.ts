@@ -1469,7 +1469,7 @@ export const ca: TranslationStructure = {
       stopTurnDescription: "Encara treballa. Quan acabi el torn, el rol es podrà aplicar.",
       roleHeldNote: "Tota la resta està feta. Torna-ho a provar per aplicar el rol.",
       done: ({ name }: { name: string }) => `${name} ara és coordinadora`,
-      doneNoRule: ({ name }: { name: string }) => `${name} està a punt. Passa a ser coordinadora quan gestioni una sessió o segueixi una regla.`,
+      doneNoRule: ({ name }: { name: string }) => `${name} està a punt. Dona-li una sessió o una regla perquè comenci a coordinar.`,
     },
     menu: {
       make: "Converteix en coordinadora…",
