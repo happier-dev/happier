@@ -13,6 +13,12 @@ export const SCREEN_OVERLAY_Z_INDEX = 90000;
  * that made the change is still open. Stacked modals step by `MODAL_Z_INDEX_STEP`, far below this.
  */
 export const NOTICE_Z_INDEX = POPOVER_Z_INDEX + 100000;
+/**
+ * The card a drag carries floats over the surface it was picked up from, including a popover or dialog
+ * (a Columns menu's rows, a customizer's list): at the popover's own layer it painted under the popover
+ * that mounted after it. It stays under the transient notice.
+ */
+export const DRAG_PREVIEW_Z_INDEX = NOTICE_Z_INDEX - MODAL_Z_INDEX_STEP;
 
 /** The attribute that marks a screen's popover host (see `PopoverPortalTargetProvider`). */
 export const POPOVER_PORTAL_HOST_ATTRIBUTE = 'data-happy-popover-portal-host';

@@ -9,7 +9,8 @@ import Animated, { cancelAnimation, useAnimatedStyle, useSharedValue, withSpring
 import { scheduleOnRN } from 'react-native-worklets';
 
 import { useOverlayPortal } from '@/components/ui/popover/OverlayPortal';
-import { POPOVER_PORTAL_Z_INDEX, tryRenderWebPortal, useNativeOverlayPortalNode } from '@/components/ui/popover/portal';
+import { tryRenderWebPortal, useNativeOverlayPortalNode } from '@/components/ui/popover/portal';
+import { DRAG_PREVIEW_Z_INDEX } from '@/components/ui/overlays/overlayLayers';
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { installEntityDragCancellation } from '../entityDragCancellation';
@@ -159,7 +160,7 @@ function CarriedCardPosition(props: EntityDragCarriedPreviewProps): React.ReactE
                     position: Platform.OS === 'web' ? ('fixed' as 'absolute') : 'absolute',
                     left: baseLeft,
                     top: 0,
-                    zIndex: POPOVER_PORTAL_Z_INDEX,
+                    zIndex: DRAG_PREVIEW_Z_INDEX,
                     // Hidden until measured once, so the first frame never lands on the wrong side.
                     opacity: touch || size.width > 0 ? 1 : 0,
                 },

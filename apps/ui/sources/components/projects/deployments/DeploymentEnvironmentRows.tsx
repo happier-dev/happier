@@ -316,7 +316,7 @@ export const SERVICES_APPS_COLLECTION_ID = 'happier.services.apps';
 export type DeploymentEnvironmentColumnsBinding = Readonly<{
   collectionId: string;
   /** The columns the width admits now, for the Columns menu's "too narrow". */
-  onColumnsFit?: (fieldKeys: readonly string[]) => void;
+  onColumnsFit?: (fieldKeys: readonly string[] | null) => void;
 }>;
 
 const SERVICES_APPS_COLUMNS_BINDING: DeploymentEnvironmentColumnsBinding = { collectionId: SERVICES_APPS_COLLECTION_ID };

@@ -230,13 +230,15 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     [shownItems, narrowed, needle, pagedRead, total, view]);
   const count = view === 'apps' ? appsCount : viewCount?.view === view ? viewCount.parts : null;
   // Apps' one Columns menu (D35): the page head's ⋯ on a wide page; a phone draws no columns and has no menu.
-  const [fittedColumnIds, setFittedColumnIds] = React.useState<readonly string[] | null>(null);
+  // Unmeasured: the device decides; then the rows' own column decision (`null`: no columns drawn) does.
+  const [fittedColumnIds, setFittedColumnIds] = React.useState<readonly string[] | null | undefined>(undefined);
   const appsColumns = React.useMemo<DeploymentEnvironmentColumnsBinding>(() => ({ collectionId: SERVICES_APPS_COLLECTION_ID,
     onColumnsFit: setFittedColumnIds }), []);
   const appsMenuColumns = React.useMemo(() => collectionColumnsMenuColumns(
     { id: 'title', title: t('projects.deployments.services.columnEnvironment') }, deploymentEnvironmentColumns(false)), []);
-  const columnsMenu = view === 'apps' && !phone ? <CollectionColumnsMenuButton collectionId={SERVICES_APPS_COLLECTION_ID}
-    columns={appsMenuColumns} fittedIds={fittedColumnIds} testID="all-deployments.columns" /> : null;
+  const columnsMenu = view === 'apps' && !phone && fittedColumnIds !== null ? <CollectionColumnsMenuButton
+    collectionId={SERVICES_APPS_COLLECTION_ID} columns={appsMenuColumns} fittedIds={fittedColumnIds ?? null}
+    testID="all-deployments.columns" /> : null;
   const header = (create: boolean) => (
     <ServicesPageHeader servicesView={servicesView} placesSpaces={placesSpaces && create} header={{
       testID: 'all-deployments.header',

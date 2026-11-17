@@ -73,7 +73,7 @@ function mount(
     fields?: readonly CollectionField<Row>[];
     width?: number;
     titleMinWidth?: number;
-    onColumnsFit?: (keys: readonly string[]) => void;
+    onColumnsFit?: (keys: readonly string[] | null) => void;
   }>,
 ) {
   const context = createSurfaceContext();
@@ -255,6 +255,15 @@ describe('Collection Columns choice', () => {
       expect(fits.at(-1)).toEqual(['deploy', 'state']);
       // One report per fit, not per render.
       expect(fits).toHaveLength(1);
+    } finally { view.unmount(); }
+  });
+
+  it('reports no column set at all where the rows draw no columns, so no Columns menu is offered there', () => {
+    const fits: (readonly string[] | null)[] = [];
+    const { view, drawnOrder } = mount({ shownKeys: null, width: 390, onColumnsFit: (keys) => fits.push(keys) });
+    try {
+      expect(drawnOrder()).toEqual([]);
+      expect(fits).toEqual([null]);
     } finally { view.unmount(); }
   });
 });

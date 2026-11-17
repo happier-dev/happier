@@ -488,10 +488,11 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
    */
   columns?: CollectionColumnsBinding;
   /**
-   * The chosen fields the measured width admits, in order, each time that changes (none while the row draws no
-   * columns, a phone): the Columns menu marks a chosen column that doesn't fit as too narrow.
+   * The chosen fields the measured width admits, in order, each time that changes: the Columns menu marks a chosen
+   * column that doesn't fit as too narrow. `null` while the rows draw no columns at all (a narrow page list, a
+   * phone), where there is nothing for a Columns menu to arrange.
    */
-  onColumnsFit?: (fieldKeys: readonly string[]) => void;
+  onColumnsFit?: (fieldKeys: readonly string[] | null) => void;
   /** The one detail component, in every container. */
   renderDetail?: (key: HappierCollectionKey, context: CollectionDetailRenderContext) => ReactNode;
   /**
@@ -2649,13 +2650,13 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     [accessibility.textScale, anatomy, rowAccessoryWidth, tableWidth, treeLeadingWidth],
   );
   // Which of the chosen fields the width admits, once per change: the Columns menu marks the rest too narrow.
-  const fittedFieldKeys = size === null ? null
+  const fittedFieldKeys = size === null ? undefined
     : rowGeometry === 'table' ? columns.flatMap((column) => (column.fieldKey === null ? [] : [column.fieldKey])).join('\u0000')
-      : columnsShown ? listColumns.map((field) => field.key).join('\u0000') : '';
+      : columnsShown ? listColumns.map((field) => field.key).join('\u0000') : null;
   const onColumnsFit = props.onColumnsFit;
   useEffect(() => {
-    if (fittedFieldKeys === null || onColumnsFit === undefined) return;
-    onColumnsFit(fittedFieldKeys === '' ? [] : fittedFieldKeys.split('\u0000'));
+    if (fittedFieldKeys === undefined || onColumnsFit === undefined) return;
+    onColumnsFit(fittedFieldKeys === null ? null : fittedFieldKeys === '' ? [] : fittedFieldKeys.split('\u0000'));
   }, [fittedFieldKeys, onColumnsFit]);
   const setBranchOpen = model.actions.setBranchOpen;
   const treeStage = useMemo<CollectionTreeStage | null>(() => (tree === null || presentation !== 'table' ? null

@@ -297,8 +297,8 @@ export function CollectionColumnsMenuView(
   ];
   return (
     <View testID={`${testID}.menu`} style={MENU_STYLE}>
-      {/* The menu names what it arranges, on the rows' text edge (lab p8Columns menu). */}
-      <Text variant="label" emphasis="semiBold" style={HEADING_STYLE} accessibilityRole="header">
+      {/* The menu names what it arranges, on the menu rows' inset, where Reset to default stands (lab p8Columns menu). */}
+      <Text variant="label" emphasis="semiBold" style={[HEADING_STYLE, { color: theme.colors.text.primary }]} accessibilityRole="header">
         {t('collectionColumns.title')}
       </Text>
       <EntityFlatReorderList
