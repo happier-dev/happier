@@ -241,25 +241,91 @@ export const TeamMemberDefaultsSection = React.memo(
               testID={`${props.testID}-approvalProfile`}
             />
           )}
-          {agents.map((entry) => (
-            <AgentDefaultsItem
-              key={entry.backendTargetKey}
-              entry={entry}
-              state={row}
-              conflicts={memberDefaultsConflicts(
-                stored,
-                scope,
-                entry.backendTargetKey!,
-                policy?.homeDefaults,
-              )}
-              testID={`${props.testID}-agent:${entry.agentId}`}
-            />
-          ))}
+          <AgentDefaultsList
+            agents={agents}
+            state={row}
+            // Team, Group and Home defaults name no default Agent; their Agents with a value lead.
+            selected={undefined}
+            conflictsFor={(key) => memberDefaultsConflicts(stored, scope, key, policy?.homeDefaults)}
+            testID={props.testID}
+          />
         </ItemGroup>
       </>
     );
   },
 );
+
+const noConflicts = () => NO_CONFLICTS;
+
+/**
+ * The Agents a defaults scope shows (lab L11; design review 2026-11-17): the default Agent's group open first,
+ * then each Agent with a value at some layer, then the rest behind one "Other Agents" row, so an unset Agent
+ * is one press away instead of a row of "None". Inherited layers are read once per Agent here, not on render.
+ */
+const AgentDefaultsList = React.memo(function AgentDefaultsList(props: Readonly<{
+  agents: readonly ResolvedAgentCatalogEntry[];
+  state: RowState;
+  selected: AgentExecutionTargetV1 | undefined;
+  conflictsFor: (backendTargetKey: string) => MemberDefaultsConflicts;
+  testID: string;
+}>) {
+  // While "Other Agents" is open, the Agents it showed stay in it: a value set there must not move the row being
+  // edited out from under the person (and remount it closed). They join the valued Agents once it closes.
+  const [openedOthers, setOpenedOthers] = React.useState<ReadonlySet<string> | null>(null);
+  const othersOpen = openedOthers !== null;
+  const { defaults, inheritance } = props.state;
+  const groups = React.useMemo(() => {
+    const lead: { entry: ResolvedAgentCatalogEntry; summary: string | null }[] = [];
+    const valued: typeof lead = [];
+    const others: typeof lead = [];
+    for (const entry of props.agents) {
+      const key = entry.backendTargetKey!;
+      const target = agentExecutionTargetOf(entry);
+      const inherited = inheritance && target ? inheritance.forAgent(target) : null;
+      const decision = inherited
+        ? [inherited.permissionMode, inherited.model, ...inherited.connectedServices].find((field) => field.source !== 'none') ?? null
+        : null;
+      const summary = decision && inherited ? describeInheritedDefaultSource(decision.source, inherited.permissionMode.names) : null;
+      const stored = defaults.permissionModeByAgentTargetKey?.[key] !== undefined
+        || defaults.modelByAgentTargetKey?.[key] !== undefined
+        || (defaults.connectedServicesByAgentTargetKey?.[key]?.length ?? 0) > 0;
+      const item = { entry, summary };
+      if (props.selected && target && sameAgentTarget(target, props.selected)) lead.push(item);
+      else if (openedOthers?.has(key)) others.push(item);
+      else if (stored || decision) valued.push(item);
+      else others.push(item);
+    }
+    return { lead, valued, others };
+  }, [props.agents, props.selected, defaults, inheritance, openedOthers]);
+  const setOthersOpen = React.useCallback((open: boolean) => {
+    setOpenedOthers(open ? new Set(groups.others.map((item) => item.entry.backendTargetKey!)) : null);
+  }, [groups.others]);
+  const row = (item: Readonly<{ entry: ResolvedAgentCatalogEntry; summary: string | null }>, initiallyExpanded = false) => (
+    <AgentDefaultsItem key={item.entry.backendTargetKey} entry={item.entry} state={props.state}
+      conflicts={props.conflictsFor(item.entry.backendTargetKey!)} summary={item.summary}
+      initiallyExpanded={initiallyExpanded} testID={`${props.testID}-agent:${item.entry.agentId}`} />
+  );
+  return (
+    <>
+      {groups.lead.map((item) => row(item, true))}
+      {groups.valued.map((item) => row(item))}
+      {/* Nothing to say about unset Agents when read-only; editable, they are one press away. */}
+      {groups.others.length > 0 && props.state.editable ? (
+        <ExpandableItem
+          testID={`${props.testID}-otherAgents`}
+          expanded={othersOpen}
+          onExpandedChange={setOthersOpen}
+          header={({ headerProps }) => (
+            <Item {...headerProps} testID={`${props.testID}-otherAgents:header`} icon={<Icon name="stack" />}
+              title={t('teams.settings.memberDefaults.otherAgents')} detail={String(groups.others.length)} />
+          )}
+        >
+          {othersOpen ? groups.others.map((item) => row(item)) : null}
+        </ExpandableItem>
+      ) : null}
+    </>
+  );
+});
 
 /** One Agent's defaults: collapsed it says which are set; open, one row per choice. */
 const AgentDefaultsItem = React.memo(function AgentDefaultsItem(
@@ -268,10 +334,15 @@ const AgentDefaultsItem = React.memo(function AgentDefaultsItem(
     state: RowState;
     conflicts: MemberDefaultsConflicts;
     testID: string;
+    /** The scope's default Agent opens with its rows showing (lab L11). */
+    initiallyExpanded?: boolean;
+    /** Collapsed, with nothing set here: where this Agent's defaults come from, else the Agent's own default. */
+    summary?: string | null;
   }>,
 ) {
   const { theme } = useUnistyles();
-  const [expanded, setExpanded] = React.useState(false);
+  const [expanded, setExpanded] = React.useState(props.initiallyExpanded === true);
+  const unset = props.summary ?? t('teams.settings.memberDefaults.agentDefault');
   const key = props.entry.backendTargetKey!;
   const { defaults, inheritance } = props.state;
   // A project scope shows what each field falls back to; resolved only while the Agent is open.
@@ -315,7 +386,7 @@ const AgentDefaultsItem = React.memo(function AgentDefaultsItem(
       <Item
         testID={`${props.testID}:header`}
         title={props.entry.title}
-        detail={t('teams.settings.memberDefaults.none')}
+        detail={unset}
         icon={icon}
         mode="info"
         showChevron={false}
@@ -339,7 +410,7 @@ const AgentDefaultsItem = React.memo(function AgentDefaultsItem(
           detail={
             expanded
               ? undefined
-              : setLabels.join(' · ') || t('teams.settings.memberDefaults.none')
+              : setLabels.join(' · ') || unset
           }
           icon={icon}
         />
@@ -359,6 +430,7 @@ const AgentDefaultsItem = React.memo(function AgentDefaultsItem(
             entry={props.entry}
             state={props.state}
             conflict={props.conflicts.model}
+            inherited={inherited?.model ?? null}
             testID={`${props.testID}:model`}
           />
           <ConnectedServiceDefaultRows
@@ -378,9 +450,9 @@ const PermissionModeDefaultRow = React.memo(function PermissionModeDefaultRow(
     entry: ResolvedAgentCatalogEntry;
     state: RowState;
     conflict: boolean;
-    testID: string;
     /** What clearing this project field restores, and whose it is (project scopes only). */
     inherited?: ResolvedInheritedManagedSessionDefaults['permissionMode'] | null;
+    testID: string;
   }>,
 ) {
   const [open, setOpen] = React.useState(false);
@@ -432,9 +504,9 @@ const PermissionModeDefaultRow = React.memo(function PermissionModeDefaultRow(
         title,
         subtitle: note,
         showSelectedSubtitle: false,
-        itemProps: { disabled: state.disabled, testID: props.testID },
         // Nothing set here: the field shows the value a new session falls back to.
         detailFormatter: (item) => item?.id === NONE_ID ? inheritedLabel ?? none : item?.title ?? null,
+        itemProps: { disabled: state.disabled, testID: props.testID },
       }}
       items={[
         {
@@ -465,6 +537,8 @@ const ModelDefaultRow = React.memo(function ModelDefaultRow(
     entry: ResolvedAgentCatalogEntry;
     state: RowState;
     conflict: boolean;
+    /** What clearing this project field restores, and whose it is (project scopes only). */
+    inherited?: ResolvedInheritedManagedSessionDefaults['model'] | null;
     testID: string;
   }>,
 ) {
@@ -472,7 +546,13 @@ const ModelDefaultRow = React.memo(function ModelDefaultRow(
   const { state } = props;
   const key = props.entry.backendTargetKey!;
   const stored = state.defaults.modelByAgentTargetKey?.[key];
-  const pickerSelection = React.useMemo(() => sessionModelPickerValueFromRef(stored?.ref), [stored]);
+  const restore = props.inherited?.value ?? null;
+  const restoreSource = restore && props.inherited ? describeInheritedDefaultSource(props.inherited.source, props.inherited.names) : null;
+  const restoreLabel = restore && 'modelId' in restore.ref ? restore.ref.modelId : null;
+  // Nothing set here: the field shows the model a new session falls back to; picking any model sets it here.
+  const inheriting = stored === undefined && restore !== null;
+  const shownRef = stored?.ref ?? (inheriting ? restore.ref : undefined);
+  const pickerSelection = React.useMemo(() => sessionModelPickerValueFromRef(shownRef), [shownRef]);
   const selected = isTeamCredentialProviderModelPickerValue(pickerSelection) ? null : pickerSelection;
   const selectedTeamCredentialModel = isTeamCredentialProviderModelPickerValue(pickerSelection) ? pickerSelection : null;
   const placement = state.defaults.placement;
@@ -516,14 +596,14 @@ const ModelDefaultRow = React.memo(function ModelDefaultRow(
     selected,
     title,
     fallbackLabel: none,
-    clearOptionLabel: none,
-    clearOptionDescription: t('teams.settings.memberDefaults.modelNone'),
+    clearOptionLabel: restore ? t('teams.settings.memberDefaults.useDefault', { value: restoreLabel ?? none }) : none,
+    clearOptionDescription: restoreSource ?? t('teams.settings.memberDefaults.modelNone'),
     enabled: true,
     teamModelChoice,
   });
   const hasSelection = selected !== null || selectedTeamCredentialModel !== null;
   const label = hasSelection ? (choice.presentation.subtitle ?? null) : null;
-  const note = props.conflict ? state.conflictNote : undefined;
+  const note = [inheriting ? restoreSource : null, props.conflict ? state.conflictNote : null].filter(Boolean).join(' ') || undefined;
   if (!state.editable) {
     return (
       <Item
@@ -807,10 +887,9 @@ export const ProjectSessionDefaultsSection = React.memo(function ProjectSessionD
           inherited={inheritance.approvalProfileId}
           description={shared ? t('teams.settings.memberDefaults.approvalProfileProject') : undefined}
           editable={props.editable} disabled={props.busy} save={selectApprovalProfile} testID={`${props.testID}-approvalProfile`} />
-        {agents.map((entry) => (
-          <AgentDefaultsItem key={entry.backendTargetKey} entry={entry} state={row} conflicts={NO_CONFLICTS}
-            testID={`${props.testID}-agent:${entry.agentId}`} />
-        ))}
+        <AgentDefaultsList agents={agents} state={row}
+          selected={defaults.defaultAgentTarget ?? inheritance.agentTarget.value}
+          conflictsFor={noConflicts} testID={props.testID} />
       </ItemGroup>
     </>
   );

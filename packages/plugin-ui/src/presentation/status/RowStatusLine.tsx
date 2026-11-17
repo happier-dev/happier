@@ -48,16 +48,16 @@ export function HappierRowStatusLine(props: HappierRowStatusLineProps): ReactEle
       {props.busy ? props.host.renderBusy({ size: 12 }) : null}
       {props.tone !== 'quiet' && !props.marked ? props.host.renderIndicator({ size: 6, color }) : null}
       {lead ? props.host.renderText({ text: lead, numberOfLines: 1, mono: true,
-        style: { color: props.host.colors.quiet, flexShrink: 1 } }) : null}
+        style: { color: props.host.colors.quiet, flexShrink: 1, maxWidth: '100%' } }) : null}
       {lead && (context || props.text) ? props.host.renderText({ text: ' · ', numberOfLines: 1,
         style: { color: quiet, flexShrink: 0 } }) : null}
-      {context ? props.host.renderText({ text: context, numberOfLines: 1, style: { color: quiet, flexShrink: 1 } }) : null}
+      {context ? props.host.renderText({ text: context, numberOfLines: 1, style: { color: quiet, flexShrink: 1, maxWidth: '100%' } }) : null}
       {context && props.text ? props.host.renderText({ text: ' · ', numberOfLines: 1,
         style: { color: quiet, flexShrink: 0 } }) : null}
       {props.text ? props.host.renderText({
         text: props.text,
         numberOfLines: props.numberOfLines ?? 1,
-        style: lead || context ? { color, flexShrink: 0, maxWidth: '100%' } : { color, flexShrink: 1 },
+        style: lead || context ? { color, flexShrink: 1, maxWidth: '100%' } : { color, flexShrink: 1 },
       }) : null}
     </View>
   );
@@ -68,4 +68,6 @@ export function HappierRowStatusLine(props: HappierRowStatusLineProps): ReactEle
   </View>;
 }
 
-const LINE_STYLE = { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0, flexShrink: 1 } as const;
+// A narrow row wraps whole parts onto the next line instead of collapsing the command and its context to a
+// glyph to keep the outcome on one line (design review 2026-11-17, L6 at 390): every part stays readable.
+const LINE_STYLE = { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 6, rowGap: 2, minWidth: 0, flexShrink: 1 } as const;

@@ -16177,6 +16177,8 @@ const spanish: TeamsTranslationRoot = {
                 readOnlyGroup: "Solo quien gestiona este grupo puede cambiarlos.",
                 machine: "Máquina",
                 useDefault: ({ value }: { value: string }) => `Usar el predeterminado · ${value}`,
+                agentDefault: "Predeterminado del agente",
+                otherAgents: "Otros agentes",
                 sourceYours: "Tuyo",
                 sourceTeamProject: ({ team, project }: { team: string; project: string }) => `${team} · ${project}`,
                 projectDefault: "Predeterminado del proyecto",

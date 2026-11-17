@@ -16225,6 +16225,8 @@ const portuguese: TeamsTranslationRoot = {
                 readOnlyGroup: "Só quem gere este grupo pode alterá-las.",
                 machine: "Máquina",
                 useDefault: ({ value }: { value: string }) => `Usar a predefinição · ${value}`,
+                agentDefault: "Predefinição do agente",
+                otherAgents: "Outros agentes",
                 sourceYours: "Teu",
                 sourceTeamProject: ({ team, project }: { team: string; project: string }) => `${team} · ${project}`,
                 projectDefault: "Predefinição do projeto",

@@ -16052,6 +16052,8 @@ const german: TeamsTranslationRoot = {
                 readOnlyGroup: "Nur wer diese Gruppe verwaltet, kann sie ändern.",
                 machine: "Maschine",
                 useDefault: ({ value }: { value: string }) => `Standard verwenden · ${value}`,
+                agentDefault: "Standard des Agenten",
+                otherAgents: "Weitere Agenten",
                 sourceYours: "Deins",
                 sourceTeamProject: ({ team, project }: { team: string; project: string }) => `${team} · ${project}`,
                 projectDefault: "Projektstandard",

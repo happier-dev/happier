@@ -16121,6 +16121,8 @@ const traditionalChinese: TeamsTranslationRoot = {
                 readOnlyGroup: "只有管理此群組的人可以變更。",
                 machine: "機器",
                 useDefault: ({ value }: { value: string }) => `使用預設值 · ${value}`,
+                agentDefault: "智慧體預設值",
+                otherAgents: "其他智慧體",
                 sourceYours: "你的",
                 sourceTeamProject: ({ team, project }: { team: string; project: string }) => `${team} · ${project}`,
                 projectDefault: "專案預設",

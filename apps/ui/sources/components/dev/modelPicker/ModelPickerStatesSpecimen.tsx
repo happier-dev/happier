@@ -104,7 +104,7 @@ const TEAM_PROPS = {
     homeNameByTeamId: { acme: 'Acme Cloud' },
 };
 
-/** The model pane's states: `?frame=normal|loading|refreshing|empty|pending|usage|failures|team`. */
+/** The model pane's states: `?frame=normal|loading|refreshing|empty|pending|usage|failures|team|inherited`. */
 function frameProps(frame: string): SessionModelPickerProps {
     const none = { ...BASE, nativeModels: [], allowAutomatic: false, canEnterCustomNativeValue: false };
     switch (frame) {
@@ -121,6 +121,9 @@ function frameProps(frame: string): SessionModelPickerProps {
             selected: { agentTargetKey: BASE.agentTargetKey, providerConnectionId: ProviderConnectionIdSchema.parse('openrouter'), modelId: 'anthropic/claude-sonnet-5' },
             probe: { phase: 'idle', onRefresh: noop } };
         case 'team': return { ...BASE, ...TEAM_PROPS, nativeModels: MODELS, probe: { phase: 'idle', onRefresh: noop } };
+        // Lab L11 nsPop: the selected model came from the project's Team default and says so on its row only.
+        case 'inherited': return { ...BASE, ...TEAM_PROPS, nativeModels: MODELS, probe: { phase: 'idle', onRefresh: noop },
+            selected: { agentTargetKey: BASE.agentTargetKey, modelId: 'opus-5-5' }, selectedAttribution: 'Acme · acme/web' };
         default: return { ...BASE, nativeModels: MODELS, probe: { phase: 'idle', onRefresh: noop } };
     }
 }

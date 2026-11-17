@@ -16177,6 +16177,8 @@ const japanese: TeamsTranslationRoot = {
                 readOnlyGroup: "このグループを管理する人だけが変更できます。",
                 machine: "マシン",
                 useDefault: ({ value }: { value: string }) => `デフォルトを使う · ${value}`,
+                agentDefault: "エージェントの既定",
+                otherAgents: "その他のエージェント",
                 sourceYours: "あなた",
                 sourceTeamProject: ({ team, project }: { team: string; project: string }) => `${team} · ${project}`,
                 projectDefault: "プロジェクトのデフォルト",

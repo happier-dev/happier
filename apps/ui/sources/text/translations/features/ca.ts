@@ -16253,6 +16253,8 @@ const catalan: TeamsTranslationRoot = {
                 readOnlyGroup: "Només qui gestiona aquest grup pot canviar-los.",
                 machine: "Màquina",
                 useDefault: ({ value }: { value: string }) => `Usa el valor per defecte · ${value}`,
+                agentDefault: "Valor per defecte de l’agent",
+                otherAgents: "Altres agents",
                 sourceYours: "Teu",
                 sourceTeamProject: ({ team, project }: { team: string; project: string }) => `${team} · ${project}`,
                 projectDefault: "Valor del projecte",

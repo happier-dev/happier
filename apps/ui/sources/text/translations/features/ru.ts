@@ -16268,6 +16268,8 @@ const russian: TeamsTranslationRoot = {
                 readOnlyGroup: "Изменить их могут только те, кто управляет этой группой.",
                 machine: "Машина",
                 useDefault: ({ value }: { value: string }) => `По умолчанию · ${value}`,
+                agentDefault: "По умолчанию у агента",
+                otherAgents: "Другие агенты",
                 sourceYours: "Ваше",
                 sourceTeamProject: ({ team, project }: { team: string; project: string }) => `${team} · ${project}`,
                 projectDefault: "По умолчанию для проекта",

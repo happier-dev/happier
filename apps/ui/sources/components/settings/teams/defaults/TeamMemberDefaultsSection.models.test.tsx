@@ -104,6 +104,8 @@ it.each(['native', 'team'] as const)('offers the selected Machine and Team model
     const rowId = 'team-new-members-defaults-agent:codex:model';
     const agent = () => screen.findAll(node => node.props.testID === 'team-new-members-defaults-agent:codex'
         && typeof node.props.onExpandedChange === 'function')[0];
+    // Codex has no Team value, so it waits behind "Other Agents" (design review 2026-11-17).
+    await openOtherAgents(screen, 'team-new-members-defaults');
     await waitForHomeGovernance(() => expect(agent()).toBeDefined());
     expect(transport.call.mock.calls.some(([request]) => request.method === RPC_METHODS.CAPABILITIES_INVOKE)).toBe(false);
     await act(async () => { agent()!.props.onExpandedChange(true); });
@@ -155,6 +157,8 @@ it('shows a failed Team model catalog and reloads it without losing native choic
     const screen = await renderScreen(<ModalProvider><TeamNewMembersScreen serverId={serverId} teamId="team-1" /></ModalProvider>);
     const agent = () => screen.findAll(node => node.props.testID === 'team-new-members-defaults-agent:codex'
         && typeof node.props.onExpandedChange === 'function')[0];
+    // Codex has no Team value, so it waits behind "Other Agents" (design review 2026-11-17).
+    await openOtherAgents(screen, 'team-new-members-defaults');
     await waitForHomeGovernance(() => expect(agent()).toBeDefined());
     await act(async () => { agent()!.props.onExpandedChange(true); });
     await screen.pressByTestIdAsync('team-new-members-defaults-agent:codex:model');
@@ -202,4 +206,33 @@ it('shows what an empty project field falls back to, whose it is, and names it o
     expect(permissionMenu!.props.items[0]).toMatchObject({ title: t('teams.settings.memberDefaults.useDefault', { value: readOnly }), subtitle: source });
     expect(permissionMenu!.props.itemTrigger.detailFormatter(permissionMenu!.props.items[0])).toBe(readOnly);
     expect(save).not.toHaveBeenCalled();
+});
+
+async function openOtherAgents(screen: Awaited<ReturnType<typeof renderScreen>>, prefix: string) {
+    const others = () => screen.findAll(node => node.props.testID === `${prefix}-otherAgents`
+        && typeof node.props.onExpandedChange === 'function')[0];
+    await waitForHomeGovernance(() => expect(others()).toBeDefined());
+    await act(async () => { others()!.props.onExpandedChange(true); });
+}
+
+it('lists only Agents with a value at some layer and keeps the rest behind one Other Agents row', async () => {
+    const { serverId } = await account.restore({ accountId: 'admin', currentAccount: true, waivedActions: ['providers.models.refresh'],
+        machines: [createMachineFixture({ id: 'machine-5964', activeAt: Date.now(), storageMode: 'plain' })],
+        settings: { experiments: true, featureToggles: { providers: true } },
+        features: createRootLayoutFeaturesResponse({ features: { providers: { enabled: true }, teams: { enabled: true } } }),
+    });
+    const { ProjectSessionDefaultsSection } = await import('./TeamMemberDefaultsSection');
+    // Only Codex has a value (from the project's shared Source); nothing is set For me.
+    const context = { primaryTeamId: null, projectDefaults: { permissionModeByAgentTargetKey: { [agentTargetKey]: 'read-only' as const } } };
+    const screen = await renderScreen(<ModalProvider><ProjectSessionDefaultsSection testID="defaults" serverId={serverId} teamId={null}
+        defaults={{}} save={vi.fn(async () => {})} scope="personal-project" context={context} teamName="Acme" projectName="acme/web"
+        editable busy={false} /></ModalProvider>);
+    const agentRows = () => screen.findAll(node => typeof node.props.testID === 'string' && /^defaults-agent:[^:]+$/.test(node.props.testID)
+        && typeof node.props.onExpandedChange === 'function').map(node => node.props.testID as string)
+        .filter((id, index, ids) => ids.indexOf(id) === index);
+    await waitForHomeGovernance(() => expect(agentRows()).toEqual(['defaults-agent:codex']));
+    // Collapsed, an Agent with nothing set here names where its default comes from instead of "None".
+    expect(screen.getTextContent()).toContain(t('teams.settings.memberDefaults.sourceTeamProject', { team: 'Acme', project: 'acme/web' }));
+    await openOtherAgents(screen, 'defaults');
+    await waitForHomeGovernance(() => expect(agentRows().length).toBeGreaterThan(1));
 });

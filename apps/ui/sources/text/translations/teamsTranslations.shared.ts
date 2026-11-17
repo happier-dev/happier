@@ -506,6 +506,8 @@ export const english = {
                 teamDefault: "Team default",
                 groupDefault: "Group default",
                 useDefault: ({ value }: { value: string }) => `Use the default · ${value}`,
+                agentDefault: "Agent's default",
+                otherAgents: "Other Agents",
                 sourceYours: "Yours",
                 sourceTeamProject: ({ team, project }: { team: string; project: string }) => `${team} · ${project}`,
                 projectDefault: "Project default",

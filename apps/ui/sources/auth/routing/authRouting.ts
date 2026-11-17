@@ -201,12 +201,12 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
   )
     return true;
 
-  // The Session defaults (loading, failed) and Team "Shared with this Team" specimens draw their real
-  // views with fixture states and inert callbacks, no account or machine data. Exact dev/debug routes only.
+  // The Session defaults (loading, failed), Team "Shared with this Team" and New Session model pane specimens
+  // draw their real views with fixture states and inert callbacks, no account or machine data. Exact dev/debug routes only.
   if (
     isDevRouteEnabled() &&
     first === 'dev' &&
-    (normalized[1] === 'session-defaults' || normalized[1] === 'team-shared') &&
+    (normalized[1] === 'session-defaults' || normalized[1] === 'team-shared' || normalized[1] === 'model-picker-states') &&
     normalized.length === 2
   )
     return true;
