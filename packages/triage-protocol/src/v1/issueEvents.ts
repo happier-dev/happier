@@ -2,7 +2,7 @@ import {
   defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 import { SessionInputForgeEvidenceV1Schema } from '@happier-dev/plugin-sdk/sessions';
-import { TriageConfiguredSourceConnectedAccountInstanceV1Schema } from './instances.js';
+import { TriageConfiguredSourceConnectedAccountInstanceV1Schema, TriageConfiguredSourceInstanceV1Schema } from './instances.js';
 import { TriageSourceInstanceIdV1Schema, TriageActionIdV1Schema, TriageIdentifierV1ProtocolSchema } from './identity.js';
 import { MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1 } from './bounds.js';
 import { defineTriageSingleLineStringV1 } from './strings.js';
@@ -26,6 +26,17 @@ export const TriageIssueEventSourceConfigV1Schema = defineProtocolObject({
   investigation: TriageIssueInvestigationV1Schema,
 }, closed);
 export type TriageIssueEventSourceConfigV1 = ReturnType<typeof TriageIssueEventSourceConfigV1Schema.parse>;
+
+/**
+ * A source whose single writer publishes each committed transition itself
+ * (an Account-data source such as native Happier exceptions). It has no
+ * polling period; the scan-diff observer above never runs for it.
+ */
+export const TriageIssueCommitPublishedEventSourceConfigV1Schema = defineProtocolObject({
+  v: defineProtocolLiteral(1), instance: TriageConfiguredSourceInstanceV1Schema,
+  investigation: TriageIssueInvestigationV1Schema,
+}, closed);
+export type TriageIssueCommitPublishedEventSourceConfigV1 = ReturnType<typeof TriageIssueCommitPublishedEventSourceConfigV1Schema.parse>;
 
 /** Native time is evidence, not a status-change watermark or occurrence identity. */
 export const TriageIssueTransitionV1Schema = defineProtocolObject({

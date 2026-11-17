@@ -3,7 +3,8 @@ import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/plugin-sd
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { readTriageSessionHandoffChoicesV1 } from '../sessionHandoff.js';
 import {
-  TriageConfiguredSourceConnectedAccountInstanceV1Schema,
+  TriageConfiguredSourceConnectedAccountInstanceV1Schema, TriageConfiguredSourceInstanceV1Schema,
+  TriageIssueCommitPublishedEventSourceConfigV1Schema,
   TriageReadConfiguredSourceInstancesResultV1Schema,
   TriageIssueEventSetupInputV1Schema, TriageIssueEventSourceConfigV1Schema,
   TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1,
@@ -43,8 +44,18 @@ export const TRIAGE_ISSUE_EVENT_SETUP_INPUT_HINTS_V1 = {
   }],
 };
 
-/** Resolve the source through its current target-owned row; opening setup writes nothing. */
-export function createTriageIssueEventSourceSetupV1(input: Readonly<{ pluginId: string; sourceLocalId: string; displayName: string }>):
+/** A commit-published source has no polling period, so its setup asks no check interval. */
+export const TRIAGE_ISSUE_COMMIT_EVENT_SETUP_INPUT_HINTS_V1 = {
+  fields: TRIAGE_ISSUE_EVENT_SETUP_INPUT_HINTS_V1.fields.filter(field => field.path !== 'checkPeriodSeconds'),
+};
+
+/**
+ * Resolve the source through its current target-owned row; opening setup writes nothing.
+ * `publication: 'commit'` admits an Account-data source whose own writer publishes
+ * committed transitions; the default polls a connected-account source.
+ */
+export function createTriageIssueEventSourceSetupV1(input: Readonly<{ pluginId: string; sourceLocalId: string; displayName: string;
+  publication?: 'scan' | 'commit' }>):
   (raw: unknown, context: PluginInvocationContext) => Promise<JsonValue> {
   return async (raw: unknown, context: PluginInvocationContext) => {
     const selected = TriageIssueEventSetupInputV1Schema.parse(raw);
@@ -58,10 +69,15 @@ export function createTriageIssueEventSourceSetupV1(input: Readonly<{ pluginId: 
         && record.configured.instance.source.pluginId === input.pluginId
         && record.configured.instance.source.localId === input.sourceLocalId)
       : [];
-    const instance = candidates.length === 1
-      ? TriageConfiguredSourceConnectedAccountInstanceV1Schema.safeParse(candidates[0]!.configured)
-      : null;
-    if (!instance?.success) throw new PluginError({ code: 'triage_issue_source_unavailable', message: 'Choose a currently configured source.' });
+    const commit = input.publication === 'commit';
+    const configured = candidates.length === 1 ? candidates[0]!.configured : null;
+    const instance = configured === null ? null : commit
+      ? TriageConfiguredSourceInstanceV1Schema.safeParse(configured)
+      : TriageConfiguredSourceConnectedAccountInstanceV1Schema.safeParse(configured);
+    if (!instance?.success || (commit && !('source' in instance.data.binding && instance.data.binding.source === 'accountData'))
+      || (commit && selected.checkPeriodSeconds !== undefined)) {
+      throw new PluginError({ code: 'triage_issue_source_unavailable', message: 'Choose a currently configured source.' });
+    }
     if (selected.investigation?.mode === 'auto_start') {
       const choices = await readTriageSessionHandoffChoicesV1({ executeAction: (ref, args, options) =>
         context.services.actions.execute(ref, args, options) }, { task: 'investigate', signal: context.signal });
@@ -71,7 +87,9 @@ export function createTriageIssueEventSourceSetupV1(input: Readonly<{ pluginId: 
         throw new PluginError({ code: 'triage_issue_investigation_unavailable', message: 'Choose a currently configured investigate Action.' });
       }
     }
-    const sourceConfig = TriageIssueEventSourceConfigV1Schema.parse({
+    const sourceConfig = commit ? TriageIssueCommitPublishedEventSourceConfigV1Schema.parse({
+      v: 1, instance: instance.data, investigation: selected.investigation ?? { mode: 'inbox' },
+    }) : TriageIssueEventSourceConfigV1Schema.parse({
       v: 1, instance: instance.data,
       checkPeriodMs: selected.checkPeriodSeconds === undefined
         ? TRIAGE_ISSUE_DEFAULT_CHECK_PERIOD_MS_V1 : selected.checkPeriodSeconds * 1_000,

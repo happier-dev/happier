@@ -417,9 +417,9 @@ export type {
 } from './sessionPullRequestStatus.js';
 export {
     TriageIssueInvestigationV1Schema, TriageIssueEventSetupInputV1Schema,
-    TriageIssueEventSourceConfigV1Schema, TriageIssueTransitionV1Schema,
+    TriageIssueEventSourceConfigV1Schema, TriageIssueTransitionV1Schema, TriageIssueCommitPublishedEventSourceConfigV1Schema,
 } from './issueEvents.js';
-export type { TriageIssueEventSourceConfigV1, TriageIssueTransitionV1 } from './issueEvents.js';
+export type { TriageIssueEventSourceConfigV1, TriageIssueTransitionV1, TriageIssueCommitPublishedEventSourceConfigV1 } from './issueEvents.js';
 export {
     TriageReadAttentionInputV1Schema, TriageReadAttentionConnectedAccountInputV1Schema,
     TriageReadAttentionCredentialInputV1Schema, TriageReadAttentionResultV1Schema,

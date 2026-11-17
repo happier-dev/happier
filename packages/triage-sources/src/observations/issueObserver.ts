@@ -1,4 +1,4 @@
-import { computeCanonicalDomainSeparatedDigest, PluginError, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { computeCanonicalDomainSeparatedDigest, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginCheckpointedEventSourceAdapterV1, PluginCheckpointedEventSourceCatalogV1 } from '@happier-dev/plugin-sdk/background-services';
 import { PluginEventAutomationHistoryGapResetActionInputV1Schema,
   type PluginEventAutomationHistoryGapResetActionResultV1, type PluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
@@ -14,10 +14,9 @@ import {
 import {
   TriageIssueEventSourceConfigV1Schema, TriageIssueTransitionV1Schema,
   TRIAGE_ISSUE_DEFAULT_CHECK_PERIOD_MS_V1,
-  TRIAGE_ISSUE_EVENT_LOCAL_ID_V1, TRIAGE_ISSUE_NOTIFICATION_CATEGORY_ID_V1,
+  TRIAGE_ISSUE_EVENT_LOCAL_ID_V1,
   type TriageIssueEventSourceConfigV1, type TriageIssueTransitionV1,
 } from './issueSource.js';
-import { readTriageIssueAutomaticInvestigationChoiceV1, requestTriageIssueAutomaticInvestigationV1 } from './issueInvestigation.js';
 import {
   TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1, issueCheckpointRowId, readIssueCheckpoints, writeIssueCheckpoints,
   type IssueCheckpoint, type IssueCheckpointPut,
@@ -43,13 +42,6 @@ export type TriageIssueObserverProviderV1 = Readonly<{
   pluginId: string; sourceLocalId: string; displayName: string; scanLimit: number;
   scan(input: TriageScanInputV1, context: PluginInvocationContext): Promise<TriageScanResultV1>;
 }>;
-
-/** Notice body's first line per transition: the outcome in the person's words, not the phase id. */
-const ISSUE_TRANSITION_SENTENCE: Record<TriageIssueTransitionV1['phase'], (provider: string) => string> = {
-  open: provider => `New issue in ${provider}.`,
-  updated: provider => `Issue updated in ${provider}.`,
-  resolved: provider => `Resolved in ${provider}.`,
-};
 
 function fingerprint(present: Present): string {
   return computeCanonicalDomainSeparatedDigest('happier.triage.issue.v1', [
@@ -218,9 +210,6 @@ export function createTriageIssueEventSourceAdapterV1(provider: TriageIssueObser
       if (!await sourceIsCurrent(input)) return;
       const storage = input.context.services.storage.account;
       if (!storage) throw new PluginError({ code: 'triage_issue_checkpoint_unavailable', message: 'Account checkpoint storage is unavailable.' });
-      const host = { executeAction: async (ref: { pluginId: string; localId: string }, args: JsonValue) =>
-        input.context.services.actions.execute(ref, args, { signal: input.context.signal }) };
-      let investigationChoice: Awaited<ReturnType<typeof readTriageIssueAutomaticInvestigationChoiceV1>> | undefined;
       // Project this finite attempt once; do not rescan every observation's
       // admission metadata for every changed issue, or read it for Inbox mode.
       const admittedOccurrences = new Set<string>();
@@ -239,46 +228,19 @@ export function createTriageIssueEventSourceAdapterV1(provider: TriageIssueObser
           }
         }
       }
+      const choices = createTriageIssueInvestigationChoiceReaderV1(input.context);
+      const investigation = input.source.investigation;
       for (const change of input.checkpoint.changes) {
         input.context.signal.throwIfAborted();
         if (change.transition && change.occurrenceId) {
-          const notice = {
-            clientRequestId: change.occurrenceId, categoryId: TRIAGE_ISSUE_NOTIFICATION_CATEGORY_ID_V1,
-            title: change.present.snapshot.title, type: 'update', resolved: false,
-            // The title already names the issue; the body says what changed and where to open it.
-            body: [ISSUE_TRANSITION_SENTENCE[change.transition.phase](provider.displayName),
-              ...(change.present.locator.webUrl === undefined ? [] : [change.present.locator.webUrl])].join('\n'),
-            healthPhase: change.transition.phase === 'resolved' ? 'recovered' : 'open',
-            investigation: { kind: 'alertEntry', entry: {
-              entryRef: change.entryRef, sourceInstanceId: input.definition.sourceInstanceId,
-            } },
-            data: projectNativeJsonValueForTransport({
-              transition: change.transition, evidence: { kind: 'alertEntry', entry: {
-                entryRef: change.entryRef, sourceInstanceId: input.definition.sourceInstanceId,
-              } },
-            }),
-          } satisfies Parameters<PluginInvocationContext['services']['notifications']['send']>[0];
-          const result = await publishTriageAttentionV1(input.context, {
-            entryRef: change.entryRef, reason: 'watchedAlert', notice,
+          await publishTriageIssueTransitionV1(input.context, {
+            providerDisplayName: provider.displayName, sourceInstanceId: input.definition.sourceInstanceId,
+            transition: change.transition, occurrenceId: change.occurrenceId, entryRef: change.entryRef,
+            title: change.present.snapshot.title,
+            ...(change.present.locator.webUrl === undefined ? {} : { webUrl: change.present.locator.webUrl }),
+            ...(investigation.mode === 'auto_start' && admittedOccurrences.has(change.occurrenceId)
+              ? { autoStart: { configuredActionId: investigation.configuredActionId, choices } } : {}),
           });
-          input.context.signal.throwIfAborted();
-          if (!result.notice && change.transition.phase !== 'resolved') throw new PluginError({
-            code: 'triage_issue_notice_unavailable', message: 'The issue notice was not committed.',
-          });
-          if (admittedOccurrences.has(change.occurrenceId) && change.transition.phase === 'open' && input.source.investigation.mode === 'auto_start'
-            && result.notice?.opened === true && !result.replayed) {
-            investigationChoice ??= await readTriageIssueAutomaticInvestigationChoiceV1(host,
-              input.source.investigation.configuredActionId, { signal: input.context.signal });
-            const outcome = typeof investigationChoice === 'string' ? investigationChoice : await requestTriageIssueAutomaticInvestigationV1(host, {
-              selection: investigationChoice,
-              entry: { entryRef: change.entryRef, sourceInstanceId: input.definition.sourceInstanceId },
-            }, { signal: input.context.signal });
-            if (outcome !== null) await publishTriageAttentionV1(input.context, {
-              entryRef: change.entryRef, reason: 'watchedAlert', notice: { ...notice,
-                clientRequestId: `${change.occurrenceId}:investigation`, body: `${notice.body}\n${outcome}`,
-              },
-            });
-          }
         }
         input.context.signal.throwIfAborted();
       }
@@ -294,4 +256,4 @@ export function createTriageIssueEventSourceAdapterV1(provider: TriageIssueObser
   };
 }
 
-import { publishTriageAttentionV1 } from './attention.js';
+import { createTriageIssueInvestigationChoiceReaderV1, publishTriageIssueTransitionV1 } from './issueTransition.js';
