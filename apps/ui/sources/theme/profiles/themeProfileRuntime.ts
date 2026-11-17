@@ -449,7 +449,7 @@ export const commitThemeSelection = (input: CommitThemeSelectionInput): Promise<
     });
 };
 
-const resolveActivationModes = (input: Readonly<{
+export const resolveActivationModes = (input: Readonly<{
     profileMode?: ThemeProfileMode | 'all';
     themePreference?: ThemePreference;
 }>): readonly ThemeProfileMode[] => {
