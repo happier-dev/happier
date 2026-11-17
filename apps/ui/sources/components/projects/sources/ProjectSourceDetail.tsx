@@ -59,6 +59,7 @@ import type {
   ProjectSourcesController,
   ProjectSourcesState,
 } from './projectSourcesController';
+import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { formatProjectSourceAddress } from './projectSourceAddress';
 import { presentProjectSourceAddressRefusal } from './resolveProjectSourceAddress';
 import {
@@ -340,6 +341,10 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
   const { state, controller } = props;
   const current = props.creating ? null : state.current;
   const newDraft = state.creationDraft;
+  // The App's Automations read its accepted source identity, distinct from any Environment it deploys to.
+  const appSubject = React.useMemo(() => current
+    ? { kind: 'app' as const, serverId: controller.scope.serverId, projectSourceId: current.id } : null,
+  [current?.id, controller.scope.serverId]); // eslint-disable-line react-hooks/exhaustive-deps
   const machines = useActiveMachineFacts();
   // A phone reads the page as summaries that push their editor (lab `SOURCESp`), with Open pinned below.
   const compact = useViewportClass() === 'compact';
@@ -822,6 +827,9 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
           serverId={props.controller.scope.serverId}
           onOpenCheckout={props.onOpenCheckout}
         />
+      ) : null}
+      {current && appSubject ? (
+        <SubjectTriggersSection subject={appSubject} subjectName={current.name} />
       ) : null}
       {current && canEdit ? (
         // Delete closes the page as the shared quiet button row, its consequence the one footnote beneath.

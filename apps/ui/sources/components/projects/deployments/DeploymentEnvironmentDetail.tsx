@@ -343,6 +343,11 @@ export const DeploymentEnvironmentDetail = React.memo(
     const triggerSubject = React.useMemo(() => triggerMachineId
       ? { kind: 'environment' as const, machineId: triggerMachineId, environmentId: props.environmentId } : null,
     [triggerMachineId, props.environmentId]);
+    // Its configured backup stream is read with it, so a backup's triggers show in its Automations (Plan 05).
+    const backupConfigured = !!detail?.content.backup && 'configRevision' in detail.content.backup;
+    const backupContext = React.useMemo(() => backupConfigured
+      ? [{ kind: 'backup' as const, serverId: props.serverId, environmentId: props.environmentId }] : undefined,
+    [backupConfigured, props.serverId, props.environmentId]);
     const [ownDestination, setOwnDestination] =
       React.useState<DeploymentEnvironmentDestinationV1>(OVERVIEW);
     const { tab, section: settingsSection } =
@@ -1177,7 +1182,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               {/* Once Deploy leads, they are a titled section of their own beside the Environment's other agent work. */}
               {ready ? environmentAgentActions : null}
               {triggerSubject ? (
-                <SubjectTriggersSection subject={triggerSubject}
+                <SubjectTriggersSection subject={triggerSubject} contextSubjects={backupContext}
                   subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
                   deploymentEnvironment={{ serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
                     environmentId: detail.environment.id }}

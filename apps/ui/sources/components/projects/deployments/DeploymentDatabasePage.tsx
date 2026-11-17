@@ -172,6 +172,12 @@ export function DeploymentDatabasePage(
     detail?.content.backup && 'configRevision' in detail.content.backup
       ? detail.content.backup
       : null;
+  // The Environment's configured backup stream also runs here: its triggers read under Also runs here (Plan 05).
+  const backupEnvironmentId = backupConfiguration ? detail?.environment.id ?? null : null;
+  const backupServerId = detail?.environment.serverId ?? null;
+  const backupContext = React.useMemo(() => backupEnvironmentId && backupServerId
+    ? [{ kind: 'backup' as const, serverId: backupServerId, environmentId: backupEnvironmentId }] : undefined,
+  [backupEnvironmentId, backupServerId]);
   const lifetime = props.lifetime;
   const projectSourceId = detail?.environment.projectSourceId ?? null;
   const actions = React.useMemo(
@@ -681,7 +687,7 @@ export function DeploymentDatabasePage(
 
           {automationSubject?.ok ? (
             <SubjectTriggersSection subject={automationSubject.subject} subjectName={title}
-              accountLifetime={lifetime} />
+              accountLifetime={lifetime} contextSubjects={backupContext} />
           ) : null}
 
           <ItemGroup

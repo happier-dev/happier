@@ -17,6 +17,7 @@ import {
   type TelemetryKeyFlowConfigV1,
 } from '@happier-dev/database-protocol';
 import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 
 import type { ConfiguredHealthResultsState } from '@/components/store/inventory/configuredHealthResults';
 import type { ConfiguredCheckDefinitionFacts } from '@/components/store/inventory/useConfiguredCheckDefinitions';
@@ -240,6 +241,22 @@ export function readServiceCheckSettings(
     label: seed.source.displayLabel,
     run: { subject: source.subject, check: { checkId: check.checkId, kind: check.kind } },
   };
+}
+
+/**
+ * A saved Check's Automations subject before it has a result: the saved source's instance and the Check it names
+ * (the one its settings read), the same selector the retained results carry once one arrives.
+ */
+export function serviceCheckSavedAutomationSubject(
+  seed: PluginEventAutomationEditSeed | null,
+  checkId: string | null,
+  serverId: string,
+): Extract<AutomationSubjectV1, { kind: 'healthCheck' }> | null {
+  if (!seed) return null;
+  const parsed = storedHealthSource.safeParse(seed.source.sourceConfig);
+  if (!parsed.success) return null;
+  const check = parsed.data.checks.find((candidate) => candidate.checkId === checkId) ?? parsed.data.checks[0];
+  return check ? { kind: 'healthCheck', serverId, sourceInstanceId: seed.source.sourceInstanceId, checkId: check.checkId } : null;
 }
 
 /**

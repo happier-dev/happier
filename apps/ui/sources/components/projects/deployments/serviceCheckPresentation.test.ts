@@ -8,6 +8,7 @@ import {
   readServiceCheckDefinitions,
   serviceCheckResultWord,
   serviceCheckInvestigationSubject,
+  serviceCheckSavedAutomationSubject,
   serviceCheckHistoryStrip,
   serviceCheckRecentBars,
   serviceCheckResponseSeries,
@@ -212,6 +213,19 @@ describe('Investigate on a failing Check names the subject its saved source watc
       checks: [check('svc', { kind: 'healthCheck' })] };
     expect(serviceCheckInvestigationSubject(seed(config), 'svc', 'server-a')).toBeNull();
     expect(serviceCheckInvestigationSubject(null, null, 'server-a')).toBeNull();
+  });
+
+  it('a saved Check with no result yet has its Automations subject from its saved source; no source, no subject', () => {
+    const config = { v: 1, subject: environment, checks: [
+      check('first', { kind: 'environmentHealth', domainId: 'domain-b', targetLinkId: 'link-a' }),
+      check('second', { kind: 'environmentHealth', domainId: 'domain-c', targetLinkId: 'link-a' }),
+    ] };
+    expect(serviceCheckSavedAutomationSubject(seed(config), null, 'server-a'))
+      .toEqual({ kind: 'healthCheck', serverId: 'server-a', sourceInstanceId: 'health:x', checkId: 'first' });
+    expect(serviceCheckSavedAutomationSubject(seed(config), 'second', 'server-a'))
+      .toMatchObject({ checkId: 'second' });
+    expect(serviceCheckSavedAutomationSubject(seed({ v: 2 }), null, 'server-a')).toBeNull();
+    expect(serviceCheckSavedAutomationSubject(null, null, 'server-a')).toBeNull();
   });
 });
 

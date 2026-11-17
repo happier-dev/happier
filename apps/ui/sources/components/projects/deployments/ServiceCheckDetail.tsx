@@ -43,6 +43,7 @@ import {
   serviceCheckKeyFlowCauseText,
   formatServiceCheckKeyFlowValue,
   serviceCheckInvestigationSubject,
+  serviceCheckSavedAutomationSubject,
   serviceCheckHistoryStrip,
   serviceCheckListFacts,
   serviceCheckRecentBars,
@@ -172,10 +173,12 @@ export function ServiceCheckDetail(
     [seed, shown?.checkId, serverIdForSubject],
   );
   const serverId = row.scope.serverId;
-  // The retained health source owns this Check's identity; without it the page has no Automations section.
+  // The retained health source owns this Check's identity; a saved Check with no result yet reads it from its saved
+  // source, so its Automations are there before the first result.
   const automationSubject = React.useMemo(
-    () => shown ? configuredHealthCheckAutomationSubject(row.lastResults, shown.checkId, serverId) : null,
-    [row.lastResults, shown, serverId],
+    () => shown ? configuredHealthCheckAutomationSubject(row.lastResults, shown.checkId, serverId)
+      : serviceCheckSavedAutomationSubject(seed, null, serverId),
+    [row.lastResults, shown, serverId, seed],
   );
   const observer = useServerScopedMachineLabel(
     serverId,
