@@ -9,6 +9,7 @@ import { ArtifactStoredKindV1Schema, decodeArtifactKindV1 } from './artifactKind
 import { CoordinationMessageRefV1Schema } from '../discussions/messageRefs.js';
 import { ArtifactIdScopeV1Schema } from './idScope.js';
 import { ApprovalTranscriptVisualPublicationV1Schema } from '../sessions/messages/transcriptObservationV1.js';
+import { ReviewRoundStartMetadataV1Schema, ReviewMetadataWriteV1Schema } from '../reviews/reviewArtifactV1.js';
 export { ArtifactIdScopeV1Schema, deriveAccountScopedArtifactIdV1, resolveAccountScopedArtifactIdV1, artifactIdScopeMatchesAccountV1, type ArtifactIdScopeV1 } from './idScope.js';
 
 type MemoryDecisionSourceSchema<Required extends boolean> = Required extends true
@@ -23,6 +24,7 @@ export function createArtifactCreateHttpInputV1Schema<const RequiresMemoryDecisi
         id: ArtifactCreateIdV1Schema,
         idScope: z.optional(ArtifactIdScopeV1Schema),
         kind: z.optional(ArtifactStoredKindV1Schema),
+        reviewMetadata: z.optional(ReviewRoundStartMetadataV1Schema),
         approvalState: z.optional(ApprovalArtifactQueryHintsV1Schema.shape.approvalState),
         approvalSessionId: z.optional(ApprovalArtifactQueryHintsV1Schema.shape.approvalSessionId),
         header: z.string(),
@@ -49,6 +51,7 @@ export function createArtifactUpdateHttpInputV1Schema<const RequiresMemoryDecisi
         updateOperationId: z.optional(z.string().check(z.uuid())),
         transcriptVisualPublication: z.optional(lazyZodSchema(() => ApprovalTranscriptVisualPublicationV1Schema)),
         approvalInputCustody: z.optional(ApprovalInputCustodySchema),
+        reviewMetadata: z.optional(ReviewMetadataWriteV1Schema),
         header: z.optional(z.string()),
         kind: z.optional(ArtifactStoredKindV1Schema),
         approvalState: z.optional(ApprovalArtifactQueryHintsV1Schema.shape.approvalState),

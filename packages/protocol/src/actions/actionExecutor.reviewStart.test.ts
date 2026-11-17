@@ -1,3 +1,4 @@
+import { createReviewRecordPortV1, type ReviewArtifactTransportV1 } from '../reviews/reviewArtifactV1.js';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor';
@@ -15,6 +16,30 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
+  it('admits a durable Review before starting reviewers, including clean results', async () => {
+    let row: Awaited<ReturnType<ReviewArtifactTransportV1['read']>> = null;
+    const records = createReviewRecordPortV1({
+      read: async () => row,
+      create: async input => {
+        row = { ...input, revision: { headerVersion: 1, bodyVersion: 1 } };
+        return row;
+      },
+      update: async () => { throw new Error('No terminal update at admission'); },
+    });
+    let binding: unknown;
+    const executor = createActionExecutor({
+      reviewRecords: () => records,
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      executionRunStart: async (_sessionId, input) => {
+        expect(row).not.toBeNull();
+        binding = (input.intentInput as Record<string, unknown>).reviewRound;
+        return { runId: 'clean-run', callId: 'call', sidechainId: 'call' };
+      },
+    } as ActionExecutorDeps);
+    const result = await executor.execute('review.start', { sessionId: 's1', engineIds: ['codex'], instructions: 'Review.' }, { surface: 'ui' });
+    expect(result).toMatchObject({ ok: true, result: { reviewRound: binding, results: [{ ok: true }] } });
+    expect(binding).toMatchObject({ reviewId: expect.any(String), roundOrdinal: 1 });
+  });
   it.each([undefined, 'agentDefault'] as const)('preserves Session Review inheritance and explicit Account-default choice (%s)', async childSelection => {
     const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
     const sessionConfigOptionOverrides = buildAcpConfigOptionOverridesV1({

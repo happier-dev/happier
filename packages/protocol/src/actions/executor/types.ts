@@ -1,3 +1,4 @@
+import type { ReviewRecordPortV1 } from '../../reviews/reviewArtifactV1.js';
 import type { SessionSpaceMembershipSetInputV1 } from '../sessionSpaceMembership.js';
 import type { SessionAgentReadinessActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 import type { SessionRunnerRuntimeRefreshActionInputV1 } from '../../sessions/control/sessionRunnerRestartV2.js';
@@ -1706,6 +1707,7 @@ export type ActionExecutorDeps = Readonly<{
       onSnapshot?: (snapshot: ExecutionRunGetResponse) => void | Promise<void>;
     }>,
   ) => Promise<unknown>;
+  reviewRecords?: (context: ActionExecutorContext) => ReviewRecordPortV1;
   reviewCommentAction?: (args: Readonly<{
     actionId: ReviewCommentActionIdV1;
     input: unknown;

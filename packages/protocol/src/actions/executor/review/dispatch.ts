@@ -326,7 +326,18 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           && narrator !== undefined && normalizeExecutionBackendOptionValue(narrator.engineId) === normalizeExecutionBackendOptionValue(engineIds[0]!)
           && (narrator.modelId === undefined || narrator.modelId === originalModelId);
 
-        const reviewGroupId = `review_${bytesToHex(randomBytes(16))}`;
+        const reviewIdBytes = randomBytes(16);
+        reviewIdBytes[6] = (reviewIdBytes[6]! & 0x0f) | 0x40;
+        reviewIdBytes[8] = (reviewIdBytes[8]! & 0x3f) | 0x80;
+        const reviewIdHex = bytesToHex(reviewIdBytes);
+        const reviewId = `${reviewIdHex.slice(0, 8)}-${reviewIdHex.slice(8, 12)}-${reviewIdHex.slice(12, 16)}-${reviewIdHex.slice(16, 20)}-${reviewIdHex.slice(20)}`;
+        const reviewRecords = deps.reviewRecords?.(ctx);
+        const reviewRound = reviewRecords ? await reviewRecords.start({ reviewId, title: 'Code review',
+          subjectKind: reviewInput.comparisonId ? 'comparison' : 'repository',
+          sourceKind: ctx.actionCaller?.kind === 'workflowRun' ? 'workflow' : 'direct',
+          ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
+          reviewerIds: engineIds, startedAt: Date.now(), signal: ctx.signal }) : undefined;
+        const reviewGroupId = reviewRound?.reviewId ?? `review_${bytesToHex(randomBytes(16))}`;
         const results = await fanoutStarts({
           keys: engineIds,
           recordActionOutputDiagnostic: deps.recordActionOutputDiagnostic,
@@ -398,6 +409,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
                   : {}),
                 ...(!data.intent || data.intent === 'review' ? { intentInput: {
                   ...intentInputBase, engineId,
+                  ...(reviewRound ? { reviewRound, reviewReviewerId: engineId, reviewRoundSettlement: engineIds.length === 1 && !workflowScope ? 'execution' : 'workflow' } : {}),
                   ...(continueSingleReview ? { outputs: ['walkthrough'], narrator } : {}),
                 } } : {}),
               },
@@ -409,15 +421,17 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           },
         });
 
-        if (!narrationRequested) return { ok: true, result: { intent: 'review', sessionId, results } };
+        if (reviewRound && results.every(result => !result.ok)) await reviewRecords!.settle({ ...reviewRound,
+          outcome: 'failed', finishedAt: Date.now(), runs: [], signal: ctx.signal });
+        if (!narrationRequested) return { ok: true, result: { intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}) } };
         const reviewRunIds = results.flatMap((item) => item.ok && typeof readRecord(item.result).runId === 'string'
           ? [String(readRecord(item.result).runId)] : []);
         if (reviewRunIds.length === 0) {
-          return { ok: true, result: { intent: 'review', sessionId, results,
+          return { ok: true, result: { intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}),
             narration: { state: 'failed', errorCode: 'review_launch_failed', error: 'review_launch_failed' } } };
         }
         if (continueSingleReview) {
-          return { ok: true, result: { intent: 'review', sessionId, results, narration: {
+          return { ok: true, result: { intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}), narration: {
             runId: reviewRunIds[0], comparisonId: reviewInput.comparisonId, reviewRunIds,
             mode: 'continued_review', state: 'collecting',
           } } };
@@ -425,7 +439,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const launchFailures = results.flatMap((item) => item.ok ? [] : [{
           engineId: item.key, errorCode: item.errorCode ?? 'execution_run_failed', error: item.error ?? 'execution_run_failed',
         }]);
-        if (!deps.executionRunAction) return { ok: true, result: { intent: 'review', sessionId, results,
+        if (!deps.executionRunAction) return { ok: true, result: { intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}),
           narration: { state: 'failed', errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.action' } } };
         let narration: unknown;
         try {
@@ -445,7 +459,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           } catch { /* Diagnostics cannot replace the accepted review result. */ }
           narration = { state: 'failed', ...readFanoutStartError(error) };
         }
-        return { ok: true, result: { intent: 'review', sessionId, results, narration } };
+        return { ok: true, result: { intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}), narration } };
       }
   return null;
 }

@@ -7,7 +7,7 @@ export const ArtifactCoarseKindV1Schema = z.enum(['skill', 'prompt', 'plugin_ui'
 export type ArtifactCoarseKindV1 = z.infer<typeof ArtifactCoarseKindV1Schema>;
 
 /** Disjoint Team discovery buckets; exact contributed kinds remain on each row. */
-export const ArtifactTeamResourceKindV1Schema = z.enum(['projectDocuments', 'prompts', 'workflows', 'otherArtifacts']);
+export const ArtifactTeamResourceKindV1Schema = z.enum(['projectDocuments', 'prompts', 'workflows', 'reviews', 'otherArtifacts']);
 export type ArtifactTeamResourceKindV1 = z.infer<typeof ArtifactTeamResourceKindV1Schema>;
 // Lightweight identities also consumed by the existing sharing adapters. Keeping
 // their schemas out of this index owner avoids importing the Action policy graph.
@@ -16,6 +16,7 @@ export const PROMPT_BUNDLE_ARTIFACT_KIND_V2 = 'prompt_bundle.v2';
 export const WORKFLOW_DEFINITION_ARTIFACT_KIND_V1 = 'workflow-definition.v1';
 export const THEME_PROFILE_ARTIFACT_KIND_V1 = 'theme_profile.v1';
 export const APPROVAL_PROFILE_ARTIFACT_KIND_V1 = 'approval-profile.v1';
+export const REVIEW_ARTIFACT_KIND_V1 = 'review.v1';
 
 export type ArtifactContentDeliveryPolicyV1 = Readonly<{
   legacySocketPublication: boolean;
@@ -24,7 +25,7 @@ export type ArtifactContentDeliveryPolicyV1 = Readonly<{
 
 /** Private theme bodies use addressed delivery; replay-bearing approval bodies have no excerpt. */
 export function getArtifactContentDeliveryPolicyV1(kind: unknown): ArtifactContentDeliveryPolicyV1 {
-  const privateTheme = kind === THEME_PROFILE_ARTIFACT_KIND_V1;
+  const privateTheme = kind === THEME_PROFILE_ARTIFACT_KIND_V1 || kind === REVIEW_ARTIFACT_KIND_V1;
   return { legacySocketPublication: !privateTheme,
     bodyPreviewAllowed: !privateTheme && !isApprovalArtifactKindV1(kind) };
 }
@@ -36,6 +37,7 @@ export function getArtifactTeamResourceStoredKindsV1() {
     projectDocument: stored(PROMPT_DOC_ARTIFACT_KIND_V2),
     prompts: [...stored(PROMPT_DOC_ARTIFACT_KIND_V2), ...stored(PROMPT_BUNDLE_ARTIFACT_KIND_V2)],
     workflows: stored(WORKFLOW_DEFINITION_ARTIFACT_KIND_V1),
+    reviews: stored(REVIEW_ARTIFACT_KIND_V1),
   } as const;
 }
 
@@ -44,6 +46,7 @@ export function deriveArtifactTeamResourceKindV1(input: Readonly<{
   storedKind: string | null; sourceContextDocument?: boolean;
 }>): ArtifactTeamResourceKindV1 {
   const kinds = getArtifactTeamResourceStoredKindsV1();
+  if (input.storedKind !== null && kinds.reviews.includes(input.storedKind)) return 'reviews';
   if (input.storedKind !== null && kinds.workflows.includes(input.storedKind)) return 'workflows';
   if (input.storedKind !== null && kinds.prompts.includes(input.storedKind)) {
     return input.sourceContextDocument && kinds.projectDocument.includes(input.storedKind) ? 'projectDocuments' : 'prompts';
