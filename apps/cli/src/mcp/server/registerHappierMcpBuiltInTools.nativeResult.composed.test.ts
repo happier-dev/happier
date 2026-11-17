@@ -75,7 +75,9 @@ it('retains permitted Action outcomes through native MCP results with nullable s
         const provider = encoding === 'claude-text' ? 'claude' : 'codex';
         for (const event of events) {
           const { sidechainId: _sidechainId, ...body } = event;
-          const observed = normalizeAcpSessionMessageBody({ ...caches, provider, body: { ...body, id: event.callId } });
+          const observed = normalizeAcpSessionMessageBody({ ...caches, provider,
+            source: { protocol: 'native', agent: { pluginId: 'example.agent', localId: provider } },
+            body: { ...body, id: event.callId } });
           if (observed.type !== 'tool-result') continue;
           if (args.actionId === 'account.public_profile.preview') {
             expect(observed.output).toMatchObject({ kind: 'ready' });
