@@ -12,6 +12,7 @@ import {
     subscribeServerProfiles,
     resolveServerProfileScopeId,
     type ActiveServerSnapshot,
+    type ServerProfile,
 } from '@/sync/domains/server/serverProfiles';
 
 import type { ActivityAttentionSource } from './activityAttentionSourceTypes';
@@ -155,7 +156,9 @@ function useActivityAttentionSourceContext(includeSessionMessages: boolean, deta
 
 /** What a full Activity source adds to the store source: Session audience presentation and Home profiles. */
 export type ActivitySourceDetail = Readonly<Required<Pick<ActivityAttentionSource,
-    'audienceScopes' | 'audiencePresentationsBySessionKey' | 'serverProfilesById'>>>;
+    'audienceScopes' | 'audiencePresentationsBySessionKey'>> & {
+    serverProfilesById: Readonly<Record<string, ServerProfile>>;
+}>;
 
 /** Every Session address whose audience a full Activity source presents. */
 export function collectActivityAudienceAddresses(source: Pick<ActivityAttentionSource, 'sessionsById'
