@@ -25,6 +25,9 @@ import type { CodeEditorProps } from '@/components/ui/code/editor/codeEditorType
 import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, flattenWidgetLayoutWidgetsV1, projectOverviewPresetV1, WidgetLayoutItemsV1Schema } from '@happier-dev/protocol/widgets';
 import { createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
+import { Modal } from '@/modal';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { useArtifactNetworkEditor } from './useArtifactNetworkEditor';
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -119,6 +122,60 @@ async function setup(kind: 'image' | 'html' | 'file' | 'document', delayBlob?: P
 }
 
 describe('Artifact composed view reads', () => {
+    it('retains the typed network editor open refusal and allows another open', async () => {
+        let refused = true;
+        const { row, head, served } = await setup('html', undefined, false, request =>
+            refused && request.path === '/v1/artifacts/document'
+                ? Response.json({ error: 'database_transaction_timeout' }, { status: 503 }) : undefined);
+        head.body = encodePlainArtifactStoredContent({ body: '<!doctype html><h1>Saved HTML</h1>' });
+        const anchorRef = React.createRef<React.ComponentRef<typeof import('react-native').View>>();
+        const hook = await renderHook(() => useArtifactNetworkEditor(row, true, anchorRef));
+        vi.mocked(Modal.alert).mockClear();
+        await act(async () => { await hook.getCurrent().open(); });
+        await waitForHomeGovernance(() => expect(Modal.alert).toHaveBeenCalled());
+        expect(served.requests).toContainEqual(expect.objectContaining({ path: '/v1/artifacts/document', method: 'GET' }));
+        const details = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === 'approvals.technicalDetails');
+        expect(details).toBeDefined();
+        await act(async () => { details?.onPress?.(); });
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'database_transaction_timeout');
+        expect(hook.getCurrent().panel).toBeNull();
+        refused = false;
+        await act(async () => { await hook.getCurrent().open(); });
+        expect(hook.getCurrent().panel).not.toBeNull();
+        await hook.unmount();
+    });
+
+    it('retains the typed network save refusal and keeps the editor open for retry', async () => {
+        let refused = true;
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
+        const { row, head, served } = await setup('html', undefined, false, request => {
+            if (request.path !== '/v1/artifacts/document' || request.method === 'GET') return undefined;
+            return refused ? Response.json({ error: 'database_transaction_timeout' }, { status: 503 })
+                : artifacts.handle(request.path, { method: request.method, body: JSON.stringify(request.body) }) ?? undefined;
+        });
+        head.body = encodePlainArtifactStoredContent({ body: '<!doctype html><h1>Saved HTML</h1>' });
+        artifacts.replaceStoredRow(head);
+        const anchorRef = React.createRef<React.ComponentRef<typeof import('react-native').View>>();
+        const hook = await renderHook(() => useArtifactNetworkEditor(row, true, anchorRef));
+        await act(async () => { await hook.getCurrent().open(); });
+        const panel = hook.getCurrent().panel;
+        if (!panel) throw new Error('Expected the opened network editor');
+        vi.mocked(Modal.alert).mockClear();
+        const choice = { mode: 'origins' as const, origins: ['https://example.com'] };
+        await act(async () => {
+            await expect(panel.props.children.props.onSave(choice)).resolves.toMatchObject({ ok: false, message: expect.any(String) });
+        });
+        expect(served.requests).toContainEqual(expect.objectContaining({ path: '/v1/artifacts/document', method: 'POST' }));
+        const details = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === 'approvals.technicalDetails');
+        expect(details).toBeDefined();
+        await act(async () => { details?.onPress?.(); });
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'database_transaction_timeout');
+        expect(hook.getCurrent().panel).not.toBeNull();
+        refused = false;
+        await act(async () => { await expect(panel.props.children.props.onSave(choice)).resolves.toEqual({ ok: true }); });
+        await hook.unmount();
+    });
+
     it('hydrates presented Doc titles only for the current Account scope', async () => {
         const artifactHome = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
         const { served, head } = await setup('document', undefined, false, request => request.path === '/v1/artifacts/read'

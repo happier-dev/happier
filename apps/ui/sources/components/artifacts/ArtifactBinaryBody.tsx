@@ -2,6 +2,8 @@ import * as React from 'react';
 import { View, useWindowDimensions } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ArtifactBlobReferenceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import { createActionExecuteFailureError, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { FileViewerBody, type FileViewerStageHandle } from '@/components/workspaces/files/file/FileViewerBody';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -9,7 +11,9 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { useFilePreviewSource, type UseFilePreviewSourceInput } from '@/components/ui/media/useFilePreviewSource';
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
-import { createArtifactActionsClient, createMountedArtifactActionExecute, type ArtifactActionsClient } from './artifactActionsClient';
+import { createArtifactActionsClient, createMountedArtifactActionExecute, readArtifactActionFailure, type ArtifactActionsClient } from './artifactActionsClient';
+import { presentArtifactActionFailure } from './artifactActionFailure';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -109,8 +113,18 @@ export function ArtifactBinaryBody(props: Readonly<{ artifactId: string; name: s
             const outcome = await actions?.exportArtifact({ artifactId: props.artifactId, destination: 'client',
                 reference, fileName: props.name }, { signal: controller.signal });
             if (outcome && 'approvalId' in outcome) return;
+            if (outcome && !outcome.ok) throw createActionExecuteFailureError({ ok: false, errorCode: outcome.failure.code,
+                error: outcome.failure.code, failureCause: outcome.failure.failureCause });
             if (!outcome?.ok || !('status' in outcome.value)) throw new Error('artifact_export_failed');
-        } catch { if (!controller.signal.aborted) setDownloadFailed(true); }
+        } catch (error) {
+            if (!controller.signal.aborted) {
+                setDownloadFailed(true);
+                alertActionFailure(presentArtifactActionFailure(
+                    readArtifactActionFailure(parseActionExecuteFailure(error) ?? normalizeActionExecutorThrownError(error)),
+                    t('artifacts.browser.loadFailedBody'),
+                ));
+            }
+        }
         finally {
             if (downloadController.current === controller) downloadController.current = null;
             if (!controller.signal.aborted) setDownloading(false);

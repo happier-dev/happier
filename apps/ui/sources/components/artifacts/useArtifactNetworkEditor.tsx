@@ -13,10 +13,13 @@ import type { WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSet
 import { WidgetFlowShell } from '@/components/widgets/flow/WidgetFlowShell';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { WidgetDefinitionV1Schema } from '@happier-dev/protocol/widgets';
-import { Modal } from '@/modal';
+import { createActionExecuteFailureError, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { t } from '@/text';
 
-import { useArtifactActionsClient } from './artifactActionsClient';
+import { readArtifactActionFailure, useArtifactActionsClient } from './artifactActionsClient';
+import { presentArtifactActionFailure } from './artifactActionFailure';
 
 function holdsHtmlNetwork(artifact: DecryptedArtifact): boolean {
   const kind = (artifact.rawHeader ?? artifact.header)?.kind;
@@ -65,19 +68,24 @@ export function useArtifactNetworkEditor(
     setState({ artifactId: artifact.id, phase: 'opening' });
     try {
       const read = await client.getArtifact(artifact.id);
-      const opened = read.ok ? read.value.artifact : null;
+      if (!read.ok) throw createActionExecuteFailureError({ ok: false, errorCode: read.failure.code,
+        error: read.failure.code, failureCause: read.failure.failureCause });
+      const opened = read.value.artifact;
       if (!opened)
-        throw new Error(read.ok ? 'artifact_not_found' : read.failure.code);
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'artifact_not_found', error: 'artifact_not_found' });
       const resource = await readArtifactPublicNetworkResource({
         opened,
         scope: client.scope,
       });
       if (mounted.current)
         setState({ artifactId: artifact.id, phase: 'open', opened, resource });
-    } catch {
+    } catch (error) {
       if (!mounted.current) return;
       setState(null);
-      Modal.alert(t('common.error'), t('sessionBoard.item.network.failed'));
+      alertActionFailure(presentArtifactActionFailure(
+        readArtifactActionFailure(parseActionExecuteFailure(error) ?? normalizeActionExecutorThrownError(error)),
+        t('sessionBoard.item.network.failed'),
+      ));
     }
   }, [artifact.id, available, client]);
 
@@ -103,15 +111,21 @@ export function useArtifactNetworkEditor(
               payload as Parameters<typeof client.updateArtifact>[0],
             );
             if ('approvalId' in outcome) return null;
-            if (!outcome.ok) throw new Error(outcome.failure.code);
+            if (!outcome.ok) throw createActionExecuteFailureError({ ok: false, errorCode: outcome.failure.code,
+              error: outcome.failure.code, failureCause: outcome.failure.failureCause });
             return outcome.value;
           },
         });
         return written.kind === 'pending'
           ? { ok: true, approvalPending: true }
           : { ok: true };
-      } catch {
-        return { ok: false, message: t('sessionBoard.item.network.failed') };
+      } catch (error) {
+        const failure = presentArtifactActionFailure(
+          readArtifactActionFailure(parseActionExecuteFailure(error) ?? normalizeActionExecutorThrownError(error)),
+          t('sessionBoard.item.network.failed'),
+        );
+        alertActionFailure(failure);
+        return { ok: false, message: failure.reason };
       }
     },
     [client, current],

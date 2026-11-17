@@ -4,7 +4,7 @@ import { act } from 'react-test-renderer';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 
-import { createActionInputForm, type ActionInputForm } from './actionInputForm';
+import { createActionInputForm, type ActionInputForm, type ActionInputFormSubmissionResult } from './actionInputForm';
 import { ActionInputFormModal } from './ActionInputFormModal';
 
 const routerPush = vi.hoisted(() => vi.fn());
@@ -69,6 +69,25 @@ function submittingForm(): ActionInputForm {
 }
 
 describe('ActionInputFormModal', () => {
+    it.each(['unavailable', 'settled'] as const)('retains the typed %s refusal in the shared diagnostic disclosure', async (kind) => {
+        const form: ActionInputForm<ActionInputFormSubmissionResult, string, string> = {
+            ...failedForm(),
+            submit: async () => kind === 'unavailable'
+                ? { kind: 'unavailable', reason: 'host_unavailable' }
+                : { kind: 'settled', outcome: { ok: false, code: 'unavailable', phase: 'admission' } },
+        };
+        const setChrome = vi.fn();
+        const screen = await renderScreen(<ActionInputFormModal form={form} onClose={vi.fn()} setChrome={setChrome} />);
+        const submit = findSubmitButton(setChrome.mock.calls.at(-1)?.[0] as ChromeWithFooter);
+        if (!submit) throw new Error('Expected form submit');
+        await act(async () => { submit.props.onPress?.(); await Promise.resolve(); });
+        const disclosure = screen.findAllByTestId('plugin-contributed-action-form-error-details.header').at(-1);
+        expect(disclosure).toBeDefined();
+        await pressTestInstanceAsync(disclosure);
+        expect(screen.getTextContent()).toContain(kind === 'unavailable' ? 'host_unavailable' : 'unavailable');
+        if (kind === 'settled') expect(screen.getTextContent()).toContain('admission');
+    });
+
     it('renders an external plugin declared default and submits an explicit switch override', async () => {
         const { createActionInputForm } = await import('./actionInputForm');
         const submit = vi.fn(async (_candidate: Readonly<Record<string, unknown>>) => ({ ok: true }));

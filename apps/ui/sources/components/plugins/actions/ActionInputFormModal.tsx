@@ -20,6 +20,9 @@ import type { InputTypePickerHostContext } from '@/components/sessions/actions/I
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 import type {
     ActionInputForm,
@@ -72,7 +75,7 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
     const [, refresh] = React.useReducer((value: number) => value + 1, 0);
     const onRetireRef = React.useRef(props.onRetire);
     onRetireRef.current = props.onRetire;
-    const [error, setError] = React.useState<string | null>(null);
+    const [error, setError] = React.useState<ReturnType<typeof presentActionExecutionFailure> | null>(null);
 
     React.useEffect(() => {
         const unsubscribe = props.form.subscribe(() => refresh());
@@ -127,11 +130,16 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 if (outcome.kind === 'settled' && outcome.outcome.cancelled) {
                     return;
                 }
-                setError(outcome.kind === 'settled' && outcome.outcome.code
-                    ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: outcome.outcome.code }).body
-                    : t('pluginRuntime.unavailableGeneric'));
-            } catch {
-                setError(t('pluginRuntime.unavailableGeneric'));
+                const code = outcome.kind === 'settled' ? outcome.outcome.code : outcome.reason;
+                const message = code ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: code }).body
+                    : t('pluginRuntime.unavailableGeneric');
+                const presentation = presentActionExecutionFailure({ ok: false, errorCode: code ?? 'action_failed' }, message);
+                setError({ ...presentation, technicalDetails: [...presentation.technicalDetails,
+                    ...(outcome.kind === 'settled' && outcome.outcome.phase ? [{ key: 'phase',
+                        label: t('approvals.failureTechnicalLabels.causePhase'), value: outcome.outcome.phase }] : []),
+                ] });
+            } catch (error) {
+                setError(presentActionExecutionFailure(normalizeActionExecutorThrownError(error), t('pluginRuntime.unavailableGeneric')));
             }
         })();
     }, [props.form, props.onClose]);
@@ -205,9 +213,14 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 <View style={styles.error}>
                     <HappierValidationMessage
                         testID="plugin-contributed-action-form-error"
-                        message={error}
+                        message={error.reason}
                         theme={pluginUiTheme}
                         accessibilityLiveRegion="polite"
+                    />
+                    <TechnicalDetailsDisclosure
+                        testID="plugin-contributed-action-form-error-details"
+                        title={t('approvals.technicalDetails')}
+                        lines={error.technicalDetails}
                     />
                 </View>
             ) : null}

@@ -124,7 +124,7 @@ describe('ArtifactBinaryBody', () => {
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
             screen = await renderScreen(<ArtifactBinaryBody artifactId="pdf-facts" name="Report.pdf" {...source} />);
-            await vi.waitFor(() => expect(screen!.tree.root.findAllByType('WebView')).toHaveLength(1));
+            await waitForHomeGovernance(() => expect(screen!.tree.root.findAllByType('WebView')).toHaveLength(1));
             const text = () => JSON.stringify(screen!.findByTestId('artifact:binaryFacts')?.props.children) ?? '';
             expect(text()).toContain('files.kind.pdf');
             expect(text()).toContain('8 B');
@@ -221,6 +221,10 @@ describe('ArtifactBinaryBody', () => {
         expect(anchor.click).not.toHaveBeenCalled();
         expect(source.request).not.toHaveBeenCalled();
         expect(screen.findByTestId('artifact:downloadFailed')).not.toBeNull();
+        const details = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === 'approvals.technicalDetails');
+        expect(details).toBeDefined();
+        await act(async () => { details?.onPress?.(); });
+        expect(Modal.alert).toHaveBeenLastCalledWith('approvals.technicalDetails', 'action_disabled');
         source.setExportEnabled(true);
         await screen.pressByTestIdAsync('artifact:download');
         await vi.waitFor(() => expect(anchor.click).toHaveBeenCalledOnce());
@@ -308,7 +312,7 @@ describe('ArtifactBinaryBody', () => {
             const shared = platform === 'android' ? androidShares : iosShares;
             if (platform === 'android' && outcome === 'success') expect([...files.entries()].filter(([uri]) => uri.includes('/happier-downloads/')).map(([, bytes]) => bytes)).toEqual([[...source.bytes]]);
             expect(shared).toHaveLength(1);
-            if (platform === 'android') expect(shared[0]).toMatch(/^file:\/\/\/cache\/happier-downloads\/.*Quarterly report$/);
+            if (platform === 'android') expect(decodeURI(shared[0]!)).toMatch(/^file:\/\/\/cache\/happier-downloads\/.*Quarterly report$/);
             if (platform === 'android') expect(iosShares).toEqual([]);
             else expect(androidShares).toEqual([]);
             if (platform === 'android' && outcome === 'success') expect(files.get(shared[0]!)).toEqual([...source.bytes]);
