@@ -53,16 +53,18 @@ function unavailable(reason: Unavailable['reason'], error?: unknown): Unavailabl
     };
 }
 
-function rootIdentity(rootPath: string): string {
+/** Canonical comparison identity for an already captured physical root, even after deletion. */
+export function canonicalWorktreeRootIdentity(rootPath: string): string {
     const canonical = resolveCanonicalAbsolutePath(rootPath);
     if (!canonical) throw new Error('Execution root must be absolute');
     return canonical.comparisonKey;
 }
 
-async function physicalRootIdentity(rootPath: string): Promise<string> {
+/** Resolve through the admitted execution source before retaining a physical identity. */
+export async function resolvePhysicalWorktreeRootIdentity(rootPath: string): Promise<string> {
     const canonical = resolveCanonicalAbsolutePath(rootPath);
     if (!canonical) throw new Error('Execution root must be absolute');
-    return rootIdentity(await currentWorkspaceSource().realpath(canonical.path));
+    return canonicalWorktreeRootIdentity(await currentWorkspaceSource().realpath(canonical.path));
 }
 
 /** One receiving daemon owns mutations; independent installations remain external bind contenders. */
@@ -92,7 +94,7 @@ export function createWorktreePortsOwner(input: Readonly<{ statePath: string }>)
             const state = stateSchema.parse(JSON.parse(bytes));
             const retained = new Set<number>();
             for (const [root, assignment] of Object.entries(state.assignments)) {
-                if (rootIdentity(root) !== root) return unavailable('state_corrupt');
+                if (canonicalWorktreeRootIdentity(root) !== root) return unavailable('state_corrupt');
                 for (const port of [...assignment.ports, ...Object.values(assignment.listenerPorts)]) {
                     if (retained.has(port)) return unavailable('state_corrupt');
                     retained.add(port);
@@ -117,7 +119,7 @@ export function createWorktreePortsOwner(input: Readonly<{ statePath: string }>)
         if (demand.signal?.aborted) return unavailable('cancelled');
         let root: string;
         try {
-            root = await physicalRootIdentity(demand.rootPath);
+            root = await resolvePhysicalWorktreeRootIdentity(demand.rootPath);
         } catch (error) {
             return unavailable('root_unavailable', error);
         }
@@ -180,7 +182,7 @@ export function createWorktreePortsOwner(input: Readonly<{ statePath: string }>)
 
     return {
         async subscribe(request, listener) {
-            const root = await physicalRootIdentity(request.rootPath);
+            const root = await resolvePhysicalWorktreeRootIdentity(request.rootPath);
             const subscribers = listeners.get(root) ?? new Set<() => void>();
             listeners.set(root, subscribers);
             subscribers.add(listener);
@@ -198,14 +200,14 @@ export function createWorktreePortsOwner(input: Readonly<{ statePath: string }>)
             ? Promise.resolve(unavailable('active')) : serialized(() => allocate(demand, true)),
         read: request => serialized(async () => {
             let root: string;
-            try { root = await physicalRootIdentity(request.rootPath); }
+            try { root = await resolvePhysicalWorktreeRootIdentity(request.rootPath); }
             catch (error) { return unavailable('root_unavailable', error); }
             const state = await load();
             return 'kind' in state ? state : ready(state.assignments[root]);
         }),
         release: request => serialized(async () => {
             let root: string;
-            try { root = rootIdentity(request.rootPath); }
+            try { root = canonicalWorktreeRootIdentity(request.rootPath); }
             catch (error) { return unavailable('root_unavailable', error); }
             const state = await load();
             if ('kind' in state) return state;

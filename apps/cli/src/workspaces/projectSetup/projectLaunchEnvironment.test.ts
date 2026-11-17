@@ -3,8 +3,24 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { composeProjectLaunchEnvironment, prepareProjectLaunchEnvironment } from './projectLaunchEnvironment';
+import { runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
 
 const roots: string[] = [];
+it('gives service observers the canonical physical identity returned by the selected execution source', async () => {
+    const selected = await workspace();
+    let observed: unknown;
+    const result = await runWithWorkspaceSource({ ...localWorkspaceSource,
+        // Execution-source filesystem access is the OS boundary. Native Windows
+        // uses the same comparison-key policy as the port assignment owner.
+        async realpath() { return process.platform === 'win32' ? 'C:\\Work/Mixed\\..\\Physical\\' : '/work/mixed/../Physical/'; },
+    }, () => prepareProjectLaunchEnvironment({ workspace: selected, originalEnvironment: {}, requirements: [],
+        service: { project: { serverId: 'home', projectId: 'project' }, serviceId: 'web',
+            executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
+            async prepareServiceLaunchEnvironments(input) { observed = input; return []; } } }));
+    expect(result.kind).toBe('prepared');
+    expect(observed).toMatchObject({ physicalRootIdentity: process.platform === 'win32' ? 'c:\\work\\physical' : '/work/Physical' });
+});
 it('carries admitted launch custody to observers without placing it in the child environment', async () => {
     const selected = await workspace();
     const requester = { accountId: 'alice', installationId: 'installation' };

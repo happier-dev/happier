@@ -10,7 +10,7 @@ import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows'
 import { createProjectFiniteAction, type ProjectFiniteActionRuntime } from './projectFiniteAction';
 import { resolveProjectSetupAcceptedWorkspace, type ProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
 import type { ProjectSetupOperationContext } from './projectSetupExecution';
-import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { canonicalWorktreeRootIdentity, resolvePhysicalWorktreeRootIdentity } from '@/workspaces/execution/worktreePorts';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
 /** Only the containing operation supplies review, cancellation and settlement. */
@@ -49,10 +49,15 @@ export async function prepareProjectCheckoutRemoval(input: Readonly<{
     if (!operationId) throw Object.assign(new Error('project_setup_operation_unavailable'), { code: 'project_setup_operation_unavailable' });
     // Capture a live root before deletion, or consume the selected backend's
     // retained registration when the files were already removed externally.
-    const physicalRoot = input.missingWorktree?.physicalRootPath ?? await currentWorkspaceSource().realpath(input.worktreePath).catch(() => {
+    let physicalRoot: string;
+    try {
+        physicalRoot = input.missingWorktree
+            ? canonicalWorktreeRootIdentity(input.missingWorktree.physicalRootPath)
+            : await resolvePhysicalWorktreeRootIdentity(input.worktreePath);
+    } catch {
         const code = operation.signal.aborted ? 'cancelled' : 'project_worktree_root_unavailable';
         throw Object.assign(new Error(code), { code });
-    });
+    }
     const association = input.association !== undefined ? input.association : await resolveProjectSetupAcceptedWorkspace({
         ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, serverHttpBaseUrl: runtime.serverHttpBaseUrl,
         address: { serverId: runtime.serverId, machineId: runtime.machineId, rootPath: input.worktreePath },

@@ -33,6 +33,8 @@ export const WorktreeRemovedEventV1Schema = lazyZodSchema(() => z.strictObject({
   machineId: WorkspaceAddressV1Schema.shape.machineId,
   operationId: ActionOperationIdentifierV1Schema,
   originRunId: z.optional(ActionOperationIdentifierV1Schema),
+  /** Canonical physical execution-root comparison identity, equal to the admitted
+   * service-launch physicalRootIdentity; retained verbatim after deletion. */
   worktreePath: WorkspaceAddressV1Schema.shape.rootPath,
   outcome: z.literal('removed'),
   removalKind: z.enum(['deleted', 'retired']),

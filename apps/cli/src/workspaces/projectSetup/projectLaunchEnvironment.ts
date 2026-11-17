@@ -6,6 +6,7 @@ import type { LocalServicePortSourceV1 } from '@happier-dev/protocol/local/servi
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { mergeProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { isProjectWorktreeRuntimeVariable } from '@/workspaces/execution/projectWorktreeRuntime';
+import { resolvePhysicalWorktreeRootIdentity } from '@/workspaces/execution/worktreePorts';
 import { createProjectDotenvPreparation, type ProjectDotenvDiagnostic, type ProjectDotenvPreparation } from './projectDotenv';
 
 /** Deliberate selections have one precedence owner for values and reference bindings. */
@@ -18,7 +19,7 @@ type Environment = Readonly<Record<string, string>>;
 export type ProjectServiceLaunchEnvironmentResult = Readonly<{ kind: 'ready' | 'unchanged' }>
     | Readonly<{ kind: 'unavailable'; code: string; reason?: string }>
     | Readonly<{ kind: 'conflict'; reason: 'replacement_key_conflict'; names: readonly string[] }>;
-export type ProjectServiceLaunchEnvironmentInput = Omit<ServiceLaunchEnvironmentHostInput, 'workspace' | 'readEnvironment'> & Readonly<{
+export type ProjectServiceLaunchEnvironmentInput = Omit<ServiceLaunchEnvironmentHostInput, 'workspace' | 'readEnvironment' | 'physicalRootIdentity'> & Readonly<{
     prepareServiceLaunchEnvironments(input: Omit<ServiceLaunchEnvironmentHostInput, 'workspace'>): Promise<readonly PreparedServiceLaunchEnvironmentContribution[]>;
 }>;
 export type PreparedProjectLaunchInput = Readonly<{
@@ -109,7 +110,8 @@ export async function prepareProjectLaunchEnvironment(input: Readonly<{
             return { projectedEnvironment: Object.freeze(projectedEnvironment), provenance: Object.freeze(provenance) };
         };
         let contributions: readonly PreparedServiceLaunchEnvironmentContribution[];
-        try { contributions = await serviceInput.prepareServiceLaunchEnvironments({ project: serviceInput.project,
+        try { contributions = await serviceInput.prepareServiceLaunchEnvironments({
+            physicalRootIdentity: await resolvePhysicalWorktreeRootIdentity(input.workspace.rootPath), project: serviceInput.project,
             ...(serviceInput.requester ? { requester: serviceInput.requester } : {}),
             serviceId: serviceInput.serviceId, executionPlacement: serviceInput.executionPlacement,
             assignedPorts: serviceInput.assignedPorts, requestListenerPorts: serviceInput.requestListenerPorts,

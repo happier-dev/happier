@@ -63,6 +63,11 @@ receive original values rather than another contribution's rewritten upstream.
 Successful contribution cleanup stays with the actual service process lifetime.
 Unavailable capture leaves the ordinary service usable with a visible diagnostic.
 
+The required `physicalRootIdentity` is the execution source's physical root in
+the worktree-port owner's canonical comparison form. Retain it verbatim: the
+settled removal fact's `worktreePath` uses that same identity, including for an
+unassociated worktree, so cleanup needs no filesystem lookup after deletion.
+
 The same private preparation carries the admitted requester and Project identity.
 Its optional `readDeclaredEnvironment()` reads the original declared config values
 and provenance through the existing dotenv preparation, excluding secret bindings.

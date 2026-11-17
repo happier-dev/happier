@@ -19,6 +19,8 @@ import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAc
 import type { ProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import type { ProjectFiniteActionRuntime } from './projectFiniteAction';
 import { prepareProjectCheckoutRemoval } from './projectCheckoutRemoval';
+import { prepareProjectLaunchEnvironment } from './projectLaunchEnvironment';
+import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 
 afterEach(() => { vi.restoreAllMocks(); withdrawActiveProjectAccountRowsSnapshot(); });
 
@@ -82,9 +84,18 @@ it.each([
     try {
         expect(await ports.assign({ rootPath: physical, slots: 1, listenerKeys: [] })).toMatchObject({ kind: 'ready' });
         expect(await ports.assign({ rootPath: sibling, slots: 1, listenerKeys: [] })).toMatchObject({ kind: 'ready' });
-        const captured = await realpath(physical);
-        const retainedSibling = await realpath(sibling);
+        const captured = resolveCanonicalAbsolutePath(await realpath(physical))!.comparisonKey;
+        const retainedSibling = resolveCanonicalAbsolutePath(await realpath(sibling))!.comparisonKey;
         const before = JSON.parse(await readFile(statePath, 'utf8'));
+        expect(before.assignments[captured]).toMatchObject({ ports: [expect.any(Number)] });
+        expect(before.assignments[retainedSibling]).toMatchObject({ ports: [expect.any(Number)] });
+        let admittedLaunch: unknown;
+        const launch = await prepareProjectLaunchEnvironment({ workspace: { rootPath: alias }, requirements: [], originalEnvironment: {},
+            service: { project: { serverId: 'home', projectId: 'project' }, serviceId: 'worker',
+                executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
+                async prepareServiceLaunchEnvironments(input) { admittedLaunch = input; return []; } } });
+        expect(launch.kind).toBe('prepared');
+        expect(admittedLaunch).toMatchObject({ physicalRootIdentity: captured });
         const signal = new AbortController().signal;
         const result = await operationRuntime.observeExecution({ actionId: 'scm.worktree.remove', input: { cwd: directory,
             worktreePath: alias }, actionContext: { executionRunWorkflowRunId: 'removal-workflow',

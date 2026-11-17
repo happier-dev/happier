@@ -14,6 +14,9 @@ export type PluginServiceLaunchEnvironmentInputV1 = Readonly<{
     project: Readonly<{ serverId: string; projectId: string }>;
     serviceId: string;
     executionPlacement: Readonly<{ mode: 'spawn' | 'native'; machineId: string }>;
+    /** Admitted physical execution-root comparison identity, equal to removal.worktreePath.
+     * Host-private; retain verbatim so cleanup needs no filesystem lookup after deletion. */
+    physicalRootIdentity: string;
     /** Previously retained ports under this contribution's local listener names. */
     assignedPorts: Readonly<Record<string, number>>;
     /** Demand after opt-in and eligibility. Ready assignment.listenerPorts uses these same local names. */

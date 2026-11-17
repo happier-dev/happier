@@ -15,6 +15,7 @@ const input = {
     workspace: { id: 'checkout', serverId: 'home', machineId: 'machine', rootPath: '/work/project', createdAtMs: 1 },
     project: { serverId: 'home', projectId: 'project' }, serviceId: 'web',
     executionPlacement: { mode: 'spawn', machineId: 'machine' },
+    physicalRootIdentity: '/work/project',
     async readEnvironment(names: readonly string[]) {
         return {
             projectedEnvironment: Object.fromEntries(names.flatMap(name => name === 'DATABASE_URL' ? [[name, originalEnvironment.DATABASE_URL]] : [])),
