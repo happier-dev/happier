@@ -296,7 +296,8 @@ describe('daemon managed Machine Action factory', () => {
         const interrupted = outcome.startsWith('interrupted-');
         if (interrupted) {
             preset = ManagedMachinePresetV1Schema.parse({ ...preset, content: { t: 'plain', v: { v: 1,
-                name: launch.name, launch, preparation: { enabled: true },
+                name: launch.name, launch, preparation: { enabled: true,
+                    ...(outcome === 'interrupted-replace' ? { whenHappierUpdates: 'rebuild-automatically' } : {}) },
                 prepared: { operationId: 'lost-original-operation', status: 'building', cliBinaryPath: '/opt/happier/cli/current/happier',
                     binding: createManagedMachinePresetPreparationBindingV1({ content: { launch },
                         credentialConfigurations: reconnected ? [{ account, revision: 'configuration-before-reconnect' }] : [],
