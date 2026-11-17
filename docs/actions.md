@@ -1886,9 +1886,10 @@ decision. Agents may request Until it changes through `projects.prepare` with
 checkout, including a worker target, rather than reconstructing it from SOURCE.
 This is a request for a present person's decision in the
 ordinary approval card/Inbox flow, even when invocation approval is waived.
-Approval runs in the approving app and delegates to the same
-`decideProjectSetupConsent` → `rememberReviewedProjectEffect` → approving-Account
-Trust CAS writer as the UI button. It remeasures the retained target review
+Approval runs in the approving client through the shared
+`rememberAdmittedProjectSetupConsentV1` owner and the existing approving-Account
+Trust CAS writer. The CLI consumes that same approval locally; it does not
+re-author a signed `projects.prepare` with a different execution origin. It remeasures the retained target review
 before writing; a changed digest is not covered. Agents cannot approve their own
 request, and rejection, cancellation or an expired/stale request remembers
 nothing. Ordinary preparation, This time and Skip retain their Machine owner;

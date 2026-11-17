@@ -166,8 +166,16 @@ it.skipIf(process.platform === 'win32').each(cases)('remembers setup consent the
   const pending = await settledOrReview(first.operationId);
   expect(pending.setupReview?.code).toBe('project_setup_consent_required');
   const digest = pending.setupReview!.reviewedEffectDigest;
-  await action('projects.prepare', { workspace, phase: 'setup', heldOperationId: first.operationId,
-    expectedEffectDigest: digest, consentScope: 'untilChanged' });
+  const consent = { workspace, phase: 'setup' as const, heldOperationId: first.operationId,
+    expectedEffectDigest: digest, consentScope: 'untilChanged' as const };
+  if (scenario.name === 'literal script') {
+    // The CLI decision must consume the same captured approval. Re-dispatching
+    // prepare changes its signed origin and conflicts before Trust is written.
+    const rememberedConsent = await account.executeReviewed('projects.prepare', consent);
+    expect(rememberedConsent.ok, JSON.stringify(rememberedConsent)).toBe(true);
+    if (!rememberedConsent.ok) throw new Error(rememberedConsent.errorCode);
+    expect(ProjectCommandActionOutputV1Schema.parse(rememberedConsent.result).operation.operationId).toBe(first.operationId);
+  } else await action('projects.prepare', consent);
   await waitFor(async () => (await observe(first.operationId)).state === 'succeeded', { context: 'approved setup succeeds' });
   expect(await readFile(join(root, 'effects'), 'utf8')).toBe('original');
   expect(await trust()).toMatchObject([{ value: { reviewedEffectDigest: digest } }]);

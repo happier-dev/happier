@@ -15,7 +15,7 @@ import { updateProjectOrganizationV1 } from '@happier-dev/protocol/projects/proj
 import { setProjectSetupV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
 import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { createCliProjectTrustAction } from '../projectTrustAction';
-import { PROJECT_ACTION_INPUT_SCHEMAS_V1, PROJECT_ACTION_OUTPUT_SCHEMAS_V1, PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { PROJECT_ACTION_INPUT_SCHEMAS_V1, PROJECT_ACTION_OUTPUT_SCHEMAS_V1, PROJECT_FINITE_ACTION_RPC_METHODS_V1, isProjectSetupTrustRequestV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { resolveProjectActionMachineV1 } from '@happier-dev/protocol/actions/executor/projectActionPlacement';
 import type { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
 import { randomUUID } from 'node:crypto';
@@ -44,8 +44,9 @@ function isOrganizationPayload(payload: ProjectAccountRowPayloadV1): payload is 
 }
 export function createCliProjectActionDeps(
   params: Pick<CliActionDepsParams, 'serverId' | 'credentials' | 'isCredentialCurrent' | 'machineActionDirectTargetTransport' | 'onRequesterSessionCredentialDisclosure' | 'projectAction' | 'projectWorkerAccountAction' | 'projectDefinitionAction' | 'serverHttpBaseUrl' | 'serverIdentityId' | 'token'>,
-  { readAdmittedProjectRows, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome }: Readonly<{
+  { readAdmittedProjectRows, actionOperationAction, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome }: Readonly<{
     readAdmittedProjectRows: CliAdmittedProjectRowsReader;
+    actionOperationAction: NonNullable<ActionExecutorDeps['actionOperationAction']>;
     callMachineAction: CliMachineActionCall;
     isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent;
     executionRunActionFailure: (code: string, message?: string, details?: unknown) => CliProjectAdmissionFailure;
@@ -234,6 +235,53 @@ export function createCliProjectActionDeps(
           accountId: homeAccountId, ...exactHome })(args);
       }
       if (params.projectAction) return await params.projectAction(args);
+      if (isProjectSetupTrustRequestV1(args.actionId, args.input)) {
+        const request = PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.prepare'].safeParse(args.input);
+        if (!request.success) return executionRunActionFailure('invalid_parameters');
+        const { context } = args;
+        // The approval owner admitted this Account effect. Re-dispatching prepare
+        // would author a second signed origin for the same immutable approval.
+        const denied = await projectAccountAdmission(request.data.workspace.serverId, context);
+        if (denied) return denied;
+        if (!params.credentials || !homeAccountId) return executionRunActionFailure('not_authenticated');
+        const { ActionOperationGetV1ResponseSchema } = await import('@happier-dev/protocol/actions/operations/v1');
+        const { readProjectSetupTrustRequestOperationV1 } = await import('@happier-dev/protocol/actions/projectActionFamily');
+        const { rememberAdmittedProjectSetupConsentV1 } = await import('@happier-dev/protocol/workspaces/projectSetup/projectSetupConsent');
+        const { createProjectSetupTrustClient } = await import('@/workspaces/projectSetup/projectSetupTrust');
+        try {
+          const refresh = async () => {
+            const response = await actionOperationAction({ actionId: 'action.operations.get', input: {
+              serverId: request.data.workspace.serverId, machineId: request.data.workspace.machineId,
+              operationId: request.data.heldOperationId!, refreshSetupReview: true,
+            }, context, signal: context.signal });
+            const failure = ActionExecuteFailureSchema.safeParse(response);
+            if (failure.success) throw Object.assign(new Error(failure.data.errorCode), { code: failure.data.errorCode });
+            return ActionOperationGetV1ResponseSchema.parse(response);
+          };
+          const retained = readProjectSetupTrustRequestOperationV1(request.data, await refresh());
+          const source = retained?.domainRef?.kind === 'projectCommand' ? retained.domainRef.sourceWorkspace : undefined;
+          if (!retained || retained.scope.accountId !== homeAccountId || !source) return executionRunActionFailure('project_setup_review_unavailable');
+          const rows = await readProjectRows({ key: { kind: 'workspace-ref', serverId: source.serverId, id: source.workspaceId } },
+            context.signal, context, 'projects.prepare');
+          const selected = resolveWorkspaceRefV1(rows.workspaceRefs, source);
+          if (selected.kind !== 'resolved' || !selected.ref.projectKey) return executionRunActionFailure('project_unavailable');
+          const client = createProjectSetupTrustClient({ credentials: params.credentials,
+            serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(), signal: context.signal });
+          const project = { serverId: source.serverId, projectId: selected.ref.projectKey };
+          const result = await rememberAdmittedProjectSetupConsentV1({ scope: { serverId: source.serverId, accountId: homeAccountId },
+            workspace: source, reviewedEffectDigest: request.data.expectedEffectDigest!, operation: retained, project,
+            refreshOperation: async () => { const response = await refresh(); return response.kind === 'found' ? response.operation : null; },
+            readTrust: () => client.read(project),
+            rememberEffect: value => client.approveReviewedEffect({ ...value, authority: context.authority ?? 'account_automation' }),
+          });
+          return result.kind === 'remembered' ? { operation: result.operation } : executionRunActionFailure(
+            result.kind === 'changed' ? 'project_setup_effect_changed' : result.code);
+        } catch (error) {
+          const code = error instanceof Error && 'code' in error && typeof error.code === 'string'
+            ? error.code : 'project_setup_requester_review_unavailable';
+          return executionRunActionFailure(code);
+        }
+      }
       const { actionId, input, context } = args;
       const parsed = PROJECT_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(input);
       if (!parsed.success) return executionRunActionFailure('invalid_parameters');

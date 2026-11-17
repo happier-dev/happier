@@ -1024,7 +1024,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       ...(context.signal ? { signal: context.signal } : {}) });
   };
 
-  const projectDeps = createCliProjectActionDeps(params, { readAdmittedProjectRows, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome });
+  const projectDeps = createCliProjectActionDeps(params, { readAdmittedProjectRows, actionOperationAction: machineDeps.actionOperationAction!, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome });
   const machineResourceDeps = createCliMachineResourceActionDeps(params, { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, machineRebootReferences,
     readEnvironmentAccess: deploymentStorageDeps.readEnvironmentAccess,
     observeEnvironmentAccessChanges: deploymentStorageDeps.observeEnvironmentAccessChanges, executionRunActionFailure });
