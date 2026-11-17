@@ -27,7 +27,7 @@ export class RealtimeToolExecutionError extends Error {
 
 export type RealtimeToolValidation =
   | Readonly<{ status: 'allowed'; call?: VoiceRealtimeToolCallV1 }>
-  | Readonly<{ status: 'rejected'; code?: string }>;
+  | Readonly<{ status: 'rejected'; code?: string; failure?: Extract<ReturnType<typeof decodeVoiceToolInput>, { ok: false }> }>;
 
 export type RealtimeToolEffectClass = 'read_only' | 'mutation' | 'external';
 
@@ -242,11 +242,13 @@ export function createRealtimeToolBarrier(deps: RealtimeToolBarrierDeps) {
   ): Promise<RetainedToolResult> => {
     const validation = deps.validateCall?.(call) ?? (() => {
       const input = decodeVoiceToolInput(call.toolName, call.arguments);
-      return input ? { status: 'allowed' as const, call: { ...call, ...input } }
-        : { status: 'rejected' as const, code: 'invalid_tool_call' };
+      return input.ok ? { status: 'allowed' as const, call: { ...call, toolName: input.toolName, arguments: input.arguments } }
+        : { status: 'rejected' as const, code: 'invalid_tool_call', failure: input };
     })();
     if (validation.status === 'rejected') {
-      return terminalResult(call, 'error', validation.code ?? 'invalid_tool_call');
+      const errorCode = validation.code ?? 'invalid_tool_call';
+      return validation.failure ? redactFailure(call, 'error', { ...validation.failure, errorCode })
+        : terminalResult(call, 'error', errorCode);
     }
     const admittedCall = validation.call ?? call;
     const controller = new AbortController();

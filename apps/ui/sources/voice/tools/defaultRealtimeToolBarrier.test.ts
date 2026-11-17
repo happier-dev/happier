@@ -16,7 +16,10 @@ function call(overrides: Record<string, unknown> = {}) {
 }
 
 describe('default realtime tool barrier integration', () => {
-  it.each(['direct', 'generic'] as const)('dispatches the published decoder input rather than raw scalar strings (%s)', async transport => {
+  it.each([
+    { transport: 'direct', encoded: false }, { transport: 'direct', encoded: true },
+    { transport: 'generic', encoded: false }, { transport: 'generic', encoded: true },
+  ] as const)('dispatches the published decoder input ($transport, encoded: $encoded)', async ({ transport, encoded }) => {
     let dispatched: unknown;
     const toolName = transport === 'direct' ? 'listSessions' : 'action_execute';
     const barrier = createRealtimeToolBarrierForVoiceHandlers({
@@ -29,14 +32,52 @@ describe('default realtime tool barrier integration', () => {
       submitResults: async () => {}, continueResponse: async () => {},
     });
     try {
+      const input = encoded ? JSON.stringify({ limit: '10' }) : { limit: '10' };
       const result = await barrier.run({ responseId: 'response-1', calls: [call({ toolName,
-        arguments: transport === 'direct' ? { limit: '10' } : { actionId: 'session.list', input: { limit: '10' } },
+        arguments: transport === 'direct' ? input : { actionId: 'session.list', input },
       })] });
       expect(result.results[0]?.status).toBe('success');
       expect(dispatched).toEqual(transport === 'direct' ? { limit: 10 }
         : { actionId: 'session.list', input: { limit: 10 } });
     } finally { barrier.dispose(); }
   });
+
+  it.each([
+    { transport: 'direct', shareFilePaths: true },
+    { transport: 'generic', shareFilePaths: true },
+    { transport: 'generic_envelope', shareFilePaths: true },
+    { transport: 'direct', shareFilePaths: false },
+  ] as const)(
+    'retains content-free validation issues before any handler effect ($transport, paths: $shareFilePaths)', async ({ transport, shareFilePaths }) => {
+      const handler = vi.fn(async () => JSON.stringify({ ok: true }));
+      const submitted: unknown[] = [];
+      const toolName = transport === 'direct' ? 'memorySearch' : 'action_execute';
+      const input = { query: { query: 'PRIVATE_INPUT_CANARY', maxResults: null }, UNKNOWN_KEY_CANARY: 'PRIVATE_INPUT_CANARY' };
+      const barrier = createRealtimeToolBarrierForVoiceHandlers({
+        handlers: { [toolName]: handler },
+        readRedactionPrefs: () => ({ shareFilePaths, shareSessionSummary: false,
+          sharePermissionRequests: false, shareRecentMessages: true }),
+        submitResults: async (_id, results) => { submitted.push(results); }, continueResponse: async () => {},
+      });
+      try {
+        const result = await barrier.run({ responseId: 'response-1', calls: [call({ toolName,
+          arguments: transport === 'direct' ? input : { actionId: 'memory.search', input,
+            ...(transport === 'generic_envelope' ? { UNKNOWN_ENVELOPE_KEY_CANARY: 'PRIVATE_INPUT_CANARY' } : {}) },
+        })] });
+        expect(result.results[0]).toMatchObject({ status: 'error', errorCode: 'invalid_tool_call',
+          errorDetails: { issues: expect.arrayContaining([expect.objectContaining(transport === 'generic_envelope'
+            ? { code: 'unrecognized_keys', path: [] }
+            : { code: 'invalid_type', path: shareFilePaths ? ['query', 'maxResults']
+              : ['<path_redacted>', '<path_redacted>'], expected: 'number' })]) } });
+        expect(submitted).toEqual([result.results]);
+        expect(handler).not.toHaveBeenCalled();
+        for (const canary of ['PRIVATE_INPUT_CANARY', 'UNKNOWN_KEY_CANARY', 'UNKNOWN_ENVELOPE_KEY_CANARY']) {
+          expect(JSON.stringify(result)).not.toContain(canary);
+          expect(JSON.stringify(submitted)).not.toContain(canary);
+        }
+      } finally { barrier.dispose(); }
+    },
+  );
 
   it('refuses generic execution on an attached Agent current-UI-only surface', async () => {
     const handler = vi.fn(async () => JSON.stringify({ ok: true, result: {} }));
@@ -50,6 +91,25 @@ describe('default realtime tool barrier integration', () => {
     expect(result.results[0]).toMatchObject({ status: 'error', errorCode: 'invalid_tool_call' });
     expect(handler).not.toHaveBeenCalled();
     barrier.dispose();
+  });
+
+  it('keeps an unpublished generic Action opaque and does not dispatch it', async () => {
+    const handler = vi.fn(async () => JSON.stringify({ ok: true }));
+    const barrier = createRealtimeToolBarrierForVoiceHandlers({
+      handlers: { action_execute: handler },
+      readRedactionPrefs: () => ({ shareFilePaths: true, shareSessionSummary: true, sharePermissionRequests: true }),
+      submitResults: async () => {}, continueResponse: async () => {},
+    });
+    try {
+      const result = await barrier.run({ responseId: 'response-1', calls: [call({ toolName: 'action_execute',
+        arguments: { actionId: 'UNPUBLISHED_ACTION_CANARY', input: { value: 'PRIVATE_INPUT_CANARY' } },
+      })] });
+      expect(result.results[0]).toMatchObject({ status: 'error', errorCode: 'invalid_tool_call' });
+      expect(result.results[0]?.errorDetails).toBeUndefined();
+      expect(handler).not.toHaveBeenCalled();
+      expect(JSON.stringify(result)).not.toContain('UNPUBLISHED_ACTION_CANARY');
+      expect(JSON.stringify(result)).not.toContain('PRIVATE_INPUT_CANARY');
+    } finally { barrier.dispose(); }
   });
   it('classifies provider tools from the canonical ActionSpec side-effect owner', () => {
     expect(resolveVoiceToolEffectClass('listMachines')).toBe('read_only');

@@ -16,6 +16,24 @@ function call(callId: string, order: number, toolName = 'listMachines') {
 }
 
 describe('realtime tool barrier', () => {
+  it('retains the canonical decoder refusal without a custom validator or an effect', async () => {
+    const executeCall = vi.fn(async () => ({ ok: true }));
+    const barrier = createRealtimeToolBarrier({ executeCall, redactResult: value => value,
+      submitResults: async () => {}, continueResponse: async () => {},
+    });
+    try {
+      const result = await barrier.run({ responseId: 'response-1', calls: [{
+        ...call('malformed-memory', 0, 'memorySearch'),
+        arguments: { query: { query: 'PRIVATE_INPUT_CANARY', maxResults: null } },
+      }] });
+      expect(result.results[0]).toMatchObject({ status: 'error', errorCode: 'invalid_tool_call', errorDetails: {
+        issues: expect.arrayContaining([expect.objectContaining({ path: ['query', 'maxResults'], expected: 'number' })]),
+      } });
+      expect(executeCall).not.toHaveBeenCalled();
+      expect(JSON.stringify(result)).not.toContain('PRIVATE_INPUT_CANARY');
+    } finally { barrier.dispose(); }
+  });
+
   it('retains a known PluginError after cancellation instead of replacing its identity with unknown', async () => {
     let refuse!: () => void;
     const executeCall = vi.fn(async () => await new Promise<never>((_resolve, reject) => {

@@ -662,7 +662,7 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
             if (!isReadOnly) throw directVoiceEffectExecutionUnavailable();
             if (typeof handler !== 'function') throw new Error('voice_read_tool_unavailable');
             const admitted = decodeVoiceToolInput(name, parameters);
-            if (!admitted) throw new Error('invalid_parameters');
+            if (!admitted.ok) throw new Error('invalid_parameters');
             const raw = await handler(admitted.arguments);
             let value: unknown = raw;
             try {
@@ -692,7 +692,8 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
           async execute(parameters: VoiceRealtimeJsonValue): Promise<VoiceRealtimeJsonValue> {
             if (!generation.isCurrent()) throw new Error('voice_runtime_generation_revoked');
             const admitted = decodeVoiceToolInput(VOICE_ACTION_EXECUTE_TOOL_NAME, parameters);
-            const target = admitted ? resolveVoiceActionExecution(admitted.arguments) : null;
+            if (!admitted.ok) throw new Error('invalid_parameters');
+            const target = resolveVoiceActionExecution(admitted.arguments);
             if (!target) throw new Error('invalid_parameters');
             if (!isVoiceActionAvailableInState(storage.getState(), target.spec.id as ActionId, scope)) {
               throw new Error('voice_action_unavailable');
@@ -705,7 +706,7 @@ export function createBundledConversationRuntimeHostLease(input: Readonly<{
             const result = value && typeof value === 'object' && 'ok' in value && value.ok === false
               ? value : { ok: true, result: value };
             return StrictJsonValueSchema.parse(projectVoiceToolResultsForFollowUp([
-              { t: VOICE_ACTION_EXECUTE_TOOL_NAME, args: admitted!.arguments, result },
+              { t: VOICE_ACTION_EXECUTE_TOOL_NAME, args: admitted.arguments, result },
             ], privacy)[0]!.result);
           },
         }));

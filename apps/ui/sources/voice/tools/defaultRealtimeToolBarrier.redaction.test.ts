@@ -106,6 +106,7 @@ describe('realtime provider output redaction', () => {
     });
     const output = getActionSpec('approval.request.get')!.outputSchema!.parse({
       artifactId: 'approval', request: projectApprovalRequestForPublicRead(request),
+      canAllow: false, // No pending automatic consent in this stored request.
       queryPlan: { kind: 'approval_artifact_id_lookup', backingStore: 'ArtifactStore',
         boundedBy: 'approval artifact id', hydratedTranscripts: false },
     });

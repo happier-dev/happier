@@ -83,7 +83,8 @@ export function createRealtimeToolBarrierForVoiceHandlers(deps: VoiceHandlerBarr
         if (!spec || !isCurrentUiContextVoiceAction(spec.id)) return rejected;
       }
       const input = decodeVoiceToolInput(call.toolName, call.arguments);
-      return input ? { status: 'allowed', call: { ...call, ...input } } : rejected;
+      return input.ok ? { status: 'allowed', call: { ...call, toolName: input.toolName, arguments: input.arguments } }
+        : { ...rejected, failure: input };
     },
     classifyCall: (call) => resolveVoiceToolEffectClass(call.toolName, call.arguments),
     executeCall: async (call, signal, turnOrigin) => {
