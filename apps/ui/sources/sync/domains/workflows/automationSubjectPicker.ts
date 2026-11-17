@@ -6,6 +6,9 @@ import type { AutomationSubjectKind } from '@happier-dev/plugin-sdk/automations'
 import { ProjectSourcesListOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { SessionListActionResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
 import { DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
+import { WorkflowSubjectsListResultV1Schema, type WorkflowSubjectsListRequestV1 }
+    from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { PluginSubjectKindListInputV1Schema, PluginSubjectKindListResultV1Schema,
     type PluginSubjectKindListInputV1 } from '@happier-dev/protocol/plugins/contributions/subjectKinds';
 import { readPluginAutomationSubjectKindV1, readPluginAutomationSubjectV1,
@@ -29,8 +32,17 @@ export type AutomationSubjectPickerPage = Readonly<{
     coverage: ProjectsListResult['coverage'];
 }>;
 
-export type AutomationSubjectPickerActionPageKind = Extract<AutomationSubjectKind,
-    { kind: 'session' | 'project' | 'machine' | 'app' | 'environment' | 'backup' | 'plugin' }>;
+export type AutomationSubjectPickerActionPageKind = Exclude<AutomationSubjectKind, { kind: 'database' }>;
+
+/** Page demand comes from the caller or the list owner's existing default. */
+export type AutomationSubjectPickerActionPageRequest =
+    | Readonly<{ kind: Exclude<AutomationSubjectPickerActionPageKind, { kind: 'plugin' | 'healthCheck' | 'app' }>;
+        cursor?: string }>
+    | Readonly<{ kind: Extract<AutomationSubjectKind, { kind: 'app' }>; cursor?: string; query?: string; limit?: number }>
+    | Readonly<{ kind: Extract<AutomationSubjectKind, { kind: 'healthCheck' }>;
+        page: Omit<WorkflowSubjectsListRequestV1, 'kind'> }>
+    | Readonly<{ kind: Extract<AutomationSubjectKind, { kind: 'plugin' }>;
+        page: PluginSubjectKindListInputV1; subjectKinds: readonly PluginAutomationSubjectKindDeclarationV1[] }>;
 
 /** Project an acknowledged page without reading its body or fetching a second page. */
 export function projectAutomationSubjectPickerActionPage(input: Readonly<{
@@ -39,6 +51,11 @@ export function projectAutomationSubjectPickerActionPage(input: Readonly<{
 }>): AutomationSubjectPickerPage {
     const serverId = input.serverId;
     switch (input.kind.kind) {
+        case 'healthCheck': {
+            const page = WorkflowSubjectsListResultV1Schema.parse(input.result);
+            return { items: page.subjects.map(item => ({ subject: item.subject, label: item.label })),
+                nextCursor: page.nextCursor, coverage: page.nextCursor === null ? 'complete' : 'partial' };
+        }
         case 'project': {
             const page = readRecord(input.result);
             if (!Array.isArray(page.items)) throw new Error('Expected Project page');
@@ -86,6 +103,12 @@ export function projectAutomationSubjectPickerActionPage(input: Readonly<{
                 subject: { kind: 'session', serverId, sessionId: session.id } })), nextCursor: page.nextCursor,
             coverage: page.nextCursor !== null || page.hasNext === true ? 'partial' : 'complete' };
         }
+        case 'approvalProfile': {
+            const page = ActionPolicyOutputSchemas['actions.policy.get'].parse(input.result);
+            if (!('profiles' in page)) throw new Error('Expected Approval Profile page');
+            return { items: page.profiles.map(profile => ({ label: profile.profile.name,
+                subject: { kind: 'approvalProfile', serverId, profileId: profile.id } })), nextCursor: null, coverage: 'unknown' };
+        }
         case 'plugin': {
             const page = PluginSubjectKindListResultV1Schema.parse(input.result);
             const kind = input.kind;
@@ -103,13 +126,14 @@ export function projectAutomationSubjectPickerActionPage(input: Readonly<{
 export async function readAutomationSubjectPickerActionPage(input: Readonly<{
     lifetime: ServerAccountScopeLifetime; signal?: AbortSignal;
     context?: WorkflowActionCallerContext;
-}> & (Readonly<{ kind: Exclude<AutomationSubjectPickerActionPageKind, { kind: 'plugin' }>; cursor?: string }>
-    | Readonly<{ kind: Extract<AutomationSubjectKind, { kind: 'plugin' }>;
-        page: PluginSubjectKindListInputV1; subjectKinds: readonly PluginAutomationSubjectKindDeclarationV1[] }>)):
+}> & AutomationSubjectPickerActionPageRequest):
     Promise<AutomationSubjectPickerPage> {
     const serverId = input.lifetime.scope.serverId;
+    const page = 'page' in input ? input.page : input;
     const read = resolveAutomationSubjectPickerListRead({ kind: input.kind, serverId,
-        ...('cursor' in input ? { cursor: input.cursor } : {}) });
+        cursor: page.cursor, ...('limit' in page ? { limit: page.limit } : {}),
+        ...('query' in page ? { query: page.query } : {}),
+        ...('sources' in page ? { sources: page.sources } : {}) });
     const { callWorkflowAction } = await import('./callWorkflowAction');
     if (read.kind === 'plugin_contribution' && 'subjectKinds' in input) {
         const declaration = readPluginAutomationSubjectKindV1({ ...read, subjectKinds: input.subjectKinds });
@@ -131,14 +155,16 @@ export type AutomationSubjectPickerListRead =
     | Readonly<{ kind: 'action'; actionId: ActionId; serverId: string; input: Readonly<Record<string, unknown>> }>
     | Readonly<{ kind: 'database'; actionId: typeof DATABASE_TARGETS_LIST_ACTION_ID_V1; input: DatabaseTargetsListInputV1 }>
     | Readonly<{ kind: 'database_scope_required' }>
-    | Readonly<{ kind: 'plugin_contribution'; serverId: string; pluginId: string; subjectKindId: string }>
-    | Readonly<{ kind: 'saved_health_check'; serverId: string }>;
+    | Readonly<{ kind: 'plugin_contribution'; serverId: string; pluginId: string; subjectKindId: string }>;
 
 /** Selection uses each resource's existing read owner; declarations and admission remain elsewhere. */
 export function resolveAutomationSubjectPickerListRead(input: Readonly<{
     kind: AutomationSubjectKind;
     serverId: string;
     cursor?: string;
+    query?: string;
+    limit?: number;
+    sources?: WorkflowSubjectsListRequestV1['sources'];
     databaseScope?: DatabaseTargetsListInputV1['scope'];
 }>): AutomationSubjectPickerListRead {
     const serverId = input.serverId;
@@ -147,14 +173,19 @@ export function resolveAutomationSubjectPickerListRead(input: Readonly<{
         case 'session': return { kind: 'action', actionId: 'session.list', serverId,
             input: input.cursor === undefined ? {} : { cursor: input.cursor } };
         case 'project': return { kind: 'action', actionId: 'projects.list', serverId, input: { serverId } };
-        case 'app': return { kind: 'action', actionId: 'projects.sources.list', serverId, input: paged };
+        case 'app': return { kind: 'action', actionId: 'projects.sources.list', serverId, input: { ...paged,
+            ...(input.query === undefined ? {} : { query: input.query }),
+            ...(input.limit === undefined ? {} : { limit: input.limit }) } };
         case 'environment':
         case 'backup': return { kind: 'action', actionId: 'deployments.environments.list', serverId, input: paged };
         case 'machine': return { kind: 'action', actionId: 'machines.list', serverId, input: { serverId, refresh: true } };
         case 'approvalProfile': return { kind: 'action', actionId: 'actions.policy.get', serverId, input: { profiles: true } };
         case 'database': return input.databaseScope === undefined ? { kind: 'database_scope_required' }
             : { kind: 'database', actionId: DATABASE_TARGETS_LIST_ACTION_ID_V1, input: { scope: input.databaseScope } };
-        case 'healthCheck': return { kind: 'saved_health_check', serverId };
+        case 'healthCheck': return { kind: 'action', actionId: 'workflow.subjects.list', serverId,
+            input: { kind: 'healthCheck', ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+                ...(input.limit === undefined ? {} : { limit: input.limit }),
+                ...(input.sources === undefined ? {} : { sources: input.sources }) } };
         case 'plugin': return { kind: 'plugin_contribution', serverId,
             pluginId: input.kind.pluginId, subjectKindId: input.kind.subjectKindId };
     }

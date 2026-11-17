@@ -4,6 +4,16 @@ import { DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/action
 import { projectAutomationSubjectPickerActionPage, resolveAutomationSubjectPickerListRead } from './automationSubjectPicker';
 
 describe('automation subject picker read ownership', () => {
+    it('selects saved health-check identities from the saved-source owner without synthesizing checks', () => {
+        const subject = { kind: 'healthCheck' as const, serverId: 'home-a', sourceInstanceId: 'saved-source', checkId: 'check-a' };
+        expect(projectAutomationSubjectPickerActionPage({ kind: { kind: 'healthCheck' }, serverId: 'home-a', result: {
+            subjects: [{ subject, source: { automationId: 'automation-a', triggerId: '00000000-0000-4000-8000-000000000001' }, label: 'Saved check' }],
+            nextCursor: 'next-source',
+        } })).toEqual({ items: [{ subject, label: 'Saved check' }], nextCursor: 'next-source', coverage: 'partial' });
+        expect(resolveAutomationSubjectPickerListRead({ kind: { kind: 'healthCheck' }, serverId: 'home-a', cursor: 'next-source', limit: 3 }))
+            .toEqual({ kind: 'action', actionId: 'workflow.subjects.list', serverId: 'home-a',
+                input: { kind: 'healthCheck', cursor: 'next-source', limit: 3 } });
+    });
     it('keeps Environment coverage incomplete even when there is no continuation cursor', () => {
         const page = { ok: true, items: [], nextCursor: null, coverage: 'partial' };
         expect(projectAutomationSubjectPickerActionPage({ kind: { kind: 'environment' }, serverId: 'home-a', result: page }).coverage).toBe('partial');
@@ -36,6 +46,14 @@ describe('automation subject picker read ownership', () => {
             nextCursor: 'continue-here', coverage: 'partial' });
     });
 
+    it('uses the acknowledged profile identity and rejects another policy reply instead of an empty ready page', () => {
+        expect(projectAutomationSubjectPickerActionPage({ kind: { kind: 'approvalProfile' }, serverId: 'home-a',
+            result: { profiles: [{ id: 'reviewed', profile: { id: 'reviewed', name: 'Reviewed' },
+                access: 'view', revision: { headerVersion: 1, bodyVersion: 1 } }] } })).toEqual({ items: [{ label: 'Reviewed',
+                subject: { kind: 'approvalProfile', serverId: 'home-a', profileId: 'reviewed' } }], nextCursor: null, coverage: 'unknown' });
+        expect(() => projectAutomationSubjectPickerActionPage({ kind: { kind: 'approvalProfile' }, serverId: 'home-a',
+            result: { actionId: 'actions.policy.get', audience: 'ui', mode: 'allowed', actionEnabled: true, enabled: true } })).toThrow();
+    });
     it('uses Environment pages for both Environment identities and backup streams, never backup attempts', () => {
         const environment = resolveAutomationSubjectPickerListRead({ kind: { kind: 'environment' }, serverId: 'home-a', cursor: 'next-page' });
         const backup = resolveAutomationSubjectPickerListRead({ kind: { kind: 'backup' }, serverId: 'home-a', cursor: 'next-page' });
