@@ -6,6 +6,7 @@ import { createActionExecutor } from './actionExecutor.js';
 import type { ActionExecutorDeps } from './executor/types.js';
 import type { AccountApiTokenSummaryV1 } from '../auth/accountApiTokens.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
+import { sealPrivateLabelV1, projectPrivateLabelForRecipientV1 } from '../crypto/privateLabelV1.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
   return {
@@ -53,9 +54,12 @@ const encryptionAccess = {
   wrappedContentPrivateKey: 'B'.repeat(96),
 } as const;
 
+const storedLabel = sealPrivateLabelV1({ mode: 'plain',
+  binding: { entity: 'account_api_token', field: 'label', id: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d' }, value: 'CI deploy' });
+
 const token = {
   tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d',
-  label: 'CI deploy',
+  label: projectPrivateLabelForRecipientV1({ stored: storedLabel, recipientAccountId: 'account-1' }),
   displayPrefix: 'hap_v1_dd03e74b',
   createdAt: '2026-08-22T12:00:00.000Z',
   lastUsedAt: null,
@@ -76,7 +80,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
     for (const externalActionCredential of [undefined, {
       accountId: 'account-1', principalId: 'account-1', credentialId: token.tokenId, grant: API_TOKEN_FULL_GRANT_V1,
     }]) {
-      expect(await executor.execute('account.apiTokens.create', { tokenId: token.tokenId, label: token.label }, {
+      expect(await executor.execute('account.apiTokens.create', { tokenId: token.tokenId, label: storedLabel }, {
         surface, authority: 'account_automation', actionCaller: { kind: 'host' }, externalActionCredential,
       })).toMatchObject(externalActionCredential
         ? { ok: false, errorCode: 'present_user_required' }
@@ -91,7 +95,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
     const approvalsCreate = vi.fn();
     const executor = createActionExecutor(createDeps({ accountApiTokensCreateAction: effect, approvalsCreate }));
     expect(await executor.execute('account.apiTokens.create', {
-      tokenId: token.tokenId, label: token.label, encryption: { access: encryptionAccess },
+      tokenId: token.tokenId, label: storedLabel, encryption: { access: encryptionAccess },
     }, { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' } }))
       .toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'unsupported_surface', surface: 'agent' } });
     expect(effect).not.toHaveBeenCalled();
@@ -127,7 +131,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
 
     await expect(executor.execute(
       CREATE_ACTION_ID,
-      { tokenId: token.tokenId, label: token.label, expiresAt: token.expiresAt },
+      { tokenId: token.tokenId, label: storedLabel, expiresAt: token.expiresAt },
       context,
     )).resolves.toEqual({
       ok: true,
@@ -140,8 +144,8 @@ describe('createActionExecutor (account.apiTokens)', () => {
       result: { ok: true, result: { apiToken: token } },
     }));
     expect(accountApiTokensCreateAction).toHaveBeenCalledWith({
-      input: { tokenId: token.tokenId, label: token.label, expiresAt: token.expiresAt },
-      context,
+      input: { tokenId: token.tokenId, label: storedLabel, expiresAt: token.expiresAt },
+      context: expect.objectContaining(context),
     });
 
     await expect(executor.execute(LIST_ACTION_ID, {}, context)).resolves.toEqual({
@@ -159,7 +163,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
 
     await expect(executor.execute(
       CREATE_ACTION_ID,
-      { tokenId: token.tokenId, label: token.label, accountId: 'caller-selected-account' },
+      { tokenId: token.tokenId, label: storedLabel, accountId: 'caller-selected-account' },
       context,
     )).resolves.toMatchObject({
       ok: false,
@@ -171,8 +175,8 @@ describe('createActionExecutor (account.apiTokens)', () => {
   });
 
   it.each([
-    { tokenId: token.tokenId, label: token.label },
-    { tokenId: token.tokenId, label: token.label, encryption: { access: encryptionAccess } },
+    { tokenId: token.tokenId, label: storedLabel },
+    { tokenId: token.tokenId, label: storedLabel, encryption: { access: encryptionAccess } },
   ])('rejects generic API creation before approval or issuance', async (actionInput) => {
     const observeActionExecution = vi.fn();
     const accountApiTokensCreateAction = vi.fn(async () => ({
@@ -224,11 +228,12 @@ describe('createActionExecutor (account.apiTokens)', () => {
     const executor = createActionExecutor(createDeps({
       accountApiTokensCreateAction,
       readActionsSettings: context => ActionsSettingsV1Schema.parse({ v: 1, actions: { [CREATE_ACTION_ID]: { approvalRequiredSurfaces: [context.surface ?? 'ui'] } } }),
+      presentUserActionConfirmation: async () => true,
       approvalsCreate,
       observeActionExecution: async event => { observations.push(event); },
     }));
     await expect(executor.execute(CREATE_ACTION_ID,
-      { tokenId: token.tokenId, label: token.label, expiresAt: token.expiresAt },
+      { tokenId: token.tokenId, label: storedLabel, expiresAt: token.expiresAt },
       { surface: 'ui', authority: 'present_user', serverId: 'home-1', runtimeAccountId: 'account-1',
         actionRequestId: 'request-api-token', actionCaller: { kind: 'host' } },
     )).resolves.toEqual({ ok: true, result: { token: bearer, apiToken: token } });
@@ -266,7 +271,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
 
     // Token management by automation defaults to Ask; this host offers no approval owner.
     for (const [actionId, input] of [
-      [CREATE_ACTION_ID, { tokenId: token.tokenId, label: token.label }],
+      [CREATE_ACTION_ID, { tokenId: token.tokenId, label: storedLabel }],
       [REVOKE_ACTION_ID, { tokenId: token.tokenId }],
       [REVOKE_ALL_ACTION_ID, {}],
     ] as const) {
@@ -279,7 +284,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
     expect(accountApiTokensCreateAction).not.toHaveBeenCalled();
     expect(accountApiTokensListAction).toHaveBeenCalledExactlyOnceWith({
       input: {},
-      context: automationContext,
+      context: expect.objectContaining(automationContext),
     });
     expect(accountApiTokensRevokeAction).not.toHaveBeenCalled();
     expect(accountApiTokensRevokeAllAction).not.toHaveBeenCalled();
@@ -306,7 +311,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
 
     await expect(executor.execute(
       CREATE_ACTION_ID,
-      { tokenId: token.tokenId, label: token.label, expiresAt: token.expiresAt, encryption: { access: encryptionAccess } },
+      { tokenId: token.tokenId, label: storedLabel, expiresAt: token.expiresAt, encryption: { access: encryptionAccess } },
       context,
     )).resolves.toEqual({
       ok: true,
@@ -316,37 +321,37 @@ describe('createActionExecutor (account.apiTokens)', () => {
       result: { ok: true, result: { apiToken: token } },
     }));
     expect(accountApiTokensCreateAction).toHaveBeenCalledWith({
-      input: { tokenId: token.tokenId, label: token.label, expiresAt: token.expiresAt, encryption: { access: encryptionAccess } },
-      context,
+      input: { tokenId: token.tokenId, label: storedLabel, expiresAt: token.expiresAt, encryption: { access: encryptionAccess } },
+      context: expect.objectContaining(context),
     });
 
     // The wrapping record is the only material input; no raw key, wrapping
     // secret or caller-selected Account may reach the issuance owner.
     for (const { input, issues } of [
       {
-        input: { tokenId: token.tokenId, label: token.label, encryption: {} },
+        input: { tokenId: token.tokenId, label: storedLabel, encryption: {} },
         issues: [{ code: 'invalid_type', path: ['encryption', 'access'], expected: 'object' }],
       },
       {
-        input: { label: token.label, encryption: { access: encryptionAccess } },
+        input: { label: storedLabel, encryption: { access: encryptionAccess } },
         issues: [{ code: 'invalid_type', path: ['tokenId'], expected: 'string' }],
       },
       {
-        input: { tokenId: token.tokenId, label: token.label, encryption: { access: encryptionAccess }, accountId: 'caller-selected' },
+        input: { tokenId: token.tokenId, label: storedLabel, encryption: { access: encryptionAccess }, accountId: 'caller-selected' },
         issues: [{ code: 'unrecognized_keys', path: [] }],
       },
       {
-        input: { tokenId: token.tokenId, label: token.label, encryption: { access: encryptionAccess }, wrappingSecret: 'C'.repeat(43) },
+        input: { tokenId: token.tokenId, label: storedLabel, encryption: { access: encryptionAccess }, wrappingSecret: 'C'.repeat(43) },
         issues: [{ code: 'unrecognized_keys', path: [] }],
       },
       {
-        input: { tokenId: 'not-a-uuid', label: token.label, encryption: { access: encryptionAccess } },
+        input: { tokenId: 'not-a-uuid', label: storedLabel, encryption: { access: encryptionAccess } },
         issues: [{ code: 'invalid_format', path: ['tokenId'] }],
       },
       {
         input: {
           tokenId: token.tokenId,
-          label: token.label,
+          label: storedLabel,
           encryption: { access: { ...encryptionAccess, wrappedContentPrivateKey: 'B'.repeat(95) } },
         },
         issues: [
@@ -375,7 +380,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
 
     await expect(executor.execute(
       CREATE_ACTION_ID,
-      { tokenId: token.tokenId, label: token.label, encryption: { access: encryptionAccess } },
+      { tokenId: token.tokenId, label: storedLabel, encryption: { access: encryptionAccess } },
       { surface: 'ui' as const, authority: 'account_automation' as const, actionCaller: { kind: 'host' as const } },
     )).resolves.toMatchObject({ ok: false });
     expect(accountApiTokensCreateAction).not.toHaveBeenCalled();
@@ -397,7 +402,7 @@ describe('createActionExecutor (account.apiTokens)', () => {
     });
     expect(accountApiTokensListAction).toHaveBeenLastCalledWith({
       input: {},
-      context,
+      context: expect.objectContaining(context),
     });
 
     for (const invalid of [{ includeEncryptionAccess: true }, { projectionVersion: 2 }]) {

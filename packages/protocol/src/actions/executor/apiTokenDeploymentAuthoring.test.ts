@@ -8,8 +8,12 @@ import { createProjectAccountRowCipherV1 } from '../../projects/projectAccountRo
 import { createActionExecutor } from '../actionExecutor.js';
 import { ActionsSettingsV1Schema } from '../actionSettings.js';
 import { AccountApiTokenSummaryV1Schema } from '../../auth/accountApiTokens.js';
+import { sealPrivateLabelV1, projectPrivateLabelForRecipientV1 } from '../../crypto/privateLabelV1.js';
 // Collect the real approved-operation owner before timing behavior; its cold transform is not token authoring work.
 import './workflowRunActions.js';
+
+const storedLabel = sealPrivateLabelV1({ mode: 'plain',
+  binding: { entity: 'account_api_token', field: 'label', id: '11111111-1111-4111-8111-111111111111' }, value: 'CI' });
 
 const grant = { ...API_TOKEN_FULL_GRANT_V1,
   actions: { families: [], ids: ['deployments.deploy', 'action.operations.get'] },
@@ -34,7 +38,7 @@ describe('token Automatic authoring', () => {
       // Token persistence/HTTP is the boundary; the Action and consent author run real.
       accountApiTokensUpdateAction: async ({ input, context }) => {
         authored = (await prepareApiTokenDeploymentAuthoring({ actionId: child.action, value: input, context, host })).body;
-        return { apiToken: AccountApiTokenSummaryV1Schema.parse({ tokenId: value.tokenId, label: 'CI',
+        return { apiToken: AccountApiTokenSummaryV1Schema.parse({ tokenId: value.tokenId, label: projectPrivateLabelForRecipientV1({ stored: storedLabel, recipientAccountId: 'person' }),
           displayPrefix: 'hap_v1_11111111', createdAt: '2026-10-30T00:00:00Z', lastUsedAt: null, expiresAt: null,
           hasEncryptionAccess: false, hasUnattendedTeamAccess: true, grant: value.grant,
           parentTokenId: null, activeChildCount: 0, embedConfig: null }) };
@@ -49,7 +53,7 @@ describe('token Automatic authoring', () => {
   });
 
   it.each(['account.apiTokens.create', 'account.apiTokens.update'] as const)('%s saves a deliberate choice without opening Environment content', async actionId => {
-    const base = { tokenId: '11111111-1111-4111-8111-111111111111', label: 'CI' };
+    const base = { tokenId: '11111111-1111-4111-8111-111111111111', label: storedLabel };
     for (const fields of [
       { grant: { ...grant, deployApproval: 'automatic' as const } },
       { grant, deployment: { serverId: 'home', environmentId: 'staging', deployApproval: 'automatic' as const } },

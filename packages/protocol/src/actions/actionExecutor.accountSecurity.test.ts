@@ -119,17 +119,17 @@ describe('createActionExecutor (Account Security)', () => {
           expect(effects).toBe(1);
           expect(stored?.status).toBe('executed');
         } else {
-          expect(result).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable',
+          expect(result).toMatchObject({ ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable',
             details: { reason: 'live_invocation_unavailable' } });
-          expect(stored).toMatchObject({ status: 'failed', execution: {
-            ok: false, effectAttempted: false, errorCode: 'approval_origin_unavailable',
-            details: { reason: 'live_invocation_unavailable' },
-          } });
+          // Built-in approval consent remains available until its owner claims execution.
+          expect(stored).toMatchObject({ status: 'approved', decision: { kind: 'approve' } });
+          expect(stored).not.toHaveProperty('execution');
           expect(effects).toBe(0);
           const read = await executor.execute('approval.request.get', { artifactId: 'configuration-lifetime' }, {
             surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
           });
-          expect(read).toMatchObject({ ok: true, result: { request: { status: 'failed', execution: { errorCode: 'approval_origin_unavailable' } } } });
+          expect(read).toMatchObject({ ok: true, result: { request: { status: 'approved', decision: { kind: 'approve' } } } });
+          expect(read).not.toHaveProperty('result.request.execution');
         }
         const repeated = await executor.execute('approval.request.decide', { artifactId: 'configuration-lifetime', decision: 'approve' }, {
           surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },

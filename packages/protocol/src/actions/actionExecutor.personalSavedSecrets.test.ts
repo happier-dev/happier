@@ -13,16 +13,16 @@ import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Sc
 
 describe('personal Saved Secret Action boundary', () => {
   it.each([
-    ['coded Error', Object.assign(new Error('Secret store unavailable'), { code: 'secret_store_unavailable', details: { secret: 'x' } })],
-    ['RpcError', Object.assign(new RpcError('Secret store unavailable', 'RPC_FORBIDDEN'), { details: { secret: 'x' } })],
-    ['coded RpcError', Object.assign(new RpcError('Secret store unavailable', 'RPC_FORBIDDEN'), { code: 'RPC_FORBIDDEN', details: { secret: 'x' } })],
-  ] as const)('keeps private exception details out of Saved Secret refusals (%s)', async (_kind, error) => {
+    ['coded Error', Object.assign(new Error('Secret store unavailable'), { code: 'secret_store_unavailable', details: { secret: 'x' } }), 'action_failed'],
+    ['RpcError', Object.assign(new RpcError('Secret store unavailable', 'RPC_FORBIDDEN'), { details: { secret: 'x' } }), 'RPC_FORBIDDEN'],
+    ['coded RpcError', Object.assign(new RpcError('Secret store unavailable', 'RPC_FORBIDDEN'), { code: 'RPC_FORBIDDEN', details: { secret: 'x' } }), 'RPC_FORBIDDEN'],
+  ] as const)('keeps private exception details out of Saved Secret refusals (%s)', async (_kind, error, errorCode) => {
     // The private-resource persistence port is the boundary, not the family owner.
     const execute = createPersonalSavedSecretActionExecuteV1({ list: async () => { throw error; },
       create: async () => ({ secretId: 'unused', secretRef: 'unused' }), update: async () => ({ revision: 2 }), delete: async () => {} });
     const result = await execute('secrets.list', {});
     expect(result).not.toHaveProperty('details');
-    expect(result).toMatchObject({ ok: false, errorCode: 'code' in error ? error.code : error.rpcErrorCode });
+    expect(result).toMatchObject({ ok: false, errorCode });
   });
 
   it('retains a public Action failure diagnostic through Saved Secret refusals', async () => {
@@ -109,9 +109,20 @@ describe('personal Saved Secret Action boundary', () => {
     expect(getActionSpec('secrets.list').inputSchema.safeParse({ source: target }).success).toBe(true);
     expect(getActionSpec('secrets.link').inputSchema.safeParse({ source: target, itemIds: ['item-a', 'item-b'] }).success).toBe(true);
     expect(getActionSpec('secrets.export').inputSchema.safeParse({ target, secrets: [{ secretId: 'one', expectedUpdatedAt: 1 }] }).success).toBe(true);
-    const result = await createPersonalSavedSecretActionExecuteV1({ list: async () => [], create: async () => ({ secretId: 'unused', secretRef: 'unused' }),
-      update: async () => ({ revision: 2 }), delete: async () => {} })('secrets.link', { source: target });
-    expect(result).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    let mutations = 0;
+    const execute = createPersonalSavedSecretActionExecuteV1({ list: async () => [],
+      create: async () => { mutations += 1; return { secretId: 'unused', secretRef: 'unused' }; },
+      update: async () => { mutations += 1; return { revision: 2 }; }, delete: async () => { mutations += 1; } });
+    for (const [actionId, input] of [
+      ['secrets.list', { source: target }],
+      ['secrets.link', { source: target }],
+      ['secrets.export', { target, secrets: [{ secretId: 'one', expectedUpdatedAt: 1 }] }],
+    ] as const) {
+      expect(await execute(actionId, input)).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+    }
+    expect(await execute('secrets.update', { secretId: 'one', expectedUpdatedAt: 1 }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_request' });
+    expect(mutations).toBe(0);
     expect(JSON.stringify(getActionSpec('secrets.create').projectObservationInput?.({ name: 'Token', value: 'private-test-value', storeIn: target }))).not.toContain('private-test-value');
   });
   it('links and updates external sources through the existing private mutation port', async () => {

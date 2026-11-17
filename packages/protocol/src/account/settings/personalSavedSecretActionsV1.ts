@@ -5,6 +5,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { AccountSettingsSavedSecretReferenceSchema, type AccountSettingsSavedSecretReference } from './savedSecretReferenceV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { isRpcError } from '../../rpc/errors.js';
+import { createActionExecuteFailureError } from '../../actions/actionExecutionResult.js';
 import { SavedSecretResourceSourceV1Schema, SavedSecretExternalSourceV1Schema, type SavedSecretExternalSourceV1 } from './savedSecretResourceContentSchemaV1.js';
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -115,7 +116,7 @@ export function createPersonalSavedSecretActionExecuteV1(port: PersonalSavedSecr
       }
       case 'secrets.list': {
         const input = PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1[actionId].parse(raw);
-        if (input.source && !port.browse) throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
+        if (input.source && !port.browse) throw createActionExecuteFailureError({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action', effectAttempted: false });
         return PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse({ secrets: (await port.list(input.secretId))
           .filter(secret => input.secretId === undefined || secret.secretId === input.secretId)
           .map(({ revision, ...secret }) => ({ ...secret, secretRef: formatSharedSavedSecretRefV1(secret.secretId), updatedAt: revision })),
@@ -125,7 +126,7 @@ export function createPersonalSavedSecretActionExecuteV1(port: PersonalSavedSecr
       case 'secrets.link':
       case 'secrets.export': {
         const execute = port[actionId === 'secrets.link' ? 'link' : 'export'];
-        if (!execute) throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
+        if (!execute) throw createActionExecuteFailureError({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action', effectAttempted: false });
         if (actionId === 'secrets.link') return PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse(await port.link!(PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1[actionId].parse(raw)));
         return PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse(await port.export!(PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1[actionId].parse(raw)));
       }
@@ -133,7 +134,7 @@ export function createPersonalSavedSecretActionExecuteV1(port: PersonalSavedSecr
         return PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse(await port.create(PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1[actionId].parse(raw)));
       case 'secrets.update': {
         const input = PERSONAL_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1[actionId].parse(raw);
-        if (input.name === undefined && input.value === undefined && input.source === undefined) throw Object.assign(new Error('invalid_request'), { code: 'invalid_request' });
+        if (input.name === undefined && input.value === undefined && input.source === undefined) throw createActionExecuteFailureError({ ok: false, errorCode: 'invalid_request', error: 'invalid_request', effectAttempted: false });
         const result = await port.update(input);
         return PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse({ secretId: input.secretId, updatedAt: result.revision });
       }
