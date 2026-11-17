@@ -7,7 +7,7 @@ import tweetnacl from 'tweetnacl';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { ExternalActionMachineBootstrapV1Schema, ExternalActionMachineRpcExecutionV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { signExternalActionApprovalInputV1, verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { verifyExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 
 import { configuration } from '@/configuration';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -52,44 +52,39 @@ import { readMachineSetupAcceptedAppRuns, prepareMachineSetupAcceptedAppRuns } f
 import { sealWorkflowProgressStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1,
   serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
+import { projectManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
+import { createPlainSetupPresetFixture } from '@/testkit/machines/setupPreset';
 
 describe('ApiMachine own Session Account read custody', () => {
-  it.skipIf(process.platform === 'win32')('refuses a carried native confirmation without a per-request owner while retaining ordinary Plan', async () => {
+  it.skipIf(process.platform === 'win32')('keeps Plan read-only with or without a carried native confirmation', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'native-confirm' });
     const executor = fixture.createExecutor(osStore.credentials!);
     const input = { homeId: 'srv_home', machineId: fixture.machine.id, mode: 'effects' as const, sources: fixture.sources };
     const context = fixture.context('machines.setup.plan');
     expect(await executor.execute('machines.setup.plan', input, withNativeConfirmation('machines.setup.plan', input, context)))
-      .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
-    const ordinaryPlan = await executor.execute('machines.setup.plan', input, context);
-    expect(ordinaryPlan, ordinaryPlan.ok ? undefined : `ordinary_native_plan_failed:${ordinaryPlan.errorCode}`)
       .toMatchObject({ ok: true });
+    expect(await executor.execute('machines.setup.plan', input, context)).toMatchObject({ ok: true });
     expect(await fixture.readInstalled()).toEqual({ installed: false, version: null, effects: [] });
+    expect(fixture.metadataWrites).toHaveLength(0);
     expect(fixture.rootLaunches).toHaveLength(0);
   });
-  it.skipIf(process.platform === 'win32')('keeps carried native confirmation at Ask until the existing owner supplies its acceptance', async () => {
+  it.skipIf(process.platform === 'win32')('refuses confirmed Apply when the receiving host cannot bind its request owner', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'native-confirm' });
-    const artifacts = new Map<string, ApprovalRequest>();
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), machineSetupApply: fixture.machineSetupApply,
-      approvalsCreate: async ({ request }) => { artifacts.set('unowned-native-approval', ApprovalRequestV2Schema.parse(request));
-        return { artifactId: 'unowned-native-approval' }; },
-      approvalsGet: async ({ artifactId }) => artifacts.get(artifactId) ?? null,
-      approvalsUpdate: async () => { throw new Error('No Artifact decision was submitted'); },
-    });
+    const planned = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { homeId: 'srv_home', machineId: fixture.machine.id, mode: 'effects', sources: fixture.sources },
+      context: fixture.context('machines.setup.plan'),
+    }));
     const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_home', machineId: fixture.machine.id,
-      targets: [{ homeId: 'srv_home', machineId: fixture.machine.id, desiredRevision: 0, sources: fixture.sources, recipePlans: [] }] });
+      targets: [{ homeId: 'srv_home', machineId: fixture.machine.id, desiredRevision: planned.desiredRevision,
+        sources: planned.sources, recipePlans: planned.recipePlans ?? [] }] });
+    const unavailable = createHostActionOperationRuntime({ machineId: fixture.machine.id, resolveAccountId: async () => null });
+    const executor = fixture.createExecutor(osStore.credentials!, { runActionOperation: unavailable.runActionOperation });
     const admitted = fixture.context('machines.setup.apply', 'unowned-native-request');
-    const context = withNativeConfirmation('machines.setup.apply', input, { ...admitted, serverId: configuration.activeServerId,
-      signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ ...args,
-        authorizationToken: admitted.externalActionExecutionAuthorization!.token, privateKey: fixture.pair.secretKey }),
-    });
+    const context = withNativeConfirmation('machines.setup.apply', input, { ...admitted, machineAdmission: undefined });
     expect(context.operationAcceptance).toBeUndefined();
-    expect(await executor.execute('machines.setup.apply', input, context)).toMatchObject({ ok: true,
-      result: { kind: 'approval_request_created', artifactId: 'unowned-native-approval' } });
-    expect(artifacts.size).toBe(1);
-    expect(artifacts.get('unowned-native-approval')).toMatchObject({ status: 'open', actionId: 'machines.setup.apply' });
+    expect(await executor.execute('machines.setup.apply', input, context))
+      .toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
     expect(await fixture.readInstalled()).toEqual({ installed: false, version: null, effects: [] });
     expect(fixture.metadataWrites).toHaveLength(0);
     expect(fixture.rootLaunches).toHaveLength(0);
@@ -113,9 +108,11 @@ describe('ApiMachine own Session Account read custody', () => {
     const item = { kind: 'softwareRecipe' as const, selection: { ref, inputs: {} } };
     const setup = { items: [item] };
     const bundled = { kind: 'bundledPreset' as const, ref: { pluginId: ref.pluginId, localId: 'bundle', revision: '1' }, setup };
-    const account = { kind: 'accountPreset' as const, presetId: 'ordinary-copy', presetRevision: 1,
-      setup: { ...setup, ...(personalCopy ? { secretRefs: { v: 1 as const, bindings: { PRIVATE: { ref: 'alice-secret' } } } } : {}) } };
-    const custodySources = [account, { kind: 'direct' as const, setup: {} }];
+    const account = await createPlainSetupPresetFixture({ presetId: 'ordinary-copy', presetRevision: 1,
+      setup: { ...setup, ...(personalCopy ? { secretRefs: { v: 1 as const, bindings: { PRIVATE: { ref: 'alice-secret' } } } } : {}) } });
+    const candidateRequest = { homeId: 'srv_home', machineId: 'alice-machine',
+      candidatePreset: { presetId: account.wire.presetId, presetRevision: account.wire.presetRevision } };
+    const originRequest = { homeId: 'srv_home', machineId: 'alice-machine', purpose: 'creationOrigin', candidates: [account.wire] };
     const exclusions = [{ ref, reason: 'not_selected' as const }];
     const previous = scenario !== 'unchecked-new' ? [{ kind: 'direct' as const, setup }] : [{ kind: 'direct' as const, setup: {} }];
     const runtime = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController, coldStart: true,
@@ -132,10 +129,10 @@ describe('ApiMachine own Session Account read custody', () => {
         && 'purpose' in body && body.purpose === 'creationOrigin') {
         return { status: 200, data: { purpose: 'creationOrigin' } };
       }
-      if (personalCopy) {
-        expect(body).toEqual({ homeId: 'srv_home', machineId: 'alice-machine', sources: custodySources });
-        return scenario === 'foreign-owned-personal-copy'
-          ? { status: 200, data: { sources: custodySources } }
+      if (accountCopy) {
+        expect(body).toEqual(candidateRequest);
+        return scenario !== 'foreign-unowned-personal-copy'
+          ? { status: 200, data: { sources: [account.resolved, { kind: 'direct', setup: {} }] } }
           : { status: 403, data: { error: 'credential_unavailable' } };
       }
       throw new Error('Ordinary setup copies cannot demand Preset certification');
@@ -158,7 +155,7 @@ describe('ApiMachine own Session Account read custody', () => {
       desiredRevision: 0, exclusions, recipePlans: [], sources: scenario === 'unchanged-unknown' ? [
         { kind: 'direct' as const, setup },
       ] : [
-        accountCopy ? account : bundled,
+        accountCopy ? account.wire : bundled,
         { kind: 'direct' as const, setup: scenario === 'same-item-second-source' ? setup : {} },
       ] }] };
     const operations = createHostActionOperationRuntime({ machineId: machine.id,
@@ -181,13 +178,11 @@ describe('ApiMachine own Session Account read custody', () => {
           withNativeConfirmation('machines.setup.apply', input, { ...context, ...owned })) });
       if (scenario === 'foreign-unowned-personal-copy') {
         expect(result).toMatchObject({ ok: false, errorCode: 'machine_setup_request_failed' });
-        expect(post.mock.calls.map(([, body]) => body)).toEqual([{ homeId: 'srv_home', machineId: machine.id, sources: custodySources }]);
+        expect(post.mock.calls.map(([, body]) => body)).toEqual([candidateRequest]);
         expect(machine.metadataVersion).toBe(0);
         return;
       }
-      expect(post.mock.calls.map(([, body]) => body)).toEqual(personalCopy
-        ? [{ homeId: 'srv_home', machineId: machine.id, sources: custodySources }, expect.objectContaining({ purpose: 'creationOrigin' })]
-        : accountCopy ? [expect.objectContaining({ purpose: 'creationOrigin' })] : []);
+      expect(post.mock.calls.map(([, body]) => body)).toEqual(accountCopy ? [candidateRequest, originRequest] : []);
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
       const saved = await client.getMachineSetupDesiredSnapshot();
       expect(saved.status).toBe('ready');
@@ -197,7 +192,7 @@ describe('ApiMachine own Session Account read custody', () => {
       expect(JSON.stringify(input)).toBe(before);
       expect(machine.metadataVersion).toBe(scenario === 'unchanged-unknown' ? 0 : 1);
       if (scenario === 'unchanged-unknown') expect(saved.policy.revision).toBe(0);
-      expect(post).toHaveBeenCalledTimes(personalCopy ? 2 : accountCopy ? 1 : 0);
+      expect(post).toHaveBeenCalledTimes(accountCopy ? 2 : 0);
     } finally {
       await registration.dispose(); await runtime.dispose(); profile.mockRestore(); post.mockRestore(); osStore.identity = null; osStore.credentials = null;
     }
@@ -385,8 +380,11 @@ describe('ApiMachine own Session Account read custody', () => {
         : acceptedApp && String(url).endsWith('/v1/account/encryption') ? { mode: 'plain', updatedAt: 1 }
         : { id: 'alice' } }));
     const reports: string[] = [];
-    const retained = { kind: 'accountPreset' as const, presetId: 'preset', presetRevision: 4,
-      setup: { scripts: [{ body: '\r\necho actual-setup\r\n', affects: 'none' as const }],  } };
+    const preset = await createPlainSetupPresetFixture({ presetId: 'preset', presetRevision: 4,
+      setup: { scripts: [{ body: '\r\necho actual-setup\r\n', affects: 'none' }] } });
+    const retained = preset.local;
+    const retainedScript = retained.setup.scripts?.[0];
+    if (!retainedScript) throw new Error('Source setup fixture must retain its authored script');
     const desiredRevision = scenario === 'retained-copy' || acceptedApp ? 2 : 0;
     const sources = [retained, { kind: 'direct' as const, setup: scenario === 'managed-apply-rejected' ? { items: [{ kind: 'setupRecipe' as const,
         selection: { ref: { pluginId: 'com.example.unadmitted', recipeId: 'unadmitted', revision: '1' }, inputs: {} } }] }
@@ -395,6 +393,7 @@ describe('ApiMachine own Session Account read custody', () => {
           { kind: 'app' as const, definition: templateIntent }] }
         : scenario === 'managed-app-item' ? { items: [{ kind: 'app' as const, definition: { name: 'Creation app',
           project: { kind: 'create' as const }, definition: { from: 'compose' as const, document: 'services: {}', profiles: [], services: [] }, bindings: [] } }] } : {} }];
+    const wireSources = projectManagedOpaqueSetupSourcesV1(sources);
     let resolves = 0;
     let originReads = 0;
     let succeededReportFailed = false;
@@ -432,12 +431,12 @@ describe('ApiMachine own Session Account read custody', () => {
         const selected = MachineSetupResolveInputV1Schema.parse(body);
         if ('purpose' in selected) {
           originReads++;
-          expect(selected).toMatchObject({ homeId: 'srv_home', machineId: 'alice-machine', candidates: [retained] });
+          expect(selected).toEqual({ homeId: 'srv_home', machineId: 'alice-machine', purpose: 'creationOrigin', candidates: [preset.wire] });
           if (scenario === 'changed-review') advanceDesired();
           if (scenario !== 'report-fallback-retry') return { status: 200, data: { purpose: 'creationOrigin' } };
-          // Home returns the matching retained creation while it is pending,
-          // then failed on retry; ordinary Preset copies have no such origin.
-          expect(reports).toEqual(originReads === 1 ? [] : ['running', 'failed']);
+          // Home returns the matching pending creation. A lost terminal report
+          // does not undo its target's completed native operation.
+          expect(reports).toEqual([]);
           return { status: 200, data: { purpose: 'creationOrigin',
             creation: { managedId: 'managed', preset: { id: retained.presetId, revision: retained.presetRevision } } } };
         }
@@ -445,9 +444,14 @@ describe('ApiMachine own Session Account read custody', () => {
         // The original Preset has since changed; its retained Machine copy is
         // not a request for revision history from the Home.
         if (scenario === 'retained-copy' || scenario === 'managed-apply-rejected') return { status: 409, data: { error: 'request_conflict' } };
-        if (scenario === 'changed-review') advanceDesired();
+        if ('candidatePreset' in selected) {
+          expect(selected).toEqual({ homeId: 'srv_home', machineId: 'alice-machine',
+            candidatePreset: { presetId: retained.presetId, presetRevision: retained.presetRevision } });
+          return { status: 200, data: { sources: [preset.resolved, { kind: 'direct', setup: {} }] } };
+        }
         if (!('sources' in selected)) throw new Error('Expected canonical source setup');
-        return { status: 200, data: { sources: selected.sources,
+        expect(selected.sources).toEqual(wireSources);
+        return { status: 200, data: { sources: selected.sources.map(source => source.kind === 'accountPresetOpaque' ? preset.resolved : source),
           creation: { managedId: 'managed', preset: { id: retained.presetId, revision: retained.presetRevision } } } };
       }
       expect(String(url)).toMatch(/\/v1\/machines\/setup\/report$/u);
@@ -488,7 +492,7 @@ describe('ApiMachine own Session Account read custody', () => {
           controllerMachineId: machine.id } }] } : {}),
       sources: scenario === 'foreign-personal' ? [{ kind: 'direct', setup: {
         scripts: [{ body: 'echo private', affects: 'none' }],  secretRefs: { v: 1, bindings: { PRIVATE: { ref: 'alice-secret' } } },
-      } }] : directScript ? [{ kind: 'direct', setup: { scripts: [{ body: directScriptBody, affects: 'none' }] } }] : sources }] });
+      } }] : directScript ? [{ kind: 'direct', setup: { scripts: [{ body: directScriptBody, affects: 'none' }] } }] : wireSources }] });
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-setup', binding: {
       accountId: actor, custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 7 }, accountEncryptionMode: 'plain',
       machineId: machine.id, installationId: osStore.identity.installationId, serverIdentityId: input.homeId,
@@ -574,8 +578,8 @@ describe('ApiMachine own Session Account read custody', () => {
       if (scenario === 'managed-plan') {
         const plan = createMachineSetupPlanAction({ apiMachine: client, machineId: machine.id, homeId: input.homeId,
           installation: { installationId: osStore.identity.installationId, privateKey: pair.secretKey } });
-        expect(await plan({ input: { homeId: input.homeId, machineId: machine.id, sources, mode: 'effects' }, context }))
-          .toMatchObject({ desiredRevision: 0, sources });
+        expect(await plan({ input: { homeId: input.homeId, machineId: machine.id, sources: wireSources, mode: 'effects' }, context }))
+          .toMatchObject({ desiredRevision: 0, sources: wireSources });
         expect(resolves).toBe(1);
         expect(reports).toEqual([]);
         expect(nativeTerminal.launches).toEqual([]);
@@ -612,7 +616,7 @@ describe('ApiMachine own Session Account read custody', () => {
         // reviewed app child can publish correspondence or execute deployment.
         expect(await execution).toMatchObject({ ok: true, result: { operationId: 'setup-operation' } });
         expect(nativeTerminal.launches).toHaveLength(1);
-        expect(nativeTerminal.launches[0]?.args).toContain(retained.setup.scripts[0]!.body);
+        expect(nativeTerminal.launches[0]?.args).toContain(retainedScript.body);
         expect(reports).toEqual(['running', 'succeeded']);
         expect(resolves).toBe(1);
         expect(transport.mock.calls.some(([url]) => String(url).endsWith(WORKFLOW_RUN_STORAGE_HTTP_PATH))).toBe(false);
@@ -647,7 +651,7 @@ describe('ApiMachine own Session Account read custody', () => {
         // An admitted finite Apply consumes its captured script. A competing
         // desired edit is preserved by final CAS, not re-admitted per step.
         expect(nativeTerminal.launches).toHaveLength(1);
-        expect(nativeTerminal.launches[0]?.args).toContain(retained.setup.scripts[0]!.body);
+        expect(nativeTerminal.launches[0]?.args).toContain(retainedScript.body);
         expect(machine.metadataVersion).toBe(1);
         expect(await client.getMachineSetupDesiredSnapshot()).toMatchObject({ status: 'ready', policy: { revision: 1,
           sources: [{ kind: 'direct', setup: { scripts: [{ body: 'new reviewed intent' }] } }] } });
@@ -687,7 +691,7 @@ describe('ApiMachine own Session Account read custody', () => {
         }), { cause });
       }
       expect(reports).toEqual(scenario === 'report-fallback-retry' ? ['running'] : []);
-      expect(nativeTerminal.launches[0]?.args).toContain(retained.setup.scripts[0]!.body);
+      expect(nativeTerminal.launches[0]?.args).toContain(retainedScript.body);
       const running = await operations.handlers.getV2({ operationId: 'setup-operation' }, context);
       expect(running).toMatchObject({ kind: 'found', operation: { state: 'running', domainRef: {
         kind: 'machineSetup', setupTask: { id: expect.any(String), taskKind: 'machine.setup.apply.v1' },
@@ -698,33 +702,27 @@ describe('ApiMachine own Session Account read custody', () => {
       const task = { taskId: running.operation.domainRef.setupTask.id };
       nativeTerminal.exit!(0);
       if (scenario === 'report-fallback-retry') {
-        expect(await execution).toMatchObject({ ok: false, errorCode: 'machine_setup_request_failed' });
-        expect(reports).toEqual(['running', 'failed']);
+        const completed = await execution;
+        expect(completed).toMatchObject({ ok: true, result: { operationId: 'setup-operation' } });
+        expect(succeededReportFailed).toBe(true);
+        expect(reports).toEqual(['running']);
         const current = await client.getMachineSetupDesiredSnapshot();
         if (current.status !== 'ready') throw new Error('Missing successful desired write before Report failure');
         expect(current.policy.revision).toBe(1);
-        const retryInput = MachineSetupApplyInputV1Schema.parse({ homeId: input.homeId, machineId: input.machineId, targets: [{ homeId: input.homeId, machineId: input.machineId,
-          desiredRevision: current.policy.revision, recipePlans: [], sources: current.policy.sources }] });
-        const retryAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization,
-          binding: { ...authorization.binding, requestId: 'setup-retry', requestEnvelopeDigest: 'b'.repeat(43) } });
-        const retryContext = { ...context, actionRequestId: 'setup-retry', externalActionExecutionAuthorization: retryAuthorization };
-        execution = operations.observeExecution({ actionId: 'machines.setup.apply', input: retryInput,
-          actionRequestId: retryContext.actionRequestId, rpcContext: retryContext,
-          onOperation: operation => { observedOperationId = operation.operationId; },
-          execute: owned => executor.execute('machines.setup.apply', retryInput,
-            withNativeConfirmation('machines.setup.apply', retryInput, { ...retryContext, ...owned })),
-        });
-        void execution.catch(() => undefined);
-        await expect.poll(() => nativeTerminal.launches.length).toBe(2);
-        expect(reports).toEqual(['running', 'failed', 'running']);
-        expect(nativeTerminal.launches[1]?.args).toContain(retained.setup.scripts[0]!.body);
-        nativeTerminal.exit!(0);
-        expect(await execution).toMatchObject({ ok: true, result: { operationId: 'setup-retry-operation' } });
-        expect(reports).toEqual(['running', 'failed', 'running', 'succeeded']);
-        expect(resolves).toBe(0); // Neither attempt reloads the edited live Preset.
-        expect(originReads).toBe(2);
-        expect(machine.metadataVersion).toBe(1); // Equal current copies do not publish again.
-        expect(await operations.handlers.getV2({ operationId: 'setup-retry-operation' }, retryContext))
+        // Re-observing this accepted invocation returns its settled native
+        // result, without a second script run or another Home report.
+        expect(await operations.observeExecution({ actionId: 'machines.setup.apply', input,
+          actionRequestId: context.actionRequestId, rpcContext: context,
+          execute: owned => executor.execute('machines.setup.apply', input,
+            withNativeConfirmation('machines.setup.apply', input, { ...context, ...owned })),
+        })).toEqual(completed);
+        expect(nativeTerminal.launches).toHaveLength(1);
+        expect(reports).toEqual(['running']);
+        expect(resolves).toBe(1);
+        expect(originReads).toBe(1);
+        expect(machine.metadataVersion).toBe(1);
+        expect(await client.getMachineSetupDesiredSnapshot()).toEqual(current);
+        expect(await operations.handlers.getV2({ operationId: 'setup-operation' }, context))
           .toMatchObject({ kind: 'found', operation: { state: 'succeeded', domainRef: {
             managedId: 'managed', preset: { id: retained.presetId, revision: retained.presetRevision },
           } } });
@@ -736,9 +734,11 @@ describe('ApiMachine own Session Account read custody', () => {
       const terminal = await operations.handlers.getV2({ operationId: 'setup-operation' }, context);
       if (terminal.kind !== 'found') throw new Error('Missing receiving setup outcome');
       const reloaded = ActionOperationSnapshotV1Schema.parse(JSON.parse(JSON.stringify(terminal.operation)));
-      expect(reloaded).toMatchObject({ state: 'succeeded', domainRef: { ...running.operation.domainRef, exitCode: 0 } });
+      expect(reloaded).toMatchObject({ state: 'succeeded', domainRef: { ...running.operation.domainRef, exitCode: 0,
+        steps: running.operation.domainRef.steps?.map(step => ({ ...step, state: 'succeeded' })),
+      } });
       expect(reports).toEqual([]);
-      expect(resolves).toBe(0);
+      expect(resolves).toBe(scenario === 'new-preset' ? 1 : 0);
       expect(originReads).toBe(1);
       if (acceptedApp) {
         expect(await client.getMachineSetupDesiredSnapshot()).toMatchObject({ status: 'ready', policy: {
@@ -852,17 +852,18 @@ describe('ApiMachine own Session Account read custody', () => {
         expect(runStorage.calls.slice(beforeBatch).filter(call => call.operation === 'get')).toHaveLength(1);
         // Exercise the public composer through the real installed target Plan
         // and Account Run storage, not a replacement completion classifier.
-        const continuitySources = MachineSetupSourceV1Schema.parse(sources).map(source => ({ ...source, setup: { ...source.setup,
+        const continuitySources = projectManagedOpaqueSetupSourcesV1(MachineSetupSourceV1Schema.parse(sources).map(source => ({ ...source, setup: { ...source.setup,
           ...(source.setup.items ? { items: source.setup.items.map(item => item.kind === 'app'
             && item.definition.definition.from === 'catalogApp' && appIntent.definition.from === 'catalogApp'
             && item.definition.definition.templateRef.itemId === appIntent.definition.templateRef.itemId
             ? { ...item, definition: { ...appIntent, definition: { ...appIntent.definition,
               templateRef: { ...appIntent.definition.templateRef, version: '2', ref: { kind: 'version' as const, version: '2' } } } } }
             : item) } : {}),
-        } }));
+        } })));
         // App outcome reads moved to the receiving Plan owner. Supply its real
         // Account transport, as the daemon host does, rather than a bare Plan.
         const targetPlan = createMachineSetupPlanAction({ apiMachine: client, machineId: machine.id, homeId: input.homeId,
+          installation: { installationId: osStore.identity.installationId, privateKey: pair.secretKey },
           appPreparation: { readAppRuntime: () => ({
             execute: (actionId, actionInput, actionContext) => boundExecutor.execute(actionId, actionInput, actionContext),
             isCurrent: boundCurrent,
@@ -873,8 +874,7 @@ describe('ApiMachine own Session Account read custody', () => {
           resolveServerFeaturesSnapshot: () => fetchServerFeaturesSnapshot({ serverUrl: 'https://machine-home.example.test', token }),
           machineActionDirectTargetTransport: { machineId: machine.id, invoke: async (method, request) => {
             expect(method).toBe(RPC_METHODS.MACHINE_SETUP_PLAN);
-            return targetPlan({ input: MachineSetupPlanInputV1Schema.parse(request),
-              context: { surface: 'cli', authority: 'present_user' } });
+            return targetPlan({ input: MachineSetupPlanInputV1Schema.parse(request), context });
           } },
         }));
         const beforeContinuity = { reads: runStorage.calls.length, launches: nativeTerminal.launches.length,
@@ -978,7 +978,7 @@ describe('ApiMachine own Session Account read custody', () => {
       }
     }
   });
-  it('applies a Manage grantee operation with their additional root step rather than requiring catalog equality', async () => {
+  it.each([false, true])('applies a Manage grantee operation without catalog equality (additional step: %s)', async additionalStep => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
     const context = (actionId: 'machines.setup.plan' | 'machines.setup.apply'): RpcActionExecutorContext => {
       const admitted = fixture.context(actionId);
@@ -1003,10 +1003,10 @@ describe('ApiMachine own Session Account read custody', () => {
     if (!entry?.plan.steps[0] || !entry.plan.nativeFacts[0]) throw new Error('Expected the native package review');
     const { v: _version, planDigest: _digest, ...contents } = entry.plan;
     // Manage permits editing the operation. The admitted input, not catalog equality, binds execution.
-    const extended = createMachineSetupEffectPlan({ ...contents,
+    const extended = additionalStep ? createMachineSetupEffectPlan({ ...contents,
       steps: [...contents.steps, { ...contents.steps[0]!, id: 'extra-root-step' }],
       nativeFacts: [...contents.nativeFacts, { ...contents.nativeFacts[0]!, stepId: 'extra-root-step' }],
-    });
+    }) : entry.plan;
     const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_home', machineId: fixture.machine.id,
       targets: [{ homeId: 'srv_home', machineId: fixture.machine.id, sources: reviewed.sources,
         desiredRevision: reviewed.desiredRevision, recipePlans: [{ ...entry, plan: extended }] }] });
@@ -1016,7 +1016,7 @@ describe('ApiMachine own Session Account read custody', () => {
       execute: owned => executor.execute('machines.setup.apply', input,
         withNativeConfirmation('machines.setup.apply', input, { ...admitted, ...owned })),
     });
-    expect(result).toMatchObject({ ok: true });
+    expect(result, result.ok ? undefined : result.errorCode).toMatchObject({ ok: true });
     expect(fixture.rootLaunches).toHaveLength(1);
     expect(fixture.rootPlans).toMatchObject([[{ plan: { steps: extended.steps } }]]);
     expect(fixture.metadataWrites).toHaveLength(1);

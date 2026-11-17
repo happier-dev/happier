@@ -1,4 +1,5 @@
 import { prepareMachineSetupSecretEnvironment } from './secretEnvironment';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { observeMachineSetupInitialPresence } from './initialPresence';
 import { homedir } from 'node:os';
 import type { ActionExecuteResult, ActionExecutorDeps } from '@happier-dev/protocol';
@@ -498,7 +499,9 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             generation: lease.registry.generation }, machineRecipesProjectionFamily).entriesById);
         } });
         if ('errorCode' in planned) return planned;
-        if (mode === 'apply') {
+        // The admitted root owns its exact reviewed plan, including Manage edits.
+        // Direct target requests still need the installed recipe's review.
+        if (mode === 'apply' && context.operationAcceptance?.actionId !== MACHINE_SETUP_APPLY_ACTION_ID_V1) {
           const recipePlans = planned.recipePlans ?? [];
           if (recipePlans.length !== reviewedRecipePlans.length || recipePlans.some((entry, index) => {
             const reviewed = reviewedRecipePlans[index];

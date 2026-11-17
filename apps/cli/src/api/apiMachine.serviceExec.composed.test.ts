@@ -12,8 +12,8 @@ import { ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1,
     EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
-    ExternalActionDaemonDispatchRequestSchema, ExternalActionExecutionAuthorizationV1Schema,
-    ExternalActionRequestEnvelopeSchema, parseExternalActionDaemonDispatchResultV1,
+    ExternalActionDaemonDispatchRequestSchema, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
+    parseExternalActionDaemonDispatchResultV1,
     type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, decodeExternalActionResolvedTargetV1,
     verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -69,6 +69,7 @@ async function exerciseCurrentService(scenario: 'defaultAsk' | 'finite' | 'cance
     vi.stubEnv('HAPPIER_HOME_DIR', home);
     reloadConfiguration();
     let releaseHome: (() => void) | undefined;
+    let currentnessChannel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>> | undefined;
     let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
     let client: ReturnType<ApiClient['machineSyncClient']> | undefined;
     try {
@@ -94,7 +95,7 @@ async function exerciseCurrentService(scenario: 'defaultAsk' | 'finite' | 'cance
         const machineRow = { id: target.machineId, kind: 'persistent', active: true,
             revokedAt: null, replacedByMachineId: null, installationId: installation.installationId,
             operationProtocolCapabilities: MachineOperationProtocolCapabilitiesV1Schema.parse({}), operationProtocolCapabilitiesRevision: 0,
-            installationPublicKey: installation.publicKey, storageMode: 'plain',
+            installationPublicKey: Buffer.from(installation.publicKey, 'base64url').toString('base64'), storageMode: 'plain',
             dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, access: { custodian: { accountId: 'requester', displayName: 'Requester' },
                 role: machineRole, resourceMode: 'plain', accessState: 'ready' } };
         let verifySignedHomeRequest: ((url: string, method: string, body: unknown, headers: AxiosHeaders) => boolean) | undefined;
@@ -158,6 +159,9 @@ async function exerciseCurrentService(scenario: 'defaultAsk' | 'finite' | 'cance
                 },
             } };
         });
+        // Machine startup can acquire the shared Account observation. Redirect
+        // its transport before that first holder captures the Home endpoint.
+        if (signedReplyLoss) currentnessChannel = await createRequesterCurrentnessSocketHarness();
         const api = await ApiClient.create(credentials);
         api.setServerFeaturesSnapshotProvider(() => ({ status: 'ready', features: FeaturesResponseSchema.parse({
             features: {}, capabilities: { serverIdentity: { serverIdentityId: target.serverId } },
@@ -232,15 +236,14 @@ async function exerciseCurrentService(scenario: 'defaultAsk' | 'finite' | 'cance
                 signal, rpcContext: { ...context, signal }, localActionContext: context.localActionContext,
             });
             if (signedReplyLoss) {
-                // Ordinary terminal sign-in resolves present-person authority
-                // at Home; keep the real signed carrier and no private box.
+                // Ordinary terminal sign-in uses the current signed admission
+                // and requester-context carrier through the receiving owner.
                 for (const surface of ['cli', 'ui'] as const) actionSettings = setScopedActionApprovalPreference({
                     actionId: method, scope: handle.actionScope, surface, mode: 'waived', settings: actionSettings });
                 let routes: DaemonLocalServicesMachineRpcRoutes | undefined;
                 let startup: Awaited<ReturnType<typeof createRequesterSessionControlRuntimeFixture>> | undefined;
                 const post = vi.mocked(axios.post).getMockImplementation();
                 if (!post) throw new Error('Expected the existing Home network boundary');
-                const channel = await createRequesterCurrentnessSocketHarness();
                 const roots = new Map<string, ExternalActionExecutionAuthorizationV1>();
                 const tasks: Promise<unknown>[] = [];
                 let rejectHomeFailure!: (error: unknown) => void;
@@ -272,18 +275,22 @@ async function exerciseCurrentService(scenario: 'defaultAsk' | 'finite' | 'cance
                         if (provenance?.provenance.kind !== 'terminal' || provenance.provenance.authority !== 'account_automation') {
                             throw new Error('Expected ordinary terminal sign-in authentication');
                         }
-                        // This is the person's terminal invocation. Agent
-                        // delegation would carry an explicit authority ceiling.
-                        expect(request.headers[AUTHORITY_CEILING_HEADER_V1]).toBeUndefined();
+                        // Minting retains the terminal credential floor; delivery
+                        // carries the person's sealed host invocation.
+                        const mint = request.url?.endsWith('/execution-authorization') === true;
+                        expect(request.headers[AUTHORITY_CEILING_HEADER_V1]).toBe(mint ? 'account_automation' : undefined);
                         const authentication = { kind: provenance.provenance.kind, tokenEpoch: claims?.tokenEpoch };
                         const authority = resolveInvocationAuthority({ credential: provenance.provenance.kind, surface: 'rpc' });
                         expect(authority).toBe('present_user');
-                        const actionId = request.url?.slice(EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1.length);
+                        const actionId = request.url?.slice(EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1.length)
+                            .replace(/\/execution-authorization$/, '');
                         if (actionId !== method && actionId !== 'action.operations.get') throw new Error('Unexpected Home Action');
                         const chunks: Buffer[] = [];
                         for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
                         const raw: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-                        const envelope = ExternalActionRequestEnvelopeSchema.parse(raw);
+                        const submitted = ExternalActionExecutionAuthorizationRequestV1Schema.parse(raw);
+                        expect(submitted.machineId).toBe(target.machineId);
+                        const { envelope } = submitted;
                         expect(envelope.v).toBe(1);
                         // Only Home's HTTP authentication/storage is substituted.
                         // Canonical public authority resolution and installation
@@ -294,11 +301,20 @@ async function exerciseCurrentService(scenario: 'defaultAsk' | 'finite' | 'cance
                                 authentication, actionId, requestId: envelope.requestId,
                                 machineId: target.machineId, installationId: installation.installationId,
                                 target: envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } });
-                        roots.set(root.token, root);
+                        if (mint) {
+                            roots.set(root.token, root);
+                            response.setHeader('content-type', 'application/json');
+                            response.end(JSON.stringify(root));
+                            return;
+                        }
+                        const authorization = submitted.executionAuthorization;
+                        if (!authorization) throw new Error('Expected the minted signed admission');
+                        expect(roots.get(authorization.token)).toEqual(root);
+                        expect(authorization.binding).toEqual(root.binding);
                         // Home's closed relay principal retains the signed
                         // credential floor. The installed receiver derives the
                         // person's invocation from this verified root instead.
-                        const dispatch = ExternalActionDaemonDispatchRequestSchema.parse({ actionId, envelope, executionAuthorization: root,
+                        const dispatch = ExternalActionDaemonDispatchRequestSchema.parse({ actionId, envelope, executionAuthorization: authorization,
                             principal: { accountId: 'requester', authentication, authority: provenance.provenance.authority },
                             placement: { machineId: target.machineId, target: envelope.target } });
                         const manager: unknown = Reflect.get(installed, 'rpcHandlerManager');
@@ -365,6 +381,8 @@ async function exerciseCurrentService(scenario: 'defaultAsk' | 'finite' | 'cance
                             expect(await finiteInvocations()).toHaveLength(1);
                             expect(serviceReply).toBeDefined();
                             expect(snapshots.some(row => row.actionId === method)).toBe(true);
+                        }), pending.then(result => {
+                            throw new Error(`Current service settled before HTTP reply loss: ${JSON.stringify(result)}`);
                         }), homeFailure]);
                         const operation = snapshots.find(row => row.actionId === method)!;
                         const read = async () => {
@@ -407,7 +425,7 @@ async function exerciseCurrentService(scenario: 'defaultAsk' | 'finite' | 'cance
                     verifySignedHomeRequest = undefined;
                     const settled = await Promise.allSettled(tasks);
                     if (http.listening) await new Promise<void>((resolve, reject) => http.close(error => error ? reject(error) : resolve()));
-                    try { await startup?.dispose(); } finally { await channel.close(); }
+                    await startup?.dispose();
                     const failed = settled.find(result => result.status === 'rejected');
                     if (failed?.status === 'rejected') throw failed.reason;
                 }
@@ -510,6 +528,7 @@ async function exerciseCurrentService(scenario: 'defaultAsk' | 'finite' | 'cance
     } finally {
         await client?.shutdown();
         await runtime?.dispose();
+        await currentnessChannel?.close();
         releaseHome?.();
         vi.restoreAllMocks(); vi.unstubAllEnvs(); reloadConfiguration();
         await rm(home, { recursive: true, force: true });

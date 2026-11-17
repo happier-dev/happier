@@ -742,6 +742,12 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
       await writeFile(statePath, JSON.stringify({ ...state, installFails: fail }));
     },
     credentials, issuerCredentials, accountEncryptionMode: encryptionMode, accountEncryptionCurrentness,
-    readInstalled: async () => JSON.parse(await readFile(statePath, 'utf8')) as { installed: boolean; version: string | null; effects: string[] },
+    readInstalled: async () => {
+      // Installer fault injection is fixture control, not observed native state.
+      const { installFails: _installFails, ...installed } = JSON.parse(await readFile(statePath, 'utf8')) as {
+        installed: boolean; version: string | null; effects: string[]; updatesChecks?: number; installFails?: boolean;
+      };
+      return installed;
+    },
     dispose };
 }

@@ -470,7 +470,7 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
         expect(await executor.execute('machines.setup.apply', { ...input, targets: [target] }, rpcContext))
           .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
       }
-      expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual({ installed: true, version: '0.5', effects: [] });
+      expect(await fixture.readInstalled()).toEqual({ installed: true, version: '0.5', effects: [] });
       expect(machine.metadataVersion).toBe(0);
       expect(rootLaunches).toEqual([]);
     }
@@ -557,7 +557,7 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
     if (scenario !== 'apt-none') {
       expect(result, result.ok ? undefined : `machine_setup_apply_failed:${result.errorCode ?? 'unclassified'}`)
         .toMatchObject({ ok: true });
-      expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({ installed: true, version: '1.0', effects: [manager === 'brew' ? 'brew' : 'apt-get'],
+      expect(await fixture.readInstalled()).toMatchObject({ installed: true, version: '1.0', effects: [manager === 'brew' ? 'brew' : 'apt-get'],
         ...(manager === 'apt' ? { updatesChecks: 1 } : {}) });
       if (nativeConfirmed) expectNativeMetadataPublications();
       else {
@@ -596,13 +596,13 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
         expect(await executor.execute('machines.setup.apply', staleReviewInput, {
           ...fresh, presentUserConfirmation: decodeNativeConfirmation(fresh),
         })).toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
-        expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({ installed: true, version: '1.0', effects: ['apt-get'] });
+        expect(await fixture.readInstalled()).toMatchObject({ installed: true, version: '1.0', effects: ['apt-get'] });
         expectNativeMetadataPublications();
         expect(approvalArtifacts).toHaveLength(0);
       }
     } else {
       expect(result).toMatchObject({ ok: false, errorCode: 'mode_none' });
-      expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual({ installed: false, version: null, effects: [] });
+      expect(await fixture.readInstalled()).toEqual({ installed: false, version: null, effects: [] });
       expect(machine.metadataVersion).toBe(0);
     }
     if (scenario === 'apt' || firstPresence || excludedToSelected || nativeConfirmed) {
@@ -646,7 +646,7 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
         if (saved.status !== 'ready') throw new Error('Second attachment must publish');
         expect(Object.values(saved.policy.sourceFacts?.['bundled:com.example.public-package/bundle']?.firstPresence ?? {})).toEqual(['absent']);
         expect(Object.values(saved.policy.sourceFacts?.direct?.firstPresence ?? {})).toEqual(['absent']);
-        expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual({ installed: true, version: '1.0', effects: ['apt-get'], updatesChecks: 2 });
+        expect(await fixture.readInstalled()).toEqual({ installed: true, version: '1.0', effects: ['apt-get'], updatesChecks: 2 });
         expect(machine.metadataVersion).toBe(2);
         expect(metadataWrites).toHaveLength(2);
         expect(rootLaunches).toHaveLength(2);
@@ -669,7 +669,7 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
       const selected = await executor.execute('machines.setup.plan', { ...detach, removeItemKeys: [itemKey] }, context('machines.setup.plan', 'remove-selected'));
       if (initiallyPresent) {
         expect(selected).toMatchObject({ ok: false, errorCode: 'remove_unsupported' });
-        expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual({ installed: true, version: '1.0', effects: ['apt-get'], updatesChecks: 1 });
+        expect(await fixture.readInstalled()).toEqual({ installed: true, version: '1.0', effects: ['apt-get'], updatesChecks: 1 });
         expect(machine.metadataVersion).toBe(1);
       } else {
         if (!selected.ok) throw new Error(`Declared removal Plan failed: ${selected.errorCode}`);
@@ -687,7 +687,7 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
           execute: owned => executor.execute('machines.setup.remove', removeInput,
             withNativeConfirmation('machines.setup.remove', removeInput, { ...removeContext, ...owned })),
         })).toMatchObject({ ok: true });
-        expect(JSON.parse(await readFile(statePath, 'utf8'))).toEqual({ installed: false, version: null, effects: ['apt-get', 'dpkg:remove'], updatesChecks: 2 });
+        expect(await fixture.readInstalled()).toEqual({ installed: false, version: null, effects: ['apt-get', 'dpkg:remove'], updatesChecks: 2 });
         expect(nativeTerminal.launches).toHaveLength(terminalCount);
         const removed = await client.getMachineSetupDesiredSnapshot();
         if (removed.status !== 'ready') throw new Error('Declared removal must publish its resulting desired copy');
