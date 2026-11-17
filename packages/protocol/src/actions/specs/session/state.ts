@@ -417,6 +417,7 @@ function createSessionStateActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.delete', approval: {result: 'none'},
+    originalExecution: { accountEncryptionCurrentness: true },
     operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'current' } },
     hostReviewedChildren: (input: unknown) => {
       const target = input as z.output<typeof SessionDeleteInputSchema>;

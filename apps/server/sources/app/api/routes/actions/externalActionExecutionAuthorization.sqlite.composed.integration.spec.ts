@@ -12869,11 +12869,16 @@ describe("external Action execution authorization", () => {
             const verifyHttp = (method: string, path: string, body?: unknown) => verifyExternalActionDomainExecutionRequest({
                 authorizationToken: authorization.token, effectActionId: 'session.delete',
                 encodedTarget: encodeExternalActionResolvedTargetV1(target), method, path, body,
-                sessionRouteTarget: { kind: 'session', sessionId: path.split('/')[3]!.split('?')[0]!, actionId: 'session.transcript.get' },
+                ...(path.startsWith('/v2/sessions/') ? { sessionRouteTarget: { kind: 'session' as const,
+                    sessionId: path.split('/')[3]!.split('?')[0]!, actionId: 'session.transcript.get' as const } } : {}),
                 machineSignature: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
                     effectActionId: 'session.delete', target, installationId: fixture.machine.installationId!,
                     requestId: authorization.binding.requestId, method, path, body, privateKey: fixture.keyPair.secretKey }),
             });
+            expect(await verifyHttp('GET', '/v1/account/encryption/currentness')).not.toBeNull();
+            expect(await verifyHttp('GET', '/v1/account/encryption/currentness?unexpected=1')).toBeNull();
+            expect(await verifyHttp('GET', '/v1/account/encryption/currentness', {})).toBeNull();
+            expect(await verifyHttp('POST', '/v1/account/encryption/currentness', {})).toBeNull();
             expect(await verifyHttp('GET', `/v2/sessions/${session.id}`)).not.toBeNull();
             expect(await verifyHttp('GET', `/v2/sessions/${session.id}?accessProjectionVersion=1`)).not.toBeNull();
             expect(await verifyHttp('GET', `/v2/sessions/${session.id}?unexpected=1`)).toBeNull();
