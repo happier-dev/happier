@@ -89,7 +89,7 @@ describe('Account trigger HTTP read failure and recovery', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-add'), screen.getTextContent()).toBeTruthy());
         const restorePopoverGlobals = withPopoverWebGlobals();
         disposals.unshift(async () => restorePopoverGlobals());
-        for (const id of ['subject-triggers-add', 'subject-triggers-set-up', 'subject-triggers-starter:healthFailed', 'subject-triggers-starter:nightly']) {
+        for (const id of ['subject-triggers-add', 'subject-triggers-starter:healthFailed', 'subject-triggers-starter:nightly']) {
             const before = vi.mocked(router.push).mock.calls.length;
             await act(async () => screen.findByTestId(id)!.props.onPress());
             expect(vi.mocked(router.push).mock.calls).toHaveLength(before + 1);
@@ -216,6 +216,52 @@ describe('Account trigger HTTP read failure and recovery', () => {
         await vi.waitFor(() => expect(screen.findByTestId(readId)).toBeNull());
         expect(screen.findByTestId(sectionId)).toBeNull();
         await screen.unmount();
+    });
+});
+
+describe('Resource Automations section read states', () => {
+    it('keeps its place while the first read is pending and offers Retry in place when it fails', async () => {
+        await loadSyncSingletonForTests();
+        let fail = true;
+        let gate = createDeferred<void>();
+        let reads = 0;
+        const account = await restoreServerAccountForTest({
+            serverUrl: `https://subject-trigger-states-${crypto.randomUUID()}.test`,
+            accountId: 'subject-trigger-states',
+            request: homeRequest(async (url, init) => {
+                if (url.pathname === '/v3/automations/query' && JSON.parse(String(init?.body)).scope === 'account_inline') {
+                    reads++;
+                    await gate.promise;
+                    if (fail) return json({ error: 'temporarily_unavailable' }, 503);
+                }
+                return json({ automations: [], nextCursor: null });
+            }),
+        });
+        disposals.push(() => account.dispose());
+        const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active>
+            <ListPresentationProvider value="page">
+                <SubjectTriggersSection subject={{ kind: 'machine', machineId: 'machine-states' }} subjectName="Studio" />
+            </ListPresentationProvider>
+        </PluginSurfaceFocusEligibilityProvider>);
+        disposals.push(() => screen.unmount());
+        await vi.waitFor(() => expect(reads).toBeGreaterThan(0));
+        // Pending: the section is already there, holding placeholder rows rather than appearing later.
+        expect(screen.findByTestId('subject-triggers')).not.toBeNull();
+        expect(screen.findByTestId('subject-triggers-read')).not.toBeNull();
+        expect(screen.findByTestId('subject-triggers-read-retry')).toBeNull();
+        await act(async () => gate.resolve());
+        await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-read-retry')).not.toBeNull());
+        expect(screen.getTextContent()).toContain('workflows.triggers.section.accountLoadFailed');
+        expect(screen.findByTestId('subject-triggers-starter:nightly')).toBeNull();
+
+        fail = false;
+        gate = createDeferred<void>();
+        gate.resolve();
+        const beforeRetry = reads;
+        await screen.pressByTestIdAsync('subject-triggers-read-retry');
+        await vi.waitFor(() => expect(reads).toBeGreaterThan(beforeRetry));
+        await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-starter:nightly')).not.toBeNull());
+        expect(screen.findByTestId('subject-triggers-read')).toBeNull();
     });
 });
 

@@ -4,10 +4,11 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { t } from '@/text';
 import { prepareWorkflowSentenceEditorEntry } from '@/components/workflows/authoring/workflowSentenceAuthoring';
@@ -82,35 +83,32 @@ export const SubjectTriggersSection = React.memo(
       else if (starter === 'addCheck') setOpening({ kind: 'check', anchor });
       else openSentence(starter);
     };
-    const section = rows.length === 0 && status !== 'ready' ? null : (
+    // Nothing known yet: the section keeps its place with its header and two placeholder rows, so the
+    // page does not move when the rows land. With nothing retained, a failed read says so in place, with Retry.
+    const unsettled = empty && status !== 'ready';
+    const section = (
       <ItemGroup
         testID="subject-triggers"
         title={t('workflows.triggers.section.title')}
         description={t(
-          `workflows.triggers.section.${props.subject.kind}${empty ? 'Empty' : 'Info'}`,
+          `workflows.triggers.section.${props.subject.kind}${empty && !unsettled ? 'Empty' : 'Info'}`,
         )}
         action={
           <View ref={addAnchor} collapsable={false} style={styles.actions}>
-            <RoundButton
+            <SectionActionButton
               testID="subject-triggers-add"
-              size="small"
-              display="inverted"
-              title={t('workflows.triggers.section.custom')}
+              icon="plus"
+              title={t('workflows.triggers.section.automate')}
               onPress={() => openSentence(null)}
-            />
-            <RoundButton
-              testID="subject-triggers-set-up"
-              size="small"
-              display="secondary"
-              title={t('workflows.triggers.section.setUp')}
-              onPress={() =>
-                openSentence(null)
-              }
             />
           </View>
         }
       >
-        {empty
+        {unsettled ? (
+          <ItemLoadStateRows testID="subject-triggers-read" rows={2} accessibilityLabel={t('workflows.triggers.section.title')}
+            state={status === 'failed' ? { kind: 'failed', reason: t('workflows.triggers.section.accountLoadFailed'), onRetry: read.retry }
+              : { kind: 'loading' }} />
+        ) : empty
           ? SUBJECT_TRIGGER_STARTERS[props.subject.kind].filter(starterAvailable).map((starter) => (
               <StarterRow key={starter} starter={starter} onOpen={(anchor) => openStarter(starter, anchor)} />
             ))
@@ -125,6 +123,7 @@ export const SubjectTriggersSection = React.memo(
                 onToggle={(next) => {
                   void editor.toggle(row, next);
                 }}
+                onRemove={editor.remove}
               />
             ))}
         {empty ? null : SUBJECT_TRIGGER_PERSISTENT_STARTERS[props.subject.kind].filter(starterAvailable).map((starter) => (
@@ -206,10 +205,15 @@ const SubjectTriggerRowView = React.memo(function SubjectTriggerRowView(
     pending: boolean;
     onOpen: (anchor: React.RefObject<View | null>) => void;
     onToggle: (next: boolean) => void;
+    /** The editor's stable remover; the Action owns its confirmation. */
+    onRemove: (row: AccountTriggerRow) => unknown;
   }>,
 ) {
   const anchorRef = React.useRef<View>(null);
   const { row } = props;
+  const { onRemove } = props;
+  const menuActions = React.useMemo(() => [{ id: 'remove', title: t('workflows.triggers.row.removeTrigger'),
+    icon: 'trash' as const, destructive: true, onPress: () => { void onRemove(row); } }], [onRemove, row]);
   // A page sheet names a trigger by what it runs, its event the quiet line (the column leads with the event).
   const manual = row.triggerId === null;
   return (
@@ -220,6 +224,8 @@ const SubjectTriggerRowView = React.memo(function SubjectTriggerRowView(
         qualifier={row.legacy?.qualifier ?? (manual ? row.subtitle : row.title)}
         enabled={!row.off}
         multiline={!!row.legacy}
+        glyph={row.sourceGone ? 'warning' : row.glyph}
+        menuActions={row.sourceGone ? undefined : menuActions}
         toggleDisabled={props.pending || props.row.sourceGone === true}
         onToggle={props.onToggle}
         onPress={() => props.onOpen(anchorRef)}
