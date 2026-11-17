@@ -17,19 +17,6 @@ const listActionId = 'workflow.starters.list';
 const resolveActionId = 'workflow.starters.resolve';
 
 describe('workflow authoring starters through Actions', () => {
-  it('offers a Session-free restore drill that retains its chosen Environment and cleans up on failure', async () => {
-    const executor = createActionExecutor({});
-    const resolved = await executor.execute(resolveActionId, { key: 'restore-drill' }, { surface: 'cli' });
-    expect(resolved).toMatchObject({ ok: true, result: { status: 'ready', example: { key: 'restore-drill' } } });
-    if (!resolved.ok) throw new Error('The persistent drill must be discoverable');
-    const example = readyExample(resolved.result);
-    expect(example).not.toHaveProperty('sessionTarget');
-    expect(example.definition.blocks.at(-1)).toMatchObject({ kind: 'loop', runWhen: 'always',
-      body: [{ kind: 'action', actionId: 'machines.services.control', input: { operation: { kind: 'literal', value: 'stop' } } }] });
-    expect(example.definition.inputs.map(field => field.name)).toEqual(expect.arrayContaining([
-      'backupTarget', 'restoreSource', 'drillTarget', 'restoreDestination', 'verificationLevel', 'dataCheck',
-    ]));
-  });
   it('opens Restart when needed as an unsaved schedule using Setup facts and the ordinary reboot Action', async () => {
     const executor = createActionExecutor({});
     const listed = await executor.execute(listActionId, {}, { surface: 'agent' });
@@ -92,9 +79,14 @@ describe('workflow authoring starters through Actions', () => {
         } }] },
       ] });
       expect(example.definition.inputs.map(input => input.name)).toEqual(['readinessScope', 'backupAutomationIds']);
-    } else if (key === 'restore-drill') expect(example.definition.blocks[0]).toMatchObject({ kind: 'parallel',
-      failurePolicy: 'collect_outcomes' });
-    else expect(example.definition.blocks[0]).toMatchObject({ kind: 'action',
+    } else if (key === 'restore-drill') {
+      expect(example.definition.blocks[0]).toMatchObject({ kind: 'parallel', failurePolicy: 'collect_outcomes' });
+      expect(example.definition.blocks.at(-1)).toMatchObject({ kind: 'loop', runWhen: 'always',
+        body: [{ kind: 'action', actionId: 'machines.services.control', input: { operation: { kind: 'literal', value: 'stop' } } }] });
+      expect(example.definition.inputs.map(field => field.name)).toEqual(expect.arrayContaining([
+        'backupTarget', 'restoreSource', 'drillTarget', 'restoreDestination', 'verificationLevel', 'dataCheck',
+      ]));
+    } else expect(example.definition.blocks[0]).toMatchObject({ kind: 'action',
       actionId: key === 'backup-verify' ? 'deployments.backups.verify' : 'deployments.environments.get' });
     if (key === 'nightly-backups') {
       expect(example.definition.blocks).toMatchObject([
