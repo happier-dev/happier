@@ -7,6 +7,7 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { IosSimulatorResourcesDiscoveryResult } from '../ios/discovery';
+import type { SimulatorPreviewResourceReadResult } from '../adapter';
 import { readSimulatorLogSideband } from '../capture/logs';
 import { createIosSimulatorUnavailableHealth } from '../ios/diagnostics';
 import {
@@ -18,7 +19,7 @@ export type IosSimulatorPlatformAdapter = Readonly<{
     platform: 'ios';
     usesPrivateFrameworks: true;
     health: () => Promise<IosSimulatorAdapterHealthV1>;
-    listResources: () => Promise<readonly SimulatorDeviceResourceV1[]>;
+    listResources: () => Promise<SimulatorPreviewResourceReadResult>;
     listDiagnostics: () => Promise<readonly Record<string, unknown>[]>;
     dispatchAction: (input: IosSimulatorPlatformDispatchInput) => Promise<SimulatorPreviewActionResultV1 | void>;
     stop: () => Promise<void>;
@@ -208,6 +209,7 @@ export function createIosSimulatorPlatformAdapter(input: Readonly<{
         } catch (error) {
             const diagnostics = [{ code: 'simulator_discovery_failed', errorName: error instanceof Error ? error.name : 'UnknownError' }];
             lastDiscoveryResult = {
+                refreshState: 'error',
                 resources: [],
                 health: createIosSimulatorUnavailableHealth({ reasonCode: 'simulator_not_booted', diagnostics }),
                 diagnostics: [{ platform: 'ios', status: 'unavailable', severity: 'error', reasonCode: 'simulator_discovery_failed', diagnostics }],
@@ -219,7 +221,7 @@ export function createIosSimulatorPlatformAdapter(input: Readonly<{
         platform: 'ios',
         usesPrivateFrameworks: true,
         health: async () => (lastDiscoveryResult ?? await readDiscoveryResult()).health,
-        listResources: async () => (await readDiscoveryResult()).resources,
+        listResources: readDiscoveryResult,
         listDiagnostics: async () => (lastDiscoveryResult ?? await readDiscoveryResult()).diagnostics,
         dispatchAction: async ({ event, resource }) => {
             if (event.type === 'simulator.sideband.request') {

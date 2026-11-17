@@ -19,6 +19,7 @@ import type { LiveStreamPlayerState } from '@/sync/domains/machines/peer/mediati
 import type { LiveStreamPlayerDiagnostic } from '@/sync/domains/machines/peer/mediation/stream/diagnostics';
 
 import type { SimulatorPreviewState } from './store';
+import type { SimulatorPreviewDaemonState } from './runtimeState';
 
 export type SimulatorPreviewAvailability = Readonly<{
     state: 'available' | 'degraded' | 'unavailable';
@@ -89,7 +90,7 @@ export type SimulatorPreviewStreamState = Pick<
 }>;
 
 export type SimulatorPreviewViewModel = Readonly<{
-    kind: 'empty' | 'selected';
+    kind: 'loading' | 'unavailable' | 'empty' | 'selected';
     viewerId: string;
     devices: readonly SimulatorPreviewDeviceOption[];
     selectedSimulatorId: string | null;
@@ -105,6 +106,8 @@ export type SimulatorPreviewViewModel = Readonly<{
 }>;
 
 export type SimulatorPreviewSelectionInput = Readonly<{
+    /** The selected daemon's existing snapshot lifecycle, when discovery owns the inventory. */
+    snapshotState?: Pick<SimulatorPreviewDaemonState, 'resources' | 'refreshState'>;
     resources: readonly SimulatorDeviceResourceV1[];
     selectedSimulatorId?: string | null;
     viewerId: string;

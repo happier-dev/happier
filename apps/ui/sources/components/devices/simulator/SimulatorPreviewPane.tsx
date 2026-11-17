@@ -71,6 +71,7 @@ export function SimulatorPreviewPane(props: Readonly<{
                 {!resource ? (
                     <SimulatorDevicePicker
                         devices={viewModel.devices}
+                        kind={viewModel.kind}
                         selectedSimulatorId={viewModel.selectedSimulatorId}
                         onSelectDevice={(simulatorId) => actions.selectDevice?.(simulatorId)}
                         onStartDevice={(simulatorId) => { void startDevice(simulatorId); }}

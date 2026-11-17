@@ -42,7 +42,7 @@ describe('createSimulatorCaptureRegistryReconciler', () => {
             createAdapter: () => unavailableMachineLiveStreamCaptureAdapter,
         });
 
-        expect(reconciler.reconcile([availableIosResource])).toEqual({
+        expect(reconciler.reconcile({ resources: [availableIosResource], refreshState: 'idle' })).toEqual({
             registered: ['ios-simulator:A1B2-C3D4:screen'],
             unregistered: [],
             diagnostics: [],
@@ -75,8 +75,8 @@ describe('createSimulatorCaptureRegistryReconciler', () => {
             createAdapter: () => unavailableMachineLiveStreamCaptureAdapter,
         });
 
-        reconciler.reconcile([availableIosResource]);
-        expect(reconciler.reconcile([unavailableIosResource])).toEqual({
+        reconciler.reconcile({ resources: [availableIosResource], refreshState: 'idle' });
+        expect(reconciler.reconcile({ resources: [unavailableIosResource], refreshState: 'idle' })).toEqual({
             registered: [],
             unregistered: ['ios-simulator:A1B2-C3D4:screen'],
             diagnostics: [],
@@ -102,7 +102,7 @@ describe('createSimulatorCaptureRegistryReconciler', () => {
             createAdapter,
         });
 
-        expect(reconciler.reconcile([availableIosResource])).toEqual({
+        expect(reconciler.reconcile({ resources: [availableIosResource], refreshState: 'idle' })).toEqual({
             registered: [],
             unregistered: [],
             diagnostics: [expect.objectContaining({
@@ -132,7 +132,7 @@ describe('createSimulatorCaptureRegistryReconciler', () => {
             createAdapter,
         });
 
-        expect(reconciler.reconcile([availableIosResource])).toEqual({
+        expect(reconciler.reconcile({ resources: [availableIosResource], refreshState: 'idle' })).toEqual({
             registered: ['ios-simulator:A1B2-C3D4:screen'],
             unregistered: [],
             diagnostics: [],
@@ -140,7 +140,7 @@ describe('createSimulatorCaptureRegistryReconciler', () => {
 
         failAdapterCreation = true;
 
-        expect(reconciler.reconcile([availableIosResource])).toEqual({
+        expect(reconciler.reconcile({ resources: [availableIosResource], refreshState: 'idle' })).toEqual({
             registered: [],
             unregistered: ['ios-simulator:A1B2-C3D4:screen'],
             diagnostics: [expect.objectContaining({

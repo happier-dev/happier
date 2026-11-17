@@ -43,6 +43,7 @@ import {
 } from './tooling';
 import { getSimulatorDeviceOperationCapabilities } from '../operations/capabilities';
 import { readAndroidSimulatorInventory } from '../operations/inventory';
+import type { SimulatorPreviewResourceReadResult } from '../adapter';
 
 export type AndroidSimulatorDiscoveredDevice = Readonly<{
     serial: string;
@@ -55,8 +56,7 @@ export type AndroidSimulatorDiscoveredDevice = Readonly<{
 export type AndroidSimulatorDiscoveryReader = () =>
     Promise<readonly AndroidSimulatorDiscoveredDevice[]> | readonly AndroidSimulatorDiscoveredDevice[];
 
-export type AndroidSimulatorResourcesDiscoveryResult = Readonly<{
-    resources: readonly SimulatorDeviceResourceV1[];
+export type AndroidSimulatorResourcesDiscoveryResult = Readonly<SimulatorPreviewResourceReadResult & {
     diagnostics: readonly Record<string, unknown>[];
     health: AndroidSimulatorAdapterHealthV1;
 }>;
@@ -203,7 +203,7 @@ async function runAdbDevices(input: Readonly<{
     timeoutMs: number;
     signal?: AbortSignal;
     resolveEmulatorCommand?: (adbCommand: string) => Promise<string | null>;
-}>): Promise<Readonly<{ devices: readonly AndroidSimulatorDiscoveredDevice[]; diagnostics: readonly Record<string, unknown>[] }>> {
+}>) {
     return await readAndroidSimulatorInventory({ adbCommand: input.adb.command,
         emulatorCommand: await (input.resolveEmulatorCommand ?? ((adbCommand) => resolveAndroidEmulatorCommand({ adbCommand })))(input.adb.command),
         run: async ({ command, args, signal }) => {
@@ -271,6 +271,7 @@ export async function discoverAndroidSimulatorResources(
             diagnostics: adb.diagnostics,
         });
         return {
+            refreshState: 'error',
             resources: [],
             diagnostics: [diagnostic({
                 reasonCode: adb.reasonCode,
@@ -293,6 +294,7 @@ export async function discoverAndroidSimulatorResources(
             reasonCode: 'android_emulator_unavailable',
         });
         return {
+            refreshState: adbDevices.refreshState,
             resources: [],
             diagnostics: [
                 ...adbDevices.diagnostics,
@@ -314,6 +316,7 @@ export async function discoverAndroidSimulatorResources(
             : 'android_emulator_unavailable';
         const health = unavailableHealth({ reasonCode });
         return {
+            refreshState: adbDevices.refreshState,
             resources: projectDevices({ devices: adbDevices.devices, health }),
             diagnostics: [
                 ...adbDevices.diagnostics,
@@ -334,6 +337,7 @@ export async function discoverAndroidSimulatorResources(
             diagnostics: scrcpyServerArtifact.diagnostics,
         });
         return {
+            refreshState: adbDevices.refreshState,
             resources: projectDevices({ devices: adbDevices.devices, health }),
             diagnostics: [
                 ...adbDevices.diagnostics,
@@ -355,6 +359,7 @@ export async function discoverAndroidSimulatorResources(
     );
 
     return {
+        refreshState: adbDevices.refreshState,
         resources: projectDevices({ devices: adbDevices.devices, health }),
         diagnostics: [
             ...adbDevices.diagnostics,

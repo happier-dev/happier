@@ -8,10 +8,11 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import type { SimulatorPreviewDeviceOption } from '@/sync/domains/devices/simulator/types';
+import type { SimulatorPreviewDeviceOption, SimulatorPreviewViewModel } from '@/sync/domains/devices/simulator/types';
 import { t } from '@/text';
 
 import { simulatorStreamStyles } from './styles';
+import { SimulatorUnavailableState } from './SimulatorUnavailableState';
 
 /** Healthy is quiet: only a device that needs attention says its availability. */
 function availabilityDetail(state: SimulatorPreviewDeviceOption['availability']['state']): string | undefined {
@@ -32,6 +33,7 @@ function availabilityDetail(state: SimulatorPreviewDeviceOption['availability'][
  */
 export function SimulatorDevicePicker(props: Readonly<{
     devices: readonly SimulatorPreviewDeviceOption[];
+    kind?: SimulatorPreviewViewModel['kind'];
     selectedSimulatorId: string | null;
     onSelectDevice: (simulatorId: string) => void;
     onStartDevice?: (simulatorId: string) => void;
@@ -47,13 +49,23 @@ export function SimulatorDevicePicker(props: Readonly<{
                 style={simulatorStreamStyles.stateStage}
                 contentContainerStyle={simulatorStreamStyles.stateStageContent}
             >
-                <SurfaceStateCard
-                    testID={`${props.testID}-empty`}
-                    kind="empty"
-                    iconName="device-mobile"
-                    title={t('simulatorPreview.viewer.emptyTitle')}
-                    reason={t('simulatorPreview.viewer.emptyBody')}
-                />
+                {props.kind === 'loading' ? (
+                    <SurfaceStateCard
+                        testID={`${props.testID}-loading`}
+                        kind="loading"
+                        title={t('common.loading')}
+                    />
+                ) : props.kind === 'unavailable' ? (
+                    <SimulatorUnavailableState testID={props.testID} />
+                ) : (
+                    <SurfaceStateCard
+                        testID={`${props.testID}-empty`}
+                        kind="empty"
+                        iconName="device-mobile"
+                        title={t('simulatorPreview.viewer.emptyTitle')}
+                        reason={t('simulatorPreview.viewer.emptyBody')}
+                    />
+                )}
             </ScrollView>
         );
     }

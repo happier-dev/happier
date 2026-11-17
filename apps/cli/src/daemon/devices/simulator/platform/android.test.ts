@@ -79,7 +79,7 @@ describe('Android emulator platform adapter', () => {
             }],
         });
 
-        await expect(adapter.listResources()).resolves.toMatchObject([{
+        await expect(adapter.listResources().then((result) => result.resources)).resolves.toMatchObject([{
             v: 1,
             simulatorId: 'android:emulator:emulator-5554',
             platform: 'android',
@@ -183,7 +183,7 @@ describe('Android emulator platform adapter', () => {
             }],
         });
 
-        await expect(adapter.listResources()).resolves.toMatchObject([{
+        await expect(adapter.listResources().then((result) => result.resources)).resolves.toMatchObject([{
             v: 1,
             simulatorId: 'android:physical:R5CT123456A',
             platform: 'android',
@@ -209,6 +209,7 @@ describe('Android emulator platform adapter', () => {
 
         const adapter = mod.createAndroidSimulatorPlatformAdapter({
             discoverResources: async () => ({
+                refreshState: 'idle',
                 resources: [{
                     v: 1,
                     simulatorId: 'android:emulator:emulator-5554',
@@ -240,7 +241,7 @@ describe('Android emulator platform adapter', () => {
             status: 'unavailable',
             reasonCode: 'android_emulator_bridge_unavailable',
         });
-        await expect(adapter.listResources()).resolves.toEqual([expect.objectContaining({
+        await expect(adapter.listResources().then((result) => result.resources)).resolves.toEqual([expect.objectContaining({
             simulatorId: 'android:emulator:emulator-5554',
         })]);
         await expect(adapter.listDiagnostics()).resolves.toEqual([expect.objectContaining({
@@ -256,6 +257,7 @@ describe('Android emulator platform adapter', () => {
 
         const adapter = mod.createAndroidSimulatorPlatformAdapter({
             discoverResources: async () => ({
+                refreshState: 'idle',
                 resources: [{
                     v: 1,
                     simulatorId: 'android:emulator:emulator-5554',
@@ -298,6 +300,7 @@ describe('Android emulator platform adapter', () => {
         const runAdb = vi.fn<AndroidToolRunner>(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
         const adapter = mod.createAndroidSimulatorPlatformAdapter({
             discoverResources: async () => ({
+                refreshState: 'idle',
                 resources: [androidControlResource],
                 diagnostics: [],
                 health: {
@@ -348,6 +351,7 @@ describe('Android emulator platform adapter', () => {
         const runAdb = vi.fn<AndroidToolRunner>(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
         const adapter = mod.createAndroidSimulatorPlatformAdapter({
             discoverResources: async () => ({
+                refreshState: 'idle',
                 resources: [androidControlResource],
                 diagnostics: [],
                 health: {
@@ -395,6 +399,7 @@ describe('Android emulator platform adapter', () => {
         const runAdb = vi.fn<AndroidToolRunner>(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
         const adapter = mod.createAndroidSimulatorPlatformAdapter({
             discoverResources: async () => ({
+                refreshState: 'idle',
                 resources: [],
                 diagnostics: [],
                 health: {
@@ -443,6 +448,7 @@ describe('Android emulator platform adapter', () => {
         const runAdb = vi.fn<AndroidToolRunner>(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
         const adapter = mod.createAndroidSimulatorPlatformAdapter({
             discoverResources: async () => ({
+                refreshState: 'idle',
                 resources: [androidControlResource],
                 diagnostics: [],
                 health: {
@@ -490,6 +496,7 @@ describe('Android emulator platform adapter', () => {
         const runAdb = vi.fn<AndroidToolRunner>(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
         const adapter = mod.createAndroidSimulatorPlatformAdapter({
             discoverResources: async () => ({
+                refreshState: 'idle',
                 resources: [androidControlResource],
                 diagnostics: [],
                 health: {
@@ -698,6 +705,7 @@ describe('Android emulator platform adapter', () => {
 
         const adapter = mod.createAndroidSimulatorPlatformAdapter({
             discoverResources: async () => ({
+                refreshState: 'idle',
                 resources: [],
                 diagnostics: [],
                 health: {
@@ -732,6 +740,7 @@ describe('Android emulator platform adapter', () => {
 
         const adapter = mod.createAndroidSimulatorPlatformAdapter({
             discoverResources: async () => ({
+                refreshState: 'idle',
                 resources: [],
                 diagnostics: [],
                 health: {
@@ -761,6 +770,7 @@ describe('Android emulator platform adapter', () => {
 
         const adapter = mod.createAndroidSimulatorPlatformAdapter({
             discoverResources: async () => ({
+                refreshState: 'idle',
                 resources: [{
                     ...androidControlResource,
                     capture: {
@@ -782,7 +792,7 @@ describe('Android emulator platform adapter', () => {
             }),
         });
 
-        await expect(adapter.listResources()).resolves.toEqual([expect.objectContaining({
+        await expect(adapter.listResources().then((result) => result.resources)).resolves.toEqual([expect.objectContaining({
             capture: expect.objectContaining({
                 supportedInputKinds: ['tap'],
             }),
@@ -810,6 +820,7 @@ describe('Android emulator platform adapter', () => {
         };
         const adapter = mod.createAndroidSimulatorPlatformAdapter({
             discoverResources: async () => ({
+                refreshState: 'idle',
                 resources: [androidControlResource, otherResource],
                 diagnostics: [],
                 health: {
@@ -831,7 +842,7 @@ describe('Android emulator platform adapter', () => {
                 : null,
         });
 
-        await expect(adapter.listResources()).resolves.toEqual([
+        await expect(adapter.listResources().then((result) => result.resources)).resolves.toEqual([
             expect.objectContaining({
                 deviceId: 'emulator-5554',
                 capture: expect.objectContaining({

@@ -129,6 +129,7 @@ export function useSimulatorPreview(input: SimulatorPreviewSelectionHookInput & 
 
     const viewModel = React.useMemo(() => selectSimulatorPreviewViewModel({
         resources: input.resources,
+        snapshotState: input.snapshotState,
         selectedSimulatorId: localSelectedSimulatorId,
         viewerId: input.viewerId,
         previewStatesBySimulatorId: input.previewStatesBySimulatorId,
@@ -137,6 +138,8 @@ export function useSimulatorPreview(input: SimulatorPreviewSelectionHookInput & 
         nowMs: nowMsRef.current(),
     }), [
         input.resources,
+        input.snapshotState?.resources,
+        input.snapshotState?.refreshState,
         localSelectedSimulatorId,
         input.viewerId,
         input.previewStatesBySimulatorId,

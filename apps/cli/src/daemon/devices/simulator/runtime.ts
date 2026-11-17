@@ -9,6 +9,7 @@ import {
     type SimulatorPreviewDaemonAdapter,
     type SimulatorPreviewDaemonAdapterDispatch,
     type SimulatorPreviewDaemonAdapterDispatchInput,
+    type SimulatorPreviewResourceReadResult,
 } from './adapter';
 import type { SimulatorCaptureRegistryReconciler } from './captureRegistration';
 import { createSimulatorInputLeaseManager, type SimulatorInputLeaseManager } from './lease';
@@ -49,8 +50,7 @@ export type SimulatorStreamControlDispatch = (
 ) => Promise<Readonly<{ ok: true } | { ok: false; reasonCode: string }>>
     | Readonly<{ ok: true } | { ok: false; reasonCode: string }>;
 
-type ResourceReadResult = Readonly<{
-    resources: readonly SimulatorDeviceResourceV1[];
+type ResourceReadResult = SimulatorPreviewResourceReadResult & Readonly<{
     diagnostics: readonly Record<string, unknown>[];
 }>;
 
@@ -142,10 +142,14 @@ async function readResources(
     let rawResources: readonly SimulatorDeviceResourceV1[] = [];
     const resources: SimulatorDeviceResourceV1[] = [];
     const diagnostics: Record<string, unknown>[] = [];
+    let refreshState: SimulatorPreviewResourceReadResult['refreshState'] = 'idle';
 
     try {
-        rawResources = await adapter.listResources();
+        const read = await adapter.listResources();
+        rawResources = read.resources;
+        refreshState = read.refreshState;
     } catch (error) {
+        refreshState = 'error';
         diagnostics.push({
             code: 'simulator_resources_unavailable',
             errorName: error instanceof Error ? error.name : 'UnknownError',
@@ -166,11 +170,12 @@ async function readResources(
     });
 
     if (captureReconciler) {
-        const reconciliation = captureReconciler.reconcile(resources);
+        const reconciliation = captureReconciler.reconcile({ resources, refreshState });
         diagnostics.push(...reconciliation.diagnostics);
     }
 
     return {
+        refreshState,
         resources: sortResources(resources),
         diagnostics: [...diagnostics, ...await readPlatformDiagnostics(adapter)],
     };
@@ -262,7 +267,7 @@ export function createSimulatorPreviewDaemonRuntime(
             v: 1,
             machineId: input.machineId,
             generatedAt: now(),
-            refreshState: 'idle',
+            refreshState: read.refreshState,
             resources: [...read.resources],
             diagnostics: [...read.diagnostics],
         };

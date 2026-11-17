@@ -6,6 +6,7 @@ import {
     defaultAndroidToolRunner,
     type AndroidToolRunner,
 } from './process';
+import type { SimulatorPreviewResourceReadResult } from '../adapter';
 
 export type { AndroidToolRunner };
 
@@ -126,11 +127,13 @@ function normalizeAdbState(state: string): AndroidAdbDeviceRecord['state'] {
 }
 
 export function parseAdbDevicesLongOutput(stdout: string): Readonly<{
+    refreshState: SimulatorPreviewResourceReadResult['refreshState'];
     records: readonly AndroidAdbDeviceRecord[];
     diagnostics: readonly Record<string, unknown>[];
 }> {
     const records: AndroidAdbDeviceRecord[] = [];
     const diagnostics: Record<string, unknown>[] = [];
+    let refreshState: SimulatorPreviewResourceReadResult['refreshState'] = 'idle';
 
     for (const rawLine of stdout.split(/\r?\n/)) {
         const raw = rawLine.trim();
@@ -138,6 +141,7 @@ export function parseAdbDevicesLongOutput(stdout: string): Readonly<{
 
         const parts = raw.split(/\s+/);
         if (parts.length < 2 || parts[0] === undefined || parts[1] === undefined) {
+            refreshState = 'error';
             diagnostics.push({
                 platform: 'android',
                 severity: 'warning',
@@ -150,6 +154,7 @@ export function parseAdbDevicesLongOutput(stdout: string): Readonly<{
         const serial = parts[0].trim();
         const state = parts[1].trim();
         if (!serial || !state) {
+            refreshState = 'error';
             diagnostics.push({
                 platform: 'android',
                 severity: 'warning',
@@ -188,7 +193,7 @@ export function parseAdbDevicesLongOutput(stdout: string): Readonly<{
         records.push(record);
     }
 
-    return { records, diagnostics };
+    return { refreshState, records, diagnostics };
 }
 
 async function collectCandidates(input: Required<Pick<AndroidAdbToolingResolverInput, 'pathExists' | 'findOnPath'>> & Readonly<{

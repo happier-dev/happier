@@ -57,7 +57,8 @@ function resolveSimulatorPreviewViewModel(params: Readonly<{
     if (
         params.runtime?.viewModel
         && (
-            resourceSelectedSimulatorId === undefined
+            !params.runtime.viewModel.resource
+            || resourceSelectedSimulatorId === undefined
             || params.runtime.viewModel.selectedSimulatorId === resourceSelectedSimulatorId
         )
     ) {

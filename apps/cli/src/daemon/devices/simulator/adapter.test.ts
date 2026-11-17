@@ -46,7 +46,7 @@ function createPlatform(
 ): SimulatorPlatformPreviewAdapter {
     return {
         platform: overrides.platform,
-        listResources: overrides.listResources ?? (() => []),
+        listResources: overrides.listResources ?? (() => ({ refreshState: 'idle', resources: [] })),
         listDiagnostics: overrides.listDiagnostics ?? (() => []),
         dispatchAction: overrides.dispatchAction ?? (() => undefined),
         stop: overrides.stop ?? (async () => {}),
@@ -59,7 +59,7 @@ describe('simulator preview composed adapter', () => {
             platforms: [
                 createPlatform({
                     platform: 'ios',
-                    listResources: () => [iosResource],
+                    listResources: () => ({ refreshState: 'idle', resources: [iosResource] }),
                     listDiagnostics: () => [{
                         platform: 'ios',
                         reasonCode: 'ios_private_helper_unavailable',
@@ -77,7 +77,7 @@ describe('simulator preview composed adapter', () => {
             ],
         });
 
-        await expect(adapter.listResources()).resolves.toEqual([iosResource]);
+        await expect(adapter.listResources()).resolves.toEqual({ refreshState: 'error', resources: [iosResource] });
         await expect(adapter.listDiagnostics()).resolves.toEqual([
             {
                 platform: 'android',
@@ -108,17 +108,17 @@ describe('simulator preview composed adapter', () => {
             platforms: [
                 createPlatform({
                     platform: 'ios',
-                    listResources: () => [iosResource],
+                    listResources: () => ({ refreshState: 'idle', resources: [iosResource] }),
                     dispatchAction: iosDispatch,
                 }),
                 createPlatform({
                     platform: 'android',
-                    listResources: () => [androidResource],
+                    listResources: () => ({ refreshState: 'idle', resources: [androidResource] }),
                     dispatchAction: androidDispatch,
                 }),
             ],
         });
-        const resources = await adapter.listResources();
+        const { resources } = await adapter.listResources();
 
         await expect(adapter.dispatchAction({
             event: {
@@ -153,16 +153,16 @@ describe('simulator preview composed adapter', () => {
             platforms: [
                 createPlatform({
                     platform: 'ios',
-                    listResources: () => [iosResource],
+                    listResources: () => ({ refreshState: 'idle', resources: [iosResource] }),
                 }),
                 createPlatform({
                     platform: 'android',
-                    listResources: () => [androidResource],
+                    listResources: () => ({ refreshState: 'idle', resources: [androidResource] }),
                     dispatchAction: androidDispatch,
                 }),
             ],
         });
-        const resources = await adapter.listResources();
+        const { resources } = await adapter.listResources();
 
         await expect(adapter.dispatchAction({
             event: {
@@ -206,12 +206,12 @@ describe('simulator preview composed adapter', () => {
             platforms: [
                 createPlatform({
                     platform: 'ios',
-                    listResources: () => [unavailableIosResource],
+                    listResources: () => ({ refreshState: 'idle', resources: [unavailableIosResource] }),
                     dispatchAction: iosDispatch,
                 }),
             ],
         });
-        const resources = await adapter.listResources();
+        const { resources } = await adapter.listResources();
 
         await expect(adapter.dispatchAction({
             event: {
@@ -243,17 +243,17 @@ describe('simulator preview composed adapter', () => {
             platforms: [
                 createPlatform({
                     platform: 'ios',
-                    listResources: () => [iosResource],
+                    listResources: () => ({ refreshState: 'idle', resources: [iosResource] }),
                     dispatchAction,
                 }),
                 createPlatform({
                     platform: 'android',
-                    listResources: () => [duplicate],
+                    listResources: () => ({ refreshState: 'idle', resources: [duplicate] }),
                     dispatchAction,
                 }),
             ],
         });
-        const resources = await adapter.listResources();
+        const { resources } = await adapter.listResources();
 
         await expect(adapter.dispatchAction({
             event: {

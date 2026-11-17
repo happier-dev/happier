@@ -8,6 +8,7 @@ import type {
     SimulatorSidebandMessageV1,
 } from '@happier-dev/protocol';
 import { readSimulatorLogSideband } from '../capture/logs';
+import type { SimulatorPreviewResourceReadResult } from '../adapter';
 
 import {
     ANDROID_SCRCPY_CONTROL_INPUT_KINDS,
@@ -51,7 +52,7 @@ export type AndroidSimulatorPlatformAdapter = Readonly<{
     platform: 'android';
     usesPrivateFrameworks: false;
     health: () => Promise<AndroidSimulatorAdapterHealthV1>;
-    listResources: () => Promise<readonly SimulatorDeviceResourceV1[]>;
+    listResources: () => Promise<SimulatorPreviewResourceReadResult>;
     listDiagnostics: () => Promise<readonly Record<string, unknown>[]>;
     dispatchAction: (input: AndroidSimulatorPlatformDispatchInput) => Promise<SimulatorPreviewActionResultV1 | void>;
     stop: () => Promise<void>;
@@ -394,7 +395,10 @@ export function createAndroidSimulatorPlatformAdapter(input: Readonly<{
             }
             : unavailableHealth;
     };
-    const readDevices = async (): Promise<readonly AndroidSimulatorDiscoveredDevice[]> => {
+    const readDevices = async (): Promise<Readonly<{
+        devices: readonly AndroidSimulatorDiscoveredDevice[];
+        refreshState: SimulatorPreviewResourceReadResult['refreshState'];
+    }>> => {
         try {
             const devices = await (input.discoverDevices?.() ?? []);
             lastDiscoveryDiagnostics = devices.length === 0
@@ -405,7 +409,7 @@ export function createAndroidSimulatorPlatformAdapter(input: Readonly<{
                     reasonCode: 'android_emulator_unavailable',
                 }]
                 : [];
-            return devices;
+            return { devices, refreshState: 'idle' };
         } catch (error) {
             lastDiscoveryDiagnostics = [{
                 platform: 'android',
@@ -414,7 +418,7 @@ export function createAndroidSimulatorPlatformAdapter(input: Readonly<{
                 reasonCode: 'android_device_discovery_failed',
                 errorName: error instanceof Error ? error.name : 'UnknownError',
             }];
-            return [];
+            return { devices: [], refreshState: 'error' };
         }
     };
     const readDiscoveryResult = async (): Promise<AndroidSimulatorResourcesDiscoveryResult> => {
@@ -433,6 +437,7 @@ export function createAndroidSimulatorPlatformAdapter(input: Readonly<{
                     }],
                 });
                 const result: AndroidSimulatorResourcesDiscoveryResult = {
+                    refreshState: 'error',
                     resources: [],
                     diagnostics: [{
                         platform: 'android',
@@ -449,9 +454,10 @@ export function createAndroidSimulatorPlatformAdapter(input: Readonly<{
             }
         }
 
-        const [health, devices] = await Promise.all([readHealth(), readDevices()]);
+        const [health, inventory] = await Promise.all([readHealth(), readDevices()]);
         return {
-            resources: devices.map((device) => createAndroidSimulatorResource({ device, health })),
+            refreshState: inventory.refreshState,
+            resources: inventory.devices.map((device) => createAndroidSimulatorResource({ device, health })),
             diagnostics: [
                 ...lastDiscoveryDiagnostics,
                 ...(health.status === 'available'
@@ -479,7 +485,7 @@ export function createAndroidSimulatorPlatformAdapter(input: Readonly<{
         health: readCurrentHealth,
         listResources: async () => {
             const result = await readDiscoveryResult();
-            return result.resources;
+            return { resources: result.resources, refreshState: result.refreshState };
         },
         listDiagnostics: async () => {
             if (input.discoverResources) {

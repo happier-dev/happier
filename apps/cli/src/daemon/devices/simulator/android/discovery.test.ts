@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
+import { createDefaultAndroidSimulatorResourcesDiscovery } from './discovery';
+import { resolveAndroidAdbTooling, resolveAndroidEmulatorCommand } from './tooling';
+import type { AndroidToolRunner } from './process';
+import { readAndroidSimulatorInventory } from '../operations/inventory';
+
 function sha256(bytes: Uint8Array): string {
     return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
 }
@@ -13,6 +18,61 @@ const trustedScrcpyArtifact = {
 };
 
 describe('discoverAndroidSimulatorResources', () => {
+    it('keeps observed adb devices when the optional AVD inventory command fails', async () => {
+        await expect(readAndroidSimulatorInventory({
+            adbCommand: 'adb',
+            emulatorCommand: 'emulator',
+            run: async ({ args }) => ({
+                exitCode: args[0] === 'devices' ? 0 : 1,
+                stdout: Buffer.from(args[0] === 'devices' ? 'List of devices attached\nR58M device model:Pixel_8\n' : ''),
+                stderr: '',
+            }),
+        })).resolves.toMatchObject({
+            refreshState: 'error',
+            devices: [{ serial: 'R58M', kind: 'physical', state: 'device' }],
+        });
+    });
+
+    it('distinguishes failed inventory commands from confirmed empty and preserves partial devices', async () => {
+        let adbExitCode = 1;
+        let adbOutput = 'List of devices attached\n';
+        let avdExitCode = 0;
+        let avdNames = '';
+        // Command execution and filesystem lookup are the external boundaries; discovery stays real.
+        const runner: AndroidToolRunner = async ({ args }) => ({
+            exitCode: args[0] === 'version' ? 0 : args[0] === 'devices' ? adbExitCode : avdExitCode,
+            stdout: args[0] === 'version' ? 'Android Debug Bridge version 1.0.41'
+                : args[0] === 'devices' ? adbOutput : avdNames,
+            stderr: '',
+        });
+        const discover = createDefaultAndroidSimulatorResourcesDiscovery({
+            resolveAdbTooling: () => resolveAndroidAdbTooling({ env: {}, findOnPath: () => 'adb', runner }),
+            resolveEmulatorCommand: (adbCommand) => resolveAndroidEmulatorCommand({ adbCommand, env: {}, pathExists: () => true }),
+            runAdb: runner,
+        });
+
+        await expect(discover()).resolves.toMatchObject({ refreshState: 'error', resources: [] });
+        adbExitCode = 0;
+        await expect(discover()).resolves.toMatchObject({ refreshState: 'idle', resources: [] });
+        adbOutput = 'malformed';
+        await expect(discover()).resolves.toMatchObject({ refreshState: 'error', resources: [] });
+        adbOutput = 'List of devices attached\nR58M device model:Pixel_8\nmalformed\n';
+        await expect(discover()).resolves.toMatchObject({
+            refreshState: 'error',
+            resources: [{ deviceId: 'R58M' }],
+        });
+        adbOutput = 'List of devices attached\n';
+        avdExitCode = 1;
+        await expect(discover()).resolves.toMatchObject({ refreshState: 'error', resources: [] });
+        adbExitCode = 1;
+        avdExitCode = 0;
+        avdNames = 'Pixel_9\n';
+        await expect(discover()).resolves.toMatchObject({
+            refreshState: 'error',
+            resources: [{ deviceId: 'avd:Pixel_9', state: 'stopped' }],
+        });
+    });
+
     it('returns adb_unavailable diagnostics without resolving the scrcpy artifact', async () => {
         const mod = await import('./discovery').catch(() => null);
 

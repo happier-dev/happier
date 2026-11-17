@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
     DEFAULT_SIMULATOR_STREAM_CONTROLS_V1,
+    SimulatorPreviewSnapshotV1Schema,
     type SimulatorDeviceResourceV1,
 } from '@happier-dev/protocol';
+import type { AndroidToolRunner } from './android/process';
 
 import {
     unavailableMachineLiveStreamCaptureAdapter,
@@ -62,6 +64,94 @@ const androidStreamResource = {
 } satisfies SimulatorDeviceResourceV1;
 
 describe('daemon simulator preview runtime', () => {
+    it('publishes partial and failed platform acquisition without losing successful resources, then recovers to known empty', async () => {
+        const { createSimulatorPreviewDaemonRuntime } = await import('./runtime');
+        const { createComposedSimulatorPreviewAdapter } = await import('./adapter');
+        const { createIosSimulatorPlatformAdapter } = await import('./platform/ios');
+        const { createAndroidSimulatorPlatformAdapter } = await import('./platform/android');
+        const { createDefaultIosSimulatorResourcesDiscovery } = await import('./ios/discovery');
+        const { createDefaultAndroidSimulatorResourcesDiscovery } = await import('./android/discovery');
+        const { resolveAndroidAdbTooling, resolveAndroidEmulatorCommand } = await import('./android/tooling');
+        let outcome: 'partial' | 'failed' | 'empty' = 'partial';
+        const runAndroidCommand: AndroidToolRunner = async ({ args }) => ({
+            exitCode: args[0] === 'devices' && outcome !== 'empty' ? 1 : 0,
+            stdout: args[0] === 'version' ? 'Android Debug Bridge version 1.0.41'
+                : args[0] === 'devices' ? 'List of devices attached\n' : '',
+            stderr: '',
+        });
+        const registry = createMachineLiveStreamCaptureRegistry();
+        const captureReconciler = createSimulatorCaptureRegistryReconciler({
+            registry, createAdapter: () => unavailableMachineLiveStreamCaptureAdapter,
+        });
+        captureReconciler.reconcile({ resources: [androidStreamResource], refreshState: 'idle' });
+        expect(registry.resolve({ sourceId: androidStreamResource.capture.sourceId })).toMatchObject({ ok: true });
+        const runtime = createSimulatorPreviewDaemonRuntime({
+            machineId: 'machine_1',
+            captureReconciler,
+            adapter: createComposedSimulatorPreviewAdapter({ platforms: [
+                createIosSimulatorPlatformAdapter({ discoverResources: createDefaultIosSimulatorResourcesDiscovery({
+                    platform: 'darwin',
+                    captureAdapterAvailable: true,
+                    // Native producer health and command execution are real environment boundaries.
+                    readProducerHealth: () => ({
+                        v: 1, platform: 'ios', status: 'available', usesPrivateFrameworks: true,
+                        helperDistribution: 'bundled-native', requiredPrivateFrameworks: ['CoreSimulator', 'SimulatorKit'],
+                        supportedCodecs: ['image.mjpeg'], supportedInputKinds: ['tap'],
+                    }),
+                    runCommand: async ({ args }) => ({
+                        exitCode: args[0] === '--find' || outcome !== 'failed' ? 0 : 1,
+                        stderr: '',
+                        stdout: args[0] === '--find' ? '/Applications/Xcode.app/simctl' : JSON.stringify({ devices: {
+                            runtime: outcome === 'partial' ? [{ udid: 'ios_1', name: 'iPhone', state: 'Booted', isAvailable: true }] : [],
+                        } }),
+                    }),
+                }) }),
+                createAndroidSimulatorPlatformAdapter({ discoverResources: createDefaultAndroidSimulatorResourcesDiscovery({
+                    resolveAdbTooling: () => resolveAndroidAdbTooling({ env: {}, findOnPath: () => '/android/adb', runner: runAndroidCommand }),
+                    resolveEmulatorCommand: (adbCommand) => resolveAndroidEmulatorCommand({ adbCommand, env: {}, pathExists: () => true }),
+                    runAdb: runAndroidCommand,
+                }) }),
+            ] }),
+        });
+        expect(await runtime.snapshot()).toMatchObject({
+            refreshState: 'error', resources: [expect.objectContaining({ simulatorId: 'ios_1' })],
+        });
+        expect(registry.resolve({ sourceId: 'ios-simulator:ios_1:screen' })).toMatchObject({ ok: true });
+        expect(registry.resolve({ sourceId: androidStreamResource.capture.sourceId })).toMatchObject({ ok: true });
+        outcome = 'failed';
+        expect(await runtime.snapshot()).toMatchObject({ refreshState: 'error', resources: [] });
+        expect(registry.resolve({ sourceId: androidStreamResource.capture.sourceId })).toMatchObject({ ok: true });
+        outcome = 'empty';
+        expect(await runtime.snapshot()).toMatchObject({ refreshState: 'idle', resources: [] });
+        expect(registry.resolve({ sourceId: androidStreamResource.capture.sourceId })).toMatchObject({ ok: false });
+        expect(registry.resolve({ sourceId: 'ios-simulator:ios_1:screen' })).toMatchObject({ ok: false });
+        await runtime.stop();
+    });
+
+    it('publishes a failed device read as an error snapshot and recovers to populated or known empty', async () => {
+        const { createSimulatorPreviewDaemonRuntime } = await import('./runtime');
+        let outcome: 'populated' | 'failed' | 'empty' = 'populated';
+        const runtime = createSimulatorPreviewDaemonRuntime({
+            machineId: 'machine_1',
+            // The device adapter's OS discovery boundary; the runtime and snapshot projection stay real.
+            listResources: () => {
+                if (outcome === 'failed') throw new Error('Device discovery failed');
+                return outcome === 'empty' ? [] : [iosResource];
+            },
+        });
+        const read = async () => SimulatorPreviewSnapshotV1Schema.parse(await runtime.routes.getSnapshot());
+        expect(await read()).toMatchObject({ refreshState: 'idle', resources: [iosResource] });
+        outcome = 'failed';
+        expect(await read()).toMatchObject({
+            refreshState: 'error', resources: [],
+            diagnostics: [expect.objectContaining({ code: 'simulator_resources_unavailable' })],
+        });
+        outcome = 'populated';
+        expect(await read()).toMatchObject({ refreshState: 'idle', resources: [iosResource], diagnostics: [] });
+        outcome = 'empty';
+        expect(await read()).toMatchObject({ refreshState: 'idle', resources: [], diagnostics: [] });
+    });
+
     it('serves a sorted daemon-owned simulator snapshot', async () => {
         const mod = await import('./runtime').catch(() => null);
 
@@ -364,10 +454,14 @@ describe('daemon simulator preview runtime', () => {
             createAdapter: () => unavailableMachineLiveStreamCaptureAdapter,
         });
         let resources: readonly SimulatorDeviceResourceV1[] = [iosResource];
+        let readFails = false;
         const runtime = mod.createSimulatorPreviewDaemonRuntime({
             machineId: 'machine_1',
             resources,
-            listResources: () => resources,
+            listResources: () => {
+                if (readFails) throw new Error('simulator discovery failed');
+                return resources;
+            },
             captureReconciler,
         });
 
@@ -384,7 +478,12 @@ describe('daemon simulator preview runtime', () => {
             },
         });
 
-        resources = [androidResource];
+        readFails = true;
+        await runtime.snapshot();
+        expect(registry.resolve({ sourceId: 'source_ios' })).toMatchObject({ ok: true });
+
+        readFails = false;
+        resources = [];
         await runtime.snapshot();
         expect(registry.resolve({ sourceId: 'source_ios' })).toMatchObject({
             ok: false,
@@ -422,7 +521,7 @@ describe('daemon simulator preview runtime', () => {
             v: 1,
             machineId: 'machine_1',
             generatedAt: 2_000,
-            refreshState: 'idle',
+            refreshState: 'error',
             resources: [],
             diagnostics: [
                 {

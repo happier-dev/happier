@@ -4,6 +4,7 @@ import type {
 } from '@happier-dev/protocol';
 import { DEFAULT_SIMULATOR_STREAM_CONTROLS_V1 } from '@happier-dev/protocol/devices/simulator/v1';
 
+import type { SimulatorPreviewResourceReadResult } from '../adapter';
 import { defaultSimulatorToolRunner, type SimulatorToolRunner } from '../process';
 import { getSimulatorDeviceOperationCapabilities } from '../operations/capabilities';
 import { createIosSimulatorAccessibility } from './accessibility';
@@ -28,8 +29,7 @@ export type IosSimulatorSimctlRunner = (
     input: Readonly<{ command: 'xcrun'; args: readonly string[]; timeoutMs: number }>,
 ) => Promise<IosSimulatorXcodeCommandResult>;
 
-export type IosSimulatorResourcesDiscoveryResult = Readonly<{
-    resources: readonly SimulatorDeviceResourceV1[];
+export type IosSimulatorResourcesDiscoveryResult = SimulatorPreviewResourceReadResult & Readonly<{
     diagnostics: readonly Record<string, unknown>[];
     health: IosSimulatorAdapterHealthV1;
 }>;
@@ -201,6 +201,7 @@ export async function discoverIosSimulatorResources(
     const xcode = await input.resolveXcodeEnvironment();
     if (!xcode.ok) {
         return {
+            refreshState: xcode.reasonCode === 'unsupported_host' ? 'idle' : 'error',
             resources: [],
             diagnostics: [diagnostic({
                 reasonCode: xcode.reasonCode,
@@ -222,6 +223,7 @@ export async function discoverIosSimulatorResources(
     });
     if (simctl.exitCode !== 0) {
         return {
+            refreshState: 'error',
             resources: [],
             diagnostics: [diagnostic({
                 reasonCode: 'simulator_not_booted',
@@ -237,6 +239,7 @@ export async function discoverIosSimulatorResources(
     const parsed = parseIosSimulatorDevices(simctl.stdout);
     if (!parsed.ok) {
         return {
+            refreshState: 'error',
             resources: [],
             diagnostics: [diagnostic({
                 reasonCode: 'simulator_not_booted',
@@ -248,6 +251,7 @@ export async function discoverIosSimulatorResources(
 
     if (parsed.devices.length === 0) {
         return {
+            refreshState: 'idle',
             resources: [],
             diagnostics: [diagnostic({
                 reasonCode: 'simulator_not_booted',
@@ -258,6 +262,7 @@ export async function discoverIosSimulatorResources(
     }
 
     return {
+        refreshState: 'idle',
         resources: parsed.devices.map((device) => createIosSimulatorResource({
             device,
             health,

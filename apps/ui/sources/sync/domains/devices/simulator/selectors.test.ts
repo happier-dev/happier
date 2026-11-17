@@ -56,6 +56,63 @@ function avccFrame(): MachineLiveStreamFrameV1 & { codecId: 'h264.avcc' } {
 }
 
 describe('simulator preview selectors', () => {
+    it('retains a selected last-known Android device while partial iOS results update, until complete recovery', async () => {
+        const { selectSimulatorPreviewViewModel } = await import('./selectors');
+        const { createSimulatorPreviewDaemonState, applySimulatorPreviewDaemonSnapshot } = await import('./runtimeState');
+        const androidResource: SimulatorDeviceResourceV1 = {
+            ...availableResource, simulatorId: 'android_1', platform: 'android', deviceId: 'android_device', displayName: 'Pixel',
+        };
+        const loaded = applySimulatorPreviewDaemonSnapshot(createSimulatorPreviewDaemonState(), {
+            v: 1, machineId: 'machine_1', generatedAt: 1_000, refreshState: 'idle',
+            resources: [androidResource, availableResource], diagnostics: [],
+        });
+        const updatedIos = { ...availableResource, displayName: 'Updated iPhone' };
+        const initialPartial = applySimulatorPreviewDaemonSnapshot(createSimulatorPreviewDaemonState(), {
+            v: 1, machineId: 'machine_1', generatedAt: 2_000, refreshState: 'error',
+            resources: [updatedIos], diagnostics: [],
+        });
+        expect(selectSimulatorPreviewViewModel({
+            resources: initialPartial.resources ?? [], snapshotState: initialPartial, viewerId: 'viewer_1',
+        }).resource).toEqual(updatedIos);
+        const partial = applySimulatorPreviewDaemonSnapshot(loaded, {
+            v: 1, machineId: 'machine_1', generatedAt: 2_000, refreshState: 'error',
+            resources: [updatedIos], diagnostics: [],
+        });
+        expect(partial.resources).toEqual([androidResource, updatedIos]);
+        expect(selectSimulatorPreviewViewModel({
+            resources: partial.resources ?? [], snapshotState: partial, selectedSimulatorId: 'android_1', viewerId: 'viewer_1',
+        }).resource).toEqual(androidResource);
+        const recovered = applySimulatorPreviewDaemonSnapshot(partial, {
+            v: 1, machineId: 'machine_1', generatedAt: 3_000, refreshState: 'idle',
+            resources: [updatedIos], diagnostics: [],
+        });
+        expect(recovered.resources).toEqual([updatedIos]);
+    });
+
+    it('retains loaded devices while their daemon refresh is pending or fails', async () => {
+        const { selectSimulatorPreviewViewModel } = await import('./selectors');
+        const { createSimulatorPreviewDaemonState, applySimulatorPreviewDaemonSnapshot,
+            applySimulatorPreviewDaemonRefreshStarted, applySimulatorPreviewDaemonRefreshFailed } = await import('./runtimeState');
+        const loaded = applySimulatorPreviewDaemonSnapshot(createSimulatorPreviewDaemonState(), {
+            v: 1, machineId: 'machine_1', generatedAt: 1_000, refreshState: 'idle',
+            resources: [availableResource], diagnostics: [],
+        });
+        const refreshing = applySimulatorPreviewDaemonRefreshStarted(loaded, 2_000);
+        const failed = applySimulatorPreviewDaemonRefreshFailed(refreshing, 3_000);
+        const failedSnapshot = applySimulatorPreviewDaemonSnapshot(loaded, {
+            v: 1, machineId: 'machine_1', generatedAt: 3_000, refreshState: 'error',
+            resources: [], diagnostics: [{ code: 'simulator_resources_unavailable' }],
+        });
+        for (const snapshotState of [refreshing, failed, failedSnapshot]) {
+            expect(selectSimulatorPreviewViewModel({
+                resources: snapshotState.resources ?? [], snapshotState, viewerId: 'viewer_1',
+            })).toMatchObject({
+                kind: 'selected', resource: availableResource,
+                devices: [expect.objectContaining({ simulatorId: 'sim_1' })],
+            });
+        }
+    });
+
     it('does not invent supported input when the producer omits its input capabilities', async () => {
         const { selectSimulatorPreviewViewModel } = await import('./selectors');
         const resource: SimulatorDeviceResourceV1 = {

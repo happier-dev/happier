@@ -296,6 +296,13 @@ export function selectSimulatorPreviewViewModel(input: SimulatorPreviewSelection
     const selectedResource = input.resources.find((resource) => resource.simulatorId === input.selectedSimulatorId)
         ?? input.resources[0]
         ?? null;
+    const kind = selectedResource
+        ? 'selected'
+        : input.snapshotState?.refreshState === 'error'
+            ? 'unavailable'
+            : input.snapshotState?.resources === null
+                ? 'loading'
+                : 'empty';
     const selectedSimulatorId = selectedResource?.simulatorId ?? null;
     const previewState = selectedSimulatorId
         ? input.previewStatesBySimulatorId?.[selectedSimulatorId] ?? null
@@ -304,11 +311,13 @@ export function selectSimulatorPreviewViewModel(input: SimulatorPreviewSelection
         ? input.playerStatesBySimulatorId?.[selectedSimulatorId] ?? null
         : null;
     const stream = streamFromPreviewState({ resource: selectedResource, previewState, suppliedStream });
-    const availability = projectSimulatorPreviewAvailability({
-        resource: selectedResource,
-        previewState,
-        stream,
-    });
+    const availability: SimulatorPreviewAvailability = kind === 'loading' || kind === 'unavailable'
+        ? { state: 'unavailable' }
+        : projectSimulatorPreviewAvailability({
+            resource: selectedResource,
+            previewState,
+            stream,
+        });
     const lease = selectLease({
         resource: selectedResource,
         activeLease: previewState?.activeLease ?? null,
@@ -324,7 +333,7 @@ export function selectSimulatorPreviewViewModel(input: SimulatorPreviewSelection
     const streamId = resolveStreamId(previewState, stream);
 
     return {
-        kind: selectedResource ? 'selected' : 'empty',
+        kind,
         viewerId: input.viewerId,
         devices,
         selectedSimulatorId,

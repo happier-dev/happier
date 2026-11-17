@@ -1,4 +1,5 @@
 import type { ConnectedServiceUsageSourceV1 } from '@happier-dev/protocol';
+import type { SimulatorPreviewResourceReadResult } from '@/daemon/devices/simulator/adapter';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { PassThrough } from 'node:stream';
 import * as accountUsageControlTransport from '@/daemon/controlClient';
@@ -863,7 +864,7 @@ const createComposedSimulatorPreviewAdapterMock = vi.hoisted(() => vi.fn((input:
         listDiagnostics(): Promise<readonly Record<string, unknown>[]> | readonly Record<string, unknown>[];
     }[];
 }) => ({
-    listResources: async (): Promise<readonly SimulatorDeviceResourceV1[]> => [],
+    listResources: async (): Promise<SimulatorPreviewResourceReadResult> => ({ refreshState: 'idle', resources: [] }),
     listDiagnostics: async () => (
         await Promise.all(input.platforms.map(async (platform) => await platform.listDiagnostics()))
     ).flat(),
@@ -16634,7 +16635,7 @@ describe('startDaemonSessionControlRuntime', () => {
     it('reconciles startup simulator resources into the shared PMS live-stream capture registry', async () => {
         vi.mocked(startDaemonControlServer).mockClear();
         createComposedSimulatorPreviewAdapterMock.mockImplementationOnce(() => ({
-            listResources: async () => [startupAvailableSimulatorResource],
+            listResources: async () => ({ refreshState: 'idle', resources: [startupAvailableSimulatorResource] }),
             listDiagnostics: async () => [],
             dispatchAction: async (actionInput: { event: { type: string } }) => ({
                 v: 1,

@@ -30,6 +30,7 @@ const snapshot = SimulatorPreviewSnapshotV1Schema.parse({
         },
     })),
 });
+let snapshotResponse: (() => Promise<unknown>) | null = null;
 const rpcRequests: Array<{ method: string; params: unknown }> = [];
 const runtime = installSessionPaneRuntimeTestHarness({
     features: () => createRootLayoutFeaturesResponse({
@@ -48,6 +49,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
         if (method === RPC_METHODS.DAEMON_SIMULATOR_PREVIEW_SNAPSHOT) {
             const input = DaemonSimulatorPreviewSnapshotRequestV1Schema.parse(params);
             expect(input.machineId).toBe('machine-1');
+            if (snapshotResponse) return snapshotResponse();
             return DaemonSimulatorPreviewSnapshotResponseV1Schema.parse({ protocolVersion: 1, snapshot });
         }
         throw new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND);
@@ -55,6 +57,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
 });
 beforeEach(async () => {
     rpcRequests.length = 0;
+    snapshotResponse = null;
     storage.getState().applySettingsLocal({ experiments: true });
     storage.getState().applyMachines([createMachineFixture({ storageMode: 'plain', activeAt: Date.now() })], true, { sourceServerId: runtime.serverId });
     const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
@@ -76,6 +79,38 @@ const simulatorTab = {
 await import('./SessionDetailsPanel');
 
 describe('SessionDetailsPanel simulator runtime wiring', () => {
+    it.each(['failed', 'snapshot-failed', 'empty'] as const)('does not claim an empty simulator inventory before the daemon settles %s', async outcome => {
+        let resolveSnapshot!: (value: unknown) => void;
+        let rejectSnapshot!: (error: Error) => void;
+        snapshotResponse = () => new Promise((resolve, reject) => {
+            resolveSnapshot = resolve;
+            rejectSnapshot = reject;
+        });
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+        const { createSimulatorPreviewDetailsTab } = await import('@/components/sessions/simulator/simulatorPreviewDetailsTab');
+        const screen = await renderScreen(<runtime.Wrapper>
+            <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" nowMs={nowMs} />
+        </runtime.Wrapper>);
+        await act(async () => runtime.pane.openDetailsTab(
+            outcome === 'failed' ? simulatorTab : createSimulatorPreviewDetailsTab({ title: 'Simulator' }),
+            { intent: 'pinned' },
+        ));
+        await waitForHomeGovernance(() => expect(resolveSnapshot).toBeTypeOf('function'));
+        expect(screen.findByTestId('session-simulator:s1-preview-picker-loading')).toBeTruthy();
+        expect(screen.findByTestId('session-simulator:s1-preview-picker-empty')).toBeNull();
+        await act(async () => {
+            if (outcome === 'failed') rejectSnapshot(new Error('Machine transport unavailable'));
+            else resolveSnapshot(DaemonSimulatorPreviewSnapshotResponseV1Schema.parse({
+                protocolVersion: 1, snapshot: { ...snapshot, resources: [], refreshState: outcome === 'snapshot-failed' ? 'error' : 'idle' },
+            }));
+        });
+        await waitForHomeGovernance(() => expect(screen.findByTestId(
+            `session-simulator:s1-preview-picker-${outcome === 'empty' ? 'empty' : 'unavailable'}`,
+        )).toBeTruthy());
+        expect(screen.findByTestId('session-simulator:s1-preview-picker-loading')).toBeNull();
+        if (outcome !== 'empty') expect(screen.findByTestId('session-simulator:s1-preview-picker-empty')).toBeNull();
+    });
+
     it('renders the Session opener\'s Simulator tab from the live daemon snapshot', async () => {
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
         const { SessionSimulatorPreviewPane } = await import('@/components/sessions/simulator/SessionSimulatorPreviewPane');

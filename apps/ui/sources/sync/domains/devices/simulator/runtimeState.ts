@@ -40,6 +40,8 @@ export function applySimulatorPreviewDaemonRefreshStarted(
     state: SimulatorPreviewDaemonState,
     generatedAt: number,
 ): SimulatorPreviewDaemonState {
+    // Background retries keep the last failure visible until a snapshot actually recovers.
+    if (state.refreshState === 'error') return state;
     return {
         ...state,
         generatedAt,
@@ -51,6 +53,7 @@ export function applySimulatorPreviewDaemonRefreshFailed(
     state: SimulatorPreviewDaemonState,
     generatedAt: number,
 ): SimulatorPreviewDaemonState {
+    if (state.refreshState === 'error') return state;
     return {
         ...state,
         generatedAt,
@@ -62,11 +65,20 @@ export function applySimulatorPreviewDaemonSnapshot(
     state: SimulatorPreviewDaemonState,
     snapshot: SimulatorPreviewSnapshotV1,
 ): SimulatorPreviewDaemonState {
+    let resources: SimulatorPreviewDaemonState['resources'] = snapshot.resources;
+    if (snapshot.refreshState === 'error') {
+        resources = state.resources;
+        if (snapshot.resources.length > 0) {
+            const observedResources = new Map((state.resources ?? []).map(resource => [resource.simulatorId, resource]));
+            for (const resource of snapshot.resources) observedResources.set(resource.simulatorId, resource);
+            resources = [...observedResources.values()];
+        }
+    }
     return {
         ...state,
         generatedAt: snapshot.generatedAt,
         refreshState: snapshot.refreshState,
-        resources: snapshot.resources,
+        resources,
         diagnostics: snapshot.diagnostics,
     };
 }

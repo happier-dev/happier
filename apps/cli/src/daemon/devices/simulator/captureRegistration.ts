@@ -5,6 +5,7 @@ import type { MachineLiveStreamCaptureSourceV1, SimulatorCaptureCapabilitiesV1, 
 
 import type { MachineLiveStreamCaptureAdapter } from '../../peer/mediation/stream/captureAdapter';
 import type { MachineLiveStreamCaptureRegistry } from '../../peer/mediation/stream/captureRegistry';
+import type { SimulatorPreviewResourceReadResult } from './adapter';
 
 export type SimulatorCaptureRegistrationDiagnostic = Readonly<{
     reasonCode: string;
@@ -21,7 +22,7 @@ export type SimulatorCaptureRegistrationReconcileResult = Readonly<{
 }>;
 
 export type SimulatorCaptureRegistryReconciler = Readonly<{
-    reconcile(resources: readonly SimulatorDeviceResourceV1[]): SimulatorCaptureRegistrationReconcileResult;
+    reconcile(read: SimulatorPreviewResourceReadResult): SimulatorCaptureRegistrationReconcileResult;
     stop(): SimulatorCaptureRegistrationReconcileResult;
 }>;
 
@@ -78,12 +79,12 @@ export function createSimulatorCaptureRegistryReconciler(
     };
 
     return Object.freeze({
-        reconcile: (resources) => {
+        reconcile: (read) => {
             const registered: string[] = [];
             const diagnostics: SimulatorCaptureRegistrationDiagnostic[] = [];
             const nextSourceIds = new Set<string>();
 
-            for (const resource of resources) {
+            for (const resource of read.resources) {
                 if (!isCaptureAvailable(resource)) continue;
 
                 const sourceId = resource.capture.sourceId;
@@ -126,7 +127,7 @@ export function createSimulatorCaptureRegistryReconciler(
 
             return {
                 registered,
-                unregistered: unregisterMissing(nextSourceIds),
+                unregistered: read.refreshState === 'idle' ? unregisterMissing(nextSourceIds) : [],
                 diagnostics,
             };
         },

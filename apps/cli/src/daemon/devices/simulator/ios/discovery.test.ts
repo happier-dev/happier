@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
 describe('discoverIosSimulatorResources', () => {
+    it.each(['command-failed', 'malformed', 'empty'] as const)('distinguishes %s from a successful device inventory', async outcome => {
+        const { createDefaultIosSimulatorResourcesDiscovery } = await import('./discovery');
+        const discover = createDefaultIosSimulatorResourcesDiscovery({
+            platform: 'darwin',
+            readProducerHealth: () => ({
+                v: 1, platform: 'ios', status: 'unavailable', reasonCode: 'ios_native_producer_unavailable', diagnostics: [],
+            }),
+            runCommand: async ({ args }) => ({
+                exitCode: args[0] === '--find' || outcome !== 'command-failed' ? 0 : 1,
+                stdout: args[0] === '--find' ? '/Applications/Xcode.app/simctl'
+                    : outcome === 'malformed' ? 'invalid json' : JSON.stringify({ devices: {} }),
+                stderr: '',
+            }),
+        });
+        expect(await discover()).toMatchObject({ refreshState: outcome === 'empty' ? 'idle' : 'error', resources: [] });
+    });
+
     it('projects stopped devices independently of capture health', async () => {
         const { createIosSimulatorResource } = await import('./discovery');
         const resource = createIosSimulatorResource({
@@ -39,6 +56,7 @@ describe('discoverIosSimulatorResources', () => {
                 throw new Error('simctl should not run');
             },
         })).resolves.toMatchObject({
+            refreshState: 'idle',
             resources: [],
             health: {
                 status: 'unavailable',

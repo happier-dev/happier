@@ -1,6 +1,7 @@
 import type { AndroidSimulatorDiscoveredDevice } from '../android/discovery';
 import { parseAdbDevicesLongOutput } from '../android/tooling';
 import type { SimulatorOperationProcessResult, SimulatorOperationRunner } from '../process';
+import type { SimulatorPreviewResourceReadResult } from '../adapter';
 
 function failure(code: string, result: SimulatorOperationProcessResult): Record<string, unknown> {
     return { platform: 'android', severity: 'warning', reasonCode: code, exitCode: result.exitCode,
@@ -19,12 +20,20 @@ export async function readAndroidSimulatorInventory(input: Readonly<{
     emulatorCommand?: string | null;
     run: SimulatorOperationRunner;
     signal?: AbortSignal;
-}>): Promise<Readonly<{ devices: readonly AndroidSimulatorDiscoveredDevice[]; diagnostics: readonly Record<string, unknown>[] }>> {
+}>): Promise<Readonly<{
+    refreshState: SimulatorPreviewResourceReadResult['refreshState'];
+    devices: readonly AndroidSimulatorDiscoveredDevice[];
+    diagnostics: readonly Record<string, unknown>[];
+}>> {
     const adb = await input.run({ command: input.adbCommand, args: ['devices', '-l'], signal: input.signal });
     const diagnostics: Record<string, unknown>[] = [];
-    const parsed = adb.exitCode === 0 ? parseAdbDevicesLongOutput(adb.stdout.toString('utf8')) : { records: [], diagnostics: [] };
+    const parsed = adb.exitCode === 0 ? parseAdbDevicesLongOutput(adb.stdout.toString('utf8'))
+        : { refreshState: 'error' as const, records: [], diagnostics: [] };
+    let refreshState = parsed.refreshState;
     diagnostics.push(...parsed.diagnostics);
-    if (adb.exitCode !== 0) diagnostics.push(failure('adb_devices_failed', adb));
+    if (adb.exitCode !== 0) {
+        diagnostics.push(failure('adb_devices_failed', adb));
+    }
     const devices = await Promise.all(parsed.records.map(async (record): Promise<AndroidSimulatorDiscoveredDevice> => {
         const kind = record.serial.startsWith('emulator-') ? 'emulator' : 'physical';
         let avdName: string | undefined;
@@ -46,7 +55,10 @@ export async function readAndroidSimulatorInventory(input: Readonly<{
                 if (runningNames.has(name)) continue;
                 devices.push({ serial: `avd:${name}`, kind: 'emulator', state: 'stopped', displayName: name, avdName: name });
             }
-        } else diagnostics.push(failure('android_avd_inventory_failed', avds));
+        } else {
+            refreshState = 'error';
+            diagnostics.push(failure('android_avd_inventory_failed', avds));
+        }
     }
-    return { devices, diagnostics };
+    return { refreshState, devices, diagnostics };
 }

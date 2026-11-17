@@ -2,10 +2,19 @@ import { describe, expect, it } from 'vitest';
 
 import {
     applySimulatorPreviewDaemonActionResult,
+    applySimulatorPreviewDaemonRefreshStarted,
+    applySimulatorPreviewDaemonRefreshFailed,
     createSimulatorPreviewDaemonState,
 } from './runtimeState';
 
 describe('simulator preview daemon runtime state', () => {
+    it('keeps a failed discovery settled while a background retry is pending and fails again', () => {
+        const failed = applySimulatorPreviewDaemonRefreshFailed(createSimulatorPreviewDaemonState(), 1_000);
+        const retrying = applySimulatorPreviewDaemonRefreshStarted(failed, 2_000);
+        expect(retrying).toBe(failed);
+        expect(applySimulatorPreviewDaemonRefreshFailed(retrying, 3_000)).toBe(failed);
+    });
+
     it('stores accepted sideband request messages by kind', () => {
         const state = applySimulatorPreviewDaemonActionResult(
             createSimulatorPreviewDaemonState(),

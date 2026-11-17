@@ -82,6 +82,7 @@ export type UseSimulatorPreviewSessionSurfaceRuntimeInput = Readonly<{
 }>;
 
 const DEFAULT_REFRESH_INTERVAL_MS = 15_000;
+const EMPTY_RESOURCES: readonly SimulatorDeviceResourceV1[] = Object.freeze([]);
 
 function selectSimulatorPreviewCapabilities(features: ServerFeatures): DeviceSimulatorPreviewCapabilities {
     return features.capabilities.devices.simulatorPreview;
@@ -120,15 +121,17 @@ function resolveRuntimeResources(input: Readonly<{
     explicitResources?: readonly SimulatorDeviceResourceV1[] | null;
     capabilities: DeviceSimulatorPreviewCapabilities;
     featureEnabled: boolean;
+    daemonRuntimeAvailable: boolean;
 }>): readonly SimulatorDeviceResourceV1[] {
     if (!input.featureEnabled) {
-        return [];
+        return EMPTY_RESOURCES;
     }
     if (input.explicitResources) {
         return input.explicitResources;
     }
-    if (!input.capabilities.enabled || !input.capabilities.available) {
-        return [];
+    // A selected Machine's daemon owns its inventory; server capability devices can belong elsewhere.
+    if (input.daemonRuntimeAvailable || !input.capabilities.enabled || !input.capabilities.available) {
+        return EMPTY_RESOURCES;
     }
     return input.capabilities.availableDevices;
 }
@@ -258,7 +261,8 @@ export function useSimulatorPreviewSessionSurfaceRuntime(
         explicitResources: input.resources ?? daemonState.resources,
         capabilities,
         featureEnabled,
-    }), [capabilities, daemonState.resources, featureEnabled, input.resources]);
+        daemonRuntimeAvailable,
+    }), [capabilities, daemonRuntimeAvailable, daemonState.resources, featureEnabled, input.resources]);
 
     const executeDeviceOperationAction = React.useMemo<SimulatorDeviceOperationActionExecute>(() => {
         const execute = createFrontDoorUiActionExecutor(undefined, serverId ? { serverId } : undefined);
@@ -314,6 +318,7 @@ export function useSimulatorPreviewSessionSurfaceRuntime(
 
     const preview = useSimulatorPreview({
         resources,
+        snapshotState: daemonRuntimeAvailable && input.resources == null ? daemonState : undefined,
         selectedSimulatorId,
         viewerId: input.viewerId,
         previewStatesBySimulatorId: input.previewStatesBySimulatorId ?? daemonState.previewStatesBySimulatorId,

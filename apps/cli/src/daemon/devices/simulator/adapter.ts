@@ -6,11 +6,17 @@ import type {
     SimulatorPreviewActionResultV1,
     SimulatorPreviewActionTypeV1,
     SimulatorPreviewActionV1,
+    SimulatorPreviewSnapshotV1,
 } from '@happier-dev/protocol';
 
 import { createSimulatorPlatformDiagnosticsReader } from './platform/diagnostics';
 
 type MaybePromise<T> = T | Promise<T>;
+
+export type SimulatorPreviewResourceReadResult = Readonly<{
+    resources: readonly SimulatorDeviceResourceV1[];
+    refreshState: SimulatorPreviewSnapshotV1['refreshState'];
+}>;
 
 export type SimulatorPreviewDaemonAdapterDispatchInput = Readonly<{
     event: SimulatorPreviewActionV1;
@@ -22,7 +28,7 @@ export type SimulatorPreviewDaemonAdapterDispatch = (
 ) => MaybePromise<SimulatorPreviewActionResultV1 | void>;
 
 export type SimulatorPreviewDaemonAdapter = Readonly<{
-    listResources(): MaybePromise<readonly SimulatorDeviceResourceV1[]>;
+    listResources(): MaybePromise<SimulatorPreviewResourceReadResult>;
     listDiagnostics(): MaybePromise<readonly Record<string, unknown>[]>;
     dispatchAction: SimulatorPreviewDaemonAdapterDispatch;
     stop(): Promise<void>;
@@ -37,7 +43,7 @@ export type SimulatorPlatformPreviewDispatchInput = Readonly<{
 
 export type SimulatorPlatformPreviewAdapter = Readonly<{
     platform: SimulatorPlatformV1;
-    listResources(): MaybePromise<readonly SimulatorDeviceResourceV1[]>;
+    listResources(): MaybePromise<SimulatorPreviewResourceReadResult>;
     listDiagnostics(): MaybePromise<readonly Record<string, unknown>[]>;
     dispatchAction(input: SimulatorPlatformPreviewDispatchInput): MaybePromise<SimulatorPreviewActionResultV1 | void>;
     stop(): MaybePromise<void>;
@@ -178,7 +184,10 @@ export function createSimulatorPreviewDaemonAdapter(
 ): SimulatorPreviewDaemonAdapter {
     let stopPromise: Promise<void> | null = null;
     return Object.freeze({
-        listResources: input.listResources ?? (() => input.resources ?? []),
+        listResources: async () => ({
+            refreshState: 'idle' as const,
+            resources: await (input.listResources?.() ?? input.resources ?? []),
+        }),
         listDiagnostics: input.listDiagnostics ?? (() => []),
         dispatchAction: input.dispatchAction ?? (() => undefined),
         stop: async () => {
@@ -198,14 +207,16 @@ export function createComposedSimulatorPreviewAdapter(input: Readonly<{
         listResources: async () => {
             const resources: SimulatorDeviceResourceV1[] = [];
             const diagnostics: Record<string, unknown>[] = [];
+            let refreshState: SimulatorPreviewResourceReadResult['refreshState'] = 'idle';
             const results = await Promise.allSettled(input.platforms.map(async (platform) => ({
                 platform: platform.platform,
-                resources: await platform.listResources(),
+                read: await platform.listResources(),
             })));
 
             results.forEach((result, index) => {
                 const platform = input.platforms[index]?.platform ?? 'unknown';
                 if (result.status === 'rejected') {
+                    refreshState = 'error';
                     diagnostics.push({
                         platform,
                         code: 'simulator_platform_resources_unavailable',
@@ -213,10 +224,11 @@ export function createComposedSimulatorPreviewAdapter(input: Readonly<{
                     });
                     return;
                 }
-                resources.push(...result.value.resources);
+                if (result.value.read.refreshState === 'error') refreshState = 'error';
+                resources.push(...result.value.read.resources);
             });
             lastResourceDiagnostics = diagnostics;
-            return resources;
+            return { resources, refreshState };
         },
         listDiagnostics: async () => {
             const diagnostics: Record<string, unknown>[] = [...lastResourceDiagnostics];
@@ -276,7 +288,7 @@ export function createHealthBackedSimulatorPlatformPreviewAdapter(
     const listDiagnostics = createSimulatorPlatformDiagnosticsReader([adapter]);
     return Object.freeze({
         platform: adapter.platform,
-        listResources: () => [],
+        listResources: () => ({ resources: [], refreshState: 'idle' as const }),
         listDiagnostics,
         dispatchAction: async ({ event }) => {
             const health = await adapter.health();

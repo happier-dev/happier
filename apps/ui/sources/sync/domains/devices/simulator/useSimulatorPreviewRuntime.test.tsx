@@ -143,6 +143,56 @@ describe('useSimulatorPreviewSessionSurfaceRuntime', () => {
         }
     });
 
+    it('retains a selected stream through a failed snapshot and accepts recovery or authoritative removal', async () => {
+        vi.useFakeTimers();
+        testState.useFeatureDecision.mockReturnValue(simulatorPreviewDecision('enabled'));
+        testState.useFeatureDetails.mockReturnValue({
+            enabled: true, available: true, supportedPlatforms: ['ios'], availableDevices: [],
+            captureSupported: true, inputSupported: true, sidebandKinds: [], disabledReasons: [],
+        });
+        let refreshState: 'idle' | 'error' = 'idle';
+        let resources: readonly SimulatorDeviceResourceV1[] = [availableResource];
+        // The daemon RPC is the network boundary; state, selection, and stream projection stay real.
+        testState.machineRpcWithServerScope.mockImplementation(async () => ({
+            protocolVersion: 1, snapshot: {
+                v: 1, machineId: 'machine_1', generatedAt: Date.now(), refreshState,
+                resources, diagnostics: [],
+            },
+        }));
+        const mod = await import('./useSimulatorPreviewRuntime');
+        const hook = await renderHook(() => mod.useSimulatorPreviewSessionSurfaceRuntime({
+            machineId: 'machine_1', serverId: 'server_1', viewerId: 'viewer_1', selectedSimulatorId: 'sim_1',
+            previewStatesBySimulatorId: { sim_1: {
+                phase: 'reconnecting',
+                lastFrame: {
+                    v: 1, streamId: 'stream_1', sequence: 1, timestampMs: 1_000,
+                    payloadKind: 'image_keyframe', payloadEncoding: 'binary_base64',
+                    payloadBase64: 'AQID', payloadSizeBytes: 3,
+                },
+            } },
+        }));
+        try {
+            await flushHookEffects({ cycles: 2, turns: 2 });
+            const selectedStream = hook.getCurrent().viewModel?.stream;
+            expect(selectedStream?.lastFrameUrl).toBe('data:image/jpeg;base64,AQID');
+            expect(hook.getCurrent().selectedSimulatorId).toBe('sim_1');
+            refreshState = 'error';
+            resources = [];
+            await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+            expect(hook.getCurrent().viewModel).toMatchObject({ kind: 'selected', resource: availableResource });
+            expect(hook.getCurrent().viewModel?.stream).toEqual(selectedStream);
+            refreshState = 'idle';
+            resources = [{ ...availableResource, displayName: 'Recovered simulator' }];
+            await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+            expect(hook.getCurrent().viewModel?.resource?.displayName).toBe('Recovered simulator');
+            resources = [];
+            await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+            expect(hook.getCurrent().viewModel).toMatchObject({ kind: 'empty', resource: null });
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it('projects server simulator capabilities into a runtime and dispatches typed API events', async () => {
         testState.useFeatureDecision.mockReturnValue(simulatorPreviewDecision('enabled'));
         testState.useFeatureDetails.mockReturnValue({

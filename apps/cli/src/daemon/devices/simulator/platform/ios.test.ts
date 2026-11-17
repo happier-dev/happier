@@ -41,7 +41,7 @@ describe('iOS simulator platform adapter', () => {
     it('consumes native discovery health and keeps a device visible when its producer cannot load', async () => {
         const adapter = createIosSimulatorPlatformAdapter({ discoverResources: discovery({ unavailable: true }) });
         await expect(adapter.health()).resolves.toMatchObject({ status: 'unavailable', reasonCode: 'ios_native_producer_unavailable' });
-        await expect(adapter.listResources()).resolves.toMatchObject([{ deviceId: 'device-1', capture: { status: 'unavailable', reasonCode: 'ios_native_producer_unavailable' } }]);
+        await expect(adapter.listResources()).resolves.toMatchObject({ refreshState: 'idle', resources: [{ deviceId: 'device-1', capture: { status: 'unavailable', reasonCode: 'ios_native_producer_unavailable' } }] });
         await expect(adapter.capture({ simulatorId: 'device-1' })).resolves.toEqual({ ok: false, reasonCode: 'ios_native_producer_unavailable' });
         await expect(adapter.listDiagnostics()).resolves.toMatchObject([{ reasonCode: 'ios_native_producer_unavailable' }]);
     });
@@ -50,14 +50,14 @@ describe('iOS simulator platform adapter', () => {
         const adapter = createIosSimulatorPlatformAdapter({ discoverResources: discovery({ captureReady: false }) });
         await expect(adapter.health()).resolves.toMatchObject({ status: 'available' });
         await expect(adapter.capture({ simulatorId: 'device-1' })).resolves.toEqual({ ok: false, reasonCode: 'ios_capture_adapter_unavailable' });
-        const [resource] = await adapter.listResources();
+        const [resource] = (await adapter.listResources()).resources;
         await expect(adapter.dispatchAction({ event, resource })).resolves.toMatchObject({ status: 'unavailable', reasonCode: 'ios_capture_adapter_unavailable' });
     });
 
     it('publishes the native codecs and dispatches through the native input boundary', async () => {
         const sendInputCommand = vi.fn(async () => ({ ok: true as const }));
         const adapter = createIosSimulatorPlatformAdapter({ discoverResources: discovery(), sendInputCommand });
-        const [resource] = await adapter.listResources();
+        const [resource] = (await adapter.listResources()).resources;
         expect(resource.capture).toMatchObject({ status: 'available', supportedCodecs: ['h264.avcc', 'image.mjpeg'] });
         await expect(adapter.capture({ simulatorId: resource.simulatorId })).resolves.toEqual({ ok: true });
         await expect(adapter.dispatchAction({ event, resource })).resolves.toMatchObject({ status: 'accepted' });
@@ -66,7 +66,7 @@ describe('iOS simulator platform adapter', () => {
 
     it('refuses control without resource authority, a discovered target or an input sender', async () => {
         const available = createIosSimulatorPlatformAdapter({ discoverResources: discovery() });
-        const [resource] = await available.listResources();
+        const [resource] = (await available.listResources()).resources;
         await expect(available.dispatchAction({ event })).resolves.toMatchObject({ status: 'rejected', reasonCode: 'simulator_resource_authority_required' });
         await expect(available.dispatchAction({ event, resource })).resolves.toMatchObject({ status: 'unavailable', reasonCode: 'ios_simulator_input_sender_unavailable' });
         const absent = createIosSimulatorPlatformAdapter({ discoverResources: discovery({ empty: true }) });
@@ -77,7 +77,7 @@ describe('iOS simulator platform adapter', () => {
 
     it('returns capture health from the same discovery result and refuses unsupported sidebands', async () => {
         const adapter = createIosSimulatorPlatformAdapter({ discoverResources: discovery(), now: () => 123 });
-        const [resource] = await adapter.listResources();
+        const [resource] = (await adapter.listResources()).resources;
         await expect(adapter.dispatchAction({ event: { type: 'simulator.sideband.request', simulatorId: resource.simulatorId, kind: 'capture_health' }, resource })).resolves.toMatchObject({
             status: 'accepted', sideband: { status: 'available', emittedAtMs: 123 },
         });
