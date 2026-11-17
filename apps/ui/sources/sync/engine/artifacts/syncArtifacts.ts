@@ -55,8 +55,7 @@ import type { ArtifactHeader } from '@/sync/domains/artifacts/artifactTypes';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactBodyV1Schema, ArtifactBodyEnvelopeV1StoredSchema, ArtifactSavedByV1Schema, type ArtifactBodyEnvelopeV1, type ArtifactSavedByV1, type ArtifactWorkspaceSourceV1, ArtifactBlobReferenceV1Schema, type ArtifactBlobReferenceV1, type ArtifactBodyV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { artifactKindRequiresSharedAudienceV1, artifactKindRequiresTextBodyV1, getArtifactUseTargetV1, readArtifactSharedAudienceV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
-import { runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1, prepareOwnedArtifactRecipientKeysV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
-import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListPageV1';
+import { runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
 import { withArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
 import { canShareArtifactWriteContentV1, prepareArtifactHeaderForRevisionV1, prepareArtifactHeaderForBodyV1 } from '@happier-dev/protocol/artifacts/artifactHeaderRestorationV1';
 import { preserveSkillCreatorV1 } from '@happier-dev/protocol/prompts/library/skills/skillCreatorV1';
@@ -1345,37 +1344,6 @@ async function openArtifactWithRecipientKeyPreparation(params: Readonly<{
         });
     }
     return opened ? artifactsFromRead([opened], params.serverId)[0]! : null;
-}
-
-/**
- * The owner's later-member Artifact key repair on the Team-change wake: one owned inventory, then the
- * existing census, seal and commit for each owned E2EE Artifact (`prepareOwnedArtifactRecipientKeysV1`).
- * Keys come from the same cache the inventory fills; content is never opened.
- */
-export async function prepareOwnedSharedArtifactRecipientKeys(params: Readonly<{
-    credentials: AuthCredentials; accountId: string; request?: ArtifactApiOptions['request'];
-    encryption: Encryption; artifactDataKeys: ArtifactDataKeyCache; signal?: AbortSignal;
-}>): Promise<void> {
-    const { credentials, encryption, artifactDataKeys, signal } = params;
-    const accessApi = createArtifactAccessApi(credentials, { request: params.request });
-    await prepareOwnedArtifactRecipientKeysV1({ ownerAccountId: params.accountId, randomBytes: getRandomBytes, signal,
-        readOwnedPage: async cursor => {
-            const page = await fetchArtifactListPage(credentials, { ownerAccountId: params.accountId,
-                limit: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, fresh: true, retry: 'none', request: params.request, signal,
-                ...(cursor === null ? {} : { cursor }) });
-            const last = page.items.at(-1);
-            return { items: page.items, nextCursor: last && page.items.length === ARTIFACT_LIST_PAGE_MAX_ITEMS_V1
-                ? encodeArtifactListCursor({ artifactId: last.id, updatedAt: last.updatedAt }) : null };
-        },
-        openKeys: async row => {
-            const artifact = { id: row.id, dataEncryptionKey: row.dataEncryptionKey!, provenanceDataEncryptionKey: row.provenanceDataEncryptionKey };
-            const dataKey = await resolveArtifactDataKey({ artifact, encryption, artifactDataKeys, workClass: 'bulk' });
-            if (!dataKey) return null;
-            return { dataKey, provenanceDataKey: await resolveArtifactProvenanceDataKey({ artifact, encryption, artifactDataKeys, workClass: 'bulk' }) };
-        },
-        readCensus: artifactId => accessApi.readRecipients(artifactId, signal),
-        commit: input => accessApi.commitKeyEnvelopes(input, signal),
-    });
 }
 
 export async function fetchArtifactBinaryFromApi(params: Readonly<{

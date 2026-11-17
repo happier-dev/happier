@@ -5522,14 +5522,6 @@ the same Artifact access Action owner and workflow, role and Launch Profile kind
 adapters. The UI's captured Account context supplies the grant HTTP transport;
 its Artifact sync opener runs recipient preparation on encrypted grant-aware
 opens and after grant list/set/remove. Plain documents do no recipient-key work.
-A member who joins a granted Team or Group later gets their envelope from the
-owner's app on the Team-change wake and reconnect that also repair Team labels,
-Saved Secrets and Tasks (`prepareOwnedArtifactRecipientKeysV1`). That pass reads
-the owned inventory once and runs the existing census and fenced commit for each
-owned E2EE Artifact whose key opens, sealing only what the census owes: outsiders
-and removed members get nothing new, content is never opened, and a Plain Account
-asks nothing. Until the owner's app is online, the member sees the Artifact as
-locked.
 The 0.3 development startup selected-detail batch returns exact authorized
 content and the recipient census under one read-only capture. Its opener shares
 the exact-read key-preparation owner: a changed caller envelope still fails

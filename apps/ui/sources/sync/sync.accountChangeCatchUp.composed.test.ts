@@ -436,20 +436,14 @@ describe('sync AccountChange catch-up projection', () => {
     // A Saved Secret shared with a Team before someone joined owes that member an envelope only its
     // custodian can write. The membership-change wake is when the custodian learns of it, so it asks
     // the owed census there too, not only when the custodian happens to open Saved Secrets.
-    it.each(['e2ee', 'plain'] as const)('asks the Saved Secret owed census and the owned Task and Artifact inventories on the membership-change wake (%s)', async mode => {
+    it.each(['e2ee', 'plain'] as const)('asks the Saved Secret owed census and the owned Task inventory on the membership-change wake (%s)', async mode => {
         const owedReads: string[] = [];
         const taskListReads: string[] = [];
-        const ownedArtifactReads: string[] = [];
         const credentials = mode === 'e2ee'
             ? { token: ACCOUNT_TOKEN, secret: encodeBase64(new Uint8Array(32).fill(73), 'base64url') }
             : { token: ACCOUNT_TOKEN };
         await restoreTestAccount({ credentials, accountMode: mode, physicalRequest: (url, init) => {
             const path = new URL(url).pathname;
-            // Owned shared Artifacts owe later members the same kind of key; the wake asks the owned inventory.
-            if (path === '/v1/artifacts' && new URL(url).searchParams.get('ownerAccountId') === ACCOUNT_ID) {
-                ownedArtifactReads.push(init?.method ?? 'GET');
-                return Promise.resolve(jsonResponse([]));
-            }
             if (path === '/v1/account/encryption/currentness' && 'secret' in credentials) {
                 return Promise.resolve(jsonResponse(createAccountEncryptionCurrentnessFixtureForCredentials(credentials)));
             }
@@ -467,21 +461,18 @@ describe('sync AccountChange catch-up projection', () => {
         await waitForHomeGovernance(() => expect(getActiveServerAccountScope()).not.toBeNull());
         owedReads.length = 0;
         taskListReads.length = 0;
-        ownedArtifactReads.length = 0;
         changesResponse.mockResolvedValueOnce({ changes: [{ cursor: 1, changedAt: 1, kind: 'account',
             entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, hint: null }], nextCursor: 1 });
         await runtime.resumeViaChanges({ accountId: ACCOUNT_ID });
         if (mode === 'e2ee') await waitForHomeGovernance(() => {
             expect(owedReads).toEqual(['GET']);
             expect(taskListReads).toEqual(['GET']);
-            expect(ownedArtifactReads).toEqual(['GET']);
         });
         else {
             // A Plain Account holds no content key: it custodies no E2EE envelope and asks nothing.
             await new Promise(resolve => setTimeout(resolve, 50));
             expect(owedReads).toEqual([]);
             expect(taskListReads).toEqual([]);
-            expect(ownedArtifactReads).toEqual([]);
         }
     });
 
