@@ -1,4 +1,7 @@
+import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { WorkspaceDestinationRow } from '@/components/appShell/workspace/WorkspaceDestinationRow';
@@ -22,10 +25,12 @@ export function AppRailSlot(props: Readonly<{
     existingMenu?: boolean;
     dragSource?: boolean;
 }>) {
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
     const { children, badge } = props;
     return (
         <WorkspaceDestinationRow
-            style={styles.slot}
+            dataSet={themeSurfaceDataSet('sidebar', 'row', 'default')}
+            style={[styles.slot, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'sidebar', part: 'row' } : undefined)]}
             href={props.href ?? null}
             existingMenu={props.existingMenu}
             dragSource={props.dragSource}

@@ -1,4 +1,7 @@
+import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { Platform, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
@@ -58,6 +61,7 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
     /** Interactive trailing chrome; its measured span is reserved from workspace tabs. */
     trailing?: React.ReactNode;
 }>) {
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
     const styles = stylesheet;
     const router = useRouter();
     const presentationActive = useLayoutPresentationActive();
@@ -108,7 +112,8 @@ export const AppShellTitleStrip = React.memo(function AppShellTitleStrip(props: 
     }, []);
     const toggleLabel = props.columnVisible ? t('common.collapse') : t('common.expand');
     return (
-        <View {...dragProps} testID="app-shell-title-strip" style={styles.strip} onLayout={onStripLayout}>
+        <View {...dragProps} testID="app-shell-title-strip" dataSet={themeSurfaceDataSet('sidebar', 'header', 'default')}
+            style={[styles.strip, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'sidebar', part: 'header' } : undefined)]} onLayout={onStripLayout}>
             <DesktopShellWindowControlsHost>{windowControls}</DesktopShellWindowControlsHost>
             <View style={styles.logoSlot}>
                 <HappierPressable

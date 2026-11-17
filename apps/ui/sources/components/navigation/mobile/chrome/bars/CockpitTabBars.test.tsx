@@ -246,6 +246,34 @@ describe('cockpit tab bars', () => {
         collaborationAdmissionState.state = 'unavailable';
     });
 
+    it('keeps tab semantics on its root, icon and label during pointer and focus feedback', async () => {
+        const { CockpitTabBarView } = await import('./CockpitTabBar');
+        const { resolveTabBarMetrics } = await import('@/components/ui/navigation/tabBarMetrics');
+        const props = { activeSurface: 'chat', bottomInset: 0, metrics: resolveTabBarMetrics('regular', true),
+            barTestId: 'surface-bar', tabTestIdPrefix: 'surface:', onSurfacePress: () => {},
+        };
+        const tabs = [{ id: 'chat', label: 'Chat', icon: 'terminal' as const }];
+        const screen = await renderRealScreen(<CockpitTabBarView {...props} tabs={tabs} />);
+        const tab = () => screen.findHostByTestId('surface:chat')!;
+        const expectState = (expected: string) => {
+            for (const part of ['tab', 'icon', 'label']) {
+                const nodes = tab().findAll(node => node.props.dataSet?.surface === 'tab-bar' && node.props.dataSet?.part === part);
+                expect(nodes.length).toBeGreaterThan(0);
+                expect(nodes.every(node => node.props.dataSet.state === expected)).toBe(true);
+            }
+        };
+        expectState('selected');
+        await act(async () => tab().props.onHoverIn({}));
+        expectState('selected');
+        await act(async () => tab().props.onFocus({ target: { matches: () => true } }));
+        expectState('selected');
+        await act(async () => tab().props.onPressIn({}));
+        expectState('selected');
+        await screen.update(<CockpitTabBarView {...props} tabs={[{ ...tabs[0], disabled: true }]} />);
+        expectState('disabled');
+        await screen.unmount();
+    });
+
     it('keeps the bottom-mode page strip idle on Session updates and mounts top pages when requested', async () => {
         const props = { sessionId: 'sess_1', serverId: 'srv_1', activeSurface: 'chat' as const,
             openDetailsTabCount: 1, onSurfacePress: vi.fn(),

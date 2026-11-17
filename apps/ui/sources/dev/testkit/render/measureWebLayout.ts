@@ -48,6 +48,9 @@ export type WebLayoutRect = Readonly<{
     receivesPointerAtEdges?: Readonly<{ left: boolean; right: boolean; top: boolean; bottom: boolean }>;
     outlineWidth?: number;
     outlineStyle?: string;
+    /** The browser's settled surface paint, for theme cascade assertions beside geometry. */
+    backgroundColor?: string;
+    backgroundImage?: string;
     /**
      * The font family the browser resolved. Happier encodes a weight in its face (`Inter-SemiBold`),
      * so a weight is asserted through the family, not `font-weight`.
@@ -304,6 +307,7 @@ export async function measureWebLayout(container: HTMLElement, options: Readonly
                         },
                     } : null),
                     outlineWidth: parseFloat(computed.outlineWidth), outlineStyle: computed.outlineStyle,
+                    backgroundColor: computed.backgroundColor, backgroundImage: computed.backgroundImage,
                     fontFamily: computed.fontFamily,
                     fontSize: parseFloat(computed.fontSize), lineHeight: parseFloat(computed.lineHeight),
                     clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, scrollLeft: element.scrollLeft };

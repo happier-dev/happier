@@ -1,4 +1,7 @@
+import { resolveThemeSurfaceState, useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
+import { themeSurfaceDataSet, type SurfaceAddress } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { I18nManager, Platform, Pressable, View, type LayoutChangeEvent } from 'react-native';
 import type { PressableProps, StyleProp, TextStyle, ViewStyle } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
@@ -10,6 +13,7 @@ import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 // `resolveHappierTabKeySelection` — importing it is the contract, not a convenience.
 import {
     HAPPIER_FOCUS_RING_DELEGATED_STYLE,
+    resolveHappierThemeSurfaceStyle,
     happierFocusRingStyle,
     isHappierFocusVisible,
     HAPPIER_SEGMENTED_METRICS,
@@ -29,7 +33,7 @@ import { shadowLevelStyle } from '@/shadowElevation';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { StatusPill } from '@/components/ui/status/StatusPill';
-import { GradientSurface, type SurfaceGradient } from '@/components/ui/surfaces/GradientSurface';
+import { GradientSurface, combinedWebGradientStyle, type SurfaceGradient } from '@/components/ui/surfaces/GradientSurface';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 // The motion modules directly, not the instrument barrel: a segmented control must not load the
 // gauge and chart components (and their SVG dependency) that the barrel also exports.
@@ -529,6 +533,7 @@ function SlidingThumb(props: Readonly<{
     rect: TabRect;
     /** The chosen segment. The thumb travels only when the choice changes; layout settling snaps. */
     tabId: string;
+    themeSurface: Extract<SurfaceAddress, { surface: 'tab-bar' }>;
     compact: boolean;
     plain?: boolean;
     /** An inherited value: the thumb is an outline, no fill and no lift. */
@@ -537,9 +542,15 @@ function SlidingThumb(props: Readonly<{
     glass?: boolean;
     testID?: string;
 }>) {
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const paintColor = useHappierMaterialColorResolver();
+    const overrideBackgroundColor = surfaceOverridesEnabled
+        ? resolveHappierThemeSurfaceStyle(theme, props.themeSurface, Platform.OS)?.backgroundColor
+        : undefined;
+    const gradient = props.plain || props.outlined || props.glass ? null
+        : happierMaterialGradient(theme.colors.segmentedControl.activeGradient, color => paintColor(color, undefined, 'solidControl'));
     const motion = useMotionPreferences();
     const reduced = motion.level === 'minimal';
     const thumbX = useSharedValue(props.rect.x);
@@ -572,11 +583,14 @@ function SlidingThumb(props: Readonly<{
         <Animated.View
             testID={props.testID}
             pointerEvents="none"
-            style={[styles.thumb, props.compact ? styles.thumbCompact : null, props.plain ? styles.plainThumb : null, props.outlined ? styles.thumbOutlined : props.glass ? { backgroundColor: theme.colors.surface.selectedFocused } : { backgroundColor: paintColor(props.plain ? theme.colors.surface.selected : theme.colors.segmentedControl.activeBackground, undefined, props.plain ? undefined : 'solidControl') }, animatedStyle]}
+            style={[styles.thumb, props.compact ? styles.thumbCompact : null, props.plain ? styles.plainThumb : null, props.outlined ? styles.thumbOutlined : props.glass ? { backgroundColor: theme.colors.surface.selectedFocused } : { backgroundColor: paintColor(props.plain ? theme.colors.surface.selected : theme.colors.segmentedControl.activeBackground, undefined, props.plain ? undefined : 'solidControl') }, animatedStyle,
+                Platform.OS === 'web' ? combinedWebGradientStyle(gradient, null, true) : null,
+                overrideBackgroundColor === undefined ? null : { backgroundColor: 'transparent' }]}
         >
-            {props.plain || props.outlined || props.glass ? null : <GradientSurface
+            {Platform.OS === 'web' || props.plain || props.outlined || props.glass ? null : <GradientSurface
+                themeSurface={props.themeSurface}
                 fallbackColor={paintColor(theme.colors.segmentedControl.activeBackground, undefined, 'solidControl')}
-                gradient={happierMaterialGradient(theme.colors.segmentedControl.activeGradient, color => paintColor(color, undefined, 'solidControl'))}
+                gradient={gradient}
                 borderRadius={HAPPIER_SEGMENTED_METRICS.segmentRadiusPx[props.compact ? 'compact' : 'default']}
                 style={StyleSheet.absoluteFillObject}
             />}
@@ -617,6 +631,7 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
     const [pressedTabId, selectPressed] = useHappierTabSelection(controlled.activeTabId, controlled.onSelectTab);
     const viewSwitch = controlled.role !== 'radiogroup';
     const props = viewSwitch ? { ...controlled, activeTabId: pressedTabId, onSelectTab: selectPressed } : controlled;
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const paintColor = useHappierMaterialColorResolver();
@@ -741,6 +756,12 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
     // RN Web's Pressable hands `focused` to its own style callback only, and the ring belongs on the
     // drawn surface — around the frame it would outline a box the user cannot see.
     const [focusedTabId, setFocusedTabId] = React.useState<T | null>(null);
+    const surfaceStateFor = (tab: SegmentedTab<T> | undefined) => {
+        const active = tab !== undefined && isHappierTabSelected(props.activeTabId, tab.id);
+        return resolveThemeSurfaceState('tab-bar', {
+            disabled: disabled || tab?.disabled === true, selected: active,
+        });
+    };
     const [tabRects, setTabRects] = React.useState<Readonly<Record<string, TabRect>>>({});
     const tabRefs = React.useRef(new Map<T, React.ElementRef<typeof Pressable> | null>());
 
@@ -803,14 +824,14 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
                         return (
                             <React.Fragment key={tab.id}>
                                 <View onLayout={(event) => recordMeasure(`i:${tab.id}`, event)}>
-                                    <PlainTabCaption tab={tab} icon active={active} measuring segmented={!plain} compact={compact} tight={equalValueRow} />
+                                    <PlainTabCaption surfaceState={surfaceStateFor(tab)} tab={tab} icon active={active} measuring segmented={!plain} compact={compact} tight={equalValueRow} />
                                 </View>
                                 <View onLayout={(event) => recordMeasure(`l:${tab.id}`, event)}>
-                                    <PlainTabCaption tab={tab} icon={false} active={active} measuring segmented={!plain} compact={compact} tight={equalValueRow} />
+                                    <PlainTabCaption surfaceState={surfaceStateFor(tab)} tab={tab} icon={false} active={active} measuring segmented={!plain} compact={compact} tight={equalValueRow} />
                                 </View>
                                 {tab.count ? (
                                     <View onLayout={(event) => recordMeasure(`b:${tab.id}`, event)}>
-                                        <PlainTabCaption tab={tab} icon={false} count={false} active={active} measuring segmented={!plain} compact={compact} tight={equalValueRow} />
+                                        <PlainTabCaption surfaceState={surfaceStateFor(tab)} tab={tab} icon={false} count={false} active={active} measuring segmented={!plain} compact={compact} tight={equalValueRow} />
                                     </View>
                                 ) : null}
                             </React.Fragment>
@@ -834,6 +855,7 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
             ) : (
             <SegmentedTrackGlass glass={props.glassTrack} contentSized={contentSized} compact={compact === true}>
             <View
+                dataSet={themeSurfaceDataSet('tab-bar', 'root', 'default')}
                 style={[
                     styles.inner,
                     compact ? styles.innerCompact : null,
@@ -843,6 +865,7 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
                     !pills && !plain ? { backgroundColor: paintColor(theme.colors.segmentedControl.trackBackground) } : null,
                     disabled ? styles.innerDisabled : null,
                     awaitingFit ? styles.innerAwaitingFit : null,
+                    themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'root' } : undefined),
                 ]}
                 {...(overflow ? {} : { accessibilityRole: valueChoice ? 'radiogroup' as const : 'tablist' as const, accessibilityLabel: props.accessibilityLabel })}
             >
@@ -865,12 +888,16 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
                         plain={plain}
                         outlined={inherited}
                         glass={glassThumb}
+                        themeSurface={{ surface: 'tab-bar', part: 'tab', state: surfaceStateFor(visibleTabs.find(tab => isHappierTabSelected(props.activeTabId, tab.id))) }}
                         testID={props.testIDPrefix ? `${props.testIDPrefix}:thumb` : undefined}
                     />
                 ) : null}
                 {visibleTabs.map((tab, tabIndex) => {
                     const active = isHappierTabSelected(props.activeTabId, tab.id);
                     const tabDisabled = disabled || tab.disabled === true;
+                    const surfaceState = surfaceStateFor(tab);
+                    const activeGradient = active && !pills && !plain && !inherited && !glassThumb
+                        ? happierMaterialGradient(theme.colors.segmentedControl.activeGradient, color => paintColor(color, undefined, 'solidControl')) : null;
                     // Until the chosen segment is measured it paints itself, so the selection is visible on
                     // the first frame; the thumb then mounts at that rect and takes the surface over.
                     const showOwnActiveSurface = active && (!slidingThumb || activeRect === null);
@@ -929,6 +956,7 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
                             tabIndex={Platform.OS === 'web' ? (disabled || tabIndex !== focusableIndex ? -1 : 0) : undefined}
                         >
                             <View
+                                dataSet={themeSurfaceDataSet('tab-bar', 'tab', surfaceState)}
                                 style={[
                                     styles.tabSurface,
                                     compact ? styles.tabSurfaceCompact : null,
@@ -944,26 +972,32 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
                                     showOwnActiveSurface && !inherited ? { backgroundColor: glassThumb ? theme.colors.surface.selectedFocused : paintColor(pills ? theme.colors.surface.inset : plain ? theme.colors.surface.selected : theme.colors.segmentedControl.activeBackground, undefined, pills || plain ? undefined : 'solidControl') } : null,
                                     happierFocusRingStyle({ visible: !tabDisabled && focusedTabId === tab.id, color: theme.colors.border.focus }),
                                     !disabled && tab.disabled === true ? styles.tabDisabled : null,
+                                    Platform.OS === 'web' && showOwnActiveSurface ? combinedWebGradientStyle(activeGradient, null, true) : null,
+                                    themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'tab', state: surfaceState } : undefined),
                                 ]}
                             >
-                                {showOwnActiveSurface && !pills && !plain && !inherited && !glassThumb ? (
+                                {Platform.OS !== 'web' && showOwnActiveSurface && !pills && !plain && !inherited && !glassThumb ? (
                                     <GradientSurface
+                                        themeSurface={{ surface: 'tab-bar', part: 'tab', state: surfaceState }}
                                         fallbackColor={paintColor(theme.colors.segmentedControl.activeBackground, undefined, 'solidControl')}
-                                        gradient={happierMaterialGradient(theme.colors.segmentedControl.activeGradient, color => paintColor(color, undefined, 'solidControl'))}
+                                        gradient={activeGradient}
                                         borderRadius={HAPPIER_SEGMENTED_METRICS.segmentRadiusPx[compact ? 'compact' : 'default']}
                                         style={StyleSheet.absoluteFillObject}
                                     />
                                 ) : null}
                                 {plain ? (
-                                    <PlainTabCaption tab={tab} icon={showIcons} count={fit.counts || tab.countTone !== undefined} active={active} label={!glyphOnly} />
+                                    <PlainTabCaption surfaceState={surfaceStateFor(tab)} tab={tab} icon={showIcons} count={fit.counts || tab.countTone !== undefined} active={active} label={!glyphOnly} />
                                 ) : iconOnly ? (
-                                    <View style={[styles.tabIcon, iconGlyphStyles?.icon ?? null]}>{tab.icon}</View>
+                                    <View dataSet={themeSurfaceDataSet('tab-bar', 'icon', surfaceState)}
+                                        style={[styles.tabIcon, iconGlyphStyles?.icon ?? null, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'icon', state: surfaceState } : undefined)]}>{tab.icon}</View>
                                 ) : (
                                     <View style={styles.tabCaption}>
                                     {/* A mark that identifies one option (a dashboard's owner) leads its label. */}
                                     {/* In a bar that fits itself, glyphs drop first when the names don't fit with them. */}
-                                    {tab.icon && (!overflow || fit.icons) ? <View style={styles.tabIcon}>{tab.icon}</View> : null}
+                                    {tab.icon && (!overflow || fit.icons) ? <View dataSet={themeSurfaceDataSet('tab-bar', 'icon', surfaceState)}
+                                        style={[styles.tabIcon, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'icon', state: surfaceState } : undefined)]}>{tab.icon}</View> : null}
                                     <Text
+                                        dataSet={themeSurfaceDataSet('tab-bar', 'label', surfaceState)}
                                         // Value choices keep their full names visible when the row
                                         // stacks into a narrow slot; view tabs remain single-line.
                                         numberOfLines={valueChoice ? undefined : 1}
@@ -976,6 +1010,7 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
                                             active ? styles.tabLabelActive : null,
                                             active && inherited ? styles.tabLabelInherited : null,
                                             active ? props.activeLabelStyle : null,
+                                            themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'label', state: surfaceState } : undefined),
                                         ]}
                                     >
                                         {tab.label}
@@ -1136,6 +1171,7 @@ function TabCount(props: Readonly<{ tab: Pick<SegmentedTab, 'count' | 'countTone
 function PlainTabCaption(props: Readonly<{
     tab: Pick<SegmentedTab, 'label' | 'icon' | 'count' | 'id' | 'countTone'> & Partial<Pick<SegmentedTab, 'badge' | 'shortcut'>>;
     icon: boolean;
+    surfaceState?: Extract<SurfaceAddress, { surface: 'tab-bar' }>['state'];
     active: boolean;
     /** The words are drawn (false: the glyph stands alone for a tab that is not chosen). */
     label?: boolean;
@@ -1151,15 +1187,21 @@ function PlainTabCaption(props: Readonly<{
     tight?: boolean;
     more?: boolean;
 }>) {
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
+    const surfaceState = props.surfaceState ?? 'default';
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const caption = (
         <View style={[styles.tabCaption, styles.plainCaption]}>
-            {props.icon && props.tab.icon ? <View style={styles.tabIcon}>{props.tab.icon}</View> : null}
+            {props.icon && props.tab.icon ? <View
+                dataSet={themeSurfaceDataSet('tab-bar', 'icon', surfaceState)}
+                style={[styles.tabIcon, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'icon', state: surfaceState } : undefined)]}>{props.tab.icon}</View> : null}
             {props.more ? <Icon name="dots-three" size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> : null}
             {/* The overflow trigger is the glyph alone everywhere; its word is the accessible name. */}
             {props.label === false || props.more ? null : (
-                <Text numberOfLines={1} style={[styles.tabLabel, props.segmented ? null : styles.plainLabel, props.compact ? styles.tabLabelCompact : null, props.active ? styles.tabLabelActive : null]}>
+                <Text dataSet={themeSurfaceDataSet('tab-bar', 'label', surfaceState)}
+                    numberOfLines={1} style={[styles.tabLabel, props.segmented ? null : styles.plainLabel, props.compact ? styles.tabLabelCompact : null, props.active ? styles.tabLabelActive : null,
+                        themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'label', state: surfaceState } : undefined)]}>
                     {props.tab.label}
                     {props.tab.count && props.count !== false ? <TabCount tab={props.tab} /> : null}
                 </Text>

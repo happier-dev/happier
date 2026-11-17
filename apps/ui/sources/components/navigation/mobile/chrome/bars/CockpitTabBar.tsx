@@ -1,4 +1,7 @@
+import { resolveThemeSurfaceState, useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { Platform, View, useWindowDimensions, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent, type StyleProp, type ViewStyle } from 'react-native';
 import { HappierPressable, HAPPIER_FOCUS_RING_DELEGATED_STYLE, useHappierTabSelection } from '@happier-dev/plugin-ui/presentation';
 import { ScrollView } from 'react-native-gesture-handler';
@@ -180,6 +183,7 @@ export function CockpitTabBarView<TSurface extends string>(controlled: CockpitTa
 }>) {
     // The pressed tab shows before its owner builds the surface (`useHappierTabSelection`).
     const [activeSurface, onSurfacePress] = useHappierTabSelection(controlled.activeSurface, controlled.onSurfacePress);
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
     const props = { ...controlled, activeSurface, onSurfacePress };
     const { theme } = useUnistyles();
     const { metrics } = props;
@@ -188,10 +192,12 @@ export function CockpitTabBarView<TSurface extends string>(controlled: CockpitTa
     const anchors = React.useRef(new Map<string, unknown>());
     const renderTab = (tab: CockpitTabBarTabDefinition<TSurface>, fixedBesideTrack = false) => {
         const active = tab.id === props.activeSurface;
+        const surfaceState = resolveThemeSurfaceState('tab-bar', { disabled: tab.disabled, selected: active });
         const tintColor = active ? theme.colors.text.primary : restInk.color;
         const hold = props.onTabLongPress && !tab.disabled ? () => props.onTabLongPress?.(tab.id, anchors.current.get(tab.id) ?? null) : undefined;
         return (
             <HappierPressable
+                themeSurface={{ surface: 'tab-bar', part: 'tab' }}
                 key={tab.id}
                 testID={`${props.tabTestIdPrefix}${tab.id}`}
                 controlRef={(node) => {
@@ -211,7 +217,8 @@ export function CockpitTabBarView<TSurface extends string>(controlled: CockpitTa
                     paddingHorizontal: metrics.tabPaddingHorizontal,
                     borderRadius: metrics.activePillRadius,
                 }, HAPPIER_FOCUS_RING_DELEGATED_STYLE,
-                focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
+                focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
+                themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'tab', state: resolveThemeSurfaceState('tab-bar', state) } : undefined)]}
                 accessibilityRole="tab"
                 accessibilityLabel={tab.accessibilityLabel ?? tab.label}
                 accessibilityHint={tab.unavailableReason}
@@ -222,7 +229,8 @@ export function CockpitTabBarView<TSurface extends string>(controlled: CockpitTa
                     : undefined}
             >
                 {active ? <View pointerEvents="none" style={[styles.activePill, { borderRadius: metrics.activePillRadius }]} /> : null}
-                <View style={styles.iconContainer}>
+                <View dataSet={themeSurfaceDataSet('tab-bar', 'icon', surfaceState)}
+                    style={[styles.iconContainer, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'icon', state: surfaceState } : undefined)]}>
                     <View style={active ? null : restInk.style}>
                         {typeof tab.icon === 'string' ? (
                             <Icon name={tab.icon} size={metrics.iconSize} color={tintColor} />
@@ -234,7 +242,8 @@ export function CockpitTabBarView<TSurface extends string>(controlled: CockpitTa
                 </View>
                 {/* Every bar reads the one tab-labels setting (owner 11-15, superseding 11-06's named selected detail tab). */}
                 {metrics.showLabels ? (
-                    <Text style={[styles.label, active ? styles.labelActive : styles.labelInactive]}>
+                    <Text dataSet={themeSurfaceDataSet('tab-bar', 'label', surfaceState)}
+                        style={[styles.label, active ? styles.labelActive : styles.labelInactive, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'label', state: surfaceState } : undefined)]}>
                         {tab.label}
                     </Text>
                 ) : null}
@@ -246,7 +255,8 @@ export function CockpitTabBarView<TSurface extends string>(controlled: CockpitTa
     return (
         <FloatingTabBarSurface testID={props.barTestId} bottomInset={props.bottomInset} opaqueBand={props.opaqueBand ?? true}
             trailingAccessory={props.trailingAccessory}>
-            <Animated.View style={[styles.innerContainer, { gap: metrics.rowGap }]}>
+            <Animated.View dataSet={themeSurfaceDataSet('tab-bar', 'root', 'default')}
+                style={[styles.innerContainer, { gap: metrics.rowGap }, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'root' } : undefined)]}>
                 {/* The tablist owns only the tabs; More and other trailing controls are buttons beside it (C77). */}
                 <View accessibilityRole="tablist" style={[styles.innerContainer, styles.tablist, { gap: metrics.rowGap }]}>
                     {scrolls ? (

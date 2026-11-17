@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { Platform, StyleProp, View, ViewStyle } from 'react-native';
-import { HappierPressable, type HappierPressableProps, HappierSurfaceGradientLayer, happierSurfaceGradientWebStyle, happierMaterialGradient, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { HappierPressable, type HappierPressableProps, HappierSurfaceGradientLayer, happierMaterialGradient, useHappierMaterialColorResolver, resolveThemeSurfaceAddress, resolveHappierThemeSurfaceStyle, useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { themeSurfaceDataSet, type SurfaceAddress } from '@happier-dev/plugin-sdk/ui';
 
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
-import { GradientSurface } from '@/components/ui/surfaces/GradientSurface';
+import { combinedWebGradientStyle, GradientSurface } from '@/components/ui/surfaces/GradientSurface';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import type { Theme } from '@/theme';
@@ -54,6 +56,7 @@ export const PrimaryCircleIconButton = React.memo(
       disabled?: boolean;
       loading?: boolean;
       testID?: string;
+      themeSurface?: SurfaceAddress;
       accessibilityLabel: string;
       accessibilityHint?: string;
       accessibilityState?: { disabled?: boolean } & Record<string, unknown>;
@@ -76,9 +79,18 @@ export const PrimaryCircleIconButton = React.memo(
     const { theme: currentTheme } = useUnistyles();
     const theme = props.appearance ?? currentTheme;
     const paintColor = useHappierMaterialColorResolver();
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
     const styles = stylesheet;
 
     const computedDisabled = Boolean(props.disabled || props.loading || !props.onPress);
+    const surfaceAddress = resolveThemeSurfaceAddress(props.themeSurface ?? { surface: 'button', part: 'root' }, {
+      disabled: computedDisabled,
+      selected: props.accessibilityState?.selected === true,
+    });
+    const surfaceStyle = surfaceOverridesEnabled ? themeSurfaceStyles.surface(surfaceAddress) : undefined;
+    const overrideBackgroundColor = surfaceOverridesEnabled
+      ? resolveHappierThemeSurfaceStyle(theme, surfaceAddress, Platform.OS)?.backgroundColor
+      : undefined;
     const primary = theme.colors.button?.primary;
     // A primary that is working (after Send) keeps its own fill even though its press is locked: its spinner is
     // drawn in that fill's ink. On the disabled slab the fill's ink is dark on dark (owner 11-08).
@@ -119,16 +131,22 @@ export const PrimaryCircleIconButton = React.memo(
         >
           {({ pressed, focused }) => (
             <View
+              dataSet={{ surface: surfaceAddress.surface, part: surfaceAddress.part, state: surfaceAddress.state ?? 'default' }}
               style={[
                 styles.paint,
                 {
                   backgroundColor: paintColor(backgroundColor, undefined, 'solidControl'),
                   opacity: pressed ? motionTokens.press.opacity : 1,
-                  ...(Platform.OS === 'web' && !primary?.gradient ? happierSurfaceGradientWebStyle(resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: finishDisabled }), !theme.dark) : null),
                 },
+                Platform.OS === 'web' ? combinedWebGradientStyle(
+                  filled ? happierMaterialGradient(primary?.gradient, color => paintColor(color, undefined, 'solidControl')) : undefined,
+                  resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: finishDisabled }),
+                  !theme.dark,
+                ) : null,
+                surfaceStyle,
               ]}
             >
-              {filled && primary?.gradient ? (
+              {Platform.OS !== 'web' && overrideBackgroundColor === undefined ? filled && primary?.gradient ? (
                 <GradientSurface
                   fallbackColor={paintColor(backgroundColor, undefined, 'solidControl')}
                   gradient={happierMaterialGradient(primary?.gradient, color => paintColor(color, undefined, 'solidControl'))}
@@ -137,10 +155,13 @@ export const PrimaryCircleIconButton = React.memo(
                   borderRadius={16}
                   style={StyleSheet.absoluteFillObject}
                 />
-              ) : <HappierSurfaceGradientLayer gradient={resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: finishDisabled })} borderRadius={16} />}
+              ) : <HappierSurfaceGradientLayer gradient={resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed, focused, disabled: finishDisabled })} borderRadius={16} /> : null}
               {/* The glyph stacks above the fill's positioned gradient layer: a bare (unpositioned) glyph is painted under
                   it on web, so Send and Stop read as blank discs (QA-SHELL-1114 F9). */}
-              <View style={styles.glyph}>
+              <View
+                dataSet={surfaceAddress.surface === 'button' ? themeSurfaceDataSet('button', 'icon', surfaceAddress.state ?? 'default') : undefined}
+                style={[styles.glyph, surfaceOverridesEnabled && surfaceAddress.surface === 'button' ? themeSurfaceStyles.surface({ ...surfaceAddress, part: 'icon' }) : null]}
+              >
                 {props.loading ? (
                   <ActivitySpinner size="small" color={foreground} />
                 ) : (

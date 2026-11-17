@@ -1,4 +1,7 @@
+import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
@@ -84,6 +87,7 @@ function SessionPaneHeaderWithBack(props: SessionPaneHeaderProps) {
 
 const SessionPaneHeaderBand = React.memo(function SessionPaneHeaderBand(props: SessionPaneHeaderProps & Readonly<{ backTestID: string | undefined }>) {
     const { theme } = useUnistyles();
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
     const identityMode = useSetting('sessionHeaderIdentityDisplay');
     const isConnected = props.isConnected ?? true;
     const editing = useSessionTitleEditor(props.rename ?? null, props.title);
@@ -111,6 +115,7 @@ const SessionPaneHeaderBand = React.memo(function SessionPaneHeaderBand(props: S
         <PullTarget pullable={pullable}>
             {editing.draft !== null ? (
                 <TextInput
+                    dataSet={themeSurfaceDataSet('chat-header', 'title', 'default')}
                     testID="session-header-title-input"
                     value={editing.draft}
                     onChangeText={editing.setDraft}
@@ -120,7 +125,7 @@ const SessionPaneHeaderBand = React.memo(function SessionPaneHeaderBand(props: S
                     selectTextOnFocus
                     onKeyPress={editing.onKeyPress}
                     onSubmitEditing={editing.save}
-                    style={[styles.title, styles.titleInput]}
+                    style={[styles.title, styles.titleInput, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'chat-header', part: 'title' } : undefined)]}
                 />
             ) : (
                 <SessionHeaderTitle title={props.title} accessory={props.titleAccessory}
@@ -146,7 +151,8 @@ const SessionPaneHeaderBand = React.memo(function SessionPaneHeaderBand(props: S
             ) : undefined}
             titleControl={titleControl}
             metaLeading={props.badges?.length || props.subtitle || props.lineage ? (
-                <SessionScreenTestIdView style={styles.metadataRow} sessionScreenTestId="session-header-metadata">
+                <SessionScreenTestIdView dataSet={themeSurfaceDataSet('chat-header', 'facts', 'default')}
+                    style={[styles.metadataRow, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'chat-header', part: 'facts' } : undefined)]} sessionScreenTestId="session-header-metadata">
                     {props.subtitle ? <SessionHeaderSubtitle text={props.subtitle} mode={props.subtitleEllipsizeMode ?? 'tail'} /> : null}
                     {props.lineage}
                     {props.badges?.map((badge, index) => (
@@ -169,7 +175,8 @@ const SessionPaneHeaderBand = React.memo(function SessionPaneHeaderBand(props: S
     );
     return (
         // The covered main column withdraws its header from focus and assistive technology with the body.
-        <PaneMainBody style={styles.container}>
+        <PaneMainBody dataSet={themeSurfaceDataSet('chat-header', 'root', 'default')}
+            style={[styles.container, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'chat-header', part: 'root' } : undefined)]}>
             {pullable ? (
                 <SessionHeaderPullHost onOpen={props.onPullAllTabs!} hintTop={0} testID="session-header-band">{header}</SessionHeaderPullHost>
             ) : header}
@@ -201,6 +208,7 @@ function SessionHeaderTitle(props: Readonly<{
     lineageBelow?: boolean;
 }>) {
     const { theme } = useUnistyles();
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
     const [rowWidth, setRowWidth] = React.useState(0);
     const [titleWidth, setTitleWidth] = React.useState(0);
     const [accessoryWidth, setAccessoryWidth] = React.useState(0);
@@ -213,8 +221,10 @@ function SessionHeaderTitle(props: Readonly<{
         set((current) => current === width ? current : width);
     };
     const titleText = (hovered: boolean) => (
-        <Text numberOfLines={1} ellipsizeMode="tail" accessibilityRole="header"
-            style={[styles.title, hovered ? styles.titleHovered : null]}>{props.title}</Text>
+        <Text dataSet={themeSurfaceDataSet('chat-header', 'title', 'default')}
+            numberOfLines={1} ellipsizeMode="tail" accessibilityRole="header"
+            style={[styles.title, hovered ? styles.titleHovered : null,
+                themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'chat-header', part: 'title' } : undefined)]}>{props.title}</Text>
     );
     return (
         <View style={styles.titleRow} testID="session-header-title-row" onLayout={props.accessory ? measure(setRowWidth) : undefined}>

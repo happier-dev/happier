@@ -238,10 +238,7 @@ describe('SegmentedTabBar', () => {
           expect(flattenStyle(thumb.props.style).backgroundColor).toBe(
             activeTheme.colors.segmentedControl.activeBackground,
           );
-          const gradient = thumb
-            .findAllByType('View' as never)
-            .map((node) => flattenStyle(node.props.style))
-            .find((style) => typeof style.backgroundImage === 'string');
+          const gradient = flattenStyle(thumb.props.style);
           for (const color of activeTheme.colors.segmentedControl.activeGradient
             ?.colors ?? []) {
             expect(gradient?.backgroundImage).toContain(color);

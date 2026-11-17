@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, View, type StyleProp, type ViewStyle, type ViewProps } from 'react-native';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { PopoverAnchor } from '@/components/ui/popover';
 import { resolveWorkspaceOpenModeFromPointer, useWorkspaceOpenActions, type WorkspaceOpenActionsOptions } from './useWorkspaceOpenActions';
@@ -27,6 +27,7 @@ type WorkspaceDestinationRowProps = Readonly<{
     entityTitle?: string;
     children: React.ReactNode | ((actions: ReturnType<typeof useWorkspaceOpenActions> & Readonly<{ openMenu(): void }>) => React.ReactNode);
     style?: StyleProp<ViewStyle>;
+    dataSet?: ViewProps['dataSet'];
     /** Rows with an existing menu already include useWorkspaceOpenActions.items there. */
     existingMenu?: boolean;
     /** Opens the row's own menu, which consumes the shared open items. */
@@ -41,7 +42,7 @@ type WorkspaceDestinationRowProps = Readonly<{
 
 /** Destination gestures share one owner, without replacing the row's normal activation or anatomy. */
 export function WorkspaceDestinationRow(props: WorkspaceDestinationRowProps) {
-    if (!props.href && !props.entityItem && !props.openOptions?.windowTarget && typeof props.children !== 'function') return props.style ? <View style={props.style}>{props.children}</View> : <>{props.children}</>;
+    if (!props.href && !props.entityItem && !props.openOptions?.windowTarget && typeof props.children !== 'function') return props.style || props.dataSet ? <View style={props.style} dataSet={props.dataSet}>{props.children}</View> : <>{props.children}</>;
     return <WorkspaceDestinationRowDestination {...props} />;
 }
 
@@ -148,7 +149,7 @@ function WorkspaceDestinationRowDestination(props: WorkspaceDestinationRowProps)
             element.removeEventListener('keydown', keydown);
         };
     }, [openMenu, sourceRef]);
-    return <View ref={attach} style={props.style}>
+    return <View ref={attach} style={props.style} dataSet={props.dataSet}>
         {typeof props.children === 'function' ? props.children({ ...actions, openMenu }) : props.children}
         {!props.existingMenu && anchor !== null ? <DropdownMenu
             open={anchor !== null}

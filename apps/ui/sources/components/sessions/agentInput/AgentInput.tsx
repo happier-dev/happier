@@ -1,4 +1,6 @@
-import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-sdk/ui';
+import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useAiLaunchProfilesForLegacyUi } from '@/sync/store/useAiLaunchProfiles';
@@ -1323,6 +1325,11 @@ const ALWAYS_PRESENTED_SURFACE = Object.freeze({ get: () => true, subscribe: () 
 export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, AgentInputProps>((props, ref) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
+    const composerSurfaceState = props.disabled ? 'disabled' : 'default';
+    const inputSurfaceStyle = surfaceOverridesEnabled
+        ? themeSurfaceStyles.surface({ surface: 'composer', part: 'input', state: composerSurfaceState })
+        : undefined;
     const { width: screenWidth, height: screenHeight } = useWindowDimensions();
     const surfacePresentation = props.surfacePresentation ?? ALWAYS_PRESENTED_SURFACE;
     const surfacePresented = React.useSyncExternalStore(surfacePresentation.subscribe, surfacePresentation.get, surfacePresentation.get);
@@ -4207,7 +4214,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     <GlassSurface testID="agent-input-material-surface" themeSurface={{ surface: 'composer', part: 'root', state: props.disabled ? 'disabled' : 'default' }} {...panelMaterialProps} style={[styles.unifiedPanel, isMobileLayoutWidth(screenWidth) ? styles.unifiedPanelPhone : null, props.panelStyle, styles.readOnlyPanel, embeddedPanel ? styles.embeddedPanel : null]}>
                         {composerPresentationFeedback}
                         <AgentInputAttachmentsRow items={attachmentRowItems} />
-                        <View style={[styles.inputContainer, styles.readOnlyInputContent, documentPanel ? styles.readOnlyDocumentContent : null]}>
+                        <View dataSet={themeSurfaceDataSet('composer', 'input', composerSurfaceState)} style={[styles.inputContainer, styles.readOnlyInputContent, documentPanel ? styles.readOnlyDocumentContent : null, inputSurfaceStyle]}>
                             {/* A reading document's card is calm: about three lines, then More (DESIGN-4 M4). */}
                             <AgentInputReadOnlyDocumentText source={textSource} mentions={structuredInputMentions} accessibilityLabel={props.inputAccessibilityLabel} clamp={documentPanel}
                                 style={[isConversation ? styles.sessionInputText : styles.newSessionInputText, styles.readOnlyText]} />
@@ -4269,7 +4276,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const actionFooter = (
             <View
                 {...{ dataSet: themeSurfaceDataSet('composer', 'toolbar', props.disabled ? 'disabled' : 'default') }}
-                style={styles.nativeKeyboardFooterSection}
+                style={[styles.nativeKeyboardFooterSection, surfaceOverridesEnabled ? themeSurfaceStyles.surface({ surface: 'composer', part: 'toolbar', state: composerSurfaceState }) : null]}
                 onLayout={(event) => {
                     updateLayoutHeight(setActionFooterHeightPx, event.nativeEvent.layout.height);
                 }}
@@ -4472,7 +4479,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 <View
                                     ref={composerAnchorRef}
                                     collapsable={false}
-                                    style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined]}
+                                    dataSet={themeSurfaceDataSet('composer', 'input', composerSurfaceState)}
+                                    style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined, inputSurfaceStyle]}
                                     onLayout={(event) => {
                                         updateNullableLayoutHeight(setInputContainerHeightPx, event.nativeEvent.layout.height);
                                     }}
@@ -4548,7 +4556,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 <View
                                     ref={composerAnchorRef}
                                     collapsable={false}
-                                    style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined]}
+                                    dataSet={themeSurfaceDataSet('composer', 'input', composerSurfaceState)}
+                                    style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined, inputSurfaceStyle]}
                                     onLayout={(event) => {
                                         updateNullableLayoutHeight(setInputContainerHeightPx, event.nativeEvent.layout.height);
                                     }}

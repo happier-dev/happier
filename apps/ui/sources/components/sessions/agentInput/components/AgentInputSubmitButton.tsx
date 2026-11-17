@@ -262,6 +262,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
             <AgentInputSubmitShape>
                 {unarmRoute}
                 <RoundButton
+                    themeSurface={{ surface: 'composer', part: 'send' }}
                     testID={props.testID}
                     size="small"
                     // "Continue with [mark]". Pressing this does not only send — it
@@ -316,6 +317,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
         {unarmRoute}
         <Shaker ref={props.stopShakerRef}>
         <PrimaryCircleIconButton
+            themeSurface={{ surface: 'composer', part: 'send' }}
             appearance={props.appearance}
             // The Stop keeps its one id wherever the composer places it (device flows tap it).
             testID={showStopWhenEmpty && !props.hasSendableContent && !showDictation ? STOP_TEST_ID : props.testID}

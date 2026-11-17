@@ -1,4 +1,6 @@
+import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
 import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { useSessionManagedWakeStatus } from '@/components/sessions/pending/useSessionManagedWakeStatus';
 import { useSessionArchivePending } from '@/hooks/session/useSessionArchivePending';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -808,7 +810,9 @@ const SessionItemContent = React.memo(
         const resolvedSelectionKey = selectionKey ?? '';
         const occurrenceTestId = occurrenceId ?? resolvedSession.id;
         const resolvedSelectionOccurrenceKey = occurrenceId ?? resolvedSelectionKey;
+        const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
         const rowSelection = useOptionalSessionListSelectionRow(resolvedSelectionOccurrenceKey);
+        const rowSurfaceState = selected || rowSelection.isSelected ? 'selected' : 'default';
         // Metadata can remain unopened until this row is demanded. Its reserved
         // identity slots must stay quiet rather than running a presentation clock.
         const navigateToSession = useNavigateToSession();
@@ -1484,8 +1488,10 @@ const SessionItemContent = React.memo(
         const trailingAttentionReplacesTime = showTrailingAttentionIndicator;
         const trailingStatusWord = showTrailingStatusWord ? (
             <WorkStatusRowWord status={workStatus} seed={resolvedSession.id}>{(word) => (
-                <Text testID={`session-list-status-word-${occurrenceTestId}`} variant="meta" numberOfLines={1}
-                    style={[styles.trailingStatusWord, workStatusWord ?? styles.statusTextQuiet]}>
+                <Text dataSet={themeSurfaceDataSet('session-row', 'status', rowSurfaceState)}
+                    testID={`session-list-status-word-${occurrenceTestId}`} variant="meta" numberOfLines={1}
+                    style={[styles.trailingStatusWord, workStatusWord ?? styles.statusTextQuiet,
+                        themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'session-row', part: 'status', state: rowSurfaceState } : undefined)]}>
                     {word}
                 </Text>
             )}</WorkStatusRowWord>
@@ -1762,7 +1768,7 @@ const SessionItemContent = React.memo(
                     })}>
                     <Pressable
                         ref={followEditor.triggerRef}
-                        {...{ dataSet: themeSurfaceDataSet('session-row', 'root', selected || rowSelection.isSelected ? 'selected' : 'default') }}
+                        {...{ dataSet: themeSurfaceDataSet('session-row', 'root', rowSurfaceState) }}
                         testID={`session-list-item-${occurrenceTestId}`}
                         accessibilityRole="button"
                         accessibilityLabel={rowAccessibilityLabel}
@@ -1779,7 +1785,7 @@ const SessionItemContent = React.memo(
                             borderless: false,
                             foreground: true,
                         } : undefined}
-                        style={rowStyle}
+                        style={[rowStyle, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'session-row', part: 'root', state: rowSurfaceState } : undefined)]}
                         onPress={handleRowPress}
                         onFocus={Platform.OS === 'web' ? rowSelection.setFocused : undefined}
                         onPressIn={enableLongPressContextMenu ? () => {
@@ -1871,6 +1877,8 @@ const SessionItemContent = React.memo(
                             />
                         ) : (
                             <CollectionRowTitle
+                                dataSet={themeSurfaceDataSet('session-row', 'title', rowSurfaceState)}
+                                style={themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'session-row', part: 'title', state: rowSurfaceState } : undefined)}
                                 density={collectionRowDensity}
                                 touchCompact={touchCompactRow}
                                 textScale={typeof uiFontScale === 'number' ? uiFontScale : undefined}
@@ -1953,11 +1961,13 @@ const SessionItemContent = React.memo(
                                     </View>
                                 ) : null}
                                 <Text
+                                    dataSet={themeSurfaceDataSet('session-row', 'status', rowSurfaceState)}
                                     testID={`session-list-status-subtitle-text-${occurrenceTestId}-${rowAttentionState}`}
                                     style={[
                                         styles.statusText,
                                         compact ? styles.statusTextCompact : null,
                                         workStatusWord ?? styles.statusTextQuiet,
+                                        themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'session-row', part: 'status', state: rowSurfaceState } : undefined),
                                     ]}
                                     numberOfLines={1}
                                 >
@@ -1966,9 +1976,11 @@ const SessionItemContent = React.memo(
                             </View>
                         ) : (
                             <CollectionRowLine
+                                dataSet={themeSurfaceDataSet('session-row', 'meta', rowSurfaceState)}
                                 density={collectionRowDensity}
                                 textScale={typeof uiFontScale === 'number' ? uiFontScale : undefined}
-                                style={shouldUseWebPathSubtitleStartEllipsis ? styles.sessionPathSubtitleWeb : null}
+                                style={[shouldUseWebPathSubtitleStartEllipsis ? styles.sessionPathSubtitleWeb : null,
+                                    themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'session-row', part: 'meta', state: rowSurfaceState } : undefined)]}
                                 ellipsizeMode={shouldUseWebPathSubtitleStartEllipsis ? undefined : effectiveSubtitleEllipsizeMode}
                             >
                                 {shouldUseWebPathSubtitleStartEllipsis ? (
@@ -2009,7 +2021,7 @@ const SessionItemContent = React.memo(
                                     {showTrailingGuardWord && guardState ? (
                                         <SessionRowGuardWord guardState={guardState} />
                                     ) : activityAt !== null ? (
-                                        <SessionRowActivityTime activityAt={activityAt} style={styles.activityTime} />
+                                        <SessionRowActivityTime activityAt={activityAt} selected={rowSurfaceState === 'selected'} style={styles.activityTime} />
                                     ) : null}
                                 </WordCrossFade>
                             ) : null}

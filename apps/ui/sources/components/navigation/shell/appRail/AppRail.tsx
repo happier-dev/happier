@@ -1,4 +1,7 @@
+import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -149,6 +152,7 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const materialColor = useHappierMaterialColorResolver();
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
     const { entries, activeId, onOpen: open } = props;
     const botNeighbors = React.useMemo(() => {
         const byHome = new Map<string, AppRailBotEntry[]>();
@@ -234,7 +238,8 @@ export const AppRailSurface = React.memo(function AppRailSurface(props: Readonly
                     />
                 ) : null}
             </View>
-            <View testID="app-rail-bottom" style={styles.group}>
+            <View testID="app-rail-bottom" dataSet={themeSurfaceDataSet('sidebar', 'footer', 'default')}
+                style={[styles.group, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'sidebar', part: 'footer' } : undefined)]}>
                 {shownBottom.map(item => item.kind === 'destination'
                     ? <AppRailItem key={item.id} entry={item.entry} active={activeId === item.id} onOpen={open} onCustomize={props.onCustomize} />
                     : <React.Fragment key={item.id}>{renderFooter(item)}</React.Fragment>)}

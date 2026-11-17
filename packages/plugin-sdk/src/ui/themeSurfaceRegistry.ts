@@ -10,10 +10,12 @@ const view = { kind: 'view' } as const;
 const text = { kind: 'text' } as const;
 
 export const THEME_SURFACE_REGISTRY = {
-  sidebar: { parts: { root: view }, states: ['default'] },
-  'session-row': { parts: { root: view }, states: ['default', 'selected'] },
+  sidebar: { parts: { root: view, header: view, row: view, footer: view }, states: ['default'] },
+  'session-row': { parts: { root: view, title: text, meta: text, status: text }, states: ['default', 'selected'] },
   'user-bubble': { parts: { root: view }, states: ['default'] },
-  composer: { parts: { root: view, toolbar: view }, states: ['default', 'disabled'] },
+  composer: { parts: { root: view, input: view, toolbar: view, send: view }, states: ['default', 'disabled'] },
+  'chat-header': { parts: { root: view, title: text, facts: view }, states: ['default'] },
+  'tab-bar': { parts: { root: view, tab: view, label: text, icon: view }, states: ['default', 'disabled', 'selected'] },
   button: { parts: { root: view, label: text, icon: view }, states: ['default', 'disabled', 'selected'] },
 } as const satisfies Record<string, Readonly<{ parts: Readonly<Record<string, Part>>; states: readonly string[] }>>;
 

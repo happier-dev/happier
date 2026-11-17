@@ -29,6 +29,7 @@ const prepared = prepareThemeCss(`
     [data-surface="composer"][data-part="toolbar"] { background-color: rgba(12, 34, 56, 0.4); }
     [data-surface="sidebar"][data-part="root"] { background-color: #234567; padding: 9px; }
     [data-surface="user-bubble"][data-part="root"] { background-color: #345678; border-radius: 21px; }
+    [data-surface="composer"][data-part="send"] { background-color: rgba(18, 52, 86, 0.4); border-radius: 9px; }
 `);
 await import('react-native-unistyles');
 Object.assign(boundary.theme!, { surfaces: prepared.light });
@@ -36,6 +37,7 @@ const { GlassSurface } = await import('@/components/ui/glass/GlassSurface');
 const { GlassMaterialSettingsProvider } = await import('@/components/ui/glass/useGlassMaterialSettings');
 const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
 const { UserMessageBubble } = await import('@/components/sessions/transcript/UserMessageBubble');
+const { PrimaryCircleIconButton } = await import('@/components/ui/buttons/PrimaryCircleIconButton');
 afterEach(standardCleanup);
 
 function hex(value: unknown) {
@@ -43,6 +45,17 @@ function hex(value: unknown) {
 }
 
 describe('compiled native surface styles at their painted owners', () => {
+    it('reshapes the composer send at its painted circle without painting the authored alpha twice', async () => {
+        const screen = await renderScreen(<PrimaryCircleIconButton active accessibilityLabel="Send" onPress={() => {}}
+            themeSurface={{ surface: 'composer', part: 'send' }}><></></PrimaryCircleIconButton>);
+        const painted = screen.tree.root.findAll(node => typeof node.type === 'string' && node.props.dataSet?.surface === 'composer'
+            && node.props.dataSet?.part === 'send');
+        expect(painted).toHaveLength(1);
+        expect(flattenTestStyle(painted[0]!.props.style).borderTopLeftRadius).toBe(9);
+        expect(hex(flattenTestStyle(painted[0]!.props.style).backgroundColor)).toBe('#123456');
+        expect(painted[0]!.findAllByType('Stop')).toHaveLength(0);
+    });
+
     it('applies semantic state and geometry to the material and its clip, with no leak to an unaddressed surface', async () => {
         const screen = await renderScreen(<GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
             <GlassSurface testID="disabled-composer" themeSurface={{ surface: 'composer', part: 'root', state: 'disabled' }} style={{ borderRadius: 40 }}><></></GlassSurface>

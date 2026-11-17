@@ -15,6 +15,34 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 
 installWebLayoutBridge();
 
+it('owns selected gradient paint on the addressed tab so authored background replaces it', async () => {
+    const host = document.createElement('div');
+    document.body.append(host);
+    const root = createRoot(host);
+    const authored = document.createElement('style');
+    try {
+        await act(async () => root.render(<SegmentedTabBar
+            tabs={[{ id: 'chat', label: 'Chat' }, { id: 'files', label: 'Files' }]}
+            activeTabId="chat" onSelectTab={() => {}} testIDPrefix="paint-tabs" />));
+        const painted = host.querySelector<HTMLElement>('[data-testid="paint-tabs:chat"] [data-surface="tab-bar"][data-part="tab"]')!;
+        expect(painted).not.toBeNull();
+        painted.dataset.testid = 'selected-tab-paint';
+        const ordinary = await measureWebLayout(host, { viewport: { width: 390, height: 200 } });
+        expect(ordinary.rect('selected-tab-paint').backgroundImage).toContain('linear-gradient');
+        expect(painted.dataset.state).toBe('selected');
+        authored.textContent = '[data-surface="tab-bar"][data-part="tab"][data-state="selected"] { background: rgb(12, 34, 56) !important; }';
+        document.head.append(authored);
+        const themed = await measureWebLayout(host, { viewport: { width: 390, height: 200 } });
+        expect(themed.rect('selected-tab-paint').backgroundColor).toBe('rgb(12, 34, 56)');
+        expect(themed.rect('selected-tab-paint').backgroundImage).toBe('none');
+        expect(Array.from(painted.querySelectorAll<HTMLElement>('*')).some(node => node.style.backgroundImage.includes('gradient'))).toBe(false);
+    } finally {
+        authored.remove();
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
+
 it('retains tab focus and local wrapper state when fit measurement turns on and off', async () => {
     const host = document.createElement('div');
     document.body.appendChild(host);

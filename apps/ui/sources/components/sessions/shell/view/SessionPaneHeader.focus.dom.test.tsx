@@ -60,6 +60,18 @@ describe('SessionPaneHeader inline title (DOM keyboard)', () => {
         storage.setState(storage.getInitialState(), true);
     });
 
+    it('exposes the rendered header, title and facts as independent theme parts', async () => {
+        await act(async () => {
+            root.render(<SessionPaneHeader title="Fix settings modal remount" subtitle="app · Development machine" showBackButton={false} />);
+        });
+        const part = (name: string) => container.querySelector<HTMLElement>(
+            `[data-surface="chat-header"][data-part="${name}"][data-state="default"]`,
+        );
+        expect(part('root')).not.toBeNull();
+        expect(part('title')?.textContent).toBe('Fix settings modal remount');
+        expect(part('facts')?.textContent).toContain('app · Development machine');
+    });
+
     it('returns keyboard focus to the title after Escape, Cancel and an unchanged save', async () => {
         await beginEditing();
         await act(async () => {

@@ -4516,6 +4516,7 @@
     "sources/components/ui/navigation/DocumentTabStrip.web.dom.test.tsx",
     "sources/components/ui/navigation/FloatingTabBarSurface.test.tsx",
     "sources/components/ui/navigation/NavigationPlacementCustomizer.test.tsx",
+    "sources/components/ui/navigation/SegmentedTabBar.native.test.tsx",
     "sources/components/ui/navigation/SegmentedTabBar.test.tsx",
     "sources/components/ui/navigation/SegmentedTabBar.webLayout.real.integration.test.tsx",
     "sources/components/ui/navigation/TabBarNewSessionButton.test.tsx",
