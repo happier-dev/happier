@@ -158,6 +158,28 @@ describe('ActionOperationDetailModal', () => {
         await screen.unmount();
     });
 
+    it('marks the step a Setup waits on as needing the person, asking its password question once above', async () => {
+        const operation = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'setup-waits', revision: 1,
+            actionId: MACHINE_SETUP_APPLY_ACTION_ID_V1, state: 'running', scope: { accountId: 'account-1', machineId: 'machine-1' },
+            title: 'Set up', createdAt: 100, startedAt: 110, cancellation: 'supported',
+            domainRef: { kind: 'machineSetup', serverId: 'home-a', machineId: 'machine-1',
+                setupTask: { id: 'task-1', taskKind: 'machine.setup.apply.v1', prompt: { kind: 'sudo.password', adminUsername: 'ops' } },
+                steps: [
+                    { planIndex: 0, stepId: 'redis', label: { key: 'x', fallback: 'Redis 7' }, state: 'succeeded' },
+                    { planIndex: 0, stepId: 'postgres', label: { key: 'y', fallback: 'Postgres 17' }, state: 'running' },
+                ] } });
+        actionOperationStore.mergeSnapshots({ serverId: 'home-a', snapshots: [operation] });
+        const screen = await renderScreen(<ActionOperationDetailModal serverId="home-a" operationId="setup-waits" onClose={() => {}} />);
+        const steps = screen.findByTestId('action-operation-setup-steps')!;
+        const text = (node: typeof steps) => node.findAll(child => typeof child.children?.[0] === 'string')
+            .map(child => child.children[0] as string);
+        expect(text(steps)).toContain('inbox.needsYou');
+        expect(text(steps)).not.toContain('common.running');
+        expect(screen.findHostByTestId('action-operation-sudo-password')).not.toBeNull();
+        expect(text(steps)).not.toContain('inbox.actionOperations.sudo.passwordFor');
+        await screen.unmount();
+    });
+
     it('acknowledges the active operation settling while its detail remains open', async () => {
         const active = { version: 1 as const, operationId: 'settles-open', revision: 1, actionId: 'session.spawn_new',
             state: 'running' as const, scope: { accountId: 'account-1', machineId: 'machine-1' }, title: 'Create session',

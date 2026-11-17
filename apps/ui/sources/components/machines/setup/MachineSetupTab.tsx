@@ -5,12 +5,16 @@ import { machineSetupSourceApplyOriginKeyV1, type MachineSetupSourceApplyV1 } fr
 import { machineSetupSourceOriginKeyV1, type MachineSetupSourceEntryV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { ActionOperationRows } from '@/components/inbox/actionOperations/ActionOperationLedger';
+import { ActionOperationSudoQuestion } from '@/components/inbox/actionOperations/ActionOperationSudoQuestion';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { projectMachineSetupStepChecklist } from '@/components/inbox/actionOperations/actionOperationDetailPresentation';
+import { MachineSetupStepsChecklist } from '@/components/inbox/actionOperations/MachineSetupStepsChecklist';
 import { MachineInstallablesSection } from '@/components/machines/installables/MachineInstallablesSection';
 import { useMachineToolsSummary } from '@/components/machines/installables/useMachineToolsSummary';
 import type { MachinePageTabBodyProps, MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
@@ -33,6 +37,7 @@ import { buildStoreListingRoute } from '@/components/settings/plugins/model/plug
 import { useMachineSetupRecipeOptions, useSoftwareOptions } from '@/components/store/catalog/storeSoftware';
 import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
 import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
+import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -41,10 +46,11 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { PlanChecklistCard } from '@/components/systemTasks/planChecklist';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { readActionOperationSudoPrompt } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -497,6 +503,42 @@ const RECIPE_KIND_GROUPS = [
   { kind: 'softwareRecipe', title: 'machinePresets.setup.tab.recipesSoftware' },
 ] as const;
 
+/**
+ * Where a Setup run stopped, its cause, and the two ways forward: retry from that step (the owner's reapply
+ * review re-checks every step, so finished ones come back done) or hand the operation to an agent, the same
+ * investigation subject the operation detail uses. Mounted only while stopped.
+ */
+function MachineSetupStoppedNotice(props: Readonly<{
+  serverId: string;
+  operation: ActionOperationSnapshotV1;
+  step: string;
+  cause: string | undefined;
+  onRetry: (() => void) | null;
+}>) {
+  const { operationId } = props.operation;
+  const machineId = props.operation.scope.machineId;
+  const subject = React.useMemo((): TriageFailureSubjectV1 | null => props.operation.state === 'failed' ? {
+    kind: 'managedMachineOperation', operation: { serverId: props.serverId, machineId, operationId },
+  } : null, [props.operation.state, props.serverId, machineId, operationId]);
+  const investigation = useInvestigateFailure(subject);
+  return (
+    <AttentionBanner
+      testID="machine-setup-stopped"
+      tone="neutral"
+      iconName="x-circle"
+      title={t('machinePresets.setup.tab.stoppedAt', { step: props.step })}
+      description={props.cause}
+      action={props.onRetry ? { label: t('machinePresets.setup.tab.retryFrom', { step: props.step }), onPress: props.onRetry } : null}
+      secondaryAction={subject ? {
+        label: t('inbox.work.healthNotice.investigate'),
+        icon: 'sparkle',
+        loading: investigation.pending,
+        onPress: () => { void investigation.launch('review'); },
+      } : null}
+    />
+  );
+}
+
 /** Attention, in order: the Apply this tab started, else a failure in words with its next step, else drift. */
 function MachineSetupAttention(
   props: Readonly<{
@@ -521,24 +563,36 @@ function MachineSetupAttention(
     () => (domainRef?.kind === 'machineSetup' ? projectMachineSetupStepChecklist(domainRef, (label) => localize('', label)) : null),
     [domainRef, localize],
   );
-  const [expandedIds, setExpandedIds] = React.useState<readonly string[]>([]);
-  const toggleExpanded = React.useCallback((id: string) => {
-    setExpandedIds((current) => (current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]));
-  }, []);
   if (setup.operationId) {
     const operationId = setup.operationId;
     const open = () => openActionOperationDetail({ serverId: props.serverId, operationId });
-    if (steps && operations.length > 0) {
+    if (steps && domainRef?.kind === 'machineSetup' && operations.length > 0) {
+      const operation = operations[0];
+      // What needs the person leads the card, once: the Machine's password question while it waits, or where it stopped.
+      const sudoPrompt = readActionOperationSudoPrompt(operation.snapshot);
+      const stopped = isActionOperationTerminal(operation.snapshot.state)
+        ? steps.items.find((item) => steps.executionById[item.id]?.status === 'error') ?? null
+        : null;
+      const stoppedTitle = stopped && typeof stopped.title === 'string' ? stopped.title : null;
       return (
         <ItemGroup surface="none" testID="machine-setup-operation" title={t('machinePresets.setup.tab.applying')}>
-          <PlanChecklistCard
+          {sudoPrompt ? (
+            <ActionOperationSudoQuestion key={sudoPrompt.id} operation={operation} />
+          ) : stoppedTitle ? (
+            <MachineSetupStoppedNotice
+              serverId={props.serverId}
+              operation={operation.snapshot}
+              step={stoppedTitle}
+              cause={typeof stopped?.subtitle === 'string' ? stopped.subtitle : undefined}
+              onRetry={props.editable ? () => { void setup.prepare({ kind: 'reapply' }); } : null}
+            />
+          ) : null}
+          <MachineSetupStepsChecklist
             testID="machine-setup-steps"
-            phase="execute"
-            items={steps.items}
-            selectedIds={steps.selectedIds}
-            executionById={steps.executionById}
-            expandedIds={expandedIds}
-            onToggleExpanded={toggleExpanded}
+            title={null}
+            operation={operation}
+            attachment={domainRef}
+            stepOutput
             header={<ActionOperationRows operations={operations} showDivider
               onOpenOperation={(operation) => openActionOperationDetail({ serverId: operation.serverId, operationId: operation.snapshot.operationId })} />}
           />
@@ -891,7 +945,7 @@ function AttachedPresetRow(
                 testID={`machine-setup-source-again:${props.sourceKey}`}
                 size="small"
                 display="secondary"
-                title={t('machinePresets.setup.tab.applyAgain')}
+                title={t('machinePresets.setup.tab.reviewChanges')}
                 disabled={props.busy}
                 onPress={() => props.onApplyAgain(newer)}
               />

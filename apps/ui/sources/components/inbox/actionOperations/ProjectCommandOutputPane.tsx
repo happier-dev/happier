@@ -38,6 +38,8 @@ export const ProjectCommandOutputPane = React.memo(
       onOpenDetail?: () => void;
       /** Opens this output as its host's bottom terminal tab (desktop); preferred over the detail. */
       onOpenInTerminal?: () => void;
+      /** One reviewed step's own retained terminal (a Machine Setup row), instead of the operation's latest. */
+      terminalId?: string;
     }>,
   ) {
     const execute = React.useMemo(() => createFrontDoorActionExecute(), []);
@@ -64,7 +66,11 @@ export const ProjectCommandOutputPane = React.memo(
         setCopying(false);
       }
     };
-    const attachment = readActionOperationOutputAttachment(props.operation.snapshot);
+    const operationAttachment = readActionOperationOutputAttachment(props.operation.snapshot);
+    const attachment = React.useMemo(
+      () => (operationAttachment && props.terminalId ? { ...operationAttachment, terminalId: props.terminalId } : operationAttachment),
+      [operationAttachment, props.terminalId],
+    );
     const machine = useServerScopedMachine(
       attachment?.serverId ?? null,
       attachment?.machineId ?? '',
@@ -124,7 +130,7 @@ export const ProjectCommandOutputPane = React.memo(
         ]}
       >
         <WorkspaceEmbeddedTerminalPane
-          scopeId={`project-command:${attachment.serverId}:${props.operation.snapshot.operationId}`}
+          scopeId={`project-command:${attachment.serverId}:${props.operation.snapshot.operationId}${props.terminalId ? `:${props.terminalId}` : ''}`}
           workspaceRefId={attachment.kind === 'projectCommand' ? attachment.workspaceRefId : undefined}
           machineId={attachment.machineId}
           serverId={attachment.serverId}

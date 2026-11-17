@@ -138,6 +138,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     rowHovered: {
         backgroundColor: theme.colors.surface.inset,
     },
+    rowNeedsAttention: {
+        backgroundColor: theme.colors.state.attention.background,
+    },
     rowContent: {
         flex: 1,
         minWidth: 0,
@@ -217,6 +220,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         ...Typography.variant('meta', 'semiBold'),
     },
+    statusLabelNeedsAttention: {
+        color: theme.colors.state.attention.textForeground,
+    },
     badge: {
         paddingHorizontal: theme.space.s10,
         paddingVertical: theme.space.s4,
@@ -289,7 +295,9 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
     const styles = stylesheet;
     const [hovered, setHovered] = React.useState(false);
     const status = getRowStatus(props.item, props.phase, props.selected, props.execution);
-    const statusLabel = props.phase === 'execute' ? getStatusLabel(status) : null;
+    // A run waiting on the person at this row says so in its place; the question itself is asked once, by the caller.
+    const needsAttention = props.phase === 'execute' && props.item.needsAttention === true;
+    const statusLabel = props.phase === 'execute' ? (needsAttention ? t('inbox.needsYou') : getStatusLabel(status)) : null;
     const suppressRepeatedDetails = shouldSuppressDetailsSummary(props.item);
     const itemRenderDetails: (() => React.ReactNode) | undefined = React.useMemo(() => {
         if (suppressRepeatedDetails) {
@@ -367,6 +375,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
             <Pressable
                 testID={props.testID}
                 accessibilityRole={rowOnPress ? 'button' : undefined}
+                accessibilityState={{ busy: props.phase === 'execute' && status === 'running' }}
                 disabled={!rowOnPress}
                 onPress={rowOnPress}
                 style={({ pressed }) => ([
@@ -377,6 +386,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                     hovered && !props.selected && rowOnPress ? styles.rowHovered : null,
                     pressed && rowOnPress ? { backgroundColor: theme.colors.surface.pressed } : null,
                     dimRow ? styles.rowDisabled : null,
+                    needsAttention ? styles.rowNeedsAttention : null,
                 ])}
             >
                 <View style={[
@@ -405,7 +415,10 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                             stateGlyph={status === 'done' || status === 'error' ? <Icon name={status === 'done' ? 'check' : 'x'} size={12}
                                 color={theme.colors.state[status === 'done' ? 'success' : 'danger'].foreground} /> : undefined}
                         /> : <View testID={statusSlotTestID} style={styles.iconBoxBase}>
-                            {status === 'running' ? (
+                            {needsAttention ? (
+                                <Icon name="radio-button" size={usesCompactNestedRow ? 16 : (usesOnboardingVariant ? 18 : 16)}
+                                    color={theme.colors.state.attention.foreground} />
+                            ) : status === 'running' ? (
                                 <ActivitySpinner
                                     size={usesCompactNestedRow ? 16 : (usesOnboardingVariant ? 18 : 16)}
                                     color={usesOnboardingVariant ? theme.colors.text.secondary : theme.colors.accent.blue}
@@ -451,7 +464,7 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
 
                 <View style={[styles.trailing, usesOnboardingVariant ? styles.trailingOnboarding : null]}>
                     {statusLabel ? (
-                        <Text style={styles.statusLabel}>{statusLabel}</Text>
+                        <Text style={[styles.statusLabel, needsAttention ? styles.statusLabelNeedsAttention : null]}>{statusLabel}</Text>
                     ) : null}
                     {props.item.badge && shouldRenderBadge(statusLabel, props.item.badge) ? (
                         <View style={styles.badge}>

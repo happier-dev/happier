@@ -37,6 +37,8 @@ export type PlanChecklistItem = Readonly<{
   defaultSelected?: boolean;
   selected?: boolean;
   badge?: ReactNode;
+  /** The run waits on the person at this row (a password, a choice); the host marks it "Needs you". */
+  needsAttention?: boolean;
   children?: readonly PlanChecklistItem[];
   renderDetails?: () => ReactNode;
   details?: ReactNode | (() => ReactNode);
