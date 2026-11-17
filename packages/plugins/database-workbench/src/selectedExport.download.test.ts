@@ -27,7 +27,7 @@ async function fixture(publicationError = false) {
     const plugin = definePlugin({ id: 'happier.database', version: '0.0.0', actions: createDatabaseActions({}) });
     const host = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { fs: {
         prepareDownload, observeMachinePath: unavailable, readFile: unavailable, writeFile: unavailable,
-        stat: unavailable, list: unavailable, remove: unavailable,
+        stat: unavailable, list: unavailable, remove: unavailable, getPluginDataDirectory: unavailable,
     } } });
     return { host, plugin, prepareDownload };
 }

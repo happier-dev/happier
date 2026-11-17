@@ -7,12 +7,12 @@ import { WORKBENCH_RAIL_RENDERER_ID, WORKBENCH_RAIL_ARTIFACT_ID } from './surfac
 
 it('publishes Database and Insights rail and details destinations through the committed rail renderer', () => {
     const ui = PLUGIN_MANIFEST.contributes.ui;
-    expect(ui?.renderers.find(renderer => renderer.id === WORKBENCH_RAIL_RENDERER_ID)).toMatchObject({
+    expect(ui?.renderers?.find(renderer => renderer.id === WORKBENCH_RAIL_RENDERER_ID)).toMatchObject({
         kind: 'reactNative', artifact: WORKBENCH_RAIL_ARTIFACT_ID,
     });
     for (const kind of ['session', 'project']) {
         for (const name of ['database', 'insights']) {
-            const destinations = ui?.views.filter(view => view.target.kind === kind
+            const destinations = ui?.views?.filter(view => view.target.kind === kind
                 && view.id.startsWith(`${name}-${kind}-`)) ?? [];
             expect(destinations.map(view => view.container).sort()).toEqual(['detailsPane', 'rightSidebarTab']);
             expect(destinations.every(view => view.renderer === WORKBENCH_RAIL_RENDERER_ID)).toBe(true);

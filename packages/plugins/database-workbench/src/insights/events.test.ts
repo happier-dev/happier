@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readAutomationEventSubjectKindsV1 } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
+import { PluginEventAutomationDeclarationV1Schema, readAutomationEventSubjectKindsV1 } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
 import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { decideDatabaseAccessV1 } from '@happier-dev/databases';
 import { createPluginTestkit, createTestResourceInvocationContext, type PluginTestServicesFixture } from '@happier-dev/plugin-sdk/testing';
@@ -16,7 +16,7 @@ async function fixture(native: Awaited<ReturnType<typeof createNativeFindingFixt
     const { resolve } = native;
     const unusedSecret = async (): Promise<never> => { throw new Error('The SQLite fixture already owns its selected path'); };
     const resourceContext = createTestResourceInvocationContext({ ...invocation, requesterAccount: { accountId: 'alice' },
-        secrets: { readSavedSecret: unusedSecret, saveShared: unusedSecret, status: unusedSecret, get: unusedSecret, set: unusedSecret, delete: unusedSecret },
+        secrets: { readSavedSecret: unusedSecret },
         context: { kind: 'surface', mountInstanceKey: 'fixture', launchInput: { operation: 'describe', target } } });
     const producer = held ? await createDatabaseConnectionResourceRuntime({ resolve }).createProducer!(resourceContext) : undefined;
     const runtime = createDatabaseRuntime({ resolve, async admit({ access }) {
@@ -50,7 +50,7 @@ describe('native completed observation admission', () => {
             ]));
             const event = nativePlugin.manifest.contributes.events?.find(row => row.id === DATABASE_FINDING_EVENT_REF.localId);
             // Resource trigger authoring consumes this owner result, not the payload's subject field.
-            expect(readAutomationEventSubjectKindsV1(event?.automation)).toEqual(['database']);
+            expect(readAutomationEventSubjectKindsV1(PluginEventAutomationDeclarationV1Schema.parse(event?.automation))).toEqual(['database']);
         } finally { await kit.dispose(); }
     });
 

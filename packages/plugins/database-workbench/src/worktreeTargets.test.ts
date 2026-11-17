@@ -43,7 +43,7 @@ it('discovers the selected launched service from prepared originals, isolates cu
         expect(retained).toMatchObject({ kind: 'replace' });
         const list = (selectedScope: typeof scope = scope) => kit.invokeAction(databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1),
             { scope: selectedScope }, identity);
-        expect(await list()).toMatchObject({ targets: [{ engine: 'postgresql', target: { kind: 'worktree', ...scope,
+        expect(await list()).toMatchObject({ targets: [{ engine: 'postgresql', target: { ...scope,
             source: { kind: 'service', serviceId: 'postgres', variable: 'CUSTOM_DATABASE' } } }], completeness: { complete: true } });
         expect(JSON.stringify(await list())).not.toContain('private-selected');
         expect(JSON.stringify(await list())).not.toContain(original);
@@ -101,7 +101,10 @@ it('resolves the discovered service original into a native operation and withdra
         const listed = await targets.list(request);
         expect(listed.targets).toHaveLength(1);
         const target = listed.targets[0]!.target;
-        const input = { operation: 'statement.run', target, mode: 'read', statement: { sql: 'SELECT label FROM selected', parameters: [] } } as const;
+        const input = {
+            operation: 'statement.run', target, mode: 'read',
+            statement: { sql: 'SELECT label FROM selected', parameters: [] },
+        } satisfies Parameters<typeof targets.resolve>[0]['input'];
         const resolved = await targets.resolve({ identity, storage: emptyStorage, requester: 'person', input, access: 'read' });
         connection = resolved.connection;
         expect(resolved.descriptor).toEqual(listed.targets[0]);

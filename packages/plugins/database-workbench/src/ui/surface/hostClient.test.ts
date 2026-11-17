@@ -3,45 +3,71 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { DatabaseOperationInputV1Schema, type DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
+import { DATABASE_CONNECTION_RESOURCE_ID_V1, DatabaseOperationInputV1Schema, type DatabaseDescriptorV1, type DatabaseSelectedRowsExportInputV1 } from '@happier-dev/database-protocol';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import { computeSha256HexDigest, PluginError } from '@happier-dev/plugin-sdk';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
-import type { PluginUiHostApi, ResourceContent, ResourceSubscriptionEvent } from '@happier-dev/plugin-sdk/ui';
+import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiSemanticSurfaceAdapter, type PluginUiTestkitHostHandlers } from '@happier-dev/plugin-sdk/testing';
+import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import type { PluginUiHostApi, ResourceContent } from '@happier-dev/plugin-sdk/ui';
 import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
 import { createHostWorkbenchClient } from './hostClient.js';
 import { createWorkbenchInstance } from '../workbench.js';
 import { createDatabaseConnectionResourceRuntime } from '../../resources.js';
 import { openManualDatabaseConnection } from '../../connection.js';
 
+const adapter: PluginUiSemanticSurfaceAdapter<null> = { async mount() { return {
+  async snapshot() { return { revision: 1, nodes: [] }; }, async update() {}, async invoke() {}, async dispose() {},
+}; } };
+
+function createHostFixture(instanceId: string, handlers: PluginUiTestkitHostHandlers = {}) {
+  return createPluginUiTestkit({
+    identity: { instanceId, mountNonce: 'workbench-test' },
+    authorPlugin: { id: 'happier.database', version: '0.0.0' },
+    surface: null, surfaceContext: createSurfaceContextFixture(), adapter, handlers,
+  });
+}
+
 it('saves an export through the host download owner and the export download Action, with the rows and completeness it was given', async () => {
-  const downloadFile = vi.fn(async () => ({ success: true as const, status: 'completed' as const, transferId: 't1',
-    destinationId: 'd1', name: 'invoices.csv', sizeBytes: 32, sha256: 'a'.repeat(64) }));
-  const client = createHostWorkbenchClient({ downloadFile } as unknown as PluginUiHostApi, { pageLocation: false });
-  const result = { columns: [{ name: 'id', nativeType: 'int8', semanticType: 'integer' as const, nullable: false }],
-    rows: [{ cells: [{ type: 'integer' as const, value: '48212' }] }], completeness: { complete: false as const,
-      continuation: { kind: 'offset' as const, binding: { target: createDatabaseDescriptorV1Fixture().target,
-        relation: { schema: 'public', name: 'invoices' }, columns: [], order: [] }, offset: 1 } } };
-  await expect(client.saveExport({ format: 'csv', result })).resolves.toMatchObject({ success: true, status: 'completed' });
-  expect(downloadFile).toHaveBeenCalledTimes(1);
-  const [request] = downloadFile.mock.calls[0] as unknown as [{ action: unknown; input: { format: string; result: { completeness: { complete: boolean } } } }];
-  // The host fills the destination; the plugin names the Action and hands over exactly what it serializes.
-  expect(request.action).toEqual({ pluginId: 'happier.database', localId: 'rows/export-download' });
-  expect(request.input).not.toHaveProperty('destination');
-  expect(request.input.format).toBe('csv');
-  expect(request.input.result.completeness.complete).toBe(false);
+  const downloadFile = vi.fn<NonNullable<PluginUiTestkitHostHandlers['downloadFile']>>(async () => ({
+    success: true, status: 'completed', transferId: 't1', destinationId: 'd1', name: 'invoices.csv', sizeBytes: 32, sha256: 'a'.repeat(64),
+  }));
+  const fixture = await createHostFixture('save-export', { downloadFile });
+  try {
+    const client = createHostWorkbenchClient(fixture.context.hostApi, { pageLocation: false });
+    const result: DatabaseSelectedRowsExportInputV1['result'] = {
+      columns: [{ name: 'id', nativeType: 'int8', semanticType: 'integer', nullable: false }],
+      rows: [{ cells: [{ type: 'integer', value: '48212' }] }],
+      completeness: { complete: false, reason: 'page', continuation: { kind: 'offset',
+        binding: { target: createDatabaseDescriptorV1Fixture().target,
+          relation: { schema: 'public', name: 'invoices' }, columns: [], order: [] }, offset: 1 } },
+    };
+    await expect(client.saveExport({ format: 'csv', result })).resolves.toMatchObject({ success: true, status: 'completed' });
+    expect(downloadFile).toHaveBeenCalledTimes(1);
+    const [{ request }] = downloadFile.mock.calls[0]!;
+    // The host fills the destination; the plugin names the Action and hands over exactly what it serializes.
+    expect(request.action).toEqual({ pluginId: 'happier.database', localId: 'rows/export-download' });
+    expect(request.input).not.toHaveProperty('destination');
+    expect(request.input).toMatchObject({ format: 'csv', result: { completeness: { complete: false } } });
+  } finally { await fixture.dispose(); }
 });
 
 it('preserves demand admission refusal without reconnecting through an ordinary Action', async () => {
-  const unavailable = () => { throw new Error('A refused demand never falls back to another read path'); };
-  const host = { readResource: unavailable, executeAction: unavailable,
-    watchResource: async () => { throw new PluginError({ code: 'database_read_unavailable' }); } };
-  const client = createHostWorkbenchClient(host as PluginUiHostApi, { pageLocation: false });
+  const unavailable = vi.fn(() => { throw new Error('A refused demand never falls back to another read path'); });
+  const fixture = await createHostFixture('refused-demand', { readResource: unavailable, executeAction: unavailable });
+  const client = createHostWorkbenchClient({
+    ...fixture.context.hostApi,
+    async watchResource() { throw new PluginError({ code: 'database_read_unavailable' }); },
+  }, { pageLocation: false });
   const release = client.subscribeOwnWrites(() => {});
   try {
     await expect(client.operation({ operation: 'describe', target: createDatabaseDescriptorV1Fixture().target }, new AbortController().signal))
       .rejects.toMatchObject({ code: 'database_read_unavailable' });
-  } finally { release(); }
+    expect(unavailable).not.toHaveBeenCalled();
+  } finally {
+    release();
+    await fixture.dispose();
+  }
 });
 
 it('retains each mounted target demand and refreshes both workbenches from producer revisions only', async () => {
@@ -76,40 +102,50 @@ it('retains each mounted target demand and refreshes both workbenches from produ
     const producer = await runtime.createProducer!(options);
     return { producer, options };
   }));
-  const instances = producers.map(({ producer, options }, index) => {
-    const subscriptionId = `mounted-${index}`;
+  const mounts = await Promise.all(producers.map(async ({ producer, options }, index) => {
+    let subscriptionId: string | undefined;
     const content = async (): Promise<ResourceContent> => {
       reads++;
       const text = String(await producer.read(options));
       return { contentType: 'application/json', digest: `sha256:${computeSha256HexDigest(text)}`, bytes: new TextEncoder().encode(text) };
     };
     // Only the host transport is substituted. Resource producer, SQLite reads, cache and drafts are real.
-    const host = {
-      readResource: async () => await content(),
-      watchResource: async (_resource: unknown, listener: (event: ResourceSubscriptionEvent) => void) => {
+    const fixture = await createHostFixture(`mounted-${index}`, {
+      readResource: content,
+      async watchResource({ signal }) {
         const observation = await producer.observe(async () => {
           const value = await content();
-          listener({ version: 1, kind: 'invalidated', subscriptionId, digest: value.digest });
+          if (!signal.aborted) fixture.invalidateResource(DATABASE_CONNECTION_RESOURCE_ID_V1, value.digest);
         }, options);
-        return { subscriptionId, dispose() { releases++; return observation.dispose(); } };
+        signal.addEventListener('abort', () => { releases++; void observation.dispose(); }, { once: true });
+        return { digest: (await content()).digest };
       },
-      executeAction: async (_action: unknown, operand: unknown) => {
+      async executeAction({ input: operand }) {
         const input = DatabaseOperationInputV1Schema.parse(operand);
+        expect(subscriptionId).toBeDefined();
         expect(input.subscriptionId, 'read invokes the already admitted mounted demand').toBe(subscriptionId);
         readInvocations.push(input.operation);
-        return await producer.invoke!(input, { signal: controllers[index]!.signal });
+        return projectNativeJsonValueForTransport(await producer.invoke!(input, { signal: options.signal }));
       },
       setUnsavedChanges: async () => {},
-      notify: async () => {},
-    } satisfies Pick<PluginUiHostApi, 'readResource' | 'watchResource' | 'setUnsavedChanges' | 'notify'> & {
-      executeAction(action: unknown, operand: unknown): Promise<unknown>;
+    });
+    const hostApi = fixture.context.hostApi;
+    const host: PluginUiHostApi = {
+      ...hostApi,
+      async watchResource(...args) {
+        const handle = await hostApi.watchResource(...args);
+        subscriptionId = handle.subscriptionId;
+        return handle;
+      },
     };
     const targetKey = JSON.stringify(target);
-    return createWorkbenchInstance({ client: createHostWorkbenchClient(host as PluginUiHostApi, { pageLocation: false }),
+    const instance = createWorkbenchInstance({ client: createHostWorkbenchClient(host, { pageLocation: false }),
       scope: { ...target, kind: 'worktree' }, selectedTarget: descriptor,
       location: { targetKey, relation: { schema: 'main', name: 'first' }, mode: 'data', sort: [], columns: ['id', 'label'], page: { rows: 40, offset: 0 }, fkTrail: [] },
       cataloguePageRows: 40, statementRanges: () => [], consoleStorage: () => ({ read: async () => null, write: async () => {} }) });
-  });
+    return { fixture, instance };
+  }));
+  const instances = mounts.map(mount => mount.instance);
   try {
     const pages = instances.flatMap(instance => ['first', 'second'].map(name => instance.page({ ...instance.local.get('location'), relation: { schema: 'main', name } })));
     await Promise.all(pages.map(page => page.demand()));
@@ -139,6 +175,7 @@ it('retains each mounted target demand and refreshes both workbenches from produ
     await vi.waitFor(() => expect(releases).toBe(2));
   } finally {
     instances.forEach(instance => instance.close());
+    await Promise.all(mounts.map(mount => mount.fixture.dispose()));
     controllers.forEach(controller => controller.abort());
     await Promise.all(producers.map(({ producer }) => producer.dispose()));
     await rm(directory, { recursive: true, force: true });
@@ -148,12 +185,20 @@ it('retains each mounted target demand and refreshes both workbenches from produ
 it.each([false, true])('protects staged changes through the host unsaved owner with pageLocation=%s', async pageLocation => {
   const unsaved: boolean[] = [];
   // The mounted host is the external boundary; staging and its lifetime stay real.
-  const host = { setUnsavedChanges: async (value: boolean) => { unsaved.push(value); } } as Pick<PluginUiHostApi, 'setUnsavedChanges'>;
+  const fixture = await createHostFixture('unsaved-changes', { setUnsavedChanges() {} });
+  const hostApi = fixture.context.hostApi;
+  const host: PluginUiHostApi = {
+    ...hostApi,
+    async setUnsavedChanges(isDirty) {
+      await hostApi.setUnsavedChanges(isDirty);
+      unsaved.push(isDirty);
+    },
+  };
   const descriptor = createDatabaseDescriptorV1Fixture();
   const targetKey = JSON.stringify(descriptor.target);
   const relation = { schema: 'public', name: 'items' };
   const instance = createWorkbenchInstance({
-    client: createHostWorkbenchClient(host as PluginUiHostApi, { pageLocation }),
+    client: createHostWorkbenchClient(host, { pageLocation }),
     scope: { kind: 'worktree', accountId: 'account', installationId: 'installation', projectKey: 'project',
       workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/project' } },
     location: { targetKey, relation, mode: 'data', sort: [], columns: [], page: { rows: 40, offset: 0 }, fkTrail: [] },
@@ -168,5 +213,8 @@ it.each([false, true])('protects staged changes through the host unsaved owner w
     await vi.waitFor(() => expect(unsaved).toEqual([true]));
     instance.drafts.discard();
     await vi.waitFor(() => expect(unsaved).toEqual([true, false]));
-  } finally { instance.close(); }
+  } finally {
+    instance.close();
+    await fixture.dispose();
+  }
 });

@@ -12,7 +12,7 @@ it('keeps selected insight demand pending, shares its native read, and distingui
     const held = new Promise<void>(resolve => { release = resolve; });
     const unexpected = async (): Promise<never> => { throw new Error('Insights must use the selected stats Action only'); };
     // Genuine Action transport boundary; the production SQLite query/decoder remains real.
-    const client: WorkbenchClient = { targets: unexpected, access: unexpected,
+    const client: WorkbenchClient = { targets: unexpected, access: unexpected, saveExport: unexpected,
         async operation(input) {
             await held;
             const { connection } = await native.resolve();
