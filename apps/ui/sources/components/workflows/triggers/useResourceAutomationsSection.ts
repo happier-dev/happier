@@ -18,12 +18,19 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import { useAccountWorkflowEditor } from './AccountTriggersSection';
 import { projectAccountTriggerRows, type AccountTriggerRow, type TriggerSubject } from './accountTriggerRows';
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
+import { useWorkflowActionCatalog } from '../presentation/useWorkflowActionCatalog';
+import { useWorkflowTriggerEventOptions } from './useWorkflowTriggerEventOptions';
+import { buildResourceWorkflowTriggerStartOptions, type ResourceWorkflowTriggerStartOption } from './workflowTriggerStarts';
 
 const NO_SHARED_AUDIENCE: readonly PrincipalRefV1[] = [];
 const EMPTY_ROWS: readonly AccountTriggerRow[] = [];
+const EMPTY_WHEN_OPTIONS: readonly ResourceWorkflowTriggerStartOption[] = Object.freeze([]);
 
-export type ResourceAutomationLinkDraft = Readonly<Omit<Extract<Parameters<typeof addWorkflowTrigger>[0], { project: unknown }>,
-    'project' | 'target' | 'workflow'> & { workflow: string }>;
+type ResourceAutomationLinkInput = Exclude<Parameters<typeof addWorkflowTrigger>[0], Readonly<{ observationOnly: unknown }>>;
+export type ResourceAutomationLinkDraft = Readonly<Omit<ResourceAutomationLinkInput,
+    'project' | 'target' | 'workflow' | 'trigger'> & { workflow: string;
+        /** Link authors a new definition; saved revision-bound envelopes are not authoring starts. */
+        trigger: Exclude<ResourceAutomationLinkInput['trigger'], Readonly<{ triggerDefinitionEnvelope: unknown }>> }>;
 export type ResourceAutomationLinkResult =
     | Readonly<{ ok: true; shared: readonly PrincipalRefV1[]; write: WorkflowTriggerWriteResult }>
     | Readonly<{ ok: false; phase: 'declined'; shared: readonly [] }>
@@ -55,6 +62,8 @@ export type ResourceAutomationsSectionRead = Readonly<{
     project: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'> | undefined;
     audience: readonly PrincipalRefV1[] | undefined;
     link: Readonly<{
+        whenOptions: readonly ResourceWorkflowTriggerStartOption[];
+        whenStatus: 'idle' | 'loading' | 'ready' | 'unavailable';
         draft: ResourceAutomationLinkDraft | null;
         setDraft(draft: ResourceAutomationLinkDraft | null): void;
         missingAudience: ReturnType<typeof useDocumentShareController>['missingAudience'];
@@ -94,7 +103,32 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
     const legacyMachineId = legacySubject?.machineId;
     const project = React.useMemo(() => props.executionContext ?? (legacyMachineId ? { machineId: legacyMachineId, directory: '~' } : undefined),
         [props.executionContext, legacyMachineId]);
+    const actionScope = React.useMemo(() => subject?.kind === 'session'
+        ? { kind: 'session' as const, sessionId: subject.sessionId, serverId }
+        : { kind: 'machine' as const, machineId: project?.machineId ?? (subject?.kind === 'machine' ? subject.machineId : null), serverId },
+    [subject?.kind, subject?.kind === 'session' ? subject.sessionId : null,
+        subject?.kind === 'machine' ? subject.machineId : null, project?.machineId, serverId]);
+    const actionCatalog = useWorkflowActionCatalog(actionScope, 'automation', {
+        enabled: demanded && subject !== null, accountLifetime });
+    const eventCatalog = useWorkflowTriggerEventOptions({ machineId: actionCatalog.machineId, serverId: serverId ?? null,
+        enabled: demanded && subject !== null && accountLifetime !== null, accountLifetime });
+    const whenStatus = !demanded || !subject || accountLifetime === null ? 'idle'
+        : actionCatalog.phase === 'error' || actionCatalog.phase === 'unsupported' || eventCatalog.status === 'unavailable' ? 'unavailable'
+            : eventCatalog.status === 'idle' ? 'idle'
+                : actionCatalog.phase === 'ready' && eventCatalog.status === 'ready' ? 'ready' : 'loading';
+    const whenOptions = React.useMemo(() => whenStatus === 'ready' && subject
+        ? buildResourceWorkflowTriggerStartOptions({ subject, actions: actionCatalog.specs,
+            events: eventCatalog.events, machineId: actionCatalog.machineId }) : EMPTY_WHEN_OPTIONS,
+    [whenStatus, subject, actionCatalog.specs, eventCatalog.events, actionCatalog.machineId]);
     const [linkDraft, setLinkDraft] = React.useState<ResourceAutomationLinkDraft | null>(null);
+    const setDraft = React.useCallback((draft: ResourceAutomationLinkDraft | null) => {
+        // This flow links an Automation to the selected resource. Source setup supplies
+        // its configuration; the resource section supplies the authored subject once.
+        setLinkDraft(draft && subject && (draft.trigger.kind === 'pluginEvent'
+            || (draft.trigger.kind === 'action' && !('consentFor' in draft.trigger)))
+            ? { ...draft, trigger: { ...draft.trigger, subject } } : draft);
+    }, [subject]);
+
     const machineId = subject?.kind === 'machine' ? subject.machineId : '';
     const machineSubject = subject?.kind === 'machine';
     const machineSharing = useMachineShareController({ machineId,
@@ -113,8 +147,8 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
             ? await review.shareMissingAudience() : { ok: true, shared: NO_SHARED_AUDIENCE };
         if (!sharing.ok) return { ...sharing, phase: 'sharing' };
         try {
-            if (!linkDraft || !project) throw new WorkflowActionError({ message: 'source_unavailable', rawCode: 'source_unavailable' });
-            const write = await editor.add({ ...linkDraft, project }, binding);
+            if (!linkDraft) throw new WorkflowActionError({ message: 'source_unavailable', rawCode: 'source_unavailable' });
+            const write = await editor.add({ ...linkDraft, ...(project ? { project } : {}) }, binding);
             return { ok: true, shared: sharing.shared, write };
         } catch (error) {
             return { ok: false, phase: 'link', shared: sharing.shared, error };
@@ -124,9 +158,9 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
     const reviewIssue = machineSubject ? machineSharing.issue ?? review.issue : review.issue;
     const reviewLoading = review.loading || (machineSubject && linkDraft !== null && machineSharing.loading);
     const retryReview = machineSubject && machineSharing.issue ? machineSharing.retryContent : review.retryContent;
-    const link = React.useMemo(() => ({ draft: linkDraft, setDraft: setLinkDraft,
+    const link = React.useMemo(() => ({ whenOptions, whenStatus, draft: linkDraft, setDraft,
         missingAudience, issue: reviewIssue, loading: reviewLoading,
         retryReview, submit: submitLink }),
-    [linkDraft, missingAudience, reviewIssue, reviewLoading, retryReview, submitLink]);
+    [whenOptions, whenStatus, linkDraft, setDraft, missingAudience, reviewIssue, reviewLoading, retryReview, submitLink]);
     return { accountLifetime, read, editor, rows, also, skippedNotSharedCount: read.attachedPage?.skippedNotSharedCount ?? 0, project, audience, link };
 }

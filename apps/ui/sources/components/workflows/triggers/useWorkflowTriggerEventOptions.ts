@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
-import { acquireDaemonMergedWorkflowEventCatalog, readCachedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { acquireDaemonMergedWorkflowEventCatalog, readCachedDaemonMergedProjectionCacheEntry, readObservedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import type { WorkflowEventsListOutputV1 } from '@happier-dev/protocol/actions/specs/workflowEvents';
 import {
   readEligibleEventPluginName,
@@ -9,6 +9,8 @@ import {
 } from '@/components/automations/editor/pluginEventAutomationEventPresentation';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { PLUGIN_EVENT_AUTOMATION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
+
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 import type { WorkflowTriggerEventOption } from './workflowTriggerStarts';
 
@@ -24,6 +26,7 @@ export function useWorkflowTriggerEventOptions(
     machineId: string | null;
     serverId: string | null;
     enabled: boolean;
+    accountLifetime?: ServerAccountScopeLifetime | null;
   }>,
 ): Readonly<{
   status: 'idle' | 'loading' | 'ready' | 'unavailable';
@@ -31,15 +34,19 @@ export function useWorkflowTriggerEventOptions(
 }> {
   const projection = useDaemonMergedProjectionInputs({
     machineId: params.machineId,
+    accountLifetime: params.accountLifetime,
     serverId: params.serverId,
     enabled: params.enabled && params.machineId !== null,
     sections: PLUGIN_EVENT_AUTOMATION_SECTIONS,
   });
   const ready = projection.phase === 'ready' ? projection.inputs : null;
   const target = React.useMemo(() => params.enabled && projection.phase === 'ready'
-    ? readCachedDaemonMergedProjectionCacheEntry({ machineId: params.machineId, serverId: params.serverId,
-      sections: PLUGIN_EVENT_AUTOMATION_SECTIONS }) : null,
-  [params.enabled, params.machineId, params.serverId, projection.phase, projection.inputs]);
+    ? params.accountLifetime === undefined
+      ? readCachedDaemonMergedProjectionCacheEntry({ machineId: params.machineId, serverId: params.serverId, sections: PLUGIN_EVENT_AUTOMATION_SECTIONS })
+      : readObservedDaemonMergedProjectionCacheEntry({ machineId: params.machineId, serverId: params.serverId, accountLifetime: params.accountLifetime,
+        sections: PLUGIN_EVENT_AUTOMATION_SECTIONS })
+    : null,
+  [params.enabled, params.machineId, params.serverId, params.accountLifetime, projection.phase, projection.inputs]);
   const [catalog, setCatalog] = React.useState<Readonly<{
     target: typeof target;
     status: 'ready' | 'unavailable';
@@ -69,6 +76,7 @@ export function useWorkflowTriggerEventOptions(
         localId: entry.event.identity.localId,
       },
       title: readEligibleEventPresentation(entry, localize).title,
+      automation: entry.event.automation,
       pluginName: readEligibleEventPluginName(
         ready,
         entry.event.identity.pluginId,

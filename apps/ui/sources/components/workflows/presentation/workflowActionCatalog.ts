@@ -25,6 +25,9 @@ export type WorkflowActionSpec = Readonly<Pick<ActionSpec, 'title' | 'descriptio
     plugin?: Readonly<{ id: string; title: string; icon?: string }>;
     /** Before/after selection consumes the invocation declaration's own subject metadata. */
     subjectKind?: ReturnType<typeof readPluginActionApprovalScopeSubjectKindV1>;
+    /** Public discovery facts; potential operands do not grant management permission. */
+    automation?: ActionDiscoveryDefinitionSummaryV1['automation'];
+    approvalScope?: ActionDiscoveryDefinitionSummaryV1['approvalScope'];
 }>;
 
 /** Resolve an authored id without replacing it when the current catalog lacks it. */
@@ -45,14 +48,18 @@ function projectWorkflowAction(read: () => WorkflowActionSpec, unavailable: () =
 }
 
 export function projectWorkflowHostActionSpecs(specs: readonly ActionSpec[], selected?: ReadonlySet<string>,
-    purpose: WorkflowActionCatalogPurpose = 'workflowStep'): WorkflowActionSpec[] {
+    purpose: WorkflowActionCatalogPurpose = 'workflowStep',
+    discovery?: ReadonlyMap<string, ActionDiscoveryDefinitionSummaryV1>): WorkflowActionSpec[] {
     // Without discovery, the host catalog's own projection decides before/after eligibility.
     const offered = selected ? (spec: ActionSpec) => selected.has(spec.id)
         : purpose === 'workflowStep' ? isWorkflowStepActionSpecV1
-            : (spec: ActionSpec) => serializeActionSpec(spec, { includeOutputSchema: false }).automation?.[purpose] === true;
+            : (spec: ActionSpec) => offersActionForPurpose(serializeActionSpec(spec, { includeOutputSchema: false }), purpose);
     return specs.filter(offered)
         .map(spec => {
+            const automation = discovery ? discovery.get(spec.id)?.automation
+                : purpose === 'workflowStep' ? undefined : serializeActionSpec(spec, { includeOutputSchema: false }).automation;
             const presentation = { id: spec.id, title: resolveWorkflowActionTitle(spec.id, spec),
+            ...(automation === undefined ? {} : { automation }),
             ...resolveHostActionPickerPresentation(spec.id),
             ...(spec.description === undefined ? {} : { description: resolveWorkflowActionDescription(spec.id, spec) }) };
             return projectWorkflowAction(() => {
@@ -63,14 +70,20 @@ export function projectWorkflowHostActionSpecs(specs: readonly ActionSpec[], sel
 }
 
 /** What an Action is offered for: a workflow step, or a trigger before or after it (the discovery owner's `automation` choices). */
-export type WorkflowActionCatalogPurpose = 'workflowStep' | 'before' | 'after';
+export type WorkflowActionCatalogPurpose = 'workflowStep' | 'before' | 'after' | 'automation';
+
+function offersActionForPurpose(spec: ActionDiscoveryDefinitionSummaryV1, purpose: WorkflowActionCatalogPurpose): boolean {
+    return purpose === 'automation' ? spec.automation?.before === true || spec.automation?.after === true
+        : spec.automation?.[purpose] === true;
+}
 
 export function listWorkflowStepActionSpecs(projection?: PluginProjectionV2 | null, presentation?: PluginUiProjectionModel | null,
     localize?: PluginLocalizedTextResolver, discovery?: readonly ActionDiscoveryDefinitionSummaryV1[],
     purpose: WorkflowActionCatalogPurpose = 'workflowStep'): readonly WorkflowActionSpec[] {
     const selected = discovery === undefined ? undefined : new Set(discovery
-        .filter(spec => spec.automation?.[purpose] === true).map(spec => spec.id));
-    const host = projectWorkflowHostActionSpecs(listActionSpecs(), selected, purpose);
+        .filter(spec => offersActionForPurpose(spec, purpose)).map(spec => spec.id));
+    const discovered = discovery === undefined ? undefined : new Map(discovery.map(spec => [spec.id, spec]));
+    const host = projectWorkflowHostActionSpecs(listActionSpecs(), selected, purpose, discovered);
     const subjectKinds = purpose === 'workflowStep' ? [] : Object.values(presentation?.subjectKindsById ?? {});
     const contributed = Object.entries(projection?.actionsById ?? {}).flatMap(([key, action]): WorkflowActionSpec[] => {
         const identity = parseQualifiedPluginContributionKey(key);
@@ -81,7 +94,11 @@ export function listWorkflowStepActionSpecs(projection?: PluginProjectionV2 | nu
         // Before/after eligibility of a contributed Action is known only from discovery.
         if (selected ? !selected.has(actionId) : purpose !== 'workflowStep' || action.available === false
             || action.execution.target !== 'daemon' || !action.surfaces.includes('agent')) return [];
+        const declaration = discovered?.get(actionId);
+        const automation = declaration?.automation;
         const present = (resolved: ResolvedPluginProjectedActionPresentation): WorkflowActionSpec => ({ id: actionId, title: resolved.title,
+            ...(automation === undefined ? {} : { automation }),
+            ...(declaration?.approvalScope === undefined ? {} : { approvalScope: declaration.approvalScope }),
             ...(purpose === 'workflowStep' ? {} : { subjectKind: readPluginActionApprovalScopeSubjectKindV1({
                 declaration: action.approvalScope, pluginId: action.pluginId, subjectKinds }) }),
             plugin: { id: action.pluginId, title: projection?.installedPackagesById?.[action.pluginId]?.displayName ?? t('workflows.plugins.fromPlugins'),

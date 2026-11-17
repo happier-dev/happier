@@ -1,3 +1,6 @@
+import { readAutomationEventSubjectKindsV1, type PluginEventAutomationDeclarationV1 } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
+import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import type { WorkflowActionSpec } from '../presentation/workflowActionCatalog';
 import type { AutomationTriggerId } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -43,7 +46,59 @@ export type WorkflowTriggerEventOption = Readonly<{
     title: string;
     /** The plugin's name: the Event's group in the menu. */
     pluginName: string;
+    /** The public Event declaration owns which resource kinds it can observe. */
+    automation?: PluginEventAutomationDeclarationV1;
 }>;
+
+/** A resource Link chooses an ordinary trigger start; Event setup stays with the Event editor. */
+export type ResourceWorkflowTriggerStartOption = Readonly<{
+    id: string;
+    label: string;
+    subject: AutomationSubjectV1;
+}> & (Readonly<{ relation: 'before' | 'after'; setupRequired: false;
+        when: Extract<TriggerWhenValue, { kind: 'action' }>;
+        trigger: Extract<TriggerWhenValue, { kind: 'action' }> & Readonly<{ enabled: boolean }> }>
+    | Readonly<{ relation: 'event'; setupRequired: true;
+        when: Extract<TriggerWhenValue, { kind: 'pluginEvent' }>;
+        trigger: null; eventSeed: PluginUiOpenAutomationEventRequestV1 }>);
+
+export function buildResourceWorkflowTriggerStartOptions(params: Readonly<{
+    subject: AutomationSubjectV1;
+    actions: readonly WorkflowActionSpec[];
+    events: readonly WorkflowTriggerEventOption[];
+    machineId: string | null;
+}>): readonly ResourceWorkflowTriggerStartOption[] {
+    const { subject } = params;
+    const options: ResourceWorkflowTriggerStartOption[] = [];
+    for (const action of params.actions) {
+        if (!action.automation?.subjectKinds?.includes(subject.kind)) continue;
+        if (subject.kind === 'plugin') {
+            const kind = action.approvalScope;
+            if (typeof kind !== 'object' || kind.kind !== 'plugin' || action.plugin?.id !== subject.pluginId
+                || kind.subjectKindId !== subject.subjectKindId) continue;
+        }
+        for (const phase of ACTION_PHASES) {
+            if (action.automation[phase] !== true) continue;
+            const start = createWorkflowTriggerStartWhen(actionStartId(phase));
+            if (start?.kind !== 'action') continue;
+            const when = { ...start, actionIds: [action.id], subject };
+            options.push({ id: `${actionStartId(phase)}:${action.id}`, label: action.title,
+                relation: phase, subject, when, setupRequired: false, trigger: { ...when, enabled: true } });
+        }
+    }
+    for (const event of params.events) {
+        if (!readAutomationEventSubjectKindsV1(event.automation).includes(subject.kind)) continue;
+        if (subject.kind === 'plugin' && (event.eventRef.pluginId !== subject.pluginId
+            || !event.automation?.subjects?.some(kind => kind.subjectKindId === subject.subjectKindId))) continue;
+        const id = eventId(event.eventRef);
+        const when = createWorkflowTriggerStartWhen(id);
+        if (when?.kind !== 'pluginEvent') continue;
+        options.push({ id, label: event.title, relation: 'event', subject, when, trigger: null, setupRequired: true,
+            eventSeed: { eventRef: event.eventRef, setupInput: {},
+                ...(params.machineId === null ? {} : { monitoringMachineId: params.machineId }) } });
+    }
+    return options;
+}
 
 /**
  * One way a trigger starts, as every start menu lists it (the When card's **When** select and **Add a

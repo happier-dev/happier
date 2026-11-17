@@ -45,7 +45,7 @@ function releaseEventProjection() {
         protocolVersion: 1, projection, projectionDigest: 'c'.repeat(64), automationEligibleEvents: [{
             event: { id: `${pluginId}/released`, identity: { pluginId, localId: 'released' }, occurrenceId: 'occurrence-a',
                 sourceCustody: { kind: 'development', registeredRootId: 'catalog-root' }, title: 'A release ships', description: null,
-                automation: { v: 1, eligible: true, source: { sourceContractVersion: 1,
+                automation: { v: 1, eligible: true, subjectKinds: ['environment'], source: { sourceContractVersion: 1,
                     supportedObservationTransports: ['checkpointedPull'], sourceConfigSchema: { type: 'object' },
                     setupActionRef: { pluginId, localId: 'setup' } } } },
             setupAction: { id: `${pluginId}/setup`, identity: { pluginId, localId: 'setup' }, occurrenceId: 'occurrence-a',
@@ -104,6 +104,39 @@ describe('useWorkflowActionCatalog', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('reads resource When choices once on demand, including settled Actions and Event setup declarations', async () => {
+        deferred = releaseEventProjection();
+        storage.getState().applySettingsForScope({ serverId, accountId: 'account-a' }, settingsParse({}), 2);
+        const { buildResourceWorkflowTriggerStartOptions } = await import('../triggers/workflowTriggerStarts');
+        const hook = await renderHook((enabled: boolean) => {
+            const catalog = useWorkflowActionCatalog({ kind: 'machine', machineId: 'machine-1', serverId }, 'automation', { enabled });
+            const events = useWorkflowTriggerEventOptions({ machineId: 'machine-1', serverId, enabled });
+            return { catalog, events, choices: buildResourceWorkflowTriggerStartOptions({
+                subject: { kind: 'environment', serverId, environmentId: 'production' },
+                actions: catalog.specs, events: events.events, machineId: 'machine-1' }) };
+        }, { initialProps: false });
+        try {
+            expect(hook.getCurrent().catalog.phase).toBe('idle');
+            expect(hook.getCurrent().choices).toEqual([]);
+            expect(sectionsRead.size).toBe(0);
+            await hook.rerender(true);
+            await vi.waitFor(() => {
+                expect(hook.getCurrent().catalog.phase).toBe('ready');
+                expect(hook.getCurrent().events.status).toBe('ready');
+            });
+            expect(hook.getCurrent().choices).toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: 'action:before:deployments.deploy', setupRequired: false }),
+                expect.objectContaining({ id: 'action:after:deployments.deploy', setupRequired: false }),
+                expect.objectContaining({ id: 'event:acme.deploy/released', setupRequired: true }),
+            ]));
+            const { readCachedDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+            expect(readCachedDaemonMergedProjectionCacheEntry({ machineId: 'machine-1', serverId, sections: PLUGIN_UI_SECTIONS })
+                ?.workflowActionCatalog.current?.readers).toBe(1);
+            await hook.rerender(false);
+            expect(hook.getCurrent().choices).toEqual([]);
+        } finally { await hook.unmount(); }
+    });
+
     it('offers only Actions admitted by the Account discovery read', async () => {
         const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1,
             actions: { 'machines.command.run': { enabled: false } } });
@@ -148,8 +181,9 @@ describe('useWorkflowActionCatalog', () => {
         ]);
         try {
             await vi.waitFor(() => expect(hook.getCurrent().every(catalog => catalog.status === 'ready')).toBe(true));
-            for (const catalog of hook.getCurrent()) expect(catalog.events).toEqual([{
+            for (const catalog of hook.getCurrent()) expect(catalog.events).toMatchObject([{
                 eventRef: { pluginId: 'acme.deploy', localId: 'released' }, title: 'A release ships', pluginName: 'Deploy',
+                automation: { subjectKinds: ['environment'] },
             }]);
             expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
                 && request.payload !== null && typeof request.payload === 'object' && !('sectionRead' in request.payload))).toHaveLength(1);

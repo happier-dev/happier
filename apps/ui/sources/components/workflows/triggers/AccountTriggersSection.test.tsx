@@ -14,7 +14,7 @@ import {
     WorkflowDefinitionArtifactHeaderV1Schema, WorkflowDefinitionArtifactBodyV1Schema} from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { AutomationTriggerDetailSchema} from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import {
-    sealAutomationTriggerDefinitionStoredEnvelopeV1} from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+    createAutomationPluginEventTriggerDefinitionV1, sealAutomationTriggerDefinitionStoredEnvelopeV1} from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { AutomationTriggerIdSchema} from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import {
     type AutomationTriggerDefinitionInput} from '@happier-dev/protocol/automations/automationTriggerDefinition';
@@ -79,6 +79,8 @@ function storedTrigger(automationId: string, id: string, revision: number, value
     if (value.kind === 'runLifecycle') return AutomationTriggerDetailSchema.parse({ ...value, id, revision,
         createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null,
         remainingOccurrences: 1, status: { state: 'waiting', runId: null } });
+    if (value.kind === 'action' && 'triggerDefinitionEnvelope' in value) return AutomationTriggerDetailSchema.parse({
+        ...value, id, revision, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: JSON.stringify(value.triggerDefinitionEnvelope) });
     if (value.kind !== 'pluginEvent') return AutomationTriggerDetailSchema.parse({ ...value, id, revision,
         createdAt: 1, updatedAt: 1, nextRunAt: null, triggerDefinitionEnvelope: null });
     if (!('sourceInstanceId' in value) || value.observationTransport.kind === 'durablePush') throw new Error('Expected plain watcher fixture');
@@ -91,8 +93,7 @@ function storedTrigger(automationId: string, id: string, revision: number, value
         triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
             binding: { v: 1, automationId, triggerId: AutomationTriggerIdSchema.parse(id), triggerRevision: revision,
                 triggerKind: 'pluginEvent', eventRef: value.eventRef, sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(sourceSelectorId) },
-            definition: { v: 1, sourceInstanceId: value.sourceInstanceId, sourceConfig: value.sourceConfig,
-                displayLabel: value.displayLabel, filter: value.filter, maximumObservationAgeMs: value.maximumObservationAgeMs } })) });
+            definition: createAutomationPluginEventTriggerDefinitionV1(value) })) });
 }
 function fixture(legacy = false, triggers = [trigger('t1')]) {
     return WorkflowTriggerSetV1Schema.parse({ automationId: 'digest', revision: 1, enabled: true,
@@ -216,7 +217,7 @@ beforeEach(async () => {
             targetType: null, existingSessionId: null, lastRunAt: null, createdAt: 1, updatedAt: 1,
             executionRecipe: input.executionRecipe, observationOnly: input.observationOnly, assignments: input.assignments?.map(value => ({ ...value,
                 enabled: value.enabled ?? true, priority: value.priority ?? 0, updatedAt: 1 })) ?? [],
-            triggers: input.triggers.map(value => storedTrigger(input.automationId, value.triggerId, 1, value.trigger)) });
+            triggers: input.triggers.map(value => storedTrigger(input.automationId, value.triggerId, 0, value.trigger)) });
         rows = [...rows, row];
         installRow(row.id);
         return { body: row };
@@ -416,30 +417,66 @@ describe('Account Workflow Library and settings', () => {
         expect(reads()).toEqual([]);
         await hook.unmount();
     });
-    it('links a built-in Workflow through the trigger owner without an Artifact grant review', async () => {
+    it.each(['schedule', 'action', 'pluginEvent', 'lifetimeSession'] as const)('links a built-in Workflow through the trigger owner without an Artifact grant review (%s)', async kind => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
         home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
             automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0,
         }) });
-        const hook = await renderHook(() => useResourceAutomationsSection({ serverId,
-            subject: { kind: 'environment', machineId: project.machineId, environmentId: 'source-environment' },
-            sourceAudience: [{ kind: 'account', accountId: 'reader' }],
-        }), { wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider> });
+        if (kind === 'lifetimeSession') storage.getState().applySessions([createSessionFixture({ id: 'session-link', serverId,
+            active: false, encryptionMode: 'plain', metadataLayoutVersion: 1,
+            // Layout 1 shared metadata omits the legacy owner fields in the UI Metadata alias.
+            metadata: { name: 'Session link' } as ReturnType<typeof createSessionFixture>['metadata'],
+            ownerMetadataView: { path: '/repo', host: 'test', homeDir: '/home/test', machineId: project.machineId, flavor: 'claude' } })]);
+        const hook = await renderHook(() => useResourceAutomationsSection(kind === 'lifetimeSession'
+            ? { subject: { kind: 'session', serverId, sessionId: 'session-link' } }
+            : { serverId, subject: { kind: 'environment', machineId: project.machineId, environmentId: 'source-environment' },
+                sourceAudience: [{ kind: 'account', accountId: 'reader' }] }),
+        { wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider> });
         await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
-        await act(async () => hook.getCurrent().link.setDraft({ workflow: 'builtin:review-and-converge',
-            trigger: { kind: 'schedule', enabled: true,
-                schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } } }));
+        const configuredTrigger: AutomationTriggerDefinitionInput = kind === 'schedule' || kind === 'lifetimeSession'
+            ? { kind: 'schedule', enabled: true,
+                schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } }
+            : kind === 'action' ? { kind: 'action', phase: 'after', enabled: true, actionIds: ['deployments.deploy'],
+                filter: { v: 1, all: [{ field: '/outcome', op: 'eq', value: 'failed' }] } }
+                : { kind: 'pluginEvent', enabled: true, eventRef: { pluginId: 'acme.deploy', localId: 'released' },
+                    sourceInstanceId: 'production', sourceContractVersion: 1, sourceConfig: { environment: 'production' },
+                    displayLabel: 'Production', observationTransport: { kind: 'checkpointedPull',
+                        watcherMaterializationRef: { machineId: project.machineId, pluginId: 'acme.deploy', materializationId: 'deploy' } },
+                    filter: null, maximumObservationAgeMs: null };
+        await act(async () => hook.getCurrent().link.setDraft({ workflow: 'builtin:review-and-converge', trigger: configuredTrigger,
+            ...(kind === 'lifetimeSession' ? { lifetimeSession: { sessionId: 'session-link' } } : {}) }));
         expect(hook.getCurrent().link.missingAudience).toEqual([]);
         let outcome: Awaited<ReturnType<ReturnType<typeof useResourceAutomationsSection>['link']['submit']>> | undefined;
         await act(async () => { outcome = await hook.getCurrent().link.submit('accept'); });
+        if (outcome && !outcome.ok && outcome.phase === 'link') throw outcome.error;
         expect(outcome).toMatchObject({ ok: true, shared: [], write: { set: { target: { kind: 'workflow', ref: 'builtin:review-and-converge' } } } });
         expect(rows).toHaveLength(1);
+        const submitted = AutomationDefinitionCreateRequestSchema.parse(home.requests.find(request =>
+            request.method === 'POST' && request.path === '/v3/automations')?.input);
+        if (kind === 'lifetimeSession') {
+            expect(hook.getCurrent().project).toBeUndefined();
+            expect(submitted.scopeSessionId).toBe('session-link');
+        }
+        const submittedTrigger = submitted.triggers[0];
+        if (!submittedTrigger) throw new Error('Expected the actual submitted trigger');
+        if (kind === 'action') {
+            const { openAutomationTriggerDefinitionStoredEnvelopeV1 } = await import('@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent');
+            if (submittedTrigger.trigger.kind !== 'action' || !('triggerDefinitionEnvelope' in submittedTrigger.trigger)) throw new Error('Expected private Action definition');
+            const { enabled: _enabled, ...authored } = configuredTrigger;
+            expect(openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', envelope: submittedTrigger.trigger.triggerDefinitionEnvelope,
+                binding: { v: 1, automationId: submitted.automationId, triggerId: submittedTrigger.triggerId, triggerRevision: 0, triggerKind: 'action' } }))
+                .toMatchObject({ kind: 'available', definition: { ...authored,
+                    subject: { kind: 'environment', serverId, environmentId: 'source-environment' } } });
+        } else if (kind === 'pluginEvent') expect(submittedTrigger.trigger).toMatchObject({ ...configuredTrigger,
+            subject: { kind: 'environment', serverId, environmentId: 'source-environment' } });
+        else expect(submittedTrigger.trigger).toEqual(configuredTrigger);
         expect(home.requests.filter(request => request.path.includes('/access/grants'))).toEqual([]);
         await hook.unmount();
     });
     it('borrows the physical resource Account lifetime and keeps explicit null unavailable', async () => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { useWorkflowActionCatalog } = await import('../presentation/useWorkflowActionCatalog');
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
         const { AutomationSubjectV1Schema } = await import('@happier-dev/protocol/automations/automationSubjectV1');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
@@ -450,13 +487,21 @@ describe('Account Workflow Library and settings', () => {
         home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
             automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0,
         }) });
-        const hook = await renderHook((props: { accountLifetime: import('@/sync/domains/scope/serverAccountScope').ServerAccountScopeLifetime | null }) =>
-            useResourceAutomationsSection({ subject, accountLifetime: props.accountLifetime }), {
+        const hook = await renderHook((props: { accountLifetime: import('@/sync/domains/scope/serverAccountScope').ServerAccountScopeLifetime | null }) => {
+            const section = useResourceAutomationsSection({ subject, accountLifetime: props.accountLifetime });
+            const catalog = useWorkflowActionCatalog({ kind: 'machine', machineId: null, serverId }, 'automation',
+                { accountLifetime: props.accountLifetime });
+            return { ...section, catalogPhase: catalog.phase };
+        }, {
             initialProps: { accountLifetime: physicalAccount },
             wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider>,
         });
         await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
         expect(hook.getCurrent().accountLifetime).toBe(physicalAccount);
+        await waitForHomeGovernance(() => expect(hook.getCurrent().catalogPhase).toBe('ready'));
+        // A successful Action read cannot stand in for the Event catalog: this resource has no monitoring Machine.
+        expect(hook.getCurrent().link.whenStatus).toBe('idle');
+        expect(hook.getCurrent().link.whenOptions).toEqual([]);
         const reads = listRequests().length;
         await hook.rerender({ accountLifetime: null });
         expect(hook.getCurrent().accountLifetime).toBeNull();
@@ -875,7 +920,7 @@ describe('Account Workflow Library and settings', () => {
         expect(screen.findByTestId('workflows-column-trigger-popover-submit')?.props.disabled).toBe(false);
         await screen.pressByTestIdAsync('workflows-column-trigger-popover-submit');
         await waitForHomeGovernance(() => expect(writes()).toHaveLength(1));
-        expect(writes()[0]?.triggers).toEqual([{ kind: 'existing', triggerId: saved.triggers[0]!.id, expectedRevision: 1 }]);
+        expect(writes()[0]?.triggers).toEqual([{ kind: 'existing', triggerId: saved.triggers[0]!.id, expectedRevision: saved.triggers[0]!.revision }]);
         expect(rows[0]?.triggers).toEqual(saved.triggers);
         expect(writtenContext(writes()[0]!)).toMatchObject({ inlineDefinition: { blocks: [{ input: {
             message: { kind: 'literal', value: 'The machine needs attention' },

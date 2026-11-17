@@ -6076,6 +6076,16 @@ omission retains ordinary search paging. The CLI's `actions search` accepts
 choices do not authorize execution. Event pickers use `workflow.events.list`
 rather than interpreting a private daemon projection themselves.
 
+Resource Link reads combine the admitted before/after Action metadata with the
+resource's declared Events through the shared trigger-start owner. Native kinds
+come from `automation.subjectKinds`; plugin kinds match the qualified declaration.
+Completion Actions contribute one After choice; failure is an outcome filter.
+Choices become ready only after both catalogs settle successfully. An Event
+choice carries a setup-required seed for the existing Event editor, rather than
+a fabricated configured source. The resource Link controller binds the selected
+subject to the completed Action or Event trigger before writing, while the
+ordinary trigger owner validates execution Project or Session lifetime.
+
 An Event-triggered Workflow can bind `trigger_event` references to scalar leaves
 of its declared Event payload. Save validates paths with the Event filter's
 scalar-leaf resolver. Create and update may supply `intendedTriggers` for draft
