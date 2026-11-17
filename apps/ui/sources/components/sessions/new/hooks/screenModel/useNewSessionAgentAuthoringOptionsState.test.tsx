@@ -26,6 +26,70 @@ function nativeSelection(agentTargetKey: string, modelId: string, updatedAt: num
 }
 
 describe('useNewSessionAgentAuthoringOptionsState', () => {
+    it.each(['selection', 'target', 'engine'] as const)('resets a stale Team %s intent after switching Agents', async setter => {
+        const codex = 'agent:happier.agent.codex/codex';
+        const pi = 'agent:happier.agent.pi/pi';
+        const selection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 1, ref: {
+            source: 'team_resource', teamId: 'team-a', resourceId: 'muse-share-r1117c',
+            expectedResourceRevision: 0, deliveryMode: 'brokered', agentTargetKey: codex,
+            modelId: 'muse-spark-1.3-contributor',
+        } });
+        const hook = await renderHook(useNewSessionAgentAuthoringOptionsState, { initialProps: {
+            agentType: 'pi', backendTargetKey: pi, hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null,
+        } });
+        const apply = (modelSelection: typeof selection) => act(() => {
+            const state = hook.getCurrent();
+            if (setter === 'selection') state.setModelSelection(modelSelection);
+            else if (setter === 'target') state.setModelSelectionForBackendTarget(pi, modelSelection);
+            else state.setEngineSelectionForBackendTarget(pi, { modelMode: modelSelection.ref.modelId,
+                modelSelection, acpSessionModeId: null, sessionConfigOptionOverrides: null });
+        });
+        try {
+            const valid = SessionModelSelectionV2Schema.parse({ ...selection, ref: { ...selection.ref, agentTargetKey: pi } });
+            apply(valid);
+            expect(hook.getCurrent().modelSelection).toEqual(valid);
+            apply(selection);
+            expect(hook.getCurrent().modelSelection).toBeNull();
+            expect(hook.getCurrent().modelMode).toBe(getAgentCore('pi').model?.defaultMode);
+        } finally { await hook.unmount(); }
+    });
+
+    it.each(['draft', 'remembered'] as const)('resolves Agent switches with a %s Team selection through target defaults', async source => {
+        type Props = Parameters<typeof useNewSessionAgentAuthoringOptionsState>[0];
+        const codex = 'agent:happier.agent.codex/codex';
+        const pi = 'agent:happier.agent.pi/pi';
+        const team = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 1, ref: {
+            source: 'team_resource', teamId: 'team-a', resourceId: 'muse-share-r1117c',
+            expectedResourceRevision: 0, deliveryMode: 'brokered', agentTargetKey: codex,
+            modelId: 'muse-spark-1.3-contributor',
+        } });
+        const props = (target: string, selection: typeof team | ReturnType<typeof nativeSelection>): Props => ({
+            agentType: target === codex ? 'codex' : 'pi', backendTargetKey: target,
+            hydratedTempAuthoringDraft: source === 'draft' ? {
+                agentTarget: { kind: 'agent', identity: { pluginId: target === codex ? 'happier.agent.codex' : 'happier.agent.pi', localId: target === codex ? 'codex' : 'pi' } },
+                modelSelection: selection,
+            } : null,
+            hydratedPersistedAuthoringDraft: null,
+            rememberedEngineSelection: source === 'remembered' ? { v: 1, updatedAt: 1,
+                modelSelection: selection, acpSessionModeId: null, sessionConfigOptionOverrides: null } : null,
+        });
+        // Native control, then the exact Team source/model from r1117c.
+        const hook = await renderHook(useNewSessionAgentAuthoringOptionsState, {
+            initialProps: props(codex, nativeSelection(codex, 'gpt-5.5', 1)),
+        });
+        try {
+            expect(hook.getCurrent().modelMode).toBe('gpt-5.5');
+            await hook.rerender(props(codex, team));
+            expect(hook.getCurrent().modelSelection).toEqual(team);
+            await hook.rerender(props(pi, team));
+            expect(hook.getCurrent().modelSelection).toBeNull();
+            expect(hook.getCurrent().modelMode).toBe(getAgentCore('pi').model?.defaultMode);
+            const valid = SessionModelSelectionV2Schema.parse({ ...team, ref: { ...team.ref, agentTargetKey: pi } });
+            await hook.rerender(props(pi, valid));
+            expect(hook.getCurrent().modelSelection).toEqual(valid);
+        } finally { await hook.unmount(); }
+    });
+
     it('reads pushed Team model defaults without settings writes, retains explicit choices, and honors policy locks', async () => {
         const agentTargetKey = 'agent:happier.agent.claude/claude';
         const scope = createServerAccountScope('home-a', 'member-a')!;

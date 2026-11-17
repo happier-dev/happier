@@ -78,6 +78,18 @@ describe('machine agent projection', () => {
         expect(projectMachineAgentForCredential(agent, { ...selection, credentialBindings: { v: 2, bindingsByServiceId: {
             'acme.agent/anthropic': { source: 'connected', selection: 'profile', profileId: 'missing' },
         } } })?.state).toBe('unknown');
+        // Account inventory may retain services from a different Agent. The exact
+        // selected route's declaration, not those rows, owns native auth replacement.
+        const inventoryWithOtherService = { ...agent, signIn: { ...agent.signIn, connectedServices: [
+            ...agent.signIn.connectedServices, { serviceId: 'happier.agent.muse/muse-account', title: 'Muse',
+                connected: false, healthy: false, profileLabel: null, profiles: [] },
+        ] } };
+        expect(projectMachineAgentForCredential({ ...agent, signIn: { ...agent.signIn,
+            native: { status: 'signedIn', loginSupport: 'login_terminal' }, status: 'signedIn' } },
+            { credentialBindings: null })?.state).toBe('ready');
+        expect(projectMachineAgentForCredential(inventoryWithOtherService, { ...selection,
+            providerRoute: { ...providerRoute, acceptedConnectedServiceIds: [serviceId] },
+        })?.state).toBe('ready');
         expect(projectMachineAgentForCredential(agent, { credentialBindings: null })?.state).toBe('needsSignIn');
         expect(projectMachineAgentForCredential(agent, { ...selection, providerRoute: { ...providerRoute, ready: false } })?.state).toBe('unknown');
         expect(projectMachineAgentForCredential(agent, { ...selection, providerRoute: { ...providerRoute, suppressedConnectedServiceIds: [] } })?.state).toBe('needsSignIn');

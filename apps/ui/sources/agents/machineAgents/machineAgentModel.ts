@@ -88,11 +88,11 @@ export function projectMachineAgentForCredential(agent: MachineAgent | null | un
     if (!agent) return null;
     const suppressedServiceIds = new Set((selection.providerRoute?.ready ? selection.providerRoute.suppressedConnectedServiceIds : [])
         .map(resolveQualifiedConnectedAccountServiceKey).filter((key): key is string => key !== null));
-    const acceptedServiceIds = new Set([
-        ...agent.signIn.connectedServices.map(service => service.serviceId),
-        ...(selection.providerRoute?.acceptedConnectedServiceIds ?? [])
-            .map(resolveQualifiedConnectedAccountServiceKey).filter((key): key is string => key !== null),
-    ]);
+    // The selected route's exact declaration owns accepted services. Inventory
+    // rows can retain an earlier declaration and must not add authentication requirements.
+    const acceptedServiceIds = new Set((selection.providerRoute?.acceptedConnectedServiceIds
+        ?? agent.signIn.connectedServices.map(service => service.serviceId))
+        .map(resolveQualifiedConnectedAccountServiceKey).filter((key): key is string => key !== null));
     // Selected credentials and an admitted Provider route override native policy;
     // the shared execution-state resolver owns native authentication requirements.
     const authenticationRequired = Object.entries(selection.credentialBindings?.bindingsByServiceId ?? {})

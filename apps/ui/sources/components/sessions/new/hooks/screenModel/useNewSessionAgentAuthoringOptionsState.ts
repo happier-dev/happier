@@ -111,6 +111,14 @@ type ResolvedAuthoringModelState = Readonly<{
     modelSelection: SessionModelSelection | null;
 }>;
 
+/** A stale model intent during an Agent switch resolves to that target's default. */
+function resolveTargetModelSelection(selection: SessionModelSelection | null | undefined, agentTargetKey: string): SessionModelSelection | null {
+    if (!selection || !backendTargetKeysMatch(selection.ref.agentTargetKey, agentTargetKey)) return null;
+    return selection.ref.agentTargetKey === agentTargetKey ? selection : SessionModelSelectionSchema.parse({
+        ...selection, ref: { ...selection.ref, agentTargetKey },
+    });
+}
+
 function readDraftModelSelection(params: Readonly<{
     draft: TempAuthoringDraftLike | PersistedAuthoringDraftLike;
     agentTargetKey: string;
@@ -118,21 +126,8 @@ function readDraftModelSelection(params: Readonly<{
     if (!params.draft) return { present: false, selection: null };
     if (params.draft.modelSelection !== undefined) {
         if (params.draft.modelSelection === null) return { present: true, selection: null };
-        const selection = SessionModelSelectionSchema.parse(params.draft.modelSelection);
-        if (!backendTargetKeysMatch(selection.ref.agentTargetKey, params.agentTargetKey)) {
-            throw new Error('Session authoring model selection target mismatch');
-        }
-        return {
-            present: true,
-            // Persisted retired target-key spellings rekey onto the canonical
-            // target so exactly one key spelling flows through authoring state.
-            selection: selection.ref.agentTargetKey === params.agentTargetKey
-                ? selection
-                : SessionModelSelectionSchema.parse({
-                    ...selection,
-                    ref: { ...selection.ref, agentTargetKey: params.agentTargetKey },
-                }),
-        };
+        const selection = resolveTargetModelSelection(SessionModelSelectionSchema.parse(params.draft.modelSelection), params.agentTargetKey);
+        return { present: selection !== null, selection };
     }
     if (typeof params.draft.modelId !== 'string') return { present: false, selection: null };
     const modelId = params.draft.modelId.trim();
@@ -169,15 +164,12 @@ function resolveAuthoringModelState(params: Readonly<{
         agentTargetKey: params.agentTargetKey,
     });
     const profileSelection = params.implicitProfileModelSelection ?? null;
-    const rememberedSelection = params.rememberedEngineSelection?.modelSelection ?? null;
+    const rememberedSelection = resolveTargetModelSelection(params.rememberedEngineSelection?.modelSelection, params.agentTargetKey);
     const candidate = temp.present
         ? temp.selection
         : persisted.present
             ? persisted.selection
             : profileSelection ?? rememberedSelection;
-    if (candidate && !backendTargetKeysMatch(candidate.ref.agentTargetKey, params.agentTargetKey)) {
-        throw new Error('Session authoring model selection target mismatch');
-    }
     const modelMode = coerceNewSessionModelMode({
         modelMode: candidate?.ref.modelId ?? null,
         modelSelection: candidate,
@@ -390,10 +382,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     }, [currentBackendTargetKey, effectiveModelTargetKey, resolvedModelState]);
 
     const setModelSelection = React.useCallback((selection: SessionModelSelection | null) => {
-        const parsed = selection === null ? null : SessionModelSelectionSchema.parse(selection);
-        if (parsed && !backendTargetKeysMatch(parsed.ref.agentTargetKey, effectiveModelTargetKey)) {
-            throw new Error('Session authoring model selection target mismatch');
-        }
+        const parsed = resolveTargetModelSelection(selection === null ? null : SessionModelSelectionSchema.parse(selection), effectiveModelTargetKey);
         setModelState({
             backendTargetKey: currentBackendTargetKey,
             value: {
@@ -411,10 +400,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         if (!targetKey) {
             throw new Error('Session authoring model selection requires backend target');
         }
-        const parsed = selection === null ? null : SessionModelSelectionSchema.parse(selection);
-        if (parsed && !backendTargetKeysMatch(parsed.ref.agentTargetKey, targetKey)) {
-            throw new Error('Session authoring model selection target mismatch');
-        }
+        const parsed = resolveTargetModelSelection(selection === null ? null : SessionModelSelectionSchema.parse(selection), targetKey);
         setModelState({
             backendTargetKey: targetKey,
             value: {
@@ -491,7 +477,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         const targetKey = backendTargetKey.trim();
         if (!targetKey) return;
         if (selection.applyModel !== false) {
-            const nextModelSelection = selection.modelSelection === undefined
+            const candidate = selection.modelSelection === undefined
                 ? selection.modelMode === 'default'
                     ? null
                     : SessionModelSelectionSchema.parse({
@@ -504,13 +490,11 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
                         },
                     })
                 : selection.modelSelection;
-            if (nextModelSelection && !backendTargetKeysMatch(nextModelSelection.ref.agentTargetKey, targetKey)) {
-                throw new Error('Session authoring model selection target mismatch');
-            }
+            const nextModelSelection = resolveTargetModelSelection(candidate, targetKey);
             setModelState({
                 backendTargetKey: targetKey,
                 value: {
-                    modelMode: nextModelSelection?.ref.modelId ?? selection.modelMode,
+                    modelMode: nextModelSelection?.ref.modelId ?? (candidate ? 'default' : selection.modelMode),
                     modelSelection: nextModelSelection,
                 },
             });
