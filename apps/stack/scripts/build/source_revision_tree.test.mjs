@@ -484,7 +484,11 @@ createRequire(import.meta.url)('prisma/build/index.js');
   // refused "outside the caller-approved root").
   await mkdir(join(repoDir, 'node_modules/fixture-dep'), { recursive: true });
   await writeFile(join(repoDir, 'node_modules/fixture-dep/package.json'), JSON.stringify({ name: 'fixture-dep' }));
+  // pnpm task-state files are transient runner state, not installed packages.
+  await mkdir(join(repoDir, 'node_modules/.pnpm-task-run-state-v1'), { recursive: true });
+  await writeFile(join(repoDir, 'node_modules/.pnpm-task-run-state-v1/task.jsonl'), '{}');
   const first = await reload();
+  assert.equal(await lstat(join(treesRoot, 'installs', first.installIdentity, 'node_modules/.pnpm-task-run-state-v1')).catch(error => error.code), 'ENOENT');
   assert.deepEqual(await readGeneratedClientFields(first.treeDir), { default: ['id'], sqlite: ['id'], mysql: ['id'] });
   const mounted = await realpath(join(first.treeDir, 'node_modules/fixture-dep'));
   assert.ok(!mounted.startsWith(`${await realpath(repoDir)}/`), `the base mounts the installation snapshot, not the checkout (${mounted})`);

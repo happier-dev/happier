@@ -236,7 +236,7 @@ async function prepareInstallSnapshot({ repoDir, treesRoot, workspaceDirs, env, 
       try {
         for (const workspaceDir of ['', ...workspaceDirs]) {
           const installed = await realpath(join(repoDir, workspaceDir, 'node_modules')).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
-          if (installed) await cloneTree(installed, join(staging, workspaceDir, 'node_modules'), { base: installed, clone: installed, skip: ['@happier-dev'] });
+          if (installed) await cloneTree(installed, join(staging, workspaceDir, 'node_modules'), { base: installed, clone: installed, skip: ['@happier-dev', '.pnpm-task-run-state-v1'] });
         }
         await publication.assertCurrent();
         await writeFile(join(staging, BASE_MARKER), JSON.stringify({ installIdentity: identity, builtAt: new Date().toISOString() }));
