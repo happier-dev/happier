@@ -7751,6 +7751,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     retryIn: ({ seconds }: { seconds: number }) =>
       `Tentar novamente em ${seconds} ${seconds === 1 ? "segundo" : "segundos"}`,
     agentStoppedWithError: "O agente parou com um erro.",
+    /** Ends a line made of a title and its cause (the failure line), when its last part is not a sentence. */
+    sentenceEnd: ".",
     errorWithCode: ({
       message,
       code,

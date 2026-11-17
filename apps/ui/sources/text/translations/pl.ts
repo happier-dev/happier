@@ -7488,6 +7488,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     retryIn: ({ seconds }: { seconds: number }) =>
       `Ponów próbę za ${seconds} ${plural({ count: seconds, one: "sekundę", few: "sekundy", many: "sekund" })}`,
     agentStoppedWithError: "Agent zatrzymał się z błędem.",
+    /** Ends a line made of a title and its cause (the failure line), when its last part is not a sentence. */
+    sentenceEnd: ".",
     errorWithCode: ({
       message,
       code,

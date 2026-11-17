@@ -8802,6 +8802,8 @@ const enErrors = {
   retryIn: ({ seconds }: { seconds: number }) =>
     `Retry in ${seconds} ${seconds === 1 ? 'second' : 'seconds'}`,
   agentStoppedWithError: "The agent stopped with an error.",
+  /** Ends a line made of a title and its cause (the failure line), when its last part is not a sentence. */
+  sentenceEnd: ".",
   errorWithCode: ({
     message,
     code,

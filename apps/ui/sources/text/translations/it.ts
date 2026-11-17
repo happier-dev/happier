@@ -7866,6 +7866,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     retryIn: ({ seconds }: { seconds: number }) =>
       `Riprova tra ${seconds} ${seconds === 1 ? "secondo" : "secondi"}`,
     agentStoppedWithError: "L'agente si è fermato con un errore.",
+    /** Ends a line made of a title and its cause (the failure line), when its last part is not a sentence. */
+    sentenceEnd: ".",
     errorWithCode: ({
       message,
       code,

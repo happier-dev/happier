@@ -22,7 +22,7 @@ import { resolveInlineMessageReference, resolveMessageStructuredReferences, type
 import { readRuntimeIssueMessageMeta } from './events/runtimeIssueMessage';
 import { presentSessionTeamCredentialDenial } from '../presentation/sessionTeamCredentialDenialPresentation';
 import { presentSessionAgentAuthRequired } from '../presentation/sessionAgentAuthRequiredPresentation';
-import { presentSessionRuntimeIssue } from '../presentation/sessionRuntimeIssuePresentation';
+import { formatSessionFailureLine, presentSessionRuntimeIssue } from '../presentation/sessionRuntimeIssuePresentation';
 import { resolveSessionStartFailureNotice } from '../startFailure/sessionStartFailureNotice';
 
 export type TranscriptMessageDisplayOptions = Readonly<{
@@ -90,24 +90,24 @@ export function prepareTranscriptMessageBody(
         : null;
     const usageLimitIssue = runtimeIssue?.source === 'usage_limit' || runtimeIssue?.code === 'usage_limit'
         ? presentSessionRuntimeIssue(runtimeIssue) : null;
+    // Every failure row reads as one line through the line owner: what failed · its cause, ending as a sentence.
     const runtimeFailure = usageLimitIssue
         // Worded like the usage card's cause; the card owns the recovery action.
-        ? [usageLimitIssue.summary, usageLimitIssue.reset].filter(Boolean).join(' · ') || null
+        ? formatSessionFailureLine([usageLimitIssue.summary, usageLimitIssue.reset])
         : runtimeIssue?.code === 'provider_model_not_found' || readAgentStartupFailureCode(runtimeIssue?.code) !== null
-        ? [presentSessionRuntimeIssue(runtimeIssue).message, runtimeIssue?.failureCause?.providerErrorMessage]
-            .filter(Boolean).join('\n') || null
+        ? formatSessionFailureLine([presentSessionRuntimeIssue(runtimeIssue).message, runtimeIssue?.failureCause?.providerErrorMessage])
         // A refused model change reads as its status; the Agent's own words wait in the row's Details.
         : readSessionModelTransitionFailureStatus(runtimeIssue?.code) !== null
             ? presentSessionRuntimeIssue(runtimeIssue).message
         // Other closed startup causes (preparation) read exactly as the Session's start-failure banner.
         : runtimeIssue && Object.hasOwn(SESSION_PREPARATION_FAILURE_PREVIEWS, runtimeIssue.code)
-            ? resolveSessionStartFailureNotice({ issue: runtimeIssue, sessionActive: false })?.message ?? null
+            ? formatSessionFailureLine([resolveSessionStartFailureNotice({ issue: runtimeIssue, sessionActive: false })?.message])
         // A failure no known cause explains reads as the plain line; the Agent's own text (SDK output, paths)
         // waits in Details. Rows with a known cause keep the words written for them.
         : runtimeIssue ? unexplainedRuntimeIssueSummary(runtimeIssue) : null;
     let text: string | null;
-    if (teamDenial) text = [teamDenial.title, teamDenial.body].filter(Boolean).join(' · ');
-    else if (agentAuth) text = agentAuth.message;
+    if (teamDenial) text = formatSessionFailureLine([teamDenial.title, teamDenial.body]);
+    else if (agentAuth) text = formatSessionFailureLine([agentAuth.message]);
     else if (runtimeFailure) text = runtimeFailure;
     else if (message.kind === 'user-text' && message.displayText !== undefined) text = message.displayText;
     else if (isLegacyVoiceAgentTurn) text = normalizeVoiceAgentTurnTranscriptText(message.text);

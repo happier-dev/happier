@@ -5,7 +5,7 @@ import { resolveTranscriptMessageDisplayText } from './messageDisplayText';
 import { normalizeRawMessage } from '@happier-dev/session-core/raw';
 import { presentSessionTeamCredentialDenial } from '../presentation/sessionTeamCredentialDenialPresentation';
 import { readRuntimeIssueMessageMeta } from './events/runtimeIssueMessage';
-import { presentSessionRuntimeIssue } from '../presentation/sessionRuntimeIssuePresentation';
+import { formatSessionFailureLine, presentSessionRuntimeIssue } from '../presentation/sessionRuntimeIssuePresentation';
 import { resolveSessionStartFailureNotice } from '../startFailure/sessionStartFailureNotice';
 import { buildSessionHostOnboardingInputV1 } from '@happier-dev/protocol/sessions/creation/sessionPreparedBirthV1';
 
@@ -45,7 +45,7 @@ describe('resolveTranscriptMessageDisplayText', () => {
             meta: { source: 'runtime', runtimeIssueV1: issue },
         });
         const text = resolveTranscriptMessageDisplayText(agent({ meta: normalized?.meta, text: `codex turn failed: ${preview}` })).text;
-        expect(text).toBe(resolveSessionStartFailureNotice({ issue, sessionActive: false })?.message);
+        expect(text).toBe(formatSessionFailureLine([resolveSessionStartFailureNotice({ issue, sessionActive: false })?.message]));
         expect(text).not.toContain('turn failed');
     });
 
@@ -86,7 +86,7 @@ describe('resolveTranscriptMessageDisplayText', () => {
         const message = agent({ meta: normalized?.meta, text: 'codex turn failed: Codex app-server turn failed.' });
         const guidance = presentSessionRuntimeIssue(readRuntimeIssueMessageMeta(message.meta)).message;
         expect(guidance).toBeTruthy();
-        expect(resolveTranscriptMessageDisplayText(message).text).toBe(guidance);
+        expect(resolveTranscriptMessageDisplayText(message).text).toBe(formatSessionFailureLine([guidance]));
         expect(resolveTranscriptMessageDisplayText(agent({ text: message.text })).text).toBe(message.text);
         expect(resolveTranscriptMessageDisplayText(agent({ ...message, isThinking: true })).text).toBe(message.text);
     });
@@ -124,7 +124,7 @@ describe('resolveTranscriptMessageDisplayText', () => {
         const message = agent({ meta: normalized?.meta, text: 'codex turn failed: Usage limit reached' });
         const issue = presentSessionRuntimeIssue(readRuntimeIssueMessageMeta(message.meta));
         const text = resolveTranscriptMessageDisplayText(message).text;
-        expect(text).toBe(`${issue.summary} · ${issue.reset}`);
+        expect(text).toBe(formatSessionFailureLine([issue.summary, issue.reset]));
         expect(text).not.toContain('codex turn failed');
         expect(text).not.toContain('Try another connected account');
     });
@@ -141,7 +141,7 @@ describe('resolveTranscriptMessageDisplayText', () => {
         const presentation = presentSessionTeamCredentialDenial({ issue: readRuntimeIssueMessageMeta(message.meta),
             resolveResourceDisplayName: () => null });
         expect(presentation).not.toBeNull();
-        expect(resolveTranscriptMessageDisplayText(message).text).toBe([presentation?.title, presentation?.body].filter(Boolean).join(' · '));
+        expect(resolveTranscriptMessageDisplayText(message).text).toBe(formatSessionFailureLine([presentation?.title, presentation?.body]));
     });
 
     it('shows a native Agent sign-in requirement as its guidance, and keeps a Provider credential issue\'s own text', () => {
@@ -186,6 +186,49 @@ describe('resolveTranscriptMessageDisplayText', () => {
         expect(resolveTranscriptMessageDisplayText(unsupported, { debugInformationEnabled: true })).toMatchObject({
             text: 'diagnostic payload', unsupportedContentText: 'diagnostic payload',
         });
+    });
+});
+
+describe('failure line anatomy', () => {
+    // Every runtime failure row the transcript draws (the /dev/session-states rows plus a native startup refusal
+    // carrying its provider text): one line, "what failed · its cause or next step", ending as a sentence.
+    const failureRow = (issue: Record<string, unknown>, text = 'codex turn failed: native text') => {
+        const normalized = normalizeRawMessage('failure-line', 'failure-line', 1794000000000, {
+            role: 'agent', content: { type: 'acp', agentId: 'codex', data: { type: 'message', message: text } },
+            meta: { source: 'runtime', runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed',
+                occurredAt: 1794000000000, agentId: 'codex', ...issue } },
+        });
+        return resolveTranscriptMessageDisplayText(agent({ meta: normalized?.meta, text })).text;
+    };
+    const rows = {
+        modelNotFound: failureRow({ code: 'provider_model_not_found', source: 'agent_session_error',
+            failureCause: { code: 'provider_model_not_found', phase: 'turn', failureReason: 'unclassified_provider_error',
+                providerErrorCode: 'model_not_found' } }),
+        modelTransition: failureRow({ code: 'session_model_transition_apply_failed', source: 'agent_session_error',
+            sanitizedPreview: 'native_model_restart_required' }),
+        teamRefusal: failureRow({ code: 'team_credential', source: 'team_credential',
+            teamCredential: { v: 1, resourceId: 'r', reasonCode: 'resource_forbidden' } }),
+        teamReconnect: failureRow({ code: 'team_credential', source: 'team_credential',
+            teamCredential: { v: 1, resourceId: 'r', reasonCode: 'connected_service_credential_reconnect_required' } }),
+        usageLimit: failureRow({ code: 'usage_limit', source: 'usage_limit',
+            usageLimit: { v: 1, resetAtMs: 1794056400000, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait' } }),
+        agentSignIn: failureRow({ code: 'provider_endpoint_auth_required', source: 'auth_error' }),
+        startupRefusal: failureRow({ code: 'agent_startup_rpc_rejected', source: 'agent_session_error',
+            failureCause: { code: 'agent_startup_rpc_rejected', phase: 'client_start', failureReason: 'unclassified_provider_error',
+                providerErrorCode: -32603, providerErrorMessage: 'stage=exec errno=EACCES' } }),
+        unexplained: failureRow({ code: 'agent_session_error', source: 'agent_session_error', sanitizedPreview: 'exit 1' }),
+    };
+
+    it.each(Object.entries(rows))('%s reads as one line ending as a sentence', (_name, text) => {
+        expect(text).toBeTruthy();
+        expect(text).not.toContain('\n');
+        expect(text).toMatch(/[.!?。！？]$/u);
+    });
+
+    it('puts what failed before its cause on the same line', () => {
+        expect(rows.modelNotFound?.split(' · ')).toHaveLength(2);
+        expect(rows.modelTransition?.split(' · ')).toHaveLength(2);
+        expect(rows.startupRefusal).toContain(' · stage=exec errno=EACCES');
     });
 });
 

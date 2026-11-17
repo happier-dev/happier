@@ -7951,6 +7951,8 @@ localTailscale: {
     }) => `${field}は${min}から${max}の間である必要があります`,
     retryIn: ({ seconds }: { seconds: number }) => `${seconds}秒後に再試行`,
     agentStoppedWithError: "エージェントがエラーで停止しました。",
+    /** Ends a line made of a title and its cause (the failure line), when its last part is not a sentence. */
+    sentenceEnd: "。",
     errorWithCode: ({
       message,
       code,

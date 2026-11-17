@@ -258,6 +258,20 @@ export function presentSessionActivationFailure(
     };
 }
 
+const SENTENCE_END = /[.!?。！？]$/u;
+
+/**
+ * The one failure line every transcript failure row draws: what failed, then its cause or next step, joined by
+ * " · " on a single line, and ending as a sentence. A cause owner's two-line pair ("Title\nNext step.") reads as
+ * "Title · Next step."; a line whose last part is a label or a fact ("resets Wed 01:31 AM") takes the locale's end.
+ */
+export function formatSessionFailureLine(parts: readonly (string | null | undefined)[]): string | null {
+    const segments = parts.flatMap(part => part?.split('\n') ?? []).map(part => part.trim()).filter(Boolean);
+    if (segments.length === 0) return null;
+    const line = segments.join(' · ');
+    return SENTENCE_END.test(line) ? line : `${line}${t('errors.sentenceEnd')}`;
+}
+
 /** Present the typed cause, reported reset and recovery supported by the carried Connected Account context. */
 export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null | undefined, context?: Readonly<{
     /** The surface's own failure text that wraps this issue (a worker's result), when it has one. */
@@ -284,7 +298,7 @@ export function presentSessionRuntimeIssue(issue: SessionRuntimeIssueV1 | null |
     const transitionTitle = modelTransition ? t('session.modelTransitionFailure.title') : null;
     const localized = modelTransition ? t(`session.modelTransitionFailure.cause.${modelTransition}`)
         : presentSessionContinuationFailure(issue)?.message ?? presentSessionStartupFailureCause(issue?.code, issue ?? undefined);
-    const message = transitionTitle ? `${transitionTitle} · ${localized}`
+    const message = transitionTitle ? formatSessionFailureLine([transitionTitle, localized])
         : presentSessionStartupFailureRecovery([issue?.code])?.message ?? localized ?? issue?.sanitizedPreview ?? null;
     const requestId = issue?.failureCause?.requestId;
     const carrierFailure = issue?.failureCause?.carrierFailure;

@@ -7629,6 +7629,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         retryIn: ({ seconds }: { seconds: number }) =>
             `Erneut versuchen in ${seconds} ${seconds === 1 ? 'Sekunde' : 'Sekunden'}`,
         agentStoppedWithError: "Der Agent wurde mit einem Fehler beendet.",
+        /** Ends a line made of a title and its cause (the failure line), when its last part is not a sentence. */
+        sentenceEnd: ".",
         errorWithCode: ({ message, code }: { message: string; code: number | string }) =>
             `${message} (Fehler ${code})`,
         disconnectServiceFailed: ({ service }: { service: string }) =>

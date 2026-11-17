@@ -7641,6 +7641,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     retryIn: ({ seconds }: { seconds: number }) =>
       `Intenta en ${seconds} ${seconds === 1 ? "segundo" : "segundos"}`,
     agentStoppedWithError: "El agente se detuvo con un error.",
+    /** Ends a line made of a title and its cause (the failure line), when its last part is not a sentence. */
+    sentenceEnd: ".",
     errorWithCode: ({
       message,
       code,

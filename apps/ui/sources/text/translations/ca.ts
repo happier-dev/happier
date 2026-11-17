@@ -7103,6 +7103,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         retryIn: ({ seconds }: { seconds: number }) =>
             `Torna-ho a provar en ${seconds} ${seconds === 1 ? 'segon' : 'segons'}`,
         agentStoppedWithError: "L'agent s'ha aturat amb un error.",
+        /** Ends a line made of a title and its cause (the failure line), when its last part is not a sentence. */
+        sentenceEnd: ".",
         errorWithCode: ({ message, code }: { message: string; code: number | string }) =>
             `${message} (Error ${code})`,
         disconnectServiceFailed: ({ service }: { service: string }) =>

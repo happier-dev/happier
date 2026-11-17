@@ -7362,6 +7362,8 @@ export const zhHans: TranslationStructure = {
     }) => `${field} 必须在 ${min} 和 ${max} 之间`,
     retryIn: ({ seconds }: { seconds: number }) => `${seconds} 秒后重试`,
     agentStoppedWithError: "智能体因出错而停止。",
+    /** Ends a line made of a title and its cause (the failure line), when its last part is not a sentence. */
+    sentenceEnd: "。",
     errorWithCode: ({
       message,
       code,

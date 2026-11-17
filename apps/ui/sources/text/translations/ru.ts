@@ -7391,6 +7391,8 @@ export const ru: TranslationStructure = {
     retryIn: ({ seconds }: { seconds: number }) =>
       `Повторить через ${seconds} ${plural({ count: seconds, one: "секунду", few: "секунды", many: "секунд" })}`,
     agentStoppedWithError: "Агент остановился из-за ошибки.",
+    /** Ends a line made of a title and its cause (the failure line), when its last part is not a sentence. */
+    sentenceEnd: ".",
     errorWithCode: ({
       message,
       code,

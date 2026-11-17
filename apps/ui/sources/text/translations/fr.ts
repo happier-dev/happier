@@ -7470,6 +7470,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     retryIn: ({ seconds }: { seconds: number }) =>
       `Réessai dans ${seconds} ${seconds === 1 ? "seconde" : "secondes"}`,
     agentStoppedWithError: "L’agent s’est arrêté sur une erreur.",
+    /** Ends a line made of a title and its cause (the failure line), when its last part is not a sentence. */
+    sentenceEnd: ".",
     errorWithCode: ({
       message,
       code,
