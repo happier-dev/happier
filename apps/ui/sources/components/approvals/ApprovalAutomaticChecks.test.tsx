@@ -166,7 +166,7 @@ describe('Action before checks on the approval card', () => {
       phase: 'override',
       consents: [],
       runs: [{ ...ref, runId: 'run-214' }],
-      results: [{ ...ref, runId: 'run-214', outcome: 'failed' }],
+      results: [{ ...ref, runId: 'run-214', outcome: 'failed', reason: '3 release tests fail in billing.' }],
     });
     expect(readApprovalAutomaticChecksDecision(override)).toEqual({
       kind: 'override',
@@ -184,6 +184,8 @@ describe('Action before checks on the approval card', () => {
     expect(screen.getTextContent()).toContain(
       'workflows.triggers.checks.overrideTitle',
     );
+    // The check's own reason leads what the person decides on.
+    expect(screen.getTextContent()).toContain('3 release tests fail in billing.');
     await screen.unmount();
     const skipped = checks({
       phase: 'passed',

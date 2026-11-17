@@ -8,7 +8,7 @@ import {
 
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { useWorkflowReferenceTitles } from '@/components/workflows/presentation/workflowReferenceOptions';
 import { useApprovalAccountLabel } from '@/components/approvals/ApprovalRequesterConfirmationSection';
@@ -114,7 +114,7 @@ export function useApprovalAutomaticChecksControls(input: Readonly<{
 
 const stylesheet = StyleSheet.create((theme) => ({
   block: {
-    borderRadius: 10,
+    borderRadius: theme.borderRadius.lg,
     backgroundColor: theme.colors.surface.inset,
     paddingHorizontal: theme.space.s12,
     paddingVertical: theme.space.s10,
@@ -239,7 +239,7 @@ export const ApprovalAutomaticChecks = React.memo(
           <View style={styles.lead}>
             <Icon
               name="shield-check"
-              size={16}
+              size={ICON_SIZE.sm}
               color={theme.colors.text.secondary}
             />
             <Text variant="body" emphasis="semiBold" style={styles.leadText}>
@@ -308,7 +308,7 @@ export const ApprovalAutomaticChecks = React.memo(
           <View style={styles.lead}>
             <Icon
               name="warning"
-              size={16}
+              size={ICON_SIZE.sm}
               color={theme.colors.text.secondary}
             />
             <Text variant="body" emphasis="semiBold" style={styles.leadText}>
@@ -319,6 +319,10 @@ export const ApprovalAutomaticChecks = React.memo(
                   : t('workflows.triggers.checks.refused', { workflow })}
             </Text>
           </View>
+          {/* The workflow's own reason for failing, as it said it. */}
+          {failed.reason ? (
+            <Text variant="body" testID={props.testID ? `${props.testID}:reason` : undefined}>{failed.reason}</Text>
+          ) : null}
           <View style={styles.line}>
             {checks.phase === 'override' ? (
               <Text variant="meta" style={styles.secondary}>
@@ -349,7 +353,7 @@ export const ApprovalAutomaticChecks = React.memo(
         {body}
         {skipped.map((line, index) => (
           <View key={index} style={styles.lead}>
-            <Icon name="minus-circle" size={14} color={theme.colors.text.secondary} />
+            <Icon name="minus-circle" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
             <Text
               variant="meta"
               style={[styles.secondary, styles.leadText]}

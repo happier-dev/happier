@@ -20,6 +20,8 @@ import { buildApprovalProfileSettingsRoute } from './approvalProfileSettingsRout
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useApprovalProfileMachineNames } from './useApprovalProfileMachineNames';
+import { useApprovalProfileAudience } from './useApprovalProfileAudience';
+import { joinList } from '@/utils/text/joinList';
 
 const stylesheet = StyleSheet.create(() => ({
     headerActions: { flexDirection: 'row', alignItems: 'center', gap: HEADER_ACTIONS_GAP_PX },
@@ -65,10 +67,18 @@ export const ApprovalProfilePageHeader = React.memo(function ApprovalProfilePage
         const created = await createApprovalProfileFromStart(write, profileRow.profile);
         if (created) router.push(buildApprovalProfileSettingsRoute(created.id));
     }, [profileRow, router, write]);
-    const meta = React.useMemo<PageHeaderMetaFact[] | undefined>(() => !profileRow || manages ? undefined : [
+    // Its owner reads who it is shared with from the profile's own grant roster; nothing reads defaults back from a
+    // profile (Plan 03 R19), so the line names its audience only.
+    const audience = useApprovalProfileAudience(manages ? profileRow?.id ?? null : null);
+    const sharedWith = React.useMemo(() => {
+        const names = audience?.grants?.flatMap(grant => grant.display.name?.trim() || grant.display.username?.trim() || []) ?? [];
+        return names.length > 0 ? t('workflows.triggers.guided.profile.sharedWith', { names: joinList(names) }) : null;
+    }, [audience]);
+    const meta = React.useMemo<PageHeaderMetaFact[] | undefined>(() => !profileRow ? undefined
+        : manages ? (sharedWith ? [{ key: 'audience', text: sharedWith }] : undefined) : [
         ...(profileRow.ownerDisplayName ? [{ key: 'owner', text: t('workflows.triggers.guided.profile.sharedBy', { name: profileRow.ownerDisplayName }) }] : []),
         { key: 'access', text: t(changes ? 'workflows.triggers.guided.profile.sharedWithYouToChange' : 'workflows.triggers.guided.profile.sharedWithYouToUse') },
-    ], [changes, manages, profileRow]);
+    ], [changes, manages, profileRow, sharedWith]);
     return (
         <>
             <Stack.Screen options={screenOptions} />

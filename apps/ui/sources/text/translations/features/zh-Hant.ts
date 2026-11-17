@@ -19286,6 +19286,7 @@ const zhHant: WorkflowTriggersCopy = {
             shareDescription: "你共用給的人可以在他們的工作階段中使用它。",
             duplicateToChange: "複製後修改",
             sharedBy: ({ name }: { name: string }) => `由 ${name} 共用`,
+            sharedWith: ({ names }: { names: string }) => `已與 ${names} 共用`,
             sharedWithYouToUse: "已共用給你使用",
             sharedWithYouToChange: "已共用給你修改",
             machineSectionDescription: ({ machine }: { machine: string }) => `用於你在 ${machine} 上啟動的工作階段。其他人的工作階段保留他們自己的設定檔。`,

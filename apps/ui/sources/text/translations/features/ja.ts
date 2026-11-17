@@ -19346,6 +19346,7 @@ const ja: WorkflowTriggersCopy = {
             shareDescription: "共有した相手は、自分のセッションでこのプロファイルを使えます。",
             duplicateToChange: "複製して変更",
             sharedBy: ({ name }: { name: string }) => `${name} が共有`,
+            sharedWith: ({ names }: { names: string }) => `${names} と共有`,
             sharedWithYouToUse: "使用のために共有されています",
             sharedWithYouToChange: "変更のために共有されています",
             machineSectionDescription: ({ machine }: { machine: string }) => `${machine} であなたが開始するセッション用です。ほかの人のセッションは各自の設定を使います。`,

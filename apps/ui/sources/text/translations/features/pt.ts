@@ -19398,6 +19398,7 @@ const pt: WorkflowTriggersCopy = {
             shareDescription: "As pessoas com quem você compartilha podem usá-lo nas sessões delas.",
             duplicateToChange: "Duplicar para alterar",
             sharedBy: ({ name }: { name: string }) => `Compartilhado por ${name}`,
+            sharedWith: ({ names }: { names: string }) => `Compartilhado com ${names}`,
             sharedWithYouToUse: "Compartilhado com você para usar",
             sharedWithYouToChange: "Compartilhado com você para alterar",
             machineSectionDescription: ({ machine }: { machine: string }) => `Para as sessões que você inicia em ${machine}. As sessões de outras pessoas mantêm o delas.`,

@@ -220,6 +220,7 @@ export const en = {
             shareDescription: "People you share with can use it in their Sessions.",
             duplicateToChange: "Duplicate to change",
             sharedBy: ({ name }: { name: string }) => `Shared by ${name}`,
+            sharedWith: ({ names }: { names: string }) => `Shared with ${names}`,
             sharedWithYouToUse: "Shared with you to use",
             sharedWithYouToChange: "Shared with you to change",
             machineSectionDescription: ({ machine }: { machine: string }) => `For the Sessions you start on ${machine}. Other people's Sessions keep their own.`,

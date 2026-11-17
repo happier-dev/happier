@@ -19440,6 +19440,7 @@ const ru: WorkflowTriggersCopy = {
             shareDescription: "Те, с кем вы поделитесь, смогут использовать его в своих сеансах.",
             duplicateToChange: "Дублировать, чтобы изменить",
             sharedBy: ({ name }: { name: string }) => `Поделился ${name}`,
+            sharedWith: ({ names }: { names: string }) => `Доступ: ${names}`,
             sharedWithYouToUse: "Доступен вам для использования",
             sharedWithYouToChange: "Доступен вам для изменения",
             machineSectionDescription: ({ machine }: { machine: string }) => `Для сеансов, которые вы запускаете на ${machine}. Сеансы других людей сохраняют свои.`,

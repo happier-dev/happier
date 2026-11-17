@@ -19286,6 +19286,7 @@ const zhHans: WorkflowTriggersCopy = {
             shareDescription: "你共享给的人可以在他们的会话中使用它。",
             duplicateToChange: "复制后修改",
             sharedBy: ({ name }: { name: string }) => `由 ${name} 共享`,
+            sharedWith: ({ names }: { names: string }) => `已与 ${names} 共享`,
             sharedWithYouToUse: "已共享给你使用",
             sharedWithYouToChange: "已共享给你修改",
             machineSectionDescription: ({ machine }: { machine: string }) => `用于你在 ${machine} 上启动的会话。其他人的会话保留他们自己的配置。`,
