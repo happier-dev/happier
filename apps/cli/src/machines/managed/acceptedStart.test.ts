@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedControllerReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { GuestCliIdentityV1Schema } from '@happier-dev/protocol/features';
 import { sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
@@ -30,7 +31,7 @@ import { createStablePluginHttpHost } from '@/plugins/runtime/fetch/service';
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
-import { withTempDir } from '@/testkit/fs/tempDir';
+import { withSocketTempDir, withTempDir } from '@/testkit/fs/tempDir';
 import { createManagedMachineAcquisitionDriver, type ManagedMachineExecutionOptions } from './acquire';
 
 const controller = { machineId: 'controller', installationId: 'installation' };
@@ -49,7 +50,7 @@ async function setup(root: string, kind: 'lume' | 'lima' = 'lume') {
     const plugin = kind === 'lume' ? LUME_PLUGIN : LIMA_PLUGIN;
     const manifest = normalizePluginManifestV2(plugin.manifest);
     const provider = { pluginId: manifest.id, localId: kind };
-    const fixtureLimaLaunch = { ...limaLaunch, store: join(root, 'lima-store') };
+    const fixtureLimaLaunch = { ...limaLaunch, store: root };
     const choices = kind === 'lume' ? lumeLaunch : fixtureLimaLaunch;
     const value = kind === 'lume' ? { storage: 'home', vmName: `happier-${managedId}` }
         : limaAcquisitionResource(fixtureLimaLaunch, managedId);
@@ -141,7 +142,8 @@ else process.exit(9);
         }]] : []));
     const fixture = nativeFixture({ fixtureManifest: manifest, reconciliation: true, actionHandlers: handlers,
         createServices: services.createServices, resolveHostBinding: services.resolveHostBinding });
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ features: { teams: { enabled: true } }, capabilities: {} })));
+    const guestCli = GuestCliIdentityV1Schema.parse({ source: 'public-release', line: '0.3', channel: 'stable' });
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ features: { teams: { enabled: true } }, capabilities: { guestCli } })));
     vi.spyOn(axios, 'get').mockImplementation(async raw => {
         const path = new URL(String(raw)).pathname;
         if (path.endsWith('/account/profile')) return { status: 200, data: { id: 'owner' } };
@@ -283,7 +285,7 @@ describe('accepted native start at the real acquisition boundary', () => {
         });
 
     it.skipIf(process.platform === 'win32')('does not invent an accepted start for a retained stopped Lima Retry', async () => {
-        await withTempDir('managed-stale-start-', async root => {
+        await withSocketTempDir(async root => {
             const fixture = await setup(root, 'lima');
             await expect(fixture.execute()).rejects.toMatchObject({ code: 'native_resource_unavailable' });
             expect(fixture.entries.map(entry => entry.role)).toEqual(['bootstrap']);
