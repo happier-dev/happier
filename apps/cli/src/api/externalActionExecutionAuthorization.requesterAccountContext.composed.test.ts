@@ -15,7 +15,7 @@ import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1 } from '@happier-dev/plugin-sdk/events
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
-import { registerAccountHomeHttp, registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
+import { registerAccountArtifactRoutes, registerAccountHomeHttp, registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
 import { admitRequesterAccountActionContext, prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/externalActions/approvalExecutionAuthorization';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
@@ -49,6 +49,10 @@ import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/p
 import { encodeStoredCredentials, updateSettings, readStoredCredentialsForServerId, writeStoredCredentialsForServerId, type StoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { createLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV1Schema,
+  LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { AccountSettingsV2HistoryListResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { handleActionsCommand } from '@/cli/commands/actions';
 import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
 import { listCompiledActionCliCommands } from '@/cli/actions/compiledCommands';
@@ -598,6 +602,7 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   scopedControllerMismatch?: 'parent' | 'installation' | 'resource' | 'account-owned';
   onRequestAuthorization?: (authorization: string | undefined) => void;
   onRequestPath?: (path: string | undefined) => void;
+  artifacts?: ReturnType<typeof fastify>;
 } = {}) {
   const seed = new Uint8Array(32).fill(19);
   const publicKey = ed25519.getPublicKey(seed);
@@ -608,11 +613,17 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   const retiredRequests: Array<Readonly<{ path: string; authorization: string | undefined; body?: unknown }>> = [];
   const securityPrincipals: Array<Readonly<{ authority: ReturnType<typeof effectiveCredentialAuthority>; authorization: string | undefined }>> = [];
   const server = createServer(async (request, response) => {
+    if (options.artifacts && request.url?.startsWith('/v1/artifacts')) {
+      return options.artifacts.routing(request, response);
+    }
     const actionId = options.originalOwnAction === 'action.invoke' && request.url?.startsWith('/v1/actions/')
       ? ActionIdSchema.parse(request.url.split('/')[3]) : defaultActionId;
     options.onRequestPath?.(request.url);
     options.onRequestAuthorization?.(request.headers.authorization);
     const respond = (value: unknown) => { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(value)); };
+    if (request.url === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+      return respond(ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
+    }
     const machine = { id: 'alice-machine', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
       installationId: 'alice-installation', installationPublicKey: encodeBase64(publicKey), storageMode: 'plain',
       access: { custodian: { accountId: options.custodianAccountId ?? 'alice', displayName: 'Alice' }, role: options.machineRole ?? 'use', resourceMode: options.custodianAccountId === 'bob' ? mode : 'plain', accessState: 'ready' } };
@@ -623,6 +634,7 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
       return respond(FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: homeIdentityId } } }));
     }
     if (request.url === '/v2/account/settings') return respond({ content: null, version: 0 });
+    if (request.url === '/v2/account/settings/history') return respond(AccountSettingsV2HistoryListResponseSchema.parse({ snapshots: [] }));
     if (request.url === '/v1/account/profile') return respond(AccountProfileSchema.parse({ id: 'bob' }));
     if (request.url === '/v1/account/encryption/currentness') return respond(createAccountEncryptionCurrentnessFixture({ mode, settingsVersion: 0 }));
     if (request.url === '/v1/account/encryption') {
@@ -705,7 +717,7 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
       events.push('local-daemon'); received = body;
       return respond(options.localDaemonExecution ?? { ok: true, result: ownMachineResult });
     }
-    if ((options.authenticationKind === 'terminal' || options.authorityCeiling === 'account_automation')
+    if (options.authorityCeiling === 'account_automation'
       && !request.url?.endsWith('/verify')
       && request.headers[AUTHORITY_CEILING_HEADER_V1.toLowerCase()] !== 'account_automation') {
       response.statusCode = 401;
@@ -921,7 +933,7 @@ it('spends the same contributed requester custody through CLI and native HTTP po
         [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' });
       const wireOnly = await projectExternalActionRequesterHttpAuthorization({ ...projectionInput, authorization: root });
       expect(await wireOnly?.requesterHttpProjection?.createRequestHeaders(request)).toBeNull();
-    } finally { await requester?.dispose(); await channel.close(); restore(); await app.close(); }
+    } finally { await requester?.dispose(); await channel.close(); restore(); await app.close(); vi.unstubAllGlobals(); }
   });
 });
 
@@ -2103,15 +2115,23 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
 
   it.each(['plain', 'e2ee'] as const)('delivers a fresh cross-Account Stop from JSON CLI without disclosing a sign-in (%s)', async mode => {
     const events: string[] = [];
+    const requestPaths: Array<string | undefined> = [];
     const actionId = 'localServices.actions.stopManaged' as const;
-    const approval = { kind: 'approval_request_created' as const, artifactId: 'stop-approval', actionId };
-    const target = await home(mode, events, { originalOwnAction: actionId, ownExecution: { ok: true, result: approval } });
-    const input = { requestId: 'stop-request', action: 'stop_managed', target: {
+    const currentness = await createRequesterCurrentnessSocketHarness();
+    const artifacts = fastify();
+    registerAccountArtifactRoutes(artifacts, 'bob', { encryptionMode: mode });
+    await artifacts.ready();
+    const stopped = LocalServiceActionResultV1Schema.parse({ v: 1, requestId: 'stop-request',
+      action: 'stop_managed', status: 'succeeded', auditEvents: [] });
+    const target = await home(mode, events, { originalOwnAction: actionId, artifacts, onRequestPath: path => requestPaths.push(path),
+      ownExecution: { ok: true, result: stopped } });
+    const reviewed = LocalServiceActionRequestV1Schema.parse({ requestId: 'stop-request', action: 'stop_managed', target: {
       kind: 'managed_service', managedServiceId: 'moved-instance', machineId: 'alice-machine',
       workspaceId: 'worker-ref', cwd: '/worker/project', declaration: {
         workspaceRefId: 'worker-ref', selection: { kind: 'manifest', name: 'web' },
       },
-    }, force: false, confirmationNonce: 'stop-confirmation' };
+    }, force: false, confirmationNonce: 'stop-confirmation' });
+    const input = { ...reviewed, confirmationNonce: createLocalServiceActionConfirmationNonceV1(reviewed) };
     const credentials: StoredCredentials = { token: token(), encryption: mode === 'plain' ? null
       : { type: 'legacy', secret: new Uint8Array(32).fill(23) }, credentialProvenance: 'stored_session' };
     terminal.interactive = false;
@@ -2127,8 +2147,10 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
             getAccountSettings: () => ({ actionsSettingsV1: { v: 1,
               actions: { [actionId]: { approvalRequiredSurfaces: ['cli'] } } } }) } }),
       });
-      const emitted: unknown = JSON.parse(output.text());
-      expect(emitted, JSON.stringify(emitted)).toMatchObject({ ok: true, data: approval });
+      const [approval, emitted] = output.lines.map(line => JSON.parse(line) as unknown);
+      expect(output.lines).toHaveLength(2);
+      expect(approval).toMatchObject({ ok: true, data: { kind: 'approval_request_created', actionId } });
+      expect(emitted, JSON.stringify(emitted)).toMatchObject({ ok: true, data: stopped });
       const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
       expect(received.executionAuthorization?.binding).toMatchObject({ actionId, accountId: 'bob',
         custodianAccountId: 'alice', machineId: 'alice-machine' });
@@ -2143,9 +2165,9 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
       })?.input).toEqual(input);
       else expect(received.envelope).toMatchObject({ v: 1, input });
       expect(terminal.prompts).toEqual([]);
-      expect(events).toEqual(['home-authorized', 'dispatch']);
+      expect(events, JSON.stringify(requestPaths)).toEqual(['home-authorized', 'dispatch']);
       expect(JSON.stringify(received)).not.toContain(credentials.token);
-    } finally { output.restore(); }
+    } finally { output.restore(); await currentness.close(); await artifacts.close(); }
   });
 
   it.each(['yes', 'no', 'noninteractive', 'json'] as const)('requires actual CLI confidentiality consent before private delivery (%s)', async answer => {

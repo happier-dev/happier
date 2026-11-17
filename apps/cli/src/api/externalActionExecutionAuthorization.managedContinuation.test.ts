@@ -32,7 +32,14 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { ManagedAcquireInputV1Schema, MachineSetupApplyInputV1Schema, MachineSetupPlanResultV1Schema, readMachineSetupPlanChildInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { createAccountScopedCryptoMaterialSnapshotV1, deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { sealConnectedAccountCatalogContentV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { AccountSettingsV2HistoryListResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
@@ -121,6 +128,8 @@ describe('managed continuation through the ordinary public Action transport', ()
             }
             if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'account' } };
             if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: null, version: 0 } };
+            if (url.endsWith('/v2/account/settings/history')) return { status: 200,
+                data: AccountSettingsV2HistoryListResponseSchema.parse({ snapshots: [] }) };
             expect(url).toBe('https://home.example/v1/account/encryption/currentness');
             return { status: 200, data: { mode: 'plain', version: 1, settingsVersion: 0,
                 signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
@@ -206,6 +215,13 @@ describe('managed continuation through the ordinary public Action transport', ()
         const parent = { ...root, binding: { ...root.binding, custodianAccountId: foreign ? 'company' : 'account', accountEncryptionMode: mode,
             ...('workflowRoot' in testCase ? { actionId: 'workflow.run.start', requestId: 'workflow-request' } : {}) } };
         const ownMaterial = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(secret) };
+        const contentKeyFingerprint = mode === 'plain' ? null
+            : convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+                createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: mode,
+                    material: { type: 'legacy', secret } }).contentPublicKeyFingerprint);
+        const purposeCatalog = sealConnectedAccountCatalogContentV1({ mode,
+            material: mode === 'plain' ? null : { type: 'legacy', secret },
+            record: { key: 'purposes', value: { v: 1, bindings: [] } } });
         const guest = new ApiMachineClient(credentials.token, { id: 'guest', encryptionMode: 'plain', metadataVersion: 0,
             daemonState: null, daemonStateVersion: 0, metadata: { host: 'worker', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/users/worker', happyHomeDir: '/users/worker/.happier', setup: { version: 1, revision: 3,
@@ -221,18 +237,31 @@ describe('managed continuation through the ordinary public Action transport', ()
             ...(mode === 'plain' ? { mode: 'plain' as const, ctx: null }
                 : { mode: 'e2ee' as const, ctx: { encryptionVariant: 'legacy' as const, encryptionKey: secret } }), sessionId: '', serverId: 'home-profile', serverIdentityId: 'srv_home',
             serverHttpBaseUrl: 'https://home.example', sessionSpawnDirectTargetTransport: { machineId: 'guest',
+                readMachineMetadataSnapshot: () => guest.getMachineMetadataSnapshot(),
                 // The actual directory/Agent process boundary is unavailable in
                 // this test; all Session authoring and Action admission is real.
                 prepare: async request => { preparedDirectories.push(request.directory); return { ok: false, code: 'invalid_directory' }; },
                 spawnedSession: { spawn: async () => { throw new Error('Unexpected native spawn'); },
                     resolveSpawnSessionByNonce: async () => { throw new Error('Unexpected native spawn lookup'); } } } }).executor;
         const executor = actionId === 'machines.setup.plan' ? setupExecutor : spawnExecutor;
+        const homeDefaultsRequest = bindHomeDomainActionHttpRequestV1('home.governance.get', { projection: 'session_defaults' });
+        const accountRequests = vi.spyOn(axios, 'request').mockImplementation(async request => {
+            if (request.url === `https://home.example${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`) {
+                return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+            }
+            expect(request.url).toBe(`https://home.example${homeDefaultsRequest.path}`);
+            expect(request.method).toBe(homeDefaultsRequest.method);
+            expect(request.data).toEqual(homeDefaultsRequest.body);
+            return { status: 200, data: HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null }) };
+        });
         const read = vi.spyOn(axios, 'get').mockImplementation(async url => {
             if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'account' } };
             if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: null, version: 0 } };
+            if (url.endsWith('/v1/account/entity-rows/connected-accounts/purposes')) return { status: 200,
+                data: { status: 'present', revision: 1, content: purposeCatalog } };
             expect(url).toBe('https://home.example/v1/account/encryption/currentness');
-            return { status: 200, data: { mode, version: 1, settingsVersion: 0,
-                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+            return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode, version: 1,
+                settingsVersion: 0, contentKeyFingerprint, updatedAt: 1 }) };
         });
         const keys: Uint8Array[] = [];
         const receivedInputs: unknown[] = [];
@@ -295,10 +324,12 @@ describe('managed continuation through the ordinary public Action transport', ()
             ? dispatchManagedMachineSetupPlan({ ...dispatch, ...(includeInvocation ? { invocation: { ...dispatch.invocation, surface } } : { invocation: undefined }), serverId: 'home-profile', input: { homeId: 'srv_home', machineId: 'guest' } })
             : dispatchManagedSessionStart({ ...dispatch, ...(includeInvocation ? { invocation: { ...dispatch.invocation, surface } } : { invocation: undefined }), input: sessionInput });
         const expected = actionId === 'machines.setup.plan' ? { ok: true, result: { desiredRevision: 3 } }
-            : { ok: true, result: { type: 'error', code: 'spawn_failed', retryable: false,
+            : { ok: false, errorCode: 'spawn_failed', details: { type: 'error', code: 'spawn_failed', retryable: false,
                 launchError: { code: 'invalid_directory' } } };
         const first = await invoke();
-        expect(first, JSON.stringify({ first, receiverResult, preparedAccount, boundaryFailure })).toMatchObject(expected);
+        expect(first, JSON.stringify({ first, receiverResult, preparedAccount, boundaryFailure,
+            accountReads: read.mock.calls.map(([url]) => url),
+            accountRequests: accountRequests.mock.calls.map(([request]) => ({ method: request.method, url: request.url })) })).toMatchObject(expected);
         expect(await invoke()).toMatchObject(expected);
         expect(keys).toHaveLength(foreign ? 2 : 0);
         if (foreign) expect(keys[0]).not.toEqual(keys[1]);
