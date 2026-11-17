@@ -1,3 +1,5 @@
+import type { PluginActionDeclaration } from '../definePlugin.js';
+import { pluginActionDeclarationIsReadOnlyForInput as canonicalPluginActionDeclarationIsReadOnlyForInput } from '@happier-dev/protocol/plugins/actions/invocation';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getActionSpec as canonicalGetActionSpec, PLUGIN_ACTION_INPUT_SCHEMAS, PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 
@@ -98,6 +100,12 @@ export type ActionId = ActionSpec['id'];
 
 /** Canonical definition result projected by the host Workflow Action. */
 export type PluginActionWorkflowDefinitionV1 = PluginActionResultById['workflow.definition.get']['definition'];
+
+/** Evaluates the declaration's read-only fact through the canonical invocation owner. */
+export const pluginActionDeclarationIsReadOnlyForInput: (
+  declaration: Pick<PluginActionDeclaration, 'readOnly'>,
+  input: unknown,
+) => boolean = /* @__PURE__ */ projectProtocolValue(canonicalPluginActionDeclarationIsReadOnlyForInput);
 
 /** Looks up one canonical host ActionSpec without changing its runtime identity. */
 export const getActionSpec: (

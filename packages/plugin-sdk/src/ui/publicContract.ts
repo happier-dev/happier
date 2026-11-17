@@ -715,3 +715,4 @@ export type PluginLiveStreamReferenceV1 =
     | Readonly<{ kind: 'plugin'; source: Readonly<{ pluginId: string; localId: string }> }>
     | Readonly<{ kind: 'host'; sourceId: string }>;
 export type { FailureActionPlacement, FailureAgentAction, FailureActionOutcome } from '@happier-dev/protocol/plugins/contributions/ui/failureActionPresentation';
+export { FailureAgentActionV1Schema, FailureActionOutcomeV1Schema, FailureActionPlacementV1Schema, FailureActionPlacementReasonV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/failureActionPresentation';

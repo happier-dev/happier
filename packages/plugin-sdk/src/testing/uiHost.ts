@@ -571,7 +571,7 @@ export type PluginUiTestkitHostHandlers = Readonly<{
     ) => void | Promise<void>;
     executeAction?: (input: PluginUiTestkitExecuteActionInput) => JsonValue | Promise<JsonValue>;
     downloadFile?: (input: Readonly<{ request: import('../ui/hostApi.js').DownloadFileRequest; signal: AbortSignal }>) =>
-        import('../protocol/index.js').FileDownloadResultV1 | Promise<import('../protocol/index.js').FileDownloadResultV1>;
+        import('../protocol/fileDownload.js').FileDownloadResultV1 | Promise<import('../protocol/fileDownload.js').FileDownloadResultV1>;
     admitAction?: (input: Readonly<{ action: PluginReference; input?: JsonValue; signal: AbortSignal }>) => boolean | Promise<boolean>;
     selectActionInput?: (
         input: PluginUiTestkitSelectActionInputInput,

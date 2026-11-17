@@ -8,7 +8,7 @@ export type {
     PluginUiReadAuthorityReferenceV1,
 } from '@happier-dev/protocol/plugins/ui/client';
 import type { ActionExecutionOptions } from '../actions/service.js';
-import type { FileDownloadResultV1 } from '../protocol/index.js';
+import type { FileDownloadResultV1 } from '../protocol/fileDownload.js';
 /** Contributed Action and input only; the host holds the receiving destination. */
 export type DownloadFileRequest = import('@happier-dev/protocol/plugins/ui/client').PluginUiDownloadFileRequestV1;
 /** A source-neutral seed for the incumbent Automation Event editor. */

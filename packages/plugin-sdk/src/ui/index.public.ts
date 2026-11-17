@@ -1,4 +1,4 @@
-export { FailureAgentActionV1Schema, FailureActionOutcomeV1Schema, FailureActionPlacementV1Schema, FailureActionPlacementReasonV1Schema } from '@happier-dev/protocol/plugins/contributions/ui/failureActionPresentation';
+export { FailureAgentActionV1Schema, FailureActionOutcomeV1Schema, FailureActionPlacementV1Schema, FailureActionPlacementReasonV1Schema } from './publicContract.js';
 export type { FailureActionOutcome, FailureActionPlacement, FailureAgentAction } from './publicContract.js';
 export { THEME_SURFACE_REGISTRY, themeSurfaceDataSet, isThemeSurfaceAddress, getThemeSurfacePaintMap, getThemeSurfaceReference } from './themeSurfaceRegistry.js';
 export type { SurfaceId, SurfacePart, ThemeSurfaceState, SurfaceAddress, ThemeSurfacePaintSource, ThemeSurfacePaintRole, ThemeSurfacePaintDescriptor, ThemeSurfaceReference } from './themeSurfaceRegistry.js';
