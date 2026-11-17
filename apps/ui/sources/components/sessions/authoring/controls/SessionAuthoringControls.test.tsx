@@ -593,6 +593,46 @@ describe('SessionAuthoringControls', () => {
     await chips.screen.unmount();
   });
 
+  it('returns a changed Windows window name to inheritance rather than an explicit blank', async () => {
+    const { SessionAuthoringControls } = await import('./SessionAuthoringControls');
+    const { createWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowEditorDraft');
+    const { resolveEffectiveWorkflowStepExecution, listWorkflowStepOverriddenFields } = await import('@/sync/domains/workflows/workflowAuthoring');
+    const { setWorkflowDefaultField, setWorkflowStepExecutionField } = await import('@happier-dev/protocol/workflows/workflowDefinitionEditV1');
+    const initial = createWorkflowEditorDraft({ draftId: 'window-name-reset',
+      defaults: { windowsTerminalWindowName: 'Workflow window' },
+      blocks: [{ kind: 'step', id: 'check', document: { text: 'Check', references: [], attachments: [] },
+        input: [], result: { kind: 'text' }, execution: { windowsTerminalWindowName: 'Step window' } }] });
+    let current = initial;
+    let changeDefault = (_name: string) => {};
+    function Field() {
+      const [draft, setDraft] = React.useState(initial);
+      current = draft;
+      changeDefault = (name) => setDraft(value => setWorkflowDefaultField(value, 'windowsTerminalWindowName', name));
+      const step = draft.blocks[0];
+      if (step?.kind !== 'step') throw new Error('Expected the authored step');
+      return <SessionAuthoringControls fields={['windowsTerminalWindowName']}
+        values={resolveEffectiveWorkflowStepExecution(draft, step)} facts={{ targetIsWindows: true }}
+        overriddenFields={new Set(listWorkflowStepOverriddenFields(step))}
+        onChangeField={(field, value) => setDraft(draft => setWorkflowStepExecutionField(draft, step.id, field, value))}
+        resetOverride={{ label: 'Use workflow’s',
+          onResetField: (field) => setDraft(draft => setWorkflowStepExecutionField(draft, step.id, field, undefined)) }} />;
+    }
+    const screen = await renderScreen(<Field />);
+    const inputId = 'session-authoring-control-windowsTerminalWindowName-input';
+    const resetId = 'session-authoring-control-windowsTerminalWindowName-reset';
+    expect(screen.findByTestId(inputId)?.props.value).toBe('Step window');
+    await act(async () => { screen.changeTextByTestId(inputId, ''); });
+    expect(current.blocks[0]).toMatchObject({ execution: { windowsTerminalWindowName: null } });
+    expect(screen.findHostByTestId(resetId), 'an explicit blank still needs a way back to inheritance').not.toBeNull();
+    await screen.pressByTestIdAsync(resetId);
+    expect(current.blocks[0]).not.toHaveProperty('execution');
+    expect(screen.findByTestId(inputId)?.props.value).toBe('Workflow window');
+    expect(screen.findHostByTestId(resetId)).toBeNull();
+    await act(async () => { changeDefault('Renamed workflow window'); });
+    expect(screen.findByTestId(inputId)?.props.value).toBe('Renamed workflow window');
+    await screen.unmount();
+  });
+
   it('draws the selects presentation as unlabelled field selects that open the chip picker and write the same value', async () => {
     const { HappierFieldBoxTrigger } = await import('@happier-dev/plugin-ui/presentation');
     const selects = await renderControls({

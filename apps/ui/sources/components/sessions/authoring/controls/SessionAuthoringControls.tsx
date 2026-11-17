@@ -708,6 +708,7 @@ export function useSessionAuthoringEngineSummary(params: Readonly<{
 }
 
 export function SessionAuthoringControls(props: SessionAuthoringControlsProps): React.ReactElement {
+    const { theme } = useUnistyles();
     const testIDPrefix = props.testIDPrefix ?? 'session-authoring-control';
     const facts = props.facts ?? EMPTY_FACTS;
     const overlayAnchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
@@ -733,6 +734,23 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
     const presentation = props.presentation ?? 'chips';
     const isChanged = (field: SessionAuthoringFieldId) => props.overriddenFields === 'all'
         || (props.overriddenFields?.has(field) ?? false);
+    // Controls without an option picker still need the same way back to inheritance.
+    const withReset = (field: SessionAuthoringFieldId, control: React.ReactNode): React.ReactNode => {
+        const reset = props.resetOverride;
+        if (reset === undefined || !isChanged(field)) return control;
+        const title = resolveSessionAuthoringFieldTitle(field,
+            findSessionAuthoringAgentTargetOption(facts.agentTargets, props.values.agentTarget)) ?? field;
+        return <View key={field} style={styles.root}>
+            {control}
+            <HappierPressable testID={`${testIDPrefix}-${field}-reset`} accessibilityRole="button"
+                accessibilityLabel={`${title}: ${reset.label}`} disabled={props.disabled}
+                onPress={() => reset.onResetField(field)}
+                style={(state) => [styles.chip, state.pressed ? styles.chipPressed : null,
+                    focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}>
+                <Text style={styles.chipText}>{reset.label}</Text>
+            </HappierPressable>
+        </View>;
+    };
     const controlFor = (field: SessionAuthoringFieldId) => resolveSessionAuthoringFieldControl({
         field,
         values: props.values,
@@ -764,11 +782,11 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
             style={presentation === 'fields' || props.renderFieldRow !== undefined ? styles.fields : styles.root}
         >
             {props.fields.map((field) => {
-                if (field === 'approvalProfileId') return inRow(field, <SessionAuthoringApprovalProfileField key={field}
+                if (field === 'approvalProfileId') return inRow(field, withReset(field, <SessionAuthoringApprovalProfileField key={field}
                     value={props.values.approvalProfileId} serverId={facts.agentPickerContext?.serverId}
                     machineId={facts.agentPickerContext?.machineId ?? null} presentation={presentation}
                     onChange={value => props.onChangeField('approvalProfileId', value)} disabled={props.disabled}
-                    titleMeta={props.fieldMeta?.approvalProfileId} testID={`${testIDPrefix}-approvalProfileId`} />);
+                    titleMeta={props.fieldMeta?.approvalProfileId} testID={`${testIDPrefix}-approvalProfileId`} />));
                 if (presentation !== 'chips' && field === 'profileId' && !props.values.profileId) return null;
                 if (engineField !== undefined && (field === 'acpSessionModeId' || field === 'sessionConfigOptionOverrides')) return null;
                 if (engineField !== undefined && (field === 'agentTarget' || field === 'modelSelection')) {
@@ -795,7 +813,7 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                             titleMeta={props.fieldMeta?.[engineField]} />;
                 }
                 const control = controlFor(field);
-                const rendered = (
+                const fieldControl = (
                     <SessionAuthoringFieldControl
                         key={field}
                         control={control}
@@ -814,6 +832,8 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                         testIDPrefix={testIDPrefix}
                     />
                 );
+                const rendered = control.kind === 'options' || control.kind === 'optionGroups'
+                    ? fieldControl : withReset(field, fieldControl);
                 // A chip row beside its engine chip (in this row, or the host's: a step card's header) says "Choose an
                 // agent" once, there; the fields that wait on it add nothing. A lone field still says why.
                 if (presentation === 'chips') {
