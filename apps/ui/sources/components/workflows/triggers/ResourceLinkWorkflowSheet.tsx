@@ -109,7 +109,10 @@ export function ResourceLinkWorkflowSheet(
     },
     [setDraft],
   );
-  React.useEffect(() => () => setDraft(null), [setDraft]);
+  // Closing the sheet drops its draft; a new setter identity on a later render must not clear it mid-choice.
+  const clearDraft = React.useRef(setDraft);
+  clearDraft.current = setDraft;
+  React.useEffect(() => () => clearDraft.current(null), []);
 
   const workflowItems = React.useMemo<ValueFieldSelectItem[]>(
     () =>

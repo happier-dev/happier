@@ -178,6 +178,26 @@ describe('Link a workflow to a resource', () => {
     await screen.unmount();
   });
 
+  // QA-B E10: the section hands a new setter on a later render; the chosen Workflow and When must stay drafted.
+  it('keeps the draft while the section re-renders with a new setter, and drops it only on close', async () => {
+    const first = linkFor([]);
+    const sheet = (link: ReturnType<typeof linkFor>) => <ResourceLinkWorkflowSheet anchorRef={React.createRef<never>()}
+      resourceName="Studio" link={link} serverId={null} machineId={null} accountLifetime={null}
+      onRequestClose={() => undefined} onLinked={() => undefined} />;
+    const screen = await renderScreen(sheet(first));
+    const [workflowSelect, whenSelect] = screen.findAllByType(ValueFieldSelect);
+    await act(async () => workflowSelect!.props.onSelect('builtin:review-and-converge'));
+    await act(async () => whenSelect!.props.onSelect(option.id));
+    const drafted = first.setDraft.mock.calls.at(-1)?.[0];
+    expect(drafted).toMatchObject({ workflow: 'builtin:review-and-converge' });
+    const second = { ...linkFor([]), draft: drafted };
+    await act(async () => screen.update(sheet(second)));
+    expect(first.setDraft).not.toHaveBeenLastCalledWith(null);
+    expect(second.setDraft).not.toHaveBeenCalled();
+    await screen.unmount();
+    expect(second.setDraft).toHaveBeenLastCalledWith(null);
+  });
+
   it('links without a share question on a private resource and says why a link failed', async () => {
     const link = linkFor([]);
     const screen = await renderScreen(
