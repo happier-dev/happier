@@ -431,6 +431,7 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
   }));
   h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, 'codex', freshNative, undefined,
     freshNative ? pluginReloadController : undefined, {
+    additionalPluginIds: ['happier.provider.cliproxyapi'],
     ...(freshNative ? { ordinaryAccountSession: true, externalActionAccountId: freshActor === 'owner' ? 'requester' : 'company',
       homeServerIdentityId: freshHome,
       machineAccess: { custodianAccountId: freshActor === 'owner' ? 'requester' : 'company', role: freshRole },
