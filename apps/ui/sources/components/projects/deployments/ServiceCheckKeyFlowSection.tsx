@@ -13,7 +13,7 @@ import { Typography } from '@/constants/Typography';
 import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
-import { formatServiceCheckLatency, type ServiceCheckCollectorTrend } from './serviceCheckPresentation';
+import { formatServiceCheckKeyFlowValue, formatServiceCheckLatency, type ServiceCheckCollectorTrend } from './serviceCheckPresentation';
 import { serviceCheckCollectorLatency, useServiceCheckCollectorTrend } from './useServiceCheckCollectorTrend';
 
 const m = 'projects.deployments.monitoring' as const;
@@ -27,6 +27,28 @@ const formatPercent = (fraction: number) =>
 const formatCount = (count: number) => new Intl.NumberFormat(getPreferredLanguage()).format(count);
 
 type Interval = TelemetryMetricsReadResultV1['trend'][number];
+
+/** The newest measured point of a series, in its own units; null while the window has none. */
+function latestOf(series: HappierSeries, format: (value: number) => string): string | null {
+  for (let index = series.points.length - 1; index >= 0; index -= 1) {
+    const y = series.points[index]!.y;
+    if (typeof y === 'number') return format(y);
+  }
+  return null;
+}
+
+/** A trend's name and newest value on one line, its limit under it (lab p7Flows detail). */
+function ChartHead(props: Readonly<{ title: string; latest: string | null; detail: string | null }>) {
+  return (
+    <View style={styles.head}>
+      <View style={styles.headLine}>
+        <Text variant="label" numberOfLines={1} style={styles.headTitle}>{props.title}</Text>
+        <Text variant="label" emphasis="semiBold" style={styles.headValue}>{props.latest ?? '—'}</Text>
+      </View>
+      {props.detail ? <Text variant="meta" style={styles.caption}>{props.detail}</Text> : null}
+    </View>
+  );
+}
 
 /** The latency statistic a chart names ("p95"), from the saved flow. */
 function latencyWord(config: TelemetryKeyFlowConfigV1): string {
@@ -81,14 +103,18 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
         ) : charts ? (
           <View style={[styles.charts, twoUp ? styles.chartsRow : null]} onLayout={(event) => setWidth(Math.round(event.nativeEvent.layout.width))}>
             <View style={styles.chart} testID="services.check.keyFlow.latency">
+              <ChartHead title={charts.latency.label} latest={latestOf(charts.latency, routeFlow ? formatServiceCheckLatency : String)}
+                detail={errorsMeasured ? null : `${limitLabel} ${formatServiceCheckKeyFlowValue(config, threshold.value)}`} />
               <StackedSeriesChart theme={pluginTheme} label={charts.latency.label} series={[charts.latency]} variant="line" size="full"
-                showLegend={false} {...(routeFlow ? { valueFormatter: formatServiceCheckLatency } : {})} unknownLabel={t(`${m}.keyFlowNoRequests`)}
+                showLegend={false} showReadout={false} {...(routeFlow ? { valueFormatter: formatServiceCheckLatency } : {})} unknownLabel={t(`${m}.keyFlowNoRequests`)}
                 {...(!errorsMeasured ? { threshold: { value: threshold.value, label: limitLabel, tone: props.failing ? 'error' : 'warning' } } : {})} />
             </View>
             {routeFlow ? (
               <View style={styles.chart} testID="services.check.keyFlow.errors">
+                <ChartHead title={charts.errors.label} latest={latestOf(charts.errors, formatPercent)}
+                  detail={errorsMeasured ? `${limitLabel} ${formatServiceCheckKeyFlowValue(config, threshold.value)}` : null} />
                 <StackedSeriesChart theme={pluginTheme} label={charts.errors.label} series={[charts.errors]} variant="line" size="full"
-                  showLegend={false} valueFormatter={formatPercent} unknownLabel={t(`${m}.keyFlowNoRequests`)}
+                  showLegend={false} showReadout={false} valueFormatter={formatPercent} unknownLabel={t(`${m}.keyFlowNoRequests`)}
                   {...(errorsMeasured ? { threshold: { value: threshold.value, label: limitLabel, tone: props.failing ? 'error' : 'warning' } } : {})} />
               </View>
             ) : null}
@@ -125,6 +151,10 @@ const styles = StyleSheet.create((theme) => ({
   caption: { color: theme.colors.text.secondary },
   charts: { gap: theme.space.s16 },
   chartsRow: { flexDirection: 'row' },
-  chart: { flex: 1, minWidth: 0 },
+  chart: { flex: 1, minWidth: 0, gap: theme.space.s8 },
+  head: { gap: theme.space.s2 },
+  headLine: { flexDirection: 'row', justifyContent: 'space-between', gap: theme.space.s12 },
+  headTitle: { flexShrink: 1, color: theme.colors.text.secondary },
+  headValue: { color: theme.colors.text.primary, fontVariant: ['tabular-nums'] },
   route: { ...Typography.mono(), color: theme.colors.text.primary },
 }));

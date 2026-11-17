@@ -446,6 +446,27 @@ describe('a Key flow check names its routes and reads its trend from the collect
     expect(facts.collectorTrend).toEqual({ collectorMachineId: 'collector-b', config: keyFlow, until: today });
   });
 
+  it('says a failing or unknown Key flow in its measurement, never the producer’s reason code', async () => {
+    const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
+    const row = (status: 'down' | 'unknown', value?: number) => ({
+      native: { name: 'Checkout' },
+      definitionFacts: { kind: 'available', observerMachineId: 'collector-b', checks: [{ checkId: 'Checkout', name: 'Key flow',
+        targetLabel: 'POST /checkout', periodMs: 60_000, domainId: null, keyFlow }] },
+      lastResults: { kind: 'available', checks: [{ checkId: 'Checkout', result: { status, observedAt: today, evidence: { kind: 'none' },
+        cause: { kind: 'keyFlow', vantage: 'sameMachine', reason: status === 'down' ? 'threshold_exceeded' : 'no_traffic' },
+        measurements: { measure: 'p95', unit: 'ms', basis: 'metric_points', producers: [], window: { since: today - 600_000, until: today },
+          completeness: value === undefined ? 'unknown' : 'complete', reasons: value === undefined ? ['no_traffic'] : [],
+          ...(value === undefined ? {} : { value }) } } }] },
+    }) as never;
+    const failing = serviceCheckListFacts(row('down', 1420)).causeText;
+    expect(failing).toMatch(/p95/);
+    expect(failing).toMatch(/800/);
+    expect(failing).not.toMatch(/threshold_exceeded/);
+    const unknown = serviceCheckListFacts(row('unknown')).causeText;
+    expect(unknown).toMatch(/10/);
+    expect(unknown).not.toMatch(/no_traffic/);
+  });
+
   it('every other check keeps its retained response and has no collector trend', async () => {
     const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
     const facts = serviceCheckListFacts({

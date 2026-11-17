@@ -64,6 +64,10 @@ const en = {
   keyFlowAbove: 'above',
   keyFlowBelow: 'below',
   keyFlowSpend: 'Spend',
+  keyFlowNoTraffic: ({ window }: { window: string }) => `no requests in ${window}`,
+  keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
+    `${measure} ${value} over ${window}, limit ${limit}`,
+  keyFlowLatestLimit: ({ limit }: { limit: string }) => `latest · limit ${limit}`,
 };
 type MonitoringCopy = typeof en;
 
@@ -130,6 +134,10 @@ export const deploymentMonitoringTranslations = {
     keyFlowAbove: 'per sobre de',
     keyFlowBelow: 'per sota de',
     keyFlowSpend: 'Despesa',
+    keyFlowNoTraffic: ({ window }: { window: string }) => `cap petició en ${window}`,
+    keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
+      `${measure} ${value} en ${window}, límit ${limit}`,
+    keyFlowLatestLimit: ({ limit }: { limit: string }) => `últim · límit ${limit}`,
   },
   de: {
     title: 'Überwachung',
@@ -192,6 +200,10 @@ export const deploymentMonitoringTranslations = {
     keyFlowAbove: 'über',
     keyFlowBelow: 'unter',
     keyFlowSpend: 'Kosten',
+    keyFlowNoTraffic: ({ window }: { window: string }) => `keine Anfragen in ${window}`,
+    keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
+      `${measure} ${value} über ${window}, Grenze ${limit}`,
+    keyFlowLatestLimit: ({ limit }: { limit: string }) => `zuletzt · Grenze ${limit}`,
   },
   es: {
     title: 'Monitorización',
@@ -254,6 +266,10 @@ export const deploymentMonitoringTranslations = {
     keyFlowAbove: 'por encima de',
     keyFlowBelow: 'por debajo de',
     keyFlowSpend: 'Gasto',
+    keyFlowNoTraffic: ({ window }: { window: string }) => `sin peticiones en ${window}`,
+    keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
+      `${measure} ${value} en ${window}, límite ${limit}`,
+    keyFlowLatestLimit: ({ limit }: { limit: string }) => `último · límite ${limit}`,
   },
   fr: {
     title: 'Surveillance',
@@ -318,6 +334,10 @@ export const deploymentMonitoringTranslations = {
     keyFlowAbove: 'au-dessus de',
     keyFlowBelow: 'en dessous de',
     keyFlowSpend: 'Dépenses',
+    keyFlowNoTraffic: ({ window }: { window: string }) => `aucune requête en ${window}`,
+    keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
+      `${measure} ${value} sur ${window}, limite ${limit}`,
+    keyFlowLatestLimit: ({ limit }: { limit: string }) => `dernier · limite ${limit}`,
   },
   it: {
     title: 'Monitoraggio',
@@ -380,6 +400,10 @@ export const deploymentMonitoringTranslations = {
     keyFlowAbove: 'sopra',
     keyFlowBelow: 'sotto',
     keyFlowSpend: 'Spesa',
+    keyFlowNoTraffic: ({ window }: { window: string }) => `nessuna richiesta in ${window}`,
+    keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
+      `${measure} ${value} in ${window}, limite ${limit}`,
+    keyFlowLatestLimit: ({ limit }: { limit: string }) => `ultimo · limite ${limit}`,
   },
   ja: {
     title: 'モニタリング',
@@ -440,6 +464,10 @@ export const deploymentMonitoringTranslations = {
     keyFlowAbove: 'を超える',
     keyFlowBelow: 'を下回る',
     keyFlowSpend: '費用',
+    keyFlowNoTraffic: ({ window }: { window: string }) => `${window} にリクエストなし`,
+    keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
+      `${window} の ${measure} ${value}、上限 ${limit}`,
+    keyFlowLatestLimit: ({ limit }: { limit: string }) => `最新 · 上限 ${limit}`,
   },
   pl: {
     title: 'Monitorowanie',
@@ -500,6 +528,10 @@ export const deploymentMonitoringTranslations = {
     keyFlowAbove: 'powyżej',
     keyFlowBelow: 'poniżej',
     keyFlowSpend: 'Wydatki',
+    keyFlowNoTraffic: ({ window }: { window: string }) => `brak żądań w ciągu ${window}`,
+    keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
+      `${measure} ${value} w ciągu ${window}, limit ${limit}`,
+    keyFlowLatestLimit: ({ limit }: { limit: string }) => `najnowsze · limit ${limit}`,
   },
   pt: {
     title: 'Monitorização',
@@ -562,6 +594,10 @@ export const deploymentMonitoringTranslations = {
     keyFlowAbove: 'acima de',
     keyFlowBelow: 'abaixo de',
     keyFlowSpend: 'Gastos',
+    keyFlowNoTraffic: ({ window }: { window: string }) => `sem pedidos em ${window}`,
+    keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
+      `${measure} ${value} em ${window}, limite ${limit}`,
+    keyFlowLatestLimit: ({ limit }: { limit: string }) => `mais recente · limite ${limit}`,
   },
   ru: {
     title: 'Мониторинг',
@@ -623,6 +659,10 @@ export const deploymentMonitoringTranslations = {
     keyFlowAbove: 'выше',
     keyFlowBelow: 'ниже',
     keyFlowSpend: 'Расходы',
+    keyFlowNoTraffic: ({ window }: { window: string }) => `нет запросов за ${window}`,
+    keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
+      `${measure} ${value} за ${window}, предел ${limit}`,
+    keyFlowLatestLimit: ({ limit }: { limit: string }) => `последнее · предел ${limit}`,
   },
   'zh-Hans': {
     title: '监控',
@@ -683,6 +723,10 @@ export const deploymentMonitoringTranslations = {
     keyFlowAbove: '高于',
     keyFlowBelow: '低于',
     keyFlowSpend: '花费',
+    keyFlowNoTraffic: ({ window }: { window: string }) => `${window} 内没有请求`,
+    keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
+      `${window} 内 ${measure} ${value}，上限 ${limit}`,
+    keyFlowLatestLimit: ({ limit }: { limit: string }) => `最新 · 上限 ${limit}`,
   },
   'zh-Hant': {
     title: '監控',
@@ -743,5 +787,9 @@ export const deploymentMonitoringTranslations = {
     keyFlowAbove: '高於',
     keyFlowBelow: '低於',
     keyFlowSpend: '花費',
+    keyFlowNoTraffic: ({ window }: { window: string }) => `${window} 內沒有請求`,
+    keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
+      `${window} 內 ${measure} ${value}，上限 ${limit}`,
+    keyFlowLatestLimit: ({ limit }: { limit: string }) => `最新 · 上限 ${limit}`,
   },
 } satisfies Record<SupportedLanguage, MonitoringCopy>;

@@ -448,6 +448,31 @@ export function serviceCheckCauseText(cause: RetainedCheck['result']['cause'] | 
   ].filter((part): part is string => Boolean(part)).join(' · ');
 }
 
+/** A measured value in the words of its flow: latency as time, an error share as a percentage, anything else as is. */
+export function formatServiceCheckKeyFlowValue(config: TelemetryKeyFlowConfigV1, value: number): string {
+  const measure = config.measure;
+  if (measure.kind === 'route' && measure.statistic === 'errorRate') {
+    return new Intl.NumberFormat(getPreferredLanguage(), { style: 'percent', maximumFractionDigits: 1 }).format(value);
+  }
+  return measure.kind === 'route' ? formatServiceCheckLatency(value) : String(value);
+}
+
+/**
+ * Why a Key flow result stands as it does, from its measurement and the saved rule ("p95 1.42 s over 10 min, limit
+ * 800 ms"), or that nothing reached the collector in its window. The producer's reason codes never reach the screen.
+ */
+export function serviceCheckKeyFlowCauseText(config: TelemetryKeyFlowConfigV1, result: RetainedCheck['result']): string | null {
+  const k = 'projects.deployments.monitoring' as const;
+  const measured = result.measurements;
+  const window = formatServiceCheckPeriod(config.windowMs);
+  if (!measured || measured.value === undefined) return result.status === 'unknown' ? t(`${k}.keyFlowNoTraffic`, { window }) : null;
+  const measure = config.measure.kind === 'route'
+    ? (config.measure.statistic === 'errorRate' ? t(`${k}.keyFlowErrors`) : config.measure.statistic)
+    : config.measure.kind === 'runtime' ? config.measure.metricName : t(`${k}.keyFlowSpend`);
+  return t(`${k}.keyFlowMeasured`, { measure, value: formatServiceCheckKeyFlowValue(config, measured.value), window,
+    limit: formatServiceCheckKeyFlowValue(config, config.threshold.value) });
+}
+
 type ShownDefinition = Extract<ConfiguredCheckDefinitionFacts, { kind: 'available' }>['checks'][number];
 
 /**
@@ -558,7 +583,10 @@ export function serviceCheckListFacts(row: ListedCheck, slots: number = SERVICE_
     usualMs: usual.length === 0 ? null : usual.reduce((sum, value) => sum + value, 0) / usual.length,
     uptimePercent: facts.uptimePercent,
     failingSince: recent?.failingSince ?? null,
-    causeText: shown && serviceCheckStatusTone(shown.result.status) !== null ? serviceCheckCauseText(shown.result.cause) : null,
+    // A Key flow says its measurement; an unknown one says nothing reached the collector (quiet, never a failure tone).
+    causeText: shown && keyFlow && (serviceCheckStatusTone(shown.result.status) !== null || shown.result.status === 'unknown')
+      ? serviceCheckKeyFlowCauseText(keyFlow, shown.result)
+      : shown && serviceCheckStatusTone(shown.result.status) !== null ? serviceCheckCauseText(shown.result.cause) : null,
     observerMachineId,
   };
 }

@@ -40,6 +40,8 @@ import {
   readServiceCheckSettings,
   serviceCheckShownDefinition,
   serviceCheckCauseText,
+  serviceCheckKeyFlowCauseText,
+  formatServiceCheckKeyFlowValue,
   serviceCheckInvestigationSubject,
   serviceCheckHistoryStrip,
   serviceCheckListFacts,
@@ -215,7 +217,8 @@ export function ServiceCheckDetail(
   const meta = useServiceCheckMeta(row);
   const lastTone = shown ? serviceCheckStatusTone(shown.result.status) : null;
   const recent = shown ? readServiceCheckRecent(shown) : null;
-  const causeText = serviceCheckCauseText(shown?.result.cause);
+  const shownKeyFlow = definition?.keyFlow ?? null;
+  const causeText = shownKeyFlow && shown ? serviceCheckKeyFlowCauseText(shownKeyFlow, shown.result) : serviceCheckCauseText(shown?.result.cause);
   const latencies = recent
     ? recent.results.slice(0, PAGE_RESULTS).flatMap((result) => (result.latencyMs === undefined ? [] : [result])).reverse()
     : [];
@@ -244,18 +247,20 @@ export function ServiceCheckDetail(
           },
         ]
       : []),
-    {
-      key: 'response',
-      label: t(`${k}.response`),
-      value: shown?.result.latencyMs === undefined || !shown ? '—' : formatLatency(shown.result.latencyMs),
-      ...(shown?.result.latencyMs === undefined ? {} : { detail: t(`${m}.latest`) }),
-    },
-    {
-      key: 'average',
-      label: t(`${m}.average`),
-      value: average ? formatLatency(average.averageMs) : '—',
-      ...(average ? { detail: t(`${m}.averageDetail`, { count: average.count }) } : {}),
-    },
+    ...(shownKeyFlow ? keyFlowFacts(shownKeyFlow, shown?.result ?? null) : [
+      {
+        key: 'response',
+        label: t(`${k}.response`),
+        value: shown?.result.latencyMs === undefined || !shown ? '—' : formatLatency(shown.result.latencyMs),
+        ...(shown?.result.latencyMs === undefined ? {} : { detail: t(`${m}.latest`) }),
+      },
+      {
+        key: 'average',
+        label: t(`${m}.average`),
+        value: average ? formatLatency(average.averageMs) : '—',
+        ...(average ? { detail: t(`${m}.averageDetail`, { count: average.count }) } : {}),
+      },
+    ]),
     {
       key: 'today',
       label: t(`${m}.uptimeToday`),
@@ -513,6 +518,33 @@ export function ServiceCheckDetail(
       </ItemGroup>
     </View>
   );
+}
+
+/**
+ * A Key flow's latest measurement beside its limit, then its latest error share (lab p7Flows detail): both from the
+ * persisted result's measurements. Unknown keeps the slot with an em dash and says why, never a zero.
+ */
+function keyFlowFacts(config: NonNullable<ServiceCheckSettings['keyFlow']>, result: Readonly<{ measurements?: Readonly<{
+  value?: number; errorRate?: number; requestCount?: number }> }> | null): FactStripFact[] {
+  const measured = result?.measurements;
+  const errorsMeasured = config.measure.kind === 'route' && config.measure.statistic === 'errorRate';
+  const limit = formatServiceCheckKeyFlowValue(config, config.threshold.value);
+  const noTraffic = t(`${m}.keyFlowNoTraffic`, { window: formatServiceCheckPeriod(config.windowMs) });
+  const latest = measured?.value === undefined ? null : formatServiceCheckKeyFlowValue(config, measured.value);
+  const facts: FactStripFact[] = [{
+    key: 'response',
+    label: config.measure.kind === 'route' ? (errorsMeasured ? t(`${m}.keyFlowErrors`) : config.measure.statistic)
+      : config.measure.kind === 'runtime' ? config.measure.metricName : t(`${m}.keyFlowSpend`),
+    value: latest ?? '—',
+    detail: latest === null ? noTraffic : t(`${m}.keyFlowLatestLimit`, { limit }),
+  }];
+  if (config.measure.kind === 'route' && !errorsMeasured) {
+    facts.push({ key: 'errors', label: t(`${m}.keyFlowErrors`),
+      value: measured?.errorRate === undefined ? '—'
+        : new Intl.NumberFormat(getPreferredLanguage(), { style: 'percent', maximumFractionDigits: 1 }).format(measured.errorRate),
+      detail: measured?.errorRate === undefined ? t(`${m}.keyFlowNoRequests`) : t(`${m}.latest`) });
+  }
+  return facts;
 }
 
 /** A Key flow's saved rule in words: "p95 above 800 ms, over 10 min". */

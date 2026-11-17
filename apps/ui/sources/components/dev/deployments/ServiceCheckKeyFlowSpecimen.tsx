@@ -42,9 +42,16 @@ function results(state: State, latency: (index: number) => number) {
     const age = 59 - index;
     const failing = state === 'failing' && age < 3;
     const unknown = state === 'unknown' && age < 11;
-    return { status: failing ? 'down' : unknown ? 'unknown' : 'up', observedAt: NOW - age * MINUTE,
-      ...(unknown ? {} : { latencyMs: failing ? 1380 + age * 20 : latency(index) }),
-      ...(failing ? { cause: { kind: 'keyFlow', vantage: 'sameMachine', reason: 'p95 1.42 s over 10 min, limit 800 ms' } } : {}),
+    const observedAt = NOW - age * MINUTE;
+    const value = failing ? 1420 - age * 20 : latency(index);
+    // The finite Key flow Action's result shape: reason codes stay codes; the UI words them from the measurement.
+    return { status: failing ? 'down' : unknown ? 'unknown' : 'up', observedAt,
+      ...(unknown ? {} : { latencyMs: value }),
+      measurements: { measure: 'p95', unit: 'ms', basis: 'metric_points', producers: [{ serviceName: 'billing-api' }],
+        window: { since: observedAt - 10 * MINUTE, until: observedAt }, completeness: unknown ? 'unknown' : 'complete',
+        reasons: unknown ? ['no_traffic'] : [],
+        ...(unknown ? {} : { value, p95Ms: value, errorRate: failing ? 0.024 : 0.002, requestCount: 140 }) },
+      cause: { kind: 'keyFlow', vantage: 'sameMachine', reason: failing ? 'threshold_exceeded' : unknown ? 'no_traffic' : 'within_threshold' },
       evidence: { kind: 'none' } };
   });
 }
@@ -96,7 +103,7 @@ function collectorRead(config: TelemetryKeyFlowConfigV1, state: State, until: nu
     const quiet = state === 'unknown' && index >= count - 2;
     const regressed = state === 'failing' && index >= regressionAt;
     const p95 = regressed ? wave(index, 1380, 60) : wave(index, config.threshold.value * 0.4, config.threshold.value * 0.06);
-    const errorRate = regressed ? 0.024 + 0.002 * Math.sin(index) : Math.max(0, 0.003 + 0.002 * Math.sin(index / 3));
+    const errorRate = regressed ? 0.024 + 0.002 * Math.sin(index) : 0.002 + 0.0006 * Math.sin(index / 5) + 0.0003 * Math.sin(index * 1.3);
     return quiet ? { since, until: since + step, unit: 'ms', count: 0 }
       : { since, until: since + step, unit: 'ms', value: p95, p95, errorRate, count: 120 };
   });
@@ -128,7 +135,8 @@ export function ServiceCheckKeyFlowSpecimen(props: Readonly<{ state: State; view
       {props.view === 'page' ? (
         <ItemList testID="services.check.page"><ServiceCheckPageBody row={shown} /></ItemList>
       ) : (
-        <ItemList>
+        // Monitoring's own wide column, so the list draws every column it has room for there.
+        <ItemList pageColumn="wide">
           <ServiceCheckList rows={rows} scope={SCOPE} selection={selection} testID="specimen.checks"
             accessibilityLabel="Checks" presentation={props.view === 'cards' ? 'grid' : 'list'} />
         </ItemList>
