@@ -4254,7 +4254,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         // Existing C40 routes own original-custodian conversion; Machine
         // audience routes independently own current Manage.
         const custodianPreparationPath = preparesKeys && (
-            method === 'GET' && (path === '/v1/account/encryption' || /^\/v1\/machines\/[^/]+$/u.test(path))
+            method === 'GET' && (path === '/v1/account/encryption' || /^\/v1\/machines\/[^/]+(?:\/content-key\/transition)?$/u.test(path))
             || method === 'POST' && /^\/v1\/machines\/[^/]+\/content-key\/transition$/u.test(path)
         );
         if (keyPreparationPath) {

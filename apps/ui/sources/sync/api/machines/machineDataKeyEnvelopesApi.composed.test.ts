@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import nacl from 'tweetnacl';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createDataKeyAccountEncryptionCurrentnessFixture, createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createDataKeyAccountEncryptionCurrentnessFixture, createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { encodeBase64, decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
@@ -22,6 +22,8 @@ import { Encryption } from '@/sync/encryption/encryption';
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { flushHookEffects } from '@/dev/testkit';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { decodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { readScopedAccountEncryption } from '@/sync/encryption/scopedAccountEncryption';
 
 await loadSyncSingletonForTests();
 
@@ -233,6 +235,60 @@ describe('captured Machine recipient preparation transport', () => {
             const requests = home.requests.filter(request => request.path.startsWith('/v1/machines/'));
             expect(requests.filter(request => request.path.endsWith('/data-key-envelopes'))).toHaveLength(ids.length * 3);
             expect(requests.filter(request => !request.path.endsWith('/data-key-envelopes'))).toEqual([]);
+        } finally { await home.dispose(); }
+    });
+
+    it('converts retained historical content through the custodian snapshot when persisted Account mode is plain', async () => {
+        const secret = new Uint8Array(32).fill(73);
+        const historicalMetadata = { host: 'old-host', platform: 'linux', happyCliVersion: '0.2', homeDir: '/home/owner',
+            happyHomeDir: '/home/owner/.happier', displayName: 'Retained workstation' };
+        const historicalState = { status: 'stopped' };
+        let metadata = encodeBase64(encryptLegacy(historicalMetadata, secret));
+        let daemonState = encodeBase64(encryptLegacy(historicalState, secret));
+        let envelope: string | null = null;
+        let revision = 1;
+        let storageMode: 'e2ee' | 'plain' = 'e2ee';
+        const row = () => ({ id: 'historical-machine', storageMode, metadata, daemonState,
+            dataEncryptionKey: envelope, metadataVersion: revision, daemonStateVersion: revision,
+            keyBasis: { dataEncryptionKey: envelope, metadataVersion: revision, daemonStateVersion: revision } });
+        const path = '/v1/machines/historical-machine';
+        const home = await serveAccountHomes({ homes: [{ key: 'resource', serverUrl: 'https://plain-history.test',
+            accountId: 'alice', accountMode: 'plain', encryptionCurrentness: createPlainAccountEncryptionCurrentnessFixture,
+            credentials: { token: createAccountTokenForTests('alice'), secret: encodeBase64(secret), custody: 'historical' } }],
+            route: request => {
+                if (request.path === path) return Response.json({ machine: { ...row(), storageMode: 'plain',
+                    metadata: storageMode === 'plain' ? metadata : null, daemonState: storageMode === 'plain' ? daemonState : null,
+                    access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'plain',
+                        accessState: storageMode === 'plain' ? 'ready' : 'refused' } } });
+                if (request.path === `${path}/content-key/transition`) {
+                    if (request.method === 'GET') return Response.json({ machine: row() });
+                    const input = MachineContentKeyTransitionInputV1Schema.parse(request.body);
+                    expect(input.expected).toEqual(row().keyBasis);
+                    envelope = input.next.dataEncryptionKey;
+                    metadata = input.next.metadata;
+                    daemonState = input.next.daemonState!;
+                    revision++;
+                    storageMode = 'plain';
+                    return Response.json({ kind: 'committed', machine: row() });
+                }
+                if (request.path === `${path}/data-key-envelopes`) return storageMode === 'plain'
+                    ? Response.json({ machineId: 'historical-machine', custodianAccountId: 'alice', encryptionMode: 'plain',
+                        machineOwnerEnvelopeFingerprint: null, callerDataEncryptionKey: null, nextCursor: null, recipients: [],
+                        content: { metadata, metadataVersion: revision, daemonState, daemonStateVersion: revision } })
+                    : Response.json({ kind: 'refused', code: 'access_denied' });
+                return undefined;
+            } });
+        try {
+            expect(await prepareMachineDataKeyEnvelopesForScope({
+                scope: { serverId: home.homes.resource!.id, accountId: 'alice' }, machineId: 'historical-machine',
+            })).toEqual({ kind: 'prepared' });
+            expect(envelope).toBe(MACHINE_PLAIN_DATA_KEY_MARKER);
+            expect(decodePlainMachineStoredContent(metadata)).toEqual(historicalMetadata);
+            expect(decodePlainMachineStoredContent(daemonState)).toEqual(historicalState);
+            expect(readScopedAccountEncryption(home.homes.resource!.id)).toBeNull();
+            expect(home.requests.filter(request => request.path.startsWith(path)).map(request => [request.method, request.path]))
+                .toEqual([['GET', path], ['GET', `${path}/content-key/transition`],
+                    ['POST', `${path}/content-key/transition`], ['GET', `${path}/data-key-envelopes`]]);
         } finally { await home.dispose(); }
     });
 

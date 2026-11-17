@@ -1,13 +1,12 @@
 import { MachineAccessRecipientCensusResponseV1Schema, MachineAccessRefusalV1Schema, MachineRecipientKeyEnvelopeCommitInputV1Schema, MachineRecipientKeyEnvelopeCommitResponseV1Schema, type MachineAccessRecipientCensusResponseV1, type MachineKeyPreparationResultV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { isMachineRetiredForKeyPreparationV1, MachineDataKeyPreparationErrorV1 } from '@happier-dev/protocol/machines/prepareMachineDataKeyEnvelopesV1';
 import { MachineContentKeyTransitionResultV1Schema, MachinePublishedRowV1Schema, type MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
-import { readAccountE2eeCustody } from '@/auth/storage/tokenStorage';
-import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { runSessionDataKeyPreparationDetached } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyPreparationPass';
 import { serverAccountScopedResourceKey, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureEncryptionGenerationCurrentness } from '@/sync/encryption/encryption';
+import { resolveScopedMachineContentKeyPreparation } from '@/sync/encryption/scopedAccountEncryption';
 import { prepareCurrentMachineDataKeyEnvelopes } from '@/sync/encryption/prepareCurrentMachineDataKeyEnvelopes';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { runWithServerAccountScopeRequestGuard } from '@/sync/runtime/orchestration/serverScopedRpc/serverAccountScopeRequestGuard';
@@ -57,15 +56,15 @@ export async function prepareMachineDataKeyEnvelopesForScope(params: Readonly<{
             let preparedOwner: Awaited<ReturnType<NonNullable<typeof authority.context.encryption>['prepareMachineContentKey']>> | null = null;
             let observedOwner: ReturnType<typeof MachinePublishedRowV1Schema.parse> | null = null;
             let initialMachineRow = params.initialMachineRow;
-            const observeMachine = async () => {
+            const observeMachine = async (custodianRecovery = false) => {
                 guard.check();
                 if (!isCurrent()) throw new MachineDataKeyPreparationErrorV1('machine_key_changed');
                 // C40 admits the exact published basis and conditional transition;
                 // the fresh recipient census separately reauthorizes delivery.
                 // Consume the list observation once so conflict/unknown outcomes
                 // always read the Home again.
-                const payload = initialMachineRow === undefined
-                    ? await request(`/v1/machines/${encodeURIComponent(params.machineId)}`)
+                const payload = custodianRecovery || initialMachineRow === undefined
+                    ? await request(`/v1/machines/${encodeURIComponent(params.machineId)}${custodianRecovery ? '/content-key/transition' : ''}`)
                     : { machine: initialMachineRow };
                 initialMachineRow = undefined;
                 if (!payload || typeof payload !== 'object' || !('machine' in payload)) throw new MachineDataKeyPreparationErrorV1('machine_unavailable');
@@ -73,27 +72,27 @@ export async function prepareMachineDataKeyEnvelopesForScope(params: Readonly<{
                 return observedOwner;
             };
             const encryption = authority.context.encryption;
+            const contentKeyPreparation = params.resolveTransferableMachineDataKey ? null
+                : await resolveScopedMachineContentKeyPreparation({ serverId: authority.scope.serverId,
+                    serverUrl: authority.context.targetServerUrl,
+                    credentials: authority.context.credentials ?? { token: authority.context.token } });
             return prepareCurrentMachineDataKeyEnvelopes({
                 serverId: authority.scope.serverId, machineId: params.machineId,
                 isHostScopeCurrent: isCurrent,
-                ...(!params.resolveTransferableMachineDataKey && encryption ? {
+                ...(contentKeyPreparation ? {
                     ownerPreparation: {
                         accountId: authority.scope.accountId,
                         observeMachine,
                         prepareContentKey: async () => {
-                            preparedOwner = await encryption.prepareMachineContentKey({ machineId: params.machineId,
+                            preparedOwner = await contentKeyPreparation.prepare({ machineId: params.machineId,
                                 custodianAccountId: authority.scope.accountId, isCurrent, signal: guard.signal,
-                                accountE2eeCustody: readAccountE2eeCustody(authority.context.credentials ?? { token: authority.context.token }),
-                                readAccountMode: async () => {
-                                    guard.check();
-                                    const result = await fetchAccountEncryptionMode(authority.context.credentials ?? { token: authority.context.token }, {
-                                        request: authority.request, signal: guard.signal, usage: 'identity',
-                                    });
-                                    guard.check();
-                                    if (!isCurrent()) throw new MachineDataKeyPreparationErrorV1('machine_key_changed');
-                                    return result.mode;
-                                },
                                 observe: async () => {
+                                    if (contentKeyPreparation.accountMode === 'plain') {
+                                        observedOwner = null;
+                                        // Ordinary plain readers withhold historical ciphertext.
+                                        // The existing original-custodian snapshot owns recovery.
+                                        return observeMachine(true);
+                                    }
                                     // The owner lifecycle has just admitted this exact row.
                                     // Consume it once; conflict/unknown-outcome observations
                                     // still read the Home afresh before accepting a winner.

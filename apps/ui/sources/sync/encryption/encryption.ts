@@ -833,7 +833,7 @@ export class Encryption {
     async prepareMachineContentKey(params: Readonly<{
         machineId: string;
         custodianAccountId: string;
-        /** Only predecessor rows without explicit resource mode need Account mode. */
+        /** Persisted Account mode admitted by the captured credential transport. */
         readAccountMode: () => Promise<'plain' | 'e2ee'>;
         /** This device's custody of the Account keys; an own row's plain mode is admitted with it. */
         accountE2eeCustody: AccountE2eeCustody;
@@ -850,12 +850,13 @@ export class Encryption {
             const [value] = await codec.decrypt([decodeBase64(ciphertext)], { signal: params.signal });
             return value;
         };
-        return await prepareMachineContentKeyV1<Opened>({ ...params, material: this.accountScopedCryptoMaterial,
+        const targetMode = await params.readAccountMode();
+        return await prepareMachineContentKeyV1<Opened>({ ...params, targetMode, material: this.accountScopedCryptoMaterial,
             ...(this.accountScopedCryptoMaterial.type === 'dataKey' ? { dataKeyPublicKey: this.contentKeyPair.publicKey } : {}), randomBytes: getRandomBytes,
             open: async row => {
                 const openedKey = row.dataEncryptionKey ? await this.decryptEncryptionKey(row.dataEncryptionKey, scope) : null;
                 const resolution = resolvePublishedMachineDataEncryptionKeyV1({ machine: row, openedDataEncryptionKey: openedKey,
-                    expectedAccountMode: row.access?.resourceMode ?? row.storageMode ?? await params.readAccountMode(), viewerAccountId: params.custodianAccountId });
+                    expectedAccountMode: row.access?.resourceMode ?? row.storageMode ?? targetMode, viewerAccountId: params.custodianAccountId });
                 if (resolution.status === 'unavailable') throw new MachineContentKeyPreparationErrorV1('encryption_material_unavailable');
                 if (resolution.status === 'plain') {
                     try {

@@ -69,6 +69,37 @@ export function readScopedAccountEncryption(serverId: string): Encryption | null
     return owner && isOwnerCurrent(owner) ? owner.encryption : null;
 }
 
+/** Historical keys can convert an owned Machine without becoming an active plain-Account cipher. */
+export async function resolveScopedMachineContentKeyPreparation(params: Parameters<typeof resolveScopedAccountEncryption>[0]): Promise<Readonly<{
+    accountMode: AccountEncryptionIdentity['mode'];
+    prepare: (input: Omit<Parameters<Encryption['prepareMachineContentKey']>[0], 'readAccountMode' | 'accountE2eeCustody'>) => ReturnType<Encryption['prepareMachineContentKey']>;
+}> | null> {
+    await resolveScopedAccountEncryption(params);
+    const owner = owners.get(resolveServerProfileScopeIdForIdentifier(params.serverId));
+    if (!owner?.identity || !isOwnerCurrent(owner)) return null;
+    const accountMode = owner.identity.mode;
+    return {
+        accountMode,
+        prepare: async input => {
+            if (!isOwnerCurrent(owner)) throw new AccountEncryptionMaterialUnavailableError('Captured Account encryption material was retired');
+            // The identity reader already refused an unconfirmed active-custody downgrade.
+            // Only this finite conversion may open admitted historical plain-Account material.
+            const encryption = owner.encryption ?? await createEncryptionFromAuthCredentials(owner.material);
+            const transient = encryption !== owner.encryption;
+            if (transient) encryption.bindAccountMaterialCurrentness(() => isOwnerCurrent(owner));
+            try {
+                return await encryption.prepareMachineContentKey({ ...input,
+                    isCurrent: () => isOwnerCurrent(owner) && input.isCurrent(),
+                    accountE2eeCustody: readAccountE2eeCustody(owner.material),
+                    readAccountMode: async () => accountMode,
+                });
+            } finally {
+                if (transient) encryption.retireAccountMaterial();
+            }
+        },
+    };
+}
+
 /** One current Account material owner per Home, shared by mounted and finite readers. */
 export async function resolveScopedAccountEncryption(params: Readonly<{
     serverId: string;

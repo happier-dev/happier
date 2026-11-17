@@ -54,10 +54,11 @@ export async function prepareMachineDataKeyEnvelopesV1(params: Readonly<{
       if (machine.id !== params.machineId || isMachineRetiredForKeyPreparationV1(machine)) {
         return { kind: 'unavailable', code: 'machine_unavailable' };
       }
-      // Historical owners can read a genuinely absent envelope, while the recipient census
-      // requires a current key holder. C40 must establish that key before asking for recipients.
+      // The custodian lifecycle owns both legacy keys and Account-mode conversion.
+      // A plain Account's locked historical projection still needs that owner
+      // before the mode-aware recipient census can admit it.
       // Foreign Manage holders never convert: their delivered tuple remains census-owned.
-      if (machine.access?.custodian.accountId === owner.accountId && machine.access.resourceMode === 'e2ee') {
+      if (machine.access?.custodian.accountId === owner.accountId) {
         await owner.prepareContentKey();
         if (!params.isScopeCurrent()) return { kind: 'unavailable', code: 'machine_key_changed' };
       }
