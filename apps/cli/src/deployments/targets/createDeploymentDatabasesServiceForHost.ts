@@ -1,13 +1,14 @@
 import { PluginError, type DeploymentDatabasesServiceV1, type DeploymentTargetPreparationBaseV1,
     type DeploymentTargetDatabaseRuntimeV1 } from '@happier-dev/plugin-sdk';
 import { readAutomationDatabaseSubjectV1, type DatabaseCompletenessV1, type DatabaseDescriptorV1, type DatabaseManagedDeploymentTargetV1,
-    type DatabaseOperationClassV1, type DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
+    type DatabaseOperationClassV1, type DatabaseOperationInputV1, type DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
 import { builtinDatabaseCapabilities } from '@happier-dev/databases/capabilities';
 import { openOwnServerDatabaseConnectionForHost } from './ownServer/databaseConnection';
 import { readOwnServerDataServiceDeploymentForHost, resolveOwnServerDataQueryDefinitionForHost } from './ownServer/dataQueryScope';
 import { decideDatabaseAccessV1, resolveDatabaseRequesterKindV1, summarizeDatabaseAccessV1 } from '@happier-dev/databases';
 import { isAgentCaller } from '@happier-dev/protocol/actions/executor/callerContext';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { resolvePluginContributionHostAccessRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import { projectConnectedAccountHostAccessScopes } from '@happier-dev/cli-common/connectedAccounts';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
@@ -174,6 +175,15 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
     };
 
     return Object.freeze({
+        async admitTelemetryRead(request) {
+            const admission = await readEnvironment({ kind: 'environment', environment: request }, undefined, { nativeMember: true });
+            access(admission, 'read');
+            const environment = admission.detail.environment;
+            if (environment.telemetryMachineId !== admission.host.machineId) return refuse('machine_unavailable');
+            return { environment: { serverId: environment.serverId, environmentId: environment.id, revision: environment.revision },
+                collectorMachineId: admission.host.machineId,
+                capabilities: resolveDeploymentTelemetryCapabilitiesV1(admission.detail.content.telemetry) };
+        },
         async admit(request, operation) {
             const { admission, summary } = await admitTarget(request, operation);
             const environment = admission.detail.environment;

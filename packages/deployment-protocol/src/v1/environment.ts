@@ -9,6 +9,7 @@ import { deploymentStoredContentV1Schema } from './storedContent.js';
 import { DeploymentEnvironmentTemplateProvenanceV1Schema } from './template.js';
 import { DeploymentPreviewProvenanceV1Schema, DeploymentPreviewTemplateV1Schema } from './previews.js';
 import { DeploymentEnvironmentBackupV1Schema } from './backup.js';
+import { DeploymentTelemetryCapabilitiesV1Schema } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { WorkflowRunIdV1Schema } from '@happier-dev/protocol/workflows/workflowIdsV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -92,6 +93,7 @@ const environmentContentShape = {
     ownServer: z.optional(OwnServerEnvironmentConfigurationV1Schema),
     ingress: z.optional(DeploymentIngressV1Schema),
     backup: z.optional(DeploymentEnvironmentBackupV1Schema),
+    telemetry: z.optional(DeploymentTelemetryCapabilitiesV1Schema),
     template: z.optional(DeploymentEnvironmentTemplateProvenanceV1Schema),
     previewTemplate: z.optional(DeploymentPreviewTemplateV1Schema),
     previewProvenance: z.optional(DeploymentPreviewProvenanceV1Schema),
@@ -187,8 +189,10 @@ export async function reconcileDeploymentRemovedDataServicesV1(content: Deployme
 /** A binding writer may replace only bindings, never another owner's content leaves. */
 export function isDeploymentEnvironmentBindingsOnlyUpdateV1(
     previous: DeploymentEnvironmentContentV1, candidate: DeploymentEnvironmentContentV1,
+    writer: 'bindings' | 'telemetry' = 'bindings',
 ): boolean {
-    return sameStrictJsonValue({ ...previous, bindings: [] }, { ...candidate, bindings: [] });
+    return sameStrictJsonValue({ ...previous, bindings: [], ...(writer === 'telemetry' ? { telemetry: undefined } : {}) },
+        { ...candidate, bindings: [], ...(writer === 'telemetry' ? { telemetry: undefined } : {}) });
 }
 export const DeploymentEnvironmentStoredContentV1Schema = deploymentStoredContentV1Schema(DeploymentEnvironmentContentStoredReadV1Schema);
 export type DeploymentEnvironmentStoredContentV1 = z.infer<typeof DeploymentEnvironmentStoredContentV1Schema>;

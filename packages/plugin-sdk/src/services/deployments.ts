@@ -1,9 +1,9 @@
 /** @moduleRealm daemon */
+import type { DeploymentTelemetryAssignmentsV1, DeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import type {
     DatabaseAccessSummaryV1, DatabaseOperationClassV1, DatabaseOperationInputV1, DatabaseTargetsListInputV1, DatabaseTargetsListResultV1,
 } from '@happier-dev/database-protocol';
 import type { DeploymentDatabaseResolutionV1 } from '../deploymentTargets.js';
-import type { DeploymentTelemetryAssignmentsV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 
 /** Exact deployment admitted by the host's target-role invocation. No paths or source overrides. */
 export type DeploymentSourceMaterializationRequestV1 = Readonly<{
@@ -35,7 +35,7 @@ export interface DeploymentSourceMaterializationPortV1 {
 }
 
 /** Home-authoritative assignments contain token hashes, never raw tokens. */
-export type DeploymentTelemetryAssignmentV1 = Readonly<DeploymentTelemetryAssignmentsV1['assignments'][number]>;
+export type DeploymentTelemetryAssignmentV1 = DeploymentTelemetryAssignmentsV1['assignments'][number];
 
 /** Same daemon's production collector, bound to its captured Account and Machine. */
 export interface DeploymentTelemetryServiceV1 {
@@ -49,6 +49,13 @@ export interface DeploymentTelemetryServiceV1 {
 
 /** Uses the existing deployment selection, admission and connection-custody owner. */
 export interface DeploymentDatabasesServiceV1 {
+    /** Raw collector reads use this invocation's Environment data authority and selected collector,
+     * independently of the Machine that runs the App. Absent on hosts without telemetry admission. */
+    admitTelemetryRead?(input: Readonly<{ serverId: string; environmentId: string }>): Promise<Readonly<{
+        environment: Readonly<{ serverId: string; environmentId: string; revision: number }>;
+        collectorMachineId: string;
+        capabilities: DeploymentTelemetryCapabilitiesV1;
+    }>>;
     listTargets(input: DatabaseTargetsListInputV1): Promise<DatabaseTargetsListResultV1>;
     resolve(input: DatabaseOperationInputV1, access: DatabaseOperationClassV1): Promise<DeploymentDatabaseResolutionV1>;
     /** This request's access through the server's current Environment authorization, without a credential or

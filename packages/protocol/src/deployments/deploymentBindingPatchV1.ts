@@ -5,6 +5,7 @@ import { DeploymentEnvironmentContentCasV1Schema } from './deploymentArtifactCon
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
+import { DeploymentTelemetryCapabilitiesV1Schema } from './deploymentTelemetryV1.js';
 import { EnvironmentSecretBindingInputV1Schema, EnvironmentSecretBindingIdentityV1Schema, EnvironmentSecretBindingV1Schema,
     EnvironmentVariableBindingGrantReferenceV1Schema, DeploymentBackupDestinationBindingIdentityV1Schema,
     environmentSecretBindingIdentityV1, type EnvironmentSecretBindingIdentityV1,
@@ -160,6 +161,7 @@ export const DeploymentBindingsPatchInputV1Schema = lazyZodSchema(() => z.strict
     serverId: DeploymentIdentifierV1Schema, environmentId: DeploymentIdentifierV1Schema,
     expectedRevision: DeploymentRevisionV1Schema, ...bindingPatchShape(),
     telemetryMachineId: z.optional(z.nullable(DeploymentIdentifierV1Schema)),
+    telemetry: z.optional(DeploymentTelemetryCapabilitiesV1Schema),
     providerVariables: z.optional(z.strictObject({
         useOurs: z.array(DeploymentIdentifierV1Schema), keepTheirs: z.array(DeploymentIdentifierV1Schema),
     })),
@@ -170,6 +172,7 @@ export type DeploymentBindingsPatchInputV1 = z.infer<typeof DeploymentBindingsPa
 export const DeploymentBindingsPreparedInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...DeploymentEnvironmentContentCasV1Schema.shape,
   telemetryMachineId: z.optional(z.nullable(DeploymentIdentifierV1Schema)),
+  telemetryCapabilities: z.optional(DeploymentTelemetryCapabilitiesV1Schema),
   referencedSavedSecretRevisions: DeploymentBindingSavedSecretRevisionsV1Schema,
 }));
 export type DeploymentBindingsPreparedInputV1 = z.infer<typeof DeploymentBindingsPreparedInputV1Schema>;

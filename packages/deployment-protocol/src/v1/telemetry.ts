@@ -2,6 +2,7 @@
 export const TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1 = [
     'OTEL_EXPORTER_OTLP_ENDPOINT', 'OTEL_EXPORTER_OTLP_PROTOCOL', 'OTEL_EXPORTER_OTLP_HEADERS',
     'OTEL_SERVICE_NAME', 'OTEL_RESOURCE_ATTRIBUTES',
+    'OTEL_METRICS_EXPORTER',
 ] as const;
 
 /** Each SDK signal-specific endpoint overrides the generic exporter destination. */

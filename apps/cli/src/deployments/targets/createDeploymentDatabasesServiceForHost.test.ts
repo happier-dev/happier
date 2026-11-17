@@ -14,6 +14,30 @@ import { createDeploymentTargetRoleAdmissionFixture } from './deploymentTargetRo
 import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/deployment-neon/src/manifest';
 
 describe('managed database attachment at the deployment owner', () => {
+    it('admits telemetry on its collector using the captured requester and the same Environment data decision', async () => {
+        const stored = createDeploymentTargetRoleAdmissionFixture('inspect');
+        stored.state.environment.environment.controllerMachineId = 'app-machine';
+        stored.state.environment.environment.telemetryMachineId = stored.host.machineId;
+        const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} } });
+        const service = createDeploymentDatabasesServiceForHost({ seed: {
+            plugin: { id: 'happier.telemetry', version: '0.0.0' }, contribution: { id: 'key-flows-read', qualifiedId: 'happier.telemetry/actions/key-flows-read' },
+            occurrenceId: 'telemetry', correlationId: 'telemetry-admission', surface: 'cli', signal: new AbortController().signal,
+            approvalContext: { ...stored.request.context, authority: 'present_user' }, isOccurrenceCurrent: () => true,
+        }, contributes: { deploymentTargets: [], activationTargets: [] }, targetRegistrations: [], readHost: async () => stored.host,
+            createServices: owners.createServices, resolveInvocationHostPolicy: owners.resolveInvocationHostPolicy });
+        try {
+            const input = { serverId: 'home', environmentId: stored.state.environment.environment.id };
+            expect(await service.admitTelemetryRead!(input)).toMatchObject({ collectorMachineId: stored.host.machineId,
+                environment: { environmentId: input.environmentId } });
+            expect(stored.state.reads).toBe(1);
+            stored.state.environment.environment.capabilities.read = false;
+            await expect(service.admitTelemetryRead!(input)).rejects.toMatchObject({ code: 'deployment_access_denied' });
+            stored.state.environment.environment.capabilities.read = true;
+            stored.state.environment.environment.telemetryMachineId = 'another-collector';
+            await expect(service.admitTelemetryRead!(input)).rejects.toMatchObject({ code: 'machine_unavailable' });
+        } finally { await owners.dispose(); }
+    });
+
     it('lists the selected native service from the active deployment without provider credentials', async () => {
         const stored = createDeploymentTargetRoleAdmissionFixture('inspect');
         stored.state.environment.environment.controllerMachineId = 'other-controller';

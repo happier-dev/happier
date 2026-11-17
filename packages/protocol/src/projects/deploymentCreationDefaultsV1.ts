@@ -6,6 +6,7 @@ import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdent
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { AutomationScheduleSchema } from '../automations/automationSchedule.js';
 import { HealthCheckAlertChannelV1Schema } from '../deployments/healthCheckSourceV1.js';
+import { DeploymentTelemetryCapabilitiesV1Schema } from '../deployments/deploymentTelemetryV1.js';
 
 /** Existing domain setup preview chooses which not-yet-configured leaf to prepare. */
 export const DeploymentConfigurationDefaultsForV1Schema = z.enum(['previews', 'backups', 'backupSchedule', 'alerts']);
@@ -19,6 +20,7 @@ export const DEFAULT_DEPLOYMENT_RETAIN_PREVIOUS_DEPLOYMENTS_V1 = 1;
 /** Deliberate creation preferences; partial layers never materialize domain defaults. */
 export const DeploymentCreationDefaultsV1Schema = lazyZodSchema(() => z.strictObject({
   telemetryMachineId: z.optional(DeploymentIdentifierV1Schema),
+  telemetry: z.optional(DeploymentTelemetryCapabilitiesV1Schema),
   buildMachineId: z.optional(DeploymentIdentifierV1Schema),
   controllerMachineId: z.optional(DeploymentIdentifierV1Schema),
   retainPreviousDeployments: z.optional(DeploymentRetainPreviousDeploymentsV1Schema),
@@ -38,6 +40,7 @@ export const ResolvedDeploymentCreationDefaultsV1Schema = lazyZodSchema(() => z.
   values: z.extend(DeploymentCreationDefaultsV1Schema, { retainPreviousDeployments: DeploymentRetainPreviousDeploymentsV1Schema }),
   sources: z.strictObject({
     telemetryMachineId: z.optional(DeploymentCreationDefaultSourceV1Schema),
+    telemetry: z.optional(DeploymentCreationDefaultSourceV1Schema),
     buildMachineId: z.optional(DeploymentCreationDefaultSourceV1Schema),
     controllerMachineId: z.optional(DeploymentCreationDefaultSourceV1Schema),
     retainPreviousDeployments: z.optional(DeploymentCreationDefaultSourceV1Schema),
