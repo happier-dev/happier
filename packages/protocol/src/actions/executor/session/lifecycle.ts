@@ -93,8 +93,7 @@ export async function dispatchSessionLifecycle1(inv: Pick<CoreInvocation, 'actio
             ...(hasOwn(data, 'strategy') ? { strategy: data.strategy } : {}),
             ...(hasOwn(data, 'replaySummaryRunner') ? { replaySummaryRunner: data.replaySummaryRunner } : {}),
             ...(hasOwn(data, 'replayMaxSeedChars') ? { replayMaxSeedChars: data.replayMaxSeedChars } : {}),
-            ...(input.approvalProfileId !== undefined || ctx.approvalProfileId !== undefined
-              ? { approvalProfileId: resolveInheritedApprovalProfileIdV1(input.approvalProfileId, ctx.approvalProfileId) } : {}),
+            ...(input.approvalProfileId !== undefined ? { approvalProfileId: input.approvalProfileId } : {}),
             ...(hasOwn(data, 'requestId')
               ? { requestId: data.requestId }
               : ctx.actionRequestId
