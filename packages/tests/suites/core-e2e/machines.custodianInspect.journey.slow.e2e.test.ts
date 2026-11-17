@@ -140,6 +140,42 @@ it('TH.J4 admits Check now by the current custodian of another creator’s Machi
     const wrongSigner = await context(tweetnacl.sign.keyPair().secretKey);
     expect(wrongSigner.status).toBe(401);
     expect(wrongSigner.data).toMatchObject({ error: 'invalid_token', authorizationRefusal: 'machine_signature' });
+    // MR-R2: a failed installer does not erase the acquired native resource.
+    // Retry crosses the same person Action, PostgreSQL Home and real daemon;
+    // only the guest executable intentionally exits before enrollment.
+    expect(allocation).toMatchObject({ state: 'failed', errorCode: expect.any(String) });
+    expect(bound.bootstrapInstalled).not.toBe(true);
+    expect(bound.enrolledMachineId).toBeFalsy();
+    const nativeContainerIds = async () => {
+      const found = await promisify(execFile)('docker', ['ps', '--all', '--filter',
+        `label=happier.managed-machine=${managedId}`, '--format', '{{.ID}}']);
+      return found.stdout.trim().split('\n').filter(Boolean).sort();
+    };
+    const originalContainers = await nativeContainerIds();
+    expect(originalContainers).toHaveLength(1);
+    const retry = await creator.executeAsPerson('machines.managed.bootstrap.retry', {
+      ...input, expectedIntentRevision: bound.intentRevision,
+    }, { presentUserConfirmation: { actionId: 'machines.managed.bootstrap.retry' } });
+    if (!retry.ok) throw new Error(`Bootstrap Retry refused (${retry.errorCode}); cause=${JSON.stringify(retry.failureCause)}`);
+    const acceptedRetry = ManagedMachineActionOutputSchemasV1['machines.managed.bootstrap.retry'].parse(retry.result);
+    expect(acceptedRetry.managedId).toBe(managedId);
+    expect(acceptedRetry.operation).toBeDefined();
+    if (!acceptedRetry.operation) throw new Error('Bootstrap Retry did not expose its operation');
+    const retried = ActionOperationGetV1ResponseSchema.parse(await act(creator, 'action.operations.get', {
+      serverId: fixture.serverId, machineId: controller.machineId,
+      operationId: acceptedRetry.operation.operationId, waitForTerminal: true,
+    }));
+    expect(retried).toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: expect.any(String) } } });
+    const retained = unwrapManagedMachineReadV1(ManagedMachineActionOutputSchemasV1['machines.managed.get'].parse(
+      await act(custodian, 'machines.managed.get', input)));
+    expect(retained).toMatchObject({ allocation: 'bound', resource: bound.resource });
+    expect(retained.bootstrapInstalled).not.toBe(true);
+    expect(retained.enrolledMachineId).toBeFalsy();
+    const listed = ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse(
+      await act(custodian, 'machines.managed.list', { homeId: fixture.serverId }));
+    expect(listed.machines.map(machine => unwrapManagedMachineReadV1(machine).id)).toEqual([managedId]);
+    expect(await nativeContainerIds()).toEqual(originalContainers);
+    console.info('MR-R2 failed install and Retry retained exactly the same native resource without enrollment');
     // Use the public credential owner; no direct epoch edit can manufacture the refusal.
     const revoked = await fetchJson<unknown>(`${fixture.server.baseUrl}${ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1}`, {
       method: 'POST', headers: { Authorization: `Bearer ${custodian.auth.token}`, 'Content-Type': 'application/json' }, body: '{}',
