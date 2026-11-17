@@ -60,7 +60,7 @@ async function snapshot(product: Product, input: Read, context: PluginAccountAct
     if (value.id !== input.providerIdentity.providerResourceId || value.name !== input.preparedNative?.projectName
       || !isObject(value.deployment_configs)) refuse('provider_response_invalid');
     const config = value.deployment_configs[selected.arm!];
-    if (!isObject(config) || config.env_vars !== undefined && !isObject(config.env_vars)) refuse('provider_response_invalid');
+    if (!isObject(config) || config.env_vars != null && !isObject(config.env_vars)) refuse('provider_response_invalid');
     if (typeof config.wrangler_config_hash === 'string') wranglerConfigHash = config.wrangler_config_hash;
     for (const [key, row] of Object.entries(config.env_vars ?? {})) {
       if (!isObject(row) || row.type !== 'plain_text' && row.type !== 'secret_text') refuse('provider_response_invalid');

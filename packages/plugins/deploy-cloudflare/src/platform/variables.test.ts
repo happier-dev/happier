@@ -19,6 +19,30 @@ const sync = { ...common, desiredRevision: 2, owned: [], set: [], remove: [], us
 const response = (result: unknown, status = 200) => ({ status, headers: {},
   body: new TextEncoder().encode(JSON.stringify({ success: status === 200, result, errors: [], messages: [] })) });
 
+it('reads and synchronizes variables on a newly created Pages project with null env_vars', async () => {
+  // Captured from Cloudflare GET cor6-171r3-pages, 2026-11-17; only identities are substituted.
+  const project = { id: 'project-exact', name: 'my-project', deployment_configs: {
+    preview: { env_vars: null, wrangler_config_hash: null },
+    production: { env_vars: null, wrangler_config_hash: null },
+  } };
+  let written: unknown;
+  const http = createPluginHttpFixture({ async request(request) {
+    if (request.method === 'PATCH') written = JSON.parse(new TextDecoder().decode(request.body));
+    return response(project);
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
+  try {
+    await expect(kit.invokeAction('pages-variables-read', { ...common, owned: [] }))
+      .resolves.toEqual({ v: 1, variables: [] });
+    await expect(kit.invokeAction('pages-variables-sync', { ...sync, set: [binding('COR6_QA', 'round3')] }))
+      .resolves.toMatchObject({ failures: [], owned: [{ ...owned('COR6_QA'), desiredRevision: sync.desiredRevision }],
+        variables: [{ key: 'COR6_QA', present: true, owned: true }] });
+    expect(written).toEqual({ deployment_configs: { production: { env_vars: {
+      COR6_QA: { type: 'plain_text', value: 'round3' },
+    } } } });
+  } finally { await kit.dispose(); }
+});
+
 it('encodes a telemetry Saved Secret only in the sensitive provider write', async () => {
   const rawToken = 'telemetry-fixture-token';
   let written: Record<string, unknown> | undefined;
