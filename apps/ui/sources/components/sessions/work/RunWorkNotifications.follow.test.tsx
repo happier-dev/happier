@@ -211,6 +211,35 @@ describe('Run Notify me through personal Follow', () => {
         expect(owner.follow().onceDeliveries).toEqual([receipt]);
     });
 
+    it('re-reads only a failed followed Run when the Inbox asks to retry, and settles the source', async () => {
+        const source = { kind: 'execution_run', machineId: 'machine-one', runId: 'retry-header' } as const;
+        const owner = await setup(source);
+        owner.oneShotOnly();
+        owner.setDeliveries([RunFollowOccurrenceV1Schema.parse({ original: { source, terminalEventId: 'terminal-one' }, event: { kind: 'finished' } })]);
+        const header = ExecutionRunGetResponseSchema.parse({ run: { runId: source.runId, callId: 'call', sidechainId: 'sidechain',
+            intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
+            retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response', status: 'succeeded', startedAtMs: 1, finishedAtMs: 2 } });
+        let answer: 'fail' | 'ok' = 'fail';
+        network.setRpcAckResponder(async request => request.method === RPC_METHODS.CAPABILITIES_DESCRIBE
+            ? { ok: true, result: executionRunCapabilities }
+            : answer === 'ok' ? { ok: true, result: header } : { ok: false, error: 'execution_run_not_found', errorCode: 'execution_run_not_found' });
+        let detail: ReturnType<typeof useInboxExecutionRunSource> | null = null;
+        const readDetail = (): ReturnType<typeof useInboxExecutionRunSource> | null => detail;
+        function Detail() { detail = useInboxExecutionRunSource(); return null; }
+        await renderScreen(<InboxExecutionRunSourceBoundary><Detail /></InboxExecutionRunSourceBoundary>);
+        await vi.waitFor(() => expect(readDetail()?.failed).toBe(true));
+        const listReads = owner.listReads();
+        const runReads = () => network.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET).length;
+        const failedReads = runReads();
+        answer = 'ok';
+        await act(async () => readDetail()?.retry());
+        await vi.waitFor(() => expect(readDetail()?.failed).toBe(false));
+        expect(readDetail()?.entries).toHaveLength(1);
+        // One more read of the failed Run; the healthy Follow census is not read again.
+        expect(runReads()).toBe(failedReads + 1);
+        expect(owner.listReads()).toBe(listReads);
+    });
+
     it('counts a source receipt without reading a Run body and clears it only on explicit open', async () => {
         const source = { kind: 'execution_run', machineId: 'machine-one', runId: 'receipt-demand' } as const;
         const owner = await setup(source);

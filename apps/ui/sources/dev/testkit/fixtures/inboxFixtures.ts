@@ -36,7 +36,7 @@ export function createInboxAttentionFixture(serverId: string | null = null): Pic
         automationAttentionItems: [],
         machineReachabilityEntries: [],
         machineDeletionEntries: [],
-        executionRunAttention: { loading: false, failed: false },
+        executionRunAttention: { loading: false, failed: false, retry: () => {} },
         items: [], sessionCandidates: [], accountNotices: [], openAccountNotices: [], dismissAccountNotice: async () => {}, markItemOpened: async () => {},
         discussionAttention: { source: null, coverage: 'unavailable', available: false, loading: false,
             status: 'idle', errorCode: null, markOpened: async () => {}, refresh: () => undefined, loadMore: () => undefined },

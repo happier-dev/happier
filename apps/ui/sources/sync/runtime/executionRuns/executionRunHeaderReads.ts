@@ -128,6 +128,8 @@ export function createExecutionRunHeaderDemand(lifetime: ServerAccountScopeLifet
             notify();
         },
         read(source: Source): ExecutionRunHeaderSnapshot { return retained.get(executionRunHeaderKey(source))?.snapshot ?? UNREAD; },
+        /** The person's Retry: read again only the demanded headers whose last read failed. */
+        retryFailed() { for (const header of retained.values()) if (header.snapshot.failed) refresh(header, lifetime); },
         dispose() { for (const [key, header] of retained) release(key, header); },
     };
 }

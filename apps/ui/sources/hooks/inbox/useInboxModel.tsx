@@ -93,7 +93,7 @@ export type InboxModel = Readonly<{
     /** Current canonical Activity facts, including Sessions that no longer need an answer. */
     sessionCandidates: readonly SessionActivityAttention[];
     discussionAttention: ReturnType<typeof useInboxDiscussionSource>;
-    executionRunAttention: Pick<ReturnType<typeof useInboxExecutionRunSource>, 'loading' | 'failed'>;
+    executionRunAttention: Pick<ReturnType<typeof useInboxExecutionRunSource>, 'loading' | 'failed' | 'retry'>;
     markItemOpened: (item: InboxItem) => Promise<void>;
     friendRequests: ReturnType<typeof useInboxFriendRequests>['requests'];
     sessionPresentation: InboxSessionPresentation;

@@ -366,7 +366,14 @@ function useInboxContentParts(props: InboxContentProps, segmentSize: number) {
     // unable to say "nothing here". The stale line or state below says so once; Retry exists where a retry does.
     const artifactsIncomplete = model.artifactSource.phase === 'failed' || model.artifactSource.phase === 'partial';
     const sourcesIncomplete = artifactsIncomplete || model.executionRunAttention.failed;
-    const sourcesRetry = artifactsIncomplete ? { label: t('common.retry'), onPress: model.artifactSource.retry } : undefined;
+    // One Retry for the view: it reads again each source that is incomplete, and only those.
+    const retryArtifacts = model.artifactSource.retry;
+    const retryRuns = model.executionRunAttention.retry;
+    const runsFailed = model.executionRunAttention.failed;
+    const sourcesRetry = sourcesIncomplete ? { label: t('common.retry'), onPress: () => {
+        if (artifactsIncomplete) retryArtifacts();
+        if (runsFailed) retryRuns();
+    } } : undefined;
     const sourcesComplete = model.artifactSource.phase === 'current' && !model.executionRunAttention.failed;
 
     const markAllReadDisabled = model.markAllPending || Boolean(model.markAllReadUnavailableReason);

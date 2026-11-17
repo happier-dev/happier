@@ -925,15 +925,20 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
         expect(settled.findByTestId('inbox.loading_rest')).toBeNull();
     });
 
-    it('does not call an Updates view caught up while a followed Run could not be read (BI1 round 3)', async () => {
+    it('does not call an Updates view caught up while a followed Run could not be read, and retries that source (BI1 round 3)', async () => {
         const { InboxContent } = await import('./InboxContent');
+        const retryRuns = vi.fn();
+        const retryArtifacts = vi.fn();
         const model = { ...createModel({ needsYou: false }), items: [], friendRequests: [], openUsageNotices: [],
-            executionRunAttention: { loading: false, failed: true } };
+            artifactSource: { scope: null, phase: 'current' as const, retry: retryArtifacts },
+            executionRunAttention: { loading: false, failed: true, retry: retryRuns } };
         const updates = await renderScreen(<InboxContent model={model} view="updates" />, { wrapper: PagePresentation });
         expect(updates.findByTestId('inbox.empty')).toBeNull();
         expect(updates.findByTestId('inbox.artifacts_unavailable')).not.toBeNull();
-        // Nothing to retry from here: the line says so once and offers no dead Retry.
-        expect(updates.findByTestId('inbox.artifacts_retry')).toBeNull();
+        // The one Retry reads again what failed: the followed Runs, not the Artifacts that are current.
+        await act(async () => { updates.pressByTestId('inbox.artifacts_retry'); });
+        expect(retryRuns).toHaveBeenCalledTimes(1);
+        expect(retryArtifacts).not.toHaveBeenCalled();
     });
 
     it('shows a first read in Mentions and Updates as loading, not as a blank page', async () => {

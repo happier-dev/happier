@@ -10,7 +10,7 @@ import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/s
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { isAccountFollowConfigurationChangeRelevant } from '@/components/sessions/follow/sessionFollowAccountChange';
 import { subscribeSessionRunningExecutionRunRoster } from '@/hooks/session/useSessionRunningExecutionRuns';
-import { readRunningExecutionRunRosterSnapshot } from '@/sync/runtime/executionRuns/executionRunActivityBus';
+import { readRunningExecutionRunRosterSnapshot, refreshRunningExecutionRunRoster } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { useExecutionRunHeaders } from '@/hooks/session/useExecutionRunHeaders';
 import { classifyInboxExecutionRun, readInboxExecutionRunOnceDeliveries, type InboxExecutionRun } from '@/components/inbox/inboxItems';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
@@ -18,6 +18,7 @@ import type { OtherFollowSourceRefV1 } from '@happier-dev/protocol/sessions/foll
 import { useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
 import { exactWorkflowRunWindowId } from '@/sync/domains/workflows/workflowRunListActions';
 import { useWorkflowAttentionSource } from './useWorkflowAttentionSource';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
 type RunWorkNotificationSource = Extract<OtherFollowSourceRefV1, { kind: 'execution_run' | 'workflow_run' }>;
 type RunFollow = OtherAccountFollowV1 & Readonly<{ source: RunWorkNotificationSource }>;
@@ -28,11 +29,13 @@ type Source = Readonly<{
     failed: boolean;
     count: number;
     markOpened: (source: RunWorkNotificationSource) => Promise<void>;
+    /** Read again only what failed: the Follow census, failed Run headers, the Workflow window, Session rosters. */
+    retry: () => void;
 }>;
 const EMPTY_ENTRIES: readonly InboxExecutionRun[] = Object.freeze([]);
 const EMPTY_FOLLOWS: readonly RunFollow[] = Object.freeze([]);
 const EMPTY_SOURCE: Source = Object.freeze({ entries: EMPTY_ENTRIES, workflowFollows: EMPTY_FOLLOWS,
-    loading: false, failed: false, count: 0, markOpened: async () => {} });
+    loading: false, failed: false, count: 0, markOpened: async () => {}, retry: () => {} });
 const SourceContext = React.createContext<(Source & Readonly<{ acquireDetails: () => () => void }>) | null>(null);
 const CountContext = React.createContext(0);
 const sourceKey = (source: RunWorkNotificationSource) => followDeliveryMuteScopeKeyV1({ kind: 'source', source });
@@ -50,6 +53,7 @@ function useCreateSource(detailsDemanded: boolean): Source {
     }> | null>(null);
     const censusRef = React.useRef(census);
     censusRef.current = census;
+    const refreshCensusRef = React.useRef<(() => void) | null>(null);
     React.useEffect(() => {
         if (!enabled || !lifetime?.isCurrent()) return;
         const controller = new AbortController();
@@ -96,8 +100,9 @@ function useCreateSource(detailsDemanded: boolean): Source {
             const current = censusRef.current;
             return current?.lifetime !== lifetime || current.loading || current.failed;
         } } });
+        refreshCensusRef.current = () => { void refresh(); };
         void refresh();
-        return () => { controller.abort(); retirement.dispose(); unsubscribe(); };
+        return () => { refreshCensusRef.current = null; controller.abort(); retirement.dispose(); unsubscribe(); };
     }, [enabled, lifetime]);
     const follows = enabled && lifetime?.isCurrent() && census?.lifetime === lifetime ? census.follows : null;
     const workflowFollows = React.useMemo(() => workflowAttention.available
@@ -195,6 +200,17 @@ function useCreateSource(detailsDemanded: boolean): Source {
             follows: previous.follows.flatMap(follow => sourceKey(follow.source) !== sourceKey(source) ? [follow]
                 : hasRunInterest(result.follow) ? [{ ...result.follow, source }] : []) });
     }, [lifetime]);
+    // Stable identity: a Retry press reads the latest sub-sources without re-keying the source on every render.
+    const retry = useEventCallback(() => {
+        if (!lifetime?.isCurrent()) return;
+        const current = censusRef.current;
+        if (current?.lifetime === lifetime && current.failed) refreshCensusRef.current?.();
+        headerReads.owner?.retryFailed();
+        if (workflowFollows.length > 0 && workflowWindow.status === 'failed') workflowWindow.retry();
+        for (const address of sessionAddresses.values()) {
+            if (readRunningExecutionRunRosterSnapshot(address).failed) refreshRunningExecutionRunRoster(address);
+        }
+    });
     return React.useMemo(() => {
         if (!enabled || !lifetime?.isCurrent()) return EMPTY_SOURCE;
         const entries = follows && projection?.follows === follows ? projection.entries : EMPTY_ENTRIES;
@@ -210,10 +226,10 @@ function useCreateSource(detailsDemanded: boolean): Source {
                 && follow.onceDeliveries?.some(delivery => delivery.event.kind !== 'needs_you')) countable.add(sourceKey(follow.source));
         }
         const availableWorkflowFollows = workflowFollows.filter(follow => !workflowFailed(follow.source.runId));
-        return { entries, workflowFollows: availableWorkflowFollows, count: countable.size, markOpened,
+        return { entries, workflowFollows: availableWorkflowFollows, count: countable.size, markOpened, retry,
             loading: census?.lifetime !== lifetime || census.loading || Boolean(follows && (projection?.follows !== follows || projection.loading)),
             failed: census?.lifetime === lifetime && (census.failed || Boolean(projection?.follows === follows && projection.failed)) };
-    }, [enabled, lifetime, follows, projection, census, workflowFollows, workflowAttention.available, workflowAttention.runIds, markOpened, headerReads, workflowFailed]);
+    }, [enabled, lifetime, follows, projection, census, workflowFollows, workflowAttention.available, workflowAttention.runIds, markOpened, retry, headerReads, workflowFailed]);
 }
 
 function SourceProvider(props: Readonly<{ children: React.ReactNode }>) {
