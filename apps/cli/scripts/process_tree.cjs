@@ -356,13 +356,7 @@ function createProcessTreeOwner({ readProcessCensus, indexCensus, descendantsOf,
     return { terminateProcessTree, terminateTargets, captureTargets };
 }
 
-async function terminateProcessTree(proc, options) {
-    if (!proc.pid) return;
-    const [processTools, processes] = await Promise.all([import('@happier-dev/cli-common/process'), import('#process-census')]);
-    const owner = createProcessTreeOwner({ ...processTools, ...processes,
-        taskkillWindowsProcessTree: input => taskkillWindowsProcessTree(input, processTools.windowsSystemToolCommand, processTools.execFileWithDeadline),
-    });
-    await owner.terminateProcessTree(proc, options);
-}
-
-module.exports = { createProcessTreeOwner, terminateProcessTree, taskkillWindowsProcessTree, DEFAULT_PROCESS_TREE_GRACE_MS };
+// Hosts pass their own census and process tools as adapters, so this file stays free of
+// workspace imports: the CLI and daemon load it in-process, and a bundled closure here
+// would be a second, never-run copy held as source text in every Runner heap.
+module.exports = { createProcessTreeOwner, taskkillWindowsProcessTree, DEFAULT_PROCESS_TREE_GRACE_MS };

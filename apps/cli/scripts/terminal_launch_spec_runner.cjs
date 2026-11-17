@@ -4,10 +4,21 @@ const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
-const { terminateProcessTree } = require('./process_tree.cjs');
+const { createProcessTreeOwner, taskkillWindowsProcessTree } = require('./process_tree.cjs');
 const { reportNativeProcessExited } = require('./native_process_exit.cjs');
 
 const terminalSignalNames = ['SIGINT', 'SIGQUIT'];
+
+// This launcher runs in its own process, so it composes the process-tree owner with
+// its own census and process tools (bundled into this sidecar only).
+async function terminateProcessTree(proc, options) {
+    if (!proc.pid) return;
+    const [processTools, processes] = await Promise.all([import('@happier-dev/cli-common/process'), import('#process-census')]);
+    const owner = createProcessTreeOwner({ ...processTools, ...processes,
+        taskkillWindowsProcessTree: input => taskkillWindowsProcessTree(input, processTools.windowsSystemToolCommand, processTools.execFileWithDeadline),
+    });
+    await owner.terminateProcessTree(proc, options);
+}
 
 function isPlainObject(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -266,6 +277,7 @@ module.exports = {
     readLaunchSpecFile,
     runLaunchSpec,
     runLaunchSpecFile,
+    terminateProcessTree,
 };
 
 if (require.main === module) {

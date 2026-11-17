@@ -9,9 +9,11 @@ import { build } from 'esbuild';
 import { expect, it } from 'vitest';
 import { bundleCliSourceSidecars, readWorkspacePackages } from '@happier-dev/cli-common/sourceRuntimeEntries';
 
-// The sidecar runs inside every Runner that terminates a process tree. Its graph
-// must not pull the CLI file logger's Account/persistence closure into that heap.
-it('builds process_tree.cjs without the CLI logger closure and it still terminates a real tree', async () => {
+// process_tree.cjs is loaded inside every Runner and the daemon (createRequire), where
+// the census and process tools come from the host graph as adapters. Any bundled
+// workspace closure in it is a second, never-run copy retained as source text in
+// each of those heaps. Only the standalone launcher composes its own census.
+it('keeps process_tree.cjs free of bundled workspace code and the standalone launcher still terminates a real tree', async () => {
   // Bundled sidecars keep npm packages external, so the output must resolve the installed node_modules.
   const cacheDir = resolve(__dirname, '../../../node_modules/.cache');
   await mkdir(cacheDir, { recursive: true });
@@ -26,13 +28,15 @@ it('builds process_tree.cjs without the CLI logger closure and it still terminat
     const inputs = Object.keys(metafile.outputs).find(key => key.endsWith('process_tree.cjs'));
     expect(inputs, 'sidecar output present').toBeDefined();
     const processTreeInputs = Object.keys(metafile.outputs[inputs!].inputs);
-    // The logger's own Account/persistence closure is what must be absent.
-    expect(processTreeInputs.filter(path => path.endsWith('apps/cli/src/persistence.ts'))).toEqual([]);
+    expect(processTreeInputs).toEqual(['apps/cli/scripts/process_tree.cjs']);
+    const launcher = Object.keys(metafile.outputs).find(key => key.endsWith('terminal_launch_spec_runner.cjs'));
+    // The launcher's own CLI-independent graph still must not carry the CLI logger's Account/persistence closure.
+    expect(Object.keys(metafile.outputs[launcher!].inputs).filter(path => path.endsWith('apps/cli/src/persistence.ts'))).toEqual([]);
 
     // The bundled census and termination path must still run outside the CLI.
     await promisify(execFile)(process.execPath, ['-e', `
-      const tree = require(${JSON.stringify(join(outputDir, 'process_tree.cjs'))});
-      tree.terminateProcessTree({ pid: ${child.pid} }, { timeoutMs: 15000 }).then(() => process.exit(0), error => { console.error(error); process.exit(1); });
+      const launcher = require(${JSON.stringify(join(outputDir, 'terminal_launch_spec_runner.cjs'))});
+      launcher.terminateProcessTree({ pid: ${child.pid} }, { timeoutMs: 15000 }).then(() => process.exit(0), error => { console.error(error); process.exit(1); });
     `], { timeout: 30_000 });
     expect(child.exitCode !== null || child.signalCode !== null || await new Promise(done => {
       child.once('exit', () => done(true));
