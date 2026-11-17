@@ -5,6 +5,7 @@ import { createFilesystemEffectAdmission, type FilesystemEffectAdmission } from 
 import { FILESYSTEM_TRANSFER_ACTION_IDS, type FilesystemTransferActionId } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
+import { SESSION_CHECKOUT_REMOVAL_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 
 import { logger } from '@/ui/logger';
 import { registerManagedActivityRpcHandlers, type ManagedActivityRpcOwner } from './rpcHandlers.managedActivity';
@@ -17,7 +18,7 @@ import {
   type SpawnSessionOptions,
   type SpawnSessionResult,
 } from '@/session/shared/spawnSessionContract';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import { listExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import { listExecutionRunMarkersForRehydration } from '@/daemon/executionRunRegistry';
@@ -212,6 +213,7 @@ import type { HostActionOperationRuntime } from '@/daemon/actionOperations/creat
 import type { TerminalPtySessionManager } from '@/terminal/pty/sessions';
 import { createProjectFiniteActionExecutor, registerProjectFiniteRpcHandlers } from '@/rpc/handlers/projects/registerProjectFiniteRpcHandlers';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { registerSessionLifecycleRpcHandlers } from '@/rpc/handlers/sessionLifecycle';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 
 const transferRelayV2DownloadResponderCleanupByManager = new WeakMap<RpcHandlerManager, () => void>();
@@ -464,6 +466,7 @@ export type MachineRpcHandlerDeps = Readonly<{
 }>;
 
 export type MachineRpcLifecycleRegistration = Readonly<{
+  isSessionActive?: MachineRpcHandlers['isSessionActive'];
   /** Closed custodian work consumes the same capability service without requester ingress. */
   hostCapabilities: ReturnType<typeof registerCapabilitiesHandlers>;
   captureExecutionRunWorkflowRequester?: ExecutionRunHostBridge['captureWorkflowRequester'];
@@ -635,8 +638,23 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   } });
   let detachedExecutionRunManager: ExecutionRunRequestBridgeContract<ExecutionRunHostBridge> | null = null;
   const executionBudgetRegistry = params.deps?.executionBudgetRegistry ?? createExecutionBudgetRegistry();
+  let sessionDelete: Parameters<typeof registerExecutionRunHandlers>[1]['sessionDelete'];
+  if (externalAction && params.deps?.currentMachineId) {
+    registerSessionLifecycleRpcHandlers({
+      rpcHandlerManager: { registerHandler: (_method, handler) => { sessionDelete = handler; } },
+      actionIds: SESSION_CHECKOUT_REMOVAL_ACTION_IDS_V1,
+      scopes: [{ id: 'session.delete', methods: [SESSION_RPC_METHODS.SESSION_DELETE] }],
+      targetMachineId: params.deps.currentMachineId, defaultMachineTarget: true,
+      actionExecutor: { execute: (actionId, input, context) => externalAction.executor.execute(
+        actionId as Parameters<typeof externalAction.executor.execute>[0], input, context) },
+      ...(params.deps.actionOperations ? { observeExecution: params.deps.actionOperations.observeExecution } : {}),
+      ...(params.deps.requesterSessionRuntime ? { requesterSessionRuntime: params.deps.requesterSessionRuntime } : {}),
+      ...(params.deps.requesterBootstrapBoundary ? { requesterBootstrapBoundary: params.deps.requesterBootstrapBoundary } : {}),
+    });
+  }
   const executionRunRegistration = registerExecutionRunHandlers(rpcHandlerManager, {
     sessionId: null,
+    ...(sessionDelete ? { sessionDelete } : {}),
     ...(params.deps?.actionOperations?.attachOwner ? { attachActionOperationOwner: params.deps.actionOperations.attachOwner } : {}),
     budgetRegistry: executionBudgetRegistry,
     serverId: params.deps?.currentServerId ?? configuration.activeServerId,
@@ -1230,6 +1248,7 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     cleanupRequesterMachineTerminals: terminalRegistration.cleanupRequesterMachineTerminals,
     ...(operationStore?.readActiveProjectCommands ? { readActiveProjectCommands: operationStore.readActiveProjectCommands } : {}),
     projectFiniteExecutionInstalled: Boolean(resolveProjectFiniteRuntime && params.deps?.currentMachineId && params.deps.currentServerId),
+    ...(handlers.isSessionActive ? { isSessionActive: handlers.isSessionActive } : {}),
     ...(resolveProjectFiniteRuntime ? { resolveProjectFiniteRuntime } : {}),
     sessionsRoleFamily,
     externalSessionHostActionExecutor:

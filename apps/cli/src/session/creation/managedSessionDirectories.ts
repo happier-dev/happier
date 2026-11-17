@@ -22,6 +22,14 @@ import { SessionCreationCorrespondenceConflictError } from '@/api/session/sessio
 import { renameStoragePathNoReplace } from '@/storage/trash/renameStoragePath';
 import { ensureExactUidDirectoryAccess, grantExactUidPathAccess, removeUnixPathTree, withPinnedUnixDirectory } from '@/utils/fs/unixPathAccess';
 import type { WorkspaceMaterializedEntryAccess } from '@/scm/workspace/workspaceExportStaging/promoteStagedWorkspace';
+import type { StorageWorktreeRemovalContext } from '@/storage/worktrees/storageWorktreeOperations';
+import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
+import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { ProjectCheckoutRemoval } from '@/workspaces/projectSetup/projectCheckoutRemoval';
+import type { PreparedMemberSessionDirectoryRemoval } from './memberSessionDirectoryRemoval';
+import type { MemberWorkspaceReadServices } from '@/workspaces/activation/memberWorkspaceSource';
+import { createMemberWorkspaceReadSource } from '@/workspaces/activation/memberWorkspaceSource';
+import { runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 const RecordSchema = z.strictObject({
   v: z.literal(1),
@@ -85,6 +93,7 @@ export function createManagedSessionDirectories(input: Readonly<{
   protection?: ProtectedLocalStateOptions;
   /** Already admitted native identity and Workspace root; ownership records stay private. */
   payloadPlacement?: ManagedSessionDirectoryPayloadPlacement;
+  resolveProjectRuntime?: (ingress: RpcHandlerContext) => Promise<ProjectFiniteActionRuntime | null>;
 }> = {}) {
   const platform = input.platform ?? process.platform;
   const paths = platform === 'win32' ? win32 : posix;
@@ -335,6 +344,13 @@ export function createManagedSessionDirectories(input: Readonly<{
       await markPendingRemoval(allocationId, error);
     }
   };
+  const prepareRemoval = async (directory: string, removalContext: StorageWorktreeRemovalContext) => {
+    if (!input.resolveProjectRuntime) throw Object.assign(new Error('project_setup_operation_unavailable'), { code: 'project_setup_operation_unavailable' });
+    const runtime = await input.resolveProjectRuntime(removalContext.ingress);
+    if (!runtime) throw Object.assign(new Error('project_setup_operation_unavailable'), { code: 'project_setup_operation_unavailable' });
+    const { prepareProjectCheckoutRemoval } = await import('@/workspaces/projectSetup/projectCheckoutRemoval');
+    return prepareProjectCheckoutRemoval({ runtime, ...removalContext, worktreePath: directory });
+  };
   const removeSessionRecords = async (sessionId: string, records: readonly ManagedSessionDirectoryEntry[], stopSession: StopSession) => {
     if (!records.length) return;
     try {
@@ -353,6 +369,48 @@ export function createManagedSessionDirectories(input: Readonly<{
     try { records = (await listRecords({ includeTrashed: true })).filter(record => record.sessionId === sessionId); }
     catch (error) { logger.warn('[MANAGED SESSION DIRECTORY] Removal inventory unavailable', { sessionId, error }); throw error; }
     await removeSessionRecords(sessionId, records, stopSession);
+  };
+  /** Captures teardown and native effects while the original Session authority exists. */
+  const prepareForSessionDeletion = async (request: Readonly<{
+    sessionId: string; removalContext: StorageWorktreeRemovalContext;
+    prepareMemberDirectory(directory: string, prepareRemoval: (reads: MemberWorkspaceReadServices) => Promise<void>): Promise<PreparedMemberSessionDirectoryRemoval>;
+  }>) => {
+    const records = (await listRecords({ includeTrashed: true })).filter(record => record.sessionId === request.sessionId);
+    const removals: ProjectCheckoutRemoval[] = [];
+    const effects: PreparedMemberSessionDirectoryRemoval[] = [];
+    try { for (const record of records) {
+      const directory = record.inTrash?.payloadPath ?? record.directory;
+      if (record.payloadPlacement) {
+        const effect = await request.prepareMemberDirectory(directory, async reads => {
+          // The callback crosses the member pipe, so bind its read source here.
+          const source = createMemberWorkspaceReadSource(reads, record.payloadPlacement!.root);
+          await runWithWorkspaceSource(source, async () => {
+            const removal = record.inTrash ? undefined : await prepareRemoval(directory, request.removalContext);
+            if (removal) removals.push(removal);
+          });
+        });
+        effects.push({ remove: async () => {
+          await effect.remove();
+          await removeProtectedLocalStateFile(recordPath(record.allocationId), protection);
+        }, dispose: () => effect.dispose() });
+      } else {
+        if (!record.inTrash) await assertContained(record);
+        else {
+          const info = await lstat(directory);
+          if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Managed allocation must be a directory, never a symlink');
+        }
+        const removal = record.inTrash ? undefined : await prepareRemoval(directory, request.removalContext);
+        if (removal) removals.push(removal);
+        effects.push({ remove: async () => {
+          await rm(directory, { recursive: true, force: true });
+          await removeProtectedLocalStateFile(recordPath(record.allocationId), protection);
+        }, dispose: async () => {} });
+      }
+    } } catch (error) { await Promise.allSettled(effects.map(effect => effect.dispose())); throw error; }
+    return { async remove(): Promise<readonly ProjectCheckoutRemoval[]> {
+      for (const effect of effects) await effect.remove();
+      return removals;
+    }, async dispose(): Promise<void> { await Promise.all(effects.map(effect => effect.dispose())); } };
   };
   const retryPendingRemovals = async ({ stopSession }: Readonly<{ stopSession: StopSession }>) => {
     const records = (await listRecords({ includeTrashed: true })).filter(record => record.pendingRemoval === true);
@@ -513,7 +571,7 @@ export function createManagedSessionDirectories(input: Readonly<{
     // rechecking the identity of a path that has already been removed.
     if (record) await removeProtectedLocalStateFile(recordPath(allocationId), protection);
   };
-  return { prepareForCreation, materializeForFreshSpawn, prepareSeed, bind, listRecords, resolveForSession, removeForSession, removeAllocation,
+  return { prepareForCreation, materializeForFreshSpawn, prepareSeed, bind, listRecords, resolveForSession, removeForSession, prepareForSessionDeletion, removeAllocation,
     retireToTrash, reinstateFromTrash, discardFromTrash,
     retryPendingRemovals, allocateForHandoff, commitHandoff, abortHandoff, rollbackFreshSpawn, prepareForSpawn };
 }

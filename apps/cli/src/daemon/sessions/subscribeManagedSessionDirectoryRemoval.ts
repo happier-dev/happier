@@ -16,7 +16,7 @@ type CreationSessionLookup = (args: Readonly<{
 
 type ManagedSessionDirectoryRemovalParams = Readonly<{
   directories: Pick<ManagedSessionDirectories,
-    'listRecords' | 'bind' | 'removeForSession' | 'retryPendingRemovals'>;
+    'listRecords' | 'bind'>;
   token: string;
   stopSession: (sessionId: string) => Promise<StopSessionResult>;
   purgeBrowserStorageForSessionDeleted?: (sessionId: string) => Promise<void>;
@@ -38,33 +38,31 @@ export async function subscribeManagedSessionDirectoryRemoval(
       return await lookupSessionsByTags(args);
     });
 
-  const retryPendingRemovals = async (): Promise<void> => {
-    try {
-      await params.directories.retryPendingRemovals({ stopSession: params.stopSession });
-    } catch (error) {
-      logger.warn('[MANAGED SESSION DIRECTORY] Pending removal retry unavailable', { error });
-    }
-  };
-
   const unsubscribes = [
     params.onSessionDeletedChange(async ({ sessionId }) => {
       // Home inactivity is not physical death: an automatic successor can still
       // own this Session, including one with an ordinary (unmanaged) directory.
       // Stop fences pending launches as well as retiring every tracked runner.
-      // Keep failed cleanup inside the deletion cursor's existing replay custody.
+      // Keep failed runner retirement inside the deletion cursor's replay custody.
       const stopped = await params.stopSession(sessionId);
       if (stopped.status !== 'stopped' && stopped.status !== 'not_found') {
         throw new Error('deleted_session_runner_retirement_incomplete');
       }
       // Inactive Sessions have no child-exit signal to release their Browser storage.
       await params.purgeBrowserStorageForSessionDeleted?.(sessionId);
+      const retained = (await params.directories.listRecords({ includeTrashed: true }))
+        .some(record => record.sessionId === sessionId);
+      if (retained) {
+        // Raw legacy Home DELETE removed metadata only. Original requester
+        // authority is gone; keep bytes and custody for explicit Storage recovery.
+        logger.warn('[MANAGED SESSION DIRECTORY] Checkout retained for Storage recovery', { sessionId });
+        return;
+      }
       if (params.requesterCustody
         && !await retireRequesterSessionCredentialCustody({ ...params.requesterCustody, sessionId })) {
         throw new Error('requester_session_custody_unavailable');
       }
-      await params.directories.removeForSession({ sessionId, stopSession: async () => stopped });
     }),
-    params.onSessionAccessReset(retryPendingRemovals),
   ];
   const dispose = (): void => {
     for (const unsubscribe of unsubscribes) unsubscribe();
@@ -93,8 +91,6 @@ export async function subscribeManagedSessionDirectoryRemoval(
   } catch (error) {
     logger.warn('[MANAGED SESSION DIRECTORY] Startup cleanup unavailable', { error });
   }
-  // Only a deletion event or a previously recorded removal authorizes cleanup.
-  // Account inventory absence is visibility, never proof of Session deletion.
-  await retryPendingRemovals();
+  // Startup and visibility resets never authorize a new destructive effect.
   return dispose;
 }

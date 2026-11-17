@@ -20,7 +20,7 @@ import { readSessionStopConfirmationFailure } from '@happier-dev/protocol/action
 import { SessionStopResultSchema } from '@happier-dev/protocol/sessions/control/contract';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
 import type { InactiveSessionResumeResult } from '@/session/services/requestInactiveSessionResume';
-type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionOpen' | 'sessionFork' | 'sessionContinueWithReplay' | 'sessionRollback' | 'checkpointCodeRollback' | 'sessionCheckpoint' | 'sessionRestore' | 'sessionContinuationInspect' | 'sessionAgentTransition' | 'sessionArchiveSet'> & Required<Pick<ActionExecutorDeps, 'sessionOpen' | 'sessionFork' | 'sessionRollback'>>;
+type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionDelete' | 'sessionOpen' | 'sessionFork' | 'sessionContinueWithReplay' | 'sessionRollback' | 'checkpointCodeRollback' | 'sessionCheckpoint' | 'sessionRestore' | 'sessionContinuationInspect' | 'sessionAgentTransition' | 'sessionArchiveSet'> & Required<Pick<ActionExecutorDeps, 'sessionOpen' | 'sessionFork' | 'sessionRollback'>>;
 
 export function createCliSessionLifecycleActionDeps(
   params: CliActionDepsParams,
@@ -53,6 +53,31 @@ export function createCliSessionLifecycleActionDeps(
 ): FamilyActionDeps {
   return {
 
+    sessionDelete: async ({ input, context, deleteFromHome }) => {
+      if (!params.credentials) return notSupported();
+      const transport = await resolveTransportForSession(input.sessionId, context.signal,
+        { context, actionId: 'session.delete' }, context.expectedSessionAddress);
+      // Home remains the authority for absent Sessions; no native authority is fabricated.
+      if (!transport.ok) return transport.code === 'session_not_found'
+        ? deleteFromHome() : { ok: false, errorCode: transport.code, error: transport.code };
+      const machineId = normalizeStringValue(transport.rawSession.machineId)
+        ?? normalizeStringValue(readTransportSessionOwnerMetadata(transport)?.machineId);
+      if (!machineId) return deleteFromHome();
+      const direct = params.machineActionDirectTargetTransport;
+      if (direct?.machineId === machineId) {
+        if (!direct.sessionDelete) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+        return direct.sessionDelete({ input: { ...input, sessionId: transport.sessionId }, context, deleteFromHome });
+      }
+      return readMachineActionRpcResult(await callMachineAction({
+        machineId, method: SESSION_RPC_METHODS.SESSION_DELETE, request: { ...input, sessionId: transport.sessionId },
+        effectActionId: 'session.delete', exactMachine: true, context,
+        authorization: { kind: 'session.write', sessionId: transport.sessionId },
+        ...(context.authority ? { authority: context.authority } : {}),
+        ...(context.serverId ? { serverId: context.serverId } : {}),
+        ...(context.signal ? { signal: context.signal } : {}),
+        ...(context.actionRequestId ? { requestId: context.actionRequestId } : {}),
+      }));
+    },
     sessionOpen: async ({ sessionId, serverId, resumeRequest, actionRequestId, signal, approvedNewDirectoryCreation }, context) => {
       if (!params.credentials) return notSupported();
       const exactServerId = normalizeStringValue(serverId);

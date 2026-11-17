@@ -42,7 +42,7 @@ export const SessionTargetsResolveInputV1Schema: z.ZodMiniType<
 const SessionMemoryActionInputSchema = lazyZodSchema(() => z.extend(SessionMemorySetInputV1Schema, { sessionId: SessionTargetV1Schema }));
 const SessionContextActionInputSchema = lazyZodSchema(() => z.extend(SessionContextUpdateInputV1Schema, { sessionId: SessionTargetV1Schema }));
 const SessionDeleteInputSchema = lazyZodSchema(() => z.union([
-  z.strictObject({ sessionId: z.string().check(z.trim(), z.minLength(1)) }),
+  z.strictObject({ sessionId: z.string().check(z.trim(), z.minLength(1)), skipCleanup: z.optional(z.boolean()) }),
   z.strictObject({ machineId: z.string().check(z.trim(), z.minLength(1)), runId: z.string().check(z.trim(), z.minLength(1)) }),
 ]));
 const BOT_FACE_SHAPE_AUTHORING_GUIDANCE = `For "Surprise me", set shape: {generate:"surprise", seed:17}, choosing an integer seed for a fresh generated outline; this is distinct from the roster-identity face.seed. The Action saves the concrete outline from the shared seeded generator. For requests such as "make me a cat", set shape: {v:1, fill:[closed path], mouth:[x,y,scale], stroke?:[[path,width]], cut?:[path or [path,width]], origin:"custom"}. Paths use M L C Q A Z (either case), finite numbers and the 0–100 source-coordinate convention; the Action centres the outline at x=45 without rescaling. Mouth only: no eyes. Mouth scale is 0.5–1.2 and stroke width is greater than 0 through 24. ${BOT_FACE_SHAPE_GEOMETRY_GUIDANCE} Shape wins over body, which remains the fallback.`;
@@ -417,6 +417,7 @@ function createSessionStateActionSpecs() {
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.delete', approval: {result: 'none'},
+    operation: { version: 1, visibility: 'activity', progress: 'indeterminate', presentation: { onStart: 'current' } },
     hostReviewedChildren: (input: unknown) => {
       const target = input as z.output<typeof SessionDeleteInputSchema>;
       return 'sessionId' in target ? [{ action: 'session.stop' as const, role: 'stop', input: { sessionId: target.sessionId } }] : [];
@@ -426,12 +427,13 @@ function createSessionStateActionSpecs() {
     description: 'Permanently delete a session or stopped detached conversation history. Session deletion removes managed folders through the durable lifecycle; detached deletion removes Happier history and leaves provider history untouched.',
     safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'account', placements: [],
     bindings: { mcpToolName: 'session_delete', rpcMethod: SESSION_RPC_METHODS.SESSION_DELETE },
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: true },
     serverTransport: { method: 'DELETE', path: '/v1/sessions/:sessionId' },
     inputSchema: SessionDeleteInputSchema,
     outputSchema: lazyZodSchema(() => z.strictObject({ success: z.literal(true) })),
     inputHints: { description: 'Use sessionId for a session, or machineId and runId for stopped detached conversation history.', title: 'Delete a session', fields: [
       { path: 'sessionId', title: 'Session id', prompt: 'Which session?', widget: 'text' },
+      { path: 'skipCleanup', title: 'Remove without cleanup', widget: 'boolean' },
       { path: 'machineId', title: 'Machine id', widget: 'text' },
       { path: 'runId', title: 'Detached conversation id', widget: 'text' },
     ] },

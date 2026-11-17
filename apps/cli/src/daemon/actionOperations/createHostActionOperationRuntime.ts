@@ -1,4 +1,4 @@
-import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ManagedMachineActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -407,6 +407,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       },
       ...(domainRef ? { domainRef } : {}),
       cancellation: request.actionId === 'workspace.files.replace'
+        || isProjectCheckoutRemovalActionIdV1(request.actionId)
         || request.actionId === 'projects.script.run' || request.actionId === 'projects.compute.exec' || request.actionId === 'projects.prepare'
         || request.actionId === 'machines.managed.power.set' || request.actionId === 'machines.managed.delete'
         || request.actionId === 'machines.managed.acquire' || request.actionId === 'machines.managed.bootstrap.retry'

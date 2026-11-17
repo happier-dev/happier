@@ -115,6 +115,7 @@ function isHandoffPhaseBound(input: unknown, context: RpcHandlerContext | undefi
 
 type SessionLifecycleActionId =
     | 'session.stop'
+    | 'session.delete'
     | 'session.fork'
     | 'session.continue_with_replay'
     | 'session.rollback'
@@ -280,6 +281,8 @@ export function registerSessionLifecycleRpcHandlers(params: Readonly<{
     actionExecutor: RpcActionExecutor;
     actionIds?: readonly SessionLifecycleActionId[];
     scopes?: readonly ActionSpecRpcRegistrationScope[];
+    targetMachineId?: string;
+    defaultMachineTarget?: true;
     observeExecution?: RegisterActionSpecRpcHandlersParams['observeExecution'];
     mapResponseForMethod?: RegisterActionSpecRpcHandlersParams['mapResponseForMethod'];
     mapRequestForMethod?: RegisterActionSpecRpcHandlersParams['mapRequestForMethod'];
@@ -318,6 +321,8 @@ export function registerSessionLifecycleRpcHandlers(params: Readonly<{
             return await withRequesterSessionRuntime(input, context, sessionId, params.requesterSessionRuntime, handler);
         }) },
         actionExecutor: params.actionExecutor,
+        ...(params.targetMachineId ? { targetMachineId: params.targetMachineId } : {}),
+        ...(params.defaultMachineTarget ? { defaultMachineTarget: true } : {}),
         actionIds: params.actionIds,
         scopes: params.scopes ?? SESSION_LIFECYCLE_RPC_SCOPES,
         ...(params.observeExecution ? { observeExecution: params.observeExecution } : {}),

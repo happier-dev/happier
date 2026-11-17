@@ -1,4 +1,4 @@
-import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunUserTranscriptCommitRequestSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { SessionExecutionRunBrokerAuthorityRequestV1Schema, SessionExecutionRunBrokerAuthorityResponseV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
@@ -72,6 +72,8 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   attachActionOperationOwner?: import('@/daemon/actionOperations/createHostActionOperationRuntime').HostActionOperationRuntime['attachOwner'];
   /** Fixed handler scope: a concrete Session or the daemon-owned detached scope. */
   sessionId: string | null;
+  /** Same SESSION_DELETE registration delegates ordinary Sessions to their native lifecycle owner. */
+  sessionDelete?: RpcHandler;
   cwd: string;
   machineId?: string;
   /** Stable qualified Home identity; never the transport URL. */
@@ -336,10 +338,11 @@ export function registerExecutionRunRpcHandlers(
   if (ctx.sessionId === null) rpc.registerHandler(SESSION_RPC_METHODS.SESSION_DELETE,
     async (request: unknown, rpcContext) => {
       const parsed = getActionSpec('session.delete').inputSchema.safeParse(request);
-      if (!parsed.success || !('runId' in parsed.data)) {
-        return { ok: false, errorCode: 'invalid_parameters', error: 'Invalid params' };
+      if (parsed.success && 'runId' in parsed.data) {
+        return manager.deleteForRequest(parsed.data.runId, projectRpcRequesterWorkAttribution(rpcContext, ctx.serverId));
       }
-      return manager.deleteForRequest(parsed.data.runId, projectRpcRequesterWorkAttribution(rpcContext, ctx.serverId));
+      if (ctx.sessionDelete) return ctx.sessionDelete(request, rpcContext);
+      return { ok: false, errorCode: 'invalid_parameters', error: 'Invalid params' };
     });
 
   // This content-free source read belongs to the daemon's retained owner, not

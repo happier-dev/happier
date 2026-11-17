@@ -3158,6 +3158,27 @@ export class ApiMachineClient {
         return await this.getMachineServicesBinding().execute(request);
     }
 
+    /** Native leaf of the original admitted Session deletion, before its Home row disappears. */
+    async executeSessionDeleteAction(request: Parameters<NonNullable<import('@happier-dev/protocol/actions').ActionExecutorDeps['sessionDelete']>>[0],
+        ingress: RpcHandlerContext): Promise<unknown> {
+        const registration = this.rpcLifecycleRegistrations.at(-1);
+        if (this.projectionSchedulingClosed || !registration?.isSessionActive) {
+            return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+        }
+        const { createNativeSessionDeleteAction } = await import('@/daemon/sessions/sessionDeleteAction');
+        return createNativeSessionDeleteAction({ ingress,
+            resolveRuntime: context => this.resolveProjectFiniteRuntime(context),
+            isSessionActive: registration.isSessionActive,
+            retireRequesterCustody: async sessionId => {
+                const { retireRequesterSessionCredentialCustody } = await import('@/daemon/sessionEncryption/requesterSessionCredentials');
+                return retireRequesterSessionCredentialCustody({ happyHomeDir: configuration.happyHomeDir,
+                    serverId: this.machineRuntimeServerId, sessionId });
+            },
+            nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input),
+                readMemberFolderOwner: path => this.readMemberFolderOwner(path) },
+        })(request);
+    }
+
     /** Private installed target port, invoked only after public Action admission. */
     async executeMachineRebootAction(request: MachineRebootDirectTargetInvocation): Promise<unknown> {
         if (this.projectionSchedulingClosed || !this.machineRebootAction) return { kind: 'unavailable', reason: 'admission_unavailable' };

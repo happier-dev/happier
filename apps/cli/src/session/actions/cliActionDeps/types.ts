@@ -127,6 +127,8 @@ export type MachineServiceActionDirectTargetInvocation = Parameters<NonNullable<
 
 export type MachineActionDirectTargetTransport = Readonly<{
   machineId: string;
+  /** The installed custodian runs cleanup and Home deletion under the original operation. */
+  sessionDelete?: NonNullable<ActionExecutorDeps['sessionDelete']>;
   /** Exact receiving daemon's native setup leaf; composition stays at the Action owner. */
   machineSetupApply?: NonNullable<ActionExecutorDeps['machineSetupApply']>;
   /** Exact receiving daemon's declared-removal leaf. */

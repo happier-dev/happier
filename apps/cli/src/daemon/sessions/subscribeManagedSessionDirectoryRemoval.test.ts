@@ -45,7 +45,7 @@ async function createHarness() {
 }
 
 describe('subscribeManagedSessionDirectoryRemoval', () => {
-  it('stops the tracked session before deleting all its allocations, and accepts redelivery', async () => {
+  it('stops the tracked Session but retains allocations after raw Home deletion, including redelivery', async () => {
     const harness = await createHarness();
     const first = await harness.directories.materializeForFreshSpawn({ sessionCreationTag: 'creation:first' });
     const second = await harness.directories.allocateForHandoff({ operationId: 'handoff-back', sessionId: 'session' });
@@ -67,10 +67,10 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
 
     await harness.deleted.emit({ sessionId: 'session' });
     expect(stopped).toBe(true);
-    await expect(access(first.directory)).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(access(second.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(first.directory)).resolves.toBeUndefined();
+    await expect(access(second.directory)).resolves.toBeUndefined();
     await expect(harness.deleted.emit({ sessionId: 'session' })).resolves.toBeUndefined();
-    expect(await harness.directories.listRecords()).toEqual([]);
+    expect(await harness.directories.listRecords()).toHaveLength(2);
     dispose();
   });
 
@@ -144,7 +144,7 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
     dispose();
   });
 
-  it('retains a failed runner retirement for deletion-cursor redelivery before removing directories', async () => {
+  it('retries failed runner retirement while retaining its directory for an admitted Storage removal', async () => {
     const harness = await createHarness();
     const allocation = await harness.directories.materializeForFreshSpawn({ sessionCreationTag: 'creation:pending' });
     await harness.directories.bind({ allocationId: allocation.allocationId, sessionId: 'pending-session' });
@@ -166,8 +166,10 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
     await expect(access(allocation.directory)).resolves.toBeUndefined();
     available = true;
     await harness.deleted.emit({ sessionId: 'pending-session' });
-    expect(await harness.directories.listRecords()).toEqual([]);
-    await expect(access(allocation.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await harness.directories.listRecords()).toEqual([
+      expect.objectContaining({ allocationId: allocation.allocationId, sessionId: 'pending-session' }),
+    ]);
+    await expect(access(allocation.directory)).resolves.toBeUndefined();
     dispose();
   });
 
@@ -200,7 +202,7 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
     dispose();
   });
 
-  it('keeps deletion subscribed and continues startup cleanup after a network failure for one record', async () => {
+  it('keeps deletion observation subscribed and retains folders after a startup lookup fails', async () => {
     const harness = await createHarness();
     const failed = await harness.directories.materializeForFreshSpawn({ sessionCreationTag: 'network-failed' });
     const gone = await harness.directories.materializeForFreshSpawn({ sessionCreationTag: 'gone' });
@@ -217,11 +219,11 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
     await expect(access(failed.directory)).resolves.toBeUndefined();
     await expect(access(gone.directory)).resolves.toBeUndefined();
     await harness.deleted.emit({ sessionId: 'retained-session' });
-    await expect(access(retained.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(retained.directory)).resolves.toBeUndefined();
     dispose();
   });
 
-  it('retries an unbound pending removal instead of rebinding its creation tag', async () => {
+  it('retains an unbound pending removal without retrying a destructive effect or rebinding its tag', async () => {
     const harness = await createHarness();
     const allocation = await harness.directories.materializeForFreshSpawn({ sessionCreationTag: 'creation:pending-unbound' });
     const [{ allocationId: _allocationId, directory: _directory, ...record }] = await harness.directories.listRecords();
@@ -236,12 +238,15 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
       onSessionAccessReset: harness.reset.subscribe,
       lookupCreationSessions: async () => ({ state: 'available', sessions: [{ id: 'already-deleted' }] }),
     });
-    expect(await harness.directories.listRecords()).toEqual([]);
-    await expect(access(allocation.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await harness.directories.listRecords()).toEqual([
+      expect.objectContaining({ allocationId: allocation.allocationId, sessionId: null, pendingRemoval: true }),
+    ]);
+    await harness.reset.emit({ cursor: 1 });
+    await expect(access(allocation.directory)).resolves.toBeUndefined();
     dispose();
   });
 
-  it('retains files after a failed deletion until the deletion cursor redelivers',
+  it('retains files and ownership across a failed deletion observation and its redelivery',
     async () => {
       const harness = await createHarness();
       const allocations = new Map<string, string>();
@@ -279,18 +284,18 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
       await expect(access(goneDirectory)).resolves.toBeUndefined();
       await harness.deleted.emit({ sessionId: 'gone' });
       expect(new Set(stopped)).toEqual(new Set(['gone']));
-      await expect(access(goneDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(access(goneDirectory)).resolves.toBeUndefined();
       for (const retained of ['active', 'archived', 'unknown']) {
         expect(await readFile(join(allocations.get(retained)!, 'notes.md'), 'utf8')).toBe(retained);
       }
-      expect((await harness.directories.listRecords()).map((record) => record.sessionId).sort()).toEqual(['active', 'archived', null]);
+      expect((await harness.directories.listRecords()).map((record) => record.sessionId).sort()).toEqual(['active', 'archived', 'gone', null]);
       dispose();
       await harness.connection.emit({ phase: 'online' });
       expect(new Set(stopped)).toEqual(new Set(['gone']));
     },
   );
 
-  it('retains folders on healthy reconnects until a deletion arrives', async () => {
+  it('retains folders across reconnects and a metadata-only Home deletion', async () => {
     const harness = await createHarness();
     const allocation = await harness.directories.materializeForFreshSpawn({ sessionCreationTag: 'creation:retained' });
     await harness.directories.bind({ allocationId: allocation.allocationId, sessionId: 'retained' });
@@ -305,7 +310,7 @@ describe('subscribeManagedSessionDirectoryRemoval', () => {
     }
     await expect(access(allocation.directory)).resolves.toBeUndefined();
     await harness.deleted.emit({ sessionId: 'retained' });
-    await expect(access(allocation.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(allocation.directory)).resolves.toBeUndefined();
     dispose();
   });
 });

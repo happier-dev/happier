@@ -16,6 +16,7 @@ export function readProjectSetupSetChildRpcEffectV1(rootActionId: string, method
 }
 
 export const PROJECT_PREPARE_ACTION_ID_V1 = 'projects.prepare' as const;
+export const SESSION_CHECKOUT_REMOVAL_ACTION_IDS_V1 = ['session.delete'] as const;
 
 /** Destructive checkout owners retain cleanup review and Stop in their own operation. */
 export function isProjectCheckoutRemovalActionIdV1(actionId: string): actionId is

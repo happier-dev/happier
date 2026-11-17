@@ -23,6 +23,11 @@ import { readProjectManifest } from './projectManifestFile';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { registerProjectFiniteRpcHandlers } from '@/rpc/handlers/projects/registerProjectFiniteRpcHandlers';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { createNativeSessionDeleteAction } from '@/daemon/sessions/sessionDeleteAction';
+import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
+import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
+import type { HostEventEnvelopeV1 } from '@happier-dev/protocol/plugins/events/hostV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
@@ -3053,6 +3058,103 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.operationRuntime.runner.cancel(scope, 'operation')).toEqual({ kind: 'requested' });
         await expect.poll(() => h.operationRuntime.store.get(scope, 'operation')?.state).toBe('cancelled');
         expect(h.runtime.workerAdmission.dependencies()).toEqual([]);
+    });
+
+    it.each(['removed', 'home-refused', 'cleanup-refused'] as const)('retains native Session bytes through Home refusal and settles only removal (%s)', async outcome => {
+        const h = await harness({ version: 1, workspace: { teardown: [{ kind: 'command', command: 'true' }] } });
+        const environment = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+        const home = await mkdtemp(join(tmpdir(), 'finite-session-removal-'));
+        roots.push(home);
+        environment.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'home' });
+        reloadConfiguration();
+        const directories = createManagedSessionDirectories({});
+        const allocation = await directories.materializeForFreshSpawn({ sessionCreationTag: 'native-session-remove' });
+        await directories.bind({ allocationId: allocation.allocationId, sessionId: 'managed-session' });
+        await cp(join(h.root, '.happier'), join(allocation.directory, '.happier'), { recursive: true });
+        await writeFile(join(allocation.directory, 'kept'), 'private-session-bytes');
+        h.workspaceRefs[0]!.rootPath = allocation.directory;
+        h.address.rootPath = allocation.directory;
+        const plugin = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            runtimeOptions: { pluginIds: [], contributes: createResolvedContributionRegistry({}) } });
+        releaseRequesterContexts.push(() => plugin.dispose());
+        const facts: HostEventEnvelopeV1[] = [];
+        const subscription = plugin.registry.stableEventsBroker!.subscribeHost({
+            target: { eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' } },
+            isCurrent: () => true, listener: event => { facts.push(event); },
+        });
+        let homePresent = true;
+        let homeDeletes = 0;
+        let custodyRetired = false;
+        let receiverResult: unknown;
+        const executor = createActionExecutor({
+            sessionDelete: createNativeSessionDeleteAction({ ingress: h.context,
+                resolveRuntime: async () => ({ ...h.runtime, requesterIdentity: selectHostRequesterExecutionIdentity({
+                    rpcContext: h.context, hostHomeServerIdentityId: 'home' }) }),
+                isSessionActive: async () => false,
+                retireRequesterCustody: async () => { custodyRetired = true; return true; },
+                // Host allocations never cross the OS member-launch boundary.
+                nativeOperationRuntime: { readMemberFolderOwner: async () => null,
+                    prepareNativeOperation: async () => { throw new Error('Unexpected member launch for a host allocation'); } },
+            }),
+            // The Home HTTP boundary refuses or accepts the real root Action;
+            // admission, native preparation, teardown and deletion stay real.
+            homeDomainAction: async () => {
+                homeDeletes++;
+                expect(await readFile(join(allocation.directory, 'kept'), 'utf8')).toBe('private-session-bytes');
+                expect(facts).toEqual([]);
+                if (outcome === 'home-refused') return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
+                homePresent = false;
+                return { success: true };
+            },
+        });
+        const scope = { accountId: 'owner', machineId: 'machine' };
+        try {
+            const accepted = h.operationRuntime.observeExecution({ actionId: 'session.delete', input: { sessionId: 'managed-session' },
+                actionRequestId: 'remove-session', response: 'admission', execute: async operation => {
+                    const result = await executor.execute('session.delete', { sessionId: 'managed-session' }, {
+                        ...operation, authority: 'present_user', actionCaller: { kind: 'host' }, surface: 'rpc', serverId: 'home',
+                        presentUserConfirmation: { actionId: 'session.delete' }, actionsSettings: normalizeActionsSettingsV1({
+                            v: 1, actions: {}, approvalWaivedSurfaces: { 'projects.prepare': ['rpc'] },
+                        }),
+                    });
+                    receiverResult = result;
+                    return result;
+                } });
+            expect(await accepted).toMatchObject({ ok: true });
+            await expect.poll(() => h.spawned.length || h.operationRuntime.store.get(scope, 'operation')?.state === 'failed').toBeTruthy();
+            expect(h.spawned).toHaveLength(1);
+            expect(homePresent).toBe(true);
+            expect(homeDeletes).toBe(0);
+            expect(await readFile(join(allocation.directory, 'kept'), 'utf8')).toBe('private-session-bytes');
+            h.spawned[0]!.pty.exit(outcome === 'cleanup-refused' ? 7 : 0);
+            await h.operationRuntime.runner.waitForTerminal(scope, 'operation');
+            expect(h.operationRuntime.store.list(scope).items).toHaveLength(1);
+            if (outcome === 'removed') {
+                expect(receiverResult).toEqual({ ok: true, result: { success: true } });
+                expect(homePresent).toBe(false);
+                expect(custodyRetired).toBe(true);
+                await expect(access(allocation.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+                expect(await directories.listRecords()).toEqual([]);
+                await expect.poll(() => facts.length).toBe(1);
+                expect(facts[0]).toMatchObject({ payload: { kind: 'worktreeRemoved', removal: {
+                    operationId: 'operation', workspace: { workspaceId: 'accepted', rootPath: allocation.directory },
+                    removalKind: 'deleted', outcome: 'removed',
+                } } });
+            } else {
+                expect(receiverResult).toMatchObject({ ok: false,
+                    errorCode: outcome === 'home-refused' ? 'credential_scope_denied' : 'project_setup_step_failed' });
+                expect(homePresent).toBe(true);
+                expect(homeDeletes).toBe(outcome === 'home-refused' ? 1 : 0);
+                expect(custodyRetired).toBe(false);
+                expect(await readFile(join(allocation.directory, 'kept'), 'utf8')).toBe('private-session-bytes');
+                expect(await directories.listRecords()).toMatchObject([{ sessionId: 'managed-session' }]);
+                expect(facts).toEqual([]);
+            }
+        } finally {
+            await subscription.dispose();
+            await h.operationRuntime.runner.retireProjectFiniteOperations();
+            environment.restore(); reloadConfiguration();
+        }
     });
 
     it('runs teardown under the admitted removal operation without creating a child operation', async () => {

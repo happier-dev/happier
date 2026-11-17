@@ -1423,6 +1423,11 @@ resolveServerFeaturesSnapshot?: () =>
               },
               machineActionDirectTargetTransport: {
                 machineId: params.machineId,
+                sessionDelete: async request => {
+                  const ingress = resolveRequesterIngress(request.context);
+                  if (!ingress) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+                  return apiMachineForSessions.executeSessionDeleteAction(request, ingress);
+                },
                 workspaceSyncPreflightTarget: async (request, context) => {
                   const ingress = resolveRequesterIngress(context.localActionContext ?? executionContext);
                   if (!ingress?.machineAdmission || !ingress.verifyMachineAdmissionCurrent) {

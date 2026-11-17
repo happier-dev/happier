@@ -9695,18 +9695,18 @@ relationship for those private folders. Source copies are retained; a return
 handoff creates a new allocation. Abort removes only that operation's uncommitted
 target allocation.
 
-Managed folders survive daemon restart and archive/unarchive. Durable session
-deletion stops the tracked process tree before removing every allocation bound to
-the session on that machine, after physical containment and symlink checks.
-Offline cleanup is pending until the daemon returns. Persistent removal failure
-records `pendingRemoval` and returns normally so later Account changes can advance;
-startup and access reset retry it. Existing deletion cursor replay owns missed
-deletion delivery. An allocation's absence from the daemon Account's inventory
-or creation-tag lookup never proves deletion: a grantee's Session can run on this
-Machine without being visible to its owner. Startup binds unbound creations when
-the existing tag lookup finds their Session, and otherwise retains their files
-for normal resume binding. A cursor gap without a recorded removal can therefore
-leave orphaned files; it must not delete a retained conversation's workspace.
+Managed folders survive daemon restart and archive/unarchive. A raw Home
+deletion observer stops the tracked process tree but retains bound allocations
+and their requester custody for explicit removal through Storage. Home deletion
+removes Session metadata; its later observation has no original requester
+admission for a physical checkout effect. Startup and access reset do not retry
+physical deletion. Existing deletion cursor replay owns missed runner retirement.
+An allocation's absence from the daemon Account's inventory or creation-tag
+lookup never proves deletion: a grantee's Session can run on this Machine without
+being visible to its owner. Startup binds unbound creations when the existing tag
+lookup finds their Session, and otherwise retains their files for normal resume
+binding. A cursor gap can therefore leave orphaned files; it must not delete a
+retained conversation's workspace.
 
 These private folders are separate working directories, not OS or tenant
 isolation. Agents retain the daemon user's filesystem access, including access to
