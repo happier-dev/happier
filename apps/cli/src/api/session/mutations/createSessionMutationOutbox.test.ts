@@ -143,7 +143,13 @@ function createObservationSocket(options: Readonly<{
 }
 
 describe('createSessionMutationOutbox', () => {
-    it('delivers a failed turn with its valid issue core when optional issue details are invalid', async () => {
+    it.each([
+        { details: { providerObservedAtMs: 1_000 }, path: 'issue.usageLimit', code: 'unrecognized_keys', retained: true, expectedDetails: {} },
+        { details: { connectedService: { serviceId: 'claude-subscription' as const, profileId: 'profile-1', groupId: 'group-1', extra: true } }, path: 'issue.usageLimit.connectedService', code: 'unrecognized_keys', retained: true, expectedDetails: {} },
+        { details: { utilization: 101 }, path: 'issue.usageLimit.utilization', code: 'too_big', retained: true, expectedDetails: {} },
+        { details: { allWindows: [{ meterId: 'seven_day', remainingPct: 101, resetAtMs: 2_000 }] }, path: 'issue.usageLimit.allWindows.0.remainingPct', code: 'too_big', retained: true, expectedDetails: { allWindows: [{ meterId: 'seven_day', resetAtMs: 2_000 }] } },
+        { details: { resetAtMs: Number.NaN }, path: 'issue.usageLimit.resetAtMs', code: 'invalid_type', retained: false, expectedDetails: {} },
+    ])('delivers a failed turn preserving valid issue details after $path ($code)', async ({ details, path, code, retained, expectedDetails }) => {
         const { createSessionMutationOutbox } = await import('./createSessionMutationOutbox');
         const { createSessionTurnMutation } = await import('./sessionMutationTypes');
         const { logger } = await import('@/ui/logger');
@@ -156,8 +162,9 @@ describe('createSessionMutationOutbox', () => {
             usageLimit: {
                 v: 1 as const, resetAtMs: 2_000, retryAfterMs: null,
                 quotaScope: 'account' as const, recoverability: 'switch_account' as const,
-                providerLimitId: 'seven_day', providerObservedAtMs: 1_000,
+                providerLimitId: 'seven_day',
                 connectedService: { serviceId: 'claude-subscription' as const, profileId: 'profile-1', groupId: 'group-1' },
+                ...details,
             },
         };
         const delivered: unknown[] = [];
@@ -185,11 +192,21 @@ describe('createSessionMutationOutbox', () => {
                     temporaryThrottle: issue.temporaryThrottle,
                 }),
             })]);
-            expect(delivered[0]).not.toHaveProperty('issue.usageLimit');
+            if (retained) {
+                expect(delivered[0]).toHaveProperty('issue.usageLimit', {
+                    v: 1, resetAtMs: 2_000, retryAfterMs: null,
+                    quotaScope: 'account', recoverability: 'switch_account', providerLimitId: 'seven_day',
+                    connectedService: { serviceId: 'claude-subscription', profileId: 'profile-1', groupId: 'group-1' },
+                    ...expectedDetails,
+                });
+            } else {
+                expect(delivered[0]).not.toHaveProperty('issue.usageLimit');
+            }
+            expect(issue.usageLimit).toMatchObject(details);
             await expect(readDeadLetterEntries('s-invalid-optional-issue')).resolves.toEqual([]);
             expect(warnFile).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
                 mutationId: 'failure-1',
-                issues: [{ code: 'unrecognized_keys', path: 'issue.usageLimit' }],
+                issues: [{ code, path }],
             }));
         } finally {
             await outbox.close();
@@ -197,7 +214,7 @@ describe('createSessionMutationOutbox', () => {
         }
     });
 
-    it('readmits historical issue-only failed turns from recovery custody on startup without laundering malformed cores', async () => {
+    it('does not requeue historical invalid-issue failed turns from recovery custody on startup', async () => {
         const sessionId = 's-historical-invalid-issue';
         const payload = {
             v: 1, sessionId, mutationId: 'historical-failure', action: 'fail',
@@ -235,10 +252,10 @@ describe('createSessionMutationOutbox', () => {
             await outbox.awaitReady();
             await outbox.flush('connect');
             await outbox.flush('connect');
-            expect(delivered).toEqual([expect.objectContaining({ mutationId: 'historical-failure', action: 'fail' })]);
-            expect(delivered[0]).not.toHaveProperty('issue.usageLimit');
+            expect(delivered).toEqual([]);
+            await expect(readPersistedOutboxMutations(sessionId)).resolves.toEqual([]);
             const deadLetters = await readDeadLetterEntries(sessionId);
-            expect(deadLetters[0]).toHaveProperty('recoveryAttemptedAt', expect.any(Number));
+            expect(deadLetters[0]).not.toHaveProperty('recoveryAttemptedAt');
             expect(deadLetters[0]).toHaveProperty('recoveryPayload.issue.usageLimit.providerObservedAtMs', 1_000);
             expect(deadLetters[1]).not.toHaveProperty('recoveryAttemptedAt');
         } finally {

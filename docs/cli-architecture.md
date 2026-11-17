@@ -2208,13 +2208,19 @@ Claude's public usage-limit issue is projected through the protocol schema's own
 field set without validating provider values before failure publication. Provider
 observation time, account attribution, sidechain attribution and note kind remain
 internal evidence. Invalid values reach the existing durable admission reduction
-below rather than throwing before local turn failure and recovery reporting. At durable mutation validation, an invalid
-issue on an otherwise valid terminal failure is reduced to valid diagnostic fields
-or the shared generic failure issue, with a warning in the default file log. The
-terminal transition remains authoritative; malformed mutation fields still fail
-validation. Startup re-admits recoverable authoritative dead letters using their
-retained payload through the same validation, including older failures with invalid
-optional issue details. This does not repair sessions until their journal resumes.
+below rather than throwing before local turn failure and recovery reporting. At durable
+mutation validation, an invalid issue on an otherwise valid terminal failure loses
+only the deepest invalid fields or unknown keys first. The same owner revalidates
+before dropping an affected top-level field, then falls back to the shared generic
+failure issue if necessary, with a warning in the default file log. Valid reset and
+account-association details survive optional-field errors. The terminal transition
+remains authoritative; malformed mutation fields still fail validation. Historical
+invalid-issue failures retained only as recovery evidence remain quarantined at
+startup; this admission correction does not replay them. Existing recovery of other
+supported dead-letter shapes is unchanged. The server may settle delayed terminal
+evidence for an older turn without replacing a later-begun current turn, including
+when that current turn has completed. Lists, badges, presence and socket updates
+continue to consume the canonical current-turn projection.
 Runtime-state revision and generation conflicts retry under the existing recovery
 scheduler budget and backoff, rather than immediately cancelling recovery.
 Failure reporting does not wait for its durable projection.
