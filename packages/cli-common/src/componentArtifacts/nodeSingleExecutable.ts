@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { SOURCE_CONDITION } from '../../sourceRuntimeEntries.mjs';
 import { execOrThrow, type RunCommand } from './commands.js';
 import type { BinaryTarget } from './targets.js';
 
@@ -34,15 +35,15 @@ const NODE_SEA_SENTINEL_FUSE = 'NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2';
  *     runs that script (CLI children, hook forwarders, relays). The two flags are the
  *     executable's own `execArgv`, so they are already in effect.
  *   happier ...args
- *     runs the Happier CLI from `package-dist/` beside the executable.
+ *     runs the Happier CLI from its canonical active payload root.
  * The Windows installer's copied runtime supplies HAPPIER_CLI_PACKAGE_ROOT for
  * that second form. Consume it here so child processes use their own payload.
  */
-export const NODE_SINGLE_EXECUTABLE_MAIN = `'use strict';
+const NODE_SINGLE_EXECUTABLE_MAIN = `'use strict';
 const { existsSync } = require('node:fs');
 const { dirname, isAbsolute, join } = require('node:path');
 const argv = process.argv;
-const packageRoot = process.env.HAPPIER_CLI_PACKAGE_ROOT || dirname(process.execPath);
+const packageRoot = process.env.HAPPIER_CLI_PACKAGE_ROOT || resolveSelfContainedCliRuntimeRootPath() || dirname(process.execPath);
 delete process.env.HAPPIER_CLI_PACKAGE_ROOT;
 let index = 2;
 while (argv[index] === '--no-warnings' || argv[index] === '--no-deprecation') index += 1;
@@ -54,6 +55,27 @@ if (script !== undefined && isAbsolute(script) && /\\.[cm]?js$/u.test(script) &&
 }
 require('node:module').runMain();
 `;
+
+/** Embed the same managed-shim root owner used after the CLI graph loads. */
+export async function buildNodeSingleExecutableMain(): Promise<string> {
+  const { build } = await import('esbuild');
+  const result = await build({
+    stdin: {
+      contents: `import { resolveSelfContainedCliRuntimeRootPath } from '../firstPartyRuntime/resolveSelfContainedCliRuntimeRoot.ts';\n${NODE_SINGLE_EXECUTABLE_MAIN}`,
+      resolveDir: dirname(fileURLToPath(import.meta.url)),
+      sourcefile: 'nodeSingleExecutableMain.ts',
+      loader: 'ts',
+    },
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    target: 'node24',
+    conditions: [SOURCE_CONDITION],
+    write: false,
+    logLevel: 'silent',
+  });
+  return result.outputFiles[0]!.text;
+}
 
 export type NodeReleaseAsset = Readonly<{
   version: string;
@@ -180,7 +202,7 @@ export async function compileNodeSingleExecutable({
     const mainPath = join(workDir, 'main.cjs');
     const blobPath = join(workDir, 'sea.blob');
     const configPath = join(workDir, 'sea-config.json');
-    await writeFile(mainPath, NODE_SINGLE_EXECUTABLE_MAIN);
+    await writeFile(mainPath, await buildNodeSingleExecutableMain());
     await writeFile(configPath, JSON.stringify({
       main: mainPath,
       output: blobPath,

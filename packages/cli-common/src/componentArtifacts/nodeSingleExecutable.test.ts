@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import {
-  NODE_SINGLE_EXECUTABLE_MAIN,
+  buildNodeSingleExecutableMain,
   ensurePinnedNodeBinary,
   readPinnedNodeVersion,
   resolveNodeReleaseAsset,
@@ -17,6 +17,8 @@ import { CLI_BINARY_TARGETS } from './targets.js';
 const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 
 describe('Node single executable', () => {
+  let embeddedMain: string;
+  beforeAll(async () => { embeddedMain = await buildNodeSingleExecutableMain(); });
   const dirs: string[] = [];
   const tempDir = () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-node-sea-'));
@@ -52,7 +54,7 @@ describe('Node single executable', () => {
     const dir = tempDir();
     const main = join(dir, 'main.cjs');
     const script = join(dir, 'forwarder.cjs');
-    writeFileSync(main, NODE_SINGLE_EXECUTABLE_MAIN);
+    writeFileSync(main, embeddedMain);
     writeFileSync(script, 'process.stdout.write(JSON.stringify({ main: require.main === module, argv: process.argv.slice(1) }));\n');
     // The single executable's argv[1] is the typed executable path; `node main.cjs` has the same shape.
     for (const prefix of [[], ['--no-warnings', '--no-deprecation']]) {
@@ -67,11 +69,28 @@ describe('Node single executable', () => {
     const packageRoot = join(dir, 'payload');
     const entry = join(packageRoot, 'package-dist', 'index.mjs');
     mkdirSync(join(packageRoot, 'package-dist'), { recursive: true });
-    writeFileSync(main, NODE_SINGLE_EXECUTABLE_MAIN);
+    writeFileSync(main, embeddedMain);
     writeFileSync(entry, 'process.stdout.write(JSON.stringify({ argv: process.argv.slice(1), inheritedRoot: process.env.HAPPIER_CLI_PACKAGE_ROOT ?? null }));\n');
     const output = execFileSync(process.execPath, [main, 'self', '__install-payload'], {
       encoding: 'utf8', env: { ...process.env, HAPPIER_CLI_PACKAGE_ROOT: packageRoot },
     });
     expect(JSON.parse(output)).toEqual({ argv: [entry, 'self', '__install-payload'], inheritedRoot: null });
+  });
+
+  it.each(['happier.exe', 'hdev.exe'])('loads the active installed payload through the %s hard-link shim', (name) => {
+    const dir = tempDir();
+    const shim = join(dir, 'bin', name);
+    const main = join(dir, 'main.cjs');
+    const installRoot = join(dir, 'cli-dev');
+    const entry = join(installRoot, 'versions', 'test-version', 'package-dist', 'index.mjs');
+    mkdirSync(join(dir, 'bin'));
+    mkdirSync(join(installRoot, 'versions', 'test-version', 'package-dist'), { recursive: true });
+    writeFileSync(join(dir, 'default-cli-release-channel.json'), JSON.stringify({ releaseChannel: 'publicdev' }));
+    writeFileSync(join(installRoot, 'current.version'), 'test-version\n');
+    writeFileSync(entry, 'process.stdout.write(JSON.stringify({ argv: process.argv.slice(1) }));\n');
+    // Genuine process boundary: Node SEA reports the launched hard-link path as execPath.
+    writeFileSync(main, `Object.defineProperty(process, 'execPath', { value: ${JSON.stringify(shim)} });\n${embeddedMain}`);
+    const output = execFileSync(process.execPath, [main, '--version'], { encoding: 'utf8' });
+    expect(JSON.parse(output)).toEqual({ argv: [entry, '--version'] });
   });
 });
