@@ -823,6 +823,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
       ok: false,
       errorCode: 'action_failed',
       error: 'server lookup failed',
+      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: null, httpStatus: null },
       details: { executionRunStart: { v: 1, runCreation: 'noRunCreated', errorClass: 'Error' } },
     });
     expect(executionRunStart).not.toHaveBeenCalled();
@@ -844,7 +845,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
       details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' },
-        issues: [{ code: 'custom', path: ['sessionId'] }] },
+        issues: [{ code: 'custom', path: ['sessionId'], message: expect.any(String) }] },
     });
     expect(executionRunCheckProtocolV2).not.toHaveBeenCalled();
     expect(executionRunStart).not.toHaveBeenCalled();
@@ -1965,7 +1966,7 @@ describe('createActionExecutor run options parity (model + effort)', () => {
       errorCode: 'invalid_parameters',
       error: 'invalid_parameters',
       details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' },
-        issues: expect.arrayContaining([{ code: 'invalid_union', path: ['connectedServices'] }]) },
+        issues: expect.arrayContaining([{ code: 'invalid_union', path: ['connectedServices'], message: expect.any(String) }]) },
     });
     expect(executionRunStart).not.toHaveBeenCalled();
   });
