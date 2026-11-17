@@ -1,7 +1,8 @@
-import { useThemeLibraryEntries, useThemeProfileDocument, useThemeProfilesSnapshot } from '@/sync/store/useThemeProfiles';
+import { useThemeLibraryEntries, useThemeProfileDocument, useThemeProfileReferenceSelection } from '@/sync/store/useThemeProfiles';
 import { mergeThemeProfileDocumentEdit, parseThemeProfileDocument, type ThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
@@ -28,11 +29,8 @@ import { sanitizeThemeProfileName } from '@/theme/profiles/themeProfileImportExp
 import { isThemeProfileAssetAppearance, resolveThemeProfileAssetAppearance } from '@/theme/profiles/themeProfileAssetAppearance';
 import { readSystemTheme } from '@/theme/profiles/themeProfileRuntime';
 import { getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
-import {
-    readThemeProfileReferenceSelection,
-    isThemeProfileActive,
-} from '@/theme/profiles/themeProfilePersistence';
 import type { ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { ThemeRadiusScaleName } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { prepareThemeCss } from '@/theme/css/prepareThemeCss';
 import { ThemeProfileEditorView } from './ThemeProfileEditorView';
@@ -108,14 +106,13 @@ const createNewProfileRouteId = 'new';
 const themesListRoute = '/settings/appearance/themes' as const;
 
 export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorScreen() {
+    const presented = useLayoutPresentationActive();
     const router = useRouter();
     const params = useLocalSearchParams();
     const reduceMotion = useReducedMotionPreference();
     const themePreference = useLocalSetting('themePreference');
-    const { themeProfiles } = useThemeProfilesSnapshot();
-    const entries = useThemeLibraryEntries();
-    const storedSelection = useLocalSetting('themeProfileSelection');
-    const selection = React.useMemo(() => readThemeProfileReferenceSelection(storedSelection), [storedSelection]);
+    const entries = useThemeLibraryEntries(presented);
+    const selection = useThemeProfileReferenceSelection(presented);
     const { setSetting } = useSettingActionFeedback();
     const scope = useAccountSettingsScope();
     const { execute } = useMountedActionExecution(scope);
@@ -136,7 +133,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         : readThemePresetSourceReferenceId(profileId);
     const initialSource = React.useRef({ routeId: routeKey, reference });
     if (initialSource.current.routeId !== routeKey) initialSource.current = { routeId: routeKey, reference };
-    const sourceRead = useThemeProfileDocument(initialSource.current.reference);
+    const sourceRead = useThemeProfileDocument(initialSource.current.reference, presented);
     const sourceDocument = previewSource.snapshot?.document ?? sourceRead.document;
     const sourceProfile = sourceDocument?.profile ?? null;
     const builtInPresetId = initialSource.current.reference?.kind === 'built-in' ? initialSource.current.reference.presetId : null;
@@ -154,6 +151,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     const retainedDocument = React.useRef<ThemeProfileDocument | null>(null);
     const initializedRoute = React.useRef<string | null>(null);
     React.useEffect(() => {
+        if (!presented) return;
         if (initializedRoute.current === routeKey) return;
         if (previewRef && !previewSource.snapshot?.document) return;
         if (initialSource.current.reference && !sourceDocument && (!isNewProfile || sourceRead.state !== 'missing')) return;
@@ -178,7 +176,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         }).profile : { ...profile, assetAppearance: initialMode };
         setDraft(next);
         if (sourceDocument) setMode(resolveThemePresetSourcePreferredMode(sourceDocument.profile));
-    }, [entries, initialMode, isNewProfile, routeKey, previewRef, previewSource, sourceDocument, sourceProfile, sourceRead.state]);
+    }, [presented, entries, initialMode, isNewProfile, routeKey, previewRef, previewSource, sourceDocument, sourceProfile, sourceRead.state]);
     const draftDocument = React.useCallback((profile: ThemeProfileV1): ThemeProfileDocument => {
         const retained = retainedDocument.current;
         if (retained) {
@@ -322,7 +320,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     const deleteProfile = React.useCallback(async () => {
         if (!draft || readonly) return;
         // A theme a mode uses says which mode loses it; that mode returns to its default theme.
-        const assignedSlots = (['light', 'dark'] as const).filter((mode) => themeProfiles.activeProfileIds[mode] === draft.id);
+        const assignedSlots = (['light', 'dark'] as const).filter((mode) => selection[mode]?.kind === 'artifact' && selection[mode]?.id === draft.id);
         const slotNames = assignedSlots.map((mode) => t(mode === 'light'
             ? 'settingsAppearance.themeProfiles.lightModeSection'
             : 'settingsAppearance.themeProfiles.darkModeSection'));
@@ -341,7 +339,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
             return;
         }
         router.back();
-    }, [draft, execute, readonly, router, themeProfiles.activeProfileIds]);
+    }, [draft, execute, readonly, router, selection]);
 
     const editorActions = React.useMemo(() => createThemeProfileEditorActions(executeTheme), [executeTheme]);
     const previewDraft = React.useMemo(() => draft && !readonly && !hasInvalidColor && !hasInvalidProfileName
@@ -353,7 +351,8 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     useThemeProfileEditorPreview({ owner: getThemeTryOnOwner(), draft: previewDraft,
         preview: editorActions.preview, onFailure: reportPreviewFailure });
 
-    const inUse = persisted && draft !== null && isThemeProfileActive(themeProfiles, draft.id);
+    const inUse = persisted && initialSource.current.reference !== null
+        && (['light', 'dark'] as const).some(mode => sameStrictJsonValue(selection[mode], initialSource.current.reference));
     const menuActions = React.useMemo((): readonly PageHeaderMenuAction[] => [
         ...(!readonly ? [{ id: 'reset', title: t('settingsAppearance.themeProfiles.resetMode'), onSelect: resetMode }] : []),
         // Duplicating and exporting work on a saved or built-in theme, never an unsaved draft.
@@ -367,7 +366,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         ] : []),
         ...(inUse && !readonly ? [{ id: 'deactivate', title: t('settingsAppearance.themeProfiles.deactivateProfile'), onSelect: deactivate }] : []),
         ...(persisted && !readonly ? [{ id: 'delete', title: t('settingsAppearance.themeProfiles.deleteTheme'), onSelect: deleteProfile }] : []),
-    ], [cloneProfile, deactivate, deleteProfile, exportProfile, inUse, isNewProfile, persisted, readonly, resetMode, themeProfiles.profiles.length]);
+    ], [cloneProfile, deactivate, deleteProfile, exportProfile, inUse, isNewProfile, persisted, readonly, resetMode]);
     const markPalette = React.useMemo(() => resolveThemeProfile({ mode: assetAppearance, profile: draft }), [assetAppearance, draft]);
 
     const updateSeed = React.useCallback((seed: 'canvas' | 'accent', value: string) => {

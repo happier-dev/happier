@@ -1,10 +1,15 @@
+import * as React from 'react';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { act, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { act, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { AppShellPluginUiProjectionValueProvider, type AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiThemeProjection } from '@/sync/domains/plugins/ui/projection';
+import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraft';
+import { ThemeProfileArtifactHeaderSchema } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createArtifactInventoryDemandHarness, initializeArtifactInventoryDemandHarness } from '@/dev/testkit/harness/artifactInventoryDemandHarness';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { storage } from '@/sync/domains/state/storageStore';
-import { readThemeLibrarySnapshot, readThemeProfilesSnapshot, useThemeLibraryEntries, useThemeLibraryEntry, useThemeLibraryInventory, useThemeProfileDocument } from './useThemeProfiles';
+import { readThemeLibrarySnapshot, readThemeProfilesSnapshot, useThemeLibraryEntries, useThemeLibraryEntry, useThemeLibraryInventory, useThemeProfileDocument, useThemeProfileReferenceSelection } from './useThemeProfiles';
 
 
 async function home(suffix: string) {
@@ -114,5 +119,95 @@ describe('Artifact-backed theme source', () => {
         const builtIn = await renderHook(() => useThemeProfileDocument({ kind: 'built-in', presetId: 'premiumDark' }));
         expect(builtIn.getCurrent().state).toBe('ready');
         expect(builtIn.getCurrent().document?.profile.source).toEqual({ kind: 'built-in', presetId: 'premiumDark' });
+    });
+
+    it('withdraws hidden document subscriptions and reads the current document when presented again', async () => {
+        const fixture = await home('hidden-document');
+        storage.getState().applyArtifacts([fixture.row(0)]);
+        const reference = { kind: 'artifact', id: 'theme-0' } as const;
+        let renders = 0;
+        const hook = await renderHook((enabled: boolean) => { renders++; return useThemeProfileDocument(reference, enabled); },
+            { initialProps: true });
+        expect(hook.getCurrent().document?.profile.name).toBe('Theme 0');
+        await hook.rerender(false);
+        const requests = fixture.requests.length;
+        renders = 0;
+        for (let index = 1; index <= 10; index++) {
+            const row = fixture.row(0);
+            await act(async () => storage.getState().updateArtifact({ ...row, bodyVersion: index + 1,
+                body: JSON.stringify({ ...JSON.parse(row.body as string), name: `Changed ${index}` }) }));
+        }
+        expect(renders).toBe(0);
+        expect(fixture.requests).toHaveLength(requests);
+        await hook.rerender(true);
+        expect(hook.getCurrent().document?.profile.name).toBe('Changed 10');
+    });
+
+    it('retains a plugin document without rendering hidden declarations and resumes with current content', async () => {
+        await home('hidden-plugin');
+        const reference = { kind: 'plugin', pluginId: 'sample.palette', contributionId: 'night' } as const;
+        const entry = (name: string): PluginUiThemeProjection => ({
+            id: 'sample.palette/night', pluginId: reference.pluginId, pluginVersion: '1.0.0',
+            definition: { id: reference.contributionId, theme: createThemeProfileDraft({ id: 'night', name, now: '2026-11-16' }) },
+        });
+        const value = (name: string): AppShellPluginUiProjectionValue => ({
+            pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, themesById: { 'sample.palette/night': entry(name) } },
+            pluginBrowserProjection: null, phase: 'current', interactionEnabled: true, machineId: null, serverId: null,
+            platform: 'web', accountLifetime: null, connectedAccountProjectionRevision: 0,
+            reloadConnectedAccountProjection: () => {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {},
+        });
+        let renders = 0;
+        let read: ReturnType<typeof useThemeProfileDocument> | null = null;
+        const Probe = React.memo(function Probe({ enabled }: { enabled: boolean }) {
+            renders++;
+            read = useThemeProfileDocument(reference, enabled);
+            return null;
+        });
+        const shown = <Probe enabled />;
+        const hidden = <Probe enabled={false} />;
+        const surface = (name: string, child: React.ReactNode) => <AppShellPluginUiProjectionValueProvider value={value(name)}>{child}</AppShellPluginUiProjectionValueProvider>;
+        const screen = await renderScreen(surface('Original', shown));
+        const current = () => read as ReturnType<typeof useThemeProfileDocument> | null;
+        expect(current()?.document?.profile.name).toBe('Original');
+        await screen.update(surface('Original', hidden));
+        expect(current()?.document?.profile.name).toBe('Original');
+        renders = 0;
+        for (let index = 1; index <= 10; index++) await screen.update(surface(`Changed ${index}`, hidden));
+        expect(renders).toBe(0);
+        expect(current()?.document?.profile.name).toBe('Original');
+        await screen.update(surface('Changed 10', shown));
+        expect(current()?.document?.profile.name).toBe('Changed 10');
+    });
+
+    it('withdraws hidden reference selection updates and resumes with the latest selection', async () => {
+        await home('hidden-selection');
+        let renders = 0;
+        const hook = await renderHook((enabled: boolean) => { renders++; return useThemeProfileReferenceSelection(enabled); }, { initialProps: true });
+        await hook.rerender(false);
+        renders = 0;
+        for (let index = 1; index <= 10; index++) await act(async () => storage.getState().applyLocalSettings({
+            themeProfileSelection: { light: null, dark: { kind: 'artifact', id: `theme-${index}` } },
+        }));
+        expect(renders).toBe(0);
+        await hook.rerender(true);
+        expect(hook.getCurrent().dark).toEqual({ kind: 'artifact', id: 'theme-10' });
+    });
+
+    it('does no hidden transcript header work and resumes with the current addressed header', async () => {
+        const fixture = await home('hidden-card-header');
+        storage.getState().applyArtifacts([fixture.row(0)]);
+        const reference = { kind: 'artifact', id: 'theme-0' } as const;
+        let renders = 0;
+        const hook = await renderHook((enabled: boolean) => { renders++; return useThemeLibraryEntry(reference, enabled); }, { initialProps: true });
+        await hook.rerender(false);
+        const requests = fixture.requests.length;
+        renders = 0;
+        for (let index = 1; index <= 10; index++) await act(async () => storage.getState().updateArtifact({
+            ...fixture.row(0), title: `Changed ${index}`, rawHeader: { ...ThemeProfileArtifactHeaderSchema.parse(fixture.row(0).rawHeader), title: `Changed ${index}` },
+        }));
+        expect(renders).toBe(0);
+        expect(fixture.requests).toHaveLength(requests);
+        await hook.rerender(true);
+        expect(hook.getCurrent()?.name).toBe('Changed 10');
     });
 });

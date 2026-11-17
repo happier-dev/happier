@@ -19,6 +19,7 @@ import type { ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themePro
 import { readThemePresetSourceReferenceId, resolveThemePresetSourcePreferredMode } from './themeProfilePresetOptions';
 import { exportThemeProfileFile } from './themeProfileFileExport';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 const getProfileIdParam = (value: string | string[] | undefined): string | null => {
     if (Array.isArray(value)) return value[0] ?? null;
@@ -37,13 +38,14 @@ const resolveExportMode = (profile: ThemeProfileV1): ThemeProfileMode => {
 
 
 export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportScreen() {
+    const presented = useLayoutPresentationActive();
     const writeClipboard = useClipboardWrite();
     const styles = stylesheet;
     const copyFeedback = useHappierCopyFeedback();
     const params = useLocalSearchParams();
     const profileId = getProfileIdParam(params.profileId);
     const reference = React.useMemo(() => readThemePresetSourceReferenceId(profileId), [profileId]);
-    const read = useThemeProfileDocument(reference);
+    const read = useThemeProfileDocument(reference, presented);
     const profile = read.document?.profile ?? null;
     const builtInDefinition = reference?.kind === 'built-in' ? getBuiltInThemeProfileDefinition(reference.presetId) : undefined;
     // Built-in themes are named by their translated title, not their stored profile name.

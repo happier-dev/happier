@@ -6,11 +6,10 @@ import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1
 
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useLocalSetting } from '@/sync/domains/state/storage';
-import { useThemeLibraryInventory, useThemeProfileDocument } from '@/sync/store/useThemeProfiles';
+import { useThemeLibraryInventory, useThemeProfileDocument, useThemeProfileReferenceSelection } from '@/sync/store/useThemeProfiles';
 import { presentActionTurnedOffNoticeIfOff } from '@/sync/ops/actions/actionTurnedOffNotice';
 import { t } from '@/text';
 import { readSystemTheme } from '@/theme/profiles/themeProfileRuntime';
-import { readThemeProfileReferenceSelection } from '@/theme/profiles/themeProfilePersistence';
 import type { ThemeProfileMode, ThemeReference } from '@/theme/profiles/themeProfileTypes';
 import { buildThemePresetSourceOptions } from './themeProfilePresetOptions';
 import { ThemeLibraryView } from './ThemeLibraryView';
@@ -19,6 +18,7 @@ import { useThemePluginShare } from './useThemePluginShare';
 import { useThemeLibraryModel, type ThemeLibraryModelInput } from './useThemeLibraryModel';
 import { ThemeDevicePickerHost } from './ThemeDevicePickerHost';
 import type { ThemeDevicePickerInput } from './useThemeDevicePicker';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 const profileEditorRoute = (profileId: string, from?: string) => ({
     pathname: '/settings/appearance/themes/[profileId]' as const,
@@ -42,14 +42,14 @@ function presentThemeSelectionFailure(error: unknown): void {
  * library controller (`useThemeLibraryModel`, choices through theme Actions); `ThemeLibraryView` draws it.
  */
 export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSettingsScreen() {
+    const presented = useLayoutPresentationActive();
     const router = useRouter();
     const themePreference = useLocalSetting('themePreference');
-    const storedSelection = useLocalSetting('themeProfileSelection');
-    const selection = React.useMemo(() => readThemeProfileReferenceSelection(storedSelection), [storedSelection]);
-    const lightDocument = useThemeProfileDocument(selection.light).document;
-    const darkDocument = useThemeProfileDocument(selection.dark).document;
+    const selection = useThemeProfileReferenceSelection(presented);
+    const lightDocument = useThemeProfileDocument(selection.light, presented).document;
+    const darkDocument = useThemeProfileDocument(selection.dark, presented).document;
     const selectedDocuments = React.useMemo(() => ({ light: lightDocument, dark: darkDocument }), [lightDocument, darkDocument]);
-    const inventory = useThemeLibraryInventory();
+    const inventory = useThemeLibraryInventory(presented);
     const options = React.useMemo(() => buildThemePresetSourceOptions(inventory.entries), [inventory.entries]);
     const execute = useThemeActionExecution();
     const [deviceTarget, setDeviceTarget] = React.useState<ThemeDevicePickerInput['theme'] | null>(null);

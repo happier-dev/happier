@@ -25,6 +25,8 @@ const inventoryStatusScope = { settingsScope: true, artifactsLoaded: true,
     artifactInventoryKindsLoaded: true, artifactInventoryKindsPartial: true } satisfies StorageSubscriptionScope;
 const inventoryScope = { settingsScope: true, artifactThemeLibraryArtifacts: true } satisfies StorageSubscriptionScope;
 const noSubscription = {} satisfies StorageSubscriptionScope;
+const noSelectionSubscription = { localSettings: [] } satisfies StorageSubscriptionScope;
+const noArtifactSubscription = { artifacts: [] } satisfies StorageSubscriptionScope;
 const noInventory = Object.freeze({ rows: Object.freeze({}), scope: null });
 const noStatus = Object.freeze({ loaded: false, complete: false });
 const noEntries: readonly ThemeLibraryEntry[] = Object.freeze([]);
@@ -41,6 +43,12 @@ function libraryEntries(rows: Readonly<Record<string, DecryptedArtifact>>, scope
         return summary ? [summary.entry] : [];
     }) : [];
     return projectThemeLibraryEntries(saved, projectPluginThemeLibraryEntries(plugins), getBuiltInThemeLibraryEntries());
+}
+
+/** Selection controls consume tagged references without demanding any theme document. */
+export function useThemeProfileReferenceSelection(enabled = true): Readonly<Record<ThemeProfileMode, ThemeReference | null>> {
+    const selection = getStorage()(state => state.localSettings.themeProfileSelection, enabled ? selectionScope : noSelectionSubscription);
+    return React.useMemo(() => readThemeProfileReferenceSelection(selection), [selection]);
 }
 
 /** Settings reads expose the complete header library, separately from demanded editor bodies. */
@@ -65,17 +73,17 @@ export function useThemeLibraryInventory(enabled = true): Readonly<{ entries: re
     return { entries, loaded: status.loaded, failed: read.failed || status.loaded && !status.complete, retry: read.retry };
 }
 
-export function useThemeLibraryEntries(): readonly ThemeLibraryEntry[] {
-    return useThemeLibraryInventory().entries;
+export function useThemeLibraryEntries(enabled = true): readonly ThemeLibraryEntry[] {
+    return useThemeLibraryInventory(enabled).entries;
 }
 
 /** A transcript result reads one retained header without acquiring the library or its bodies. */
-export function useThemeLibraryEntry(reference: ThemeReference | null): ThemeLibraryEntry | null {
+export function useThemeLibraryEntry(reference: ThemeReference | null, enabled = true): ThemeLibraryEntry | null {
     const scope = useAccountSettingsScope();
     const id = reference?.kind === 'artifact' ? reference.id : '';
     const subscription = React.useMemo(() => ({ artifacts: [id] } satisfies StorageSubscriptionScope), [id]);
-    const row = getStorage()(React.useCallback(state => id ? state.artifacts[id] ?? null : null, [id]), subscription);
-    const plugin = usePluginThemeList(reference?.kind === 'plugin' ? reference : null);
+    const row = getStorage()(React.useCallback(state => id ? state.artifacts[id] ?? null : null, [id]), enabled ? subscription : noArtifactSubscription);
+    const plugin = usePluginThemeList(enabled && reference?.kind === 'plugin' ? reference : null);
     return React.useMemo(() => {
         if (reference?.kind === 'artifact') return row && scope ? projectThemeProfileArtifactSummary(row, scope)?.entry ?? null : null;
         if (reference?.kind === 'built-in') return getBuiltInThemeLibraryEntries().find(entry => entry.reference.kind === 'built-in'
@@ -85,28 +93,36 @@ export function useThemeLibraryEntry(reference: ThemeReference | null): ThemeLib
 }
 
 /** Editors, export and selected runtime consumers share Artifact's addressed loading lifecycle. */
-export function useThemeProfileDocument(reference: ThemeReference | null): Readonly<{
+export function useThemeProfileDocument(reference: ThemeReference | null, enabled = true): Readonly<{
     state: ArtifactBodyState; document: ThemeProfileDocument | null; failure?: unknown; retry(): void;
 }> {
     const scope = useAccountSettingsScope();
     const id = reference?.kind === 'artifact' ? reference.id : '';
     const subscription = React.useMemo(() => ({ artifacts: [id] } satisfies StorageSubscriptionScope), [id]);
-    const row = getStorage()(React.useCallback(state => id ? state.artifacts[id] ?? null : null, [id]), subscription);
-    const read = useArtifactBody(id, row, { readMissing: reference?.kind === 'artifact' });
-    const plugin = usePluginThemeList(reference?.kind === 'plugin' ? reference : null);
+    const row = getStorage()(React.useCallback(state => enabled && id ? state.artifacts[id] ?? null : null, [enabled, id]), enabled ? subscription : noSubscription);
+    const read = useArtifactBody(enabled ? id : '', row, { readMissing: enabled && reference?.kind === 'artifact' });
+    const plugin = usePluginThemeList(enabled && reference?.kind === 'plugin' ? reference : null);
     const pluginProfile = React.useMemo(() => plugin ? pluginDocument(plugin) : null, [plugin]);
     const currentRow = read.result?.artifact ?? row;
     const opened = React.useMemo(() => currentRow && scope ? readThemeProfileArtifactDocument(currentRow, scope)?.document ?? null : null,
         [currentRow, scope]);
-    const retained = React.useRef<Readonly<{ id: string; scope: AccountSettingsScope | null; document: ThemeProfileDocument }> | null>(null);
-    if (retained.current && (retained.current.id !== id || !areAccountSettingsScopesEqual(retained.current.scope, scope))) retained.current = null;
-    if (opened) retained.current = { id, scope, document: opened };
-    if (read.state === 'missing' || read.state === 'ready' && !opened) retained.current = null;
+    const pluginId = reference?.kind === 'plugin' ? reference.pluginId : null;
+    const contributionId = reference?.kind === 'plugin' ? reference.contributionId : null;
+    const retained = React.useRef<Readonly<{ id: string; pluginId: string | null; contributionId: string | null;
+        scope: AccountSettingsScope | null; document: ThemeProfileDocument }> | null>(null);
+    if (retained.current && (retained.current.id !== id || retained.current.pluginId !== pluginId
+        || retained.current.contributionId !== contributionId || !areAccountSettingsScopesEqual(retained.current.scope, scope))) retained.current = null;
+    const currentDocument = reference?.kind === 'plugin' ? pluginProfile : opened;
+    if (currentDocument) retained.current = { id, pluginId, contributionId, scope, document: currentDocument };
+    if (enabled && (reference?.kind === 'plugin' ? !pluginProfile : read.state === 'missing' || read.state === 'ready' && !opened)) retained.current = null;
     if (reference?.kind === 'built-in') {
         const document = getBuiltInThemeProfileDocument(reference.presetId);
         return { state: document ? 'ready' : 'missing', document, retry: read.retry };
     }
-    if (reference?.kind === 'plugin') return { state: pluginProfile ? 'ready' : 'missing', document: pluginProfile, retry: read.retry };
+    if (reference?.kind === 'plugin') {
+        const document = pluginProfile ?? retained.current?.document ?? null;
+        return { state: document ? 'ready' : 'missing', document, retry: read.retry };
+    }
     if (reference?.kind !== 'artifact') return { state: 'missing', document: null, retry: read.retry };
     const document = opened ?? retained.current?.document ?? null;
     return { state: opened ? 'ready' : read.state === 'ready' ? 'missing' : read.state,

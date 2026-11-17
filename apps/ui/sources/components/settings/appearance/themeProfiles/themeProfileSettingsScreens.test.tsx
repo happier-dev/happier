@@ -30,6 +30,10 @@ import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { ThemeProfileEditorView } from './ThemeProfileEditorView';
+import type { ThemeProfileEditorViewProps } from './themeProfileEditorViewTypes';
+
 const testGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean };
 testGlobal.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -608,6 +612,46 @@ describe('Theme profile editor', () => {
         await saveEditor(screen);
         expect(getThemeProfiles().profiles.find(profile => profile.id === 'ocean')?.name).toBe('Unsaved ocean');
         expect(getThemeProfiles().profiles.find(profile => profile.id === 'arrived')).toMatchObject(sibling);
+    });
+
+    it.each(['artifact', 'built-in'] as const)('keeps unsaved CSS and editor controls through hidden %s source recovery', async (source) => {
+        setThemeProfiles({ profiles: [baseProfile('ocean')], activeProfileIds: { light: null, dark: null } });
+        shared.params = source === 'artifact' ? { profileId: 'ocean' } : { profileId: 'new', from: 'premiumLight' };
+        const surface = (active: boolean) => <PluginSurfaceFocusEligibilityProvider active={active}>
+            <ThemeProfileEditorScreen />
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderSettingsView(surface(true));
+        const view = () => screen.findAllByType(ThemeProfileEditorView)[0]!.props as ThemeProfileEditorViewProps;
+        await act(async () => {
+            view().details!.onNameChange('Unsaved draft');
+            view().colors.onQueryChange('canvas');
+            view().css.onChange('[data-happier-surface="app"] { color: red; }');
+        });
+        const cssResetKey = view().css.resetKey;
+        await screen.update(surface(false));
+        await act(async () => setThemeProfiles({ profiles: [{ ...baseProfile('ocean'), name: 'Published ocean' }],
+            activeProfileIds: { light: 'premiumLight', dark: null } }));
+        await screen.update(surface(true));
+        expect(view().details?.name).toBe('Unsaved draft');
+        expect(view().colors.query).toBe('canvas');
+        expect(view().css.value).toBe('[data-happier-surface="app"] { color: red; }');
+        expect(view().css.resetKey).toBe(cssResetKey);
+    });
+
+    it.each(['artifact', 'built-in'] as const)('waits for presentation before initializing a new draft from a hidden %s source', async (source) => {
+        setThemeProfiles({ profiles: [{ ...baseProfile('ocean'), css: '.retained { color: red; }' }],
+            activeProfileIds: { light: null, dark: null } });
+        shared.params = { profileId: 'new', from: source === 'artifact'
+            ? getThemePresetSourceReferenceId({ kind: 'artifact', id: 'ocean' }) : 'premiumLight' };
+        const surface = (active: boolean) => <PluginSurfaceFocusEligibilityProvider active={active}>
+            <ThemeProfileEditorScreen />
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderSettingsView(surface(false));
+        expect(screen.findByTestId('settings-theme-profile-name')).toBeNull();
+        await screen.update(surface(true));
+        const view = screen.findAllByType(ThemeProfileEditorView)[0]!.props as ThemeProfileEditorViewProps;
+        expect(view.details?.name).toBeDefined();
+        if (source === 'artifact') expect(view.css.value).toBe('.retained { color: red; }');
     });
 
     it('publishes edited draft through shared try-on and leaves a newer agent preview on editor exit', async () => {
