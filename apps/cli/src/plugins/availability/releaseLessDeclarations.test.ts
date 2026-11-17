@@ -46,7 +46,9 @@ describe('release-less plugin declarations', () => {
     it('claims the admitted raw credential consumer declaration required by permission caller admission', () => {
         const google = PluginManifestV2Schema.parse(GOOGLE_MANIFEST);
         const project = (custodies: ReadonlyMap<string, PluginSourceCustody>) => projectReleaseLessPluginDeclarations({
-            activationTargets: [{ pluginId: google.id, manifest: google, sourceSpec: { kind: 'bundled' } }],
+            activationTargets: [{ pluginId: google.id, manifest: google, sourceSpec: {
+                kind: 'bundled', locator: '@happier-dev/plugins-google', trustPolicy: 'local_trusted', installPolicy: 'link',
+            } }],
             sourceCustodiesByPluginId: custodies,
             registryMaterializationIdsByPluginId: {}, observedAt: 1_794_381_207_921,
         }).get(google.id);
