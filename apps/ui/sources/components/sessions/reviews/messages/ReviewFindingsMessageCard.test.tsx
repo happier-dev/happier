@@ -25,6 +25,7 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { currentPendingEnqueueAck } from '@/sync/engine/pending/pendingQueueV2.testHelpers';
 import { sync } from '@/sync/sync';
 import * as serverScopedSend from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
+import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -771,6 +772,33 @@ describe('ReviewFindingsMessageCard', () => {
             .toBe(`${t('runPage.review.reviewerCount', { count: 2 })} · ${t('runPage.review.findingTotal', { count: 1 })} · ${t('runPage.review.highCount', { count: 1 })}`);
         // A single completed result keeps its own finding ids.
         expect(screen.findByTestId('review-finding:f1')).not.toBeNull();
+    });
+
+    it('re-reads only the reviewer whose run reported activity, not the whole run list', async () => {
+        serveComments([commentFor('f1')]);
+        serveSibling({ runId: 'run_2', agentId: 'codex', status: 'running' });
+        const screen = await renderScreen(
+            <ReviewFindingsMessageCard serverId={home.serverId} payload={payloadFor([finding('f1', 'high')])} sessionId="sess_1" canSendMessages presentation="page" groupId="review_group_1" />,
+        );
+        await flush();
+        expect(screen.findByTestId('review-reviewer:run_2')).not.toBeNull();
+        sessionExecutionRunListSpy.mockClear();
+        sessionExecutionRunGetSpy.mockClear();
+
+        // Five progress reports from the running reviewer, then it finishes with a result.
+        for (let index = 0; index < 5; index += 1) {
+            notifyExecutionRunActivity({ serverId: home.serverId, sessionId: 'sess_1' }, { runId: 'run_2' });
+            await flush();
+        }
+        serveSibling({ runId: 'run_2', agentId: 'codex', payload: { ...payloadFor([finding('g9', 'low')], { runId: 'run_2', callId: 'call_2', backendId: 'codex' }), summary: 'Codex finished.' } });
+        sessionExecutionRunListSpy.mockClear();
+        notifyExecutionRunActivity({ serverId: home.serverId, sessionId: 'sess_1' }, { runId: 'run_2' });
+        await flush();
+
+        expect({ lists: sessionExecutionRunListSpy.mock.calls.length, gets: sessionExecutionRunGetSpy.mock.calls.length,
+            gotOnly: [...new Set(sessionExecutionRunGetSpy.mock.calls.map(([, request]) => request.runId))] })
+            .toEqual({ lists: 0, gets: 6, gotOnly: ['run_2'] });
+        expect(screen.getTextContent()).toContain('Codex finished.');
     });
 
     it('withdraws another Home\'s reviewer results when the new Home cannot load the group', async () => {
