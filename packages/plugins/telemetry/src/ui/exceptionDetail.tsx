@@ -21,6 +21,7 @@ import {
   ErrorState,
   FreshnessLine,
   Item,
+  ItemGroup,
   List,
   LoadingState,
   Metadata,
@@ -504,47 +505,51 @@ function StackTracePanel({
       (part): part is string => typeof part === 'string' && part.length > 0,
     )
     .join(': ');
+  const recorded = (newest
+    ? text(
+        'plugins.telemetry.exceptions.newestOccurrence',
+        'Newest occurrence, recorded {when}',
+      )
+    : text(
+        'plugins.telemetry.exceptions.selectedOccurrence',
+        'Selected occurrence, recorded {when}',
+      )
+  ).replace('{when}', line.length === 0 ? when : `${when} · ${line}`);
+  // One section anatomy for the exception, its request and its logs: titles share the section inset.
   return (
     <Stack gap="large">
-      <Stack gap="small">
-        <Text
-          variant="meta"
-          tone="neutral"
-          value={(newest
-            ? text(
-                'plugins.telemetry.exceptions.newestOccurrence',
-                'Newest occurrence, recorded {when}',
-              )
-            : text(
-                'plugins.telemetry.exceptions.selectedOccurrence',
-                'Selected occurrence, recorded {when}',
-              )
-          ).replace('{when}', line.length === 0 ? when : `${when} · ${line}`)}
-        />
-        {data.topFrame ? (
-          <Text
-            variant="meta"
-            tone="neutral"
-            value={text(
-              'plugins.telemetry.exceptions.groupedBy',
-              'Grouped by type, message and top frame {frame}',
-            ).replace('{frame}', data.topFrame)}
-          />
-        ) : null}
-      </Stack>
-      {exception.length === 0 ? null : (
-        <Text variant="label" value={exception} />
-      )}
-      {stack.stacktrace === null ? (
-        <EmptyState
-          title="No stack recorded"
-          titleKey="plugins.telemetry.exceptions.noStackRecorded"
-          description="This occurrence arrived without a stack trace."
-          descriptionKey="plugins.telemetry.exceptions.noStackRecorded.description"
-        />
-      ) : (
-        <CodeBlock code={stack.stacktrace} selectable />
-      )}
+      <ItemGroup
+        title={
+          exception.length === 0
+            ? text('plugins.telemetry.exceptions.stackTitle', 'Stack trace')
+            : exception
+        }
+        description={recorded}
+        surface="none"
+      >
+        <Stack gap="small">
+          {data.topFrame ? (
+            <Text
+              variant="meta"
+              tone="neutral"
+              value={text(
+                'plugins.telemetry.exceptions.groupedBy',
+                'Grouped by type, message and top frame {frame}',
+              ).replace('{frame}', data.topFrame)}
+            />
+          ) : null}
+          {stack.stacktrace === null ? (
+            <EmptyState
+              title="No stack recorded"
+              titleKey="plugins.telemetry.exceptions.noStackRecorded"
+              description="This occurrence arrived without a stack trace."
+              descriptionKey="plugins.telemetry.exceptions.noStackRecorded.description"
+            />
+          ) : (
+            <CodeBlock code={stack.stacktrace} selectable />
+          )}
+        </Stack>
+      </ItemGroup>
       <OccurrenceRequest
         source={{
           kind: 'environment',
