@@ -61,10 +61,13 @@ describe('Discussion owner cost contracts (SQLite; not PostgreSQL lock evidence)
                 const sql = [...statements];
                 const after = await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } });
                 const cursorDelta = after.seq - before.seq;
+                // A relation read whose parent rows hold no key can match nothing; it must not reach SQLite.
+                const emptyKeyReads = sql.filter(query => /\bIN \(NULL\)/.test(query)).length;
                 console.info('DISCUSSION_SQL_COST', JSON.stringify({ operation, statements: sql.length,
                     accountUpdates: sql.filter(query => /^UPDATE.*["`]Account["`]/.test(query)).length,
-                    publications: cursorDelta }));
+                    emptyKeyReads, publications: cursorDelta }));
                 expect(result).toMatchObject({ ok: true });
+                expect(emptyKeyReads).toBe(0);
                 expect(cursorDelta).toBe(publications);
                 return result;
             };
