@@ -51,6 +51,7 @@ export {
   type DedicatedDaemonBootstrapInput,
   type DedicatedDaemonBootstrapExec,
 } from './ssh/dedicatedDaemonBootstrap.js';
+export { deliverManagedNativeArchive, type ManagedNativeFileDeliveryIO } from '../machines/managed/nativeFileDelivery.js';
 export * from '../machineSetup/effectInternalProtocol.js';
 export { MANAGED_SUDOERS_PATH, resolveManagedSudoersPath, buildManagedSudoersSteps, recognizeManagedSudoersDropIn } from '../machineSetup/managedSudoers.js';
 export { assertAgentIsolationLaunchPrincipal, buildAgentIsolationBootstrapSteps, buildAgentIsolationToolsRootStep } from '../machineSetup/agentIsolationBootstrap.js';

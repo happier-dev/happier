@@ -9,6 +9,7 @@ import {
     executeRemoteSelfDownloadFirstPartyInstallPlan,
     installRemoteCli,
     installManagedGuestCliViaRemoteDownload,
+    deliverManagedNativeArchive,
     selectManagedGuestCliPayload,
     normalizeRemoteReleaseArch,
     normalizeRemoteReleaseOs,
@@ -29,6 +30,7 @@ import {
     TokenStorage,
     type AuthCredentials,
 } from '@/auth/storage/tokenStorage';
+import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import {
     buildHomeConnectionDescriptorForProfile,
@@ -165,7 +167,7 @@ function readNativePairingContext(value: unknown): Readonly<{
 async function installRemoteCliViaNativeSelfDownload(params: Readonly<{
     channel?: string;
     signal?: AbortSignal;
-    runTextCommand: (command: string, options?: Readonly<{ execTimeoutMs?: number }>) => Promise<Readonly<{
+    runTextCommand: (command: string, options?: Readonly<{ execTimeoutMs?: number; input?: string }>) => Promise<Readonly<{
         status: number;
         stdout: string;
         stderr: string;
@@ -198,6 +200,19 @@ async function installRemoteCliViaNativeSelfDownload(params: Readonly<{
                 ? { guestCliPayload: selectManagedGuestCliPayload({ guestCli: params.guestCli,
                     homeUrl: params.homeUrl, target: { os, arch } }) } : {}),
             signal: params.signal, fetchImpl: runtimeFetch,
+            transferArchive: ({ path, chunks }) => {
+                const exec: DedicatedDaemonBootstrapExec = request => params.runTextCommand(params.daemonUsername
+                    ? buildDedicatedDaemonInvocationCommand(request.command) : request.command,
+                    { input: request.input });
+                return deliverManagedNativeArchive({ chunks, guestPath: path, resource: {}, signal: params.signal }, {
+                    exec,
+                    putFile: async ({ path, bytes, signal }) => {
+                        signal?.throwIfAborted();
+                        const result = await exec({ command: `umask 077; base64 -d > ${safeBashSingleQuote(path)}`, input: encodeBase64(bytes) });
+                        if (result.status !== 0) throw new SystemTaskExecutionError('remote_command_failed', 'Native SSH payload transfer failed.');
+                    },
+                });
+            },
             runRemoteText: command => params.runTextCommand(params.daemonUsername
                 ? buildDedicatedDaemonInvocationCommand(command) : command),
         });
@@ -455,7 +470,7 @@ export async function runNativeRemoteSshBootstrapTask(
                         channel: installTarget.channel,
                         signal,
                         ...placement,
-                        runTextCommand: (command, options) => exec({ command, signal, timeoutMs: options?.execTimeoutMs }),
+                        runTextCommand: (command, options) => exec({ command, signal, timeoutMs: options?.execTimeoutMs, input: options?.input }),
                         resolveInstallPlan: params.resolveInstallPlan,
                     }),
                 },

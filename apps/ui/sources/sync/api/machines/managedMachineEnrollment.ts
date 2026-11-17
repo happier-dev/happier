@@ -3,6 +3,7 @@ import {
     runManagedMachineEnrollment,
     projectManagedMachineBootstrapPrompt,
     installManagedGuestCliViaRemoteDownload,
+    deliverManagedNativeArchive,
     MANAGED_GUEST_CLI_REMOTE_PAYLOAD_CAPABILITIES,
     type ManagedMachineEnrollmentInput,
     type ManagedMachineEnrollmentDependencies,
@@ -78,6 +79,9 @@ export async function runUiManagedMachineEnrollment(input: UiManagedMachineEnrol
             ...(installation.guestCliPayload ? { guestCliPayload: installation.guestCliPayload } : {}),
             remoteHomeDir: installation.remoteHomeDir, signal: installation.signal, fetchImpl: runtimeFetch,
             runRemoteText: command => installation.exec({ command, signal: installation.signal }),
+            transferArchive: ({ path, chunks }) => deliverManagedNativeArchive({ chunks, guestPath: path,
+                resource: installation.resource, signal: installation.signal, onProgress: installation.onTransferProgress,
+            }, installation),
         })),
         ...(deps.readBootstrapCredential ? { runSshTask: createUiManagedAccountSshTask({
             credentials: input.credentials, readBootstrapCredential: deps.readBootstrapCredential,

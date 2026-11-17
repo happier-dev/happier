@@ -1,7 +1,8 @@
-import { access, readFile, stat } from 'node:fs/promises';
+import { access, mkdtemp, open, readFile, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { constants } from 'node:fs';
-import { basename, join } from 'node:path';
-import { quoteRemotePathWithHomeExpansion } from '../../ssh/shellQuote.js';
+import { basename, join, posix } from 'node:path';
+import { quoteRemotePathWithHomeExpansion, safeBashSingleQuote } from '../../ssh/shellQuote.js';
 import { readExecutablePlatform } from '../../process/executablePlatform.js';
 
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
@@ -17,7 +18,7 @@ import {
   readAcquisitionFailureCause,
 } from '../../firstPartyRuntime/index.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
-import type { GuestCliIdentityV1 } from '@happier-dev/protocol/features';
+import type { GuestCliIdentityV1, GuestCliPayloadV1 } from '@happier-dev/protocol/features';
 import { selectManagedGuestCliPayload, installManagedGuestCliViaRemoteDownload } from '../ssh/managedGuestCliSupplier.js';
 
 import { createScpReadyPayloadArchive } from './createScpReadyPayloadArchive.js';
@@ -232,6 +233,7 @@ export async function installRemoteFirstPartyComponent(params: Readonly<{
   strategy?: 'scp-upload' | 'remote-self-download';
   requireHomePayload?: boolean;
   guestCli?: GuestCliIdentityV1;
+  guestCliPayload?: GuestCliPayloadV1;
   homeUrl?: string;
   signal?: AbortSignal;
   onPhase?(phase: 'prepare' | 'archive' | 'transfer' | 'promote'): void;
@@ -257,6 +259,7 @@ export async function installRemoteFirstPartyComponentPayload(
   strategy?: 'scp-upload' | 'remote-self-download';
   requireHomePayload?: boolean;
   guestCli?: GuestCliIdentityV1;
+  guestCliPayload?: GuestCliPayloadV1;
   homeUrl?: string;
   signal?: AbortSignal;
   onPhase?(phase: 'prepare' | 'archive' | 'transfer' | 'promote'): void;
@@ -289,11 +292,25 @@ export async function installRemoteFirstPartyComponentPayload(
   const target = await resolvedDeps.resolveRemoteReleaseTarget({
     ...(params.signal ? { signal: params.signal } : {}),
   });
-  if (params.componentId === 'happier-cli' && params.homeUrl && params.guestCli?.source === 'home-payload' && params.guestCli.payloads) {
-    const guestCliPayload = selectManagedGuestCliPayload({ guestCli: params.guestCli, homeUrl: params.homeUrl, target });
+  if (params.componentId === 'happier-cli' && params.homeUrl
+    && (params.guestCliPayload || (params.guestCli?.source === 'home-payload' && params.guestCli.payloads))) {
+    const guestCliPayload = params.guestCliPayload ?? selectManagedGuestCliPayload({ guestCli: params.guestCli!, homeUrl: params.homeUrl, target });
     params.onPhase?.('transfer');
     return await installManagedGuestCliViaRemoteDownload({ homeUrl: params.homeUrl, channel, ...target,
       guestCliPayload, remoteHomeDir: params.remoteHomeDir, signal: params.signal,
+      transferArchive: async ({ path, chunks }) => {
+        const localStage = await mkdtemp(join(tmpdir(), 'happier-pinned-archive-'));
+        try {
+          const file = await open(join(localStage, 'archive'), 'w');
+          try { for await (const chunk of chunks) await file.writeFile(chunk); }
+          finally { await file.close(); }
+          await resolvedDeps.copyLocalDirectoryToRemote({ localPath: localStage, remotePath: posix.dirname(path), signal: params.signal });
+          const uploaded = posix.join(posix.dirname(path), basename(localStage), 'archive');
+          assertRemotePayloadCommandSucceeded(await resolvedDeps.runRemoteText({
+            remoteCommand: `mv -- ${safeBashSingleQuote(uploaded)} ${safeBashSingleQuote(path)}`, signal: params.signal,
+          }), 'staging');
+        } finally { await rm(localStage, { recursive: true, force: true }); }
+      },
       runRemoteText: remoteCommand => resolvedDeps.runRemoteText({ remoteCommand, ...(params.signal ? { signal: params.signal } : {}) }),
     });
   }

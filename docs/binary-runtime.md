@@ -325,7 +325,11 @@ path in `capabilities.guestCli.payloads`. Home captures its own descriptor in th
 existing Create admission. Update/Retry receives a new Home-owned snapshot through
 its admitted root or the existing authenticated Account context response; requester
 descriptors never choose the retained archive. The installer verifies the pinned
-archive digest before extraction or execution. Copied Add Machine commands for
+archive digest before extraction or execution. For managed enrollment, the invoking
+app or controller fetches the admitted Home archive and delivers it over the existing
+native file or SSH transport. The guest needs no HTTP downloader and receives no
+controller-local Home URL for installation; its Home profile still consumes the
+existing remote-carrier decision. Copied Add Machine commands for
 This machine and Another machine capture the same server-supplied pins and use
 the same download, verification and promotion owner before running personal setup.
 Only exported Linux/macOS targets are offered; an unavailable target never falls

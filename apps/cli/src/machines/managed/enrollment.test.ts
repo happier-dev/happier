@@ -572,7 +572,7 @@ describe('runManagedMachineEnrollment', () => {
       // reads Home, regardless of payload fragments and native commands.
       expect(authorityReads).toBe(1);
       // Native transport serializes this archive; require the compressed producer's bytes.
-      expect(archiveHeader).toEqual(Buffer.from([0x1f, 0x8b]));
+      expect(Array.from(archiveHeader ?? [])).toEqual([0x1f, 0x8b]);
       expect(await readFile(join(guestHome, '.happier/cli/current/happier'), 'utf8')).toBe(executable);
       expect(await readFile(join(guestHome, '.happier/cli/current/bundle.js'), 'utf8')).toBe(moduleContent);
       expect((await readFile(join(guestHome, 'invoked-args'), 'utf8')).split('\n')).toEqual(expect.arrayContaining([

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, writeFile, chmod, rm, mkdir, readFile, access } from 'node:fs/promises';
+import { mkdtemp, writeFile, chmod, rm, mkdir, readFile, access, readdir, symlink, cp } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -12,6 +12,7 @@ import { createCliPayloadFixture } from '../testkit/createCliPayloadFixture.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { installRemoteFirstPartyComponentPayload } from '../kinds/remoteFirstPartyPayloadInstaller.js';
 import { safeBashSingleQuote } from '../../ssh/shellQuote.js';
+import { deliverManagedNativeArchive } from '../../machines/managed/nativeFileDelivery.js';
 
 const exec = promisify(execFile);
 describe('managed guest CLI source supplier', () => {
@@ -24,9 +25,10 @@ describe('managed guest CLI source supplier', () => {
         .toThrow(expect.objectContaining({ code: 'guest_payload_missing' }));
     }
   });
-  it.each([{ matching: false, transport: 'native' }, { matching: true, transport: 'native' },
-    { matching: false, transport: 'ssh' }, { matching: true, transport: 'ssh' }])(
-    'uses the admitted Home archive pin before extraction or execution ($transport matching=$matching)', async ({ matching, transport }) => {
+  it.each([{ matching: false, transport: 'native', noDownloader: true }, { matching: true, transport: 'native', noDownloader: true },
+    { matching: true, transport: 'native', noDownloader: false },
+    { matching: false, transport: 'ssh', noDownloader: false }, { matching: true, transport: 'ssh', noDownloader: false }])(
+    'uses the admitted Home archive pin before extraction or execution ($transport matching=$matching noDownloader=$noDownloader)', async ({ matching, transport, noDownloader }) => {
     if (process.platform === 'win32') return; // Guest download/extraction is a POSIX remote boundary.
     const root = await mkdtemp(join(tmpdir(), 'happier-home-guest-export-'));
     const fixture = await createCliPayloadFixture();
@@ -47,6 +49,13 @@ describe('managed guest CLI source supplier', () => {
       const extraction = join(root, 'extracted');
       const actualTar = (await exec('/bin/sh', ['-c', 'command -v tar'])).stdout.trim();
       await mkdir(tools);
+      if (noDownloader) {
+        // The loaded ubuntu:24.04 guest has ordinary shell/archive tools but no
+        // HTTP client. Keep the real shell, verification and payload installer.
+        for (const name of await readdir('/usr/bin')) {
+          if (name !== 'curl' && name !== 'wget' && name !== 'tar') await symlink(join('/usr/bin', name), join(tools, name));
+        }
+      }
       await writeFile(join(tools, 'tar'), `#!/bin/sh\nprintf extracted > ${safeBashSingleQuote(extraction)}\nexec ${safeBashSingleQuote(actualTar)} "$@"\n`, { mode: 0o755 });
       archive = new Uint8Array(await readFile(archivePath));
       const sha256 = createHash('sha256').update(archive).digest('hex');
@@ -62,18 +71,32 @@ describe('managed guest CLI source supplier', () => {
       if (!matching) archive = new Uint8Array([...archive, 0]);
       const guestCliPayload = selectManagedGuestCliPayload({ guestCli, homeUrl, target: { os: 'linux', arch: 'x64' } });
       const runRemoteText = async (command: string) => {
-          try { return { status: 0, ...await exec('/bin/sh', ['-c', command], { env: { ...process.env, HOME: home, PATH: `${tools}:${process.env.PATH}` } }) }; }
+          // A controller-only origin must never become a guest HTTP request.
+          expect(command).not.toContain(homeUrl);
+          try { return { status: 0, ...await exec('/bin/sh', ['-c', command], { env: { ...process.env, HOME: home, PATH: noDownloader ? tools : `${tools}:${process.env.PATH}` } }) }; }
           catch (error) {
             if (!(error instanceof Error) || !('stdout' in error) || !('stderr' in error)) throw error;
             return { status: 1, stdout: String(error.stdout), stderr: String(error.stderr) };
           }
         };
       const install = transport === 'native' ? installManagedGuestCliViaRemoteDownload({ homeUrl, channel: 'stable', os: 'linux', arch: 'x64', guestCliPayload,
-        fetchImpl: async () => { throw new Error('Admitted export must not reread live Home metadata'); }, runRemoteText,
+        fetchImpl: async (url, options) => {
+          expect(String(url)).toBe(guestCliPayload.url);
+          return await fetch(url, options);
+        },
+        transferArchive: async ({ path, chunks }: { path: string; chunks: AsyncIterable<Uint8Array> }) => {
+          await deliverManagedNativeArchive({ chunks, guestPath: path, resource: { container: 'minimal-ubuntu' } }, {
+            exec: request => runRemoteText(request.command),
+            putFile: async request => { await writeFile(request.path, request.bytes); },
+          });
+        },
+        runRemoteText,
       }) : installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl, channel: 'stable', guestCli }, {
         resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
         runRemoteText: request => runRemoteText(request.remoteCommand),
-        copyLocalDirectoryToRemote: async () => { throw new Error('Admitted HTTP export must not upload local payload'); },
+        copyLocalDirectoryToRemote: async ({ localPath, remotePath }) => {
+          await cp(localPath, join(remotePath, basename(localPath)), { recursive: true });
+        },
       });
       if (matching) {
         const result = await install;

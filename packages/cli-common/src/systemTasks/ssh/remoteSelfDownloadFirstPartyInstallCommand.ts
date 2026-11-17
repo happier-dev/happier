@@ -85,6 +85,8 @@ export function buildRemoteSelfDownloadFirstPartyInstallCommand(params: Readonly
   channel?: string;
   versionId: string;
   archive: RemoteInstallAsset;
+  /** Archive already delivered through the admitted install transport. */
+  archivePath?: string;
   expectedSha256: string;
   remoteHomeDir?: string;
   managedGuest?: boolean;
@@ -106,14 +108,16 @@ export function buildRemoteSelfDownloadFirstPartyInstallCommand(params: Readonly
     'set -eu',
     'require_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "missing required command: $1" >&2; exit 127; }; }',
     'require_cmd tar',
-    REMOTE_DOWNLOAD_FUNCTION,
+    ...(params.archivePath ? [] : [REMOTE_DOWNLOAD_FUNCTION]),
     REMOTE_SHA256_FILE_FUNCTION,
     `mkdir -p ${quoteRemotePathWithHomeExpansion(layout.remoteHomeDir)} || exit $?`,
     `stage="$(mktemp -d ${quoteRemotePathWithHomeExpansion(`${layout.remoteHomeDir}/bootstrap-self-download.XXXXXX`)})" || exit $?`,
     `cleanup() { ${buildRemoteFirstPartyStagingCleanupCommand('"$stage"')}; }`,
     'trap cleanup EXIT',
-    'archive_path="$stage/archive"',
-    `download ${safeBashSingleQuote(params.archive.url)} "$archive_path" || exit $?`,
+    ...(params.archivePath ? [`archive_path=${safeBashSingleQuote(params.archivePath)}`] : [
+      'archive_path="$stage/archive"',
+      `download ${safeBashSingleQuote(params.archive.url)} "$archive_path" || exit $?`,
+    ]),
     `archive_name=${safeBashSingleQuote(archiveName)}`,
     `expected_sha=${safeBashSingleQuote(expectedSha256)}`,
     'actual_sha="$(sha256_file "$archive_path")" || exit $?',
