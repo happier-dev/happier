@@ -79,10 +79,14 @@ export const SessionWorkDigestContent = React.memo(function SessionWorkDigestCon
     const meta = recap
         ? `${formatRelativeTimeShort(recap.atMs, props.nowMs)} · ${recap.source === 'synopsis' ? t('sessionWork.digest.fromMemory') : t('sessionWork.digest.latestUpdate')}`
         : '';
-    // The Recap's own words; a status-only update is said plainly, naming the Session it is about.
+    // The sender's own Work row, when the list above does not already show it quietly (one that needs you).
+    const showsSource = sourceItem !== null && workerSessionId !== null && !props.listedQuietSessionIds.has(workerSessionId);
+    // The Recap's own words. A status-only update whose sender row is drawn says nothing more: the row names it and
+    // its state (lab P1-C). Otherwise it is said plainly, naming the Session it is about.
     const lead = !recap ? null
         : recap.source === 'synopsis' ? recap.text
-            : recap.body ?? (sourceItem ? t('sessionWork.digest.statusSentence', { title: sourceItem.title, status: recap.text }) : recap.text);
+            : recap.body ?? (showsSource ? null
+                : sourceItem ? t('sessionWork.digest.statusSentence', { title: sourceItem.title, status: recap.text }) : recap.text);
 
     return (
         <WorkSection
@@ -103,10 +107,12 @@ export const SessionWorkDigestContent = React.memo(function SessionWorkDigestCon
             )}
         >
             {recap ? (<>
-                <WorkSectionBlock style={styles.leadBlock}>
-                    <Text testID="session-work-digest-lead" numberOfLines={6} style={styles.lead}>{lead}</Text>
-                </WorkSectionBlock>
-                {sourceItem && workerSessionId && !props.listedQuietSessionIds.has(workerSessionId) ? (
+                {lead !== null ? (
+                    <WorkSectionBlock style={styles.leadBlock}>
+                        <Text testID="session-work-digest-lead" numberOfLines={6} style={styles.lead}>{lead}</Text>
+                    </WorkSectionBlock>
+                ) : null}
+                {showsSource && sourceItem ? (
                     <View testID="session-work-digest-source">
                         <WorkItemRow item={sourceItem} onOpen={props.onOpenItem} />
                     </View>

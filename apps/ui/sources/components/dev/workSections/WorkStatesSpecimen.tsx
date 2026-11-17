@@ -43,7 +43,7 @@ const idleRefresh = { sending: false, send: noop };
 function report(
   sessionId: string,
   title: string,
-  turn: 'in_progress' | 'completed',
+  turn: 'in_progress' | 'completed' | 'needs_you',
   minutesAgo: number,
 ): WorkReportSessionSource {
   const at = NOW - minutesAgo * 60_000;
@@ -59,8 +59,10 @@ function report(
         id: sessionId,
         active: true,
         activeAt: at,
-        latestTurnStatus: turn,
-        latestTurnStatusObservedAt: at,
+        // A Session waiting on a person's answer, as the Inbox and Work list see one.
+        ...(turn === 'needs_you'
+          ? { latestTurnStatus: undefined, pendingPermissionRequestCount: 1, pendingRequestObservedAt: at }
+          : { latestTurnStatus: turn, latestTurnStatusObservedAt: at }),
       }),
       NOW,
     ),
@@ -97,7 +99,7 @@ const projection = projectWork({
   sessionId: 'coordinator',
   reportSessions: [
     report('triage', 'Triage overnight CI failures', 'in_progress', 4),
-    report('faq', 'Draft the pricing FAQ', 'completed', 18),
+    report('faq', 'Draft the pricing FAQ', 'needs_you', 18),
   ],
   agentEntries: [
     agent('scout', 'Scout the webkit flakes', 'subagent', 'running'),

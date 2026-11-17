@@ -347,6 +347,8 @@ describe('Work digest (C1 R12: the coordinator digest reads the existing Recap)'
         ),
       ).not.toHaveLength(0);
       expect(hostText(source!)).toContain('Support runbook');
+      // The row says who and where it stands (lab P1-C); a sentence repeating it is not drawn above it.
+      expect(work.screen.findHostByTestId('session-work-digest-lead')).toBeNull();
     } finally {
       await work.dispose();
     }
