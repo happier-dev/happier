@@ -210,7 +210,6 @@ import { createAutomationEventActionExecutor, type CommittedAutomationEventObser
 
 
 import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
-import { createHostExternalSessionActionTransport } from './externalSessions/hostExternalSessionActionTransport';
 import type { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 
 
@@ -1093,6 +1092,15 @@ export function createCliActionDeps(params: CliActionDepsParams,
 
 
   const openPrivateLabel = createCliPrivateLabelActionOpener(params.credentials?.token === params.token ? params.credentials.encryption : null);
+  const externalSessionTransportParams = params.credentials ? {
+    credentials: params.credentials,
+    serverId: params.serverId ?? configuration.activeServerId,
+    serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
+    resolveSessionMachineId: async (sessionId: string, signal?: AbortSignal) => {
+      const transport = await resolveTransportForSession(sessionId, signal);
+      return transport.ok ? normalizeStringValue(readTransportSessionOwnerMetadata(transport)?.machineId) : null;
+    },
+  } : null;
   const actionDeps: CliActionDeps = {
     actionAutomations: createCliActionAutomationPortV1({ token: params.token,
       serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
@@ -1846,15 +1854,9 @@ export function createCliActionDeps(params: CliActionDepsParams,
         rawSession: transport.rawSession })?.machineId ?? null;
     },
 
-    hostExternalSessionAction: params.credentials ? createHostExternalSessionActionTransport({
-      credentials: params.credentials,
-      serverId: params.serverId ?? configuration.activeServerId,
-      serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(),
-      resolveSessionMachineId: async (sessionId, signal) => {
-        const transport = await resolveTransportForSession(sessionId, signal);
-        return transport.ok ? normalizeStringValue(readTransportSessionOwnerMetadata(transport)?.machineId) : null;
-      },
-    }) : undefined,
+    hostExternalSessionAction: externalSessionTransportParams ? async input => (
+      await import('./externalSessions/hostExternalSessionActionTransport')
+    ).createHostExternalSessionActionTransport(externalSessionTransportParams)(input) : undefined,
     externalSessionAction: pluginAdministrationDeps.externalSessionAction,
 
     managedMachineReferences,
