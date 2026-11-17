@@ -188,7 +188,7 @@ function readRows(query: SqliteQuery, input: DatabaseRowsReadInputV1): DatabaseO
     const next = primaryKey.length && last ? { kind: 'keyset' as const, binding: databaseRowsBindingV1(input), values: named(last, order.map(item => item.column)), direction: backward ? 'backward' as const : 'forward' as const }
         : { kind: 'offset' as const, binding: databaseRowsBindingV1(input), offset: (continuation?.kind === 'offset' ? continuation.offset : 0) + retained.length };
     return { ok: true, operation: input.operation, result: { columns: selected.map(column => metadata.columns.find(item => item.name === column)!),
-        rows: (backward ? retained.reverse() : retained).map(row => ({ cells: selected.map(column => row.cells[output.indexOf(column)]!), ...(primaryKey.length ? { identity: { key: named(row, primaryKey), original: named(row, selected) } } : {}) })),
+        rows: (backward ? retained.reverse() : retained).map(row => ({ cells: selected.map(column => row.cells[output.indexOf(column)]!), ...(primaryKey.length ? { identity: { key: named(row, primaryKey), original: named(row, output) } } : {}) })),
         completeness: more ? { complete: false, reason: 'page', continuation: next } : { complete: true } } };
 }
 function compileEdit(relation: DatabaseRelationV1, change: DatabaseEditV1, metadata: DatabaseRelationStructureV1): SqliteCompiledStatement {
