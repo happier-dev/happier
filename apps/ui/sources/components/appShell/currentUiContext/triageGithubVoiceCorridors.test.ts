@@ -11,10 +11,8 @@ import type {
   PluginAccountCollectionForDefinition,
 } from '@happier-dev/plugin-sdk/collections';
 import {
-  createPluginTestkit,
   createPluginUiTestkit,
   createSurfaceContextFixture,
-  type PluginTestkit,
   type PluginUiTestkit,
 } from '@happier-dev/plugin-sdk/testing';
 import { defineUiSurface, usePluginHostApi } from '@happier-dev/plugin-ui';
@@ -23,23 +21,13 @@ import type { PluginUiContextEnrichmentV1 } from '@happier-dev/plugin-sdk/ui';
 import {
   formatQualifiedPluginActionId} from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import {
-  DaemonPluginStructuredMessageActionExecuteRequestSchema} from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
-import {
-  PluginProjectedActionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import {
-  type PluginMachineExecutionOriginV1,
-} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
-import {
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
   TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
 } from '@happier-dev/triage-protocol/v1';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { installBrowserStorageLockBoundary } from '@/dev/testkit/harness/browserStorageLockBoundary';
 
-import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
-import { unionPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
 import {
   GITHUB_FIXTURE_OWNER,
   GITHUB_FIXTURE_REPOSITORY,
@@ -62,9 +50,10 @@ import {
 } from '../../../../../../packages/plugins/scm-github/src/triage/testkit/githubTriage.test-support';
 import { scanGithubTriageSource } from '../../../../../../packages/plugins/scm-github/src/triage/operations';
 import {
-  activate as activateTriage,
   manifest as triageManifest,
 } from '../../../../../../packages/plugins/triage/src/index';
+import { activate as activateTriageAccount } from '../../../../../../packages/plugins/triage/src/accountRuntime';
+import { INTERNAL_TASK_SOURCE_V1 } from '../../../../../../packages/plugins/triage/src/internalTasks/identity';
 import {
   listTriageEntries,
   type TriageAdmittedSourceV1,
@@ -84,15 +73,11 @@ import { projectTriageCurrentUiContextV1 } from '../../../../../../packages/plug
 import { useTriageCurrentUiContextPublication } from '../../../../../../packages/plugins/triage/src/ui/currentContextPublication';
 import { TRIAGE_SURFACE_INITIAL_STATE_V1 } from '../../../../../../packages/plugins/triage/src/ui/state/surface';
 
-let network: Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
-let restoreBrowserLocks: (() => void) | undefined;
-let composeCurrentUiContextSnapshotFromNavigation: typeof import('./currentUiContextModel').composeCurrentUiContextSnapshotFromNavigation;
-beforeAll(async () => {
-  restoreBrowserLocks = installBrowserStorageLockBoundary();
-  network = await installSessionOpsNetworkBoundary();
-  // The model's Session presentation graph reaches Sync; load it after transport installation.
-  ({ composeCurrentUiContextSnapshotFromNavigation } = await import('./currentUiContextModel'));
-});
+// Install transport before loading the model's Sync graph. Module compilation is
+// collection work, so keep it outside the per-hook runtime budget.
+const restoreBrowserLocks = installBrowserStorageLockBoundary();
+const network = await installSessionOpsNetworkBoundary();
+const { composeCurrentUiContextSnapshotFromNavigation } = await import('./currentUiContextModel');
 beforeEach(() => { network.resetRequests(); });
 afterAll(async () => {
   (await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool')).serverScopedRpcSocketPool.resetForTests();
@@ -101,10 +86,7 @@ afterAll(async () => {
   restoreBrowserLocks?.();
 });
 
-const MACHINE_ID = 'machine-triage-proof';
-const TRIAGE_OCCURRENCE_ID = 'triage-voice-proof-occurrence-7';
 const TRIAGE_PLUGIN_ID = 'happier.triage';
-const TRIAGE_ACTION_ID = `${TRIAGE_PLUGIN_ID}/${TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1}`;
 const TRIAGE_DISCOVERY_ACTION_ID = formatQualifiedPluginActionId({
   pluginId: TRIAGE_PLUGIN_ID,
   localId: TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
@@ -190,68 +172,6 @@ function accountStorageServices(
     } as unknown as PluginInvocationContext['services']['storage'],
     targetedContributions,
   };
-}
-
-async function createTriageVertical(): Promise<Readonly<{
-  triage: PluginTestkit;
-  collections: ReturnType<typeof createTestkitCorpusCollections>;
-}>> {
-  const collections = createTestkitCorpusCollections();
-  const triage = await createPluginTestkit({
-    manifest: triageManifest,
-    module: { activate: activateTriage },
-    services: accountStorageServices(collections.collections),
-  });
-  return Object.freeze({ triage, collections });
-}
-
-function createTriageVoiceProjection(serverId: string) {
-  const executionOrigin: PluginMachineExecutionOriginV1 = {
-    serverIdentityId: 'srv_triage_proof',
-    materializationRef: {
-      pluginId: TRIAGE_PLUGIN_ID,
-      machineId: MACHINE_ID,
-      materializationId: 'triage-proof-materialization',
-    },
-  };
-  const declaration = (triageManifest.contributes.actions ?? []).find(
-    (action) => action.id === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
-  );
-  if (declaration === undefined) throw new Error('Triage list Action is not declared');
-  const projectedAction = PluginProjectedActionV2Schema.parse({
-    id: declaration.id,
-    pluginId: TRIAGE_PLUGIN_ID,
-    occurrenceId: TRIAGE_OCCURRENCE_ID,
-    title: declaration.title,
-    description: declaration.description,
-    scopes: declaration.scopes,
-    surfaces: declaration.surfaces,
-    placementBindings: declaration.placementBindings,
-    execution: declaration.execution,
-    dangerLevel: declaration.dangerLevel,
-    available: true,
-    executionOrigin,
-  });
-  const projection = normalizePluginUiProjection({
-    v: 2,
-    generation: 7,
-    installedPackagesById: {},
-    agentsById: {},
-    actionsById: {
-      [TRIAGE_ACTION_ID]: projectedAction,
-    },
-    resourcesById: {},
-    settingsById: {},
-    familiesById: {},
-    diagnostics: [],
-  });
-  return unionPluginUiProjections([{
-    machineId: MACHINE_ID,
-    serverId,
-    projection,
-    phase: 'current',
-    interactionEnabled: true,
-  }], new Map([[TRIAGE_PLUGIN_ID, executionOrigin]])).pluginUiProjection;
 }
 
 /**
@@ -381,36 +301,31 @@ describe('Triage/GitHub projection and Voice Action source corridors', () => {
   });
 
   it('projects the registered Triage list Action into the dynamic Voice catalog and delegates through the unified dispatcher', async () => {
-    const vertical = await createTriageVertical();
     const home = await network.addHome('https://triage-voice-proof.example.test', 'triage-proof-account');
-    const projection = createTriageVoiceProjection(home.id);
-    if (projection === null) throw new Error('Expected the Triage action projection');
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { installPortableAccountPluginForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+    const account = await captureLazyActionAccountContext(home.id);
+    const collections = createTestkitCorpusCollections();
+    const services = accountStorageServices(collections.collections);
     let handlerCalls = 0;
-    let handlerError: unknown = null;
-    network.setRpcResponder(async (request) => {
-      expect(request.serverUrl).toBe(home.serverUrl);
-      expect(request.token).toBe(home.token);
-      expect(request.targetId).toBe(MACHINE_ID);
-      expect(request.method).toBe(RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE);
-      const payload = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(request.payload);
-      expect(payload.expectedContributorOccurrenceId).toBe(TRIAGE_OCCURRENCE_ID);
-      expect(payload.qualifiedActionId).toBe(TRIAGE_ACTION_ID);
-      expect(payload.executionSurface).toBe('voice');
-      handlerCalls += 1;
-      try {
-        if (payload.input === undefined) throw new Error('Expected the projected Triage input');
-        return {
-          ok: true,
-          result: await vertical.triage.invokeAction(
-            TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1,
-            payload.input,
-            { surface: 'voice' },
-          ),
-        };
-      } catch (error) {
-        handlerError = error;
-        throw error;
-      }
+    const installed = await installPortableAccountPluginForTest({
+      manifest: triageManifest,
+      accountLifetime: account.accountLifetime,
+      activate(api) {
+        activateTriageAccount({ ...api, actions: { register(id, handler, options) {
+          api.actions.register(id, async (input, context) => {
+            if (id === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) {
+              handlerCalls += 1;
+              expect(context.surface).toBe('voice');
+            }
+            // Substitute only the persistent Collection and contribution transport boundaries.
+            return handler(input, { ...context, services: { ...context.services,
+              storage: { account: services.storage.account! },
+              targetedContributions: services.targetedContributions,
+            } });
+          }, options);
+        } } });
+      },
     });
     try {
       const { createCurrentUiContextVoiceToolPort } = await import('./currentUiContextVoiceToolPort');
@@ -420,7 +335,7 @@ describe('Triage/GitHub projection and Voice Action source corridors', () => {
           resolveCurrentUiCommand: () => null,
           subscribe: () => () => undefined,
         },
-        readProjection: () => projection,
+        readProjection: () => installed.projection,
         readNavigationBinding: () => null,
       });
 
@@ -438,18 +353,17 @@ describe('Triage/GitHub projection and Voice Action source corridors', () => {
           order: 'newest',
         },
       });
-      expect(handlerError).toBeNull();
       expect(outcome).toMatchObject({
         ok: true,
         result: {
           v: 1,
-          configuredSources: [],
+          configuredSources: [{ source: INTERNAL_TASK_SOURCE_V1, available: false }],
           window: { rows: [] },
         },
       });
       expect(handlerCalls).toBe(1);
     } finally {
-      await vertical.triage.dispose();
+      await installed.dispose();
     }
   });
 });
