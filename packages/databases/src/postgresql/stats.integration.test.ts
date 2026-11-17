@@ -72,13 +72,13 @@ describe.skipIf(!binaries)('PostgreSQL stats against a real engine', () => {
         expect(facts.engineStartedAt).not.toBe('');
         const options = { stats: { database: facts.database, intervalBasis: { bindingKey: 'fixture', databaseIdentity: facts.databaseOid, selectionKey: 'selected' },
             pgStatStatements: facts.pgStatStatements } };
-        const directory = await executePostgresqlOperation({ operation: 'relations.list', target, schema: 'selected', page: { rows: 10 } }, query);
-        expect(directory).toMatchObject({ ok: true, operation: 'relations.list', relations: [{ relation: { schema: 'selected', name: 'items' },
+        const catalog = await executePostgresqlOperation({ operation: 'relations.list', target, schema: 'selected', page: { rows: 10 } }, query);
+        expect(catalog).toMatchObject({ ok: true, operation: 'relations.list', relations: [{ relation: { schema: 'selected', name: 'items' },
             size: { measurement: 'database_bytes', bytes: expect.stringMatching(/^\d+$/u), relationBytes: expect.stringMatching(/^\d+$/u),
                 tableBytes: expect.stringMatching(/^\d+$/u), indexBytes: expect.stringMatching(/^\d+$/u) } }] });
-        if (directory.ok && directory.operation === 'relations.list') {
-            expect(directory.relations[0]).not.toHaveProperty('estimatedRows');
-            expect(BigInt(directory.relations[0]!.size!.bytes)).toBeGreaterThan(0n);
+        if (catalog.ok && catalog.operation === 'relations.list') {
+            expect(catalog.relations[0]).not.toHaveProperty('estimatedRows');
+            expect(BigInt(catalog.relations[0]!.size!.bytes)).toBeGreaterThan(0n);
         }
         const requests = [
             { kind: 'stats.read', group: 'size', selection: {} },
