@@ -13,6 +13,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 
 import type { ThemeTryPresentationProps } from '@/components/store/storeThemeViewTypes';
 
@@ -24,6 +25,8 @@ import type { ThemeTryPresentationProps } from '@/components/store/storeThemeVie
  */
 export function ThemeTryBar(props: ThemeTryPresentationProps) {
   const phone = useDeviceType() === 'phone';
+  // The app's floating bottom bar (a phone's tab bar) reports its height; the try bar stands above it.
+  const bottomChrome = useSessionCockpitBottomChromeHeight();
   const presence = useOverlayPresence(
     props.visible,
     motionTokens.overlay.popover.exitMs,
@@ -34,7 +37,7 @@ export function ThemeTryBar(props: ThemeTryPresentationProps) {
   return (
     <View
       pointerEvents="box-none"
-      style={[styles.region, phone ? styles.regionPhone : null]}
+      style={[styles.region, phone ? styles.regionPhone : null, bottomChrome > 0 ? styles.regionAboveChrome(bottomChrome) : null]}
     >
       <OverlayMotionFrame
         visible={props.visible}
@@ -113,6 +116,9 @@ const styles = StyleSheet.create((theme) => ({
     bottom: theme.space.s24,
     alignItems: 'stretch',
   },
+  regionAboveChrome: (chromeHeight: number) => ({
+    bottom: chromeHeight + theme.space.s12,
+  }),
   bar: {
     flexDirection: 'row',
     alignItems: 'center',

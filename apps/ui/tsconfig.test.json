@@ -4300,6 +4300,7 @@
     "sources/components/settings/appearance/themeProfiles/ThemeDevicePickerView.test.tsx",
     "sources/components/settings/appearance/themeProfiles/ThemeLibraryView.test.tsx",
     "sources/components/settings/appearance/themeProfiles/ThemeProfileEditorScreen.geometry.test.tsx",
+    "sources/components/settings/appearance/themeProfiles/ThemeTryBar.test.tsx",
     "sources/components/settings/appearance/themeProfiles/themeDiagnosticCollections.test.tsx",
     "sources/components/settings/appearance/themeProfiles/themeLibraryAndEditorViews.test.tsx",
     "sources/components/settings/appearance/themeProfiles/themePluginShareForm.test.ts",
