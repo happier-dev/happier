@@ -582,17 +582,17 @@ describe('MachineRpcRoutePolicyV1', () => {
     expect(resolve(RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE, binding)).toBeNull();
     expect(resolve(RPC_METHODS.DAEMON_SPAWN_SESSION_ABANDON, binding)).toBeNull();
   });
-  it('admits repository-address checks as the canonical read Action through shared Machine Use', async () => {
+  it.each(['scm.hostingRepository.resolveAddress', 'scm.repository.discover'] as const)('admits %s as the canonical read Action through shared Machine Use', async actionSpecId => {
     const protocol = await importRpcPolicy();
     if ('importError' in protocol) throw protocol.importError;
-    const method = getActionSpec('scm.hostingRepository.resolveAddress').bindings!.rpcMethod!;
+    const method = getActionSpec(actionSpecId).bindings!.rpcMethod!;
     expect(Object.values(RPC_METHODS)).toContain(method);
     expect(resolveMachineRpcGovernance(method)).toEqual({
-      rpcClassification: 'action_spec_bound', actionSpecId: 'scm.hostingRepository.resolveAddress',
+      rpcClassification: 'action_spec_bound', actionSpecId,
     });
     expect(protocol.resolveMachineRpcRoutePolicy(method)).toMatchObject({
       routeClass: 'server_required', serverRequiredReason: 'ambiguous', sharedMachineAccess: 'use',
-      rpcClassification: 'action_spec_bound', actionSpecId: 'scm.hostingRepository.resolveAddress',
+      rpcClassification: 'action_spec_bound', actionSpecId,
       scope: { accountRequired: true, machineRequired: true, serverRequired: true },
     });
     expect(protocol.resolveEphemeralRunnerMachineRpcAuthority(method)).toBeNull();

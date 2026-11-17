@@ -237,6 +237,7 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [RPC_METHODS.SCM_PULL_REQUEST_RUN_STACKED]: 'scm.pullRequest.runStacked',
   [RPC_METHODS.SCM_REPOSITORY_CLONE]: 'scm.repository.clone',
   [RPC_METHODS.SCM_REPOSITORY_INIT]: 'scm.repository.init',
+  [RPC_METHODS.SCM_REPOSITORY_DISCOVER]: 'scm.repository.discover',
   [RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK]: 'scm.repository.removeIndexLock',
   [RPC_METHODS.SCM_HOSTING_REPOSITORY_RESOLVE_ADDRESS]: 'scm.hostingRepository.resolveAddress',
   [RPC_METHODS.SCM_HOSTING_REPOSITORY_GET]: 'scm.hostingRepository.get',

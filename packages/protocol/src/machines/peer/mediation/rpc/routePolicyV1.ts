@@ -1025,6 +1025,7 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
   ], 'ambiguous', 'Read or external-service behavior has privacy, access-policy, transcript, or side-effect ambiguity and must stay on the server route until proven safe.', "use"),
   ...serverRequiredRows([
     RPC_METHODS.SCM_STATUS_SNAPSHOT,
+    RPC_METHODS.SCM_REPOSITORY_DISCOVER,
     RPC_METHODS.SCM_COMMIT_RESOLVE_OUTCOME,
     RPC_METHODS.SCM_DIFF_FILE,
     RPC_METHODS.SCM_BLAME_FILE,
