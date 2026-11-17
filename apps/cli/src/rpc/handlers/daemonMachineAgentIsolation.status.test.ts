@@ -117,7 +117,7 @@ it.skipIf(process.platform !== 'linux')('projects the owners member directories 
 
 it.each([
   [{ version: 1, mode: 'none' }, 'mode_none', 'allowed'],
-  [{ version: 1, mode: 'ask', administratorUsername: 'admin' }, 'needs_attendance', 'allowed'],
+  [{ version: 1, mode: 'ask', administratorUsername: 'admin' }, 'not_preauthorized', 'allowed'],
   [{ version: 1, mode: 'preauthorized' }, 'not_preauthorized', 'denied'],
   [{ version: 1, mode: 'preauthorized' }, 'managed_cli_unavailable', 'allowed'],
 ] satisfies readonly (readonly [MachineAdminAccessV1, string, 'allowed' | 'denied'])[])(
@@ -148,14 +148,6 @@ it.each([
     expect(result).toMatchObject({ ok: true, result: { kind: 'unavailable' } });
     if (!result.ok) throw new Error(result.errorCode);
     const preview = MachineAgentIsolationPreviewResultV1Schema.parse(result.result);
-    // Ask requires the elevation owner's attendance flow; an unprompted read
-    // must not fabricate a not_applied refusal or try a native process.
-    if (reasonCode === 'needs_attendance') {
-      expect(preview).not.toHaveProperty('setup');
-      expect(boundary.mutations).toEqual([]);
-      expect(boundary.launches).toEqual([]);
-      return;
-    }
     expect(preview).toMatchObject({ setup: { outcome: 'not_applied', reasonCode } });
     if (reasonCode === 'mode_none') expect(preview).toMatchObject({ setup: {
       recovery: { kind: 'configure_admin_access', mode: 'preauthorized' },

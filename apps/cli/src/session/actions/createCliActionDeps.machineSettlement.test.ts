@@ -61,7 +61,7 @@ describe('CLI captured Machine acknowledgement settlement', () => {
     const executor = createActionExecutor(createCliActionDeps({ ...params, isCredentialCurrent: async () => current }));
     const result = await executor.execute(action.actionId, action.input, context);
     expect(rpc).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ ok: false, errorCode: 'action_failed', error: 'scope-retired' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
     expect(JSON.stringify(result)).not.toContain('private Vitals refusal');
   });
 
@@ -74,7 +74,7 @@ describe('CLI captured Machine acknowledgement settlement', () => {
     });
     const executor = createActionExecutor(createCliActionDeps({ ...params, isCredentialCurrent: async () => current }));
     const result = await executor.execute('machines.processes.get', { machineId: 'selected', ref: 'process-ref' }, context);
-    expect(result).toMatchObject({ ok: false, errorCode: 'action_failed' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'scope-retired' });
     expect(result).not.toHaveProperty('error', 'private refusal');
   });
   it.each(reads)('keeps typed and legacy serialized refusals out of $actionId success parsing', async action => {
@@ -155,7 +155,7 @@ describe('CLI captured Machine acknowledgement settlement', () => {
       expect(await Promise.race([dispatched.then(() => 'issued'), result])).toBe('issued');
       if (retirement === 'cancellation') controller.abort(); else current = false;
       acknowledge(action.receipt);
-      expect(await result).toMatchObject({ ok: false, errorCode: 'action_failed' });
+      expect(await result).toMatchObject({ ok: false, errorCode: retirement === 'credentials' ? 'scope-retired' : 'action_failed' });
     });
 
     it(`retains target-local Activity Undo acknowledgement after ${retirement}`, async () => {
@@ -180,7 +180,7 @@ describe('CLI captured Machine acknowledgement settlement', () => {
     const rpc = vi.spyOn(transport, 'callExactMachineRpc');
     const executor = createActionExecutor(createCliActionDeps({ ...params, isCredentialCurrent: async () => false }));
     expect(await executor.execute(guardEffect.actionId, guardEffect.input, context))
-      .toMatchObject({ ok: false, errorCode: 'action_failed', error: 'scope-retired' });
+      .toMatchObject({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
     expect(rpc).not.toHaveBeenCalled();
   });
 

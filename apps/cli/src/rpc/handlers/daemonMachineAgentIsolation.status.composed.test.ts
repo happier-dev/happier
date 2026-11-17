@@ -38,6 +38,13 @@ vi.mock('../../../../server/sources/storage/db', () => ({
       findMany: (...args: Parameters<ReturnType<typeof createInstalledMachineRpcDatabaseBoundary>['db']['machine']['findMany']>) => database.current!.db.machine.findMany(...args),
     },
     account: { findUnique: (...args: Parameters<ReturnType<typeof createInstalledMachineRpcDatabaseBoundary>['db']['account']['findUnique']>) => database.current!.db.account.findUnique(...args) },
+    // The real Home sign-in policy reads both absent singleton rows in one PostgreSQL statement.
+    $queryRawUnsafe: async (sql: string) => {
+      if (!sql.includes('LEFT JOIN "HomeSettings"') || !sql.includes('LEFT JOIN "HomeGovernancePolicy"')) {
+        throw new Error('Unexpected Home policy query');
+      }
+      return [{ revision: null, values: null, encryptedSecrets: null, authenticationPolicy: null }];
+    },
     simpleCache: { findUnique: async () => {
       if (!database.homeServerIdentityId) throw new Error('Missing Home identity database fact');
       return { value: database.homeServerIdentityId };
@@ -106,6 +113,9 @@ describe('installed own Machine isolation status admission', () => {
     const expected = actionId === 'machines.command.run'
       ? { exitCode: 0, stdout: expect.stringContaining('public-command-admitted'), stderr: '' }
       : { protection: 'trusted_administrator', status: observedStatus };
+    const expectedResponse = { ok: true, result: expected, ...(actionId === 'machines.command.run' ? {
+      automationNotices: [{ code: 'action_automations_not_checked', reason: 'automation_index_unavailable' }],
+    } : {}) };
     const authEnv = createEnvKeyScope(['HANDY_MASTER_SECRET', 'HAPPIER_SERVER_IDENTITY_ID']);
     authEnv.patch({ HANDY_MASTER_SECRET: 'machine-status-composed-test', HAPPIER_SERVER_IDENTITY_ID: '' });
     onTestFinished(() => authEnv.restore());
@@ -217,8 +227,7 @@ describe('installed own Machine isolation status admission', () => {
     const caller = createCliActionExecutorFromCredentials({ credentials, serverId: f.serverId, serverApiUrl: f.serverHttpBaseUrl,
       serverIdentityId: f.homeServerIdentityId, externalActionClient: true, actionsSettingsProvider: { getActionsSettings: () => settings } });
     const publicResult = await caller.execute(actionId, input, { surface: 'cli', externalActionTarget: target });
-    expect.soft(publicResult)
-      .toEqual({ ok: true, result: expected });
+    expect.soft(publicResult).toEqual(expectedResponse);
     const signedCall = signedCalls.at(-1);
     if (!signedCall) throw new Error(`Public ${actionId} did not reach signed Home CALL`);
     // Keep the complete real carrier and alter only its Home authorization.
@@ -229,7 +238,7 @@ describe('installed own Machine isolation status admission', () => {
       { packet: corruptedPacket })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
     expect((await app.inject({ method: 'POST', url: '/actions/root/execute', headers: { 'x-happier-daemon-token': 'fixture-control' },
       payload: { actionId, input, target } })).json())
-      .toEqual({ ok: true, result: expected });
+      .toEqual(expectedResponse);
     expect(f.admissionChecks()).toBeGreaterThan(0);
   });
 });

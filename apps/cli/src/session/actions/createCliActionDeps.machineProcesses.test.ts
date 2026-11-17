@@ -496,6 +496,6 @@ describe('CLI machine Processes Action transport', () => {
     });
     responses.push({ row: null });
     expect(await executor.execute('machines.processes.get', { machineId: 'selected', ref: 'process-ref' }, context))
-      .toMatchObject({ ok: false, errorCode: 'action_failed', error: 'scope-retired' });
+      .toMatchObject({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
   });
 });

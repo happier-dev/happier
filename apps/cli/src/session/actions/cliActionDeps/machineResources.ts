@@ -15,7 +15,7 @@ import { resolveMachineAgentIsolationOperationTimeoutMs } from '@happier-dev/pro
 import { MACHINE_STORAGE_ACTION_INPUT_SCHEMAS, MACHINE_STORAGE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/storage';
 import { MACHINE_PROCESSES_ACTION_INPUT_SCHEMAS, MACHINE_PROCESSES_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineProcesses';
 import { listMachineVitalsSummariesV1, readMachineVitalsResourcesProjectionV1 } from '@happier-dev/protocol/machines/vitals/listMachineVitalsSummariesV1';
-import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -102,7 +102,7 @@ export function createCliMachineResourceActionDeps(
       serverId: projectHomeId, callMachineAction, admit: admitMachineService,
       assertCurrent: async context => {
         context.signal?.throwIfAborted();
-        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
         await assertProjectRequesterCurrent(context);
       },
       canExecuteEnvironment: async (serverId, environmentId, context) => {
@@ -119,7 +119,7 @@ export function createCliMachineResourceActionDeps(
       return withProjectHome(() => executeCapturedMachineAction({ actionId: 'machines.reboot', assertCurrent: async () => {
         signal?.throwIfAborted();
         if (params.isCredentialCurrent && !await params.isCredentialCurrent())
-          throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+          throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
         await assertProjectRequesterCurrent(context);
         signal?.throwIfAborted();
       }, invoke: options => {
@@ -144,7 +144,7 @@ export function createCliMachineResourceActionDeps(
       serverId: projectHomeId, callMachineAction, admit: admitMachineService,
       assertCurrent: async context => {
         context.signal?.throwIfAborted();
-        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
         await assertProjectRequesterCurrent(context);
       },
       canControlEnvironment: async (serverId, environmentId, context) => {
@@ -167,7 +167,7 @@ export function createCliMachineResourceActionDeps(
         if (scopeDenied) throw Object.assign(new Error(scopeDenied.errorCode), { code: scopeDenied.errorCode });
         await assertProjectRequesterCurrent(context);
         if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
-          throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+          throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
         }
         signal?.throwIfAborted();
       };
@@ -193,7 +193,7 @@ export function createCliMachineResourceActionDeps(
       const assertCurrent = async () => {
         signal?.throwIfAborted();
         await assertProjectRequesterCurrent(context);
-        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
       };
       return withProjectHome(() => executeCapturedMachineAction({ actionId, assertCurrent,
         invoke: options => callMachineAction({ machineId: input.machineId, serverId: input.serverId,
@@ -212,7 +212,7 @@ export function createCliMachineResourceActionDeps(
         if (scopeDenied) throw Object.assign(new Error(scopeDenied.errorCode), { code: scopeDenied.errorCode });
         await assertProjectRequesterCurrent(context);
         if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
-          throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+          throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
         }
         signal?.throwIfAborted();
       };
@@ -247,7 +247,7 @@ export function createCliMachineResourceActionDeps(
         signal?.throwIfAborted();
         await assertProjectRequesterCurrent(context);
         if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
-          throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+          throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
         }
       };
       const read = async (machineId: string, method: string, request: unknown) => {
@@ -300,7 +300,7 @@ export function createCliMachineResourceActionDeps(
         const request = policyRequest ?? MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.status'].parse(input);
         const assertCurrent = async () => {
           signal?.throwIfAborted();
-          if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+          if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
           await assertProjectRequesterCurrent(context);
           signal?.throwIfAborted();
         };
@@ -319,7 +319,7 @@ export function createCliMachineResourceActionDeps(
       if (denied) return denied;
       return withProjectHome(() => executeCapturedMachineAction({ actionId, assertCurrent: async () => {
         signal?.throwIfAborted();
-        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
         await assertProjectRequesterCurrent(context);
         signal?.throwIfAborted();
       }, invoke: async options => {
@@ -351,7 +351,7 @@ export function createCliMachineResourceActionDeps(
       return select({ request: { ...input, ...(resource ? { expectedGeneration: resource.expectedGeneration } : {}) }, machineId: direct.machineId, serverId: projectHomeId,
         ...(scopeRequester.kind !== 'unknown' ? { requester: scopeRequester.requester } : {}),
         ...(context.signal ? { signal: context.signal } : {}), assertCurrent: async () => {
-          if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+          if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
           await assertProjectRequesterCurrent(context);
         } }, async handle => {
         if (handle.kind !== 'environment') return handle.actionScope;
@@ -376,7 +376,7 @@ export function createCliMachineResourceActionDeps(
       return withMachineServiceLogTarget({ request: { ...input, ...(resource ? { expectedGeneration: resource.expectedGeneration } : {}) }, machineId: direct.machineId, serverId: projectHomeId,
         ...(logRequester.kind !== 'unknown' ? { requester: logRequester.requester } : {}),
         ...(signal ? { signal } : {}), ...(approvalScope ? { approvalScope } : {}), assertCurrent: async () => {
-          if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+          if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
           await assertProjectRequesterCurrent(context);
         } }, async handle => {
         if (!approvalScope) return { ok: false as const, errorCode: 'approval_stale', error: 'approval_stale' };
@@ -437,7 +437,7 @@ export function createCliMachineResourceActionDeps(
         const scopeDenied = await projectAccountAdmission(serverId, context);
         if (scopeDenied) throw Object.assign(new Error(scopeDenied.errorCode), { code: scopeDenied.errorCode });
         await assertProjectRequesterCurrent(context);
-        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
         signal?.throwIfAborted();
       };
       return withProjectHome(async () => {
@@ -462,7 +462,7 @@ export function createCliMachineResourceActionDeps(
         return executeCapturedMachineAction({ actionId, assertCurrent: async () => {
           signal?.throwIfAborted();
           if (params.isCredentialCurrent && !await params.isCredentialCurrent()) {
-            throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
           }
           await assertProjectRequesterCurrent(context);
           signal?.throwIfAborted();
@@ -488,7 +488,7 @@ export function createCliMachineResourceActionDeps(
           const { executeCapturedMachineAction } = await import("@/api/machine/capturedMachineAction");
           return executeCapturedMachineAction({ actionId, assertCurrent: async () => {
             signal?.throwIfAborted();
-            if (!await current()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+            if (!await current()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
             signal?.throwIfAborted();
           }, invoke: options => callMachineAction({ machineId: request.machineId, serverId, method: RPC_METHODS.MACHINES_RESOURCES_POLICY_SET,
             request: { ...request, serverId }, authority: context.authority, context, effectActionId: actionId, exactMachine: true,
@@ -523,7 +523,7 @@ export function createCliMachineResourceActionDeps(
           // Ingress admitted the exact signed creation-child input; the target owns field comparison.
           return executeCapturedMachineAction({ actionId, assertCurrent: async () => {
             signal?.throwIfAborted();
-            if (!await current()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+            if (!await current()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
             signal?.throwIfAborted();
           }, invoke: options => callMachineAction({ machineId: request.machineId, serverId, method: RPC_METHODS.MACHINES_ROLES_SET,
             request: { ...request, serverId }, authority: context.authority, context, effectActionId: actionId, exactMachine: true,
@@ -557,7 +557,7 @@ export function createCliMachineResourceActionDeps(
           const request = MACHINE_ISOLATION_ACTION_INPUT_SCHEMAS[actionId].parse(input);
           return executeCapturedMachineAction({ actionId, assertCurrent: async () => {
             signal?.throwIfAborted();
-            if (!await current()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+            if (!await current()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
             signal?.throwIfAborted();
           }, invoke: options => callMachineAction({ machineId: request.machineId, serverId, method: RPC_METHODS.MACHINES_ISOLATION_SET,
             request: { ...request, serverId }, authority: context.authority, context, effectActionId: actionId, exactMachine: true,
@@ -586,7 +586,7 @@ export function createCliMachineResourceActionDeps(
         const denied = await projectAccountAdmission(serverId, context);
         if (denied) throw Object.assign(new Error(denied.errorCode), { code: denied.errorCode });
         await assertProjectRequesterCurrent(context);
-        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+        if (params.isCredentialCurrent && !await params.isCredentialCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
         signal?.throwIfAborted();
       };
       const targetLocalAction = params.machineGuardAction;
@@ -616,7 +616,7 @@ export function createCliMachineResourceActionDeps(
           if (denied) throw Object.assign(new Error('server_target_mismatch'), { code: 'server_target_mismatch' });
           if (params.isCredentialCurrent && !await params.isCredentialCurrent()
             || params.savedSecretOperationContext && !await params.savedSecretOperationContext.isCurrent()) {
-            throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'scope-retired', error: 'scope-retired' });
           }
           context.signal?.throwIfAborted();
         },

@@ -5,7 +5,7 @@ import { EventEmitter } from 'node:events';
 import { createServer } from 'node:http';
 import type { Socket } from 'socket.io-client';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type {
     DaemonLocalServiceLauncherStartResponseV1,
@@ -492,7 +492,10 @@ describe('daemon local services machine rpc handlers', () => {
                     sourceClass: { kind: 'managed_service', managedServiceId: requesterHandle.instanceId },
                     actions: expect.arrayContaining(['manage']),
                 })]);
-                expect(decoded.data.snapshot.targets[0]).not.toHaveProperty('browserTarget');
+                expect(decoded.data.snapshot.targets[0]?.browserTarget).toMatchObject({
+                    kind: 'localServicePreview', targetId: requesterHandle.serviceId, machineId: workspace.machineId,
+                });
+                expect(JSON.stringify(decoded.data.snapshot)).not.toContain('custodian-private-preview');
                 expect(decoded.data.snapshot.targets[0]?.actions).not.toContain('open_preview');
                 expect(verificationRequests).toBe(1);
                 expect(DaemonLocalServiceLauncherSnapshotResponseV1Schema.parse(await rpc.handleRequest({
@@ -583,7 +586,7 @@ describe('daemon local services machine rpc handlers', () => {
         },
     );
 
-    it('retains a host-admitted Agent launcher start in its canonical approval artifact until an actual decision', async () => {
+    it('refuses an unreviewable host-admitted Agent launcher start before creating an approval artifact', async () => {
         const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine_1',
             installationId: 'installation_1', role: 'use' as const, encryptionMode: 'plain' as const };
         const rpc = new RpcHandlerManager({ scopePrefix: 'machine_1', localMachineId: 'machine_1',
@@ -605,7 +608,6 @@ describe('daemon local services machine rpc handlers', () => {
         }) });
         await gate.refresh();
         let stored: ReturnType<typeof ApprovalRequestV2Schema.parse> | undefined;
-        let launcherExecutor: ReturnType<typeof createActionExecutor> | undefined;
         registerDaemonLocalServicesMachineRpcHandlers(rpc, { machineId: 'machine_1', localServicesLauncher: launcher,
             resolveLauncherActionExecutor: ({ ingress }) => {
                 const executor = createActionExecutor({
@@ -622,7 +624,6 @@ describe('daemon local services machine rpc handlers', () => {
                     featureGate: gate, ingress, routes: { launcherRoutes: launcher },
                 }),
                 });
-                launcherExecutor = executor;
                 // The actual receiving credential factory binds this Home, not Action input.
                 return { execute: (actionId, input, context) => executor.execute(actionId, input, { serverId: 'home-a', ...context }) };
             },
@@ -632,13 +633,8 @@ describe('daemon local services machine rpc handlers', () => {
             { signal: new AbortController().signal, rpcContext: { machineAdmission,
                 verifyMachineAdmissionCurrent: async () => true, callerAuthority: 'account_automation' },
                 localActionContext: { surface: 'agent', authority: 'account_automation', actionRequestId: 'service-approval-request' } });
-        expect(proposed).toMatchObject({ kind: 'approval_request_created', artifactId: 'service-start-approval' });
-        expect(stored).toMatchObject({ actionId: 'localServices.launcher.start', status: 'open', approval: { flow: 'deferred' } });
-        if (!launcherExecutor) throw new Error('Missing admitted launcher executor');
-        expect(await launcherExecutor.execute('approval.request.decide', { artifactId: 'service-start-approval', decision: 'reject' },
-            { serverId: 'home-a', surface: 'ui', authority: 'present_user', runtimeAccountId: 'owner' }))
-            .toMatchObject({ ok: true, result: { status: 'rejected' } });
-        expect(stored).toMatchObject({ status: 'rejected' });
+        expect(proposed).toEqual({ ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' });
+        expect(stored).toBeUndefined();
     });
     it.each(['direct', 'action'] as const)('finishes admitted %s launcher resolution and refuses the next arrival after withdrawal', async ingressKind => {
         const machineAdmission = {
@@ -654,9 +650,14 @@ describe('daemon local services machine rpc handlers', () => {
                 resolveInstallationId: () => 'installation_1', verifyMachineAdmission: async () => current,
             }),
         });
+        const owner = createManagedServicesOwner({
+            processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+            dependencies: () => { throw new Error('No managed dependency expected'); }, resolveScope: scope => scope,
+        });
+        onTestFinished(() => owner.dispose());
         const feed = createLocalServiceLauncherFeed({
             machineId: 'machine_1', inventoryRegistry: createLocalServiceInventoryRegistry(),
-            previewRegistry: createLocalServicePreviewRegistry(),
+            previewRegistry: createLocalServicePreviewRegistry(), projectManagedServices: owner,
         });
         const launcher = createLocalServiceLauncherRoutes({
             feed,
@@ -682,7 +683,7 @@ describe('daemon local services machine rpc handlers', () => {
                     });
                     return { execute: async (actionId, input, context = {}) => {
                         if (!isRuntimeActionIdV1(actionId)) throw new Error('Fixture only dispatches runtime Actions');
-                        return { ok: true, result: await execute({ actionId, input, context }) };
+                        return { ok: true, result: await execute({ actionId, input, context: { serverId: 'home-a', ...context } }) };
                     } };
                 };
         if (ingressKind === 'direct') registerDaemonLocalServicesMachineRpcHandlers(rpc, {
@@ -696,7 +697,8 @@ describe('daemon local services machine rpc handlers', () => {
             params: { machineId: 'machine_1', targetId: 'unavailable-declaration' },
             machineAdmission,
         };
-        expect(await rpc.handleRequest(request)).toMatchObject({ status: 'denied', reasonCode: 'launcher_target_unknown' });
+        const admitted = await rpc.handleRequest(request);
+        expect(admitted, JSON.stringify(admitted)).toMatchObject({ status: 'denied', reasonCode: 'launcher_target_unknown' });
         expect(await rpc.handleRequest(request)).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
         expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START,
             { machineId: 'machine_1', targetId: 'unavailable-declaration' }))
