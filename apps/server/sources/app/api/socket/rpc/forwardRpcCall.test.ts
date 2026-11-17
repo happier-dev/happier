@@ -90,6 +90,21 @@ describe('forwardRpcCall', () => {
         } finally { vi.restoreAllMocks(); }
     });
 
+    it('preserves unknown discovery codes in transport JSON while withholding them from the host log', async () => {
+        const io = new Server();
+        vi.spyOn(io.sockets.adapter, 'fetchSockets').mockRejectedValue(Object.assign(new Error('private discovery exception'), { code: 'private_native_code' }));
+        vi.mocked(log).mockClear();
+        try {
+            const response = await discoverRpcTargets({ io, userId: 'user', method: 'diagnostic-machine:read' });
+            expect(JSON.parse(JSON.stringify(response))).toEqual({ targets: [], methodRoomEmpty: false,
+                failureCause: { phase: 'rpc.discovery.target', errorClass: 'Error', errorCode: 'private_native_code', httpStatus: null } });
+            expect(vi.mocked(log).mock.calls).toEqual([[expect.objectContaining({ failureCause: {
+                phase: 'rpc.discovery.target', errorClass: 'Error', errorCode: null, httpStatus: null,
+            } }), expect.any(String)]]);
+            expect(JSON.stringify(vi.mocked(log).mock.calls)).not.toMatch(/private_native_code|private discovery exception/u);
+        } finally { vi.restoreAllMocks(); }
+    });
+
     it('retains a target cancellation transport cause without exposing exception prose', async () => {
         const io = new Server();
         vi.spyOn(io.sockets.adapter, 'broadcast').mockImplementation(() => { throw Object.assign(new Error('private cancellation failure'), { code: 'EIO' }); });

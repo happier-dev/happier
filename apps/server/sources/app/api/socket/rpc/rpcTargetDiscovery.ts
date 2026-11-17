@@ -142,18 +142,17 @@ export async function discoverRpcTargets(params: Readonly<{
         return { targets: admitted, methodRoomEmpty: snapshot.complete && targets.length === 0 };
     } catch (error) {
         const timeout = classifySocketClusterFetchFailureReason(error) === 'timeout';
-        const failureCause = projectActionFailureCauseV1(
-            timeout ? Object.assign(new Error('RPC discovery timeout'), { code: 'ETIMEDOUT' }) : error,
-            requiresGlobalUniqueness ? 'rpc.discovery.global_uniqueness' : 'rpc.discovery.target',
-            { allowUnknownErrorCode: false },
-        );
+        const cause = timeout ? Object.assign(new Error('RPC discovery timeout'), { code: 'ETIMEDOUT' }) : error;
+        const phase = requiresGlobalUniqueness ? 'rpc.discovery.global_uniqueness' : 'rpc.discovery.target';
+        const failureCause = projectActionFailureCauseV1(cause, phase);
+        const logCause = projectActionFailureCauseV1(cause, phase, { allowUnknownErrorCode: false });
         recordSocketClusterFetchSockets({
             durationMs: Date.now() - startedAt,
             result: "error",
             reason: classifySocketClusterFetchFailureReason(error),
         });
         log(
-            { module: "websocket-rpc", level: "warn", room, ...params.correlation, failureCause,
+            { module: "websocket-rpc", level: "warn", room, ...params.correlation, failureCause: logCause,
                 requiresGlobalUniqueness, observedTargetSocketIds: observedTargets.map(target => target.id),
                 localTargetSocketIds: observedTargets.filter(target => params.io.sockets?.sockets?.has(target.id))
                     .map(target => target.id) },
