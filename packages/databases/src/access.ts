@@ -8,8 +8,10 @@ export function resolveDatabaseRequesterKindV1(input: Readonly<{
     agentCaller?: boolean;
     authority?: PluginInvocationContext['authority'];
 }>): DatabaseRequesterKindV1 | undefined {
-    if (input.agentCaller === undefined || input.authority === undefined) return undefined;
-    return isDelegatedActionRequesterV1(input) ? 'agent' : 'person';
+    const { agentCaller, authority } = input;
+    if (agentCaller === undefined || authority === undefined) return undefined;
+    // Both facts are present here, so the shared predicate receives defined values only.
+    return isDelegatedActionRequesterV1({ agentCaller, authority }) ? 'agent' : 'person';
 }
 
 export type DatabaseAccessInputV1 = Readonly<{
