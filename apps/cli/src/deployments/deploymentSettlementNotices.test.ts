@@ -29,10 +29,45 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployment-protocol/v1';
+import { logger } from '@/ui/logger';
+import { readDeploymentNoticeHistory } from './deploymentNoticeRecovery';
+import { readDeploymentNoticeMachineLabels } from './deploymentNoticeLabels';
 
 afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
 describe('settlement notice admission and arrival cost', () => {
+  it('retains code-only causes when optional notice history and machine labels cannot be read', async () => {
+    const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    const receipt = createDeploymentReceiptDetailV1();
+    expect(await readDeploymentNoticeHistory((async function* () { yield receipt; })())).toEqual([receipt]);
+    expect(await readDeploymentNoticeHistory((async function* () {
+      throw Object.assign(new TypeError('PRIVATE-HISTORY'), { code: 'ECONNRESET', token: 'PRIVATE-TOKEN' });
+    })())).toEqual([]);
+    vi.spyOn(axios, 'get').mockRejectedValue(new RangeError('PRIVATE-MACHINE'));
+    expect(await readDeploymentNoticeMachineLabels({ token: 'notice-token', credentials: { token: 'notice-token', encryption: null },
+      serverHttpBaseUrl: 'http://notice-machines.test' })).toEqual(new Map());
+    expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      failureCause: { phase: 'deployment.notice.history', errorCode: 'ECONNRESET', httpStatus: null, errorClass: 'TypeError' },
+    }));
+    expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      failureCause: { phase: 'deployment.notice.machine_labels', errorCode: null, httpStatus: null, errorClass: 'Error' },
+    }));
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('PRIVATE-');
+  });
+
+  it('retains a local cause when alert selection falls back without changing its public shape', async () => {
+    const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) });
+    vi.spyOn(axios, 'post').mockRejectedValue(new TypeError('PRIVATE-SOURCE'));
+    expect(await readEnvironmentAlertDeliveryForHost({ credentials: { token: 'notice-token', encryption: null },
+      serverHttpBaseUrl: 'http://notice-source.test' }, 'environment', new AbortController().signal))
+      .toEqual({ kind: 'unavailable', code: 'content_unavailable' });
+    expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      failureCause: { phase: 'deployment.notice.alert_selection', errorCode: null, httpStatus: null, errorClass: 'TypeError' },
+    }));
+    expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('PRIVATE-');
+  });
+
   it('captures a paused saved Environment source as paused rather than legacy delivery absence', async () => {
     const credentials = { token: 'header.eyJzdWIiOiJvd25lciJ9.signature', encryption: null };
     const environmentId = 'production';

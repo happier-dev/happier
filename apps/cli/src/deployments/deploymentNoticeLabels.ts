@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { listCurrentAccountMachines } from '@/api/machine/resolveCurrentAccountMachineTarget';
 import { logger } from '@/ui/logger';
 
@@ -7,8 +8,8 @@ export async function readDeploymentNoticeMachineLabels(input: Parameters<typeof
         const machines = await listCurrentAccountMachines(input);
         return new Map(machines.filter(machine => machine.label !== machine.id).map(machine => [machine.id, machine.label]));
     } catch (error) {
-        if (!input.signal?.aborted) logger.infoFile('[deploymentHealth] Machine names unavailable', {
-            errorCode: error instanceof Error && 'code' in error ? error.code : 'machine_names_unavailable',
+        if (!input.signal?.aborted) logger.warnLocalFile('[deploymentHealth] Machine names unavailable', {
+            failureCause: projectActionFailureCauseV1(error, 'deployment.notice.machine_labels', { allowUnknownErrorCode: false }),
         });
         return new Map();
     }

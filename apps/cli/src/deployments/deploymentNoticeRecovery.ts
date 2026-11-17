@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 import { deploymentRevisionLabelV1, projectDeploymentReceiptSourceFactsV1, projectDeploymentReceiptFactsV1 } from '@happier-dev/deployments';
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -11,8 +12,8 @@ export async function readDeploymentNoticeHistory(receipts: AsyncIterable<Deploy
         if (receipts) for await (const receipt of receipts) history.push(receipt);
         return history;
     } catch (error) {
-        logger.infoFile('[deploymentHealth] Retained history unavailable', {
-            errorCode: error instanceof Error && 'code' in error ? error.code : 'history_read_failed',
+        logger.warnLocalFile('[deploymentHealth] Retained history unavailable', {
+            failureCause: projectActionFailureCauseV1(error, 'deployment.notice.history', { allowUnknownErrorCode: false }),
         });
         return [];
     }

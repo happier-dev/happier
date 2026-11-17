@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/v1';
 import { DeploymentFailedEventV1Schema, DeploymentReceiptOutcomeEventV1Schema, DeploymentReceiptEventSourceConfigV1Schema,
@@ -99,8 +100,8 @@ export function createPlatformFailureNotices(host: PlatformFailureNoticeHost) {
                 await deliver({ receipt: committed, signal: input.signal, controllerMachineId: environment.controllerMachineId });
             } catch (error) {
                 // Delivery availability cannot undo a committed private notice.
-                if (!input.signal.aborted) logger.infoFile('[deploymentHealth] Platform notice delivery unavailable', {
-                    errorCode: error instanceof Error && 'code' in error ? error.code : 'notice_delivery_failed',
+                if (!input.signal.aborted) logger.warnLocalFile('[deploymentHealth] Platform notice delivery unavailable', {
+                    failureCause: projectActionFailureCauseV1(error, 'deployment.notice.platform_delivery', { allowUnknownErrorCode: false }),
                 });
             }
             return { kind: 'consumed', changed: committed.changed, artifactId: committed.artifactId };

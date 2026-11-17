@@ -1,4 +1,4 @@
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentHealthAggregateLeaseV1 } from '@happier-dev/deployments';
 import type { StoredCredentials } from '@/persistence';
@@ -97,8 +97,8 @@ export function createConfiguredHealthCheckNotices(host: ConfiguredHealthCheckNo
         const committed = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => store.writeNotice(notice));
         try { await deliver({ receipt: committed, signal: input.signal, controllerMachineId, alerts: source.data.alerts }); }
         catch (error) {
-            if (!input.signal.aborted) logger.infoFile('[deploymentHealth] Check notice delivery unavailable', {
-                errorCode: error instanceof Error && 'code' in error ? error.code : 'notice_delivery_failed',
+            if (!input.signal.aborted) logger.warnLocalFile('[deploymentHealth] Check notice delivery unavailable', {
+                failureCause: projectActionFailureCauseV1(error, 'deployment.notice.check_delivery', { allowUnknownErrorCode: false }),
             });
         }
         if (committed.opened === true && source.data.investigation?.mode === 'auto_start') {
@@ -117,8 +117,8 @@ export function createConfiguredHealthCheckNotices(host: ConfiguredHealthCheckNo
                     await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => store.writeNotice({ ...notice,
                         body: `${notice.body}\n${outcome}` }));
                 } catch (error) {
-                    if (!input.signal.aborted) logger.infoFile('[deploymentHealth] Investigation notice update unavailable', {
-                        errorCode: error instanceof Error && 'code' in error ? error.code : 'notice_write_failed',
+                    if (!input.signal.aborted) logger.warnLocalFile('[deploymentHealth] Investigation notice update unavailable', {
+                        failureCause: projectActionFailureCauseV1(error, 'deployment.notice.investigation_update', { allowUnknownErrorCode: false }),
                     });
                 }
             }
@@ -228,8 +228,8 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
         attachHealth(owned, accountId);
     });
     void pending.catch(error => {
-        if (!controller.signal.aborted) logger.infoFile('[deploymentHealth] Notice admission failed', {
-            errorCode: error instanceof Error && 'code' in error ? error.code : 'notice_write_failed',
+        if (!controller.signal.aborted) logger.warnLocalFile('[deploymentHealth] Notice admission failed', {
+            failureCause: projectActionFailureCauseV1(error, 'deployment.notice.admission', { allowUnknownErrorCode: false }),
         });
     });
     function attachHealth(health: DeploymentHealthAggregateLeaseV1, accountId: string) {
@@ -279,8 +279,8 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                     controllerMachineId: fresh.environment.controllerMachineId, alerts: alertDelivery.alerts });
             });
             void pending.catch(error => {
-                if (!signal.aborted) logger.infoFile('[deploymentHealth] Aggregate notice write failed', {
-                    errorCode: error instanceof Error && 'code' in error ? error.code : 'notice_write_failed',
+                if (!signal.aborted) logger.warnLocalFile('[deploymentHealth] Aggregate notice write failed', {
+                    failureCause: projectActionFailureCauseV1(error, 'deployment.notice.aggregate_write', { allowUnknownErrorCode: false }),
                 });
             });
         });
@@ -336,8 +336,8 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
             // Keep failures observable without an unhandled background rejection.
             // A later genuine owner transition can progress; there is no retry timer.
             void pending.catch(error => {
-                if (!signal.aborted) logger.infoFile('[deploymentHealth] Notice write failed', {
-                    errorCode: error instanceof Error && 'code' in error ? error.code : 'notice_write_failed',
+                if (!signal.aborted) logger.warnLocalFile('[deploymentHealth] Notice write failed', {
+                    failureCause: projectActionFailureCauseV1(error, 'deployment.notice.service_write', { allowUnknownErrorCode: false }),
                 });
             });
         });

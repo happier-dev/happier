@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -26,6 +27,9 @@ export async function readEnvironmentAlertDeliveryForHost(host: Pick<OwnServerDe
     const selection = projectSavedHealthAlertSelection(source);
     return selection.kind === 'active' ? { kind: 'available', alerts: selection.alerts } : selection;
   } catch (error) {
+    if (!signal.aborted) logger.warnLocalFile('[deploymentHealth] Alert selection unavailable', {
+      failureCause: projectActionFailureCauseV1(error, 'deployment.notice.alert_selection', { allowUnknownErrorCode: false }),
+    });
     const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
       ? error.code : 'content_unavailable';
     return { kind: 'unavailable', code };
@@ -84,8 +88,8 @@ export function createBackupSettlementNotices(host: BackupNoticeHost) {
         controllerMachineId: environment.environment.controllerMachineId, alerts: input.delivery.alerts });
     } catch (error) {
       // The native result is already known. A notice failure cannot replay it.
-      if (!signal.aborted) logger.infoFile('[deploymentHealth] Backup settlement notice unavailable', {
-        errorCode: error instanceof Error && 'code' in error ? error.code : 'notice_write_failed',
+      if (!signal.aborted) logger.warnLocalFile('[deploymentHealth] Backup settlement notice unavailable', {
+        failureCause: projectActionFailureCauseV1(error, 'deployment.notice.backup_settlement', { allowUnknownErrorCode: false }),
       });
     }
   };
@@ -169,8 +173,8 @@ export function createDeploymentSettlementNotices(host: OwnServerDeploymentTarge
     } catch (error) {
       // The receipt has already settled. Alert availability cannot change its
       // result or authorize replay; another actual settlement is the next wake.
-      if (!signal.aborted) logger.infoFile('[deploymentHealth] Settlement notice unavailable', {
-        errorCode: error instanceof Error && 'code' in error ? error.code : 'notice_write_failed',
+      if (!signal.aborted) logger.warnLocalFile('[deploymentHealth] Settlement notice unavailable', {
+        failureCause: projectActionFailureCauseV1(error, 'deployment.notice.settlement', { allowUnknownErrorCode: false }),
       });
     }
   };
