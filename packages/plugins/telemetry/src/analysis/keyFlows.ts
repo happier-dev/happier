@@ -5,7 +5,8 @@ import type { KeyFlowConfig, KeyFlowReadInput } from '../healthSchemas.js';
 import { analyzeMetricWindow } from './metrics.js';
 
 export type KeyFlowMeasurements = NonNullable<HealthCheckResultV1['measurements']>;
-export type KeyFlowSelection = Readonly<{ serviceName: string; serviceVersion?: string; measure: KeyFlowReadInput['measure'] }>;
+export type KeyFlowSelection = Readonly<{ serviceName: string; serviceVersion?: string;
+    measure: Exclude<KeyFlowReadInput['measure'], { kind: 'spend' }> }>;
 export type KeyFlowWindowInput = KeyFlowSelection & Readonly<{ window: Readonly<{ since: number; until: number }>;
     points: readonly NormalizedMetricPoint[]; spans: readonly CaptureSummary[] }>;
 const kind = { pluginId: 'happier.telemetry', localId: 'key-flow' } as const;

@@ -2,6 +2,7 @@ import { z } from 'zod/mini';
 import { HealthCheckResultV1ProtocolSchema } from '@happier-dev/protocol/deployments/healthCheckV1';
 import { asProtocolZod, projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/internalProtocolZodAdapter';
 import { DatabaseTelemetryMetricIntervalV1Schema } from './databaseTelemetryMetricSeries.js';
+import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 const result = asProtocolZod(HealthCheckResultV1ProtocolSchema);
 const text = z.string().check(z.minLength(1));
@@ -11,9 +12,10 @@ const route = z.strictObject({ method: text, route: text });
 const runtime = z.strictObject({ kind: z.literal('runtime'), metricName: text,
     dimensions: z.optional(z.array(z.strictObject({ name: text, value: z.union([z.string(), z.number(), z.boolean()]) }))),
     statistic: z.enum(['latest', 'sum', 'mean', 'p50', 'p95']) });
-/** Saved key flows always name emitted routes or runtime metric identities. */
+/** Saved key flows select emitted routes, runtime metrics or API-equivalent app spend. */
 export const TelemetryKeyFlowMeasureV1Schema = z.union([
     z.strictObject({ kind: z.literal('route'), routes: z.array(route).check(z.minLength(1)), statistic: routeStatistic }), runtime,
+    z.strictObject({ kind: z.literal('spend'), costMode: z.literal('api_equivalent') }),
 ]);
 const selection = { environmentId: text, serviceName: text, serviceVersion: z.optional(text) };
 export const TelemetryKeyFlowConfigV1Schema = z.strictObject({ ...selection, measure: TelemetryKeyFlowMeasureV1Schema,
@@ -25,7 +27,7 @@ export const TelemetryMetricsReadInputV1Schema = z.strictObject({ ...selection, 
         z.strictObject({ kind: z.literal('http'), statistic: z.union([routeStatistic, z.literal('requests')]) })]) });
 export const TelemetryMetricsReadResultV1Schema = z.strictObject({ result,
     routes: z.array(z.strictObject({ method: z.string(), route: z.string(), result })),
-    trend: z.array(DatabaseTelemetryMetricIntervalV1Schema) });
+    trend: z.array(DatabaseTelemetryMetricIntervalV1Schema), usage: z.optional(UsageAnalyticsQueryResponseSchema) });
 export const TelemetryMetricsReadResultV1ProtocolSchema = projectZodProtocolSchema(TelemetryMetricsReadResultV1Schema);
 export const TelemetryMetricsReadInputV1ProtocolSchema = projectZodProtocolSchema(TelemetryMetricsReadInputV1Schema);
 export const TelemetryKeyFlowMeasureV1ProtocolSchema = projectZodProtocolSchema(TelemetryKeyFlowMeasureV1Schema);

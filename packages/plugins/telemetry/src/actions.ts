@@ -8,6 +8,7 @@ import { createCaptureReader } from './read.js';
 import type { CaptureRuntime } from './runtime.js';
 import type { CaptureListInput } from './store/capture.js';
 import type { createCaptureBackgroundOwner } from './background.js';
+import { readCaptureCostWindow } from './costs.js';
 
 /** Internal producer bindings. Public Action schemas and target admission remain
  * with the Database catalogue/access owners; operands here have already been admitted. */
@@ -48,6 +49,8 @@ export function createCaptureActionProducers(options: Readonly<{
 
 /** Public handlers consume already-admitted source/project producers; C6 metadata has one owner. */
 export type CapturePublicActionProducers = Readonly<{
+    readCapturedCosts?: (input: database.DatabaseCaptureCostsReadInputV1, context: PluginInvocationContext)
+        => database.DatabaseCaptureCostsReadResultV1 | Promise<database.DatabaseCaptureCostsReadResultV1>;
     captureStatus?: (input: database.DatabaseCaptureStatusInputV1, context: PluginInvocationContext)
         => database.DatabaseCaptureStatusResultV1 | Promise<database.DatabaseCaptureStatusResultV1>;
     listCapturedQueries?: (input: database.DatabaseCaptureQueriesListInputV1, context: PluginInvocationContext)
@@ -72,6 +75,17 @@ export type CapturePublicActionProducers = Readonly<{
 export function createCaptureActions(producers: CapturePublicActionProducers): Record<string, PluginActionDefinition> {
     const actions: Record<string, PluginActionDefinition> = {};
     const common = { execution: { target: 'daemon' }, scopes: ['global'], surfaces: ['ui', 'cli', 'agent', 'mcp', 'plugin'] } as const;
+    const readCapturedCosts = producers.readCapturedCosts;
+    if (readCapturedCosts) {
+        const { agentDefault: _agentDefault, ...metadata } = database.databaseActionMetadata[database.TELEMETRY_COSTS_READ_ACTION_ID_V1];
+        actions[database.databaseActionLocalIdV1(database.TELEMETRY_COSTS_READ_ACTION_ID_V1)] = {
+            ...common, ...metadata,
+            inputSchema: database.DatabaseCaptureCostsReadInputV1ProtocolSchema,
+            resultSchema: database.DatabaseCaptureCostsReadResultV1ProtocolSchema,
+            run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
+                await readCapturedCosts(input as database.DatabaseCaptureCostsReadInputV1, context)),
+        };
+    }
     const captureStatus = producers.captureStatus;
     if (captureStatus) {
         const { agentDefault: _agentDefault, ...metadata } = database.databaseActionMetadata[database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1];
@@ -196,6 +210,12 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
         return { ok: true as const, source: selected.source, items: [...items], ...(last && items.length === limit ? { nextCursor: { at: last.at, id: last.id } } : {}) };
     };
     return {
+        async readCapturedCosts(input: database.DatabaseCaptureCostsReadInputV1) {
+            return { ok: true as const, source: selected.source, ...await readCaptureCostWindow(selected.runtime, {
+                worktree: selected.partition, since: input.since, until: input.until, serviceName: input.serviceName,
+                serviceVersion: input.serviceVersion, granularity: input.granularity,
+            }) };
+        },
         async captureStatus(input: database.DatabaseCaptureStatusInputV1) {
             return { ok: true as const, source: selected.source, coverage: selected.runtime.ingest.coverage(selected.partition) };
         },
@@ -250,6 +270,9 @@ export function createCapturePublicActionProducers(options: Readonly<{
         finally { await lease.release(); }
     }
     return {
+        async readCapturedCosts(input, context) {
+            return withSource(input, context, database.TELEMETRY_COSTS_READ_ACTION_ID_V1, readers => readers.readCapturedCosts(input));
+        },
         async captureStatus(input, context) {
             return withSource(input, context, database.DATABASE_CAPTURE_STATUS_ACTION_ID_V1, readers => readers.captureStatus(input));
         },

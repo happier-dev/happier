@@ -5,8 +5,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import { compareDatabaseEvidenceWindowsV1, databaseActionLocalIdV1, databaseActionMetadata,
     TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1, TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
-import { readKeyFlowWindow } from './health.js';
-import { evaluateKeyFlow } from './analysis/keyFlows.js';
+import { evaluateKeyFlowWindow, keyFlowCapabilityDisabledReason, readKeyFlowWindows } from './health.js';
 import { regressionCompareInputSchema, regressionCompareResultSchema, regressionScheduleInputSchema,
     regressionScheduleResultSchema } from './regressionSchemas.js';
 
@@ -44,7 +43,8 @@ export const telemetryRegressionActions = {
             if (!admit) throw new PluginError({ code: 'deployment_target_role_unavailable' });
             const admitted = await admit({ serverId: input.serverId, environmentId: input.environmentId });
             const inconclusive = (reason: string) => ({ status: 'inconclusive' as const, reasons: [reason] });
-            if (admitted.capabilities.metrics !== true) return inconclusive('metrics_disabled');
+            const disabled = keyFlowCapabilityDisabledReason(input.measure, admitted.capabilities);
+            if (disabled) return inconclusive(disabled);
             const runtime = localCaptureBackground.readRuntime();
             if (!runtime) return inconclusive('collector_unavailable');
             const history = await successfulDeployments(context, { serverId: input.serverId, environmentId: input.environmentId });
@@ -57,14 +57,14 @@ export const telemetryRegressionActions = {
             if (duration <= 0) return { ...basis, ...inconclusive('observation_window_empty') };
             if (boundary - duration < previous.settledAtMs!) return { ...basis, ...inconclusive('previous_window_incomplete') };
             const selected = { environmentId: input.environmentId, serviceName: input.serviceName, measure: input.measure };
-            const [before, after] = await Promise.all([
-                readKeyFlowWindow(runtime, { ...selected, since: boundary - duration, until: boundary }),
-                readKeyFlowWindow(runtime, { ...selected, since: context.invokedAtMs - duration, until: context.invokedAtMs }),
-            ]);
+            const [before, after] = await readKeyFlowWindows(runtime, [
+                { ...selected, since: boundary - duration, until: boundary },
+                { ...selected, since: context.invokedAtMs - duration, until: context.invokedAtMs },
+            ], context);
             const comparison = compareDatabaseEvidenceWindowsV1(before.measurements, after.measurements);
             const evidence = { ...basis,
-                before: evaluateKeyFlow(before.measurements, undefined, context.invokedAtMs, admitted.collectorMachineId),
-                after: evaluateKeyFlow(after.measurements, undefined, context.invokedAtMs, admitted.collectorMachineId) };
+                before: evaluateKeyFlowWindow(before, undefined, context.invokedAtMs, admitted.collectorMachineId),
+                after: evaluateKeyFlowWindow(after, undefined, context.invokedAtMs, admitted.collectorMachineId) };
             return regressionCompareResultSchema.parse(projectNativeJsonValueForTransport(comparison.status === 'comparable'
                 ? { ...evidence, status: comparison.status, change: comparison.change, changePercent: comparison.changePercent }
                 : { ...evidence, ...comparison }));

@@ -5,6 +5,10 @@ import { resolveUsageCostBasis, type UsageCostMode } from '@happier-dev/protocol
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import type { DatabaseCaptureCostsReadResultV1 } from './databaseCaptureCosts.js';
 import type { DatabaseTelemetryMetricIntervalV1 } from './databaseTelemetryMetricSeries.js';
+export { UsageModelPriceOverridesV1Schema } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
+export { UsageModelPriceReadResultSchema } from '@happier-dev/protocol/usage/usageModelPriceDelivery';
+export type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
+export { projectUsagePageCost } from '@happier-dev/protocol/usage/usageCostFacts';
 
 type AppCostRead = Extract<DatabaseCaptureCostsReadResultV1, { ok: true }>;
 export type DatabaseAppUsageV1 = Readonly<{

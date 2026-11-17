@@ -55,6 +55,21 @@ reads expose duration-ranked observed child spans and log-to-trace/span links;
 an unobserved parent or span remains unresolved. These projections reuse the
 collector's existing detail storage and read Actions.
 
+App LLM capture retains only selected provider, model and operation names plus
+numeric `gen_ai` usage when the Environment's `appLlmCost` capability is enabled.
+Prompts, completions and tool arguments are omitted. The selected source,
+service/version and time window return grouped raw token operands rather than
+individual calls or a second usage ledger. Missing counters and unproven cache
+or reasoning inclusion remain unknown; the shared Usage token owner decides
+whether disjoint categories can be priced. Each call belongs to one currency
+or unreported-cost group, with coverage counts retained alongside the operands.
+
+The usage attribute names follow OpenTelemetry Semantic Conventions 1.45.
+`gen_ai.usage.cost` together with `gen_ai.usage.cost.currency` is an explicit
+Happier extension for a producer-reported amount and currency, not a standard
+OpenTelemetry cost attribute. An amount without its currency remains unknown.
+The collector stores and aggregates these values without consulting prices.
+
 App LLM cost operands can be projected with `projectDatabaseCaptureUsageV1` for
 the existing Usage cost, daily and breakdown renderers. Pass the catalog read
 through `usage.prices.get`, the invoking viewer's `usageModelPriceOverridesV1`,
@@ -67,6 +82,14 @@ alongside the accounting response, so lost observations are not zero spend.
 Telemetry Metric widget's LLM cost option. Its `DatabaseTelemetryMetricIntervalV1`
 shape is shared with metric analysis and health-check trends. Missing cost has
 no value; consumers preserve the associated Usage coverage.
+
+The Metric read accepts `{kind:'spend',costMode:'api_equivalent'}` and returns
+the same interval shape plus `usage`, the canonical viewer-priced Usage response
+with currency facts, coverage and catalog revision. The existing Key flow health
+kind accepts that measure for a saved spend threshold. It uses `appLlmCost`
+selection independently of Metrics; missing prices or lost observations remain
+inconclusive. Release comparisons price both selected windows in one viewer
+context and retain the catalog revision in finite health evidence.
 
 ## Evolving the ABI
 

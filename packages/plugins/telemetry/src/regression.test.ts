@@ -6,8 +6,68 @@ import { localCaptureBackground } from './background.js';
 import { captureMigrations } from './store/capture.js';
 import { createCaptureSqliteFixture } from './testing/sqlite.js';
 import type { NormalizedMetricPoint } from './otlp/types.js';
+import type { UsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 
 describe('retained regression Actions', () => {
+    it('compares cost-only retained windows with one invoking viewer pricing context and preserves its evidence', async () => {
+        const fixture = createCaptureSqliteFixture();
+        for (const migration of captureMigrations) await migration.up(fixture.db);
+        const storage = { daemon: { database: async () => fixture.db } } as unknown as PluginServices['storage'];
+        const calls: string[] = [];
+        const catalog: UsageModelPriceCatalog = { v: 1, models: { reference: { inputUsdPerMillion: 2, outputUsdPerMillion: 4 } },
+            provenance: { source: 'litellm', origin: 'fetched', asOfMs: 1, revision: 'regression-cost-fixture', fetchStatus: 'ready' } };
+        // Only the authenticated host Action and daemon SQLite adapters are substituted.
+        // Retained operands, viewer overrides, Usage pricing and the comparator stay real.
+        const actions = { execute: async (id: string) => {
+            calls.push(id);
+            if (id === 'deployments.receipts.list') return { ok: true, items: [
+                { id: 'live', state: 'succeeded', operation: 'deploy', settledAtMs: 2000 },
+                { id: 'old', state: 'succeeded', operation: 'deploy', settledAtMs: 500 },
+            ], nextCursor: null };
+            if (id === 'settings.get') return { anchor: 'usage.modelPrices', value: { 'private-model': { kind: 'map', modelId: 'reference' } } };
+            if (id === 'usage.prices.get') return catalog;
+            throw new Error(`Unexpected host Action ${id}`);
+        } } as unknown as PluginServices['actions'];
+        let admissions = 0;
+        let appLlmCost = true;
+        const deploymentDatabases = { admitTelemetryRead: async () => {
+            admissions++;
+            return { environment: { serverId: 'home', environmentId: 'env', revision: 1 }, collectorMachineId: 'collector',
+                capabilities: { queries: true, traces: true, metrics: false, appLlmCost } };
+        } } as unknown as PluginServices['deploymentDatabases'];
+        const lease = await localCaptureBackground.acquireRuntime({ signal: new AbortController().signal, services: { storage } });
+        const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN,
+            services: { storage, actions, deploymentDatabases } });
+        vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(3000);
+        try {
+            const tokens = { input: 1_000_000, output: 500_000, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: null };
+            const doubled = { ...tokens, input: 2_000_000, output: 1_000_000 };
+            const genAi = { provider: 'openai', modelId: 'private-model', requestedModel: 'private-model', operation: 'chat',
+                tokens, tokenCategories: tokens, reportedCost: { amount: 99, currency: 'EUR' } };
+            await lease.runtime.store.write([
+                { id: 'cost-before', worktree: 'environment:env', kind: 'span', source: 'otlp', at: 1500, serviceName: 'checkout', genAi },
+                { id: 'cost-after', worktree: 'environment:env', kind: 'span', source: 'otlp', at: 2500, serviceName: 'checkout',
+                    genAi: { ...genAi, tokens: doubled, tokenCategories: doubled } },
+            ]);
+            const compare = () => host.invokeAction('capture/regressions/compare', { serverId: 'home', environmentId: 'env',
+                serviceName: 'checkout', windowMs: 1000, measure: { kind: 'spend', costMode: 'api_equivalent' } });
+            const result = await compare();
+            expect(result).toMatchObject({ status: 'comparable', change: 4, changePercent: 100,
+                before: { measurements: { measure: 'spend', unit: 'USD', basis: 'catalog_estimate', value: 4 } },
+                after: { measurements: { measure: 'spend', unit: 'USD', basis: 'catalog_estimate', value: 8 } } });
+            for (const window of ['before', 'after'] as const) {
+                expect(result).toHaveProperty(`${window}.evidence.items`, expect.arrayContaining([
+                    expect.objectContaining({ text: expect.stringContaining('regression-cost-fixture') }),
+                ]));
+            }
+            expect(admissions).toBe(1);
+            expect(calls).toEqual(['deployments.receipts.list', 'settings.get', 'usage.prices.get']);
+            appLlmCost = false; calls.length = 0;
+            expect(await compare()).toEqual({ status: 'inconclusive', reasons: ['app_llm_cost_disabled'] });
+            expect(calls).toEqual([]);
+        } finally { vi.useRealTimers(); await host.dispose(); await lease.release(); fixture.close(); }
+    });
+
     it('uses current paged deployment history and retained windows, without writing a baseline or scheduling from compare', async () => {
         const fixture = createCaptureSqliteFixture();
         for (const migration of captureMigrations) await migration.up(fixture.db);
