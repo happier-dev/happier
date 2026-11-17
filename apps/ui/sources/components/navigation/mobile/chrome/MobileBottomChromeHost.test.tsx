@@ -232,6 +232,13 @@ describe('MobileBottomChromeHost mounted chrome', () => {
         expect(screen.findAllByType(MainAppTabBar)).toHaveLength(1);
         expect(screen.findAllByType(SessionCockpitTabBar)).toHaveLength(0);
     });
+    // A hidden destination is a flow catalogued only for its route (Personalize, a bot template, a Team's setup): no section
+    // or More entry claims it, so its steps own the bottom and no bar stands over them.
+    it.each(['/personalize', '/bot-template', '/teams/team-1/setup'])('draws no main bar over the %s flow', async pathname => {
+        route.pathname = pathname;
+        const screen = await renderScreen(<Harness />);
+        expect(screen.findAllByType(MainAppTabBar)).toHaveLength(0);
+    });
     it.each(['/settings/session', '/session/session-1', '/session/session-1/details'])('does not invent a bar from %s without a mounted owner', async pathname => {
         route.pathname = pathname; enableCockpit();
         if (pathname.endsWith('/details')) route.params.sourceSurface = 'browse';

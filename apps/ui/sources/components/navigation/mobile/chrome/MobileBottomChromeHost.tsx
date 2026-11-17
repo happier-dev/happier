@@ -37,7 +37,7 @@ import {
 import { parseSessionPaneUrlState, serializeSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 
 import { PhoneMainAppTabBar, usePhoneLauncherDestinationPinned } from '@/components/appShell/destinations/PhoneDestinationsMenu';
-import { isAppDestinationRootPath, resolveCurrentAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { isAppDestinationRootPath, isCompactAppDestinationVisible, resolveCurrentAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { useCompactAppDestinations } from '@/components/appShell/destinations/useCompactAppDestinations';
 import { PHONE_HOME_ROUTE } from '@/components/navigation/shell/PhoneHomeLogoButton';
 import { useMainAppTabState } from './MainAppTabStateProvider';
@@ -153,9 +153,10 @@ export const MobileBottomChromeHost = React.memo(function MobileBottomChromeHost
         ? resolveCurrentAppDestination(destinationCatalog, anchorPathname) : null), [anchorPathname, destinationCatalog]);
     const destinationPinned = usePhoneLauncherDestinationPinned(routeDestination);
     // Settings' pushed pages keep their own Back and no bar unless Settings is pinned; its own page is a main screen
-    // like the others (owner 11-10), decided by the catalog's one root answer.
+    // like the others (owner 11-10), decided by the catalog's one root answer. A hidden destination is a flow catalogued
+    // only for its route (Personalize, a Team's setup): no section or More entry claims it, so its steps own the bottom.
     const sectionPage = anchorPathname === PHONE_HOME_ROUTE
-        || (routeDestination !== null && (routeDestination.kind !== 'builtin' || routeDestination.column !== 'settings' || destinationPinned
+        || (routeDestination !== null && isCompactAppDestinationVisible(routeDestination) && (routeDestination.kind !== 'builtin' || routeDestination.column !== 'settings' || destinationPinned
             || (typeof anchorPathname === 'string' && isAppDestinationRootPath(destinationCatalog, anchorPathname))));
     // The root route is shared by the tabs, so the remembered tab answers there; any other page is its own destination,
     // and on one that isn't on the bar (More's Home included) no tab claims to be here.
