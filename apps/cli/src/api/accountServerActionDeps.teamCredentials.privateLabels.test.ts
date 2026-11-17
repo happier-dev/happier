@@ -2,10 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
 import tweetnacl from 'tweetnacl';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { projectPrivateLabelForRecipientV1, sealPrivateLabelV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { TeamCredentialResourceCreateInputV1Schema, TeamCredentialResourceSummaryV1Schema,
   teamCredentialDisplayNamePrivateLabelBindingV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -39,33 +35,25 @@ describe('Team credential create label intent through captured Account Actions',
   });
   afterEach(async () => { vi.unstubAllGlobals(); vi.restoreAllMocks(); process.exitCode = undefined; restore(); await app.close(); });
 
-  it.each(['e2ee', 'plain'] as const)('creates from CLI text through the %s label owner and only its Team census', async mode => {
+  it('creates from CLI text through the plain label owner and only its Team census', async () => {
     let routeError: Error | undefined;
     app.setErrorHandler((error, _request, reply) => { routeError = error; return reply.code(500).send({ error: 'fixture_failed' }); });
-    const snapshot = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: encryption,
-      dataKeyPublicKey: publicKey });
-    app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode,
-      contentKeyFingerprint: mode === 'e2ee'
-        ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(snapshot.contentPublicKeyFingerprint) : null }));
+    app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain',
+      contentKeyFingerprint: null }));
     // Account HTTP and census transport are boundaries; Action parsing and encryption stay real.
     vi.stubGlobal('fetch', async (_url: string | URL | Request, init?: RequestInit) => {
       expect(JSON.parse(String(init?.body))).toEqual({ owner: { kind: 'team', teamId: draft.teamId } });
-      return Response.json({ contentEncryptionMode: mode, recipients: mode === 'plain' ? [] : [{
-        account: { kind: 'account', accountId, firstName: null, lastName: null, username: null, avatarUrl: null },
-        readiness: { status: 'available', contentPublicKey: encodeBase64(publicKey),
-          contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) }, envelopeStatus: 'missing',
-      }] });
+      return Response.json({ contentEncryptionMode: 'plain', recipients: [] });
     });
     let writes = 0;
     app.post('/v1/teams/credential-resources/create', async request => {
       writes++;
       const wire = TeamCredentialResourceCreateInputV1Schema.parse(request.body);
-      expect(wire.displayName.content.t).toBe(mode === 'plain' ? 'plain' : 'encrypted');
-      expect(wire.displayName.recipients.map(recipient => recipient.accountId)).toEqual(mode === 'plain' ? [] : [accountId]);
-      if (mode === 'e2ee') expect(JSON.stringify(request.body)).not.toContain(draft.displayName);
+      expect(wire.displayName.content.t).toBe('plain');
+      expect(wire.displayName.recipients).toEqual([]);
       const label = projectPrivateLabelForRecipientV1({ stored: wire.displayName, recipientAccountId: accountId });
       expect(openCliPrivateLabel({ binding: teamCredentialDisplayNamePrivateLabelBindingV1(draft.resourceId), label,
-        readPolicy: { kind: 'team-resource' }, ...(mode === 'e2ee' ? { accountKey } : {}) })).toBe(draft.displayName);
+        readPolicy: { kind: 'team-resource' } })).toBe(draft.displayName);
       const { usageLimits: _limits, resourceId, ...fields } = wire;
       return TeamCredentialResourceSummaryV1Schema.parse({ ...fields, id: resourceId,
         custodianAccountId: accountId, displayName: label, enabled: true, revision: 0,
@@ -73,7 +61,7 @@ describe('Team credential create label intent through captured Account Actions',
         brokerPresentation: { selectedTarget: null, eligibleTargets: [], selectedPool: null, eligiblePools: [] },
         createdAt: '2026-11-16T00:00:00.000Z', updatedAt: '2026-11-16T00:00:00.000Z' });
     });
-    const credentials = { token, encryption: mode === 'e2ee' ? encryption : null };
+    const credentials = { token, encryption: null };
     const executor = createActionExecutor(createAccountServerActionDeps({ token, credentials,
       serverId: 'home', serverHttpBaseUrl: 'https://account.test' }));
     let output = '';

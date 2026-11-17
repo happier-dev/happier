@@ -20,6 +20,9 @@ export { allowRealServerSocketBoundary as allowRealActionServerSocketBoundary } 
 export { createMachineClientEnrollmentOutputFixture } from './machineClientEnrollmentOutputFixture';
 export { createAccountOutputFixture } from './machineAccountOutputContractFixture';
 export { createUiMachineOutputFixture } from './machinesOutputContractFixture';
+export { installBundledPluginUiArtifactsForTests, installBundledPluginUiDeclarationsForTests } from './mocks/bundledPluginUiAssets';
+export { prepareAuthenticationInventory } from './fixtures/connectedAccountAuthentication';
+export type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaration } from '@/sync/domains/plugins/availability/bundledPluginUiArtifactInventory';
 
 /** Real UI client for cross-app journeys; only the platform lock API is substituted. */
 export async function connectUiActionClient(params: Readonly<{ serverUrl: string; publicEndpoint?: string; addressAnchorUrl?: string; credentials: AuthCredentials }>) {

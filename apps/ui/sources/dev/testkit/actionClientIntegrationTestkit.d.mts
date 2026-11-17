@@ -2,6 +2,20 @@ import type { AuthCredentials } from '../../auth/storage/authCredentials.js';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaration } from '../../sync/domains/plugins/availability/bundledPluginUiArtifactInventory.js';
+export type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaration } from '../../sync/domains/plugins/availability/bundledPluginUiArtifactInventory.js';
+
+export function installBundledPluginUiArtifactsForTests(artifacts: BundledPluginUiAppArtifactInventory): () => void;
+export function installBundledPluginUiDeclarationsForTests(declarations: readonly PluginHostBundledUiDeclaration[]): () => void;
+export function prepareAuthenticationInventory(packaged: {
+    artifacts: unknown[]; declarations: unknown[]; files: Map<number, Uint8Array>; reads: number;
+}, input: Readonly<{
+    manifest: unknown;
+    target: Readonly<{ artifactId: string; exportName: string }>;
+    projectPath: string; entryPath: string; packageName: string;
+    additionalArtifacts?: readonly Readonly<{ target: Readonly<{ artifactId: string; exportName: string }>; entryPath: string }>[];
+    deferDeclaration?: boolean; onDeclarationLoad?: () => void;
+}>): Promise<{ pluginId: string; localId: string }>;
 
 export function createUiMachineOutputFixture(serverId: string): Readonly<{
     cases: ReadonlyMap<ActionId, () => unknown | Promise<unknown>>;
