@@ -31,8 +31,78 @@ import { forwardRpcCall } from './forwardRpcCall';
 import { buildRpcMethodRoom } from './rpcMethodRoom';
 import { registerSocketRoomDiscovery } from '../socketRoomDiscovery';
 import { log } from '@/utils/logging/log';
+import { discoverRpcTargets, readMachineRpcTargetPresence, readRegisteredRpcTargetPresence } from './rpcTargetDiscovery';
+import { cancelRpcTarget } from './cancelRpcTarget';
+import { projectRpcFailureDiagnostic } from './rpcFailureDiagnostic';
 
 describe('forwardRpcCall', () => {
+    it('keeps arbitrary remote cause strings outside the host log projection', () => {
+        const diagnostic = projectRpcFailureDiagnostic(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT,
+            { ok: false, errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN, failureCause: {
+                phase: 'rpc.remote', errorClass: 'RangeError', errorCode: 'private_remote_code', httpStatus: 503,
+            } }, 'rpc.forward');
+        expect(diagnostic?.failureCause).toEqual({ phase: 'rpc.remote' });
+        expect(JSON.stringify(diagnostic)).not.toMatch(/private_remote_code|RangeError|503/u);
+    });
+
+    it.each([
+        { error: Object.assign(new TypeError('private RPC boundary failure'), { code: 'EIO' }), errorCode: 'EIO', errorClass: 'TypeError' },
+        { error: Object.assign(new RangeError('private RPC boundary failure'), { code: 'private_arbitrary_code' }), errorCode: null, errorClass: 'RangeError' },
+    ])('retains a closed $errorClass ACK cause in one host diagnostic without changing JSON', async ({ error, errorCode, errorClass }) => {
+        const io = new Server();
+        // Socket.IO is the network boundary; discovery, forwarding and diagnostics stay real.
+        const target = { id: 'diagnostic-target', connected: true, data: {},
+            timeout: () => ({ emitWithAck: async () => { throw error; } }) };
+        const fetchSockets = async () => [target];
+        vi.spyOn(io, 'in').mockReturnValue({ fetchSockets, timeout: () => ({ fetchSockets }) } as unknown as ReturnType<Server['in']>);
+        vi.mocked(log).mockClear();
+        try {
+            const response = await forwardRpcCall({ io, targetUserId: 'user',
+                method: `diagnostic-session:${RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT}`, callParams: {}, traceId: 'diagnostic-request' });
+            expect(JSON.parse(JSON.stringify(response))).toEqual({ ok: false, error: 'private RPC boundary failure' });
+            const failures = vi.mocked(log).mock.calls.filter(([data]) => data.event === 'rpc-failed');
+            expect(failures).toEqual([[expect.objectContaining({ failureCause: {
+                phase: 'rpc.forward', errorClass, errorCode, httpStatus: null,
+            } }), expect.any(String)]]);
+            expect(JSON.stringify(failures)).not.toMatch(/private RPC boundary failure|private_arbitrary_code/u);
+        } finally { vi.restoreAllMocks(); }
+    });
+
+    it('retains failed presence census causes while both observations stay unknown', async () => {
+        const io = new Server();
+        vi.spyOn(io.sockets.adapter, 'fetchSockets').mockRejectedValue(Object.assign(new Error('private census failure'), { code: 'EIO' }));
+        vi.mocked(log).mockClear();
+        try {
+            const method = `diagnostic-machine:${RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT}`;
+            expect(await readRegisteredRpcTargetPresence({ io, userId: 'user', method })).toBe('unknown');
+            expect(await readMachineRpcTargetPresence({ io, userId: 'user', method,
+                machineAdmission: { actorAccountId: 'user', custodianAccountId: 'user', machineId: 'diagnostic-machine',
+                    installationId: 'diagnostic-installation', role: 'use', encryptionMode: 'plain' } })).toBe('unknown');
+            expect(await discoverRpcTargets({ io, userId: 'user', method })).toMatchObject({
+                targets: [], methodRoomEmpty: false, failureCause: { errorCode: 'EIO' },
+            });
+            expect(vi.mocked(log).mock.calls.map(([data]) => data.failureCause)).toEqual([
+                { phase: 'rpc.discovery.presence', errorClass: 'Error', errorCode: 'EIO', httpStatus: null },
+                { phase: 'rpc.discovery.machine_presence', errorClass: 'Error', errorCode: 'EIO', httpStatus: null },
+                { phase: 'rpc.discovery.target', errorClass: 'Error', errorCode: 'EIO', httpStatus: null },
+            ]);
+            expect(JSON.stringify(vi.mocked(log).mock.calls)).not.toContain('private census failure');
+        } finally { vi.restoreAllMocks(); }
+    });
+
+    it('retains a target cancellation transport cause without exposing exception prose', async () => {
+        const io = new Server();
+        vi.spyOn(io.sockets.adapter, 'broadcast').mockImplementation(() => { throw Object.assign(new Error('private cancellation failure'), { code: 'EIO' }); });
+        vi.mocked(log).mockClear();
+        try {
+            expect(cancelRpcTarget({ io, targetSocketId: 'diagnostic-target', targetRequestId: 'diagnostic-request' })).toBeUndefined();
+            expect(vi.mocked(log).mock.calls).toEqual([[expect.objectContaining({ failureCause: {
+                phase: 'rpc.cancel.target', errorClass: 'Error', errorCode: 'EIO', httpStatus: null,
+            } }), expect.any(String)]]);
+            expect(JSON.stringify(vi.mocked(log).mock.calls)).not.toContain('private cancellation failure');
+        } finally { vi.restoreAllMocks(); }
+    });
+
     it('records an ordinary unavailable upload-init once with safe correlation and failure facts', async () => {
         const io = new Server();
         const method = `private-session:${RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT}`;

@@ -2,6 +2,7 @@ import type { Server } from 'socket.io';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { SocketRoomEmitter } from '@/app/events/socketRoomEmitter';
 import { log } from '@/utils/logging/log';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 /** Cancels only the exact Socket-RPC target and server-minted request correlation. */
 export function cancelRpcTarget(input: Readonly<{
@@ -14,7 +15,8 @@ export function cancelRpcTarget(input: Readonly<{
         const room = input.io.to(input.targetSocketId) as unknown as Pick<ReturnType<Server['to']>, 'emit'>;
         room.emit(SOCKET_RPC_EVENTS.CANCEL, { requestId: input.targetRequestId });
     } catch (error) {
-        log({ module: 'websocket-rpc', level: 'warn', targetSocketId: input.targetSocketId },
-            `RPC target cancellation failed: ${error instanceof Error ? error.message : String(error)}`);
+        log({ module: 'websocket-rpc', level: 'warn', targetSocketId: input.targetSocketId,
+            failureCause: projectActionFailureCauseV1(error, 'rpc.cancel.target', { allowUnknownErrorCode: false }) },
+        'RPC target cancellation failed');
     }
 }

@@ -40,7 +40,9 @@ export async function readRegisteredRpcTargetPresence(params: Readonly<{
         if (snapshot.error) throw snapshot.error;
         return "unknown";
     } catch (error) {
-        log({ module: "websocket-rpc", level: "error" }, `Error checking rpc handler availability: ${error}`);
+        log({ module: "websocket-rpc", level: "error",
+            failureCause: projectActionFailureCauseV1(error, 'rpc.discovery.presence', { allowUnknownErrorCode: false }) },
+        'RPC handler availability lookup failed');
         return "unknown";
     }
 }
@@ -80,9 +82,11 @@ export async function readMachineRpcTargetPresence(params: Readonly<{
             const methods = readSocketRegisteredRpcMethods(target);
             return methods !== null && !methods.includes(params.method);
         }) ? 'method-absent' : 'unknown';
-    } catch {
+    } catch (error) {
         // A failed cluster/DB lookup is not affirmative evidence that a daemon disconnected.
-        log({ module: 'websocket-rpc', level: 'warn', machineId }, 'Machine RPC daemon presence lookup failed');
+        log({ module: 'websocket-rpc', level: 'warn', machineId,
+            failureCause: projectActionFailureCauseV1(error, 'rpc.discovery.machine_presence', { allowUnknownErrorCode: false }) },
+        'Machine RPC daemon presence lookup failed');
         return 'unknown';
     }
 }
@@ -137,23 +141,25 @@ export async function discoverRpcTargets(params: Readonly<{
         });
         return { targets: admitted, methodRoomEmpty: snapshot.complete && targets.length === 0 };
     } catch (error) {
+        const timeout = classifySocketClusterFetchFailureReason(error) === 'timeout';
+        const failureCause = projectActionFailureCauseV1(
+            timeout ? Object.assign(new Error('RPC discovery timeout'), { code: 'ETIMEDOUT' }) : error,
+            requiresGlobalUniqueness ? 'rpc.discovery.global_uniqueness' : 'rpc.discovery.target',
+            { allowUnknownErrorCode: false },
+        );
         recordSocketClusterFetchSockets({
             durationMs: Date.now() - startedAt,
             result: "error",
             reason: classifySocketClusterFetchFailureReason(error),
         });
         log(
-            { module: "websocket-rpc", level: "warn", room, ...params.correlation,
+            { module: "websocket-rpc", level: "warn", room, ...params.correlation, failureCause,
                 requiresGlobalUniqueness, observedTargetSocketIds: observedTargets.map(target => target.id),
                 localTargetSocketIds: observedTargets.filter(target => params.io.sockets?.sockets?.has(target.id))
                     .map(target => target.id) },
-            `RPC target discovery failed for ${room}: ${error instanceof Error ? error.message : String(error)}`,
+            'RPC target discovery failed',
         );
         // An unsuccessful census cannot prove that a connected daemon lacks a method.
-        const timeout = classifySocketClusterFetchFailureReason(error) === 'timeout';
-        return { targets: [], methodRoomEmpty: false, failureCause: projectActionFailureCauseV1(
-            timeout ? Object.assign(new Error('RPC discovery timeout'), { code: 'ETIMEDOUT' }) : error,
-            requiresGlobalUniqueness ? 'rpc.discovery.global_uniqueness' : 'rpc.discovery.target',
-        ) };
+        return { targets: [], methodRoomEmpty: false, failureCause };
     }
 }

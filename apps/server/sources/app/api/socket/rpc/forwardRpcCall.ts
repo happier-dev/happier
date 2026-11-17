@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { CallerInputConstraintsV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
 import type { ExternalActionExecutionAuthorizationV1, ExternalActionRequestEnvelope } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 
 import { isPlainMachineDataKeyMarker } from '@happier-dev/protocol/machines/machineStoredContent';
 import { type SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -599,7 +600,7 @@ async function executeRpcForwardCall(params: Readonly<{
             durationMs: Date.now() - callStartedAt,
             result: "error",
         });
-        return {
+        const result: RpcForwardResult = {
             ok: false,
             ...(requestSubmitted && params.cancellation?.signal.aborted
                 ? { error: 'RPC request cancelled after request submission', errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN }
@@ -619,5 +620,12 @@ async function executeRpcForwardCall(params: Readonly<{
                 ? { error: error.message, errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE }
                 : { error: error instanceof Error ? error.message : "RPC call failed" }),
         };
+        // Keep transport JSON unchanged; the existing outer failure logger consumes this host-only cause.
+        return result.errorCode === undefined || result.errorCode === RPC_ERROR_CODES.OUTCOME_UNKNOWN
+            || result.errorCode === MACHINE_RPC_TIMEOUT_ERROR_CODE
+            ? withActionFailureCauseDiagnostic(result, {
+                failureCause: projectActionFailureCauseV1(error, 'rpc.forward', { allowUnknownErrorCode: false }),
+            }, 'rpc.forward')
+            : result;
     }
 }

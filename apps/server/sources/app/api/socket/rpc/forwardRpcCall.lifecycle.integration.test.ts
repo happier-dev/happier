@@ -3,7 +3,7 @@ import { io as connect, type Socket as ClientSocket } from 'socket.io-client';
 import type { Socket } from 'socket.io';
 import { MessageType } from 'socket.io-adapter';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { startRedisAdapterRecoveryCluster } from '@/testkit/redisAdapterRecoveryCluster';
 
@@ -17,6 +17,7 @@ vi.mock('@/app/monitoring/metrics/index', () => ({
 
 import { forwardRpcCall } from './forwardRpcCall';
 import { buildRpcMethodRoom } from './rpcMethodRoom';
+import * as logging from '@/utils/logging/log';
 
 function receiveRpcRequest(target: ClientSocket): Promise<readonly [unknown, (result: unknown) => void]> {
     return new Promise(resolve => {
@@ -109,11 +110,17 @@ describe('forwarded RPC ACK lifetime across Redis adapter nodes', () => {
 
     it.each([0, 1] as const)('retires a timed-out ACK on node %s before a later call succeeds', async destinationIndex => {
         const { source, target, targetSocket, method } = await fixture(destinationIndex);
+        const diagnostic = vi.spyOn(logging, 'log');
         const received = receiveRpcRequest(target);
         const response = forwardRpcCall({ io: source.io, targetUserId: 'account-one', method,
             callParams: {}, timeoutMs: 100 });
         const [, acknowledgeLate] = await received;
-        await expect(response).resolves.toMatchObject({ ok: false, error: 'operation has timed out' });
+        const result = await response;
+        expect(JSON.parse(JSON.stringify(result))).toEqual({ ok: false, error: 'operation has timed out', errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE });
+        const failures = diagnostic.mock.calls.filter(([data]) => data.event === 'rpc-failed');
+        expect(failures).toEqual([[expect.objectContaining({ failureCause: expect.objectContaining({
+            phase: 'rpc.forward', errorClass: 'Error', httpStatus: null,
+        }) }), expect.any(String)]]);
         await vi.waitFor(() => {
             expect((targetSocket as unknown as { acks: Map<number, unknown> }).acks.size).toBe(0);
             expect((source.io.of('/').adapter as unknown as { ackRequests: Map<string, unknown> }).ackRequests.size).toBe(0);
