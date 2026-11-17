@@ -22,6 +22,8 @@ import { projectServiceMoveStatusInput, projectServiceMoveSnapshotInput, project
     projectServiceMoveInspectionInput, projectServiceMoveStartInput, projectServiceMoveChildRole } from './projectServiceMoveChildren';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 
 type CanonicalChildAction = NonNullable<RuntimeActionExecuteArgs['executeCanonicalAction']>;
 
@@ -130,8 +132,9 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
                             currentTarget: { ...currentTarget, cwd: currentTarget.cwd, declaration: currentTarget.declaration,
                                 workspaceId: currentTarget.workspaceId },
                             workspace, instanceId: target.managedServiceId, snapshot: { state: observed.serviceState } };
-                    } catch {
+                    } catch (error) {
                         signal?.throwIfAborted();
+                        logger.warnLocalFile('[local-service] Move observation failed', projectActionFailureCauseV1(error, 'local_service.move.observe', { allowUnknownErrorCode: false }));
                         return refusal('service_observation_unavailable');
                     }
                 }

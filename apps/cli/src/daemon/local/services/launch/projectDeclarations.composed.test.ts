@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { logger } from '@/ui/logger';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { createServer } from 'node:net';
 import { createHash } from 'node:crypto';
@@ -983,6 +984,30 @@ describe('accepted Project Service declaration starter', () => {
                 await afterCopy?.();
                 return { relationshipId: relationship.relationshipId, controllerMachineId: workspace.machineId,
                     state: 'watching', alphaPath: root, betaPath: targetRoot, mode: relationship.mode,
+    it('retains Move observation transport failure causes before any effect', async () => {
+        const f = await fixture();
+        const move = createProjectServiceRelocationRoute({ serverBaseUrl: 'https://home.example',
+            credentials: f.runtime.credentials!, projectManagedServices: f.owner, resolveWorkspaceSyncHandoffAdapter: () => null });
+        const executor = createCliActionExecutor({ token: f.runtime.credentials!.token, credentials: f.runtime.credentials!,
+            serverId: 'home', serverHttpBaseUrl: 'https://home.example', sessionId: 'cli-global', mode: 'plain', ctx: null });
+        f.post.mockRejectedValue(Object.assign(new Error('private Move transport failure'), { code: 'ECONNREFUSED' }));
+        const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const workspace = { serverId: f.workspace.serverId, refId: f.workspace.id };
+        const destination = { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: 'other-machine' } };
+        expect(await move({ workspace, sourceMachineId: f.workspace.machineId, serviceName: 'worker', requestId: 'move-observation-failure',
+            currentTarget: { kind: 'managed_service', managedServiceId: 'missing-native-service', machineId: f.workspace.machineId,
+                workspaceId: f.workspace.id, cwd: f.root, declaration: f.request.declaration }, destination,
+            selectedTarget: { machineId: 'other-machine' }, desiredPlacement: { workspace, serviceName: 'worker',
+                expectedRevision: 'absent', expected: { kind: 'absent' }, value: { runsOn: destination, unavailable: 'fail' } } },
+        f.context, (action, input) => executor.execute(action, input, f.context), f.ingress))
+            .toMatchObject({ ok: false, errorCode: 'service_observation_unavailable' });
+        expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+            phase: 'local_service.move.observe', errorClass: 'Error',
+        }));
+        expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private Move transport failure');
+        expect(f.owner.listProjectServices()).toEqual([]);
+    });
+
                     endpointStates: { alpha: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
                         beta: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 } },
                     conflictCount: 0, lastCycleObservedAtMs: null };
@@ -1992,6 +2017,25 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
         const target = (await h.routes.getSnapshot()).targets.find(target => target.source === 'managed_service');
         expect(target).toMatchObject({ endpointUrl, serviceState: 'running', endpointKind: 'http', startedByAccountId: 'owner' });
         await h.owner.listProjectServices()[0]?.stop();
+    it('retains launcher Start failure causes when operation identity randomness fails before the effect', async () => {
+        const h = await fixture();
+        // Randomness is the operation owner's genuine OS boundary; admission and launch stay real.
+        Object.assign(h.runtime, { operationRuntime: createHostActionOperationRuntime({ machineId: h.workspace.machineId,
+            resolveAccountId: async () => 'owner', generateOperationId: () => {
+                throw Object.assign(new Error('private Start failure'), { code: 'EIO' });
+            } }) });
+        const review = await h.selectStart();
+        const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        try {
+            expect(await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context))
+                .toMatchObject({ status: 'failed', reasonCode: 'managed_start_failed' });
+            expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+                phase: 'local_service.start', errorClass: 'Error', errorCode: 'EIO',
+            }));
+            expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private Start failure');
+        } finally { diagnostic.mockRestore(); }
+    });
+
     });
 
     it('reads complete current managed bindings independently of launcher Hide and distinguishes owned empty', async () => {

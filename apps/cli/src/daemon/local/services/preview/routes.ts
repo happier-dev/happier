@@ -1,5 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import axios from '@/api/client/credentialAxios';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 import type {
     DaemonLocalServicePreviewOpenOrCreateRequestV1,
     DaemonLocalServicePreviewOpenOrCreateResponseV1,
@@ -143,6 +145,7 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
             return { ok: true as const, preview };
         } catch (error) {
             signal?.throwIfAborted();
+            logger.warnLocalFile('[local-service] Preview publication failed', projectActionFailureCauseV1(error, 'local_service.preview.publish', { allowUnknownErrorCode: false }));
             context?.signal.throwIfAborted();
             if (!stillRegistered() || occurrence?.ended) return { ok: false as const, reasonCode: 'preview_target_unresolved' };
             const reasonCode = admission.server ? failureReason(error) : 'preview_server_unavailable';
@@ -394,7 +397,10 @@ export function createLocalServicePreviewRoutes(input: Readonly<{
         },
 
         async revoke(request, context) {
-            let admission: Admission;
+                catch (error) {
+                    logger.warnLocalFile('[local-service] Preview revocation failed', projectActionFailureCauseV1(error, 'local_service.preview.revoke', { allowUnknownErrorCode: false }));
+                    return { ok: false, reasonCode: failureReason(error) };
+                }
             try { admission = await admitRequest(context, true); }
             catch { return { ok: false, reasonCode: 'requester_credentials_unavailable' }; }
             if (request.machineId !== input.machineId) {

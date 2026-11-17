@@ -9,6 +9,7 @@ import type { LocalServiceNativePrerequisiteV1, LocalServiceEstablishmentFailure
 import type { LocalServiceLauncherFeed } from './feed';
 import type { LocalServiceLauncherHistoryStore } from './leaves';
 import { logger } from '@/ui/logger';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createLocalServiceLauncherSnapshotReader } from './snapshotReader';
 
 export type LocalServiceLauncherStartTarget = (
@@ -273,7 +274,8 @@ export function createLocalServiceLauncherStartTarget<TDeclaration = unknown>(
         let outcome: LocalServiceLauncherStartExecutionOutcome;
         try {
             outcome = await phase('managed_start', () => input.startManagedDeclaration!(resolution.declaration, request, ingress, actionContext, executeCanonicalAction));
-        } catch {
+        } catch (error) {
+            logger.warnLocalFile('[local-service] Start failed', projectActionFailureCauseV1(error, 'local_service.start', { allowUnknownErrorCode: false }));
             outcome = { status: 'failed', reasonCode: 'managed_start_failed' };
         }
         if (outcome.status === 'succeeded') input.history?.record(request.targetId);

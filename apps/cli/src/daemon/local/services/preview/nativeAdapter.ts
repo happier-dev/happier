@@ -5,6 +5,8 @@ import { proxyLocalServicePreviewHttpRequest, type LocalServicePreviewTunnelStre
 import { proxyLocalServicePreviewWebSocketUpgrade } from '@happier-dev/peer-mediation/localServices/preview/websocketAdapter';
 import { createLocalServicePreviewUpgradeClient, writeLocalServicePreviewUpgradeError } from '@happier-dev/peer-mediation/localServices/preview/upgradeClient';
 import { writeLocalServicePreviewDownstream } from '@happier-dev/peer-mediation/localServices/preview/downstream';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 
 function requestLocation(target: string | undefined): URL | null {
     try { return new URL(target ?? '/', 'http://127.0.0.1'); }
@@ -21,7 +23,8 @@ export async function startLocalServicePreviewNativeAdapter(input: Readonly<{
     const sockets = new Set<Socket>();
     const track = (socket: Socket) => {
         sockets.add(socket);
-        socket.on('error', () => undefined);
+        socket.on('error', error => logger.warnLocalFile('[local-service] Preview socket failed',
+            projectActionFailureCauseV1(error, 'local_service.preview.socket', { allowUnknownErrorCode: false })));
         socket.once('close', () => sockets.delete(socket));
     };
     let nextStreamId = 0;

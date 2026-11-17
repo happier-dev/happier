@@ -1,4 +1,4 @@
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { request as httpRequest } from 'node:http';
 import { createInterface } from 'node:readline';
 import { Duplex } from 'node:stream';
@@ -6,6 +6,7 @@ import { Duplex } from 'node:stream';
 import { spawnAuthorizedHostExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import { computeManagedConnectionBackoffMs, DEFAULT_MANAGED_CONNECTION_POLICY } from '@happier-dev/connection-supervisor';
 import type { MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
+import { logger } from '@/ui/logger';
 
 type Subscription = Readonly<{ dispose(): Promise<void> }>;
 export type DockerEngineEventSource = (request: Readonly<{
@@ -99,7 +100,12 @@ export function openDockerEngineEvents(launch: HostAuthorizedPluginExecLaunch, p
                     lines = createInterface({ input: response, crlfDelay: Infinity });
                     lines.on('line', line => {
                         try { event(JSON.parse(line)); }
-                        catch { if (!closed) disconnected(); }
+                        catch (error) {
+                            if (!closed) {
+                                logger.warnLocalFile('[local-service] Docker event parsing failed', projectActionFailureCauseV1(error, 'native_compose.events.parse', { allowUnknownErrorCode: false }));
+                                disconnected();
+                            }
+                        }
                     });
                     response.once('error', () => { if (!closed) disconnected(); });
                     response.once('end', () => { if (!closed) disconnected(); });
@@ -268,7 +274,12 @@ function createEngine(retired: () => void) {
                                 ...(configurationDetails === undefined ? {} : { configurationDetails }) }];
                         }));
                     }
-                } catch { if (current === connection) down(); }
+                } catch (error) {
+                    if (current === connection) {
+                        logger.warnLocalFile('[local-service] Docker event inspection failed', projectActionFailureCauseV1(error, 'native_compose.events.inspect', { allowUnknownErrorCode: false }));
+                        down();
+                    }
+                }
             })().finally(() => { for (const resolve of requested) resolve(); inspectingSource = undefined; reconciling = undefined; schedule(); });
         });
     };
@@ -315,7 +326,12 @@ function createEngine(retired: () => void) {
                 recoveryAttempt = 0;
                 for (const registration of registrations.keys()) for (const id of registration.ids) pending.add(id);
                 schedule();
-            } catch { if (!closed) down(); }
+            } catch (error) {
+                if (!closed) {
+                    logger.warnLocalFile('[local-service] Docker event connection failed', projectActionFailureCauseV1(error, 'native_compose.events.connect', { allowUnknownErrorCode: false }));
+                    down();
+                }
+            }
         })().finally(() => { connectingSource = undefined; connecting = undefined; });
         return connecting;
     };

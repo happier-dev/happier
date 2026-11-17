@@ -10,6 +10,7 @@ import type { NormalizedLocalServiceInventoryEntry } from '../inventory/scanner'
 import type { LocalServicePreviewServerInput } from './serverRoutes';
 import { createServer, request as httpRequest } from 'node:http';
 import { once } from 'node:events';
+import { logger } from '@/ui/logger';
 import { spawn } from 'node:child_process';
 import { readProcessCensus } from '@/processes/census/processCensus';
 import * as processCensusBoundary from '@/processes/census/processCensus';
@@ -725,6 +726,32 @@ describe('createLocalServicePreviewRoutes lifecycle', () => {
         expect((await routes.getSnapshot()).previews).toEqual([opened.response.preview]);
     });
     it('reads preview snapshots without minting new viewer admissions', async () => {
+    it.each(['publish', 'revoke'] as const)('retains preview %s transport causes while keeping existing refusal results', async phase => {
+        const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const registry = createLocalServicePreviewRegistry();
+        const resource = LocalServicePreviewResourceV1Schema.parse({ previewId: 'publication-diagnostic', machineId: MACHINE_ID,
+            owner: { kind: 'user', id: 'account-1' }, target: { scheme: 'http', host: '127.0.0.1', port: 5173 },
+            initialPath: { pathname: '/' }, display: { title: 'Preview', addressLabel: 'Loopback' }, originMode: 'host' });
+        registerLocalServicePreview(registry, resource);
+        const failure = Object.assign(new Error('private preview publication failure'), { code: 'ECONNREFUSED' });
+        const routes = createRoutes({ machineId: MACHINE_ID, accountId: 'account-1', registry, server: {
+            token: 'daemon-token', serverBaseUrl: 'https://home.example.test', http: {
+                async post() { throw failure; }, async delete() { throw failure; },
+            },
+        } });
+        try {
+            const result = phase === 'publish'
+                ? await routes.openOrCreate({ machineId: MACHINE_ID, launchTargetId: resource.previewId })
+                : await routes.revoke({ machineId: MACHINE_ID, previewId: resource.previewId });
+            expect(result).toEqual({ ok: false, reasonCode: 'preview_registration_failed' });
+            expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+                phase: `local_service.preview.${phase}`, errorClass: 'Error', errorCode: 'ECONNREFUSED',
+            }));
+            expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private preview publication failure');
+            expect(registry.previewsById.has(resource.previewId)).toBe(true);
+        } finally { diagnostic.mockRestore(); }
+    });
+
         const routes = createLocalServicePreviewRoutes({ machineId: MACHINE_ID, registry: createLocalServicePreviewRegistry(), inventoryRegistry: inventoryRegistryWith([inventoryEntry()]), now: () => 1_000 });
         const opened = await routes.openOrCreate({ machineId: MACHINE_ID, inventoryEntryId: 'entry-vite' });
         expect(opened.ok).toBe(true);
