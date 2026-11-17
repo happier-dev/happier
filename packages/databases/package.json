@@ -53,6 +53,6 @@
   },
   "dependencies": {
     "@happier-dev/database-protocol": "0.0.0",
-    "@happier-dev/protocol": "0.0.0"
+    "@happier-dev/plugin-sdk": "0.0.0"
   }
 }

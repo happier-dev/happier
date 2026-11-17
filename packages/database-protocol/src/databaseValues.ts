@@ -19,7 +19,7 @@ export const DatabaseValueV1Schema = z.discriminatedUnion('type', [
     z.strictObject({ type: z.literal('boolean'), value: z.boolean() }),
     z.strictObject({ type: z.literal('integer'), value: integer }),
     z.strictObject({ type: z.literal('decimal'), value: decimal }),
-    z.strictObject({ type: z.literal('float'), value: z.union([z.number(), z.enum(['NaN', 'Infinity', '-Infinity'])]) }),
+    z.strictObject({ type: z.literal('float'), value: z.union([z.number(), z.literal('NaN'), z.literal('Infinity'), z.literal('-Infinity')]) }),
     // Preserve the engine's JSON text, including integers beyond JS precision.
     z.strictObject({ type: z.literal('json'), value: z.string() }),
     z.strictObject({ type: z.literal('binary'), encoding: z.literal('base64'), value: base64 }),

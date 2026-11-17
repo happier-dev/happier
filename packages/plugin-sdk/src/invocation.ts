@@ -5,6 +5,7 @@ import type { PluginAutomationRunCause } from './automations.js';
 import type { PluginServices } from './services/index.js';
 import type { PresentationService } from './interactions.js';
 import type { ActionResolvedSessionTargetsV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
+import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
 import type {
     PluginIdentity,
     PluginInvocationContributionIdentity,
@@ -132,6 +133,13 @@ export interface PluginInvocationContext {
     /** Originating host request identity for diagnostics only; absent when none was issued. */
     readonly requestId?: string;
     readonly caller?: PluginInvocationCaller;
+    /** Authenticated host requester, independent of Action operands. */
+    readonly requesterAccount?: Readonly<{ accountId: string }>;
+    /** Exact executing Machine and installation captured by the host. */
+    readonly chosenMachine?: Readonly<{ machineId: string; installationId: string }>;
+    /** Canonical executor caller facts; these do not classify Automation policy. */
+    readonly agentCaller?: boolean;
+    readonly authority?: ActionRequiredAuthority;
     readonly session?: Readonly<{ id: string }>;
     /** Exact declared Session operands admitted by the host Action executor. */
     readonly sessionTargetsV1?: ActionResolvedSessionTargetsV1;

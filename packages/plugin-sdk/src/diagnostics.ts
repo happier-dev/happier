@@ -2,9 +2,15 @@ import { redactBugReportSensitiveText as canonicalRedactBugReportSensitiveText, 
 import { projectPluginFailureText as canonicalProjectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
 
 import type { PluginDiagnosticData } from '@happier-dev/cli-common/plugins/errors';
+import { isBaseCredentialDiagnosticKey as canonicalIsBaseCredentialDiagnosticKey,
+    isUnsafeTelemetryDataKey as canonicalIsUnsafeTelemetryDataKey } from '@happier-dev/protocol/common/sensitiveKeys';
 export type { PluginDiagnosticData, PluginRemediationData } from '@happier-dev/cli-common/plugins/errors';
 
 export type PluginDiagnosticSeverity = PluginDiagnosticData['severity'];
+
+/** Canonical key classifiers for secret-free structured diagnostics. */
+export const isBaseCredentialDiagnosticKey: (input: string) => boolean = canonicalIsBaseCredentialDiagnosticKey;
+export const isUnsafeTelemetryDataKey: (input: string) => boolean = canonicalIsUnsafeTelemetryDataKey;
 
 /** The Protocol redactor remains the sole runtime behavior owner. */
 export const redactBugReportSensitiveText: (input: string) => string = canonicalRedactBugReportSensitiveText;

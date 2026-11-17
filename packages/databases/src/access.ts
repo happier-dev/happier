@@ -1,11 +1,11 @@
-import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { DatabaseAccessDecisionV1, DatabaseAccessSummaryV1, DatabaseAgentAccessV1, DatabaseOperationClassV1,
     DatabaseRequesterKindV1 } from '@happier-dev/database-protocol';
 
 /** Fold host-admitted caller facts once for database access; older hosts remain unavailable. */
 export function resolveDatabaseRequesterKindV1(input: Readonly<{
     agentCaller?: boolean;
-    authority?: ActionRequiredAuthority;
+    authority?: PluginInvocationContext['authority'];
 }>): DatabaseRequesterKindV1 | undefined {
     if (input.agentCaller === undefined || input.authority === undefined) return undefined;
     return input.agentCaller || input.authority === 'account_automation' ? 'agent' : 'person';

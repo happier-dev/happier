@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from 'node:crypto';
-import { isBaseCredentialDiagnosticKey, isUnsafeTelemetryDataKey } from '@happier-dev/protocol/common/sensitiveKeys';
+import { isBaseCredentialDiagnosticKey, isUnsafeTelemetryDataKey } from '@happier-dev/plugin-sdk';
 import { maskDatabaseConnectionUrl, parseDatabaseConnectionUrl } from '../connection.js';
 import { PostgresqlInputError, type PostgresqlLexicalToken } from './input.js';
 import { normalizePostgresqlStatement } from './statement.js';

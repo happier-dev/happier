@@ -169,6 +169,7 @@ export type { PluginDaemonDatabaseDeclaration } from './definePlugin.js';
 export type { PluginDaemonDatabaseDefinition } from './definePlugin.js';
 export type { PluginDaemonDatabaseRuntimeProjection } from './definePlugin.js';
 export type { PluginDiagnosticData } from './diagnostics.js';
+export { isBaseCredentialDiagnosticKey, isUnsafeTelemetryDataKey } from './diagnostics.js';
 export type { PluginDragSourceContributionV1 } from './manifest.js';
 export type { PluginDragSourceRuntime } from './entityDragDrop.js';
 export type { PluginDropTargetContributionV1 } from './manifest.js';

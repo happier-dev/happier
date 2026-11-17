@@ -7,7 +7,7 @@ import {
     EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
     isExternalActionResultWithinResponseEnvelopeLimitV1,
     measureExternalActionResultResponseEnvelopeUtf8BytesV1,
-} from '@happier-dev/protocol/actions/externalActionLimits';
+} from '@happier-dev/plugin-sdk/actions';
 import { databaseRowsBindingV1 } from './rows.js';
 
 // Entries are typed JSON; measure their spelling without rebuilding the whole
