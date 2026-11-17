@@ -80,7 +80,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
     home: DeploymentSocketHomeFixture;
     createDeploymentActionDeps?(requester: RequesterAccountActionContext | undefined,
         operations: ReturnType<typeof createHostActionOperationRuntime>): Pick<ActionExecutorDeps,
-        'deploymentAction' | 'prepareDeploymentAction' | 'prepareDeploymentTeardown' | 'prepareDeploymentEnvironmentCreate' | 'prepareHostReviewedChildren'>;
+        'deploymentAction' | 'deploymentTelemetrySet' | 'prepareDeploymentAction' | 'prepareDeploymentTeardown' | 'prepareDeploymentEnvironmentCreate' | 'prepareHostReviewedChildren'>;
     projectManagedServices?: NonNullable<NonNullable<Parameters<typeof registerDaemonLocalServicesMachineRpcHandlers>[1]>['projectManagedServices']>;
     managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
     machineServiceAction?: NonNullable<Parameters<typeof createCliActionExecutorFromCredentials>[0]['machineActionDirectTargetTransport']>['machineServiceAction'];
@@ -143,6 +143,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
             workflowAcceptedAuthorizationCurrentness,
             runActionOperation: actionOperations.runActionOperation,
             deploymentAction: deployment?.deploymentAction,
+            deploymentTelemetrySet: deployment?.deploymentTelemetrySet,
             prepareDeploymentAction: deployment?.prepareDeploymentAction,
             prepareDeploymentTeardown: deployment?.prepareDeploymentTeardown,
             prepareDeploymentEnvironmentCreate: deployment?.prepareDeploymentEnvironmentCreate,

@@ -4,7 +4,7 @@ import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/re
 
 type DeploymentDeps = ReturnType<typeof createDaemonDeploymentActionDeps>;
 type DaemonDeploymentDeps = Pick<DeploymentDeps,
-  | 'deploymentAction' | 'deploymentRestore' | 'deploymentBackupAction' | 'projectReadinessRead'
+  | 'deploymentAction' | 'deploymentTelemetrySet' | 'deploymentRestore' | 'deploymentBackupAction' | 'projectReadinessRead'
   | 'deploymentTemplateInstantiate' | 'deploymentMoveToRepository' | 'prepareDeploymentTemplateInstantiation' | 'resolveEnvironmentApprovalScope'
   | 'prepareDeploymentAction' | 'prepareDeploymentTeardown' | 'prepareHostReviewedChildren'
   | 'readSetupAppArtifact' | 'readPendingDeploymentRecovery'>
@@ -30,6 +30,7 @@ export function createRequesterBoundDeploymentActionDeps(
   };
   return {
     deploymentAction: async (...args) => (await forContext(args[2])).deploymentAction(...args),
+    deploymentTelemetrySet: async (...args) => (await forContext(args[1])).deploymentTelemetrySet(...args),
     // Restore carries its retained prepare step; both bind custody from their own invocation context.
     deploymentRestore: Object.assign(
       async (...args: Parameters<DaemonDeploymentDeps['deploymentRestore']>) => (await forContext(args[1])).deploymentRestore(...args),

@@ -225,6 +225,7 @@ export type CliActionDepsParams = Readonly<{
   projectAction?: ActionExecutorDeps['projectAction'];
   /** Receiving daemon's storage carrier and admitted target executor. */
   deploymentAction?: ActionExecutorDeps['deploymentAction'];
+  deploymentTelemetrySet?: ActionExecutorDeps['deploymentTelemetrySet'];
   resolveEnvironmentApprovalScope?: ActionExecutorDeps['resolveEnvironmentApprovalScope'];
   prepareDeploymentAction?: ActionExecutorDeps['prepareDeploymentAction'];
   prepareDeploymentTeardown?: ActionExecutorDeps['prepareDeploymentTeardown'];

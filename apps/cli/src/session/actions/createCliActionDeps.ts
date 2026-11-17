@@ -1148,6 +1148,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       return bindApprovalProfileV1(catalog ?? [], id);
     },
     resolveEnvironmentApprovalScope: params.resolveEnvironmentApprovalScope ?? deploymentStorageDeps.resolveEnvironmentApprovalScope,
+    ...(params.deploymentTelemetrySet ? { deploymentTelemetrySet: params.deploymentTelemetrySet } : {}),
     ...(params.prepareDeploymentAction ? { prepareDeploymentAction: params.prepareDeploymentAction } : {}),
     ...(params.prepareDeploymentTeardown ? { prepareDeploymentTeardown: params.prepareDeploymentTeardown } : {}),
     ...(params.prepareDeploymentEnvironmentCreate ? { prepareDeploymentEnvironmentCreate: params.prepareDeploymentEnvironmentCreate } : {}),

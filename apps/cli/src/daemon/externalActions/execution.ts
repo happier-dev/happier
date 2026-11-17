@@ -1219,6 +1219,7 @@ resolveServerFeaturesSnapshot?: () =>
           : {}),
         ...(projectAction ? { projectAction } : {}),
         ...(deploymentDeps ? { deploymentAction: deploymentDeps.deploymentAction,
+          deploymentTelemetrySet: deploymentDeps.deploymentTelemetrySet,
           deploymentRestore: deploymentDeps.deploymentRestore,
           deploymentBackupAction: deploymentDeps.deploymentBackupAction,
           projectReadinessRead: deploymentDeps.projectReadinessRead,
