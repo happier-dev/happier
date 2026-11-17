@@ -104,6 +104,14 @@ inside the encrypted request payload. The public Open VSX source keeps its
 existing direct/browser and native/daemon placements. Opening an unversioned theme
 resolves latest in the acquisition itself, without a preceding metadata read.
 
+The Store's existing listing controller and body present acquired theme faces in
+both pane and page layouts. Closing the listing releases its acquisition but
+retains the local try-on; one shell host presents its origin-aware Keep/Install
+and Revert controls. Installing the inspected preview uses Keep and its acquired
+package, while an explicit Install resolves latest. Installed faces expose the
+canonical Uninstall Action and its approval. Removing them preserves user-owned
+copies; a missing selected Artifact renders the mode's base without rewriting
+the saved preference.
 
 Plugin declarations are read-only locations from the existing lazy contribution
 catalog. Their Account union retains proven Machine suppliers, including retained
