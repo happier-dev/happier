@@ -39,7 +39,7 @@ export function SessionLogScreen() {
         routeScope.hydrationOptions,
     );
     const sessionHydrated = isSessionRouteHydrationAvailable(routeHydrationState);
-    const session = useSession(sessionId);
+    const session = useSession(sessionId, routeScope.hydrationOptions?.serverId);
     const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
 
     const metadataLogPath = React.useMemo(() => {
@@ -49,7 +49,7 @@ export function SessionLogScreen() {
         return raw.length > 0 ? raw : null;
     }, [ownerMetadata]);
 
-    const resolvedMachineId = useSessionMachineTarget(sessionId)?.machineId ?? null;
+    const resolvedMachineId = useSessionMachineTarget(sessionId, routeScope.hydrationOptions?.serverId)?.machineId ?? null;
 
     const [tailText, setTailText] = React.useState('');
     const [resolvedLogPath, setResolvedLogPath] = React.useState<string | null>(null);
