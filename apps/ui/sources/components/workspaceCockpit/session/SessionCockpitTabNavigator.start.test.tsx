@@ -19,7 +19,9 @@ const { Modal, ModalProvider } = await import('@/modal');
 const { AppPaneProvider, useAppPaneContext } = await import('@/components/appShell/panes/AppPaneProvider');
 const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
 const { createSessionBoardDetailsTab } = await import('@/components/sessions/panes/details/sessionDetailsTabBuilders');
-const { SessionCockpitPanePresentationBoundary } = await import('./SessionCockpitTabNavigator');
+const { SessionCockpitPanePresentationBoundary, SessionCockpitSceneNavigationBoundary } = await import('./SessionCockpitTabNavigator');
+const { usePanePresentation } = await import('@/components/appShell/panes/panePresentation');
+const { useSessionCockpitSurfaceNavigation } = await import('./SessionCockpitSurfaceNavigation');
 
 afterEach(async () => { await act(async () => Modal.hideAll()); await standardCleanup(); });
 
@@ -59,6 +61,46 @@ it('retains phone Start before Session registration without leaving Chat, while 
         expect(navigate).toHaveBeenCalledExactlyOnceWith('tabs');
         expect(commitSurface).toHaveBeenCalledExactlyOnceWith('tabs');
         expect(router.replace).toHaveBeenCalledOnce();
+    } finally {
+        await screen.unmount();
+    }
+});
+
+it('keeps a scene\'s pane presentation and surface switch when a tab press re-renders it with fresh navigator helpers', async () => {
+    // A cockpit tab press re-renders every mounted scene with new navigator helpers, a rebuilt catalog and commit
+    // callback. Every pane-scope reader (transcript rows included) holds the presentation; every scene reader holds
+    // the switch. HEAD before: both changed identity on each press and rendered those readers (live Android,
+    // ~2.1k renders per press back to Chat under the scene's pane boundary).
+    let readerRenders = 0;
+    const seen: { presentation: unknown; navigation: unknown }[] = [];
+    const Reader = React.memo(function Reader() {
+        readerRenders += 1;
+        seen.push({ presentation: usePanePresentation(), navigation: useSessionCockpitSurfaceNavigation() });
+        return null;
+    });
+    const reader = <Reader />;
+    const scene = (navigate: (surface: string) => void, commitSurface: (surface: string) => void) => <AppPaneProvider>
+        <SessionCockpitSceneNavigationBoundary cockpit navigation={{ navigate, canGoBack: () => false, goBack: () => {} }} commitSurface={commitSurface}>
+            <SessionCockpitPanePresentationBoundary cockpit scopeId="phone-press" sessionId="s1" serverId="home"
+                catalog={[]} navigate={navigate} commitSurface={commitSurface}>{reader}</SessionCockpitPanePresentationBoundary>
+        </SessionCockpitSceneNavigationBoundary>
+    </AppPaneProvider>;
+    const screen = await renderScreen(scene(vi.fn(), vi.fn()));
+    try {
+        expect(readerRenders).toBe(1);
+        const latestNavigate = vi.fn();
+        const latestCommit = vi.fn();
+        await screen.update(scene(vi.fn(), vi.fn()));
+        await screen.update(scene(latestNavigate, latestCommit));
+        expect(readerRenders).toBe(1);
+        // The held switch and presentation act through the scene's latest helpers.
+        const { presentation, navigation } = seen[0]!;
+        await act(async () => (navigation as { switchSurface: (surface: string) => void }).switchSurface('git'));
+        expect(latestNavigate).toHaveBeenCalledExactlyOnceWith('git');
+        expect(latestCommit).toHaveBeenCalledExactlyOnceWith('git');
+        await act(async () => { (presentation as (intent: unknown) => void)({ scopeId: 'phone-press', pane: 'details', tab: createSessionBoardDetailsTab() }); });
+        expect(latestNavigate).toHaveBeenLastCalledWith('tabs');
+        expect(latestCommit).toHaveBeenLastCalledWith('tabs');
     } finally {
         await screen.unmount();
     }

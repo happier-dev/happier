@@ -361,22 +361,26 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
     );
 });
 
-function SessionCockpitSceneNavigationBoundary({ cockpit, navigation, commitSurface, children }: React.PropsWithChildren<Readonly<{
+export function SessionCockpitSceneNavigationBoundary({ cockpit, navigation, commitSurface, children }: React.PropsWithChildren<Readonly<{
     cockpit: boolean;
     navigation: Pick<BottomTabBarProps['navigation'], 'navigate' | 'canGoBack' | 'goBack'>;
     commitSurface: (surface: SessionMobileSurface) => void;
 }>>) {
-    const { navigate, canGoBack, goBack } = navigation;
-    const switchSurface = React.useCallback((surface: SessionMobileSurface) => {
-        navigate(surface);
-        commitSurface(surface);
-    }, [commitSurface, navigate]);
-    const returnToPreviousSurface = React.useCallback(() => {
-        if (canGoBack()) goBack();
-        else navigate('chat');
-    }, [canGoBack, goBack, navigate]);
-    const value = React.useMemo(() => cockpit ? { switchSurface, returnToPreviousSurface } : null,
-        [cockpit, returnToPreviousSurface, switchSurface]);
+    // Every tab press re-renders each scene with fresh navigator helpers. They are read when a surface switches, so
+    // the switch every scene reader holds keeps its identity and a press does not render those readers.
+    const latest = React.useRef({ navigation, commitSurface });
+    latest.current = { navigation, commitSurface };
+    const value = React.useMemo(() => cockpit ? {
+        switchSurface: (surface: SessionMobileSurface) => {
+            latest.current.navigation.navigate(surface);
+            latest.current.commitSurface(surface);
+        },
+        returnToPreviousSurface: () => {
+            const current = latest.current.navigation;
+            if (current.canGoBack()) current.goBack();
+            else current.navigate('chat');
+        },
+    } : null, [cockpit]);
     return <SessionCockpitSurfaceNavigationProvider value={value}>{children}</SessionCockpitSurfaceNavigationProvider>;
 }
 
@@ -394,7 +398,12 @@ export function SessionCockpitPanePresentationBoundary(props: React.PropsWithChi
     // Read when a page opens, so workspace edits never re-create this presenter for every pane opener.
     const workspacePhone = React.useRef<WorkspacePhoneControls | null>(null);
     workspacePhone.current = useOptionalWorkspaceNavigation()?.phone ?? null;
+    // A tab press re-renders each scene with fresh navigator helpers and catalog; they are read when a pane opens,
+    // so the presentation every pane-scope reader holds (transcript rows included) keeps its identity.
+    const latestProps = React.useRef({ props, router });
+    latestProps.current = { props, router };
     const presentPane = React.useCallback<PanePresentation>((intent) => {
+        const { props, router } = latestProps.current;
         if (intent.scopeId !== props.scopeId) return;
         if (intent.pane === 'details' && intent.start) return;
         if (intent.pane === 'details') {
@@ -426,7 +435,7 @@ export function SessionCockpitPanePresentationBoundary(props: React.PropsWithChi
         if (!target) return;
         props.navigate(target);
         props.commitSurface(target);
-    }, [props.catalog, props.commitSurface, props.navigate, props.scopeId, props.serverId, props.sessionId, router]);
+    }, []);
     // The phone has no side rail: its scenes are the rail's tabs. A scene that asks the scope's chooser for a
     // tab (an ended preview's Go to Services) gets this catalog and the same scene switch as presentPane.
     // The ref is stable and its reads are live, so a consumer sees the tabs on its first render.
