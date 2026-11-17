@@ -158,19 +158,25 @@ describe('Artifact-backed theme source', () => {
         });
         let renders = 0;
         let read: ReturnType<typeof useThemeProfileDocument> | null = null;
+        let header: ReturnType<typeof useThemeLibraryEntry> = null;
         const Probe = React.memo(function Probe({ enabled }: { enabled: boolean }) {
             renders++;
             read = useThemeProfileDocument(reference, enabled);
+            header = useThemeLibraryEntry(reference, enabled);
             return null;
         });
         const shown = <Probe enabled />;
         const hidden = <Probe enabled={false} />;
         const surface = (name: string, child: React.ReactNode) => <AppShellPluginUiProjectionValueProvider value={value(name)}>{child}</AppShellPluginUiProjectionValueProvider>;
-        const screen = await renderScreen(surface('Original', shown));
+        const screen = await renderScreen(surface('Original', hidden));
+        const currentHeader = (): ReturnType<typeof useThemeLibraryEntry> => header;
+        expect(currentHeader()?.name).toBe('Original');
+        await screen.update(surface('Original', shown));
         const current = () => read as ReturnType<typeof useThemeProfileDocument> | null;
         expect(current()?.document?.profile.name).toBe('Original');
         await screen.update(surface('Original', hidden));
         expect(current()?.document?.profile.name).toBe('Original');
+        expect(currentHeader()?.name).toBe('Original');
         renders = 0;
         for (let index = 1; index <= 10; index++) await screen.update(surface(`Changed ${index}`, hidden));
         expect(renders).toBe(0);

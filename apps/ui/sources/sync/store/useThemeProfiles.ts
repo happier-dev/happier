@@ -83,7 +83,7 @@ export function useThemeLibraryEntry(reference: ThemeReference | null, enabled =
     const id = reference?.kind === 'artifact' ? reference.id : '';
     const subscription = React.useMemo(() => ({ artifacts: [id] } satisfies StorageSubscriptionScope), [id]);
     const row = getStorage()(React.useCallback(state => id ? state.artifacts[id] ?? null : null, [id]), enabled ? subscription : noArtifactSubscription);
-    const plugin = usePluginThemeList(enabled && reference?.kind === 'plugin' ? reference : null);
+    const plugin = usePluginThemeList(reference?.kind === 'plugin' ? reference : null, enabled);
     return React.useMemo(() => {
         if (reference?.kind === 'artifact') return row && scope ? projectThemeProfileArtifactSummary(row, scope)?.entry ?? null : null;
         if (reference?.kind === 'built-in') return getBuiltInThemeLibraryEntries().find(entry => entry.reference.kind === 'built-in'
