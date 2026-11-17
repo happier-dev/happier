@@ -85,6 +85,13 @@ function buildReviewScopeGuidanceBlock(intentInput: unknown): string | null {
   if (!parsed.success) return null;
 
   const payload = parsed.data;
+  if (payload.scope === 'repository') {
+    return [
+      'Review scope:',
+      '- Inspect the entire repository, including unchanged and tracked files outside the current diff.',
+      '- Use the requested focus to guide inspection; do not restrict findings to changed files.',
+    ].join('\n');
+  }
   const baseLine = payload.base.kind === 'branch'
     ? `Base branch: ${payload.base.baseBranch}`
     : payload.base.kind === 'commit'

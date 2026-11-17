@@ -221,7 +221,8 @@ export async function resolveReviewScmScope(input: ResolveReviewScmScopeInput): 
     const committedPaths = changedPaths.filter((entry) => entry.hasCommittedDelta);
     const uncommittedPaths = changedPaths.filter((entry) => entry.hasUncommittedDelta);
     const explicitPaths = explicitSelectedPaths(reviewInput.record);
-    const selectedPaths = uniqueSafePaths(selectPathsForChangeType({
+    const scope = reviewInput.record.scope === 'repository' ? 'repository' : 'changes';
+    const selectedPaths = scope === 'repository' ? [] : uniqueSafePaths(selectPathsForChangeType({
       explicitPaths,
       changeType: reviewInput.changeType,
       committedPaths,
@@ -231,6 +232,7 @@ export async function resolveReviewScmScope(input: ResolveReviewScmScopeInput): 
 
     return ReviewScmScopeV1Schema.parse({
       kind: 'review_scm_scope.v1',
+      scope,
       status: 'supported',
       scmBackendId: status.snapshot.repo.backendId ?? selected.selection.backend.id,
       scmMode: status.snapshot.repo.mode ?? selected.selection.mode,

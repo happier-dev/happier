@@ -7,6 +7,13 @@ const reviewStartExports = reviewStart as typeof reviewStart & {
 };
 
 describe('ReviewStartInputSchema', () => {
+  it('distinguishes whole-repository reviews from changed-file reviews at admission', () => {
+    const input = { reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Find security issues.' };
+    expect(reviewStart.ReviewStartInputSchema.parse(input).scope).toBe('changes');
+    expect(reviewStart.ReviewStartInputSchema.parse({ ...input, scope: 'repository' }).scope).toBe('repository');
+    expect(reviewStart.ReviewStartInputSchema.safeParse({ ...input, scope: 'file' }).success).toBe(false);
+    expect(reviewStart.ReviewStartInputSchema.safeParse({ ...input, scope: 'repository', comparisonId: 'diff-1' }).success).toBe(false);
+  });
   it('admits the canonical explicit child default and rejects an invalid child selection', () => {
     const input = { engineIds: ['codex'], instructions: 'Review.' };
     expect(reviewStart.ReviewStartInputSchema.parse({ ...input, childSelection: 'agentDefault' }).childSelection)

@@ -61,6 +61,7 @@ export type ReviewScmScopeDiffV1 = z.infer<typeof ReviewScmScopeDiffV1Schema>;
 
 export const ReviewScmScopeV1Schema = lazyZodSchema(() => z.looseObject({
   kind: z.literal('review_scm_scope.v1'),
+  scope: z.optional(ReviewScopeSchema),
   status: z.enum(['supported', 'unsupported']),
   scmBackendId: z.nullable(ScmBackendIdSchema),
   scmMode: z.nullable(ScmRepoModeSchema),

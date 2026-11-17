@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { buildStandardReviewPrompt } from './buildStandardReviewPrompt';
 
 describe('buildStandardReviewPrompt', () => {
+  it('lets a Hunt inspect unchanged files instead of restricting it to a comparison', () => {
+    const prompt = buildStandardReviewPrompt({ instructions: 'Find security issues.', intentInput: {
+      reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Find security issues.', scope: 'repository',
+    } });
+    expect(prompt).toContain('entire repository');
+    expect(prompt).not.toContain('Change type:');
+    expect(prompt).not.toContain('Do not broaden');
+  });
   it('requires initial reviews to inspect accessible workspace context before finalizing', () => {
     const prompt = buildStandardReviewPrompt({
       instructions: 'Review the current workspace thoroughly.',

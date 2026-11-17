@@ -163,6 +163,11 @@ describe('resolveReviewScmScope', () => {
         repositoryRoot: cwd,
         selectedPaths: ['src/review.ts'],
       });
+      // A repository review must not inherit the changed-path selection. The
+      // engine can inspect unchanged files under the resolved repository root.
+      await expect(resolveReviewScmScope({ cwd, intentInput: { scope: 'repository' } })).resolves.toMatchObject({
+        status: 'supported', scope: 'repository', repositoryRoot: cwd, selectedPaths: [],
+      });
       expect(scmCatalogMock.runWithScmBackendRegistryLease).toHaveBeenCalledWith(
         undefined,
         expect.any(Function),
