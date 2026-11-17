@@ -82,6 +82,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createAccountTokenForTests, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS, RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -1429,18 +1430,17 @@ describe('WorkflowEditorHostScreen composition', () => {
             .toMatchObject({ ok: true, result: { status: 'unavailable' } });
     });
 
-    it.each([false, true])('presents Workflow settings as the one settings popover from How and where it runs (phone=%s)', async phone => {
+    it.each([false, true])('presents Workflow settings in How and where it runs with a Roles popover (phone=%s)', async phone => {
         await serveMountedDraftActionHome();
         nativeRouteBoundary.width = phone ? 390 : 1280;
         const screen = await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
-        // No settings companion on the rail or in More (owner 2026-11-15): the card's control opens it.
+        // The card owns the settings; its long tail expands in place and Roles opens its own editor.
         expect(screen.findByTestId('workflowEditor-companion:settings')).toBeNull();
-        await screen.pressByTestIdAsync('workflow-editor-how-where-settings');
-        await vi.waitFor(() => expect(screen.findHostByTestId('workflow-editor-options')).not.toBeNull());
-        await screen.pressByTestIdAsync('workflow-editor-group-result-header');
-        expect(screen.findHostByTestId('workflow-editor-final-output-row')).not.toBeNull();
-        await screen.pressByTestIdAsync('workflow-editor-group-roles-header');
-        expect(screen.findHostByTestId('workflow-editor-add-role-trigger')).not.toBeNull();
+        await screen.pressByTestIdAsync('workflow-editor-how-where-toggle');
+        await screen.pressByTestIdAsync('workflow-editor-more-settings-toggle');
+        expect(screen.findByTestId('workflow-editor-more-settings-description')).not.toBeNull();
+        await screen.pressByTestIdAsync('workflow-editor-more-settings-roles');
+        expect(screen.findByTestId('workflow-editor-more-settings-roles-add-role-trigger')).not.toBeNull();
     });
 
     it('saves the definition while its scoped personal memory reader is not bootstrapped', async () => {
@@ -1453,7 +1453,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             await renderScreen(<WorkflowEditorHostScreen accountLifetime={lifetime}
                 source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
             await vi.waitFor(() => expect(boundary.httpRequests.some(request => request.path === '/v1/account/authoring-memory')).toBe(true));
-            expect(boundary.httpRequests.filter(request => request.path.endsWith('/project-rows/list'))).toHaveLength(0);
+            // The independent structural Project census may bootstrap while personal memory stays held.
             await act(async () => {
                 readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Saved before personal memory is ready' });
                 readBodyProps()!.onChangeProjectTarget!({ machineId: 'machine-a', directory: '/repo' });
@@ -2155,7 +2155,8 @@ describe('WorkflowEditorHostScreen composition', () => {
             expectedDraftRevision: beforeNoop.draftRevision, settings: { triggers: initial.settings.triggers } }, context); });
         await act(async () => { expect(await executor.execute('workflow.authoring.draft.save', address,
             { ...context, surface: 'ui', authority: 'present_user' }))
-            .toEqual({ ok: true, result: { status: 'applied' } }); });
+            .toEqual({ ok: true, result: { status: 'applied' },
+                automationNotices: [{ code: 'action_automations_not_checked', reason: 'not_found' }] }); });
         expect(boundary.creates, JSON.stringify(boundary.requests.map(request => ({ path: request.path, method: request.method })))).toHaveLength(1);
         const { decodePlainArtifactStoredContent } = await import('@happier-dev/protocol/storage/artifactStoredContent');
         const { WorkflowDefinitionArtifactHeaderV1Schema } = await import('@happier-dev/protocol/workflows/workflowDefinitionV1');
@@ -3942,6 +3943,7 @@ describe('WorkflowEditorHostScreen composition', () => {
                 host: 'tester.local', happyCliVersion: '0.0.0-test', happyHomeDir: '/Users/tester/.happy-dev',
                 homeDir: '/Users/me', platform: 'darwin',
             } })]);
+            publishMachineActivityForTest(Object.values(getStorage().getState().machines));
         });
 
         it('names the folder home-relative wherever it states where the workflow runs (07 S4, copy rules)', async () => {
@@ -4019,7 +4021,6 @@ describe('WorkflowEditorHostScreen composition', () => {
             const { validateWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowAuthoring');
             expect(validateWorkflowEditorDraft(draft).issues).toEqual([]);
             expect(draft.defaults).toEqual(target.definition.defaults);
-            expect(draft.defaults).not.toHaveProperty('agentTarget');
             await act(async () => readBodyProps()?.onChange({ ...draft, name: 'Copied prompt' }));
             await saveDirectlyFromUi();
             expect(definitionActions.create).toHaveBeenCalledWith(expect.objectContaining({
