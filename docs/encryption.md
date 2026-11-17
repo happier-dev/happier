@@ -5691,6 +5691,19 @@ the native log owner must still prove captured placement and occurrence and
 apply redaction before native I/O or disclosure. This binding is not evidence of
 native health, drift or log availability.
 
+Semantic database Actions in 0.3 development use that same signed read admission
+for deployment credential custody. Its `databaseTarget` is the canonical
+structural selection: Home, Project Source, Environment, target link and either
+the native receipt/service/database or managed contribution/project/branch/database.
+SQL and parameter values remain inside the Account-mode Action input. The opener
+compares the selection with decoded input; Home admits Source access and the
+executing installation once. Later signed reads and credential acquisition spend
+that finite scope without rechecking requester membership. Native acquisition
+must name the selected receipt and service; managed acquisition must name the
+selected data link and its controller. Existing custody owners select the stored
+content and grants. This projection adds no independent database permission or
+Environment revision requirement.
+
 The 0.3 development Publish and Prepare Actions use a separate closed
 `deploymentPreparationAdmission` on that same envelope and binding. It projects
 only the reviewed Source revision, optional existing Environment reference

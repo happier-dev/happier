@@ -1229,9 +1229,8 @@ export function isDeploymentReadPreparation(binding: ExternalActionExecutionAuth
     if (binding.deploymentPreparationAdmission && isDeploymentReceiptReadActionIdV1(effectActionId)
         && binding.deploymentChildRoot !== true) return false;
     const deploymentRoot = isDeploymentActionIdV1(binding.actionId)
-        || binding.actionId === PROJECT_READINESS_ACTION_IDS_V1[0]
-            && binding.deploymentReadAdmission?.actionId === binding.actionId;
-    if (deploymentRoot && effectActionId === 'projects.sources.read') return true;
+        || binding.deploymentReadAdmission?.actionId === binding.actionId;
+    if (deploymentRoot && effectActionId === PROJECT_SOURCE_READ_ACTION_ID_V1) return true;
     if (deploymentRoot && isDeploymentActionIdV1(effectActionId)) {
         const spec = getActionSpec(effectActionId);
         if (spec.sideEffectClass === 'read' && spec.serverTransport !== undefined) return true;
@@ -2674,6 +2673,17 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
         const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);
         if (!secret.success || secret.data.materialization.kind !== 'dataRole') return false;
         const body = secret.data, materialization = secret.data.materialization;
+        if ('databaseTarget' in admission) {
+            const target = admission.databaseTarget;
+            if (body.serverId !== verified.binding.serverIdentityId || body.environmentId !== admission.environmentId
+                || body.targetLinkId !== admission.targetLinkId || body.machineId !== verified.binding.machineId
+                || body.installationId !== verified.binding.installationId
+                || proof.routeInput !== undefined && !sameManagedInput(proof.routeInput, body)) return false;
+            return target.kind === 'deployment_service'
+                ? !('targetLinkId' in materialization) && materialization.deploymentId === target.deploymentId
+                    && materialization.service === target.serviceId ? {} : false
+                : 'targetLinkId' in materialization && materialization.targetLinkId === target.targetLinkId ? {} : false;
+        }
         if (admission.actionId === ACTION_INVOKE_ACTION_ID_V1) {
             if (!('targetLinkId' in materialization)) return false;
             if (body.serverId !== verified.binding.serverIdentityId || body.environmentId !== admission.environmentId
@@ -2693,8 +2703,10 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
     if (verified.signedChildPurpose.sibling.deploymentRead) {
         if (!await isAdmittedDeclaredDeploymentReadInScope(verified.binding, verified.effectActionId, proof)) return false;
         return { acceptedDeploymentReceipt: { read: { environmentId: admission.environmentId,
-            ...(admission.actionId === 'deployments.data.query' && verified.effectActionId === 'deployments.receipts.get'
-                ? { deploymentId: admission.deploymentId } : {}),
+            ...(verified.effectActionId === 'deployments.receipts.get'
+                ? 'deploymentId' in admission ? { deploymentId: admission.deploymentId }
+                    : 'databaseTarget' in admission && admission.databaseTarget.kind === 'deployment_service'
+                        ? { deploymentId: admission.databaseTarget.deploymentId } : {} : {}),
             contentCustody: true } } };
     }
     if (admission.actionId === ACTION_INVOKE_ACTION_ID_V1 && verified.effectActionId === admission.actionId

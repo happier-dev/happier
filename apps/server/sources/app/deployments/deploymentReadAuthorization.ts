@@ -6,6 +6,7 @@ import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/action
 import type { DeploymentRestartNativeAdmissionV1, DeploymentRestoreNativeAdmissionV1, DeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import type { ProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createDeploymentReadScopeV1 } from '@happier-dev/protocol/actions/specs/deploymentReadScope';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
@@ -57,21 +58,29 @@ export async function readAdmittedDeploymentReadScopeInTx(tx: Tx,
         | Extract<DeploymentReadAdmissionV1, { actionId: typeof ACTION_INVOKE_ACTION_ID_V1 }>,
 ): Promise<Readonly<{ artifactContents: readonly DeploymentContentReference[]; managedControllerMachineId?: string }> | null> {
     const select = { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } as const;
-    if ('action' in admission) {
+    const databaseTarget = 'databaseTarget' in admission ? admission.databaseTarget : undefined;
+    if ('action' in admission && databaseTarget?.kind !== 'deployment_service') {
         const environment = await tx.deploymentEnvironment.findFirst({ where: { id: admission.environmentId,
-            revision: admission.expectedRevision, deletedAt: null }, select: { ...select, controllerMachineId: true } });
+            ...('expectedRevision' in admission ? { revision: admission.expectedRevision } : {}), deletedAt: null },
+            select: { ...select, controllerMachineId: true } });
         const links = environment ? await readCurrentManagedDataTargetLinksInTx(tx, { environmentId: admission.environmentId,
             targetLinkIds: [admission.targetLinkId] }) : null;
-        if (!environment || !links || links[0]?.revision !== admission.expectedTargetLinkRevision
-            || links[0].pluginId !== admission.action.pluginId) return null;
+        if (!environment || !links || !links[0]
+            || 'expectedTargetLinkRevision' in admission && links[0].revision !== admission.expectedTargetLinkRevision
+            || links[0].pluginId !== (databaseTarget?.kind === 'managed_deployment' ? databaseTarget.contribution.pluginId : admission.action.pluginId)) return null;
         const link = await tx.deploymentTargetLink.findFirst({ where: { id: admission.targetLinkId,
-            environmentId: admission.environmentId }, select });
-        return link ? { artifactContents: [environment, link], managedControllerMachineId: environment.controllerMachineId } : null;
+            environmentId: admission.environmentId }, select: { ...select, contributionLocalId: true } });
+        if (!link || databaseTarget?.kind === 'managed_deployment'
+            && link.contributionLocalId !== databaseTarget.contribution.contributionId) return null;
+        return { artifactContents: [environment, link], managedControllerMachineId: environment.controllerMachineId };
     }
+    const deploymentId = databaseTarget?.kind === 'deployment_service' ? databaseTarget.deploymentId
+        : 'deploymentId' in admission ? admission.deploymentId : undefined;
+    if (!deploymentId) return null;
     // The exact receipt selects its own link; an omitted id never reaches a lookup (Prisma reads undefined as no filter).
     const [environment, receipt] = await Promise.all([
         tx.deploymentEnvironment.findUnique({ where: { id: admission.environmentId }, select }),
-        tx.deployment.findFirst({ where: { id: admission.deploymentId, environmentId: admission.environmentId },
+        tx.deployment.findFirst({ where: { id: deploymentId, environmentId: admission.environmentId },
             select: { ...select, targetLinkId: true } }),
     ]);
     if (!environment || !receipt || admission.targetLinkId !== undefined && receipt.targetLinkId !== admission.targetLinkId) return null;
@@ -88,7 +97,18 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
             || binding.target.machineId !== binding.machineId) return null;
         const loaded = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId,
             admission.environmentId, authentication);
-        if (!loaded.ok || loaded.row.deletedAt || loaded.row.controllerMachineId !== binding.machineId) return null;
+        if (!loaded.ok || loaded.row.deletedAt) return null;
+        if ('databaseTarget' in admission) {
+            const target = admission.databaseTarget;
+            if (target.environment.serverId !== binding.serverIdentityId || target.environment.projectSourceId !== loaded.row.projectSourceId
+                || target.environment.environmentId !== admission.environmentId || target.targetLinkId !== admission.targetLinkId) return null;
+            if (target.kind === 'deployment_service') return readDeploymentTargetAuthorizationInTx(tx, loaded.row, {
+                actionId: ACTION_INVOKE_ACTION_ID_V1, environmentId: admission.environmentId,
+                deploymentId: target.deploymentId, targetLinkId: target.targetLinkId,
+                machineId: binding.machineId, installationId: binding.installationId,
+            });
+        }
+        if (loaded.row.controllerMachineId !== binding.machineId) return null;
         const controller = await tx.machine.findFirst({ where: { id: binding.machineId,
             installationId: binding.installationId, revokedAt: null, replacedByMachineId: null }, select: { id: true } });
         if (!controller) return null;
@@ -127,10 +147,13 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
         controllerMachineId: string | null; revision: number; contentArtifactId: string;
         contentHeaderVersion: number; contentBodyVersion: number }>,
     admission: Exclude<DeploymentReadAdmissionV1, { actionId: ProjectReadinessActionIdV1 | typeof ACTION_INVOKE_ACTION_ID_V1 }> | DeploymentRestartNativeAdmissionV1
-        | DeploymentRestoreNativeAdmissionV1 | Omit<DeploymentRestoreNativeAdmissionV1, 'expectedRevision'> | DeploymentBackupNativeAdmissionV1,
+        | DeploymentRestoreNativeAdmissionV1 | Omit<DeploymentRestoreNativeAdmissionV1, 'expectedRevision'> | DeploymentBackupNativeAdmissionV1
+        | Readonly<{ actionId: typeof ACTION_INVOKE_ACTION_ID_V1; environmentId: string; deploymentId: string;
+            targetLinkId: string; machineId: string; installationId: string }>,
     contentAdmission?: Readonly<{ actorAccountId: string; owner: ProjectSourceOwnerV1 }>,
 ): Promise<DeploymentTargetAuthorization> {
-    const scope = getActionSpec(admission.actionId).deploymentReadScope;
+    const scope = admission.actionId === ACTION_INVOKE_ACTION_ID_V1 ? createDeploymentReadScopeV1()
+        : getActionSpec(admission.actionId).deploymentReadScope;
     if (scope?.target === 'current_health') {
         // Home admits who may read this runtime link's health on its controller;
         // the controller's health owner answers what each target kind can report.

@@ -21,6 +21,8 @@ import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploy
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { readDeploymentAuthorizationFailure } from '../deploymentAuthorizationFailure';
 import { projectDeploymentFailure } from '../deploymentFailure';
+import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -55,21 +57,27 @@ describe('installed Environment secret launch reader', () => {
             error: 'action_forbidden (requester_account_projection_missing)' });
     });
 
-    it('signs only the exact service-keyed read-role acquisition without a deployment mutation', async () => {
+    it.each([false, true])('signs only the selected service read-role acquisition (semantic=%s)', async semantic => {
         install();
         const reader = await import('./readEnvironmentSecretLaunchAdmissionForHost');
-        const actionId = 'deployments.data.query' as const;
+        const actionId = semantic ? 'action.invoke' as const : 'deployments.data.query' as const;
         const target = { kind: 'machine' as const, machineId: 'machine' };
         const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3,
             deploymentId: 'deployment', targetLinkId: 'link', machineId: 'machine', installationId: 'installation',
             service: 'postgres', sql: 'SELECT 1', params: {} };
-        const envelope = { v: 1 as const, requestId: 'query-request', target, input };
+        const action = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
+        if (!action) throw new Error('The canonical database Action has a qualified identity');
+        const actionInput = semantic ? { action, input: { operation: 'statement.run', mode: 'read',
+            target: { kind: 'deployment_service', environment: { serverId: 'home', projectSourceId: 'source',
+                environmentId: input.environmentId }, deploymentId: input.deploymentId, targetLinkId: input.targetLinkId,
+                serviceId: input.service, database: 'postgres' }, statement: { sql: input.sql, parameters: [] } } } : input;
+        const envelope = { v: 1 as const, requestId: 'query-request', target, input: actionInput };
         const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'query-root', binding: {
             accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home',
             actionId, target, machineId: 'machine', installationId: 'installation', custodianAccountId: 'owner',
             accountEncryptionMode: 'plain', requestId: envelope.requestId,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
-            deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, input),
+            deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, actionInput),
         } });
         const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: root, serverId: 'home',
             serverIdentityId: 'home', serverHttpBaseUrl: request.serverHttpBaseUrl, target,

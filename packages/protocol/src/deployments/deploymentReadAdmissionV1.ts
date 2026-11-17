@@ -13,12 +13,16 @@ import { ActionInvokeInputSchema } from '../actions/actionInvokeInput.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { DeploymentTargetDataQueryInputV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
+import { DatabaseDeploymentServiceTargetV1Schema, DatabaseManagedDeploymentTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
+import { isDatabaseActionIdV1 } from '../actions/actionIdsDatabaseV1.js';
+import { formatQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 export { isDeploymentReadActionIdV1, isDeploymentNativeReadActionIdV1, isDeploymentReadAdmissionActionIdV1 } from './deploymentActionIdsV1.js';
 
 const references = { environmentId: id, deploymentId: id, targetLinkId: id, machineId: id, installationId: id };
+const deploymentDatabaseTarget = z.union([DatabaseDeploymentServiceTargetV1Schema, DatabaseManagedDeploymentTargetV1Schema]);
 
-/** Non-content purpose only; the signed binding owns Home and the sealed input owns service identity. */
-export const DeploymentReadAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('actionId', [
+/** Structural credential scope only; SQL and parameters remain in the sealed Action input. */
+export const DeploymentReadAdmissionV1Schema = lazyZodSchema(() => z.union([z.discriminatedUnion('actionId', [
   z.strictObject({ actionId: z.literal(PROJECT_READINESS_ACTION_IDS_V1[0]), projectId: id, machineId: id,
     environments: z.array(z.strictObject({ environmentId: id, expectedRevision: revision })) }),
   z.strictObject({ actionId: z.literal('deployments.health.current'), environmentId: id, targetLinkId: id, machineId: id }),
@@ -29,13 +33,23 @@ export const DeploymentReadAdmissionV1Schema = lazyZodSchema(() => z.discriminat
   z.strictObject({ actionId: z.literal('deployments.data.query'), ...references, expectedRevision: revision }),
   z.strictObject({ actionId: z.literal(ACTION_INVOKE_ACTION_ID_V1), action: asProtocolZod(PluginContributionIdentityV1Schema),
     environmentId: id, targetLinkId: id, expectedRevision: revision, expectedTargetLinkRevision: revision }),
-]));
+]), z.strictObject({ actionId: z.literal(ACTION_INVOKE_ACTION_ID_V1), action: asProtocolZod(PluginContributionIdentityV1Schema).check(
+    z.refine(action => isDatabaseActionIdV1(formatQualifiedPluginActionId(action)))),
+  environmentId: id, targetLinkId: id, databaseTarget: deploymentDatabaseTarget })]));
 export type DeploymentReadAdmissionV1 = z.infer<typeof DeploymentReadAdmissionV1Schema>;
 
 export function projectDeploymentReadAdmissionV1(actionId: string, input: unknown): DeploymentReadAdmissionV1 | undefined {
   if (actionId === ACTION_INVOKE_ACTION_ID_V1) {
     const invoked = ActionInvokeInputSchema.safeParse(input);
     if (!invoked.success || invoked.data.input === undefined) return undefined;
+    if (isDatabaseActionIdV1(formatQualifiedPluginActionId(invoked.data.action))) {
+      const operands = invoked.data.input;
+      if (!operands || typeof operands !== 'object' || !('target' in operands)) return undefined;
+      const target = deploymentDatabaseTarget.safeParse(operands.target);
+      if (!target.success) return undefined;
+      return { actionId: ACTION_INVOKE_ACTION_ID_V1, action: invoked.data.action,
+        environmentId: target.data.environment.environmentId, targetLinkId: target.data.targetLinkId, databaseTarget: target.data };
+    }
     const query = DeploymentTargetDataQueryInputV1Schema.safeParse(invoked.data.input);
     if (!query.success) return undefined;
     const { environmentId, targetLinkId, expectedRevision, expectedTargetLinkRevision } = query.data;

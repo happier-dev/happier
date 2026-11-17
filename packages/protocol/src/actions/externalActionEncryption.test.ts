@@ -1,4 +1,6 @@
 import { projectExternalActionMachineRuntimeDemandV1, readExternalActionMachineRuntimeDemandV1 } from './actionSpecs.js';
+import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
+import { parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { describe, expect, it } from 'vitest';
 import { sealAccountScopedBlobCiphertext } from '../crypto/accountScopedCipher.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
@@ -681,6 +683,32 @@ describe('whole external Action encryption', () => {
         }
       }
     });
+
+  it.each(['deployment_service', 'managed_deployment'] as const)('binds encrypted semantic input to the exact %s credential scope', kind => {
+    const action = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
+    if (!action) throw new Error('The canonical database Action has a qualified identity');
+    const environment = { serverId: binding.serverIdentityId, projectSourceId: 'source', environmentId: 'environment' };
+    const target = kind === 'deployment_service'
+      ? { kind, environment, deploymentId: 'receipt', targetLinkId: 'runtime', serviceId: 'postgres', database: 'app' }
+      : { kind, environment, targetLinkId: 'data', contribution: { pluginId: 'happier.deploy.neon', contributionId: 'neon' },
+          platformProjectId: 'project', branchId: 'branch', database: 'app' };
+    const input = { action, input: { operation: 'statement.run', mode: 'read', target,
+      statement: { sql: 'SELECT $1', parameters: [{ type: 'text', value: 'private-sql-value' }] } } };
+    const readBinding = { ...binding, actionId: 'action.invoke' };
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: readBinding, input, material, randomBytes });
+    expect(request.deploymentReadAdmission).toEqual({ actionId: 'action.invoke', action,
+      environmentId: environment.environmentId, targetLinkId: target.targetLinkId, databaseTarget: target });
+    expect(JSON.stringify(request)).not.toContain('private-sql-value');
+    expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      envelope: request, binding: readBinding, material })).toEqual({ input });
+    for (const databaseTarget of [{ ...target, database: 'neighbor' }, { ...target, targetLinkId: 'neighbor' }]) {
+      expect(openExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+        envelope: { ...request, deploymentReadAdmission: { actionId: 'action.invoke', action,
+          environmentId: environment.environmentId, targetLinkId: target.targetLinkId, databaseTarget } },
+        binding: readBinding, material })).toBeNull();
+    }
+  });
 
   it.each(['deployments.health.read', 'deployments.drift.read', 'deployments.logs.read'] as const)(
     'binds non-content deployment read admission to the encrypted %s input', actionId => {

@@ -70,6 +70,10 @@ export const DATABASE_ACTION_IDS_V1 = [
 
 export type DatabaseActionIdV1 = typeof DATABASE_ACTION_IDS_V1[number];
 
+export function isDatabaseActionIdV1(id: string): id is DatabaseActionIdV1 {
+    return DATABASE_ACTION_IDS_V1.some(actionId => actionId === id);
+}
+
 /** The manifest-local identity comes from the qualified canonical identity. */
 export function databaseActionLocalIdV1<T extends DatabaseActionIdV1>(id: T): T extends `${string}/actions/${infer LocalId}` ? LocalId : never {
     // Every admitted value is a member of the qualified literal union above.

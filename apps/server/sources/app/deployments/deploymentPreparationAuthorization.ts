@@ -423,7 +423,9 @@ export async function isDeploymentReadOperandInAdmittedScopeInTx(tx: Tx,
     // These restrictions belong here, alongside the shared operand membership decision.
     const read = binding.deploymentReadAdmission;
     if (read && 'environmentId' in read) {
-        if (owned.deployment.some(id => read.actionId === deploymentActionIds.DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1 || !('deploymentId' in read) || id !== read.deploymentId)) return false;
+        const deploymentId = 'deploymentId' in read ? read.deploymentId
+            : 'databaseTarget' in read && read.databaseTarget.kind === 'deployment_service' ? read.databaseTarget.deploymentId : undefined;
+        if (owned.deployment.some(id => read.actionId === deploymentActionIds.DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1 || id !== deploymentId)) return false;
         if (readActionId === deploymentActionIds.DEPLOYMENT_DOMAIN_GET_ACTION_ID_V1 && read.actionId === deploymentActionIds.DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1) {
             return await tx.deploymentDomain.count({ where: { id: { in: owned.domain },
                 environmentId: read.environmentId, targetLinkId: read.targetLinkId, deletedAt: null } }) === new Set(owned.domain).size;

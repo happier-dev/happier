@@ -120,7 +120,14 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
         if (!admittedDataQuery) return deploymentFailure('deployment_access_denied');
         const scope = await readAdmittedDeploymentReadScopeInTx(tx, admittedDataQuery);
         if (!scope) return deploymentFailure('deployment_access_denied');
-        if (admittedDataQuery.actionId === ACTION_INVOKE_ACTION_ID_V1) {
+        if ('databaseTarget' in admittedDataQuery) {
+            const target = admittedDataQuery.databaseTarget, materialization = input.materialization;
+            if (input.environmentId !== admittedDataQuery.environmentId || input.targetLinkId !== admittedDataQuery.targetLinkId) return deploymentFailure('deployment_access_denied');
+            if (target.kind === 'deployment_service' ? 'targetLinkId' in materialization
+                || materialization.deploymentId !== target.deploymentId || materialization.service !== target.serviceId
+                : !('targetLinkId' in materialization) || materialization.targetLinkId !== target.targetLinkId
+                    || scope.managedControllerMachineId !== input.machineId) return deploymentFailure('deployment_access_denied');
+        } else if (admittedDataQuery.actionId === ACTION_INVOKE_ACTION_ID_V1) {
             const materialization = input.materialization;
             if (!('targetLinkId' in materialization) || input.environmentId !== admittedDataQuery.environmentId || input.targetLinkId !== admittedDataQuery.targetLinkId
                 || materialization.targetLinkId !== admittedDataQuery.targetLinkId
