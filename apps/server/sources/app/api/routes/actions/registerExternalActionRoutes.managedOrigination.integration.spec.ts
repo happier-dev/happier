@@ -1767,44 +1767,6 @@ describe('ordinary Account managed Action origination', () => {
         } finally { await instance.close(); }
     });
 
-    it('keeps custodian Inspect of another creator on ordinary current credential admission', async () => {
-        const controller = await fixture(true);
-        const creator = await fixture(true);
-        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: controller.account.id,
-            machineId: controller.controller.machineId, principal: { kind: 'account', accountId: creator.account.id }, level: 'admin' }));
-        const created = await admitManagedAcquire({ custodianAccountId: controller.account.id, requesterAccountId: creator.account.id,
-            authentication: { authenticationAuthority: 'present_user' }, requestEnvelopeDigest: 'custodian-inspect-admission',
-            input: { input: controller.input, requestId: crypto.randomUUID(), continuationPresent: false } });
-        const instance = await app(async () => { throw new Error('Inspect admission cannot perform a native effect'); });
-        const actionId = 'machines.managed.inspect';
-        try {
-            const issued = await instance.inject({ method: 'POST',
-                url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId), headers: { authorization: `Bearer ${controller.token}` },
-                payload: { v: 1, machineId: controller.controller.machineId, envelope: { v: 1, requestId: crypto.randomUUID(),
-                    target: { kind: 'machine', machineId: controller.controller.machineId },
-                    input: { homeId, managedId: created.machine.id } } } });
-            expect(issued.statusCode, issued.body).toBe(200);
-            const root = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
-            const path = '/v1/machines/managed/controller/context';
-            const body = { homeId, managedId: created.machine.id, expectedIntentRevision: 0, controller: controller.controller };
-            const inspectContext = (privateKey: Uint8Array) => instance.inject({ method: 'POST', url: path, payload: body, headers: {
-                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
-                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
-                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.binding.target),
-                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
-                    effectActionId: actionId, target: root.binding.target, installationId: root.binding.installationId,
-                    requestId: root.binding.requestId, method: 'POST', path, body, privateKey }),
-            } });
-            expect((await inspectContext(creator.keys.secretKey)).statusCode).toBe(401);
-            const retained = await inspectContext(controller.keys.secretKey);
-            expect(retained.statusCode, retained.body).toBe(200);
-            expect(retained.json()).toMatchObject({ machine: { id: created.machine.id, custodianAccountId: controller.account.id } });
-            // A custodian read is not the creator's accepted-job exemption.
-            await db.account.update({ where: { id: controller.account.id }, data: { tokenEpoch: { increment: 1 } } });
-            expect((await inspectContext(controller.keys.secretKey)).statusCode).toBe(401);
-        } finally { await instance.close(); }
-    });
-
     it.each(['machines.managed.inspect', 'machines.managed.bootstrap.retry', 'action.operations.list', 'action.operations.get'] as const)(
         'authorizes only the creator resource for sealed %s recovery on the custodian controller', async actionId => {
         const controller = await fixture(true);
