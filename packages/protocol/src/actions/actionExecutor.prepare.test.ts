@@ -235,7 +235,7 @@ describe('ActionExecutor prepared invocation', () => {
           owner: { kind: 'account', accountId: 'owner' }, protection: 'nonProduction', purpose: 'standard',
           deployerMode: 'managers', controllerMachineId: 'controller', createdByAccountId: 'owner',
           contentArtifactId: 'environment-content', contentHeaderVersion: 1, contentBodyVersion: 1,
-          capabilities: { role: 'manager', read: true, deploy: true, manage: true,
+          capabilities: { editData: false, role: 'manager', read: true, deploy: true, manage: true,
             manageBindings: true, manageTargets: true, delete: true }, createdAtMs: 1, updatedAtMs: 1 }), targetLinks: [] });
       }
       dispatches += 1;

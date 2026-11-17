@@ -1861,7 +1861,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
     const ref = { resourceId: 'resource-1', expectedRevision: 1 };
     const replacement = {
       enabled: true,
-      displayName: 'Shared',
+      displayName: { content: { t: 'plain', v: 'Shared' }, recipients: [] },
       sessionUsePolicy: 'team_context_required',
       requestPolicy: null,
       ...audience,
@@ -1896,7 +1896,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
       ],
       [
         'teams.credentials.update',
-        { ...ref, displayName: 'Renamed', enabled: false },
+        { ...ref, displayName: { content: { t: 'plain', v: 'Renamed' }, recipients: [] }, enabled: false },
         false,
       ],
       ['teams.credentials.update', { ...ref, replacement }, false],

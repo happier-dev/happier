@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from './actionExecutor.js';
+import { createActionExecuteFailureError } from './actionExecutionResult.js';
 import { getActionSpec } from './actionSpecs.js';
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
@@ -68,7 +69,7 @@ describe('approval captured canonical context', () => {
       delete: async args => {
         effects.push(args);
         // A concurrent resource change must not refresh the approved CAS operand.
-        if (args.expectedUpdatedAt === 8) throw Object.assign(new Error('currentness_conflict'), { code: 'currentness_conflict' });
+        if (args.expectedUpdatedAt === 8) throw createActionExecuteFailureError({ ok: false, errorCode: 'currentness_conflict', error: 'currentness_conflict' });
       },
     });
     const executor = createActionExecutor({

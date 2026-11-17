@@ -127,7 +127,7 @@ describe('admitted scoped Actions approval', () => {
     expect(approvals).toHaveLength(1);
   });
 
-  it('consumes a token-owned exact operation without inventing Workflow origin and rechecks live stricter policy', async () => {
+  it('consumes a token-owned exact operation without inventing Workflow origin after policy changes', async () => {
     const effect = { serverId: 'home', environmentId: 'staging', expectedRevision: 1,
       targetLinkId: 'target', expectedTargetLinkRevision: 1, requestKey: 'deploy',
       contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1 };
@@ -150,8 +150,10 @@ describe('admitted scoped Actions approval', () => {
     const prepared = await executor.prepare('deployments.deploy', effect, context);
     expect(prepared.kind).toBe('ready');
     settings = normalizeActionsSettingsV1({ v: 1, actions: { 'deployments.deploy': { approvalRequiredSurfaces: ['cli'] } } });
-    if (prepared.kind === 'ready') expect(await prepared.invocation.run()).toMatchObject({ ok: false });
-    expect(effects).toEqual([]);
+    if (prepared.kind === 'ready') expect(await prepared.invocation.run())
+      .toMatchObject({ ok: false, errorCode: 'deployment_unavailable' });
+    // An exact admitted operation finishes; new admissions retain the live-policy checks above.
+    expect(effects).toEqual([effect]);
     expect(reads).toEqual(['prepare', 'dispatch']);
   });
   const scope = { kind: 'environment', environmentId: 'staging' } as const;
