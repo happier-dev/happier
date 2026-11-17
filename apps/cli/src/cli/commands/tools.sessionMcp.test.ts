@@ -33,6 +33,7 @@ import { withExecutionRunPermissionResponder } from '@/agent/runtime/bridges/exe
 import { withExecutionRunRuntimeIdentityPublication } from '@/agent/runtime/identity/executionRunRuntimeIdentityPublication';
 import { borrowExecutionRunRuntimeTurn } from '@/agent/runtime/bridges/executionRun/hostRuntime/borrowedTurn';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { supportsSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalContext';
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -182,7 +183,7 @@ describe('Agent tools Session MCP authority', () => {
       optionsSourceId: 'missing-source', sessionId: null, limit: null, query: null }, actionSessionId))
       .resolves.toMatchObject({ ok: false, requestId: 'options-diagnostic' });
   });
-  it.runIf(process.platform === 'linux')('retains canonical failure diagnostics through the MCP producer and Session CLI reader', async () => {
+  it.runIf(supportsSessionMcpLocalTransport())('retains canonical failure diagnostics through the MCP producer and Session CLI reader', async () => {
     const boundary = await openSessionMcpBoundary();
     try {
       await expect(executeSessionMcpAction('skills.read', { skillId: 'diagnostic' })).resolves.toEqual(diagnosticFailure);

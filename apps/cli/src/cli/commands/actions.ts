@@ -14,15 +14,11 @@ import type { ActionDefinitionV1, ActionExecuteResult, SignedRootActionId } from
 import { withActionAutomationNoticesV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeCliActionThrownError, projectCliActionFailure, throwCliActionFailure as throwActionFailure } from './session/shared/normalizeActionExecuteResult';
 import { FilesystemUploadInputSchema, FilesystemDownloadInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
-import { createCredentialedFilesystemTransferClient } from '@/machines/transfer/createCredentialedFilesystemTransferClient';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { ACTION_CLI_PROJECT_TARGET_VALUE_FLAGS, readActionCliExecutionTarget } from '@/cli/actions/executionTarget';
 import { finiteActionExitCode, supportsFiniteActionOutcome, readFiniteActionOutcome, readFiniteActionOperationAddress } from '@/cli/actions/finiteOutcome';
-import { renderDeploymentGithubActionsStep } from '@/cli/actions/deploymentCiStep';
 import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
-import { readDeploymentEnvironmentForHost } from '@/deployments/readEnvironmentForHost';
 import { createConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { executeSessionMcpAction, hasSessionMcpContext } from './toolsSessionMcp';
@@ -318,6 +314,9 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
     const executor = await deps.createExecutorFn({ credentials, ...fixedServer, serverIdentityId,
       readCredentials: () => deps.readCredentialsForServerIdFn(fixedServer.serverId), externalActionClient: true });
     const context = { ...actionContext(signal), serverId: fixedServer.serverId, serverIdentityId };
+    const [{ createCredentialedAccountArtifactStore }, { readDeploymentEnvironmentForHost }, { renderDeploymentGithubActionsStep }] = await Promise.all([
+      import('@/api/artifacts/accountArtifactStore'), import('@/deployments/readEnvironmentForHost'), import('@/cli/actions/deploymentCiStep'),
+    ]);
     const artifacts = createCredentialedAccountArtifactStore(credentials);
     const detail = await readDeploymentEnvironmentForHost({ environmentId, context }, {
       readMetadata: async () => {
@@ -545,6 +544,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
   let data: unknown;
   let automationNotices: ActionExecuteResult['automationNotices'];
   if ((isUpload || isDownload) && machineId && fixedServer && credentials) {
+    const { createCredentialedFilesystemTransferClient } = await import('@/machines/transfer/createCredentialedFilesystemTransferClient');
     const transfer = await createCredentialedFilesystemTransferClient({ credentials, ...fixedServer,
       executeAction: async (actionId, input, context) => await executeAction(actionId, input, { ...invocationOptions, ...context }),
       ...(signal ? { signal } : {}),

@@ -4,7 +4,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions';
-import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '@/mcp/runtime/sessionMcpLocalClient';
+import type { connectSessionMcpClient } from '@/mcp/runtime/sessionMcpLocalClient';
 import { SESSION_MCP_CONTEXT_FILE_ENV, sessionActionTransportUnavailable, type SessionMcpAgentContext,
   SESSION_MCP_ACTION_REQUEST_ID_META_KEY, SESSION_MCP_TOOL_SOURCES_META_KEY,
   SESSION_MCP_TOOL_SOURCE_META_KEY, SESSION_MCP_TOOL_WARNINGS_META_KEY } from '@/mcp/runtime/sessionMcpLocalContext';
@@ -44,6 +44,7 @@ function transportFailure(error: unknown): ToolFailure {
 }
 
 async function withSessionMcp<Result>(operation: (connection: Awaited<ReturnType<typeof connectSessionMcpClient>>) => Promise<Result>, signal?: AbortSignal, sessionContext?: SessionMcpAgentContext): Promise<Result | ToolFailure> {
+  const { connectSessionMcpClient, readSessionMcpContextFromEnvironment } = await import('@/mcp/runtime/sessionMcpLocalClient');
   let context = sessionContext;
   try { context ??= await readSessionMcpContextFromEnvironment(); }
   catch { return sessionActionTransportUnavailable(); }
