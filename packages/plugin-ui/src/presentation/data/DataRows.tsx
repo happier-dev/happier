@@ -92,6 +92,7 @@ export function HappierDataRows(props: HappierDataRowsProps) {
   const text = useHappierDataTextStyles(props.theme);
   const interactive = useChartInteractionAvailable();
   const proportionIndex = props.columns.findIndex((column) => column.proportion === true);
+  const trailingIndex = props.columns.findIndex((column, index) => index > 0 && column.trailing === true && column.proportion !== true);
   const shares = proportionIndex < 0 ? [] : resolveHappierDataShares(props.rows.map((row) => {
     const value = row[proportionIndex];
     return typeof value === 'number' ? value : 0;
@@ -103,11 +104,14 @@ export function HappierDataRows(props: HappierDataRowsProps) {
         const title = row[0] === undefined ? '' : formatHappierDataValue(row[0], text.locale);
         const lineCells = props.columns
           .map((column, index) => ({ column, index }))
-          .filter(({ index }) => index > 0 && index !== proportionIndex);
+          .filter(({ index }) => index > 0 && index !== proportionIndex && index !== trailingIndex);
         const visibleValue = (value: HappierDataValue) => typeof value === 'number' && Number.isFinite(value) && props.valueFormatter
           ? props.valueFormatter(value) : formatHappierDataValue(value, text.locale);
         const line = lineCells.map(({ index }) => row[index]).filter((value) => value !== undefined && value !== '')
           .map((value) => visibleValue(value!)).join(' · ');
+        const trailingValue = trailingIndex < 0 ? undefined : row[trailingIndex];
+        const trailingInk = trailingValue === undefined || trailingValue === '' ? null
+          : <HappierText style={text.strong} tabularNumbers numberOfLines={1}>{visibleValue(trailingValue)}</HappierText>;
         const rowShare = props.rowShares?.[rowIndex] ?? null;
         const lead = props.rowLeads?.[rowIndex];
         const trail = props.rowTrails?.[rowIndex];
@@ -161,6 +165,7 @@ export function HappierDataRows(props: HappierDataRowsProps) {
               {trail ? <View style={{ alignSelf: 'center', flexGrow: 1, flexDirection: 'row' }} accessibilityElementsHidden
                 importantForAccessibility="no-hide-descendants">{trail}</View> : null}
               {amountTarget}
+              {trailingInk}
               {rowShare !== null && hiddenShare && exactShare !== null ? <ChartDatum
                 testID={props.testID ? `${props.testID}-share-datum-${rowIndex}` : undefined}
                 datum={{ label: title, value: exactShare, subtitle: [props.columns[proportionIndex]?.label,

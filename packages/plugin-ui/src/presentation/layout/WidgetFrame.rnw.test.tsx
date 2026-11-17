@@ -286,6 +286,17 @@ describe('HappierWidgetFrame', () => {
     expect(byId(item.container, 'frame.titleBlock')!.style.flexDirection).toBe('column');
   });
 
+  it("ends a card's meta on the content edge when it has no controls, and steps it aside by one gap when it has", () => {
+    const metaBox = (root: ParentNode) => byId(root, 'frame-meta')!.parentElement!;
+    const bare = mount({ placement: 'home', meta: <Text testID="frame-meta">last 24 h</Text>, accessory: undefined });
+    const slotAfter = (root: ParentNode) => metaBox(root).nextElementSibling as HTMLElement | null;
+    // The card keeps its (empty) controls box, but it takes no room: no gap, no margin before it.
+    expect(slotAfter(bare.container)?.style.marginLeft ?? '').toBe('');
+    expect(metaBox(bare.container).parentElement!.style.gap ?? '').toBe('');
+    const withMenu = mount({ placement: 'home', meta: <Text testID="frame-meta">last 24 h</Text> });
+    expect(slotAfter(withMenu.container)!.style.marginLeft).toBe(`${HAPPIER_WIDGET_FRAME_METRICS.headerGapPx}px`);
+  });
+
   it('aligns body and header on the placement inset: a card keeps its padding, plain lines up with the page', () => {
     const card = mount();
     const plain = mount({ frameStyle: 'plain' });

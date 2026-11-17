@@ -17,6 +17,11 @@ export type HappierDataColumn = Readonly<{
   priority?: HappierDataColumnPriority;
   /** A numeric column drawn as a share of its largest value (a funnel step, top errors). */
   proportion?: boolean;
+  /**
+   * In rows, the one value the rows are compared by (a route's mean time), drawn at the row's end in the
+   * glance weight rather than in the quiet second line. Tables already end on their last column.
+   */
+  trailing?: boolean;
 }>;
 
 /**

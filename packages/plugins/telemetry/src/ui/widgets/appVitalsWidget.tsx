@@ -122,7 +122,7 @@ export function TelemetryAppVitalsWidget(
               <Row key={vital.id} testID={`${TEST_ID}.${vital.id}`} gap="medium" align="center">
                 <Stack grow gap="none"><Text tone="secondary" value={vital.label} numberOfLines={1} /></Stack>
                 <TelemetryWidgetLine series={vital.series} variant="line" width={SPARK_WIDTH} height={SPARK_HEIGHT} />
-                <Text variant="label" testID={`${TEST_ID}.${vital.id}.value`}
+                <Text variant="label" emphasis="semiBold" testID={`${TEST_ID}.${vital.id}.value`}
                   value={formatTelemetryMetric(vital.metric, vital.value, locale)} />
               </Row>
             ))}

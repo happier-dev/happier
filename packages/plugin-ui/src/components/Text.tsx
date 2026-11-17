@@ -2,12 +2,14 @@ import type { ReactElement, ReactNode } from 'react';
 
 import { HappierText } from '../presentation/text/Text.js';
 import type { HappierTextVariant, HappierTone } from '../presentation/semantics.js';
+import type { HappierTypeEmphasis } from '../presentation/text/typeScale.js';
 import { usePluginTranslation } from './PluginUiProvider.js';
 import type { PluginTranslationValues } from './PluginUiProvider.js';
 import { resolveAuthorText } from './resolveAuthorText.js';
 
 export type TextTone = HappierTone;
 export type TextVariant = HappierTextVariant;
+export type TextEmphasis = HappierTypeEmphasis;
 
 export type TextProps = Readonly<{
   /** Literal text. Use it for content the plugin produced, not for UI chrome. */
@@ -27,6 +29,8 @@ export type TextProps = Readonly<{
   values?: PluginTranslationValues;
   tone?: TextTone;
   variant?: TextVariant;
+  /** The variant's weight for the one value a row is read by ("412 ms" beside "p95"); size stays the variant's. */
+  emphasis?: TextEmphasis;
   numberOfLines?: number;
   selectable?: boolean;
   accessibilityLabel?: string;
@@ -48,6 +52,7 @@ export function Text({
   values,
   tone,
   variant,
+  emphasis,
   numberOfLines,
   selectable,
   accessibilityLabel,
@@ -60,6 +65,7 @@ export function Text({
   return (
     <HappierText
       variant={variant ?? 'meta'}
+      emphasis={emphasis}
       tone={tone ?? 'neutral'}
       numberOfLines={numberOfLines}
       selectable={selectable}

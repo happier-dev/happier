@@ -448,6 +448,38 @@ describe('WidgetFrame', () => {
         expect(screen.getTextContent()).toContain('PRs, Issues & Tasks');
     });
 
+    it('titles a plugin body\'s frame by what it shows, in place of the widget\'s generic name, and the generic name again once it stops', async () => {
+        const { WidgetFrameBodyIdentityContext, WidgetFrameBodyMetaContext } = await import('./widgetFrameBodyCaption');
+        const { useWidgetFrameHeaderBinding } = await import('./widgetFrameHeaderBinding');
+        // What `PaneHeaderContent title="p95 request time · POST /checkout"` calls from inside a plugin widget body.
+        function PluginBody(props: Readonly<{ title: string | null }>) {
+            const binding = useWidgetFrameHeaderBinding();
+            return <>{binding?.renderPaneHeader({ line: null, actions: null, title: props.title })}rows:here</>;
+        }
+        let setTitleProp: (title: string | null) => void = () => {};
+        function Placement() {
+            const [title, setTitle] = React.useState<string | null>('p95 request time · POST /checkout');
+            setTitleProp = setTitle;
+            const [identity, setIdentity] = React.useState<{ title: string } | null>(null);
+            const [meta, setMeta] = React.useState<React.ReactNode>(null);
+            return (
+                <WidgetFrameBodyIdentityContext.Provider value={setIdentity}>
+                <WidgetFrameBodyMetaContext.Provider value={setMeta}>
+                    <WidgetFrame testID="frame" frameStyle="card" placement="home" mark="list" title={identity?.title ?? 'Metric'}
+                        meta={meta} body={{ kind: 'content', children: <PluginBody title={title} /> }} />
+                </WidgetFrameBodyMetaContext.Provider>
+                </WidgetFrameBodyIdentityContext.Provider>
+            );
+        }
+        const screen = await renderScreen(<Placement />);
+        await flushHookEffects({ cycles: 3 });
+        expect(screen.getTextContent()).toContain('p95 request time · POST /checkout');
+        expect(screen.getTextContent()).not.toContain('Metric');
+        await act(async () => { setTitleProp(null); });
+        await flushHookEffects({ cycles: 3 });
+        expect(screen.getTextContent()).toContain('Metric');
+    });
+
     it('leads a capped plugin body to the page it names from the frame\'s one footer link, over the placement\'s generic Open, never over a failed refresh', async () => {
         const { WidgetFrameBodyMetaContext } = await import('./widgetFrameBodyCaption');
         const { useWidgetFrameHeaderBinding } = await import('./widgetFrameHeaderBinding');

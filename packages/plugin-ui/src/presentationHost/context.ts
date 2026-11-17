@@ -201,6 +201,8 @@ export type PluginUiPaneHeaderPresentation = Readonly<{
   line: readonly PluginUiPaneHeaderLineSegment[] | null;
   /** The trailing actions (a "+" and its menu), rendered in the header with this plugin's context. */
   actions: ReactNode | null;
+  /** A widget frame's name for what this body shows, in place of the widget's generic name; tab headers ignore it. */
+  title?: string | null;
   /** A widget frame's quiet source beside its title, in place of the plugin's name; tab headers ignore it. */
   caption?: string | null;
   /** A widget frame's footer link, "Open <caption>": the page the glance comes from. Tab headers ignore it. */

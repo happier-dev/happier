@@ -8,6 +8,7 @@ import type { PluginPaneHeaderSlotInput } from '@/components/appShell/panes/pane
 import {
   WidgetFrameBodyMetaContext,
   useWidgetFrameBodyCaption,
+  useWidgetFrameBodyIdentity,
   useWidgetFrameBodyMeta,
   useWidgetFrameBodyOpen,
 } from './widgetFrameBodyCaption';
@@ -80,6 +81,11 @@ function PluginWidgetFrameHeaderPublisher(
     store.set(props.input);
   });
   useWidgetFrameBodyMeta(meta);
+  // The body's name for what it shows ("p95 request time · POST /checkout"), as a built-in Metric lends it; the
+  // placement keeps a name the person gave the widget.
+  const title = props.input.title ?? null;
+  const identity = React.useMemo(() => (title === null ? null : { title }), [title]);
+  useWidgetFrameBodyIdentity(identity);
   // The body's own name for where it comes from ("Tasks"), in the frame's source slot, as a built-in body lends it.
   useWidgetFrameBodyCaption(props.input.caption ?? null);
   // …and the way to that page, as the frame's one footer link ("Open Tasks").

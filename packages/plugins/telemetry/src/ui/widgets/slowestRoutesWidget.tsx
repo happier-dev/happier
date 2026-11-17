@@ -102,9 +102,13 @@ export function TelemetrySlowestRoutesWidget(
             .map((route) => [
               route.route,
               formatTelemetryMetric('p95', route.meanMs, locale),
-              formatTelemetryMetric('errorRate', route.errorRate, locale),
+              route.errorRate === null
+                ? ''
+                : text('plugins.telemetry.widgets.errorsShare', '{share} errors', {
+                    share: formatTelemetryMetric('errorRate', route.errorRate, locale),
+                  }),
             ]),
-    [locale, shownRows, state],
+    [locale, shownRows, state, text],
   );
   return (
     <Stack testID={TEST_ID} gap="small" grow>
@@ -130,6 +134,7 @@ export function TelemetrySlowestRoutesWidget(
               },
               {
                 label: text('plugins.telemetry.widgets.meanTime', 'Mean time'),
+                trailing: true,
               },
               {
                 label: text('plugins.telemetry.widgets.errors', 'Errors'),

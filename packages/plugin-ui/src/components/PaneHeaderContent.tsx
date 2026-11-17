@@ -16,6 +16,12 @@ export type PaneHeaderContentProps = Readonly<{
    */
   actions?: ReactNode;
   /**
+   * Inside a widget frame, the frame's title when the widget is named by what it shows ("p95 request time ·
+   * POST /checkout") rather than by its definition ("Metric"). A name the person gave the widget still wins.
+   * Tab headers keep the tab's own title and ignore it.
+   */
+  title?: string;
+  /**
    * Inside a widget frame, the quiet source the frame says beside the widget's title, in place of the
    * plugin's name: the part of the plugin this widget comes from ("Tasks" for a plugin that also has
    * "PRs & Issues"). Tab headers have no such slot and ignore it.
@@ -63,5 +69,5 @@ export function PaneHeaderContent(props: PaneHeaderContentProps): ReactElement |
     [bridge, props.actions],
   );
   if (binding === null) return null;
-  return <>{binding.renderPaneHeader({ line, actions, caption: props.caption ?? null, open: props.onOpen ?? null })}</>;
+  return <>{binding.renderPaneHeader({ line, actions, title: props.title ?? null, caption: props.caption ?? null, open: props.onOpen ?? null })}</>;
 }

@@ -283,4 +283,15 @@ describe('Slowest routes widget', () => {
     expect((calls.filter(call => call.localId === 'capture/endpoints/list')[1]!.input.page as { before?: unknown }).before).toEqual(cursor);
     expect(calls.some(call => call.localId === 'capture/metrics/read')).toBe(false);
   });
+
+  it('says a route\'s error share with its word, so the figure beside the mean time is never a bare percentage', async () => {
+    const { page } = await mount(renderSlowestRoutes, { environment: ENVIRONMENT }, (localId, input) => {
+      if (localId !== 'capture/endpoints/list') return okAnswer({})(localId, input);
+      return { ok: true, source: input.source as JsonValue, items: [ENDPOINT('/checkout', 100, 141_000, 0.05)] };
+    });
+    await vi.waitFor(async () => {
+      await expect(page.getByText('5% errors')).resolves.toBeDefined();
+    });
+    await expect(page.getByText('1.41 s')).resolves.toBeDefined();
+  });
 });

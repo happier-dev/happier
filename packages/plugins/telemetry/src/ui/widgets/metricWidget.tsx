@@ -108,7 +108,9 @@ export function TelemetryMetricWidget(
   );
   return (
     <Stack testID={TEST_ID} gap="small" grow>
+      {/* The frame is titled by the metric it shows ("p95 request time"), not "Metric". */}
       <PaneHeaderContent
+        title={label}
         {...(caption === null ? {} : { caption })}
         line={[rangeLabel(range, text)]}
       />
@@ -122,7 +124,6 @@ export function TelemetryMetricWidget(
           <HappierDataMetric
             theme={theme}
             size="stat"
-            showLabel
             label={label}
             testID={`${TEST_ID}.value`}
             value={formatTelemetryMetric(metric, shown.value, locale)}

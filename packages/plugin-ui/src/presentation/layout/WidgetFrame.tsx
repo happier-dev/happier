@@ -664,11 +664,13 @@ export function HappierWidgetFrame(props: HappierWidgetFrameProps) {
               ...(!plain && !previewItem && !row ? { minHeight: identityRowPx } : {}),
               ...(onTitleLine ? { marginVertical: -titleLineSlack } : {}) }}>
               <View pointerEvents="box-none" {...(row ? { onLayout: onControlsLayout } : {})}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx, flexShrink: 1, minWidth: 0 }}>
+                style={{ flexDirection: 'row', alignItems: 'center', flexShrink: 1, minWidth: 0 }}>
                 {meta ? <View pointerEvents="auto" style={{ flexShrink: 0 }}>{meta}</View> : null}
-                {/* The slot is a box around its controls, not a target: words in it (a card's reason) pass a press on. */}
+                {/* The slot is a box around its controls, not a target: words in it (a card's reason) pass a press on.
+                    A card keeps the box with no controls in it, so it takes no gap then: the meta ends on the content edge. */}
                 {!plain || props.accessory ? <View pointerEvents="box-none" style={props.accessoryPlacement === 'overlay'
-                  ? ACCESSORY_OVERLAY_STYLE : { flexShrink: 1, minWidth: 0 }}>{props.accessory ?? null}</View> : null}
+                  ? ACCESSORY_OVERLAY_STYLE : { flexShrink: 1, minWidth: 0,
+                    ...(meta && !isEmptySlot(props.accessory) ? { marginLeft: HAPPIER_WIDGET_FRAME_METRICS.headerGapPx } : {}) }}>{props.accessory ?? null}</View> : null}
               </View>
             </View> : null}
             {sourceBelowHeader && source ? <View pointerEvents="box-none" style={{ width: '100%', minWidth: 0 }}>{source}</View> : null}

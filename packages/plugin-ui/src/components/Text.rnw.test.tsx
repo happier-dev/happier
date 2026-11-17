@@ -5,7 +5,7 @@ import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
 import { PluginUiProvider } from './PluginUiProvider.js';
 import { Text } from './Text.js';
-import { HAPPIER_TYPE_SCALE } from '../presentation/text/typeScale.js';
+import { HAPPIER_TYPE_SCALE, HAPPIER_TYPE_WEIGHT } from '../presentation/text/typeScale.js';
 
 /**
  * EU-7b, family `Text`.
@@ -67,6 +67,18 @@ describe('plugin-ui Text renders real React Native semantics', () => {
     expect(rendered.style.color.replace(/\s/gu, '')).toBe('rgb(255,59,48)');
 
     mount.unmount();
+  });
+
+  it('weights a glance value at its variant size when asked, and leaves plain text at the variant weight', () => {
+    const plain = mountSurface(<Text value="412 ms" variant="label" />);
+    const strong = mountSurface(<Text value="412 ms" variant="label" emphasis="semiBold" />);
+    const plainStyle = (plain.container.firstElementChild as HTMLElement).style;
+    const strongStyle = (strong.container.firstElementChild as HTMLElement).style;
+    expect(strongStyle.fontWeight).toBe(String(HAPPIER_TYPE_WEIGHT.semiBold));
+    expect(plainStyle.fontWeight).not.toBe(strongStyle.fontWeight);
+    expect(strongStyle.fontSize).toBe(plainStyle.fontSize);
+    plain.unmount();
+    strong.unmount();
   });
 
   it('draws reading prose in its own role, a step above the row-meta body line', () => {

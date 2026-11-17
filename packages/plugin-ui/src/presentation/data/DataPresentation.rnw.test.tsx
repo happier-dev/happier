@@ -157,6 +157,20 @@ describe('public data nodes through React Native Web', () => {
       expect(query(mount.container, 'ledger-row-1')!.textContent).toBe('relay12');
     } finally { mount.unmount(); }
   });
+  it('ends a row on its compared value and keeps the other facts in the quiet line, still read in full', () => {
+    const context = createSurfaceContext();
+    const mount = mountThroughReactNativeWeb(<HappierDataRows testID="routes" theme={context.theme}
+      columns={[{ label: 'Route' }, { label: 'Mean time', trailing: true }, { label: 'Errors' }]}
+      rows={[['POST /checkout', '1.42 s', '3.1% errors']]} />);
+    try {
+      const row = query(mount.container, 'routes-row-0')!;
+      // Title and the compared value share the first line; the rest is the line under it.
+      const firstLine = row.firstElementChild!;
+      expect(firstLine.textContent).toBe('POST /checkout1.42 s');
+      expect(row.textContent).toBe('POST /checkout1.42 s3.1% errors');
+      expect(row.getAttribute('aria-label')).toBe('POST /checkout, Mean time: 1.42 s, Errors: 3.1% errors');
+    } finally { mount.unmount(); }
+  });
   it('draws the mark by what it means, so a true value that is bad never reads as a tick', () => {
     const context = createSurfaceContext();
     const mount = mountThroughReactNativeWeb(<HappierDataRows testID="tests" theme={context.theme}

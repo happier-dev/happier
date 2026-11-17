@@ -187,6 +187,8 @@ export function usePaneHeaderSlotContent(content: PaneHeaderSlotContent): void {
 export type PluginPaneHeaderSlotInput = Readonly<{
     line: readonly PaneHeaderContentLineSegment[] | null;
     actions: React.ReactNode | null;
+    /** A widget frame's title for what the body shows, in place of the widget's generic name; a tab keeps its own. */
+    title?: string | null;
     /** A widget frame's source line in place of the plugin's name; a tab's pane header has no such slot. */
     caption?: string | null;
     /** A widget frame's footer link to the page `caption` names; a tab's pane header has no footer. */

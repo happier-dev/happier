@@ -25,6 +25,7 @@ import {
 } from '../semantics.js';
 import { scaleTextStyleMetrics, type TextStyleEntryTransform } from './textStyleScale.js';
 import { readHappierTypeRoleTabular, resolveHappierTypeRoleStyle } from './typeRole.js';
+import type { HappierTypeEmphasis } from './typeScale.js';
 
 const TABULAR_NUMBERS_STYLE: TextStyle = { fontVariant: ['tabular-nums'] };
 import { resolveHappierTextScaleOwnership } from './textScaleOwnership.js';
@@ -140,6 +141,11 @@ export type HappierTextProps = HappierTextHostProps & Readonly<{
    * core does exactly that, because its typography owner is Unistyles.
    */
   variant?: HappierTextVariant;
+  /**
+   * The role's weight for the one value a row is read by (a vital's figure beside its label); the role keeps
+   * its size and line height. Applies with `variant`.
+   */
+  emphasis?: HappierTypeEmphasis;
   /** Semantic colour role, resolved from the environment theme. */
   tone?: HappierTone;
   /** Defaults to the nearest {@link HappierTextSelectabilityScope}. */
@@ -179,6 +185,7 @@ export type HappierTextProps = HappierTextHostProps & Readonly<{
 export const HappierText = memo(forwardRef<unknown, HappierTextProps>(function HappierText(
   {
     variant,
+    emphasis,
     tone,
     selectable,
     textScale,
@@ -217,10 +224,10 @@ export const HappierText = memo(forwardRef<unknown, HappierTextProps>(function H
             lineHeight: code.lineHeight,
             ...(code.fontFamily ? { fontFamily: code.fontFamily } : {}),
           }
-          : resolveHappierTypeRoleStyle(variant as Exclude<HappierTextVariant, 'code'>, theme, hostTypography)),
+          : resolveHappierTypeRoleStyle(variant as Exclude<HappierTextVariant, 'code'>, theme, hostTypography, emphasis)),
       ...(color ? { color } : {}),
     };
-  }, [theme, hostTypography, variant, tone]);
+  }, [theme, hostTypography, variant, emphasis, tone]);
 
   const tabular = tabularNumbers === true
     || (variant !== undefined && variant !== 'code' && readHappierTypeRoleTabular(variant, hostTypography));
