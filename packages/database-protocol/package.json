@@ -9,9 +9,7 @@
   "exports": {
     ".": { "happier-source": "./src/index.ts", "types": "./dist/index.d.ts", "default": "./dist/index.js" },
     "./v1": { "happier-source": "./src/v1/index.ts", "types": "./dist/v1/index.d.ts", "default": "./dist/v1/index.js" },
-    "./databaseTargets": { "happier-source": "./src/databaseTargets.ts", "types": "./dist/databaseTargets.d.ts", "default": "./dist/databaseTargets.js" },
-    "./databaseValues": { "happier-source": "./src/databaseValues.ts", "types": "./dist/databaseValues.d.ts", "default": "./dist/databaseValues.js" },
-    "./databaseOperations": { "happier-source": "./src/databaseOperations.ts", "types": "./dist/databaseOperations.d.ts", "default": "./dist/databaseOperations.js" }
+    "./testing/v1": { "happier-source": "./src/testing/v1/index.ts", "types": "./dist/testing/v1/index.d.ts", "default": "./dist/testing/v1/index.js" }
   },
   "files": ["dist", "README.md", "package.json"],
   "happier": { "publicSdkRelease": { "posture": "developer_preview", "supportPolicy": "README.md#evolving-the-abi", "externalPublicationRequiresApproval": true } },

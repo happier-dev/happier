@@ -1,3 +1,13 @@
+import { pluginActionDeclarationIsReadOnlyForInput as canonicalPluginActionDeclarationIsReadOnlyForInput } from '@happier-dev/protocol/plugins/actions/invocation';
+import type { PluginActionDeclaration } from '../definePlugin.js';
+import { projectProtocolValue } from '../protocol/projectProtocolValue.js';
+
+/** Evaluates the declaration's read-only fact through the canonical invocation owner. */
+export const pluginActionDeclarationIsReadOnlyForInput: (
+    declaration: Pick<PluginActionDeclaration, 'readOnly'>,
+    input: unknown,
+) => boolean = /* @__PURE__ */ projectProtocolValue(canonicalPluginActionDeclarationIsReadOnlyForInput);
+
 export type { ActionContract } from './service.js';
 export { SavedHealthAlertTestResultSchema } from './notificationTest.js';
 export { NOTIFICATION_NOTIFY_ME_ACTION_ID, SAVED_HEALTH_ALERT_TEST_ACTION_ID,

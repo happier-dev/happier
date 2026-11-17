@@ -8,3 +8,4 @@ export * from './databaseActionSchemas.js';
 export * from './databaseTargetActions.js';
 export * from './databaseAccess.js';
 export * from './databaseDemand.js';
+export * from './databaseActionMetadata.js';

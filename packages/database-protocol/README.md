@@ -4,10 +4,11 @@ Versioned database workbench business schemas shared by the workbench, engine
 implementations, deployment transports, UI, CLI and plugin SDK projections.
 This is unreleased 0.3 development source.
 
-Import the current contract from `@happier-dev/database-protocol/v1`. Focused
-subpaths `databaseTargets`, `databaseValues` and `databaseOperations` expose the
-same producers. The package contains no SQL, driver, permission policy,
-credential acquisition, persistence or connection lifecycle.
+Import the current contract from `@happier-dev/database-protocol/v1`; the base
+entrypoint exposes the same producers. Credential-free fixtures are available
+from `@happier-dev/database-protocol/testing/v1`. The package contains no SQL,
+driver, permission policy, credential acquisition, persistence or connection
+lifecycle.
 
 Targets identify existing worktree, deployment or Project Saved Secret owners.
 They carry no connection URL. Operation inputs select one target, and may name
