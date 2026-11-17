@@ -1359,6 +1359,7 @@ export class RpcHandlerManager {
                 name: 'PluginError', code: pluginError.code, message: errorResponse.error,
                 retryable: pluginError.retryable, failureCause: errorResponse.failureCause,
             } satisfies PluginErrorContractData : errorResponse);
+            diagnostic.capabilityFailure = capabilityDetails;
             // Native OS/process codes and cancellation are diagnostic facts;
             // preserve them before the existing transport projection drops them.
             diagnostic.outcomeCode = outcomeCode;
