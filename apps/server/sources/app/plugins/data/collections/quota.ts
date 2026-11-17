@@ -4,6 +4,7 @@ import { type PluginDataCollectionsCapabilities } from '@happier-dev/protocol/fe
 
 import type { Tx } from '@/storage/inTx';
 import { getDbProviderFromEnv } from '@/storage/prisma';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 
 import { countPluginCollectionIndexEntriesByRawOrdinalKey } from './rawOrdinalIndex';
 import { readPluginCollectionPostgresQuotaAggregateInTx } from './quotaPostgres';
@@ -453,7 +454,7 @@ export async function readPluginCollectionAccountActivationUsageInTx(input: Read
     accountId: string;
     deployment: PluginDataCollectionsCapabilities;
 }>): Promise<PluginCollectionAccountActivationUsage> {
-    if (getDbProviderFromEnv(process.env, 'postgres') === 'postgres') {
+    if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres')) === 'postgres') {
         return await readPostgresActivationUsageInTx({ ...input, includeStages: false });
     }
     const mutableCollections = new Map<string, {

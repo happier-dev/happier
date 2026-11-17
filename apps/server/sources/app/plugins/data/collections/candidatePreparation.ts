@@ -16,6 +16,7 @@ import type { AccountAdmissionIntent } from "@/app/encryption/accountSessionOwne
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { readPluginsFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { getDbProviderFromEnv } from "@/storage/prisma";
+import { resolveDbSqlDialect } from "@/config/databaseProvider";
 import { inTx, type Tx } from "@/storage/inTx";
 
 import {
@@ -805,7 +806,7 @@ async function assertCandidateStageBatchQuotaInTx(input: Readonly<{
     candidateIdentity: string;
 }>): Promise<void> {
     try {
-        const postgres = getDbProviderFromEnv(process.env, "postgres") === "postgres";
+        const postgres = resolveDbSqlDialect(getDbProviderFromEnv(process.env, "postgres")) === "postgres";
         const usage = postgres
             ? await readPluginCollectionAccountCandidateStageUsageInTx(input)
             : await readPluginCollectionAccountActivationUsageInTx({

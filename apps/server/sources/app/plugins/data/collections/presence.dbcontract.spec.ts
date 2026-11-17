@@ -7,6 +7,7 @@ import { inTx, type Tx } from "@/storage/inTx";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { pluginDataRoutes } from "@/app/api/routes/plugins/data/pluginDataRoutes";
 import { materializePluginCollectionContractsTx } from "./contracts";
+import { readPluginCollectionPresence } from "./uiQuery";
 
 const provider = getDbProviderFromEnv(process.env, "postgres");
 
@@ -22,6 +23,23 @@ describe.skipIf(provider === "sqlite")("Collection presence pooled-provider cont
         await db.$connect();
     });
     afterAll(async () => { await db.$disconnect(); });
+
+    it.skipIf(provider !== "postgres")("reads requested presence with the pglite PostgreSQL recordset dialect", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain", seq: 12 } });
+        const previous = process.env.HAPPIER_DB_PROVIDER;
+        process.env.HAPPIER_DB_PROVIDER = "pglite";
+        try {
+            expect(await readPluginCollectionPresence({ accountId: account.id,
+                request: { collections: [{ pluginId: "example.dialect", collectionId: "missing" }] },
+            })).toEqual({ changeCursor: 12, collections: [
+                { pluginId: "example.dialect", collectionId: "missing", present: false },
+            ] });
+        } finally {
+            if (previous === undefined) delete process.env.HAPPIER_DB_PROVIDER;
+            else process.env.HAPPIER_DB_PROVIDER = previous;
+            await db.account.delete({ where: { id: account.id } });
+        }
+    });
 
     it("returns only requested existence facts across retained schemas and isolates Account ownership", async () => {
         const pluginId = `example.presence.${randomUUID()}`;

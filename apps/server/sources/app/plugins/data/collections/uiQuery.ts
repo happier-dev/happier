@@ -680,7 +680,7 @@ export async function readPluginCollectionPresence(input: Readonly<{
         const current = parseCurrentAccount(account);
         if (collections.length === 0) return { result: { collections: [], changeCursor: current.changeCursor }, current };
         const prisma = getActivePrismaRuntime();
-        const provider = getDbProviderFromEnv(process.env, "postgres");
+        const provider = resolveDbSqlDialect(getDbProviderFromEnv(process.env, "postgres"));
         const quote = provider === "mysql" ? "`" : '"';
         const identifier = (name: string) => prisma.raw(`${quote}${name}${quote}`);
         const pluginId = identifier("pluginId");

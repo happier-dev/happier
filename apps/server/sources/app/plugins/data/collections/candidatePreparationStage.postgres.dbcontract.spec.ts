@@ -155,6 +155,43 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("C
         await db.$disconnect();
     });
 
+    it("uses PostgreSQL activation aggregates for pglite without hydrating row bodies", async () => {
+        const fixture = await seedFixture(1);
+        fixtures.push(fixture);
+        const previous = process.env.HAPPIER_DB_PROVIDER;
+        process.env.HAPPIER_DB_PROVIDER = "pglite";
+        try {
+            const measured = await observeStage(() => inTx(tx => readPluginCollectionAccountActivationUsageInTx({
+                tx, accountId: fixture.accountId, deployment: readPluginsFeatureEnv(process.env).collectionLimits,
+            })));
+            expect(measured.result.rows).toBe(1);
+            expect(measured.observations.rowBodies).toBe(0);
+            expect(measured.observations.aggregateQueries).toBe(1);
+        } finally {
+            if (previous === undefined) delete process.env.HAPPIER_DB_PROVIDER;
+            else process.env.HAPPIER_DB_PROVIDER = previous;
+        }
+    });
+
+    it("uses PostgreSQL candidate-stage aggregates for pglite without rereading row bodies", async () => {
+        const fixture = await seedFixture(1);
+        fixtures.push(fixture);
+        const previous = process.env.HAPPIER_DB_PROVIDER;
+        process.env.HAPPIER_DB_PROVIDER = "pglite";
+        try {
+            const measured = await observeStage(() => stagePluginCollectionCandidatePreparation({
+                accountId: fixture.accountId, request: fixture.request(fixture.rowIds),
+            }));
+            expect(measured.result.results).toMatchObject([{ status: "staged" }]);
+            expect(measured.observations.rowBodies).toBe(1);
+            expect(measured.observations.stageBodies).toBe(0);
+            expect(measured.observations.aggregateQueries).toBe(1);
+        } finally {
+            if (previous === undefined) delete process.env.HAPPIER_DB_PROVIDER;
+            else process.env.HAPPIER_DB_PROVIDER = previous;
+        }
+    });
+
     it("stages one configured maximum batch with one setwise insert in one transaction", async () => {
         const limits = readPluginsFeatureEnv(process.env).collectionLimits;
         const batchRows = limits.maxBatchRows;
