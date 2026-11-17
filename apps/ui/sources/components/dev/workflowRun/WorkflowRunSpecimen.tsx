@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { canStartWorkflowRunAgain } from '@/components/workflows/presentation/workflowLifecyclePresentation';
+import { getStorage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import {
@@ -239,6 +240,17 @@ export function WorkflowRunSpecimen(
   props: Readonly<{ scene: WorkflowRunSpecimenScene }>,
 ) {
   const data = React.useMemo(() => sceneData(props.scene), [props.scene]);
+  // The real route publishes its exact invocation reads before Content renders; Activity reads that same keyed
+  // owner, so the specimen publishes its fixture there too (opened rows carry their progress).
+  const scope = useActiveServerAccountScope(null);
+  React.useLayoutEffect(() => {
+    getStorage().getState().applyWorkflowRunInvocationPage({ runId: data.run.id, scope,
+      invocations: data.invocations.map((index) => {
+        const progress = data.byId.get(index.id);
+        return progress === undefined ? index : { ...index, opened: { index, progress, parentRevision: data.run.revision } };
+      }),
+      mode: 'replace', nextCursor: null, parentRevision: data.run.revision });
+  }, [data, scope]);
   const offline = props.scene === 'offline';
   const [selected, setSelected] = React.useState<string | null>(
     offline ? 'inv-close' : 'inv-tests',

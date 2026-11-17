@@ -21,6 +21,9 @@ import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions
 import { getStorage } from '@/sync/domains/state/storage';
 import { workflowRunRowFromSummary, workflowRunStoreKey, selectWorkflowInvocationOpened, selectWorkflowInvocationRecoveryAvailability } from '@/sync/store/domains/workflowRuns';
 import { resolveWorkflowProblemPresentation, type WorkflowProblemPresentation } from '../presentation/workflowProblemPresentation';
+import { useMachinePresenceSummary, type MachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+
+const sameReachability = (left: MachinePresenceSummary, right: MachinePresenceSummary) => left.reachability === right.reachability;
 
 /** Managed summary and existing controls; native Workflow activity is a distinct producer. */
 export function useWorkflowInlineRunControls(params: Readonly<{
@@ -35,6 +38,9 @@ export function useWorkflowInlineRunControls(params: Readonly<{
     onStarted: (result: WorkflowRunStartResultV1) => void;
 }>) {
     const { run, definition, acceptedContext, accountLifetime, canEdit, supportsAnotherRound } = params;
+    // Run again repeats the Run on its Machine: the inline replay reads the same reachability the Run page passes.
+    const reachability = useMachinePresenceSummary(accountLifetime.scope.serverId, run.machineId, accountLifetime, sameReachability).reachability;
+    const machineReachable = reachability === 'unknown' ? undefined : reachability === 'reachable';
     const actions = React.useMemo(() => createWorkflowRunDetailActions({ accountLifetime }), [accountLifetime]);
     // The same Another round intent as the Run page's, so either surface rejoins one pending request.
     const start = useWorkflowRunNowController(accountLifetime, `another-round:${run.id}`);
@@ -82,7 +88,7 @@ export function useWorkflowInlineRunControls(params: Readonly<{
     onStartedRef.current = params.onStarted;
     const hasAcceptedContext = acceptedContext !== null || supportsAnotherRound !== undefined;
     const startAcceptedRun = React.useCallback(async (intent: 'replay' | 'another_round') => {
-        const eligible = { run, definition, canEdit, cancelRequested, supportsAnotherRound, hasAcceptedContext };
+        const eligible = { run, definition, canEdit, cancelRequested, supportsAnotherRound, hasAcceptedContext, machineReachable };
         if (!accountLifetime.isCurrent() || !(intent === 'another_round'
             ? canStartWorkflowAnotherRound(eligible) : canStartWorkflowRunAgain(eligible))) return;
         const controller = intent === 'another_round' ? start : replayStart;
@@ -91,7 +97,7 @@ export function useWorkflowInlineRunControls(params: Readonly<{
                 // Pressing a replay action is deliberate detail demand. Reloaded timelines never open
                 // full invocation history merely to decide whether to draw this action.
                 const detail = definition && acceptedContext ? { run, definition, acceptedContext } : await actions.getRun(run.id);
-                const opened = { run: detail.run, definition: detail.definition, canEdit, cancelRequested, hasAcceptedContext: true };
+                const opened = { run: detail.run, definition: detail.definition, canEdit, cancelRequested, hasAcceptedContext: true, machineReachable };
                 if (!accountLifetime.isCurrent() || !(intent === 'another_round'
                     ? canStartWorkflowAnotherRound(opened) : canStartWorkflowRunAgain(opened))) {
                     throw new WorkflowActionError({ message: 'invalid_input', rawCode: 'invalid_input' });
@@ -102,7 +108,7 @@ export function useWorkflowInlineRunControls(params: Readonly<{
             }, refusal: 'inline',
             isInvocationCurrent: () => mounted.current && accountLifetime.isCurrent() });
         if (admitted && mounted.current && accountLifetime.isCurrent()) onStartedRef.current(admitted);
-    }, [acceptedContext, accountLifetime, actions, canEdit, cancelRequested, definition, hasAcceptedContext, mounted, replayStart, run, start, supportsAnotherRound]);
+    }, [acceptedContext, accountLifetime, actions, canEdit, cancelRequested, definition, hasAcceptedContext, machineReachable, mounted, replayStart, run, start, supportsAnotherRound]);
     const anotherRound = React.useCallback(() => startAcceptedRun('another_round'), [startAcceptedRun]);
     const runAgain = React.useCallback(() => startAcceptedRun('replay'), [startAcceptedRun]);
     return {
@@ -116,9 +122,9 @@ export function useWorkflowInlineRunControls(params: Readonly<{
         pendingControl,
         controlError,
         cancelRequested,
-        anotherRound: canStartWorkflowAnotherRound({ ...params,
+        anotherRound: canStartWorkflowAnotherRound({ ...params, machineReachable,
             hasAcceptedContext: params.acceptedContext !== null || supportsAnotherRound === true }) ? anotherRound : null,
-        runAgain: canStartWorkflowRunAgain({ ...params, hasAcceptedContext }) ? runAgain : null,
+        runAgain: canStartWorkflowRunAgain({ ...params, hasAcceptedContext, machineReachable }) ? runAgain : null,
         start,
         replayStart,
     };
