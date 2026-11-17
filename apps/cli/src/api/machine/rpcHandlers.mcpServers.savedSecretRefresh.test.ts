@@ -11,6 +11,7 @@ import type { StoredCredentials } from '@/persistence';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
 import { createMcpOwnerRpcContext, MCP_TEST_HOME_ID } from './mcpServers.testkit';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 const randomBytes = (length: number) => new Uint8Array(length).fill(11);
 // A real MCP process advertises a tool only if fresh secret material reached it.
@@ -28,8 +29,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
 `;
 
 describe('rpcHandlers.mcpServers (saved secret refresh)', () => {
-  beforeEach(() => resetInMemoryAccountSettingsContextForTests());
-  afterEach(() => resetInMemoryAccountSettingsContextForTests());
+  const sourceEnvironment = createEnvKeyScope(['HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT']);
+  beforeEach(() => { resetInMemoryAccountSettingsContextForTests();
+    sourceEnvironment.patch({ HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1' }); });
+  afterEach(() => { resetInMemoryAccountSettingsContextForTests(); sourceEnvironment.restore(); });
 
   it.each(['plain', 'e2ee'] as const)('refreshes a draft from stale Account settings and consumes its %s saved secret', async mode => {
     const secret = new Uint8Array(32).fill(7);

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
 import { io } from 'socket.io-client';
@@ -16,8 +16,11 @@ import type { RpcRequest } from '@/api/rpc/types';
 import { createEncryptedRpcTestClient } from '@/rpc/handlers/encryptedRpc.testkit';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { authorizeMachineRpcRequest } from './machineRpcAuthorization';
 
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
+import { createMcpOwnerRpcContext, MCP_TEST_HOME_ID } from './mcpServers.testkit';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 describe('rpcHandlers.mcpServers (detect)', () => {
   let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
@@ -31,30 +34,50 @@ describe('rpcHandlers.mcpServers (detect)', () => {
   });
   afterAll(async () => { await runtime?.dispose(); });
 
+  function createDetectionManager(encryptionKey?: Uint8Array) {
+    const admission = createMcpOwnerRpcContext().machineAdmission!;
+    return new RpcHandlerManager({ scopePrefix: 'm1', localMachineId: 'm1',
+      ...(encryptionKey ? { encryptionKey, encryptionVariant: 'legacy' as const } : { encryptionMode: 'plain' as const }),
+      authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: admission.machineId,
+        resolveCustodianAccountId: async () => admission.custodianAccountId,
+        resolveInstallationId: () => admission.installationId,
+        resolveHomeServerIdentityId: async () => MCP_TEST_HOME_ID,
+        // The fixture Home verifies its authenticated Machine admission.
+        verifyMachineAdmission: async () => true,
+      }) });
+  }
+
   function createDetectionClient(env?: NodeJS.ProcessEnv) {
+    const admission = createMcpOwnerRpcContext();
+    const encryptionKey = new Uint8Array(32).fill(7);
     return createEncryptedRpcTestClient({ scopePrefix: 'm1',
-      registerHandlers: manager => registerMachineMcpServersRpcHandlers({ rpcHandlerManager: manager, deps: { env } }),
+      manager: createDetectionManager(encryptionKey), encryptionKey,
+      callerAuthority: admission.callerAuthority, machineAdmission: admission.machineAdmission,
+      registerHandlers: manager => registerMachineMcpServersRpcHandlers({ rpcHandlerManager: manager,
+        deps: { env, hostHomeServerIdentityId: MCP_TEST_HOME_ID } }),
     });
   }
 
   it('composes real plugin discovery, native files and registered RPC over HTTP/Socket.IO into the consumer schema', async () => {
+    const environment = createEnvKeyScope(['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'XDG_CONFIG_HOME']);
     const home = await mkdtemp(join(tmpdir(), 'happier-native-mcp-rpc-'));
     const http = createServer();
     const sockets = new Server(http);
-    const manager = new RpcHandlerManager({ scopePrefix: 'm1', encryptionMode: 'plain' });
-    registerMachineMcpServersRpcHandlers({ rpcHandlerManager: manager });
+    const manager = createDetectionManager();
+    registerMachineMcpServersRpcHandlers({ rpcHandlerManager: manager,
+      deps: { hostHomeServerIdentityId: MCP_TEST_HOME_ID } });
     sockets.use((socket, next) => socket.handshake.auth.fixture === 'native-discovery' ? next() : next(new Error('Unauthorized')));
     sockets.on('connection', socket => socket.on('rpc-request', (request: RpcRequest, reply: (value: unknown) => void) => {
-      void manager.handleRequest(request).then(reply, error => reply({ errorCode: 'internal_error', error: String(error) }));
+      const admission = createMcpOwnerRpcContext();
+      void manager.handleRequest({ ...request, callerAuthority: admission.callerAuthority,
+        machineAdmission: admission.machineAdmission }).then(reply, error => reply({ errorCode: 'internal_error', error: String(error) }));
     }));
     await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
     const address = http.address();
     if (!address || typeof address === 'string') throw new Error('Expected HTTP listener');
     const client = io(`http://127.0.0.1:${address.port}`, { transports: ['websocket'], auth: { fixture: 'native-discovery' }, reconnection: false });
     try {
-      vi.stubEnv('CODEX_HOME', join(home, 'codex'));
-      vi.stubEnv('CLAUDE_CONFIG_DIR', join(home, 'claude'));
-      vi.stubEnv('XDG_CONFIG_HOME', join(home, 'xdg'));
+      environment.patch({ CODEX_HOME: join(home, 'codex'), CLAUDE_CONFIG_DIR: join(home, 'claude'), XDG_CONFIG_HOME: join(home, 'xdg') });
       await mkdir(join(home, 'codex'));
       await mkdir(join(home, 'claude'));
       await mkdir(join(home, 'xdg', 'opencode'), { recursive: true });
@@ -84,7 +107,7 @@ describe('rpcHandlers.mcpServers (detect)', () => {
     } finally {
       client.disconnect();
       await new Promise<void>(resolve => sockets.close(() => resolve()));
-      vi.unstubAllEnvs();
+      environment.restore();
       await rm(home, { recursive: true, force: true });
     }
   });

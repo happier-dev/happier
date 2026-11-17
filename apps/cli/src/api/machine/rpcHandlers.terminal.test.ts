@@ -1533,7 +1533,10 @@ describe('registerMachineTerminalRpcHandlers', () => {
       expect(h.post.mock.calls.filter(([url]) => String(url).endsWith('/project-rows/list')).map(([, body]) => body))
         .toEqual([{ kinds: ['workspace-ref'], serverId: 'home' }]);
       for (const [, body] of h.post.mock.calls.filter(([url]) => String(url).endsWith('/project-rows/read'))) {
-        expect(body).toEqual({ key: { kind: 'workspace-ref', serverId: 'home', id: 'accepted' } });
+        expect([
+          { key: { kind: 'workspace-ref', serverId: 'home', id: 'accepted' } },
+          { key: { kind: 'project-organization', serverId: 'home', projectKey: 'project' } },
+        ]).toContainEqual(body);
       }
       if (!ensured || typeof ensured !== 'object' || !('terminalId' in ensured) || typeof ensured.terminalId !== 'string') throw new Error('Actual terminal missing');
       const terminalId = ensured.terminalId;

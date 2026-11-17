@@ -86,6 +86,8 @@ vi.mock('node:fs/promises', async original => {
       [pathFor(args[0]), ...args.slice(1)])) as typeof actual.stat,
     readdir: ((...args: Parameters<typeof actual.readdir>) => Reflect.apply(actual.readdir, actual,
       [pathFor(args[0]), ...args.slice(1)])) as typeof actual.readdir,
+    open: ((...args: Parameters<typeof actual.open>) => Reflect.apply(actual.open, actual,
+      [pathFor(args[0]), ...args.slice(1)])) as typeof actual.open,
     // Preserve Node's overloaded encoding contract at this genuine fs boundary.
     readFile: ((...args: Parameters<typeof actual.readFile>) => Reflect.apply(actual.readFile, actual,
       [pathFor(args[0]), ...args.slice(1)])) as typeof actual.readFile,

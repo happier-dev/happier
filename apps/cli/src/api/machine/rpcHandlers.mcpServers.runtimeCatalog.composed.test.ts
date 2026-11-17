@@ -31,6 +31,9 @@ import { ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema } fro
 import { PromptBundleArtifactHeaderV1Schema } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
 import { createMcpOwnerRpcContext, MCP_TEST_HOME_ID } from './mcpServers.testkit';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createAccountPluginSettingsRecordStorage } from '@/plugins/runtime/context/accountPluginSettingsRecordStorage';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 
 const childBoundary = vi.hoisted(() => ({ observe: undefined as ((phase: string) => void) | undefined }));
 vi.mock('node:child_process', async importOriginal => {
@@ -84,6 +87,7 @@ const catalog = { v: 1 as const, servers: settings.servers, bindings: settings.b
 
 function register(input: Readonly<{ unavailable?: boolean; retire?: boolean; retireDuringMaterialization?: boolean; project?: boolean;
   requester?: 'member';
+  requesterRole?: 'use' | 'manage';
   resolveHostHomeServerIdentityId?: (signal?: AbortSignal) => Promise<string | null>;
   serverHttpBaseUrl?: string;
   realProbe?: boolean; env?: NodeJS.ProcessEnv;
@@ -146,6 +150,7 @@ function register(input: Readonly<{ unavailable?: boolean; retire?: boolean; ret
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode: 'plain', version: 0,
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 } };
     if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+    if (path.startsWith('/v1/account/plugin-settings/')) return { status: 200, data: { status: 'absent' } };
     if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({
       key, revision: 1, content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) } })) } };
     if (path === '/v1/artifacts') return { status: 200, data: new URL(String(url)).searchParams.has('kind')
@@ -172,7 +177,7 @@ function register(input: Readonly<{ unavailable?: boolean; retire?: boolean; ret
       rpcHandlerManager.registerHandler(method, (raw, context) => {
         const admitted = createMcpOwnerRpcContext(context);
         return handler(raw, input.requester === 'member' ? { ...admitted,
-          machineAdmission: { ...admitted.machineAdmission!, actorAccountId: 'member' } } : admitted);
+          machineAdmission: { ...admitted.machineAdmission!, actorAccountId: 'member', role: input.requesterRole ?? 'use' } } : admitted);
       });
     } } as Pick<RpcHandlerManager, 'registerHandler'> as RpcHandlerManager,
     deps: {
@@ -202,14 +207,27 @@ function register(input: Readonly<{ unavailable?: boolean; retire?: boolean; ret
 }
 
 describe('Machine MCP catalog admission', () => {
+  const sourceEnvironment = createEnvKeyScope(['HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT']);
   let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
   beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
-    runtimeOptions: { pluginIds: ['claude', 'codex'] } }); });
+    runtimeOptions: { pluginIds: ['happier.agent.claude', 'happier.agent.codex'],
+      accountSettingsRecordAdapter: createAccountPluginSettingsRecordStorage({
+        readCredentials: async () => ({ token: 'rpc-mcp-account', encryption: null }),
+        isCurrentAccount: () => getActiveAccountSettingsSnapshot()?.scopeKey === resolveAccountSettingsScopeKeyForToken('rpc-mcp-account'),
+        resolveBaseUrl: () => 'https://home.example.test',
+      }),
+    } }); });
   afterAll(async () => { await runtime?.dispose(); });
-  beforeEach(() => { resetInMemoryAccountSettingsContextForTests(); vi.mocked(axios.get).mockReset(); });
-  afterEach(() => { childBoundary.observe = undefined; resetInMemoryAccountSettingsContextForTests(); });
+  beforeEach(() => { resetInMemoryAccountSettingsContextForTests(); vi.mocked(axios.get).mockReset();
+    sourceEnvironment.patch({ HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1' }); });
+  afterEach(() => { childBoundary.observe = undefined; resetInMemoryAccountSettingsContextForTests(); sourceEnvironment.restore(); });
 
   it('refuses a member before selecting the distinct custodian catalog or probe environment', async () => {
+    const manager = register({ requester: 'member', requesterRole: 'manage' });
+    await expect(manager.rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_MCP_SERVERS_TEST,
+      { t: 'byId', machineId: 'm1', directory: 'C:\\workspace', serverId: 'srv-row' }))
+      .resolves.toMatchObject({ ok: true, toolCount: 1 });
+    vi.mocked(axios.get).mockClear();
     const owner = register({ requester: 'member' });
     await expect(owner.rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_MCP_SERVERS_TEST,
       { t: 'byId', machineId: 'm1', directory: 'C:\\workspace', serverId: 'srv-row' }))
@@ -493,7 +511,7 @@ describe('Machine MCP catalog admission', () => {
     return preview({ machineId: 'm1', directory: '/repo', agentId: 'claude', capabilitySelection: {
       mcp: { v: 1, managedServersEnabled: true, forceIncludeServerIds: ['srv-row'], forceExcludeServerIds: [] },
     } }).then(raw => {
-      expect(DaemonMcpServersPreviewResponseSchema.parse(raw)).toMatchObject({ ok: true,
+      expect(DaemonMcpServersPreviewResponseSchema.parse(raw), JSON.stringify(raw)).toMatchObject({ ok: true,
         managed: [{ serverId: 'srv-row', selected: true, selectable: true, reasonCode: 'forced_included' }] });
     });
   });
@@ -647,7 +665,7 @@ describe('Machine MCP catalog admission', () => {
         RPC_METHODS.DAEMON_MCP_SERVERS_TEST, { t: 'byId', serverId, machineId: 'm1', directory: '/tmp' },
       ));
       phase = 'rpc_settled';
-      expect(result).toMatchObject(writeStatus === 'updated' ? { ok: true, toolCount: 1, toolNamesSample: ['echo'] }
+      expect(result, JSON.stringify(result)).toMatchObject(writeStatus === 'updated' ? { ok: true, toolCount: 1, toolNamesSample: ['echo'] }
         : { ok: false, errorCode: 'materialization_failed', error: 'mcp_tools_snapshot_conflict' });
       expect(probe).toHaveBeenCalled();
       expect(held.servers).toEqual([]);

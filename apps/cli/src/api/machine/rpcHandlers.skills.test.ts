@@ -211,7 +211,7 @@ it('scans, reads, adopts and installs through registered Actions and transfers w
     const revision = (await readReceiptRow()).revision;
     expect(await manager.invokeLocal('skills.machine.install', { skillId: 'happier:happier', machineId: 'foreign' }, context)).toMatchObject({ errorCode: 'machine_target_mismatch' });
     expect((await readReceiptRow()).revision).toBe(revision);
-    expect(await manager.invokeLocal('skills.machine.uninstall', { skillId: 'happier:happier', machineId: 'machine' }, context)).toMatchObject({ errorCode: 'approvals_not_supported' });
+    expect(await manager.invokeLocal('skills.machine.uninstall', { skillId: 'happier:happier', machineId: 'machine' }, context)).toMatchObject({ errorCode: 'action_interactive_review_required' });
     expect(existsSync(path)).toBe(true);
     confirmation = { actionId: 'skills.machine.uninstall' };
     const removed = SkillMachineUninstallResultV1Schema.parse(await manager.invokeLocal('skills.machine.uninstall', { skillId: 'happier:happier', machineId: 'machine' }, context));
