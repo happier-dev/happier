@@ -27,7 +27,6 @@ const inventoryScope = { settingsScope: true, artifactThemeLibraryArtifacts: tru
 const noSubscription = {} satisfies StorageSubscriptionScope;
 const noSelectionSubscription = { localSettings: [] } satisfies StorageSubscriptionScope;
 const noArtifactSubscription = { artifacts: [] } satisfies StorageSubscriptionScope;
-const noInventory = Object.freeze({ rows: Object.freeze({}), scope: null });
 const noStatus = Object.freeze({ loaded: false, complete: false });
 const noEntries: readonly ThemeLibraryEntry[] = Object.freeze([]);
 
@@ -36,13 +35,16 @@ function pluginDocument(item: PluginThemeListItem): ThemeProfileDocument | null 
         contributionId: item.contributionId });
 }
 
-function libraryEntries(rows: Readonly<Record<string, DecryptedArtifact>>, scope: AccountSettingsScope | null,
-    plugins: readonly PluginThemeListItem[]): readonly ThemeLibraryEntry[] {
-    const saved = scope ? Object.values(rows).flatMap(row => {
+function artifactLibraryEntries(rows: Readonly<Record<string, DecryptedArtifact>>, scope: AccountSettingsScope | null): readonly ThemeLibraryEntry[] {
+    return scope ? Object.values(rows).flatMap(row => {
         const summary = projectThemeProfileArtifactSummary(row, scope);
         return summary ? [summary.entry] : [];
     }) : [];
-    return projectThemeLibraryEntries(saved, projectPluginThemeLibraryEntries(plugins), getBuiltInThemeLibraryEntries());
+}
+
+function libraryEntries(rows: Readonly<Record<string, DecryptedArtifact>>, scope: AccountSettingsScope | null,
+    plugins: readonly PluginThemeListItem[]): readonly ThemeLibraryEntry[] {
+    return projectThemeLibraryEntries(artifactLibraryEntries(rows, scope), projectPluginThemeLibraryEntries(plugins), getBuiltInThemeLibraryEntries());
 }
 
 /** Selection controls consume tagged references without demanding any theme document. */
@@ -62,15 +64,33 @@ export function readThemeLibrarySnapshot(expectedScope?: AccountSettingsScope | 
         selection: readThemeProfileReferenceSelection(state.localSettings.themeProfileSelection) };
 }
 
-/** The library consumes private header inputs. Its CSS-heavy bodies stay on demand. */
-export function useThemeLibraryInventory(enabled = true): Readonly<{ entries: readonly ThemeLibraryEntry[]; loaded: boolean; failed: boolean; retry(): void }> {
-    const input = getStorage()(useShallow(state => enabled ? { rows: state.artifactThemeLibraryArtifacts, scope: state.settingsScope } : noInventory), enabled ? inventoryScope : noSubscription);
+type ThemeLibraryInventory<Entry extends ThemeLibraryEntry = ThemeLibraryEntry> = Readonly<{
+    entries: readonly Entry[]; loaded: boolean; failed: boolean; retry(): void;
+}>;
+const allEntries = (entries: readonly ThemeLibraryEntry[]) => entries;
+
+/** Saved-theme consumers select private headers before rendering, without plugin or built-in demand. */
+export function useThemeLibraryArtifactInventory(enabled?: boolean): ThemeLibraryInventory;
+export function useThemeLibraryArtifactInventory<Entry extends ThemeLibraryEntry>(enabled: boolean,
+    selectEntries: (entries: readonly ThemeLibraryEntry[]) => readonly Entry[]): ThemeLibraryInventory<Entry>;
+export function useThemeLibraryArtifactInventory(enabled = true,
+    selectEntries: (entries: readonly ThemeLibraryEntry[]) => readonly ThemeLibraryEntry[] = allEntries): ThemeLibraryInventory {
+    const entries = getStorage()(useShallow(state => enabled
+        ? selectEntries(artifactLibraryEntries(state.artifactThemeLibraryArtifacts, state.settingsScope)) : noEntries), enabled ? inventoryScope : noSubscription);
     const status = getStorage()(useShallow(state => enabled ? { loaded: isArtifactInventoryReady(state, THEME_PROFILE_ARTIFACT_KINDS),
         complete: isArtifactInventoryLoaded(state, THEME_PROFILE_ARTIFACT_KINDS) } : noStatus), enabled ? inventoryStatusScope : noSubscription);
     const read = useArtifactInventoryRead(enabled && !status.loaded, enabled ? THEME_PROFILE_ARTIFACT_KINDS : NO_ARTIFACT_KINDS);
-    const plugins = usePluginThemeList(enabled);
-    const entries = React.useMemo(() => enabled ? libraryEntries(input.rows, input.scope, plugins) : noEntries, [enabled, input.rows, input.scope, plugins]);
     return { entries, loaded: status.loaded, failed: read.failed || status.loaded && !status.complete, retry: read.retry };
+}
+
+/** The library consumes private header inputs. Its CSS-heavy bodies stay on demand. */
+export function useThemeLibraryInventory(enabled = true): ThemeLibraryInventory {
+    const inventory = useThemeLibraryArtifactInventory(enabled);
+    const plugins = usePluginThemeList(enabled);
+    const entries = React.useMemo(() => enabled
+        ? projectThemeLibraryEntries(inventory.entries, projectPluginThemeLibraryEntries(plugins), getBuiltInThemeLibraryEntries()) : noEntries,
+        [enabled, inventory.entries, plugins]);
+    return { ...inventory, entries };
 }
 
 export function useThemeLibraryEntries(enabled = true): readonly ThemeLibraryEntry[] {

@@ -3,23 +3,25 @@ import { useColorScheme } from 'react-native';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { ThemeInstallResultSchema, type ThemeActionOutput } from '@happier-dev/protocol/actions/themeActionFamily';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { ThemeLibraryEntry } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
-import { useThemeLibraryInventory } from '@/sync/store/useThemeProfiles';
+import { useThemeLibraryArtifactInventory } from '@/sync/store/useThemeProfiles';
 import { useRegistrySources } from '@/registries/useRegistrySources';
 import { getThemeRegistryLifecycle, getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
 import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
 import { resolveThemeRuntimeVisualTheme } from '@/theme/profiles/themeProfileRuntime';
 import { t } from '@/text';
-import { describeStoreThemeModes, projectStoreThemeCoverageFacts } from './catalog/storeThemes';
+import { describeStoreThemeModes, groupInstalledStoreThemes, projectStoreThemeCoverageFacts, type InstalledStoreThemeEntry } from './catalog/storeThemes';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { Modal } from '@/modal';
 import type { StoreThemeListingViewProps } from './storeThemeViewTypes';
 
 type Opened = ThemeActionOutput<typeof THEME_ACTION_IDS.storeGet>;
 type Listing = Readonly<{ sourceId: string; itemId: string }>;
+const noInstalledEntries: readonly InstalledStoreThemeEntry[] = [];
 
 /** Selected acquisition, Actions and the shared overlay feed the existing Store listing presentation. */
 export function StoreThemeListingController(props: Readonly<{ listing: Listing;
@@ -36,7 +38,9 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
             && current.origin.listing.itemId === itemId ? current : null;
     }, [owner, sourceId, itemId]);
     const matching = React.useSyncExternalStore(subscribePreview, readPreview, readPreview);
-    const library = useThemeLibraryInventory(presented);
+    const selectInstalledEntries = React.useCallback((entries: readonly ThemeLibraryEntry[]) => groupInstalledStoreThemes(entries)
+        .find(group => group.listing.sourceId === sourceId && group.listing.itemId === itemId)?.entries ?? noInstalledEntries, [sourceId, itemId]);
+    const library = useThemeLibraryArtifactInventory(presented, selectInstalledEntries);
     const sources = useRegistrySources('theme', presented);
     const preference = useLocalSetting('themePreference');
     const mode = resolveThemeRuntimeVisualTheme(preference, useColorScheme());
@@ -74,11 +78,8 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     const tryingFaceId = tryingSource?.kind === 'store' ? tryingSource.contributionId : null;
     const coverage = opened?.coverage.find(row => row.faceId === (tryingFaceId ?? preferred?.id))?.coverage;
     const coverageFacts = coverage ? projectStoreThemeCoverageFacts(coverage) : null;
-    const installed = Boolean(faces?.length && faces.every(face => library.entries.some(entry => entry.source.kind === 'store'
-        && entry.source.provenance.sourceId === sourceId && entry.source.provenance.itemId === itemId
-        && entry.source.contributionId === face.id)));
-    const hasInstalledFaces = library.entries.some(entry => entry.source.kind === 'store'
-        && entry.source.provenance.sourceId === sourceId && entry.source.provenance.itemId === itemId);
+    const installed = Boolean(faces?.length && faces.every(face => library.entries.some(entry => entry.source.contributionId === face.id)));
+    const hasInstalledFaces = library.entries.length > 0;
     const run = async (kind: NonNullable<StoreThemeListingViewProps['busy']>, actionId: ActionId, input: unknown) => {
         setBusy(kind);
         try {

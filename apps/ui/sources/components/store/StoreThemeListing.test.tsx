@@ -150,6 +150,17 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     const installed = artifacts.list();
     expect(installed).toHaveLength(2);
     expect(installed.map(row => row.headerVersion)).toEqual([1, 1]);
+    const installedHeader = Object.values(storage.getState().artifacts).find(artifact =>
+        ThemeProfileArtifactHeaderSchema.safeParse(artifact.rawHeader).success);
+    if (!installedHeader) throw new Error('Expected an admitted installed theme header');
+    listingCommits = 0;
+    for (let index = 1; index <= 10; index++) {
+        await act(async () => { storage.getState().applyArtifacts([{ ...installedHeader, id: `unrelated-theme-${index}`,
+            title: `Unrelated ${index}`, rawHeader: { ...ThemeProfileArtifactHeaderSchema.parse(installedHeader.rawHeader),
+                title: `Unrelated ${index}`, themeSource: { kind: 'yours' } } }]); });
+    }
+    expect(listingCommits, 'the listing ignores unrelated theme library headers').toBe(0);
+    expect(view()?.installed).toBe(true);
     const selected = storage.getState().localSettings.themeProfileSelection.light;
     expect(selected?.kind).toBe('artifact');
     const selectedRow = selected?.kind === 'artifact' ? artifacts.read(selected.id) : null;
