@@ -85,6 +85,8 @@ const PLUGIN_UI_ICON_TOKEN_TO_ICON_NAME: Readonly<Record<PluginUiIconTokenV1, Ic
     heart: 'heart',
     shield: 'shield',
     edit: 'pencil-simple',
+    pulse: 'pulse',
+    chart: 'chart-line',
 });
 
 /** Glyph rendered for a missing or non-canonical semantic icon token. */

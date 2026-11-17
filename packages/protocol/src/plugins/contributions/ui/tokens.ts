@@ -87,6 +87,9 @@ export const PLUGIN_UI_ICON_TOKENS_V1 = [
   // A security finding (a Dependabot or code scanning alert), and editing something the reader wrote.
   'shield',
   'edit',
+  // An app's live health and one measure over time (Telemetry widgets: vitals, key flows, a metric).
+  'pulse',
+  'chart',
 ] as const;
 
 export const PluginUiIconTokenV1Schema = lazyZodSchema(() => z.enum(PLUGIN_UI_ICON_TOKENS_V1));

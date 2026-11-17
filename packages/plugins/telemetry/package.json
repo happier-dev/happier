@@ -16,7 +16,10 @@
       "types": "./dist/manifest.d.ts",
       "default": "./dist/manifest.js"
     },
-    "./happier-plugin-ui/telemetry-exception-detail-native": "./src/ui/exceptionDetail.tsx"
+    "./happier-plugin-ui/telemetry-exception-detail-native": "./src/ui/exceptionDetail.tsx",
+    "./happier-plugin-ui/telemetry-app-vitals-widget-native": "./src/ui/widgets/appVitalsWidget.tsx",
+    "./happier-plugin-ui/telemetry-metric-widget-native": "./src/ui/widgets/metricWidget.tsx",
+    "./happier-plugin-ui/telemetry-slowest-routes-widget-native": "./src/ui/widgets/slowestRoutesWidget.tsx"
   },
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",

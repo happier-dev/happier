@@ -13,6 +13,7 @@ import { telemetryHealthActions } from './health.js';
 import { keyFlowConfigSchema } from './healthSchemas.js';
 import { telemetryRegressionActions } from './regression.js';
 import { TELEMETRY_REGRESSION_WORKFLOW_ID_V1, TELEMETRY_REGRESSION_WORKFLOW_V1 } from './regressionWorkflow.js';
+import { TELEMETRY_WIDGET_RENDERERS, TELEMETRY_WIDGET_VIEWS } from './widgets.js';
 
 /** Local sources (the requester's own Machine and worktrees) are admitted for the Account that
  * recorded them: the source must be on this executing Machine, and the requester's Account selects
@@ -70,7 +71,9 @@ export const DATABASE_CAPTURE_PLUGIN = definePlugin({
  events: telemetryExceptionManifestParts.events,
  workflows: { [TELEMETRY_REGRESSION_WORKFLOW_ID_V1]: TELEMETRY_REGRESSION_WORKFLOW_V1 },
  // D30/J2: the native exception detail, mounted by PRs & Issues for the Happier exceptions source.
- ui: { views: [], renderers: [
+ // D36: App vitals, Metric and Slowest routes, offered in Add widget → Telemetry and never auto-added.
+ ui: { views: [...TELEMETRY_WIDGET_VIEWS], renderers: [
+  ...TELEMETRY_WIDGET_RENDERERS,
   // The detail reads occurrences and writes lifecycle through this plugin's own Actions.
   { id: EXCEPTION_DETAIL_RENDERER_ID, kind: 'reactNative', artifact: 'telemetry-exception-detail-native', requiredHostMethods: ['executeAction'] },
   { id: EXCEPTION_DETAIL_FALLBACK_RENDERER_ID, kind: 'declarative', root: { kind: 'text', text: {

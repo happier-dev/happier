@@ -74,6 +74,8 @@ const EXPECTED_PRIVATE_ICON_NAMES: Readonly<Record<string, IconName>> = Object.f
     heart: 'heart',
     shield: 'shield',
     edit: 'pencil-simple',
+    pulse: 'pulse',
+    chart: 'chart-line',
 });
 
 describe('resolvePluginUiIconToken', () => {
