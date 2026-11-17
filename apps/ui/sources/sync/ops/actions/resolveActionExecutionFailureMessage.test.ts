@@ -201,7 +201,7 @@ describe('Action failure presentation', () => {
             expect(resolveActionExecutionErrorMessage(new PluginError({ code }), 'Fallback')).toBe(t('voiceSurface.actionCanceled'));
         }
         expect(resolveActionExecutionErrorMessage(new PluginError({ code: 'outcome_unknown' }), 'Fallback', options))
-            .toBe(t('entityDragDrop.preview.unknownDetail'));
+            .toBe(t('errors.scmOutcomeUnknown'));
     });
 
     it.each([

@@ -45,7 +45,7 @@ export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry
   const owner = readSpokenActionOutcomeOwner(entry.t, entry.args);
   if (!owner) return null;
   const envelope = record(entry.result);
-  const unknown = t('entityDragDrop.preview.unknownDetail');
+  const unknown = t('errors.scmOutcomeUnknown');
   if (envelope?.ok === false && (envelope.errorCode ?? envelope.code) === 'present_user_required') {
     return t('voiceSurface.approvalTapRequired');
   }

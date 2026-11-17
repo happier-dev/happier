@@ -84,7 +84,7 @@ describe('approval failure outcome', () => {
             expect.objectContaining({ key: 'failure-http-status', value: String(httpStatus) }),
         ]));
         expect(presentActionFailureOutcome({ ...recorded!, errorCode: 'outcome_unknown', error: 'outcome_unknown' }).reason)
-            .toBe(t('entityDragDrop.preview.unknownDetail'));
+            .toBe(t('errors.scmOutcomeUnknown'));
     });
 
     it('directs an unconfirmed Doc suggestion back to its thread while retaining diagnostic evidence', () => {

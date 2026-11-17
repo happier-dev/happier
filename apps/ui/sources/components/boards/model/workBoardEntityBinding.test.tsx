@@ -203,7 +203,7 @@ describe('mounted WorkBoard Action settlement', () => {
         const restoreReads = b.loseNextWriteAcknowledgement();
         try {
             await act(async () => { expect(await runWidgetSetupCommand(() => widgets.addInstance(instance, { place: false }), 'widgetAdd.addFailed'))
-                .toEqual({ ok: false, message: 'entityDragDrop.preview.unknownDetail' }); });
+                .toEqual({ ok: false, message: 'errors.scmOutcomeUnknown' }); });
             expect(b.rows.get(board.id)?.bodyVersion).toBe(2);
         } finally { restoreReads(); }
     });

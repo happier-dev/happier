@@ -146,7 +146,8 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     const transient = readTransientFailure(record, options);
     if (transient) return !options?.safeToRetry && transient.effectMayHaveApplied ? t('toolView.pending.unknownDescription') : transient.message;
     // An unconfirmed effect keeps its recovery even when its transport cause is known.
-    if (isActionOutcomeUnknownErrorCodeV1(code)) return t(options?.safeToRetry ? 'errors.tryAgain' : 'entityDragDrop.preview.unknownDetail');
+    // One neutral sentence for every surface; drag-and-drop keeps its own list wording at its own call sites.
+    if (isActionOutcomeUnknownErrorCodeV1(code)) return t(options?.safeToRetry ? 'errors.tryAgain' : 'errors.scmOutcomeUnknown');
     // A transport wrapper can say Forbidden while its producer names unavailable
     // infrastructure. Present that validated cause before the wrapper's generic copy.
     const cause = record.failureCause === undefined ? null : readActionFailureCauseV1(record.failureCause);

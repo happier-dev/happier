@@ -566,7 +566,11 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         <Item
           testID="approvals.execution-failure"
           title={failureHeadline}
-          subtitle={failureOutcome?.reason ?? (fillNotEntered ? undefined : executionFailure.reason)}
+          // The shared outcome owns the summary: executor prose already sits in Technical details, so it never
+          // leads here; "no reason" is said only when nothing was recorded.
+          subtitle={failureOutcome
+            ? failureOutcome.reason ?? (failureOutcome.message === null ? t('approvals.failureNoReason') : undefined)
+            : fillNotEntered ? undefined : executionFailure.reason}
           subtitleLines={0}
           mode="info"
           showChevron={false}

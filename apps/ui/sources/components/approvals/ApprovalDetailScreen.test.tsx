@@ -1575,6 +1575,28 @@ describe('ApprovalDetailScreen', () => {
     expect(await reasonOf('executor_failed')).toBe('approvals.failureNoReason');
   });
 
+  it('keeps an executor diagnostic in Technical details, never as the summary of a refused request', async () => {
+    const artifact = await createDaemonRoutedApprovalArtifact();
+    // The Home's header refusal (`externalActionHeaderRefusalFailure`): nothing ran, and its prose is a diagnostic.
+    // A request without automatic checks: the refusal settles on the person's approval alone.
+    const open = { ...JSON.parse(artifact.body), automaticChecks: undefined };
+    const { projectApprovalExecutionFailureV2 } = await import('@happier-dev/protocol/approvals/approvalExecutionFailure');
+    const execution = projectApprovalExecutionFailureV2({ request: ApprovalRequestV2Schema.parse(open), executedAtMs: 2, failure: {
+      ok: false, errorCode: 'action_failed', error: 'External Action authorization unavailable: not_authenticated',
+      effectAttempted: false, details: { authorizationRefusalReason: 'not_authenticated' },
+      failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: null, httpStatus: null },
+    } });
+    const request = ApprovalRequestV2Schema.parse({ ...open, status: 'failed', updatedAtMs: 2,
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+    currentArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
+    const failure = approvalItem(screen, 'approvals.execution-failure');
+
+    expect(failure?.props.title).toBe('approvals.failureNotRun');
+    expect(failure?.props.subtitle).toBeUndefined();
+  });
+
   it('preserves and presents the typed Workflow refusal from a settled Setup approval', async () => {
     await prepareApprovalFixture();
     const request = ApprovalRequestV2Schema.parse({

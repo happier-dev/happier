@@ -193,6 +193,8 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
 const styles = StyleSheet.create({
     chipHost: {
         alignSelf: 'flex-start',
+        // The chip keeps its own width even when the missing-profile line beneath it is wider.
+        alignItems: 'flex-start',
         maxWidth: '100%',
     },
 });
