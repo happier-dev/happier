@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { CapabilityMachineTruth } from './CapabilityMachineTruth';
+import { CapabilityMachineTruth, type CapabilityMachineTruthRow } from './CapabilityMachineTruth';
 import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -119,9 +119,9 @@ describe('CapabilityMachineTruth', () => {
 
     // A page's machines arrive offline until their presence settles: the group must not stay open from that first read.
     it('closes the offline machines once reachable ones arrive after a first read with none', async () => {
-        let setRows: (rows: typeof ROWS) => void = () => {};
+        let setRows: (rows: readonly CapabilityMachineTruthRow[]) => void = () => {};
         function Page() {
-            const [rows, update] = React.useState<typeof ROWS>(ROWS.map((row) => ({ ...row, offline: true })));
+            const [rows, update] = React.useState<readonly CapabilityMachineTruthRow[]>(ROWS.map((row) => ({ ...row, offline: true })));
             setRows = update;
             return <CapabilityMachineTruth testID="mt" presentation="list" rows={rows} summary="" />;
         }
