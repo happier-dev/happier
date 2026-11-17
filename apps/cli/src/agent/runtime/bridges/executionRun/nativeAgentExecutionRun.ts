@@ -955,6 +955,13 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
     resolveStructuredInputForDispatch?: NativeAgentSessionContextLeaseFactory['resolveStructuredInputForDispatch'];
 }>): ExecutionRunHostRuntime {
     const directExecutionRuns = params.runtime.executionRuns;
+    // Session-derived Runs receive intent through the host profile's prepared prompt.
+    // Only the explicit executionRuns facet (e.g. native review engines) consumes
+    // intent metadata as its own structured payload; Session media is separate.
+    const structuredInput = params.options.start?.structuredInput
+        ?? (!params.executionRunContextV1 && !params.sessionTurnRecoveryOwned
+            ? params.options.start?.intentInput : undefined);
+
     if (!params.executionRunContextV1 && !directExecutionRuns) {
         throw new Error(`Agent runtime '${params.lease.agentId}' does not support execution runs`);
     }
@@ -1566,7 +1573,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
                     const input = await resolveInputForDispatch(
                         buildInput(
                             options.initialPrompt,
-                            params.options.start?.structuredInput ?? params.options.start?.intentInput,
+                            structuredInput,
                         ),
                         localId,
                     );
@@ -1604,7 +1611,7 @@ export function createNativeAgentExecutionRunHostRuntime(params: Readonly<{
             const carriedInput = admittedInput.structuredInput === undefined
                 ? buildInput(
                     admittedInput.text,
-                    params.options.start?.structuredInput ?? params.options.start?.intentInput,
+                    structuredInput,
                 )
                 : admittedInput;
             let input: AgentSessionInput;

@@ -37,6 +37,8 @@ import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import { createVoiceSessionContextLease, createVoiceSessionRuntimeThroughNativeFactory } from './testkit/nativeSessionContext';
 import { logger } from '@/ui/logger';
 import { reloadConfiguration } from '@/configuration';
+import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { buildStandardReviewPrompt } from '@/agent/reviews/prompt/buildStandardReviewPrompt';
 import { readRetainedExecutionRunRecords } from '@/daemon/executionRunRegistry';
 import type { ExecutionRunState } from './executionRunTypes';
 import { finishExecutionRun } from './finishExecutionRun';
@@ -84,6 +86,69 @@ it.each(['bounded', 'long_lived'] as const)('refuses an unavailable native mode 
         await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
     } finally { await host.dispose(); }
 });
+
+it.each(['session', 'detached', 'execution-only'] as const)(
+    'keeps Review intent separate from native Session input through the %s facet', async (facet) => {
+        // The native process boundary validates the same envelope Muse and OpenCode accept.
+        // Explicit execution-only review engines instead consume the Review payload itself.
+        const intentInput = { engineId: 'native', engineIds: ['native'], instructions: 'Inspect the changed code',
+            changeType: 'uncommitted', base: { kind: 'none' } };
+        const prompt = buildStandardReviewPrompt({ instructions: 'Inspect the changed code', intentInput });
+        for (const admission of ['provision', 'delivery'] as const) {
+            // A valid explicit media envelope is the known-good control for this boundary.
+            for (const structuredInput of [{ v: 1 } as const, undefined]) {
+                const inputs: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionInput[] = [];
+                const accept = (input: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionInput) => {
+                    if (facet !== 'execution-only' && input.structuredInput !== undefined) {
+                        HappierStructuredInputV1Schema.parse(input.structuredInput);
+                        expect(input.structuredInput).toHaveProperty('v', 1);
+                    }
+                    inputs.push(input);
+                };
+                const executionRuns: NonNullable<AgentRuntime['executionRuns']> = { async open(request) {
+                    if (request.kind === 'create') accept(request.input);
+                    return {
+                        async send(input) { accept(input); return { status: 'admitted' as const }; },
+                        async stop() { return { status: 'requested' as const }; },
+                        watch() { return { dispose() {} }; }, async dispose() {},
+                    };
+                } };
+                const runtime: AgentRuntime = { executionRuns, sessions: { async open() { return {
+                    async send(request) { accept(request.input); return { status: 'admitted' as const }; },
+                    watch() { return { dispose() {} }; }, async dispose() {},
+                }; } } };
+                const common = {
+                    runtime, supportsResume: false,
+                    lease: { pluginId: 'acme.native', pluginVersion: '1.0.0', agentId: 'acme.native/default',
+                        localAgentId: 'default', occurrenceId: 'review-input-fixture', isCurrent: () => true },
+                    options: { cwd: '/repo', runId: 'review-input-run', scope: 'detached' as const,
+                        backendId: 'acme.native/default', permissionMode: 'read_only' as const,
+                        start: { intent: 'review' as const, intentInput,
+                            ...(structuredInput ? { structuredInput } : {}),
+                            runClass: 'bounded' as const, retentionPolicy: 'ephemeral' as const } },
+                };
+                const host = facet === 'session'
+                    ? createNativeAgentSessionExecutionRunHostRuntime({ ...common,
+                        createSessionContext: ({ services, signal }) => createVoiceSessionContextLease({ services, signal, async dispose() {} }),
+                    })
+                    : createNativeAgentExecutionRunHostRuntime({ ...common,
+                        ...(facet === 'detached' ? { executionRunContextV1: executionRuns } : {}),
+                    });
+                try {
+                    await host.provisionRuntime(admission === 'provision' ? { initialPrompt: prompt } : undefined);
+                    if (admission === 'delivery') {
+                        await expect(host.deliverInput('review-input-run', { text: prompt })).resolves.toMatchObject({ status: 'admitted' });
+                    }
+                    expect(inputs).toEqual([{ text: prompt,
+                        ...(structuredInput ? { structuredInput } : facet === 'execution-only' ? { structuredInput: intentInput } : {}),
+                    }]);
+                    expect(inputs[0]?.text).toContain('Inspect the changed code');
+                    expect(inputs[0]?.text).toContain('uncommitted');
+                } finally { await host.dispose(); }
+            }
+        }
+    },
+);
 
 it('settles a native execution-only Run when send returns unavailable without a terminal event', async () => {
     const host = createNativeAgentExecutionRunHostRuntime({
