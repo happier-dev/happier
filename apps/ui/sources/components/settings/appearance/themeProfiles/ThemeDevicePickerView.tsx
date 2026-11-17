@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
+import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -77,21 +78,29 @@ export const ThemeDevicePickerView = React.memo(function ThemeDevicePickerView(
           />
         </View>
       ) : (
-        <View accessibilityRole="list">
-          {props.rows.map((row) => (
-            <DeviceRow
-              key={row.id}
-              row={row}
-              disabled={props.dispatching}
-              onToggle={props.onToggle}
-              testID={props.testID}
-            />
-          ))}
-          {others.length === 0 ? (
+        <View
+          accessibilityRole="list"
+          accessibilityLabel={t('themeDevices.title', { name: props.themeName })}
+          style={styles.rows}
+        >
+          <VirtualizedList
+            data={props.rows}
+            keyExtractor={deviceRowKey}
+            style={styles.rows}
+            renderItem={({ item: row }) => (
+              <DeviceRow
+                row={row}
+                disabled={props.dispatching}
+                onToggle={props.onToggle}
+                testID={props.testID}
+              />
+          )}
+          ListFooterComponent={others.length === 0 ? (
             <Text variant="body" style={styles.line}>
               {t('themeDevices.noOthers')}
             </Text>
           ) : null}
+        />
         </View>
       )}
       {others.length > 0 ? (
@@ -119,6 +128,8 @@ export const ThemeDevicePickerView = React.memo(function ThemeDevicePickerView(
     </View>
   );
 });
+
+const deviceRowKey = (row: ThemeDevicePickerRow) => row.id;
 
 function DeviceRow(
   props: Readonly<{
@@ -180,11 +191,15 @@ function outcomeLine(outcome: ThemeDevicePickerRow['outcome']): string | null {
 
 const styles = StyleSheet.create((theme) => ({
   root: {
+    flex: 1,
     width: 340,
     maxWidth: '100%',
     paddingVertical: theme.space.s12,
     gap: theme.space.s8,
+    flexShrink: 1,
+    minHeight: 0,
   },
+  rows: { flex: 1, minHeight: 0 },
   head: {
     paddingHorizontal: theme.space.s16,
     paddingBottom: theme.space.s4,

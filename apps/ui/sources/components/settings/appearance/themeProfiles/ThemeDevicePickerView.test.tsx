@@ -13,6 +13,10 @@ vi.mock('react-native', async () =>
 vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 );
+// The platform recycler renders one measured window; domain rows and selection stay real.
+vi.mock('@legendapp/list/react-native', async () =>
+  (await import('@/dev/testkit/mocks/legendList')).createLegendListModuleMock({ renderItems: true, renderItemLimit: 12 }),
+);
 
 const { ThemeDevicePickerView } = await import('./ThemeDevicePickerView');
 type Props = import('./themeDevicePickerViewTypes').ThemeDevicePickerViewProps;
@@ -65,6 +69,24 @@ const find = (screen: Awaited<ReturnType<typeof renderScreen>>, id: string) =>
   )[0];
 
 describe('ThemeDevicePickerView', () => {
+  it('mounts device rows in the platform window while keeping offscreen choices in the Use count', async () => {
+    const input = props({ rows: Array.from({ length: 200 }, (_, index) => ({
+      id: `device-${index}`, label: `Device ${index}`, computer: true,
+      current: index === 0, checked: index === 199, outcome: null,
+    })) });
+    const screen = await renderScreen(<ThemeDevicePickerView {...input} />);
+    const rows = screen.tree.findAll(node => typeof node.type === 'string'
+      && typeof node.props.testID === 'string' && /^picker:row:device-/.test(node.props.testID));
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.length).toBeLessThan(200);
+    console.info('[theme-window-cost] devices', { source: input.rows.length, mounted: rows.length });
+    expect(find(screen, 'picker:use')?.props.disabled).toBe(false);
+    await pressTestInstanceAsync(find(screen, 'picker:row:device-1')!);
+    expect(input.onToggle).toHaveBeenCalledWith('device-1');
+    expect(input.onToggle).toHaveBeenCalledTimes(1);
+    await screen.unmount();
+  });
+
   it('lists this device as already wearing the theme and asks for a choice before Use', async () => {
     const input = props();
     const screen = await renderScreen(<ThemeDevicePickerView {...input} />);

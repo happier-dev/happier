@@ -13,6 +13,9 @@ export function ThemeDevicePickerPopover(props: Readonly<{
     return <Popover open anchorRef={props.anchorRef} onRequestClose={props.onDismiss} placement="bottom"
         phonePresentation="sheet" accessibilityLabel={t('themeDevices.title', { name: props.themeName })}
         sheetHeader="none" portal={{ web: true, native: true, matchAnchorWidth: false, sizeToContent: true }}>
-        {() => <FloatingOverlay scrollEnabled={false}>{props.children}</FloatingOverlay>}
+        {/* The recycler needs a definite viewport; the existing overlay cap still bounds this room. */}
+        {({ maxHeight }) => <FloatingOverlay scrollEnabled={false} scrollViewStyle={{ height: maxHeight, minHeight: 0 }}>
+            {props.children}
+        </FloatingOverlay>}
     </Popover>;
 }
