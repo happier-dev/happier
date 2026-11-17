@@ -25,6 +25,7 @@ import { createCliActionExecutorFromCredentials } from '@/session/actions/create
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { createConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '../connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { createManagedProviderOperationAuthority } from '../connectedServices/purposeBindings/managedProviderOperationAuthority';
@@ -1995,6 +1996,9 @@ describe('daemon managed Machine Action factory', () => {
     });
 
     it.each(['success', 'success-update-pending', 'success-update-failed', 'error', 'not-ready', 'cancel'] as const)('retains a pending guest start and observes %s on the same parent request without buying again', async settlement => {
+        vi.mocked(globalThis.fetch).mockImplementation(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
+            capabilities: { serverIdentity: { serverIdentityId: 'srv_home' },
+                guestCli: { source: 'public-release', line: '0.3', channel: 'publicdev' } } })));
         const updateNotice = settlement === 'success-update-pending' ? { agentId: 'coding', status: 'pending' as const }
             : settlement === 'success-update-failed' ? { agentId: 'coding', status: 'failed' as const } : undefined;
         const selection = { kind: 'one-off' as const, homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
@@ -2634,7 +2638,12 @@ describe('daemon managed Machine Action factory', () => {
         } });
     });
 
-    it('projects a real ordinary Session-start domain refusal into the retained managed operation', async () => {
+    it.each([{ code: 'agent_cli_missing', retained: false }, { code: 'agent_cli_missing', retained: true },
+        { code: 'agent_signed_out', retained: true }, { code: 'spawn_failed', retained: false },
+        { code: 'spawn_failed', retained: true }] as const)('projects a real ordinary Session-start $code refusal into the retained managed operation (retained $retained)', async ({ code, retained }) => {
+        vi.mocked(globalThis.fetch).mockImplementation(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
+            capabilities: { serverIdentity: { serverIdentityId: 'srv_home' },
+                guestCli: { source: 'public-release', line: '0.3', channel: 'publicdev' } } })));
         const selection = { kind: 'one-off' as const, homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
@@ -2646,10 +2655,26 @@ describe('daemon managed Machine Action factory', () => {
             data: String(url).endsWith('/admit') ? { machine: enrolled, replayed: false } : { machine: enrolled } }));
         // Session start is a real Action executor; only its native start
         // boundary returns the canonical Agent setup refusal.
-        const spawn = createActionExecutor({ sessionSpawnNew: async () => ({
-            type: 'error', code: 'agent_cli_missing', retryable: false, agentId: 'coding',
-        }) } as unknown as ActionExecutorDeps);
-        const managedMachineAction = adapter(true, (input, context) => spawn.execute('session.spawn_new', input, context));
+        const refusal = code !== 'spawn_failed'
+            ? { type: 'error' as const, code, retryable: false, effectAttempted: false, agentId: 'coding',
+                ...(code === 'agent_signed_out' ? { launchError: { kind: 'launch_error' as const, code,
+                    message: 'The selected Agent account needs sign-in' } } : {}) }
+            : { type: 'error' as const, code, retryable: false, effectAttempted: false,
+                launchError: { kind: 'launch_error' as const, code: 'agent_cli_target_unavailable',
+                    message: 'The Agent CLI cannot run in this target' } };
+        const spawn = createActionExecutor({ sessionSpawnNew: async () => refusal } as unknown as ActionExecutorDeps);
+        const managedMachineAction = adapter(true, async (input, context) => {
+            if (!retained) return spawn.execute('session.spawn_new', input, context);
+            const child = createHostActionOperationRuntime({ machineId: 'actual-guest', resolveAccountId: async () => 'account',
+                generateOperationId: () => 'retained-spawn' });
+            await child.observeExecution({ actionId: 'session.spawn_new', input, actionRequestId: 'child-request',
+                execute: async () => spawn.execute('session.spawn_new', input, context) });
+            const snapshot = await child.handlers.getV2({ operationId: 'retained-spawn', waitForTerminal: true });
+            if (snapshot.kind !== 'found') throw new Error('Expected retained Session operation');
+            const completed = readActionOperationTerminalResultV1(snapshot.operation);
+            if (!completed) throw new Error('Expected terminal Session operation');
+            return completed;
+        });
         const input = { enrollmentIdentity, selection, agentStart: { directory: { kind: 'managed' as const },
             agentTarget: { kind: 'agent' as const, identity: { pluginId: 'acme.agent', localId: 'coding' } } } };
         const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account', generateOperationId: () => 'operation' });
@@ -2658,7 +2683,8 @@ describe('daemon managed Machine Action factory', () => {
                 context: { ...context, surface: 'cli', authority: 'present_user', serverId: configuration.activeServerId,
                     presentUserConfirmation: { actionId: 'session.spawn_new' } }, signal: context.signal }) }) });
         expect(await operations.handlers.getV2({ operationId: 'operation', waitForTerminal: true })).toMatchObject({ kind: 'found', operation: {
-            state: 'failed', domainRef: { kind: 'managedMachine', id: 'managed' }, error: { errorCode: 'agent_cli_missing' },
+            state: 'failed', domainRef: { kind: 'managedMachine', id: 'managed' }, error: { errorCode: code, effectAttempted: false,
+                details: code !== 'spawn_failed' ? { kind: 'managedAgentStart', machineId: 'actual-guest', agentId: 'coding', failure: refusal } : refusal },
         } });
     });
 

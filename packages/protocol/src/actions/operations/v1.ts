@@ -32,7 +32,7 @@ import { ManagedControllerV1Schema } from '../../machines/managed/managedMachine
 import { ManagedResourceV1Schema, MachineProvisionerNativeCauseV1Schema, ManagedGuestHomeNetworkHintV1Schema } from '../../machines/managed/providerFactsV1.js';
 import { MachineAdministratorUsernameV1Schema } from '../../machines/adminAccessV1.js';
 import { ActionApprovalRequestCreatedResultSchema, ActionOperationCredentialUseV1Schema, ActionFailureCauseV1Schema,
-  readActionFailureCauseV1, UNKNOWN_ACTION_FAILURE_CAUSE_V1, type ActionExecuteResult } from '../actionExecutionResult.js';
+  ActionExecuteFailureSchema, readActionFailureCauseV1, UNKNOWN_ACTION_FAILURE_CAUSE_V1, type ActionExecuteResult } from '../actionExecutionResult.js';
 import { WorkspaceExecutionConfigAddressV1Schema } from '../../workspaces/projectWorkerPreferencesV1.js';
 import { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 } from './identifierV1.js';
 import { ActionOperationProgressPhaseV1Schema } from './progressV1.js';
@@ -222,6 +222,7 @@ export const ManagedAgentStartFailureDetailsV1Schema = lazyZodSchema(() => z.str
   kind: z.literal('managedAgentStart'),
   machineId: z.string().check(z.minLength(1)),
   agentId: z.string().check(z.minLength(1)),
+  failure: z.optional(SessionSpawnNewActionResultV1Schema),
 }));
 /** Selected, credential-free application carrier for guest reachability failures. */
 export const ManagedGuestHomeFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
@@ -251,6 +252,7 @@ export const MachineSetupFailureDetailsV1Schema = lazyZodSchema(() => z.strictOb
 export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject({
   errorCode: ActionOperationErrorCodeV1Schema,
   error: z.string().check(z.trim(), z.minLength(1), z.maxLength(ACTION_OPERATION_ERROR_MAX_LENGTH_V1)),
+  requestId: ActionExecuteFailureSchema.shape.requestId,
   effectAttempted: z.optional(z.boolean()),
   failureCause: z.optional(ActionFailureCauseV1Schema),
   details: z.optional(z.union([ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema,
@@ -260,8 +262,10 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
     DeploymentReceiptSettlementFailureDetailsV1Schema,
     MachineReachabilityNativeFailureDetailsV1Schema,
     DeploymentExecutionFailureDetailsV1Schema,
-    MachineAvailabilityDiagnosticV1Schema])),
-}).check(z.refine(failure => !failure.details || (!('kind' in failure.details)
+    MachineAvailabilityDiagnosticV1Schema, SessionSpawnNewActionResultV1Schema])),
+}).check(z.refine(failure => !failure.details || ('type' in failure.details
+  ? failure.details.type === 'error' && failure.details.code === failure.errorCode
+  : !('kind' in failure.details)
   ? 'domainId' in failure.details || ('state' in failure.details ? readDeploymentReceiptFailureCodeV1(failure.details.state) === failure.errorCode
     : 'failure' in failure.details ? (!!failure.details.failure && ('kind' in failure.details.failure
       ? DeploymentDomainCaddyFailureDetailsV1Schema.safeParse(failure.details).success
@@ -294,7 +298,9 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
   : failure.details.kind === 'managedGuestHome'
   ? failure.errorCode === 'home_not_guest_reachable'
   : failure.details.kind === 'managedAgentStart'
-  ? true
+  ? !failure.details.failure || failure.details.failure.type === 'error'
+    && failure.details.failure.code === failure.errorCode && 'agentId' in failure.details.failure
+    && failure.details.failure.agentId === failure.details.agentId
   : failure.details.kind === 'managedBootstrap'
   ? /^bootstrap_effect_[a-z_]+$/u.test(failure.errorCode)
   : failure.details.kind === 'managedService'
@@ -317,6 +323,7 @@ export const ActionOperationFailureV1ReadSchema = lazyZodSchema(() => z.pipe(z.t
   return {
     errorCode: record.errorCode,
     error: record.error,
+    ...(record.requestId === undefined ? {} : { requestId: record.requestId }),
     ...(record.effectAttempted === undefined ? {} : { effectAttempted: record.effectAttempted }),
     ...(record.details === undefined ? {} : { details: record.details }),
     ...(record.failureCause !== undefined ? { failureCause: readActionFailureCauseV1(record.failureCause) }
@@ -693,6 +700,7 @@ export function readActionOperationTerminalResultV1(snapshot: ActionOperationSna
       ok: false,
       errorCode: snapshot.error?.errorCode ?? 'action_operation_failed',
       error: snapshot.error?.error ?? 'action_operation_failed',
+      ...(snapshot.error?.requestId !== undefined ? { requestId: snapshot.error.requestId } : {}),
       ...(snapshot.error?.effectAttempted !== undefined ? { effectAttempted: snapshot.error.effectAttempted } : {}),
       ...(snapshot.error?.failureCause ?? linkFailure?.failureCause
         ? { failureCause: snapshot.error?.failureCause ?? linkFailure?.failureCause } : {}),

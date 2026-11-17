@@ -8,8 +8,13 @@ export function projectActionOperationFailure(error: unknown, fallback: string, 
   const errorCode = readRpcErrorCode(error)
     ?? (error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : fallback);
   const projected = normalizeActionExecutorThrownError(error, phase);
+  const evidence = {
+    ...(projected.requestId === undefined ? {} : { requestId: projected.requestId }),
+    ...(projected.effectAttempted === undefined ? {} : { effectAttempted: projected.effectAttempted }),
+  };
   const diagnostic = ActionOperationFailureV1Schema.safeParse({ errorCode, error: projected.error,
-    failureCause: projected.failureCause, ...(projected.details === undefined ? {} : { details: projected.details }) });
+    ...evidence, failureCause: projected.failureCause, ...(projected.details === undefined ? {} : { details: projected.details }) });
   return { ok: false, ...(diagnostic.success ? diagnostic.data : { errorCode, failureCause: projected.failureCause,
+    ...evidence,
     error: errorCode === 'workspace_sync_prepare_failed' ? 'Workspace preparation failed; the diagnostic exceeds the operation error format' : errorCode }) };
 }

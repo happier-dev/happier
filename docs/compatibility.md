@@ -1,5 +1,17 @@
 # Compatibility and version skew
 
+## Managed acquisition child refusals (unreleased 0.3)
+
+Current Action operation failures retain the child Action's optional `requestId`
+and canonical Session spawn error details alongside its existing effect evidence
+and failure cause. The operation's own request identity stays unchanged. Current
+development Protocol and CLI readers reload together for the new known details
+arm; the released V1 projection continues to expose only its existing code and
+message. Existing managed Agent setup recovery retains its Machine and Agent
+identity plus the optional canonical Session refusal, preserving signed-out
+launch diagnostics. No migration, wire epoch, new refusal vocabulary or adapter
+is added.
+
 ## Member SCM analysis ownership (unreleased 0.3)
 
 Machine Run and saved SCM result invalidations optionally carry the existing

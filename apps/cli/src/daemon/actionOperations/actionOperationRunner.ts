@@ -479,6 +479,7 @@ export function createActionOperationRunner(deps: Readonly<{
             deps.store.updateObservation(operationId, { kind: executionResult.errorCode === 'stop_unconfirmed' ? 'stop_unconfirmed' : 'outcome_uncertain',
               code: executionResult.errorCode }, undefined, {
               errorCode: executionResult.errorCode, error: executionResult.error,
+              ...(executionResult.requestId !== undefined ? { requestId: executionResult.requestId } : {}),
               ...(executionResult.effectAttempted !== undefined ? { effectAttempted: executionResult.effectAttempted } : {}),
               ...(executionResult.failureCause ? { failureCause: executionResult.failureCause } : {}),
             });
@@ -535,6 +536,7 @@ export function createActionOperationRunner(deps: Readonly<{
             }
           } else {
             const failure = { errorCode: executionResult.errorCode, error: executionResult.error,
+              ...(executionResult.requestId !== undefined ? { requestId: executionResult.requestId } : {}),
               ...(executionResult.effectAttempted !== undefined ? { effectAttempted: executionResult.effectAttempted } : {}),
               ...(executionResult.failureCause ? { failureCause: executionResult.failureCause } : {}) };
             // Only named Project, Domain, Network, Machine setup and managed-controller producers carry these

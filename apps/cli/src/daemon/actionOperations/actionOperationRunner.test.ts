@@ -6,7 +6,7 @@ import { getActionSpec } from '@happier-dev/protocol/actions';
 import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationSetInputV1Schema, MachineStorageDockerPruneResultV1Schema } from '@happier-dev/protocol';
 import { ActionOperationCredentialUseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ActionOperationSnapshotV1Schema, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
+import { ActionOperationSnapshotV1Schema, projectActionOperationSnapshotForV1Reader, readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { MachineAdminAccessMutationResultV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { ActionOperationSnapshotV1Schema as PredecessorSnapshotSchema } from './testFixtures/predecessorActionOperationV1';
 import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
@@ -17,6 +17,28 @@ import { callSocketRpc, type SocketRpcContent } from '@happier-dev/sync-client';
 const scope = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation canonical execution observer', () => {
+  it.each(['returned', 'thrown'] as const)('retains a managed child refusal through the %s failure carrier and current reader', async carrier => {
+    const store = createActionOperationStore();
+    const spec = getActionSpec('machines.managed.acquire');
+    const runner = createActionOperationRunner({ store, generateOperationId: () => 'managed-refusal',
+      resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation }) });
+    const refusal = { type: 'error' as const, code: 'spawn_failed' as const, retryable: false,
+      launchError: { kind: 'launch_error' as const, code: 'agent_cli_target_unavailable', message: 'The Agent CLI cannot run in this target' } };
+    const child = completeSpawnActionResult(refusal);
+    if (child.ok) throw new Error('Expected the ordinary spawn failure');
+    const failure = { ...child, requestId: 'native-child-request', effectAttempted: false };
+    const request = { actionId: spec.id, scope, requestId: 'managed-root-request', input: {}, execute: async () => {
+      if (carrier === 'thrown') throw ManagedMachineControllerError.fromActionFailure(failure, 'session.spawn_new');
+      return failure;
+    } };
+    if (carrier === 'thrown') await expect(runner.observe(request)).rejects.toMatchObject({ code: 'spawn_failed' });
+    else await expect(runner.observe(request)).resolves.toMatchObject(failure);
+    const retained = ActionOperationSnapshotV1Schema.parse(JSON.parse(JSON.stringify(store.get(scope, 'managed-refusal'))));
+    expect(retained).toMatchObject({ state: 'failed', requestId: 'managed-root-request', error: {
+      errorCode: 'spawn_failed', error: refusal.launchError.message, requestId: failure.requestId, effectAttempted: false, details: refusal,
+    } });
+    expect(readActionOperationTerminalResultV1(retained)).toMatchObject(failure);
+  });
   it.each([
     { actionId: 'machines.setup.apply', privateContent: false, retained: true },
     { actionId: 'machines.reboot', privateContent: false, retained: false },

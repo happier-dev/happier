@@ -1,5 +1,6 @@
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { completeSpawnActionResult } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { ManagedAcquireInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedMachineActionOutputSchemasV1, ManagedGetOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveAccountExecutionRuntime, type AccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
@@ -253,15 +254,19 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                         executionTarget: { serverId: params.serverId, machineId: machine.enrolledMachineId },
                         managedCreation: { homeId: machine.homeId, managedId: machine.id, controller: machine.controller },
                     }, context, machine);
-                    if (!result.ok) throw ManagedMachineControllerError.fromActionFailure(result, 'session.spawn_new');
-                    const spawn = SessionSpawnNewActionResultV1Schema.safeParse(result.result);
-                    if (!spawn.success) throw Object.assign(new Error('invalid_action_output'), { code: 'invalid_action_output' });
-                    if (spawn.success && spawn.data.type === 'error') {
-                        throw new ManagedMachineControllerError(spawn.data.code, undefined,
-                            'agentId' in spawn.data && typeof spawn.data.agentId === 'string'
-                                ? { kind: 'managedAgentStart', machineId: machine.enrolledMachineId, agentId: spawn.data.agentId }
-                                : undefined);
+                    const completed = result.ok ? completeSpawnActionResult(result.result) : result;
+                    if (!completed.ok) {
+                        const refusal = SessionSpawnNewActionResultV1Schema.safeParse(completed.details);
+                        // Keep the enrolled target used by the existing Agent setup recovery.
+                        const details = refusal.success && refusal.data.type === 'error' && 'agentId' in refusal.data
+                            && typeof refusal.data.agentId === 'string'
+                            ? { kind: 'managedAgentStart' as const, machineId: machine.enrolledMachineId, agentId: refusal.data.agentId,
+                                failure: refusal.data }
+                            : completed.details;
+                        throw ManagedMachineControllerError.fromActionFailure({ ...completed, details }, 'session.spawn_new');
                     }
+                    const spawn = SessionSpawnNewActionResultV1Schema.safeParse(completed.result);
+                    if (!spawn.success) throw Object.assign(new Error('invalid_action_output'), { code: 'invalid_action_output' });
                     if (spawn.success && spawn.data.type === 'pending') {
                         if (!context.operationOwnerUpdate) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
                         context.operationOwnerUpdate.update({ observation: { kind: 'outcome_uncertain', code: 'outcome_uncertain' } });

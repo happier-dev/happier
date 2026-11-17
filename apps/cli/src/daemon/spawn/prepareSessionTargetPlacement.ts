@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { createReadStream } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, posix, relative, sep } from 'node:path';
@@ -21,8 +23,12 @@ export type OpenManagedSessionTarget = (request: ManagedSessionTargetRequest) =>
 export function projectSessionTargetLaunchFailure(error?: unknown): Extract<SpawnSessionResult, { type: 'error' }> {
     const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
         ? error.code : 'managed_target_unavailable';
+    const failure = normalizeActionExecutorThrownError(error, 'session.target.prepare');
+    const cause = projectSessionRuntimeFailureCause(error, 'client_start', 'session.target.prepare');
+    const message = failure.errorCode === code ? failure.error : code;
     return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-        errorMessage: code, errorDetail: { kind: 'launch_error', code, message: code } };
+        errorMessage: message, errorDetail: { kind: 'launch_error', code, message,
+            ...(cause ? { failureCause: { ...cause, ...(failure.requestId ? { requestId: failure.requestId } : {}) } } : {}) } };
 }
 
 /**
@@ -114,7 +120,7 @@ function plainSessionTargetKey(key: string): string {
 }
 
 function refusal(code: string, message: string): Error {
-    return Object.assign(new Error(message), { code });
+    return Object.assign(new Error(message, { cause: { ok: false, errorCode: code, error: message } }), { code });
 }
 
 function isWithin(root: string, path: string): string | null {

@@ -3,7 +3,9 @@ import { MachineProvisionerNativeCauseV1Schema, type MachineProvisionerNativeCau
 import { projectActionFailureCauseV1,
     type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { isSessionSpawnNewActionIdV1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { isPluginErrorData } from '@happier-dev/protocol/plugins/errors';
 import { PluginDiagnosticRemediationV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import { PluginError } from '../../plugins/errors.js';
@@ -31,21 +33,29 @@ export class ManagedMachineControllerError extends Error {
         const error = new ManagedMachineControllerError(failure.errorCode);
         const parsedDetails = ManagedMachineFailureDetailsV1Schema.safeParse(failure.details);
         const details = parsedDetails.success ? parsedDetails.data : readManagedNativeFailureDetails(failure, action);
+        const spawn = isSessionSpawnNewActionIdV1(phase) ? SessionSpawnNewResultV1Schema.safeParse(failure.details) : undefined;
+        const publicDetails = spawn?.success && spawn.data.type === 'error' && spawn.data.code === failure.errorCode
+            ? spawn.data : details;
         const failureCause = failure.failureCause ?? projectActionFailureCauseV1(error, phase);
         const authored = isPluginErrorData(failure.details) && failure.details.code === failure.errorCode ? failure.details : undefined;
         const message = authored?.message?.trim();
         const remediation = PluginDiagnosticRemediationV1Schema.safeParse(authored && 'remediation' in authored ? authored.remediation : undefined);
         // Keep native-only diagnostics in their existing closed shape. Authored
         // repairs travel as the existing public Action failure in Error.cause.
-        const cause: ActionExecuteFailure | undefined = authored && (message && message !== authored.code || remediation.success)
-            ? { ok: false, errorCode: failure.errorCode, error: message || failure.errorCode, failureCause,
+        const presentation = authored && (message && message !== authored.code || remediation.success)
+            ? { error: message || failure.errorCode,
                 details: new PluginError({ code: authored.code, message, retryable: authored.retryable,
                     ...(remediation.success ? { remediation: remediation.data } : {}),
                     ...(details ? { details } : {}) }).data }
-            : failure.error.trim() && failure.error !== failure.errorCode
-                ? { ok: false, errorCode: failure.errorCode, error: failure.error, failureCause,
-                    ...(details ? { details } : {}) }
+            : failure.error.trim() && failure.error !== failure.errorCode || publicDetails !== details
+                ? { error: failure.error.trim() || failure.errorCode, ...(publicDetails ? { details: publicDetails } : {}) }
                 : undefined;
+        const retained = presentation ?? (failure.requestId !== undefined || failure.effectAttempted !== undefined
+            ? normalizeActionExecutorThrownError(new this(failure.errorCode, undefined, details, failureCause), phase)
+            : undefined);
+        const cause: ActionExecuteFailure | undefined = retained && { ...retained, ok: false, errorCode: failure.errorCode, failureCause,
+            ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
+            ...(failure.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }) };
         return new this(failure.errorCode, undefined, details, failureCause, cause);
     }
 }

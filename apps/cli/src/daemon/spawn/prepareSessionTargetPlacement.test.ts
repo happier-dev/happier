@@ -12,7 +12,9 @@ import { connectSessionTarget } from '@/subprocess/supervision/sessionTargetRela
 
 import { createSessionHolderSocketPath } from '@/subprocess/supervision/sessionHolder';
 
-import { deliverSessionTargetLaunch, observeSessionTargetRunnerExit, prepareSessionTargetPlacement, restoreSessionTargetRelay } from './prepareSessionTargetPlacement';
+import { deliverSessionTargetLaunch, observeSessionTargetRunnerExit, prepareSessionTargetPlacement, projectSessionTargetLaunchFailure, restoreSessionTargetRelay } from './prepareSessionTargetPlacement';
+import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 /**
  * The spawn owner places a Session on a managed target: the target's custody is
@@ -56,6 +58,22 @@ function sessionEnd() {
 }
 
 describe('Session placement on a managed target at spawn', () => {
+    it.each([false, true])('retains only public acquisition refusal evidence before a runner exists (typed %s)', async typed => {
+        const failure = { ok: false as const, errorCode: 'provider_unavailable', error: 'The compute provider is temporarily unavailable',
+            requestId: 'native-request', effectAttempted: false,
+            failureCause: projectActionFailureCauseV1(Object.assign(new Error('unavailable'), { code: 'provider_unavailable', status: 503 }), 'machines.native.acquire') };
+        const error = typed ? ManagedMachineControllerError.fromActionFailure(failure, 'machines.managed.acquire')
+            : Object.assign(new Error('PRIVATE_NATIVE_OUTPUT'), { code: 'provider_unavailable' });
+        const result = await prepareSessionTargetPlacement({ request: { managedId: 'managed' }, sessionKey: 'refused', requesterAccountId: 'owner',
+            holderVersion: 'v', readTrustedCallerPid: () => null, runnerExit: Promise.resolve(),
+            launchResourceScope: createProviderLaunchResourceScope({ onCleanupError: () => undefined }),
+            openManagedSessionTarget: async () => { throw error; } });
+        expect(result).toMatchObject({ ok: false, result: { errorDetail: { kind: 'launch_error', code: failure.errorCode,
+            message: typed ? failure.error : failure.errorCode,
+            ...(typed ? { failureCause: { actionCause: failure.failureCause, requestId: 'native-request' } } : {}),
+        } } });
+        expect(JSON.stringify(result)).not.toContain('PRIVATE_NATIVE_OUTPUT');
+    });
     it('opens the target under the requester, relays it to the runner, and ends it with the launch resources', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'stp-')); directories.push(directory);
         const custody = fakeCustody();
@@ -479,8 +497,12 @@ describe('Session target launch step (credentials + Agent CLI into the target)',
         const script = join(await mkdtemp(join(tmpdir(), 'stl-s-')), 'agent.sh'); directories.push(dirname(script));
         const { writeFile: writeFileAsync } = await import('node:fs/promises');
         await writeFileAsync(script, '#!/bin/sh\n');
-        await expect(deliverSessionTargetLaunch({ ...base, requestAuthMaterializedRoot: null, agentCommand: script }))
-            .rejects.toMatchObject({ code: 'agent_cli_target_unavailable' });
+        const scriptFailure = await deliverSessionTargetLaunch({ ...base, requestAuthMaterializedRoot: null, agentCommand: script })
+            .then(() => { throw new Error('Expected target refusal'); }, error => error);
+        expect(scriptFailure).toMatchObject({ code: 'agent_cli_target_unavailable' });
+        expect(projectSessionTargetLaunchFailure(scriptFailure)).toMatchObject({ errorDetail: {
+            code: 'agent_cli_target_unavailable', message: expect.stringContaining('target:'),
+        } });
         await expect(deliverSessionTargetLaunch({ ...base, requestAuthMaterializedRoot: null, agentCommand: process.execPath,
             target: { ...target, platform: { ...target.platform, arch: target.platform.arch === 'x64' ? 'arm64' : 'x64' } } }))
             .rejects.toMatchObject({ code: 'agent_cli_target_unavailable' });

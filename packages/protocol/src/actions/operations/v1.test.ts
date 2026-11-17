@@ -194,6 +194,34 @@ describe('Action operation v1 contract', () => {
     expect(ActionOperationSnapshotV1Schema.safeParse({ ...wire, result: { type: 'success' } }).success).toBe(false);
   });
 
+  it('round trips the child spawn refusal on its managed acquisition operation without replacing the root request', () => {
+    const details = { type: 'error' as const, code: 'spawn_failed' as const, retryable: false,
+      launchError: { kind: 'launch_error' as const, code: 'agent_cli_target_unavailable', message: 'The Agent CLI cannot run in this target' } };
+    const error = { errorCode: details.code, error: details.launchError.message, requestId: 'native-child-request',
+      effectAttempted: false, details };
+    const wire = { ...baseSnapshot, actionId: 'machines.managed.acquire', requestId: 'managed-root-request',
+      state: 'failed', startedAt: 110, settledAt: 120, error };
+    expect(ActionOperationGetV1ResponseSchema.parse(JSON.parse(JSON.stringify({ kind: 'found', operation: wire }))))
+      .toMatchObject({ operation: { requestId: wire.requestId, error } });
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, errorCode: 'other_failure' }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, details: { ...details, privateOutput: 'PRIVATE_OUTPUT' } }).success).toBe(false);
+    expect(projectActionOperationSnapshotForV1Reader(ActionOperationSnapshotV1Schema.parse(wire)).error)
+      .toEqual({ errorCode: error.errorCode, error: error.error });
+  });
+
+  it('retains the signed-out Session refusal with its existing managed Agent setup recovery target', () => {
+    const failure = { type: 'error', code: 'agent_signed_out', retryable: false, agentId: 'coding',
+      launchError: { kind: 'launch_error', code: 'agent_signed_out', message: 'The selected Agent account needs sign-in' } };
+    const error = { errorCode: failure.code, error: failure.launchError.message,
+      details: { kind: 'managedAgentStart', machineId: 'guest', agentId: 'coding', failure } };
+    const snapshot = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.managed.acquire',
+      state: 'failed', startedAt: 110, settledAt: 120, error });
+    expect(readActionOperationTerminalResultV1(snapshot)).toMatchObject({ ok: false, ...error });
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, errorCode: 'agent_cli_missing' }).success).toBe(false);
+    expect(ActionOperationFailureV1Schema.safeParse({ ...error, details: { ...error.details,
+      failure: { ...failure, privateOutput: 'PRIVATE_OUTPUT' } } }).success).toBe(false);
+  });
+
   it('retains content-free deployment recovery through the public operation reader', () => {
     const error = { errorCode: 'unclassified_provider_refusal', error: 'unclassified_provider_refusal',
       details: { requiredFact: 'deploymentActionResult', remedy: 'Inspect the target capabilities and retry the original request.' } };
