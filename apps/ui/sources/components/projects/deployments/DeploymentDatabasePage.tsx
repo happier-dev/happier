@@ -161,7 +161,7 @@ export function DeploymentDatabasePage(
   const detail = record.snapshot.value;
   const activeId = detail?.runtimeTargetLink?.activeDeploymentId ?? null;
   // The size DB-SIZE-1113's read reports for this database, for the facts row; read with the page.
-  const sizes = useDeploymentDataServicePage(props.controller, props.demand);
+  const sizes = useDeploymentDataServicePage(props.controller, props.demand, { environmentId: props.environmentId });
   const retained = useEnvironmentBackupSummary(
     props.controller,
     props.environmentId,

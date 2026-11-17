@@ -24,7 +24,7 @@ import type {
     DeploymentReadSnapshotV1, DeploymentReadTransportV1, DeploymentHistoryPageV1,
     DeploymentEnvironmentReadDetailV1, DeploymentEnvironmentReadCollectionV1, DeploymentReceiptReadDetailV1,
     DeploymentDomainReadPageV1, DeploymentAccountDomainReadPageV1, DeploymentDataServiceReadPageV1,
-    DeploymentAccountPageQueryV1,
+    DeploymentDataServiceQueryV1,
 } from './deploymentReadControllerTypes.js';
 
 type Resource = Readonly<{
@@ -364,9 +364,9 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
     /** An Environment holds databases when its definition declares data services (the Databases page's rows). */
     const holdsDatabases = (item: DeploymentDataServiceReadPageV1['items'][number]) => (item.content.template?.data?.length ?? 0) > 0;
     function acquireAccountPage<T extends DeploymentAccountDomainReadPageV1 | DeploymentDataServiceReadPageV1>(
-        kind: 'domainPage' | 'dataServicePage', query: DeploymentAccountPageQueryV1, demand: DeploymentReadDemandV1,
+        kind: 'domainPage' | 'dataServicePage', query: DeploymentDataServiceQueryV1, demand: DeploymentReadDemandV1,
     ) {
-        const key = (cursor: string | undefined) => JSON.stringify([kind, cursor ?? null, query.limit ?? null]);
+        const key = (cursor: string | undefined) => JSON.stringify([kind, cursor ?? null, query.limit ?? null, query.environmentId ?? null]);
         return createDeploymentReadPageLease<T>({ initialCursor: query.cursor, demand,
             nextCursor: cursor => entries.get(key(cursor))?.nextCursor ?? null,
             acquire: (cursor, pageDemand) => acquire<T>({ key: key(cursor), kind, previousPage: cursor !== undefined,
@@ -378,6 +378,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                     const read = transport.listDataServicePage;
                     if (!read) return unavailable;
                     const prior = entries.get(key(cursor))?.projection.getSnapshot().value as DeploymentDataServiceReadPageV1 | undefined;
+                    if (query.environmentId !== undefined) return read(scope, query, { signal, ...(prior ? { previousItems: prior.items } : {}) });
                     // The Databases page lists the Environments that hold databases. Their contents are end-to-end
                     // encrypted, so the Home pages every Environment: a page of none is read past here, and a page is
                     // empty only when no Environment after it holds one (owner D3, 11-16).

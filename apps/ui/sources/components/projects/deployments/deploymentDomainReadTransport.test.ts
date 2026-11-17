@@ -3,6 +3,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
 import { encodeBase64 } from '@/encryption/base64';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
@@ -16,7 +17,7 @@ const { createDeploymentReadTransport } = await import('./deploymentReadTranspor
 describe('deployment Domain read transport', () => {
     beforeEach(() => homes.reset());
     afterEach(() => standardCleanup());
-    it.each(['plain', 'e2ee'] as const)('retains valid %s Domains with partial coverage and a typed Artifact outage', async mode => {
+    it.each(['plain', 'e2ee'] as const)('retains valid %s Domains and selected Environment data independently of Account pages', async mode => {
         const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-owner' })).toString('base64url')}.signature`;
         const secret = new Uint8Array(32).fill(11);
         const serverId = await homes.addHome({ name: 'Deployments', serverUrl: 'https://deployments-ui.test', accountId: 'account-owner',
@@ -86,6 +87,24 @@ describe('deployment Domain read transport', () => {
         expect(partialDomains.ok ? null : partialDomains.failure).toBeNull();
         expect(partialDomains).toMatchObject({ ok: true, value: { items: [{ domain: { id: domain.id } }], coverage: 'partial', nextCursor: 'next-domain-page' } });
         expect(partialDomains.ok && partialDomains.value.items).toHaveLength(1);
+        homes.answer(serverId, '/v1/deployments/data-services', { body: { ok: true, items: [], artifacts: [], nextCursor: null } });
+        const controller = createDeploymentReadControllerV1({ scope, transport });
+        const demand = { mounted: true, visible: true, focused: true };
+        const accountData = controller.acquireDataServicePage({}, demand);
+        await accountData.refresh();
+        const pageReads = homes.requests.filter(request => request.path === '/v1/deployments/data-services').length;
+        const selectedData = controller.acquireDataServicePage({ environmentId: environmentHeader.id }, demand);
+        try {
+            await selectedData.refresh();
+            expect(selectedData.getSnapshot()).toMatchObject({ status: 'ready', value: {
+                items: [{ environment: { id: environmentHeader.id }, title: 'Production', content: detail.content }],
+                hasNextPage: false, hasPreviousPage: false,
+            } });
+            expect(accountData.getSnapshot()).toMatchObject({ status: 'ready', value: {
+                items: [], hasNextPage: false, hasPreviousPage: false,
+            } });
+            expect(homes.requests.filter(request => request.path === '/v1/deployments/data-services')).toHaveLength(pageReads);
+        } finally { selectedData.release(); accountData.release(); controller.retire(); }
         homes.answer(serverId, '/v1/artifacts/read', { status: 503, body: { error: 'artifact_content_unavailable' } });
         expect(await transport.listDomains!(scope, environmentHeader.id, {}, options)).toMatchObject({ ok: false,
             failure: { code: 'artifact_content_unavailable' } });

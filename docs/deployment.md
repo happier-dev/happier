@@ -197,6 +197,12 @@ leases retain the controller's demand, invalidation and explicit continuation;
 they do not acquire per-Environment health observers. Surface composition remains
 separate from these nonvisual readers.
 
+The selected database detail requests `acquireDataServicePage({ environmentId })`
+through the same controller. This local read uses the existing Environment metadata
+and Account Artifact readers, then the same database size and subject projection.
+It does not depend on the current Account page or advance its cursor; Account-wide
+callers continue to use the paged query without `environmentId`.
+
 The Account Domains page carries the same admitted `projectSources:[{id,name}]`
 projection as the Environments inventory. Its opened items expose
 `environmentTitle` and `projectSourceName` through the shared Environment

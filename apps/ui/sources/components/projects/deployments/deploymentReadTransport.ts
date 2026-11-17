@@ -7,6 +7,7 @@ import {
     DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema,
     DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema,
     DeploymentDomainListResultV1Schema, DeploymentDomainPageResultV1Schema, DeploymentDataPageResultV1Schema,
+    type DeploymentDataPageSuccessV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
     readDeploymentEnvironmentArtifactHeaderV1, readDeploymentEnvironmentArtifactV1, readDeploymentReceiptArtifactHeaderV1,
@@ -130,15 +131,27 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             return { ok: true, value: { items, nextCursor: page.nextCursor, ...(coverage === undefined ? {} : { coverage }) } };
         }),
         listDataServicePage: (scope, query, options) => scoped(scope, options, async account => {
-            const parsed = DeploymentDataPageResultV1Schema.safeParse(await execute('deployments.data.page',
-                { ...home, projectSourceId: scope.projectSourceId, ...query }, { signal: options.signal }));
-            if (!parsed.success) return failure('invalid_response');
-            const page = parsed.data;
-            if (!page.ok) return failure(page.error);
-            if (!page.items.every(({ environment }) => (scope.projectSourceId === undefined || environment.projectSourceId === scope.projectSourceId)
-                && areServerProfileIdentifiersEquivalent(environment.serverId, scope.serverId))) return failure('invalid_response');
-            const opened = await account.openArtifactContents(page.artifacts, { signal: options.signal });
-            const byId = new Map(page.artifacts.map((artifact, index) => [artifact.id, opened[index]]));
+            let page: Pick<DeploymentDataPageSuccessV1, 'items' | 'nextCursor' | 'coverage'>;
+            let byId: Map<string, Awaited<ReturnType<LazyActionAccountContext['readArtifactContents']>>[number] | undefined>;
+            let selectedMetadata: Awaited<ReturnType<typeof readEnvironmentMetadata>> | undefined;
+            if (query.environmentId !== undefined) {
+                selectedMetadata = await readEnvironmentMetadata(scope, query.environmentId, options);
+                if (!selectedMetadata.ok) return selectedMetadata;
+                const environment = selectedMetadata.value.environment;
+                const [artifact] = await account.readArtifactContents([environment.contentArtifactId], { signal: options.signal });
+                page = { items: [{ environment }], nextCursor: null };
+                byId = new Map([[environment.contentArtifactId, artifact]]);
+            } else {
+                const parsed = DeploymentDataPageResultV1Schema.safeParse(await execute('deployments.data.page',
+                    { ...home, projectSourceId: scope.projectSourceId, ...query }, { signal: options.signal }));
+                if (!parsed.success) return failure('invalid_response');
+                if (!parsed.data.ok) return failure(parsed.data.error);
+                page = parsed.data;
+                if (!page.items.every(({ environment }) => (scope.projectSourceId === undefined || environment.projectSourceId === scope.projectSourceId)
+                    && areServerProfileIdentifiersEquivalent(environment.serverId, scope.serverId))) return failure('invalid_response');
+                const opened = await account.openArtifactContents(parsed.data.artifacts, { signal: options.signal });
+                byId = new Map(parsed.data.artifacts.map((artifact, index) => [artifact.id, opened[index]]));
+            }
             const items = [];
             let coverage = page.coverage;
             const previousById = new Map(options.previousItems?.map(item => [item.environment.id, item]));

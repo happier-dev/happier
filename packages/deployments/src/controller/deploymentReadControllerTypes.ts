@@ -90,6 +90,8 @@ export type DeploymentDomainReadItemV1 = Readonly<{
     healthUnavailableReason?: string;
 }>;
 export type DeploymentAccountPageQueryV1 = Readonly<{ cursor?: string | undefined; limit?: number }>;
+/** A selected Environment reads its database facts independently of Account page navigation. */
+export type DeploymentDataServiceQueryV1 = DeploymentAccountPageQueryV1 & Readonly<{ environmentId?: string }>;
 export type DeploymentAccountDomainReadItemV1 = DeploymentDomainReadItemV1 & Readonly<{
     environment: DeploymentEnvironmentHeaderV1; environmentTitle: string; projectSourceName: string | null;
 }>;
@@ -122,7 +124,7 @@ export type DeploymentReadOptionsV1 = Readonly<{ signal: AbortSignal }>;
 /** The host binds this network boundary to its current authenticated Home. */
 export type DeploymentReadTransportV1 = Readonly<{
     listDomainPage?(scope: DeploymentReadScopeV1, query: DeploymentAccountPageQueryV1, options: DeploymentReadOptionsV1): Promise<DeploymentReadResultV1<DeploymentAccountReadPageV1<DeploymentAccountDomainReadItemV1>>>;
-    listDataServicePage?(scope: DeploymentReadScopeV1, query: DeploymentAccountPageQueryV1, options: DeploymentReadOptionsV1 & Readonly<{ previousItems?: readonly DeploymentDataServiceReadItemV1[] }>): Promise<DeploymentReadResultV1<DeploymentAccountReadPageV1<DeploymentDataServiceReadItemV1>>>;
+    listDataServicePage?(scope: DeploymentReadScopeV1, query: DeploymentDataServiceQueryV1, options: DeploymentReadOptionsV1 & Readonly<{ previousItems?: readonly DeploymentDataServiceReadItemV1[] }>): Promise<DeploymentReadResultV1<DeploymentAccountReadPageV1<DeploymentDataServiceReadItemV1>>>;
     /** One selected Domain page, opened by the host's mode-aware Artifact owner. */
     listDomains?(scope: DeploymentReadScopeV1, environmentId: string, query: DeploymentHistoryQueryV1,
         options: DeploymentReadOptionsV1): Promise<DeploymentReadResultV1<DeploymentDomainPageV1>>;
@@ -152,7 +154,7 @@ export type DeploymentReadInvalidationV1 = Readonly<{
 export type DeploymentReadControllerV1 = Readonly<{
     scope: DeploymentReadScopeV1;
     acquireDomainPage(query: DeploymentAccountPageQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentAccountDomainReadPageV1>;
-    acquireDataServicePage(query: DeploymentAccountPageQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentDataServiceReadPageV1>;
+    acquireDataServicePage(query: DeploymentDataServiceQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentDataServiceReadPageV1>;
     acquireDomains(environmentId: string, query: DeploymentHistoryQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentDomainReadPageV1>;
     acquireCollection(query: DeploymentCollectionQueryV1, demand: DeploymentReadDemandV1): DeploymentReadPageLeaseV1<DeploymentEnvironmentReadCollectionV1>;
     acquireActivity(demand: DeploymentReadDemandV1): DeploymentReadLeaseV1<DeploymentActivityV1>;
