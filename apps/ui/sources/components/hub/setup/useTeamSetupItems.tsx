@@ -48,7 +48,7 @@ export function useTeamSetupItems(
   );
 }
 
-function TeamSetupTile(
+export function TeamSetupTile(
   props: Readonly<{
     offer: TeamSetupOffer;
     layout: 'card' | 'row';
