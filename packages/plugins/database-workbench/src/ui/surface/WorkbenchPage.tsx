@@ -23,6 +23,7 @@ import { InsightsPane } from './insights/InsightsPane.js';
 import { RelationData } from './RelationData.js';
 import { RelationStructure } from './RelationStructure.js';
 import { StagedBar, StagedReview } from './StagedChanges.js';
+import { TableDirectory } from './TableDirectory.js';
 import { WorkbenchRail } from './WorkbenchRail.js';
 import {
   databaseTargetKey,
@@ -37,6 +38,7 @@ function RelationHeader(props: Readonly<{ targetKey: string }>) {
   const instance = useWorkbenchInstance();
   const location = useWorkbenchLocation();
   const relation = location.relation!;
+  const previous = location.fkTrail.at(-1);
   const modes = React.useMemo(
     () => [
       { value: 'data', label: translate('plugins.database.mode.data', 'Data') },
@@ -53,6 +55,20 @@ function RelationHeader(props: Readonly<{ targetKey: string }>) {
       <PageHeader
         title={relation.name}
         meta={[{ key: 'schema', text: relation.schema }]}
+        {...(previous
+          ? {
+              // D27 #3: a reference jump keeps the way back to the row it came from.
+              leading: (
+                <IconButton
+                  accessibilityLabel={translate('plugins.database.reference.back', 'Back to {table}', {
+                    table: previous.relation.name,
+                  })}
+                  icon={<Icon name="back" />}
+                  onPress={() => void location.back()}
+                />
+              ),
+            }
+          : {})}
         actions={
           <IconButton
             accessibilityLabel={translate(
@@ -93,28 +109,17 @@ function RelationHeader(props: Readonly<{ targetKey: string }>) {
 }
 
 function OverviewPane(props: Readonly<{ targetKey: string }>) {
-  const translate = usePluginTranslation();
   const descriptor = useWorkbenchInstance().target(props.targetKey);
   return (
     <Stack gap="large">
       <PageHeader
         title={descriptor.label}
-        description={translate(
-          'plugins.database.overview.description',
-          'Browse its tables, run SQL and review changes before they’re applied.',
-        )}
         meta={[
           { key: 'engine', text: descriptor.engine },
           { key: 'origin', text: descriptor.origin.label },
         ]}
       />
-      <EmptyState
-        layout="line"
-        title={translate(
-          'plugins.database.overview.choose',
-          'Choose a table to see its rows',
-        )}
-      />
+      <TableDirectory targetKey={props.targetKey} />
     </Stack>
   );
 }

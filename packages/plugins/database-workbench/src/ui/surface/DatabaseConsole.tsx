@@ -26,9 +26,11 @@ import {
 import { useDatabaseConsole, useWorkbenchInstance } from '../hooks.js';
 import { projectColumn } from '../projections.js';
 import { CellText } from './cells.js';
+import { ConsoleParameters } from './ConsoleParameters.js';
 import { useGridAnatomy, type GridColumn, type GridRow } from './grid.js';
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
+const NO_PARAMETERS: readonly never[] = Object.freeze([]);
 
 function ResultRows(
   props: Readonly<{
@@ -284,6 +286,11 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string }>) {
         {...sql.editorProps}
         presentation="framed"
         showLineNumbers
+      />
+      <ConsoleParameters
+        inputs={sql.parameterInputs[0] ?? NO_PARAMETERS}
+        engine={descriptor.engine}
+        onChange={(inputs) => sql.setParameterInputs([inputs])}
       />
       {sql.error ? (
         <ErrorState

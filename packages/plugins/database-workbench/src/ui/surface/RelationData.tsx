@@ -7,6 +7,7 @@ import type {
 } from '@happier-dev/database-protocol';
 import {
   Button,
+  CodeBlock,
   ErrorState,
   IconButton,
   Icon,
@@ -33,6 +34,8 @@ import {
 import type { WorkbenchChange, WorkbenchLocation } from '../models.js';
 import { CellText, presentCell } from './cells.js';
 import { useGridAnatomy } from './grid.js';
+import { RowFilters } from './RowFilters.js';
+import { RowsExport } from './RowsExport.js';
 
 type PageColumn = ReturnType<typeof useRelationPage>['columns'][number];
 type PageRow = ReturnType<typeof useRelationPage>['rows'][number];
@@ -103,6 +106,7 @@ function RowDetail(
     relation: DatabaseRelationV1;
     editable: boolean;
     reason?: string;
+    tools: ValueTools;
   }>,
 ) {
   const translate = usePluginTranslation();
@@ -197,6 +201,8 @@ function RowDetail(
             rowKey={props.row.rowKey}
             onStage={stage}
             translate={translate}
+            tools={props.tools}
+            foreignKey={column.foreignKey}
           />
         ))}
       </ItemGroup>
@@ -231,6 +237,56 @@ function RowDetail(
   );
 }
 
+type ForeignKey = NonNullable<PageColumn['foreignKey']>;
+/** What the row pane can do with a loaded value: the page's own producers (D27 #3, #7). */
+type ValueTools = Readonly<{
+  inspectJson: (rowKey: string, column: string) => Promise<JsonCellInspection>;
+  openReference: (rowKey: string, constraintName: string) => void;
+}>;
+type JsonCellInspection = Awaited<ReturnType<NonNullable<ReturnType<typeof useRelationPage>['inspectJson']>>>;
+
+/** A JSON value, read whole on request and shown formatted; a value the database cut is read to its end first. */
+function JsonValue(
+  props: Readonly<{ rowKey: string; column: string; tools: ValueTools; translate: PluginTranslate }>,
+) {
+  const [shown, setShown] = React.useState<JsonCellInspection | 'reading' | null>(null);
+  if (shown === null || shown === 'reading') {
+    return (
+      <Button
+        variant="secondary"
+        size="small"
+        busy={shown === 'reading'}
+        title={props.translate('plugins.database.row.formatJson', 'Show formatted')}
+        onPress={() => {
+          setShown('reading');
+          props.tools.inspectJson(props.rowKey, props.column).then(setShown, () =>
+            setShown({ status: 'unavailable', reason: 'not_json' }),
+          );
+        }}
+      />
+    );
+  }
+  if (shown.status === 'complete')
+    return (
+      <CodeBlock
+        code={shown.formatted}
+        language="json"
+        copyLabel={props.translate('plugins.database.row.copyValue', 'Copy value')}
+      />
+    );
+  return (
+    <Text
+      tone="secondary"
+      variant="meta"
+      value={
+        shown.status === 'incomplete'
+          ? props.translate('plugins.database.row.jsonIncomplete', 'The whole value couldn’t be read, so it isn’t formatted.')
+          : props.translate('plugins.database.row.jsonInvalid', 'This value isn’t valid JSON.')
+      }
+    />
+  );
+}
+
 function RowField(
   props: Readonly<{
     column: PageColumn;
@@ -239,6 +295,8 @@ function RowField(
     rowKey: string;
     onStage: (column: string, value: DatabaseValueV1 | null) => void;
     translate: PluginTranslate;
+    tools: ValueTools;
+    foreignKey: ForeignKey | undefined;
   }>,
 ) {
   const state = useWorkbenchCellState(props.rowKey, props.column.name);
@@ -256,12 +314,29 @@ function RowField(
     ? `${props.column.name} · ${props.translate('plugins.database.column.key', 'key')}`
     : props.column.name;
   if (!textual || props.column.primaryKey) {
+    const json = props.column.kind === 'json' && props.cell?.type !== 'null';
+    const reference = props.foreignKey && props.cell?.type !== 'null' ? props.foreignKey : undefined;
     return (
       <Item
         title={title}
         subtitle={shown.incomplete ? `${shown.text}…` : shown.text}
         detail={props.column.typeLabel}
         subtitleNumberOfLines={4}
+        {...(json || reference
+          ? {
+              accessoryBelow: true,
+              accessory: json ? (
+                <JsonValue rowKey={props.rowKey} column={props.column.name} tools={props.tools} translate={props.translate} />
+              ) : (
+                <Button
+                  variant="secondary"
+                  size="small"
+                  title={props.translate('plugins.database.row.openReference', 'Open in {table}', { table: reference!.table })}
+                  onPress={() => props.tools.openReference(props.rowKey, reference!.name)}
+                />
+              ),
+            }
+          : {})}
       />
     );
   }
@@ -312,6 +387,16 @@ export function RelationData(
     <StagedCell row={row} column={column} index={index} translate={translate} />
   ), [translate]);
   const anatomy = useGridAnatomy<PageRow, PageColumn>(page.columns, translate, renderCell, true);
+  const tools = React.useMemo<ValueTools>(() => ({
+    inspectJson: async (rowKey, column) => {
+      if (!page.inspectJson) throw new Error('Rows are not loaded');
+      return page.inspectJson(rowKey, column);
+    },
+    openReference: (rowKey, constraintName) => {
+      const target = page.foreignKey?.(rowKey, constraintName);
+      if (target?.status === 'ready') void location.navigate(target.location);
+    },
+  }), [location, page]);
   const model = useHappierCollection({
     items: page.rows,
     keyOf: (row) => row.rowKey,
@@ -438,6 +523,19 @@ export function RelationData(
           value={translate('plugins.database.rows.empty', 'No rows')}
         />
       }
+      header={
+        <Row gap="small" align="center" justify="space-between" wrap>
+          <RowFilters
+            columns={page.columns}
+            conditions={location.conditions}
+            onChange={(conditions) => {
+              setPrevious([]);
+              void location.navigate({ conditions, page: { rows: location.page.rows, offset: 0 } });
+            }}
+          />
+          <RowsExport page={page} />
+        </Row>
+      }
       footer={footer}
       minListWidth={360}
       minDetailWidth={320}
@@ -448,6 +546,7 @@ export function RelationData(
             row={open}
             columns={page.columns}
             relation={props.relation}
+            tools={tools}
             editable={page.capabilities.edit}
             {...(page.capabilities.reason
               ? { reason: page.capabilities.reason }

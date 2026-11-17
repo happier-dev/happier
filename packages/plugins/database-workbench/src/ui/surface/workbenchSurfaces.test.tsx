@@ -99,11 +99,13 @@ function daemonAnswers(targets: readonly DatabaseDescriptorV1[]) {
                 operation: 'relations.list',
                 completeness: { complete: true },
                 relations: [
-                  { relation: invoices, kind: 'table', estimatedRows: '48210' },
+                  { relation: invoices, kind: 'table', estimatedRows: '48210',
+                    size: { bytes: '31000000', tableBytes: '18000000', indexBytes: '13000000', measurement: 'table_bytes_estimate' } },
                   {
                     relation: { schema: 'public', name: 'customers' },
                     kind: 'table',
                     estimatedRows: '12040',
+                    size: { bytes: '4200000', tableBytes: '2600000', indexBytes: '1600000', measurement: 'table_bytes_estimate' },
                   },
                 ],
               };
@@ -308,6 +310,27 @@ describe('Database workbench surfaces', () => {
       await fixture.dispose();
     }
   });
+  it('shows the database Overview as its table directory: biggest first, with data, index and total sizes', async () => {
+    const executeAction = daemonAnswers([descriptor]);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'overview', mountNonce: 'overview' }, authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: renderRail, launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'overview',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-session-details' }, container: 'detailsPane' },
+        target: { kind: 'session', sessionId: 'session-1' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { ...connectionResourceHandlers(), executeAction },
+    });
+    try {
+      await settle(20);
+      // D27 #1: the producer's byte figures, never a row read; D27 #2: the estimate is marked approximate.
+      // The test host lays out narrow, so each table reads as its name over its estimate and total.
+      expect(await fixture.getByText('invoices')).toBeTruthy();
+      expect(await fixture.getByText('~48.2K rows · 31 MB')).toBeTruthy();
+      expect(await fixture.getByText('~12K rows · 4.2 MB')).toBeTruthy();
+      expect(executeAction.mock.calls.some(([call]) => call.action === DATABASE_ROWS_READ_ACTION_ID_V1)).toBe(false);
+    } finally {
+      await fixture.dispose();
+    }
+  });
   it('opens a table from the Session rail tab as a details tab at that table', async () => {
     const executeAction = daemonAnswers([descriptor]);
     const openSurface = vi.fn(async () => {});
@@ -316,10 +339,11 @@ describe('Database workbench surfaces', () => {
       surface: renderRail, launchInput: projectNativeJsonValueForTransport({ scope }),
       surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-session-rail' }, container: 'rightSidebarTab' },
         target: { kind: 'session', sessionId: 'session-1' } }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { executeAction, openSurface },
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { ...connectionResourceHandlers(), executeAction, openSurface },
     });
     try {
       await settle(20);
+      // Nothing is open until a press; the list names the tables of the first database.
       // Controls in order: the database picker, Console, the public schema, then its tables (invoices first).
       const controls = await fixture.getAllByRole('button');
       expect(controls).toHaveLength(5);
@@ -337,7 +361,7 @@ describe('Database workbench surfaces', () => {
       surface: renderRail, launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'data/public/invoices',
       surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-session-details' }, container: 'detailsPane' },
         target: { kind: 'session', sessionId: 'session-1' } }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { executeAction },
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { ...connectionResourceHandlers(), executeAction },
     });
     try {
       await settle(20);

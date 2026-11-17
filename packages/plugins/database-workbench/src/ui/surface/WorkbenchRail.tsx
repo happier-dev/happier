@@ -23,16 +23,8 @@ import {
   useWorkbenchLocation,
 } from '../hooks.js';
 import { sameRelation } from '../location.js';
+import { approxRowsLabel } from './sizes.js';
 
-const compactCount = new Intl.NumberFormat(undefined, {
-  notation: 'compact',
-  maximumFractionDigits: 1,
-});
-function rowsLabel(approxRows: string | null): string | undefined {
-  if (approxRows === null) return undefined;
-  const value = Number(approxRows);
-  return Number.isFinite(value) ? compactCount.format(value) : approxRows;
-}
 
 /** What a rail press asks for; the page navigates in place, the Session rail opens a details tab. */
 export type RailIntent = Readonly<
@@ -209,7 +201,7 @@ function SchemaRelations(
                   'plugins.database.rail.matview',
                   'materialized view',
                 );
-        const rows = rowsLabel(relation.approxRows);
+        const rows = approxRowsLabel(relation.approxRows);
         return (
           <Item
             key={relation.name}

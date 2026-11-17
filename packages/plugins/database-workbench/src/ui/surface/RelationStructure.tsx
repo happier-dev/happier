@@ -1,12 +1,14 @@
 import * as React from 'react';
 import type { DatabaseRelationV1 } from '@happier-dev/database-protocol';
 import {
+  CodeBlock,
   EmptyState,
   ErrorState,
   Item,
   ItemGroup,
   LoadingState,
   Stack,
+  Text,
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
 import { useStructure, useWorkbenchLocation } from '../hooks.js';
@@ -49,6 +51,24 @@ export function RelationStructure(
   const keyed = new Set(structure.primaryKey);
   return (
     <Stack gap="large">
+      {structure.viewDefinition ? (
+        // D27 #7: a view's query as code. Changing it belongs in a migration, not an edit here.
+        <Stack gap="small">
+          <CodeBlock
+            code={structure.viewDefinition}
+            language="sql"
+            copyLabel={translate('plugins.database.structure.copyDefinition', 'Copy definition')}
+          />
+          <Text
+            tone="secondary"
+            variant="meta"
+            value={translate(
+              'plugins.database.structure.viewNote',
+              'Rows come from this query. To change what it shows, change the view in a migration.',
+            )}
+          />
+        </Stack>
+      ) : null}
       <ItemGroup
         title={translate('plugins.database.structure.columns', 'Columns')}
       >
