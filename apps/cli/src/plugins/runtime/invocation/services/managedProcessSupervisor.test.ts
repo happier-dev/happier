@@ -1012,6 +1012,49 @@ describe('createManagedServiceProcessSupervisorHost', () => {
         }
     });
 
+    it('re-confirms a found optional endpoint from its owner sockets, walking every process only to discover it', async () => {
+        vi.useFakeTimers();
+        const listeners: Array<localServiceScan.LocalServicesScanResult['listeners'][number]> = [];
+        const processes = new Map([[42, { pid: 42, command: 'fixture server', processOwnership: 'self' as const }]]);
+        // The OS boundary: a restricted scan reads only the named PIDs' sockets.
+        const scan = vi.spyOn(localServiceScan, 'scanPlatformLocalServices').mockImplementation(async (options = {}) => ({
+            listeners: options.listenerOwnerPids
+                ? listeners.filter(listener => listener.pid !== undefined && options.listenerOwnerPids!.includes(listener.pid))
+                : listeners,
+            processes, workspaces: [], diagnostics: [],
+            ...(options.listenerOwnerPids ? { listenerOwnersRestricted: true as const } : {}),
+        }));
+        const machineWalks = () => scan.mock.calls.filter(([options]) => options?.listenerOwnerPids === undefined).length;
+        const { servers } = createHarness();
+        const cancellation = new AbortController();
+        let handle: Awaited<ReturnType<typeof servers.supervise>> | undefined;
+        const pending = servers.supervise(managedSpec('optional-address', {
+            mode: { kind: 'managedSpawn', endpointNone: true,
+                endpointDetection: { kind: 'detectAfterLaunch', minimumConfidence: 'high' } },
+        }), { signal: cancellation.signal }).then(value => { handle = value; });
+        try {
+            await vi.advanceTimersByTimeAsync(0);
+            listeners.push({ address: '127.0.0.1', port: 4312, protocol: 'tcp', pid: 42 });
+            await vi.advanceTimersByTimeAsync(5_000);
+            expect(handle?.snapshot()).toMatchObject({ baseUrl: 'http://127.0.0.1:4312', port: 4312 });
+            const walksWhenFound = machineWalks();
+
+            await vi.advanceTimersByTimeAsync(10 * 5_000);
+            expect(handle?.snapshot()).toMatchObject({ baseUrl: 'http://127.0.0.1:4312', port: 4312 });
+            expect(machineWalks() - walksWhenFound).toBe(0);
+
+            // A closed owner listener falls back to discovery and withdraws the address.
+            listeners.splice(0);
+            await vi.advanceTimersByTimeAsync(5_000);
+            expect(handle?.snapshot()).toMatchObject({ baseUrl: null, port: null });
+            expect(machineWalks() - walksWhenFound).toBe(1);
+        } finally {
+            cancellation.abort();
+            await pending.catch(() => undefined);
+            await handle?.stop();
+        }
+    });
+
     it('withdraws stale native running evidence when the current inspect fails without releasing custody', async () => {
         vi.useFakeTimers();
         const { servers } = createHarness();

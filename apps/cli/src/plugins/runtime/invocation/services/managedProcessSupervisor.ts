@@ -60,7 +60,7 @@ import {
 } from '@/providers/lifecycle/resolveManagedProviderRuntimeLaunch';
 import { normalizeLocalServiceScan } from '@/daemon/local/services/inventory/scanner';
 import { scanPlatformLocalServices } from '@/daemon/local/services/inventory/platform/scan';
-import { selectManagedOwnedTreeEndpoint } from './managedOwnedTreeEndpoint';
+import { selectManagedOwnedTreeEndpoint, type ManagedEndpointConfidence } from './managedOwnedTreeEndpoint';
 import {
     reserveLoopbackPort,
     type LoopbackHost,
@@ -1099,6 +1099,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         preparedRunnerSupervision?: RunnerManagedServiceSupervisionAuthorization,
     ): Promise<ManagedServiceProcessHandle> {
         let endpoint = resolveInitialEndpoint(spec);
+        let endpointOwnerPid: number | null = null;
         if (spec.healthCheck?.kind === 'http' && endpoint) {
             validateHealthCheckTargets(spec.healthCheck, endpoint);
         }
@@ -1693,9 +1694,9 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             }, signal, probeTimeoutMs);
         }
 
-        async function observeOwnedTreeEndpoint(managedPid: number, signal: AbortSignal): Promise<boolean> {
-            if (spec.mode.kind !== 'managedSpawn' || !spec.mode.endpointDetection) return false;
-            const scan = await waitWithAbort(scanPlatformLocalServices(), signal);
+        async function scanOwnedTreeEndpoint(managedPid: number, signal: AbortSignal,
+            minimumConfidence: ManagedEndpointConfidence, listenerOwnerPids?: readonly number[]) {
+            const scan = await waitWithAbort(scanPlatformLocalServices(listenerOwnerPids ? { listenerOwnerPids } : {}), signal);
             assertNotAborted(signal);
             await assertProcessRunning();
             assertGenerationUsable();
@@ -1708,9 +1709,27 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 // Keep process-tree ownership/ambiguity checks; never admit a foreign interface.
                 entries: inventorySnapshot.entries.filter(candidate => candidate.state === 'listening'
                     && (candidate.address.kind === 'loopback' || candidate.address.kind === 'wildcard')),
-                managedPid, minimumConfidence: spec.mode.endpointDetection.minimumConfidence,
+                managedPid, minimumConfidence,
             });
-            const host = selected && inventorySnapshot.entries.find(({ id }) => id === selected.id)?.address.family === 'ipv6'
+            const entry = selected ? inventorySnapshot.entries.find(({ id }) => id === selected.id) : undefined;
+            return { selected, family: entry?.address.family, ownerPid: selected?.provenance?.process?.pid ?? null,
+                complete: scan.diagnostics.length === 0 && (scan.socketOwnerReadFailures?.length ?? 0) === 0 };
+        }
+
+        async function observeOwnedTreeEndpoint(managedPid: number, signal: AbortSignal): Promise<boolean> {
+            if (spec.mode.kind !== 'managedSpawn' || !spec.mode.endpointDetection) return false;
+            const { minimumConfidence } = spec.mode.endpointDetection;
+            // A found endpoint is re-confirmed from its owner's own sockets through the same
+            // selector (P03-OVERBUILT-HUNT-5): a Machine-wide process walk every watchdog
+            // interval only (re)discovers. Anything else falls back to that walk.
+            const confirmed = endpoint && endpointOwnerPid !== null
+                ? await scanOwnedTreeEndpoint(managedPid, signal, minimumConfidence, [endpointOwnerPid]) : null;
+            const observed = confirmed?.complete && confirmed.selected?.port === endpoint?.port
+                && confirmed.ownerPid === endpointOwnerPid
+                ? confirmed : await scanOwnedTreeEndpoint(managedPid, signal, minimumConfidence);
+            const { selected } = observed;
+            endpointOwnerPid = observed.ownerPid;
+            const host = selected && observed.family === 'ipv6'
                 ? '::1' as const : '127.0.0.1' as const;
             endpoint = selected ? Object.freeze({ host, port: selected.port,
                 baseUrl: host === '::1' ? `http://[::1]:${selected.port}` : `http://127.0.0.1:${selected.port}`,
