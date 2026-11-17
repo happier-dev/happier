@@ -20,6 +20,7 @@ import { SettingsFloatingControlsHost } from '@/components/settings/shell/Settin
 import { getPreferredLanguage, t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { CollectionDraftTitleScope } from '@/components/ui/lists/collection/CollectionDraftTitle';
+import { CollectionRailColumnContext } from '@/components/ui/lists/collection/CollectionList';
 import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
 import { HorizontalSafeAreaProvider, NavigatorSafeAreaBleed, ScreenBackdropBoundary, useHorizontalSafeArea, useHorizontalSafeAreaContentPadding } from '@/components/navigation/safeArea/HorizontalSafeArea';
 
@@ -117,7 +118,9 @@ export const SettingsCollectionLayout = React.memo(function SettingsCollectionLa
 function CollectionRailSafeArea(props: React.PropsWithChildren) {
     const area = useHorizontalSafeArea();
     return <View style={{ flex: 1, minHeight: 0, paddingLeft: area.padded ? 0 : area.left }}>
-        <ScreenBackdropBoundary>{props.children}</ScreenBackdropBoundary>
+        <CollectionRailColumnContext.Provider value>
+            <ScreenBackdropBoundary>{props.children}</ScreenBackdropBoundary>
+        </CollectionRailColumnContext.Provider>
     </View>;
 }
 

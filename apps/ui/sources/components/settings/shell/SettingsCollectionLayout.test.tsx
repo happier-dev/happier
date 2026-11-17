@@ -237,6 +237,25 @@ describe('SettingsCollectionLayout', () => {
         expect(detailMounts.count).toBe(1);
     });
 
+    // SHELL-ACCEPT-1116 (a): the Machines rail beside its detail showed an open "Search machines" field while every
+    // shell column waits behind its magnifier (A5). A collection's rail is a column too: the list decides it once.
+    it('keeps the search of a list in the rail beside its detail behind the magnifier until pressed', async () => {
+        const { CollectionList } = await import('@/components/ui/lists/collection/CollectionList');
+        const search = { value: '', onChangeText: () => {}, placeholder: 'Search machines', testID: 'rail-search' };
+        const screen = await renderScreen(
+            <SettingsCollectionLayout navigator="machines" rootPathname="/settings/machines"
+                resolveChildRoute={() => '[id]'} rail={<CollectionList testID="machines-rail" title="Machines" search={search} />}
+                railWidth="standard" detailMinWidthPx={480} testID="settings-machines"
+                detailTop={<DetailProbe />}
+            />,
+        );
+        await layoutAt(screen, 1200);
+        expect(currentMode(screen)).toBe('split');
+        expect(screen.findByTestId('rail-search')).toBeNull();
+        await screen.pressByTestIdAsync('rail-search:toggle');
+        expect(screen.findByTestId('rail-search')).not.toBeNull();
+    });
+
     it('keeps shared detail content mounted while measuring and across width changes', async () => {
         detailMounts.count = 0;
         const screen = await renderScreen(
