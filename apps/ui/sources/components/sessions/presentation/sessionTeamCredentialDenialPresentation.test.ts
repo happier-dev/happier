@@ -83,6 +83,7 @@ describe('presentSessionTeamCredentialDenial', () => {
         expect(presentation?.body).toContain('Acme OpenAI');
         expect(presentation?.body).toContain('Limit reached');
         expect(presentation?.body).toContain('Tokens');
+        expect(presentation?.body).toContain('0 remaining');
         expect(presentation?.body).toContain('Resets');
         expect(presentation?.action).toBe('choose-model');
         expect(presentation?.actionLabel).toBe('Choose another credential');
@@ -97,7 +98,7 @@ describe('presentSessionTeamCredentialDenial', () => {
         });
 
         expect(presentation?.body).toContain('Acme OpenAI');
-        expect(presentation?.body).toContain('broker machine for this credential is not reachable');
+        expect(presentation?.body).toContain(t('teams.credentials.errors.brokerUnavailable'));
         expect(presentation?.body).not.toContain('Resets');
     });
 

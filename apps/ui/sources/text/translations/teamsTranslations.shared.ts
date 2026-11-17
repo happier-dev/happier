@@ -1112,6 +1112,7 @@ export const english = {
                 maximumInvalid: 'Enter a whole number above zero.',
                 maximumInvalidCost: 'Enter an amount above zero.',
                 recorded: ({ recorded, maximum }: { recorded: string; maximum: string }) => `${recorded} of ${maximum} recorded`,
+                remaining: ({ remaining }: { remaining: string }) => `${remaining} remaining`,
                 resetsUtc: ({ when }: { when: string }) => `Resets ${when} UTC`,
                 reached: 'Limit reached',
                 disabled: 'Turned off',

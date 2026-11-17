@@ -50,6 +50,7 @@ export function presentSessionTeamCredentialDenial(input: Readonly<{
         // A reconnect refusal is its title; the body adds only who can reconnect it.
         denial === null ? null : reconnect ? teamCredentialOwnerHandoffLabel() : credentialApprovalFailureMessage(denial.reasonCode),
         usageLimit === null ? null : limitMetricLabel(usageLimit.metric),
+        usageLimit === null ? null : t('teams.credentials.limits.remaining', { remaining: usageLimit.remaining }),
         usageLimit === null ? null : formatLimitResetUtc(usageLimit.resetsAtUtc),
     ].filter((part): part is string => Boolean(part));
     return {
