@@ -158,6 +158,68 @@ describe('TeamAuthEntrySurface admission confirmation', () => {
         restoredAccount = undefined;
     });
 
+    it('presents a reachable auth-entry request failure without claiming the Home is offline, then retries', async () => {
+        const { t } = await import('@/text');
+        const serverId = await addTeamHome(false);
+        harness.answer(serverId, ENTRY_PATH, { status: 500, body: { error: 'internal_error' } });
+        const screen = await renderScreen(
+            <TeamAuthEntrySurface
+                invitation={{ token: TOKEN }}
+                target={{ kind: 'saved_profile', profileRef: serverId }}
+                onSelectAction={() => {}}
+            />,
+        );
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-offline')).not.toBeNull());
+        expect(screen.getTextContent()).toContain(t('teams.errors.loadFailed'));
+        expect(screen.getTextContent()).not.toContain(t('teams.join.offlineTitle'));
+        expect(screen.getTextContent()).not.toContain(t('teams.join.offlineBody'));
+
+        harness.answer(serverId, ENTRY_PATH, { body: INVITATION_ENTRY });
+        await screen.pressByTestIdAsync('team-auth-entry-offline-action');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-ready')).not.toBeNull());
+        expect(screen.findByTestId('team-join-preview-role')).not.toBeNull();
+    });
+
+    it.each([
+        { name: 'HTTP error', status: 500, body: { error: 'internal_error' } },
+        { name: 'malformed successful response', status: 200, body: { outcome: 'ok', preview: null } },
+    ])('presents a preview $name without claiming the Home is offline', async ({ status, body }) => {
+        const { t } = await import('@/text');
+        const serverId = await addTeamHome(false);
+        harness.answer(serverId, PREVIEW_PATH, { status, body });
+        const screen = await renderScreen(
+            <TeamAuthEntrySurface
+                invitation={{ token: TOKEN }}
+                target={{ kind: 'saved_profile', profileRef: serverId }}
+                onSelectAction={() => {}}
+            />,
+        );
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-join-preview-failed')).not.toBeNull());
+        expect(screen.getTextContent()).toContain(t('teams.errors.loadFailed'));
+        expect(screen.getTextContent()).not.toContain(t('teams.join.offlineTitle'));
+        expect(screen.getTextContent()).not.toContain(t('teams.join.offlineBody'));
+
+        harness.answer(serverId, PREVIEW_PATH, { body: { outcome: 'ok', preview: PREVIEW } });
+        await screen.pressByTestIdAsync('team-join-preview-failed-action');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-join-preview-role')).not.toBeNull());
+    });
+
+    it('presents a reachable admission request failure without claiming the Home is offline', async () => {
+        const { t } = await import('@/text');
+        const serverId = await addTeamHome(false);
+        harness.answer(serverId, ACCEPT_PATH, { status: 500, body: { error: 'internal_error' } });
+        const screen = await renderJoin(serverId, () => {});
+        await screen.pressByTestIdAsync('team-auth-entry-join');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-admission-failure-unknown')).not.toBeNull());
+        expect(screen.getTextContent()).toContain(t('common.error'));
+        expect(screen.getTextContent()).not.toContain(t('teams.join.offlineTitle'));
+        expect(screen.getTextContent()).not.toContain(t('teams.join.offlineBody'));
+
+        harness.answer(serverId, ACCEPT_PATH, { body: { outcome: 'joined', teamId: 'team-1' } });
+        await screen.pressByTestIdAsync('team-auth-entry-admission-failure-unknown-action');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-auth-entry-admission-complete')).not.toBeNull());
+    });
+
     it.each(['token', 'continuation'] as const)('retains the admitted draft across credential rebinding and refuses a stale save without accepting again (%s)', async authority => {
         const serverId = await addTeamHome(false);
         if (authority === 'continuation') {

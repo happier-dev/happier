@@ -100,6 +100,8 @@ describe('TeamInvitationPreviewDetails', () => {
         });
         expect(rendered.findByTestId('team-join-preview-role')).not.toBeNull();
         expect(rendered.findByTestId('team-join-preview-failed')).not.toBeNull();
+        expect(rendered.getTextContent()).toContain(t('teams.errors.loadFailed'));
+        expect(rendered.getTextContent()).not.toContain(t('teams.join.offlineBody'));
         await rendered.pressByTestIdAsync('team-join-preview-failed-action');
         expect(onRetry).toHaveBeenCalledTimes(1);
     });

@@ -232,8 +232,9 @@ function admissionFailureTitle(failure: HomeDomainFailure): string {
         case 'outcome_unknown':
             return t('teams.join.acceptanceOutcomeUnknown');
         case 'unreachable':
-        case 'unknown':
             return t('teams.join.offlineTitle');
+        case 'unknown':
+            return t('common.error');
         case 'unsupported':
         case 'invalid':
             return t('teams.join.updateRequiredTitle');
@@ -985,7 +986,6 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                         kind="error"
                         title={admissionFailureTitle(admissionState.failure)}
                         reason={admissionState.failure.kind === 'unreachable'
-                            || admissionState.failure.kind === 'unknown'
                             ? t('teams.join.offlineBody')
                             : undefined}
                         action={(admissionState.failure.retryable
@@ -1117,11 +1117,11 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                 title={named?.title ?? (updateRequired
                     ? t('teams.join.updateRequiredTitle')
                     : isOffline
-                        ? t('teams.join.offlineTitle')
+                        ? t('common.error')
                         : isIncompatible
                             ? t('teams.unavailable.title')
                             : t('teams.errors.notFound'))}
-                reason={named?.body ?? (isOffline ? t('teams.join.offlineBody') : undefined)}
+                reason={named?.body ?? (isOffline ? t('teams.errors.loadFailed') : undefined)}
                 {...(loadState.kind === 'unavailable' && named
                     ? { diagnosticCode: loadState.reason }
                     : {})}

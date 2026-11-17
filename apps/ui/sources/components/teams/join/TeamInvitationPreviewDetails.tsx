@@ -96,8 +96,8 @@ export const TeamInvitationPreviewDetails = React.memo(function TeamInvitationPr
             <SurfaceStateCard
                 testID="team-join-preview-failed"
                 kind="error"
-                title={t('teams.join.offlineTitle')}
-                reason={t('teams.join.offlineBody')}
+                title={t('common.error')}
+                reason={t('teams.errors.loadFailed')}
                 action={state.retryable && props.onRetry
                     ? { label: t('teams.join.retry'), onPress: props.onRetry }
                     : undefined}
@@ -160,7 +160,7 @@ export const TeamInvitationPreviewDetails = React.memo(function TeamInvitationPr
             {state.refreshFailure ? (
                 <View testID="team-join-preview-failed" style={styles.refreshFailure}>
                     <Text accessibilityLiveRegion="polite" aria-live="polite" role="status" style={styles.pending}>
-                        {t('teams.join.offlineBody')}
+                        {t('teams.errors.loadFailed')}
                     </Text>
                     {state.refreshFailure.retryable && props.onRetry ? (
                         <RoundButton
