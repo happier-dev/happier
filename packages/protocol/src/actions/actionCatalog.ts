@@ -419,7 +419,7 @@ function searchActionDefinitionSummaryCandidates(
   const query = typeof params?.query === 'string' ? params.query.trim() : '';
   const normalizedQuery = normalizeActionSearchQuery(query);
   const limitRaw = typeof params?.limit === 'number' && Number.isFinite(params.limit) ? Math.floor(params.limit) : 20;
-  const limit = Math.max(1, Math.min(100, limitRaw));
+  const limit = params?.limit === null ? undefined : Math.max(1, Math.min(100, limitRaw));
   return candidates
     .map((candidate) => {
       const searchText = candidate.searchText ?? actionSearchText(candidate.definition);

@@ -2,8 +2,32 @@ import { describe, expect, it } from 'vitest';
 
 import { createDaemonPluginActionExecutor, createPluginActionExecutor, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
 import { createActionExecutor, type ActionCaller, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
+import { serializeActionSpec } from '@happier-dev/protocol/actions/actionCatalog';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 
 describe('createDaemonPluginActionExecutor', () => {
+  it('retains a deliberately complete catalog when merging local and daemon discovery', async () => {
+    const local = createActionExecutor(createUnavailableActionTransportDeps());
+    const base = serializeActionSpec(getActionSpec('action.spec.search'), { includeOutputSchema: false });
+    const remote = Array.from({ length: 201 }, (_, index) => ({
+      ...base, id: `test.complete/actions/choice-${index}`, title: `Choice ${index}`,
+    }));
+    const executor = createDaemonPluginActionExecutor({
+      base: local,
+      executeInCurrentProcess: async (actionId, input, context) => ({ matched: true,
+        result: await local.execute(actionId as Parameters<typeof local.execute>[0], input, context) }),
+      // The daemon IPC boundary supplies its schema-valid external contribution catalog.
+      requestPluginActionExecution: async () => ({ matched: true,
+        result: { ok: true, result: { actionSpecs: remote } } }),
+    });
+    const result = await executor.execute('action.spec.search', { query: 'test.complete', limit: null }, { surface: 'cli' });
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) return;
+    expect(PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.search'].parse(result.result).actionSpecs.map(row => row.id).sort())
+      .toEqual(remote.map(row => row.id).sort());
+  });
+
   it('refuses a plugin call without a bound local owner instead of reconstructing CLI authority', async () => {
     let transportRequests = 0;
     const executor = createDaemonPluginActionExecutor({

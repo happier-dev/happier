@@ -14,7 +14,7 @@ import type { PreNormalizedActionSpec } from './definition.js';
 
 export const ActionSpecSearchInputSchema = lazyZodSchema(() => z.looseObject({
   query: z.optional(z.string().check(z.trim())),
-  limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(100))),
+  limit: z.optional(z.nullable(z.number().check(z.int(), z.minimum(1), z.maximum(100)))),
 }));
 
 export const ActionSpecSearchCliInputSchema = lazyZodSchema(() => z.strictObject({
@@ -120,7 +120,7 @@ function createActionCatalogActionSpecs() {
       description: 'Use this before guessing action ids or tool names.',
       fields: [
         { path: 'query', title: 'Query', description: 'Natural-language search text.', widget: 'text' },
-        { path: 'limit', title: 'Limit', description: 'Maximum number of action specs to return.', widget: 'text' },
+        { path: 'limit', title: 'Limit', description: 'Maximum number of action specs to return; null reads every matching summary.', widget: 'text' },
       ],
     },
     cli: {

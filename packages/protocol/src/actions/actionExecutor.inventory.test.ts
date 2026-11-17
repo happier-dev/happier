@@ -7,6 +7,7 @@ import { compileProtocolJsonSchema } from '../plugins/actions/jsonSchemaCompiler
 
 import { createActionExecutor as createRawActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { ActionDiscoveryDefinitionSummaryV1Schema, ActionDiscoveryDefinitionV1Schema, type ActionDefinitionV1 } from './actionDefinitionV1.js';
+import { actionSpecToActionDefinitionV1 } from './actionCatalog.js';
 import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import { ActionIdSchema, WorkflowActionIdV1Schema } from './actionIds.js';
 import type { MachinesAgentsListInput } from '../capabilities/machineAgentInventory.js';
@@ -98,6 +99,22 @@ function createDeps(): ActionExecutorDeps {
     teleportVoiceAgentToSessionRoot: vi.fn(async () => ({ ok: true })),
   };
 }
+
+it('keeps a deliberately complete discovery read beyond the ordinary search limit', async () => {
+  const base = actionSpecToActionDefinitionV1(getActionSpec('action.spec.search'));
+  const declarations = Array.from({ length: 201 }, (_, index): ActionDefinitionV1 => ({
+    ...base, id: `test.complete/actions/choice-${index}`, title: `Complete fixture ${index}`,
+    inputSchema: {}, outputSchema: undefined,
+  }));
+  // These declarations substitute the external plugin contribution boundary.
+  const executor = createRawActionExecutor({ ...createDeps(), listContributedActionDefinitions: () => declarations });
+  const result = await executor.execute('action.spec.search', { query: 'test.complete', limit: null },
+    { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+  expect(result).toMatchObject({ ok: true });
+  if (!result.ok) return;
+  const found = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.search'].parse(result.result).actionSpecs;
+  expect(found.map(row => row.id).sort()).toEqual(declarations.map(row => row.id).sort());
+});
 
 it('discovers static MCP suggestions through the existing Action option reader without external reads', async () => {
   const network = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Static options cannot fetch vendor data'));

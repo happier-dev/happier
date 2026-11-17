@@ -5480,7 +5480,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 surface: ctx.surface ?? null,
                 includeOutputSchema: ctx.surface !== 'agent' && ctx.surface !== 'mcp' && ctx.surface !== 'cli' && ctx.surface !== 'voice',
                 query: typeof data.query === 'string' ? data.query : '',
-                limit: typeof data.limit === 'number' ? data.limit : undefined,
+                limit: data.limit === null || typeof data.limit === 'number' ? data.limit : undefined,
                 isActionEnabled: (id) => !credentialScopeFailure(id, ctx, undefined, true) && isActionEnabled(getActionSpec(id), ctx),
                 additionalDefinitions: listContributedActionDefinitions().filter((definition) => (
                   isContributedActionDefinitionEnabled(definition, ctx)

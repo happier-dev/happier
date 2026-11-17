@@ -152,7 +152,8 @@ export function createPluginActionExecutor(params: Readonly<{
       if (!parsedRemote.success) return local;
       const definitions = new Map([...parsedRemote.data.actionSpecs, ...parsedLocal.data.actionSpecs].map(definition => [definition.id, definition]));
       const query = typeof input === 'object' && input !== null && 'query' in input && typeof input.query === 'string' ? input.query : undefined;
-      const limit = typeof input === 'object' && input !== null && 'limit' in input && typeof input.limit === 'number' ? input.limit : undefined;
+      const limit = typeof input === 'object' && input !== null && 'limit' in input
+        && (input.limit === null || typeof input.limit === 'number') ? input.limit : undefined;
       return { matched: true as const, result: { ok: true as const, result: {
         actionSpecs: searchActionDefinitionSummaries([...definitions.values()], { query, limit }),
       } } };
