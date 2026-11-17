@@ -5,6 +5,22 @@ import { afterEach, expect, it } from 'vitest';
 import { composeProjectLaunchEnvironment, prepareProjectLaunchEnvironment } from './projectLaunchEnvironment';
 
 const roots: string[] = [];
+it('carries admitted launch custody to observers without placing it in the child environment', async () => {
+    const selected = await workspace();
+    const requester = { accountId: 'alice', installationId: 'installation' };
+    let observed: unknown;
+    let declared: unknown;
+    const result = await prepareProjectLaunchEnvironment({ workspace: selected, originalEnvironment: { CUSTOM_DATABASE: 'private-original', TOKEN: 'secret' },
+        requirements: [{ name: 'CUSTOM_DATABASE', kind: 'config', required: true }, { name: 'TOKEN', kind: 'secret', required: false }],
+        service: { project: { serverId: 'home', projectId: 'project' }, requester, serviceId: 'postgres',
+            executionPlacement: { mode: 'spawn', machineId: 'machine' }, assignedPorts: {},
+            async prepareServiceLaunchEnvironments(input) {
+                observed = input.requester; declared = await input.readDeclaredEnvironment?.(); return [];
+            } } });
+    expect(observed).toEqual(requester);
+    expect(declared).toMatchObject({ projectedEnvironment: { CUSTOM_DATABASE: 'private-original' } });
+    expect(result.kind === 'prepared' && result.launchInput.environment).toEqual({ CUSTOM_DATABASE: 'private-original' });
+});
 it('uses Windows key identity without suppressing distinct POSIX variable names', () => {
     const input = { originalEnvironment: { Path: 'host', token: 'private', KEEP: 'yes' },
         requirements: [{ name: 'TOKEN', kind: 'secret' as const, required: false }], invocationEnvironment: { PATH: 'invocation' } };

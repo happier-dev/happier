@@ -63,6 +63,14 @@ receive original values rather than another contribution's rewritten upstream.
 Successful contribution cleanup stays with the actual service process lifetime.
 Unavailable capture leaves the ordinary service usable with a visible diagnostic.
 
+The same private preparation carries the admitted requester and Project identity.
+Its optional `readDeclaredEnvironment()` reads the original declared config values
+and provenance through the existing dotenv preparation, excluding secret bindings.
+The database workbench observes that projection to discover launched-service
+targets for the selected Account and worktree. It retains only the preparation's
+private reader until the service releases it; connection URLs do not enter target
+metadata or persistent associations. This is unreleased 0.3 source behavior.
+
 The optional `requestListenerPorts(keys)` operation returns Protocol's existing
 `WorktreePortsResultV1`. The host binds the admitted execution root and launch
 signal to B's worktree port owner. A contribution requests its own named listeners

@@ -940,6 +940,8 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                         dotenvPreparation: current.plan.dotenvPreparation, platform: current.runtime.platform,
                         ...(registry.prepareServiceLaunchEnvironments ? { service: {
                             project: current.plan.project, serviceId: current.serviceId,
+                            requester: { accountId: ingress.machineAdmission!.actorAccountId,
+                                installationId: ingress.machineAdmission!.installationId },
                             executionPlacement: { mode: current.processMode.kind === 'native' ? 'native' as const : 'spawn' as const,
                                 machineId: current.plan.workspace.machineId },
                             assignedPorts: runtimeInputs.assignment.listenerPorts,

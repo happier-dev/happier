@@ -110,8 +110,10 @@ export async function prepareProjectLaunchEnvironment(input: Readonly<{
         };
         let contributions: readonly PreparedServiceLaunchEnvironmentContribution[];
         try { contributions = await serviceInput.prepareServiceLaunchEnvironments({ project: serviceInput.project,
+            ...(serviceInput.requester ? { requester: serviceInput.requester } : {}),
             serviceId: serviceInput.serviceId, executionPlacement: serviceInput.executionPlacement,
-            assignedPorts: serviceInput.assignedPorts, requestListenerPorts: serviceInput.requestListenerPorts, readEnvironment }); }
+            assignedPorts: serviceInput.assignedPorts, requestListenerPorts: serviceInput.requestListenerPorts,
+            readEnvironment, readDeclaredEnvironment: () => readEnvironment(configNames) }); }
         catch { service = { kind: 'unavailable', code: 'service_launch_environment_failed' }; contributions = []; }
         const replacements = new Map<string, { name: string; values: string[] }>();
         const defaults: Record<string, string> = {};
