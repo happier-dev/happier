@@ -9,6 +9,17 @@ import {
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import type { PromptStackEntryV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 import { ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { SessionCreationTargetPreparationRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowReadResponseV1Schema, emptyConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { socketRpcCodec } from '@happier-dev/sync-client';
+import { io } from 'socket.io-client';
+import { bindApiSessionSocketMock, createApiSessionSocketStub, createSessionCreationTargetPreparationRpcResult } from '@/testkit/backends/apiSessionSocketHarness';
+
+vi.mock('socket.io-client', () => ({ io: vi.fn() }));
 
 // Load/transform the substantial real Action owner before timed hooks, under
 // an isolated OS Home. Each test still resets modules and admits its own Home.
@@ -109,6 +120,14 @@ async function home(id: string, token: string, accountMarkdownByToken?: Readonly
     };
     else if (url.pathname === '/v2/account/settings') data = { content: { t: 'plain', v: {} }, version: 1 };
     else if (url.pathname === '/v2/sessions/lookup-by-tags') data = { sessions: [] };
+    else if (url.pathname === '/v1/home/governance/get') data = HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null });
+    else if (url.pathname === `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`) data = ConnectedAccountCatalogRowReadResponseV1Schema.parse({
+      status: 'present', revision: 1, content: { t: 'plain', v: emptyConnectedAccountCatalogRecordV1('purposes') },
+    });
+    else if (url.pathname === '/v1/machines/machine-1') data = { machine: {
+      id: 'machine-1', active: true, installationId: 'installation-1', kind: 'persistent',
+      storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, revokedAt: null, replacedByMachineId: null,
+    } };
     else if (url.pathname === '/v1/account/encryption')
       data = { mode: 'plain', updatedAt: 0 };
     else if (url.pathname === '/v1/artifacts/read' && request.method === 'POST') {
@@ -374,7 +393,7 @@ describe('CLI qualified current Artifact prompt preparation', () => {
     const absent = await dispatchWithPromptPreparation(prepare);
     expect(absent.runtime.sendTurnPrompt).not.toHaveBeenCalled();
     expect(absent.observeProviderInputSettlement).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      reason: 'provider_rejected_before_acceptance', retryable: false,
+      reason: 'runtime_config_blocked', retryable: false,
       diagnostic: expect.objectContaining({ code: 'attachment_unavailable' }),
     }));
     expect(absent.failures).toHaveLength(1);
@@ -586,6 +605,29 @@ describe('CLI qualified current Artifact prompt preparation', () => {
     });
     it.each(['missing', 'unavailable'] as const)('refuses ordinary selected Instructions %s before a provider spawn', async state => {
     if (state === 'unavailable') { a.set('instructions', 'Required remit'); a.fail(503); }
+    // Home's Socket.IO response is the Machine transport boundary. Keep the
+    // real target-preparation request and codec before Instructions admission.
+    bindApiSessionSocketMock(vi.mocked(io), createApiSessionSocketStub({ emitWithAck: async (event, raw) => {
+      if (event !== SOCKET_RPC_EVENTS.CALL || !raw || typeof raw !== 'object'
+        || !('method' in raw) || typeof raw.method !== 'string' || !('params' in raw)) throw new Error('Unexpected RPC');
+      const content = { mode: 'plain' as const };
+      const decoded = await socketRpcCodec.decodeRequestParams(content, raw.params, raw.method);
+      let result: unknown;
+      if (raw.method === `machine-1:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`) {
+        result = createSessionCreationTargetPreparationRpcResult(SessionCreationTargetPreparationRequestV1Schema.parse(decoded.params));
+      } else if (raw.method === `machine-1:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`) {
+        result = { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+          codex: { id: 'codex', title: 'Codex', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
+        } } };
+      } else if (raw.method === `machine-1:${RPC_METHODS.CAPABILITIES_DETECT}`) {
+        result = { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data: {
+          installed: true, version: '1.2.3', latestVersion: null, update: { supported: false, command: null },
+          signIn: { status: 'signedIn', loginSupport: 'unsupported' }, platform: { supported: true },
+          install: { available: false, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [],
+        } } } };
+      } else throw new Error(`Unexpected Machine RPC ${raw.method}`);
+      return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
+    } }));
     const { createActionExecutor, SessionSpawnNewInputV2Schema, accountSettingsParse } = protocol;
     const spawn = vi.fn(async () => ({ success: false, error: 'Unexpected spawn' }));
     const executor = createActionExecutor(createCliActionDeps({
@@ -593,6 +635,7 @@ describe('CLI qualified current Artifact prompt preparation', () => {
       serverId: a.id, serverHttpBaseUrl: a.url,
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
       sessionSpawnDirectTargetTransport: { machineId: 'machine-1',
+        readMachineMetadataSnapshot: () => ({ status: 'ready', metadata: {} }),
         prepare: async () => ({ ok: true, directory: '/repo', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
         spawnedSession: { spawn, resolveSpawnSessionByNonce: vi.fn(async () => ({ status: 'not_found' as const })) },
       },
