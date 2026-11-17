@@ -1406,11 +1406,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         },
         waitForProjectReconciliation: async (_revision, signal) => {
           await readSnapshot(signal);
-          // Endpoint materialization reconciles before ensure binds the runtime.
-          // Relationship identity is operation-derived, including resumed intent.
-          await runtime!.handoffAdapter.bindPrivateExecutionRelationship?.(retained.input.operationId,
-            retained.relationshipId ?? deriveWorkspaceSyncRelationshipId(retained.input.operationId));
-          await runtime!.reconcilePrivateRelationships();
+          const currentCapture = runtime!.handoffAdapter.resolvePrivateExecution?.({ operationId: retained.input.operationId });
+          // The disabled preparation row precedes native relationship admission.
+          // Only a bound relationship has runtime state to reconcile.
+          if (currentCapture?.relationshipId) await runtime!.reconcilePrivateRelationships();
         },
       });
   };
