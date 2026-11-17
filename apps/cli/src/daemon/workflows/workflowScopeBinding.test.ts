@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WorkflowDefinitionV1, WorkflowStep } from '@happier-dev/protocol';
-import { resolveWorkflowInvocationStep, resolveWorkflowInvocationStructure, type WorkflowInvocationBindingRow } from './workflowScopeBinding';
+import { resolveWorkflowInvocationStructure, type WorkflowInvocationBindingRow } from './workflowScopeBinding';
 
 const step = (id: string): WorkflowStep => ({ kind: 'step', id,
   document: { text: id, references: [], attachments: [] }, input: [], result: { kind: 'text' } });
@@ -28,9 +28,9 @@ describe('frozen workflow invocation binding', () => {
       row('work-row', 'if', '0', 'work'), row('judge-row', 'body', '1', 'judge')];
     const reads: string[] = [];
     const readInvocation = async (id: string) => { reads.push(id); return rows.find((value) => value.index.id === id); };
-    await expect(resolveWorkflowInvocationStep({ definition, invocation: rows[4]!, readInvocation })).resolves.toEqual(work);
-    await expect(resolveWorkflowInvocationStep({ definition, invocation: rows[5]!, readInvocation })).resolves.toEqual(definition.blocks[0]!.kind === 'loop'
-      && definition.blocks[0].repetition.kind === 'evaluate' ? definition.blocks[0].repetition.evaluator : undefined);
+    await expect(resolveWorkflowInvocationStructure({ keyOfInvocation: ({ index }) => index.id, definition, invocation: rows[4]!, readInvocation })).resolves.toMatchObject({ step: work });
+    await expect(resolveWorkflowInvocationStructure({ keyOfInvocation: ({ index }) => index.id, definition, invocation: rows[5]!, readInvocation })).resolves.toMatchObject({ step: definition.blocks[0]!.kind === 'loop'
+      && definition.blocks[0].repetition.kind === 'evaluate' ? definition.blocks[0].repetition.evaluator : undefined });
     expect(reads).toEqual(['if', 'body', 'loop', 'root', 'body', 'loop', 'root']);
   });
 
@@ -38,9 +38,9 @@ describe('frozen workflow invocation binding', () => {
     const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [step('first'), step('second')] };
     const root = row('root', null, '0', '$root');
     const readInvocation = async (id: string) => id === 'root' ? root : undefined;
-    await expect(resolveWorkflowInvocationStep({ definition, invocation: row('wrong', 'root', '0', 'second'), readInvocation })).resolves.toBeUndefined();
-    await expect(resolveWorkflowInvocationStep({ definition, invocation: row('missing', 'gone', '0', 'first'), readInvocation })).resolves.toBeUndefined();
-    await expect(resolveWorkflowInvocationStep({ definition, invocation: row('wrong-role', 'root', '0', 'first', { blockKind: 'loop' }), readInvocation })).resolves.toBeUndefined();
+    await expect(resolveWorkflowInvocationStructure({ keyOfInvocation: ({ index }) => index.id, definition, invocation: row('wrong', 'root', '0', 'second'), readInvocation })).resolves.toBeUndefined();
+    await expect(resolveWorkflowInvocationStructure({ keyOfInvocation: ({ index }) => index.id, definition, invocation: row('missing', 'gone', '0', 'first'), readInvocation })).resolves.toBeUndefined();
+    await expect(resolveWorkflowInvocationStructure({ keyOfInvocation: ({ index }) => index.id, definition, invocation: row('wrong-role', 'root', '0', 'first', { blockKind: 'loop' }), readInvocation })).resolves.toBeUndefined();
   });
 
   it('reconstructs the inherited parallel-item owner through If and a sequential body without a scope path', async () => {
@@ -66,7 +66,7 @@ describe('frozen workflow invocation binding', () => {
       ...candidate, progress: { ...candidate.progress,
         frame: { ownerBlockId: 'sequential', source: { kind: 'item' as const, index: '0' } } },
     });
-    await expect(resolveWorkflowInvocationStep({ definition, invocation: rows[6]!,
+    await expect(resolveWorkflowInvocationStructure({ keyOfInvocation: ({ index }) => index.id, definition, invocation: rows[6]!,
       readInvocation: async (id) => mismatched.find((candidate) => candidate.index.id === id) })).resolves.toBeUndefined();
   });
 });

@@ -8,7 +8,6 @@ import { type UpdatePayload, type EphemeralPayload, type EphemeralEvent } from "
 import { MachineKindFromLegacyProjectionSchema, type MachineKind } from '@happier-dev/protocol/machines/machineKind';
 import { SESSION_MESSAGE_USER_ATTENTION_IMPACT, type SessionMessageAttentionImpact } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
-import { type AutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { type PendingActivationAuthorizationV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { type ManagedWakeTargetV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { type ParticipantExecutionRunRecipientRoutingIdentityV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
@@ -451,95 +450,6 @@ export function buildPendingChangedUpdate(
             ...(typeof meaningfulActivityAt === "number" && Number.isFinite(meaningfulActivityAt)
                 ? { meaningfulActivityAt }
                 : {}),
-        },
-        createdAt: Date.now(),
-    };
-}
-
-export function buildAutomationUpsertUpdate(
-    data: { automationId: string; version: number; enabled: boolean; updatedAt: number },
-    updateSeq: number,
-    updateId: string,
-): UpdatePayload {
-    return {
-        id: updateId,
-        seq: updateSeq,
-        body: {
-            t: "automation-upsert",
-            automationId: data.automationId,
-            version: data.version,
-            enabled: data.enabled,
-            updatedAt: data.updatedAt,
-        },
-        createdAt: Date.now(),
-    };
-}
-
-export function buildAutomationDeleteUpdate(
-    data: { automationId: string; deletedAt: number },
-    updateSeq: number,
-    updateId: string,
-): UpdatePayload {
-    return {
-        id: updateId,
-        seq: updateSeq,
-        body: {
-            t: "automation-delete",
-            automationId: data.automationId,
-            deletedAt: data.deletedAt,
-        },
-        createdAt: Date.now(),
-    };
-}
-
-export function buildAutomationRunUpdatedUpdate(
-    data: {
-        runId: string;
-        automationId: string;
-        state: AutomationRunStateV3;
-        scheduledAt: number;
-        startedAt?: number | null;
-        finishedAt?: number | null;
-        updatedAt: number;
-        machineId?: string | null;
-        attempt?: number;
-    },
-    updateSeq: number,
-    updateId: string,
-): UpdatePayload {
-    return {
-        id: updateId,
-        seq: updateSeq,
-        body: {
-            t: "automation-run-updated",
-            runId: data.runId,
-            automationId: data.automationId,
-            state: data.state,
-            scheduledAt: data.scheduledAt,
-            startedAt: data.startedAt ?? null,
-            finishedAt: data.finishedAt ?? null,
-            updatedAt: data.updatedAt,
-            machineId: data.machineId ?? null,
-            ...(typeof data.attempt === "number" ? { attempt: data.attempt } : {}),
-        },
-        createdAt: Date.now(),
-    };
-}
-
-export function buildAutomationAssignmentUpdatedUpdate(
-    data: { machineId: string; automationId: string; enabled: boolean; updatedAt: number },
-    updateSeq: number,
-    updateId: string,
-): UpdatePayload {
-    return {
-        id: updateId,
-        seq: updateSeq,
-        body: {
-            t: "automation-assignment-updated",
-            machineId: data.machineId,
-            automationId: data.automationId,
-            enabled: data.enabled,
-            updatedAt: data.updatedAt,
         },
         createdAt: Date.now(),
     };

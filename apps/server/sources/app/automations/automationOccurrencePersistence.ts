@@ -68,33 +68,6 @@ export async function rejoinAutomationOccurrenceInsertRace<T>(
     }
 }
 
-/**
- * Reads the one immutable occurrence row for an exact Automation identity.
- *
- * Trigger identity is already inside the derived occurrence key, so the
- * canonical `(automationId, occurrenceKey)` uniqueness owner is also the
- * lookup owner. Probing by Trigger instead would miss a same-key row admitted
- * under another Trigger or cause of that Automation, turning a reportable
- * `occurrenceConflict` into a constraint violation at insert time.
- */
-export async function findAutomationOccurrenceTx<TSelect extends Prisma.AutomationRunSelect>(
-    params: Readonly<{
-        tx: Tx;
-        accountId: string;
-        automationId: string;
-        occurrenceKey: string;
-        select: TSelect;
-    }>,
-): Promise<Prisma.AutomationRunGetPayload<{ select: TSelect }> | null> {
-    const [row] = await findAutomationOccurrencesTx({
-        tx: params.tx,
-        accountId: params.accountId,
-        occurrences: [{ automationId: params.automationId, occurrenceKey: params.occurrenceKey }],
-        select: params.select,
-    });
-    return row ?? null;
-}
-
 /** Bounded batch form consumed by one Event admission request. */
 export async function findAutomationOccurrencesTx<TSelect extends Prisma.AutomationRunSelect>(
     params: Readonly<{

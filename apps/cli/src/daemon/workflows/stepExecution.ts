@@ -148,33 +148,6 @@ export async function stopWorkflowPendingExecutionRunInput(params: Readonly<{
   return observed;
 }
 
-/**
- * Sends one workflow-authored turn through the canonical detached Run API.
- * The workflow local id and execution-owned result contract cross together;
- * this adapter owns neither provider delivery nor result decoding.
- */
-export async function sendWorkflowDetachedExecutionRunInput(params: Readonly<{
-  runId: string;
-  text: string;
-  localInputId: string;
-  resultContract: ExecutionRunResultContractV1;
-  send: (request: Readonly<{
-    runId: string;
-    message: string;
-    delivery: 'prompt';
-    localInputId: string;
-    resultContract: ExecutionRunResultContractV1;
-  }>) => Promise<Readonly<{ ok: boolean; errorCode?: string; error?: string }>>;
-}>): Promise<Readonly<{ ok: boolean; errorCode?: string; error?: string }>> {
-  return await params.send({
-    runId: params.runId,
-    message: params.text,
-    delivery: 'prompt',
-    localInputId: params.localInputId,
-    resultContract: params.resultContract,
-  });
-}
-
 /** Current/last turn correspondence belongs to the native observation owner. */
 export function resolveWorkflowDetachedExecutionRunInputTurn(
   run: ReturnType<typeof ExecutionRunGetResponseSchema.parse>['run'],

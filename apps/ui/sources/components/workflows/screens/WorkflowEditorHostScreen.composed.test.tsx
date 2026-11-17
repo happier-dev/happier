@@ -1127,7 +1127,6 @@ describe('WorkflowEditorHostScreen composition', () => {
             readBodyProps()!.onChangeProjectTarget!({ machineId: 'machine-a', directory: '/repo' });
         });
         const before = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
-        const { addWorkflowEventToMountedDraft } = await import('@/sync/ops/actions/workflowEventDraft');
         const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
         const trigger = AutomationTriggerDefinitionInputSchema.parse({ kind: 'pluginEvent', enabled: true,
             eventRef: event, sourceInstanceId: 'health', sourceContractVersion: 1, sourceConfig: {}, displayLabel: 'Health',
@@ -1140,18 +1139,20 @@ describe('WorkflowEditorHostScreen composition', () => {
         const context = { surface: 'ui' as const, authority: 'present_user' as const,
             serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId,
             executeChildAction: executor.execute.bind(executor) };
+        const editInput = { scope: before.scope, draftId: before.draftId, expectedDraftRevision: before.draftRevision,
+            settings: { triggers: { ...before.settings.triggers, rows: [...before.settings.triggers.rows,
+                { identity: { clientId: 'selected-event' }, enabled: true, trigger, payloadSchema }] } } };
         let result: unknown;
-        await act(async () => { result = await addWorkflowEventToMountedDraft({ draft: before, trigger, payloadSchema,
-            clientId: 'selected-event', context }); });
-        expect(result).toMatchObject({ status: 'applied' });
+        await act(async () => { result = await executor.execute('workflow.authoring.draft.edit', editInput, context); });
+        expect(result).toMatchObject({ ok: true, result: { status: 'applied' } });
         const changed = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
         expect(changed.name).toBe('Keep my title');
         expect(changed.settings.triggers).toEqual({ ...before.settings.triggers, rows: [...before.settings.triggers.rows,
             { identity: { clientId: 'selected-event' }, enabled: true, trigger, payloadSchema }] });
         expect(boundary.creates).toHaveLength(0);
         expect(boundary.automationCreates).toHaveLength(0);
-        await act(async () => { result = await addWorkflowEventToMountedDraft({ draft: before, trigger, payloadSchema, context }); });
-        expect(result).toMatchObject({ status: 'refused', reason: 'stale_draft_revision' });
+        await act(async () => { result = await executor.execute('workflow.authoring.draft.edit', editInput, context); });
+        expect(result).toMatchObject({ ok: true, result: { status: 'refused', reason: 'stale_draft_revision' } });
         const address = { scope: before.scope, draftId: before.draftId };
         await act(async () => { await executor.execute('workflow.authoring.draft.undo', address, context); });
         const undone = readBodyProps()!.mountedDraftActions!.getSnapshot()!;

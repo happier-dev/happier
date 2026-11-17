@@ -1,42 +1,42 @@
 import { describe, expect, it } from 'vitest';
 
-import { getAutomationWorkerFeatureDecision, isAutomationWorkerEnabled } from './automationFeatureGate';
+import { getAutomationWorkerFeatureDecision } from './automationFeatureGate';
 import { getWorkflowRuntimeFeatureDecision, isWorkflowRuntimeEnabled } from './workflowFeatureGate';
 
-describe('isAutomationWorkerEnabled', () => {
+describe('Automation worker feature decisions', () => {
   it('defaults to enabled when env is unset', () => {
-    expect(isAutomationWorkerEnabled({ NODE_ENV: 'test' })).toBe(true);
+    expect(getAutomationWorkerFeatureDecision({ NODE_ENV: 'test' })).toMatchObject({ state: 'enabled' });
   });
 
   it('supports explicit disabled values', () => {
-    expect(isAutomationWorkerEnabled({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '0' })).toBe(false);
-    expect(isAutomationWorkerEnabled({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'false' })).toBe(false);
-    expect(isAutomationWorkerEnabled({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'no' })).toBe(false);
+    expect(getAutomationWorkerFeatureDecision({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '0' })).toMatchObject({ state: 'disabled' });
+    expect(getAutomationWorkerFeatureDecision({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'false' })).toMatchObject({ state: 'disabled' });
+    expect(getAutomationWorkerFeatureDecision({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'no' })).toMatchObject({ state: 'disabled' });
   });
 
   it('supports explicit enabled values', () => {
-    expect(isAutomationWorkerEnabled({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' })).toBe(true);
-    expect(isAutomationWorkerEnabled({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'true' })).toBe(true);
-    expect(isAutomationWorkerEnabled({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'yes' })).toBe(true);
+    expect(getAutomationWorkerFeatureDecision({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' })).toMatchObject({ state: 'enabled' });
+    expect(getAutomationWorkerFeatureDecision({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'true' })).toMatchObject({ state: 'enabled' });
+    expect(getAutomationWorkerFeatureDecision({ NODE_ENV: 'test',  HAPPIER_FEATURE_AUTOMATIONS__ENABLED: 'yes' })).toMatchObject({ state: 'enabled' });
   });
 
   it('uses the canonical Workflow env before its released alias', () => {
-    expect(isAutomationWorkerEnabled({ HAPPIER_FEATURE_WORKFLOWS__ENABLED: '0' })).toBe(false);
-    expect(isAutomationWorkerEnabled({
+    expect(getAutomationWorkerFeatureDecision({ HAPPIER_FEATURE_WORKFLOWS__ENABLED: '0' })).toMatchObject({ state: 'disabled' });
+    expect(getAutomationWorkerFeatureDecision({
       HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '0',
-    })).toBe(true);
-    expect(isAutomationWorkerEnabled({
+    })).toMatchObject({ state: 'enabled' });
+    expect(getAutomationWorkerFeatureDecision({
       HAPPIER_FEATURE_WORKFLOWS__ENABLED: '0', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
-    })).toBe(false);
+    })).toMatchObject({ state: 'disabled' });
   });
 
   it('respects build policy deny list', () => {
     expect(
-      isAutomationWorkerEnabled({ NODE_ENV: 'test',
+      getAutomationWorkerFeatureDecision({ NODE_ENV: 'test',
         HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
         HAPPIER_BUILD_FEATURES_DENY: 'automations',
       }),
-    ).toBe(false);
+    ).toMatchObject({ state: 'disabled' });
   });
 });
 

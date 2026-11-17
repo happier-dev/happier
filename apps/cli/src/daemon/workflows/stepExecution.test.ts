@@ -47,8 +47,6 @@ import {
   observeWorkflowSessionInputResult,
   classifyWorkflowSessionInputResult,
   observeWorkflowDetachedExecutionRunInput,
-
-  sendWorkflowDetachedExecutionRunInput,
 } from './stepExecution';
 import { createProductionWorkflowSessionStepExecutor } from './sessionStepExecutor';
 
@@ -506,23 +504,20 @@ describe('Workflow detached Execution Run step execution', () => {
     let firstFailureObservation: ReturnType<typeof observeWorkflowDetachedExecutionRunInput> | undefined;
     // Native execution, transcript/marker I/O and Home storage are the only substituted boundaries.
     // Admission, turn replacement, terminalization, projection, observation and recovery stay real.
-    const send = (localInputId: string) => sendWorkflowDetachedExecutionRunInput({
-      runId: run.runId, localInputId, text: `Work on ${localInputId}`, resultContract: { kind: 'text' },
-      send: async request => await sendBackendLongLivedRun({
-        runId: request.runId, params: { message: request.message, delivery: request.delivery,
-          localInputId: request.localInputId, resultContract: request.resultContract }, runs, controllers,
-        budgetRegistry: null, createRuntime: () => runtime, maxTurns: null, getNowMs: () => 2,
-        finishRun: async (runId, next, toolResult) => { await finishExecutionRun({ runId, next, toolResult,
-          runs, controllers, budgetRegistry: null, parentProvider: 'daemon.executionRuns', sendAcp: async () => {},
-          enqueueMarkerWrite: async () => {}, terminalMarkerWritePromises: new Map() }); },
-        sendAcp: async () => {}, parentProvider: 'daemon.executionRuns', streamedTranscriptSession: null,
-        writeActivityMarker: async () => {},
-        onPublicStateUpdated: () => {
-          if (runs.get(run.runId)?.inputTurns?.last?.state === 'failed') {
-            firstFailureObservation ??= observeWorkflowDetachedExecutionRunInput({ runId: run.runId, localInputId: 'B', get });
-          }
-        },
-      }),
+    const send = (localInputId: string) => sendBackendLongLivedRun({
+      runId: run.runId, params: { message: `Work on ${localInputId}`, delivery: 'prompt',
+        localInputId, resultContract: { kind: 'text' } }, runs, controllers,
+      budgetRegistry: null, createRuntime: () => runtime, maxTurns: null, getNowMs: () => 2,
+      finishRun: async (runId, next, toolResult) => { await finishExecutionRun({ runId, next, toolResult,
+        runs, controllers, budgetRegistry: null, parentProvider: 'daemon.executionRuns', sendAcp: async () => {},
+        enqueueMarkerWrite: async () => {}, terminalMarkerWritePromises: new Map() }); },
+      sendAcp: async () => {}, parentProvider: 'daemon.executionRuns', streamedTranscriptSession: null,
+      writeActivityMarker: async () => {},
+      onPublicStateUpdated: () => {
+        if (runs.get(run.runId)?.inputTurns?.last?.state === 'failed') {
+          firstFailureObservation ??= observeWorkflowDetachedExecutionRunInput({ runId: run.runId, localInputId: 'B', get });
+        }
+      },
     });
     try {
       expect(await send('A')).toEqual({ ok: true });
@@ -603,24 +598,6 @@ describe('Workflow detached Execution Run step execution', () => {
       expect(retired?.progress.reason).not.toHaveProperty('message');
     } finally { await runtime.dispose(); }
   });
-  it('sends the exact workflow input identity and execution-owned result contract', async () => {
-    const send = vi.fn(async () => ({ ok: true as const }));
-    await expect(sendWorkflowDetachedExecutionRunInput({
-      runId: 'run-1',
-      text: 'Do the work',
-      localInputId: 'workflow-input-1',
-      resultContract: { kind: 'decision', decisions: ['continue', 'stop'] },
-      send,
-    })).resolves.toEqual({ ok: true });
-    expect(send).toHaveBeenCalledWith({
-      runId: 'run-1',
-      message: 'Do the work',
-      delivery: 'prompt',
-      localInputId: 'workflow-input-1',
-      resultContract: { kind: 'decision', decisions: ['continue', 'stop'] },
-    });
-  });
-
   it('rejoins only the exact input turn and returns its typed result', async () => {
     const get = vi.fn(async () => ({
       run: {

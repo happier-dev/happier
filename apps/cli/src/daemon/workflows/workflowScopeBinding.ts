@@ -34,11 +34,6 @@ export async function resolveWorkflowInvocationStructure(params: WorkflowInvocat
     rootConversationOwnerRecordId: resolved.rootConversationOwnerRecordId, inputs: resolved.inputs } : undefined;
 }
 
-/** CODEC's step-only projection consumes the same exact ancestry owner. */
-export async function resolveWorkflowInvocationStep(params: WorkflowInvocationBindingParams): Promise<WorkflowStep | undefined> {
-  return (await resolveWorkflowInvocationStructure({ ...params, keyOfInvocation: (row) => row.index.id }))?.step;
-}
-
 /** Read one named structural slot, including a branch's exported body frame. */
 export async function resolveWorkflowProducerInFrame<T extends ProducerInvocation>(params: Readonly<{
   runId: string;

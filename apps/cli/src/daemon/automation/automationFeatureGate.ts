@@ -6,7 +6,3 @@ export function getAutomationWorkerFeatureDecision(env: NodeJS.ProcessEnv) {
     env,
   });
 }
-
-export function isAutomationWorkerEnabled(env: NodeJS.ProcessEnv): boolean {
-  return getAutomationWorkerFeatureDecision(env).state === 'enabled';
-}

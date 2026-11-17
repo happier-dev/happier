@@ -95,16 +95,6 @@ export async function readCurrentAutomationEventDurablePushEndpointTargetTxV1(pa
     });
 }
 
-export async function isCurrentAutomationEventDurablePushEndpointTargetTxV1(params: Readonly<{
-    tx: Tx;
-    accountId: string;
-    webhookEndpointId: string;
-    caller: AutomationEventCallerV1;
-    callerVersion: string;
-}>): Promise<boolean> {
-    return (await readCurrentAutomationEventDurablePushEndpointTargetTxV1(params)) !== null;
-}
-
 export function resolveCurrentAutomationEventContributionFromManifest(params: Readonly<{
     manifest: ParsedPluginManifestV2;
     eventLocalId: string;
