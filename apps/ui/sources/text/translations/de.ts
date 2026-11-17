@@ -18873,6 +18873,7 @@ settingsSession: {
             thisMachine: "Auf diesem Rechner",
             otherMachines: "Andere Rechner",
             openElsewhere: "Diesen Branch auf einem anderen Rechner öffnen",
+            settingUp: "Wird eingerichtet",
             working: "Agent arbeitet",
             needsYou: "braucht dich",
             newWorktree: "Neuer Worktree…",

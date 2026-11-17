@@ -18867,6 +18867,7 @@ settingsSession: {
         thisMachine: "Nesta máquina",
         otherMachines: "Outras máquinas",
         openElsewhere: "Abrir este branch em outra máquina",
+        settingUp: "A configurar",
         working: "agente trabalhando",
         needsYou: "precisa de você",
         newWorktree: "Novo worktree…",

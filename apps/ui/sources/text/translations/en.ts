@@ -22172,6 +22172,7 @@ const enProjects = {
       thisMachine: "On this machine",
       otherMachines: "Other machines",
       openElsewhere: "Open this branch on another machine",
+      settingUp: "Setting up",
       working: "agent working",
       needsYou: "needs you",
       newWorktree: "New worktree…",

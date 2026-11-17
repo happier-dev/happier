@@ -18714,6 +18714,7 @@ settingsSession: {
         thisMachine: "На этой машине",
         otherMachines: "Другие машины",
         openElsewhere: "Открыть эту ветку на другой машине",
+        settingUp: "Настройка",
         working: "агент работает",
         needsYou: "нужны вы",
         newWorktree: "Новый worktree…",

@@ -18761,6 +18761,7 @@ settingsSession: {
         thisMachine: "En esta máquina",
         otherMachines: "Otras máquinas",
         openElsewhere: "Abrir esta rama en otra máquina",
+        settingUp: "Configurando",
         working: "agente trabajando",
         needsYou: "te necesita",
         newWorktree: "Nuevo worktree…",

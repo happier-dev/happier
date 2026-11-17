@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { t } from '@/text';
 
@@ -20,7 +21,7 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
  */
 export function ProjectsTreeRowAttention(
   props: Readonly<{
-    row: Pick<ProjectsTreeRow, 'attention' | 'state'> & Partial<Pick<ProjectsTreeRow, 'kind' | 'source'>>;
+    row: Pick<ProjectsTreeRow, 'attention' | 'state'> & Partial<Pick<ProjectsTreeRow, 'kind' | 'source' | 'machineId'>>;
     testID?: string;
   }>,
 ) {
@@ -33,18 +34,37 @@ export function ProjectsTreeRowAttention(
 
 /** Ambient setup progress for one Source: the Project Open and setup operations' own states, never inferred. */
 function ProjectsTreeSourceSetupAttention(props: Readonly<{
-  row: Pick<ProjectsTreeRow, 'attention' | 'state'>;
+  row: Pick<ProjectsTreeRow, 'attention' | 'state'> & Partial<Pick<ProjectsTreeRow, 'machineId'>>;
   source: NonNullable<ProjectsTreeRow['source']>;
   testID?: string;
 }>) {
   const { binding } = useServerCredentialAccountScopeBinding(props.source.serverId);
+  // The Open ran on the Machine that holds the row's checkout; a row with no single checkout has none to ask about.
+  const machineId = props.row.machineId ?? null;
   const query = React.useMemo(() => ({ serverId: props.source.serverId, accountId: binding?.accountId ?? null,
-    machineId: null, sourceId: props.source.source.id }), [binding?.accountId, props.source.serverId, props.source.source.id]);
+    machineId, sourceId: props.source.source.id }), [binding?.accountId, machineId, props.source.serverId, props.source.source.id]);
   const progress = useTeamSetupRepositoryProgress(query, binding ?? null);
   const setup = readSetupAttention(progress.setupOperation) ?? readSetupAttention(progress.openOperation);
   // A checkout's own needs-you (a Session waiting) still leads; setup fills in where the row has nothing to say.
-  const attention = props.row.attention === 'needs-you' ? 'needs-you' : setup ?? props.row.attention;
-  return <ProjectsTreeRowAttentionMark row={props.row} attention={attention} testID={props.testID} />;
+  if (props.row.attention === 'needs-you' || setup === null)
+    return <ProjectsTreeRowAttentionMark row={props.row} attention={props.row.attention} testID={props.testID} />;
+  return <ProjectsTreeSetupStatus attention={setup} testID={props.testID} />;
+}
+
+/**
+ * A Source's setup run in words at its Project row's end (lab L3 Projects column: "Setting up", "Needs you"),
+ * through the one inline state mark core rows use (UI refinements ruling 2026-11-15 08:57Z).
+ */
+function ProjectsTreeSetupStatus(props: Readonly<{ attention: NonNullable<ProjectsTreeAttention>; testID?: string }>) {
+  const needsYou = props.attention === 'needs-you';
+  return (
+    <InlineStatus
+      tone={needsYou ? 'attention' : 'secondary'}
+      label={needsYou ? t('inbox.needsYou') : t('projects.checkouts.settingUp')}
+      pulsing={!needsYou}
+      {...(props.testID ? { testID: `${props.testID}-setup` } : {})}
+    />
+  );
 }
 
 function readSetupAttention(operation: ActionOperationProjection | null): ProjectsTreeAttention {

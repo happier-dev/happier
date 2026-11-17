@@ -14323,6 +14323,7 @@ settingsSession: {
             thisMachine: "在此機器上",
             otherMachines: "其他機器",
             openElsewhere: "在另一台機器上開啟此分支",
+            settingUp: "正在設定",
             working: "代理正在工作",
             needsYou: "需要你處理",
             newWorktree: "新工作樹…",

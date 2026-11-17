@@ -18675,6 +18675,7 @@ settingsSession: {
         thisMachine: "このマシン",
         otherMachines: "他のマシン",
         openElsewhere: "このブランチを別のマシンで開く",
+        settingUp: "セットアップ中",
         working: "エージェントが作業中",
         needsYou: "対応が必要",
         newWorktree: "新しいワークツリー…",
