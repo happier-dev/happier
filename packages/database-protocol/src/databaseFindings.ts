@@ -54,9 +54,16 @@ export type DatabaseFindingObservationV1 = z.infer<typeof DatabaseFindingObserva
 export const DatabaseFindingObservationV1ProtocolSchema = projectZodProtocolSchema(DatabaseFindingObservationV1Schema);
 export const DatabaseFindingSourceScopeV1ProtocolSchema = projectZodProtocolSchema(MachineTargetV1Schema);
 
+/** Structural names stay source-local; Event observations remain numeric only. */
+const findingObject = z.discriminatedUnion('kind', [
+    z.extend(z.pick(DatabaseStatsTableV1Schema, { relation: true }), { kind: z.literal('table') }),
+    z.extend(z.pick(DatabaseStatsIndexV1Schema, { relation: true, name: true }), { kind: z.literal('index') }),
+]);
+
 /** Source-local detail, read on demand through the database Action owner. */
 export const DatabaseFindingV1Schema = z.strictObject({
     ...observation, target: DatabaseTargetV1Schema,
+    object: z.optional(findingObject),
     normalizedShape: z.optional(z.string()), omittedTextReason: z.optional(z.string()),
     activity: z.optional(z.pick(DatabaseStatsActivityV1Schema, {
         waitClass: true, waitEvent: true, transactionStartedAt: true, queryStartedAt: true, blockingKeys: true,
@@ -120,6 +127,7 @@ export type DatabaseInsightBriefBuildInputV1 = z.infer<typeof DatabaseInsightBri
 /** Lists contain safe rankings only; statement shapes are fetched on selection. */
 export const DatabaseFindingListEntryV1Schema = z.strictObject({
     recordKey: z.string().check(z.minLength(1)), summary: DatabaseFindingSummaryV1Schema,
+    object: z.optional(findingObject),
 });
 export const DatabaseFindingsListResultV1Schema = z.union([
     DatabaseFailureV1Schema,

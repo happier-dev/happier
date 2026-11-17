@@ -61,6 +61,7 @@ export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | Databas
         observedWindow: finding.observedWindow,
         coverage: finding.coverage,
         summary: finding.summary,
+        ...(finding.object === undefined ? {} : { object: finding.object }),
         ...(finding.activity === undefined ? {} : { activity: finding.activity }),
         ...(finding.normalizedShape === undefined ? {} : { normalizedShape: finding.normalizedShape }),
         ...(finding.omittedTextReason === undefined ? {} : { omittedTextReason: finding.omittedTextReason }),

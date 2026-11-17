@@ -9,6 +9,7 @@ import { buildDatabaseFindingBriefV1 } from './brief.js';
 type AvailableStats = Extract<DatabaseStatsObservationV1, { status: 'available' }>;
 type Summary = DatabaseFindingObservationV1['summary'];
 type FindingRow = Readonly<{ recordKey: string; summary: Summary;
+    object?: DatabaseFindingV1['object'];
     normalizedShape?: string; omittedTextReason?: string; activity?: DatabaseFindingV1['activity'] }>;
 type StatsResult = Extract<DatabaseOperationResultV1, { operation: 'stats.read' }> | Extract<DatabaseOperationResultV1, { ok: false }>;
 
@@ -25,6 +26,7 @@ function rowsFor(stats: AvailableStats): FindingRow[] {
             ...(row.omittedTextReason === undefined ? {} : { omittedTextReason: row.omittedTextReason }),
         }));
         case 'tables': return stats.data.map(row => ({ recordKey: key(createCanonicalJsonSigningInput(row.relation)),
+            object: { kind: 'table', relation: row.relation },
             summary: { records: 1,
                 ...(row.size === undefined ? {} : { size: { bytes: row.size.bytes } }),
                 maintenance: {
@@ -42,6 +44,7 @@ function rowsFor(stats: AvailableStats): FindingRow[] {
         }));
         case 'indexes': return stats.data.map(row => ({
             recordKey: key(createCanonicalJsonSigningInput({ relation: row.relation, name: row.name })),
+            object: { kind: 'index', relation: row.relation, name: row.name },
             summary: { records: 1, index: {
                 ...(row.scans === undefined ? {} : { scans: row.scans }),
                 ...(row.tuplesRead === undefined ? {} : { tuplesRead: row.tuplesRead }),
@@ -104,6 +107,29 @@ function summaryFor(stats: AvailableStats, rows: readonly FindingRow[]): Summary
     }
 }
 
+/** The native stats completion and finding Actions share this content-free projection. */
+export function projectDatabaseFindingObservation(stats: AvailableStats, target: DatabaseFindingsListInputV1['target'],
+    context: PluginInvocationContext, rows: readonly FindingRow[] = rowsFor(stats)): DatabaseFindingObservationV1 {
+    const machine = context.chosenMachine;
+    if (!machine || !context.invocationId) throw new PluginError({ code: 'plugin_service_unavailable',
+        message: 'Completed database findings require native Action identity.' });
+    // The successful target resolver has already bound the exact routed
+    // Home. The Machine itself is stamped by native Action admission.
+    const serverId = target.kind === 'worktree' || target.kind === 'manual'
+        ? target.workspace.serverId : target.environment.serverId;
+    return {
+        v: 1, sourceRef: { pluginId: context.plugin.id,
+            localId: databaseActionLocalIdV1(DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1) },
+        sourceScope: { serverId, machineId: machine.machineId },
+        evidenceIdentity: computeCanonicalDomainSeparatedDigest('happier.database.completed-finding-read.v1', [
+            context.invocationId, String(stats.observedAtMs), createCanonicalJsonSigningInput(stats.intervalBasis),
+        ]),
+        kind: stats.group, observedWindow: { fromMs: stats.observedAtMs, toMs: stats.observedAtMs },
+        coverage: stats.coverage,
+        summary: summaryFor(stats, rows),
+    };
+}
+
 /** Native stats owns connection custody, demand reuse, SQL and sanitization.
  * This producer only projects completed evidence and rereads selected keys. */
 export function createDatabaseInsightProducers(options: Readonly<{
@@ -118,25 +144,8 @@ export function createDatabaseInsightProducers(options: Readonly<{
         const stats = result.observation;
         if (stats.status === 'unavailable') return { ok: false as const, status: 'unavailable' as const,
             code: 'database_stats_unavailable', reason: stats.reason };
-        const machine = context.chosenMachine;
-        if (!machine || !context.invocationId) throw new PluginError({ code: 'plugin_service_unavailable',
-            message: 'Completed database findings require native Action identity.' });
-        // The successful target resolver has already bound the exact routed
-        // Home. The Machine itself is stamped by native Action admission.
-        const serverId = input.target.kind === 'worktree' || input.target.kind === 'manual'
-            ? input.target.workspace.serverId : input.target.environment.serverId;
         const rows = rowsFor(stats);
-        const observation: DatabaseFindingObservationV1 = {
-            v: 1, sourceRef: { pluginId: context.plugin.id,
-                localId: databaseActionLocalIdV1(DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1) },
-            sourceScope: { serverId, machineId: machine.machineId },
-            evidenceIdentity: computeCanonicalDomainSeparatedDigest('happier.database.completed-finding-read.v1', [
-                context.invocationId, String(stats.observedAtMs), createCanonicalJsonSigningInput(stats.intervalBasis),
-            ]),
-            kind: stats.group, observedWindow: { fromMs: stats.observedAtMs, toMs: stats.observedAtMs },
-            coverage: stats.coverage,
-            summary: summaryFor(stats, rows),
-        };
+        const observation = projectDatabaseFindingObservation(stats, input.target, context, rows);
         return { ok: true as const, observation, rows, stats };
     }
     const readFinding: NonNullable<DatabaseActionProducers['readFinding']> = async (input, context) => {
@@ -160,7 +169,8 @@ export function createDatabaseInsightProducers(options: Readonly<{
             const result = await read(input, context);
             if (!result.ok) return result;
             return { ok: true, observation: result.observation,
-                findings: result.rows.map(({ recordKey, summary }) => ({ recordKey, summary })) };
+                findings: result.rows.map(({ recordKey, summary, object }) => ({ recordKey, summary,
+                    ...(object === undefined ? {} : { object }) })) };
         },
         readFinding,
         async buildInsightBrief(input, context) {
