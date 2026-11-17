@@ -43,13 +43,15 @@ type EnvironmentScope = Extract<DatabaseTargetsListInputV1['scope'], { kind: 'en
 /** Captures actual invocation custody; operands select a Link, never a caller or credential. */
 export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabasesHostInput): DeploymentDatabasesServiceV1 {
     const context = input.seed.approvalContext;
-    const readEnvironment = async (scope: EnvironmentScope, targetLinkId?: string) => {
+    const readEnvironment = async (scope: EnvironmentScope, targetLinkId?: string,
+        options: Readonly<{ includeDataTargetLinkContent?: true }> = {}) => {
         if (!context) return refuse('deployment_target_role_unavailable');
         const captured = { ...context, signal: input.seed.signal };
         const host = await input.readHost(captured);
         if (!host) return refuse('deployment_target_role_unavailable');
         const detail = await readDeploymentTargetEnvironmentForHost({ ...scope.environment, context: captured,
-            ...(targetLinkId ? { targetLinkId } : {}) }, host);
+            ...(targetLinkId ? { targetLinkId } : {}),
+            ...(options.includeDataTargetLinkContent ? { includeDataTargetLinkContent: true } : {}) }, host);
         if (detail.environment.controllerMachineId !== host.machineId || !host.installationId) return refuse('machine_unavailable');
         const placement: DatabaseDescriptorV1['placement'] = { serverId: host.serverId, accountId: host.credentialOwnerAccountId,
             machineId: host.machineId, installationId: host.installationId };
@@ -157,7 +159,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
     return Object.freeze({
         async listTargets(request) {
             if (request.scope.kind !== 'environment') return { targets: [], completeness: { complete: true } };
-            const admission = await readEnvironment(request.scope);
+            const admission = await readEnvironment(request.scope, undefined, { includeDataTargetLinkContent: true });
             const summary = access(admission, 'read');
             const targets: DatabaseDescriptorV1[] = [];
             let completeness: DatabaseCompletenessV1 = { complete: true };

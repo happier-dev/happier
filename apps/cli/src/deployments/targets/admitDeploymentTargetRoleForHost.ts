@@ -35,7 +35,8 @@ export type DeploymentTargetRoleAdmissionHost = Readonly<{
     resolveRequesterIdentity: import('../readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver;
     acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
     resolveEnvironmentApprovalScope?: import('@happier-dev/protocol').ActionExecutorDeps['resolveEnvironmentApprovalScope'];
-    readEnvironment(request: Readonly<{ environmentId: string; targetLinkId?: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
+    readEnvironment(request: Readonly<{ environmentId: string; targetLinkId?: string; includeDataTargetLinkContent?: true;
+        context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
     readReceipt(request: Readonly<{ environmentId: string; deploymentId: string; context: ActionExecutorContext }>): Promise<DeploymentReceiptDetailV1>;
     assertCurrent(context: ActionExecutorContext): Promise<void>;
 }>;
@@ -67,11 +68,13 @@ export async function readDeploymentTargetEnvironmentForHost(input: Readonly<{
     environmentId: string;
     projectSourceId?: string;
     targetLinkId?: string;
+    includeDataTargetLinkContent?: true;
     context: ActionExecutorContext;
 }>, host: Pick<DeploymentTargetRoleAdmissionHost, 'serverId' | 'readEnvironment'>): Promise<DeploymentEnvironmentDetailV1> {
     if (!await isServerProfileHomeIdentity(input.serverId, host.serverId)) return refuse('server_scope_mismatch');
     const detail = await host.readEnvironment({ environmentId: input.environmentId,
-        ...(input.targetLinkId ? { targetLinkId: input.targetLinkId } : {}), context: input.context });
+        ...(input.targetLinkId ? { targetLinkId: input.targetLinkId } : {}),
+        ...(input.includeDataTargetLinkContent ? { includeDataTargetLinkContent: true } : {}), context: input.context });
     const environment = detail.environment;
     if (environment.id !== input.environmentId || !await isServerProfileHomeIdentity(environment.serverId, host.serverId)
         || input.projectSourceId !== undefined && environment.projectSourceId !== input.projectSourceId

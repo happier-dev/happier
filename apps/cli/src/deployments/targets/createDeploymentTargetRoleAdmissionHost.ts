@@ -142,7 +142,10 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
                 },
             });
             const targetLinks = await Promise.all(detail.targetLinks.map(async targetLink => {
-                if (targetLink.id !== request.targetLinkId) return { targetLink };
+                const dataDiscovery = request.includeDataTargetLinkContent && detail.environment.controllerMachineId === machineId
+                    && targetLink.role === 'data'
+                    && targetLink.source.kind === 'plugin' && targetLink.deletedAtMs === undefined && targetLink.detachedAtMs === undefined;
+                if (targetLink.id !== request.targetLinkId && !dataDiscovery) return { targetLink };
                 const content = readDeploymentTargetLinkArtifactV1(targetLink, await open(targetLink.contentArtifactId, request.context));
                 if (!content.ok) return refuse(content.error, undefined, content.failureCause);
                 return { targetLink, content: content.content };
