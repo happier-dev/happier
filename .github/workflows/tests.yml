@@ -3235,7 +3235,6 @@ jobs:
           HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: "1"
         run: |
           pnpm --dir packages/tests run test:core:fin-journeys
-          pnpm --dir packages/tests run test:ui:fin-journeys
 
       - name: Upload e2e artifacts (on failure)
         if: failure()

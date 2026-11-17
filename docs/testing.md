@@ -1752,6 +1752,23 @@ still rebuild through the existing recovery path.
 - UI Playwright e2e: `packages/tests/suites/ui-e2e/**/*.spec.ts`.
 - Agent runtime/stress suites remain under `packages/tests/suites/agents` and `packages/tests/suites/stress`.
 
+The committed FIN Workflow regression journeys use the existing slow core-e2e
+runner. The initial packet covers saved-command Start, retained Run history and
+refused native Goal handoff:
+
+```sh
+./apps/stack/bin/hstack-exec --target=nl1 -- env HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT=1 HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD=1 HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD=1 pnpm --dir packages/tests run test:core:fin-journeys
+```
+
+These journeys compose the committed server/authentication/daemon testkits through
+the FIN fixture, with their own SQLite database and Accounts. They do not use a
+manual-QA stack or its fixtures. The FIN reload owner runs this
+command after reload; running the command does not reload any stack. The nightly
+Core E2E job runs the same command through the existing runner. The source-mode
+flags apply before global setup, which otherwise builds shared dependencies before
+the fixture starts. Keep these process-heavy journeys in the slow tier rather
+than the default fast loop.
+
 First-class model Provider coverage follows its owning layer rather than the historical Agent-runner name:
 
 - protocol schemas, settings, migrations, selection, compatibility, and catalog merge: `packages/protocol/src/providers/**/*.test.ts`;
