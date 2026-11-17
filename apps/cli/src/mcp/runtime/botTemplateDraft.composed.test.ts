@@ -123,6 +123,10 @@ it.each(['credentialed_host', 'installed_daemon', 'requester_daemon', 'requester
     if (path === '/v2/sessions/read-batch') return { status: 200,
       data: createSessionReadBatchResponseFixture({ request: input, sessions: [row] }) };
     if (path === '/v1/artifacts') {
+      // Same-Account template storage uses the admitted Account bearer;
+      // minting the Session origin does not add a second machine-signed root.
+      expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
+      expect(config?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]).toBeUndefined();
       if (!input || typeof input !== 'object') throw new Error('Expected Artifact HTTP input');
       const id = String(Reflect.get(input, 'id'));
       artifacts.set(id, { ...input, ownerAccountId: accountId, access: 'owner', encryptionMode: mode,
@@ -263,7 +267,10 @@ it.each(['credentialed_host', 'installed_daemon', 'requester_daemon', 'requester
         needs: { software: [], connectedAccounts: [], mcpServers: [] } },
     } } });
     expect(result, JSON.stringify({ result, homeObservation })).toMatchObject({ ok: true, result: { draftArtifactId: expect.any(String) } });
-    if (home) expect(homeObservation).toMatchObject({ mintStatus: 200, verifyStatus: 200, patchStatus: 200 });
+    if (home) {
+      expect(homeObservation).toMatchObject({ mintStatus: 200, patchStatus: 200 });
+      expect(homeObservation.verifyStatus).toBeUndefined();
+    }
     expect(artifacts.size).toBe(1);
     expect(daemon.actionRequestCount).toBe(1);
     const incumbentId = [...artifacts.keys()][0]!;
