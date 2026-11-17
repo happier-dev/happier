@@ -103,7 +103,8 @@ export function buildDatabaseUrlForContainer({ db, host, port }) {
   throw new Error(`Unsupported db: ${String(db)}`);
 }
 
-export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile = undefined, uiFile = undefined, uiGrep = undefined, containerId = undefined, env = process.env }) {
+export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile = undefined, e2eFile = undefined,
+  uiFile = undefined, uiGrep = undefined, containerId = undefined, env = process.env }) {
   if (db !== 'postgres' && db !== 'mysql') {
     throw new Error(`Unsupported db: ${String(db)}`);
   }
@@ -121,6 +122,11 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
   }
   if (contractFile !== undefined && (mode === 'e2e' || mode === 'ui' || typeof contractFile !== 'string' || !contractFile.trim() || contractFile.startsWith('-'))) {
     throw new Error('A contract file filter requires contract or extended mode and a test file path');
+  }
+  const e2eFiles = e2eFile === undefined ? [] : Array.isArray(e2eFile) ? e2eFile : [e2eFile];
+  if (e2eFile !== undefined && (mode !== 'e2e' || e2eFiles.length === 0
+    || e2eFiles.some(file => typeof file !== 'string' || !file.trim() || file.startsWith('-')))) {
+    throw new Error('An e2e file filter requires e2e mode and a test file path');
   }
   if (uiFile !== undefined && (mode !== 'ui' || typeof uiFile !== 'string' || !uiFile.trim() || uiFile.startsWith('-'))) {
     throw new Error('A UI file filter requires ui mode and a test file path');
@@ -149,13 +155,18 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
   const e2eStep = {
     kind: 'e2e',
     command: 'pnpm',
-    args: ['run', 'test:e2e'],
+    args: e2eFile === undefined ? ['run', 'test:e2e'] : [
+      '--filter', '@happier-dev/tests', 'exec', 'node', 'scripts/run-vitest-with-heartbeat.mjs',
+      '--config', 'vitest.core.slow.config.ts', ...e2eFiles,
+    ],
     env: {
       HAPPIER_E2E_DB_PROVIDER: db,
       DATABASE_URL: String(databaseUrl),
+      ...(db === 'postgres'
+        ? { HAPPIER_TEST_POSTGRES_DATABASE_URL: String(databaseUrl) }
+        : { HAPPIER_TEST_MYSQL_DATABASE_URL: String(databaseUrl) }),
     },
   };
-
   const sourceEntrypoint = String(env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT
     ?? env.HAPPY_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT ?? '').trim().toLowerCase();
   const usesSourceEntrypoint = ['1', 'true', 'yes', 'y'].includes(sourceEntrypoint);
@@ -259,8 +270,11 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
     ];
   }
 
-  if (mode === 'ui') return usesSourceEntrypoint ? [uiStep] : [prebuildCliSharedStep, prebuildCliStep, uiStep];
-  if (mode === 'e2e') return [prebuildCliSharedStep, prebuildCliStep, e2eStep];
+  if (mode === 'e2e' || mode === 'ui') {
+    const selectedStep = mode === 'ui' ? uiStep : e2eStep;
+    if ((mode === 'ui' || e2eFile !== undefined) && usesSourceEntrypoint) return [selectedStep];
+    return [prebuildCliSharedStep, prebuildCliStep, selectedStep];
+  }
   if (mode === 'contract') {
     return db === 'mysql'
       ? [mysqlVoiceIdentityUpgradeContractStep, migrateStep, contractStep]

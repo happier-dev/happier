@@ -51,6 +51,30 @@ describe('extended-db container ownership', () => {
     expect(vi.mocked(spawnSync).mock.calls.filter(([command, args]) => command === 'docker' && args?.[0] === 'rm')
       .map(([, args]) => args)).toEqual([]);
   });
+
+  it.each([
+    ['suites/core-e2e/teamSetup.D.existingClones.slow.e2e.test.ts'],
+    ['suites/core-e2e/teamSetup.F.storage.slow.e2e.test.ts', 'suites/core-e2e/teamSetup.F.resources.slow.e2e.test.ts'],
+  ].map(files => ({ files })))('runs the selected composed files $files against one disposable database and cleans up only its container', async ({ files }) => {
+    const id = 'b'.repeat(64);
+    vi.mocked(spawnSync).mockImplementation((command, args) => ({
+      status: 0, signal: null, pid: 1, output: [], stderr: '',
+      stdout: command !== 'docker' ? '' : args?.[0] === 'run' ? id
+        : args?.[0] === 'inspect' ? 'healthy' : args?.[0] === 'port' ? '127.0.0.1:54321' : '',
+    }));
+    await runExtendedDbDockerScript.main(['node', 'runner', '--db', 'postgres', '--mode', 'e2e',
+      ...files.flatMap(file => ['--e2e-file', file])]);
+    const focused = vi.mocked(spawnSync).mock.calls.find(([, args]) => args?.includes(files[0]));
+    expect(focused?.[1]).toEqual(['--filter', '@happier-dev/tests', 'exec', 'node',
+      'scripts/run-vitest-with-heartbeat.mjs', '--config', 'vitest.core.slow.config.ts', ...files]);
+    expect(focused?.[2]?.env).toMatchObject({
+      HAPPIER_E2E_DB_PROVIDER: 'postgres',
+      DATABASE_URL: 'postgresql://happier:happier@127.0.0.1:54321/happier?sslmode=disable',
+    });
+    const removals = vi.mocked(spawnSync).mock.calls.filter(([command, args]) => command === 'docker' && args?.[0] === 'rm');
+    expect(removals.map(([, args]) => args)).toEqual([['rm', '-f', '-v', id]]);
+  });
+
   it('runs selected browser flows with disposable PostgreSQL through the existing Playwright owner', async () => {
     const id = 'c'.repeat(64);
     const file = 'suites/ui-e2e/automations.authoring.feat.automations.spec.ts';

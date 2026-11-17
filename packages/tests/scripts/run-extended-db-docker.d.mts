@@ -8,6 +8,7 @@ export interface ExtendedDbArgs {
   db?: ExtendedDbName;
   name?: string;
   'contract-file'?: string;
+  'e2e-file'?: string | string[];
 }
 
 export function parseArgs(argv: string[]): ExtendedDbArgs;

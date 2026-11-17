@@ -17,7 +17,7 @@ function usage() {
 Run Happier extended DB tests with an auto-provisioned Docker database.
 
 Usage:
-  node packages/tests/scripts/run-extended-db-docker.mjs --db postgres|mysql [--mode e2e|ui|contract|extended|session-system-record-upgrade] [--contract-file <server-relative-test-file>] [--ui-file <tests-relative-browser-file>] [--ui-grep <test-name-pattern>] [--keep]
+  node packages/tests/scripts/run-extended-db-docker.mjs --db postgres|mysql [--mode e2e|ui|contract|extended|session-system-record-upgrade] [--contract-file <server-relative-test-file>] [--e2e-file <tests-relative-slow-test-file> (repeatable)] [--ui-file <tests-relative-browser-file>] [--ui-grep <test-name-pattern>] [--keep]
 
 Examples:
   node packages/tests/scripts/run-extended-db-docker.mjs --db postgres --mode e2e
@@ -112,8 +112,9 @@ async function waitForHealthy(name, timeoutMs) {
 
 export function parseArgs(argv) {
   const args = argv.slice(2);
-  /** @type {Record<string, string|boolean>} */
+  /** @type {Record<string, string|boolean|string[]>} */
   const out = { mode: 'extended', keep: false };
+  const e2eFiles = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '-h' || a === '--help') return { help: true };
@@ -121,10 +122,14 @@ export function parseArgs(argv) {
       out.keep = true;
       continue;
     }
-    if (a === '--db' || a === '--mode' || a === '--name' || a === '--contract-file' || a === '--ui-file' || a === '--ui-grep') {
+    if (a === '--db' || a === '--mode' || a === '--name' || a === '--contract-file' || a === '--e2e-file'
+      || a === '--ui-file' || a === '--ui-grep') {
       const v = args[++i];
       if (!v) throw new Error(`Missing value for ${a}`);
-      out[a.slice(2)] = v;
+      if (a === '--e2e-file') {
+        e2eFiles.push(v);
+        out['e2e-file'] = e2eFiles.length === 1 ? v : e2eFiles;
+      } else out[a.slice(2)] = v;
       continue;
     }
     throw new Error(`Unknown arg: ${a}`);
@@ -238,7 +243,8 @@ export async function main(argv = process.argv) {
     const { host, port } = parseDockerPortLine(portLine);
     const databaseUrl = buildDatabaseUrlForContainer({ db, host, port });
 
-    const steps = buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile: parsed['contract-file'], uiFile: parsed['ui-file'], uiGrep: parsed['ui-grep'], containerId });
+    const steps = buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile: parsed['contract-file'],
+      e2eFile: parsed['e2e-file'], uiFile: parsed['ui-file'], uiGrep: parsed['ui-grep'], containerId });
     for (const step of steps) {
       const invocation = resolveExtendedDbPnpmInvocation(step.args);
       const env = { ...process.env, ...step.env };
