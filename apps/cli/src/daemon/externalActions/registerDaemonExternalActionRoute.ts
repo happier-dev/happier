@@ -69,8 +69,9 @@ function sendExternalActionHttpError(
   requestId?: string,
   diagnostic?: MachineAvailabilityDiagnosticV1,
   failureCause?: ActionFailureCauseV1,
+  origin?: Parameters<typeof projectExternalActionHttpError>[7],
 ): FastifyReply {
-  const error = projectExternalActionHttpError(code, requestId, undefined, undefined, undefined, diagnostic, failureCause);
+  const error = projectExternalActionHttpError(code, requestId, undefined, undefined, undefined, diagnostic, failureCause, origin);
   return sendExternalActionJson(reply, error.statusCode, error.payload);
 }
 
@@ -242,15 +243,17 @@ export function registerDaemonExternalActionRoute(
           })
         : null;
       if (minted && !minted.ok && (minted.code === 'invalid_token' || minted.code === 'credential_scope_denied' || minted.code === 'present_user_required')) {
+        const requestId = minted.requestId ?? (envelope.success ? envelope.data.requestId : undefined);
         if (minted.code === 'credential_scope_denied' && minted.details !== undefined) {
-          const projected = projectExternalActionHttpError(minted.code);
-          return sendExternalActionJson(reply, projected.statusCode, { ...projected.payload, details: minted.details,
-            ...(minted.failureCause === undefined ? {} : { failureCause: minted.failureCause }) });
+          const projected = projectExternalActionHttpError(minted.code, requestId,
+            undefined, undefined, undefined, undefined, minted.failureCause);
+          return sendExternalActionJson(reply, projected.statusCode, { ...projected.payload, details: minted.details });
         }
-        return sendExternalActionHttpError(reply, minted.code);
+        return sendExternalActionHttpError(reply, minted.code, requestId, undefined, minted.failureCause);
       }
       if (minted && !minted.ok && minted.code === 'target_unavailable' && minted.diagnostic) {
-        return sendExternalActionHttpError(reply, minted.code, envelope.success ? envelope.data.requestId : undefined, minted.diagnostic);
+        return sendExternalActionHttpError(reply, minted.code,
+          minted.requestId ?? (envelope.success ? envelope.data.requestId : undefined), minted.diagnostic, minted.failureCause);
       }
       const installationId = input.resolveInstallationId?.();
       const verifyExecutionAuthorization = input.verifyExecutionAuthorization;
@@ -294,6 +297,7 @@ export function registerDaemonExternalActionRoute(
           result.requestId ?? readExternalActionProtectedRequestId(request.body),
           undefined,
           result.failureCause,
+          'daemon',
         );
       }
       return sendExternalActionResponse(reply, result.prepared);

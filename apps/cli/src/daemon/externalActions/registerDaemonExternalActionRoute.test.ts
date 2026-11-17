@@ -44,6 +44,7 @@ import { registerDaemonExternalActionRoute } from './registerDaemonExternalActio
 import { SessionStatusActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { prepareRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionProjection';
+import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externalActionExecutionAuthorization';
 
 const PAT = `hap_v1_2c67deea-5ae7-4706-9ad6-b5b992df1cba_${'A'.repeat(43)}`;
 
@@ -139,6 +140,81 @@ async function createApp(overrides: Partial<Parameters<typeof registerDaemonExte
 }
 
 describe('registerDaemonExternalActionRoute', () => {
+  it('retains the Home target-unavailable diagnostic and typed cause before dispatch', async () => {
+    const requestId = 'direct-unavailable-mint';
+    const diagnostic = { reason: 'machine_offline', requiredFact: 'machine_online', remedy: 'reconnect_machine' } as const;
+    const failureCause = { phase: 'execution_authorization', errorClass: 'Error' as const,
+      errorCode: 'target_unavailable', httpStatus: 409 };
+    const app = await createApp({ mintExecutionAuthorization: async () => ({
+      ok: false, code: 'target_unavailable', requestId, diagnostic, failureCause,
+    }) });
+    try {
+      const response = await app.inject({ method: 'POST', url: '/v1/actions/session.title.set',
+        headers: { authorization: `Bearer ${PAT}` }, payload: { v: 1, requestId,
+          target: { kind: 'machine', machineId: 'machine-local' }, input: { sessionId: 'session-1', title: 'Private title' } } });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toEqual({ error: 'invalid_request', code: 'target_unavailable', requestId, diagnostic, failureCause });
+    } finally { await app.close(); }
+  });
+
+  it.each([
+    ['invalid_token', 401, undefined],
+    ['credential_scope_denied', 403, undefined],
+    ['credential_scope_denied', 403, { requiredFact: 'verification_purpose' }],
+  ] as const)('keeps admitted target %s refusals separate from requester authentication (%i, %j)', async (code, status, details) => {
+    const actionId = 'session.title.set';
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(25));
+    const target = { kind: 'machine' as const, machineId: 'machine-local' };
+    const envelope = { v: 1 as const, requestId: `direct-target-${code}`, target,
+      input: { sessionId: 'session-1', title: 'Private title' } };
+    const authorization = sealExternalActionRequesterAccountContextV1({ authorization: { v: 1, token: 'home-proof', binding: {
+      serverIdentityId: 'srv_home', accountId: 'account-1', custodianAccountId: 'account-1',
+      principalId: 'principal-1', credentialId: 'credential-1', grant: API_TOKEN_FULL_GRANT_V1,
+      actionId, requestId: envelope.requestId, target, machineId: target.machineId, installationId: 'installation-1',
+      accountEncryptionMode: 'plain', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } }, credentials: { token: 'private-requester-token' }, purpose: { kind: 'external_action' },
+      installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
+    const actionExecutor = createActionExecutor(createUnavailableActionTransportDeps());
+    const failureCause = { phase: 'execution_authorization', errorClass: 'Error' as const,
+      errorCode: code, httpStatus: status };
+    let minted = false;
+    // Home HTTP is the substituted boundary; signed verification, requester
+    // preparation, phase classification and direct daemon projection remain real.
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status, data: { error: code } });
+    const app = await createApp({ executor: actionExecutor,
+      mintExecutionAuthorization: async () => minted ? { ok: true, authorization } : {
+        ok: false, code, requestId: envelope.requestId, failureCause, ...(details === undefined ? {} : { details }),
+      },
+      externalActionMachineRequestPrivateKey: installation.secretKey,
+      resolveInstallationId: () => 'installation-1', verifyExecutionAuthorization: async () => true,
+      prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({ authorization: request.authorization,
+        purpose: { kind: 'external_action' }, machineId: target.machineId, installationId: 'installation-1',
+        installationPrivateKey: installation.secretKey, serverId: 'server-local', serverIdentityId: 'srv_home',
+        serverHttpBaseUrl: 'https://profile-home.test', createExecutor: () => actionExecutor,
+        isCurrent: () => verifyExternalActionExecutionAuthorizationCurrent({ authorization: request.authorization,
+          effectActionId: actionId, target, privateKey: installation.secretKey, installationId: 'installation-1',
+          serverHttpBaseUrl: 'https://profile-home.test' }),
+      }),
+    });
+    try {
+      const dispatch = () => app.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
+        headers: { authorization: `Bearer ${PAT}` }, payload: envelope });
+      const ownRefusal = await dispatch();
+      expect(ownRefusal.statusCode).toBe(status);
+      expect(ownRefusal.json()).toEqual({ error: code,
+        ...(code === 'credential_scope_denied' ? { requestId: envelope.requestId } : {}),
+        failureCause, ...(details === undefined ? {} : { details }),
+      });
+      expect(post).not.toHaveBeenCalled();
+      minted = true;
+      const targetRefusal = await dispatch();
+      expect(targetRefusal.statusCode).toBe(400);
+      expect(targetRefusal.json()).toEqual({ error: 'invalid_request', code, requestId: envelope.requestId });
+      expect(post).toHaveBeenCalled();
+      expect(targetRefusal.body).not.toMatch(/private-requester-token|Private title|home-proof/);
+    } finally { post.mockRestore(); await app.close(); }
+  });
+
   it('returns the requester profile refusal cause through direct HTTP before opening or executing', async () => {
     const actionId = 'session.title.set';
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(24));

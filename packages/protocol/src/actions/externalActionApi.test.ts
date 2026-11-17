@@ -923,6 +923,18 @@ describe('External Action API envelope v1', () => {
     },
   );
 
+  it.each([
+    ['invalid_token', 401],
+    ['auth_unavailable', 503],
+    ['server_unavailable', 503],
+  ] as const)('retains the validated Home %s authentication cause', (code, statusCode) => {
+    const failureCause = { phase: 'home.authorization', errorClass: 'Error' as const, errorCode: null, httpStatus: statusCode };
+    const projected = projectExternalActionHttpError(code, 'unsupported-auth-correlation', undefined, undefined,
+      undefined, undefined, failureCause);
+    expect(projected).toEqual({ statusCode, payload: { error: code, failureCause } });
+    expect(ExternalActionHttpErrorSchema.parse(projected.payload)).toEqual(projected.payload);
+  });
+
   it('projects one strict redacted pre-open error vocabulary with safe correlation', () => {
     const placement = projectExternalActionHttpError('target_required', 'request-placement');
     expect(placement).toEqual({

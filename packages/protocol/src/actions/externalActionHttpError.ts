@@ -289,7 +289,9 @@ export function projectExternalActionHttpError(
     }),
   };
   return isExternalActionHttpAuthenticationErrorCode(code)
-    ? { statusCode: externalActionHttpErrorStatus(code), payload: { error: code } }
+    ? { statusCode: externalActionHttpErrorStatus(code), payload: {
+        error: code, ...(failureCause === undefined ? {} : { failureCause }),
+      } }
     : {
         statusCode: externalActionHttpErrorStatus(code),
         payload: {
