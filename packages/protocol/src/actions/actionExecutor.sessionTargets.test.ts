@@ -585,19 +585,24 @@ describe('SessionTarget at the Actions front door', () => {
 
   it('resolves a Follow receiver once without changing its exact source or Account receiver', async () => {
     const h = harness();
+    const executor = createActionExecutor({ ...h.deps,
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1,
+        approvalWaivedSurfaces: { 'follow.remove': ['cli'] },
+      }),
+    } as unknown as ActionExecutorDeps);
     const source = { kind: 'session', sessionId: 'self' };
     for (const selector of ['self', 'manager'] as const) {
-      await expect(h.executor.execute('follow.remove', { receiver: { kind: 'session', sessionId: { selector } }, source }, context))
+      await expect(executor.execute('follow.remove', { receiver: { kind: 'session', sessionId: { selector } }, source }, context))
         .resolves.toMatchObject({ ok: true, result: { changed: false } });
     }
-    await expect(h.executor.execute('follow.remove', { receiver: { kind: 'account' }, source }, context))
+    await expect(executor.execute('follow.remove', { receiver: { kind: 'account' }, source }, context))
       .resolves.toMatchObject({ ok: true, result: { changed: false } });
     expect(h.followEffects).toEqual([
       { receiver: { kind: 'session', sessionId: 'parent' }, source },
       { receiver: { kind: 'session', sessionId: 'manager' }, source },
       { receiver: { kind: 'account' }, source },
     ]);
-    await expect(h.executor.execute('follow.remove', { receiver: { kind: 'session', sessionId: { selector: 'workers' } }, source }, context))
+    await expect(executor.execute('follow.remove', { receiver: { kind: 'session', sessionId: { selector: 'workers' } }, source }, context))
       .resolves.toMatchObject({ ok: false, errorCode: 'session_target_cardinality_mismatch' });
     expect(h.followEffects).toHaveLength(3);
   });
