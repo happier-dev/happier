@@ -78,6 +78,8 @@ describe('managed database attachment at the deployment owner', () => {
             expect(await service.listTargets({ scope: { kind: 'environment', environment } })).toMatchObject({ targets: [{
                 target: { kind: 'deployment_service', environment, deploymentId: 'deployment-a', targetLinkId: 'target-link', serviceId: 'db', database: 'deployed' },
                 engine: 'postgresql', access: { canRead: true, canWrite: false },
+                automationSubject: { ok: true, subject: { kind: 'database', serverId: environment.serverId,
+                    target: { kind: 'environment', environmentId: environment.environmentId, service: 'db', database: 'deployed' } } },
             }], completeness: { complete: true } });
             stored.state.environment.environment.dataEditorMode = 'managers';
             stored.state.environment.environment.capabilities.editData = true;

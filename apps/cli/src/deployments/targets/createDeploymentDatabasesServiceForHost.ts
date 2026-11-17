@@ -204,8 +204,10 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                     if (!basis.services.includes(data.service)) continue;
                     if (data.engine !== 'postgres' && data.engine !== 'postgresql' && data.engine !== 'mysql') continue;
                     const definition = resolveOwnServerDataQueryDefinitionForHost(admission.detail.content, data.service, basis.bindings);
-                    targets.push({ target: { kind: 'deployment_service', environment: request.scope.environment,
-                        deploymentId: runtime.activeDeploymentId, targetLinkId: runtime.id, serviceId: data.service, database: definition.database },
+                    const target: Extract<DatabaseDescriptorV1['target'], { kind: 'deployment_service' }> = {
+                        kind: 'deployment_service', environment: request.scope.environment,
+                        deploymentId: runtime.activeDeploymentId, targetLinkId: runtime.id, serviceId: data.service, database: definition.database };
+                    targets.push({ target, automationSubject: readAutomationDatabaseSubjectV1(admission.host.serverId, target),
                         label: definition.database, engine: definition.engine, origin: { label: admission.detail.content.name },
                         capabilities: builtinDatabaseCapabilities(definition.engine), access: summary, placement: admission.placement });
                 }
@@ -242,6 +244,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                     environment: admission.detail, installationId: admission.placement.installationId,
                     context: admission.context, signal: input.seed.signal, operationId: input.seed.correlationId, access: operation });
                 return { descriptor: { target, engine: connection.engine, label: target.database,
+                    automationSubject: readAutomationDatabaseSubjectV1(admission.host.serverId, target),
                     origin: { label: admission.detail.content.name }, capabilities: builtinDatabaseCapabilities(connection.engine),
                     access: summary, placement: admission.placement }, connection };
             }
