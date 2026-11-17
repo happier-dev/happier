@@ -26,7 +26,8 @@ export function DiffHorizontalScroll(props: Readonly<{ children: React.ReactNode
             <DiffHunkRowViewportContext.Provider value={viewport}>
                 <HorizontalOverflowScrollView showsHorizontalScrollIndicator={true} contentContainerStyle={{ flexGrow: 1 }}
                     onScroll={onScroll}>
-                    {props.children}
+                    {/* The rows are at least the viewport wide, so a short diff's band spans the card, not its longest line. */}
+                    <View style={{ flexGrow: 1 }}>{props.children}</View>
                 </HorizontalOverflowScrollView>
             </DiffHunkRowViewportContext.Provider>
         </View>

@@ -3,12 +3,17 @@ import * as React from 'react';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useSetting } from '@/sync/store/settingsReadHooks';
 import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 export type DiffPresentationStyle = 'unified' | 'split';
 
-/** Phone code wraps for reading; the saved desktop preference is neither changed nor discarded. */
+/**
+ * Phone code wraps for reading; the saved desktop preference is neither changed nor discarded. A phone
+ * screen counts even where no container declares its size (a transcript tool card, an approval card).
+ */
 export function useEffectiveDiffWrapLines(preference: boolean | undefined): boolean | undefined {
-    return useSurfaceStateSize() === 'phone' ? true : preference;
+    const phoneScreen = useDeviceType() === 'phone';
+    return phoneScreen || useSurfaceStateSize() === 'phone' ? true : preference;
 }
 
 /**
