@@ -1,4 +1,5 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 
@@ -217,6 +218,19 @@ export function createMachineNativeEffectAdmission() {
             protectedStage?.pending.add(settlement);
             void settlement.then(() => { entry.pending.delete(settlement); protectedStage?.pending.delete(settlement); });
             return work;
+        },
+        /** An already-admitted deployment lends its exact operation to a service lifecycle child. */
+        async runAdmitted<T>(context: MachineNativeEffectContext, input: Readonly<{
+            operation: MachineNativeEffectOperation; keys: readonly MachineNativeEffectKey[];
+        }>, effect: (context: MachineNativeEffectContext) => Promise<T>): Promise<T> {
+            const entry = read(context);
+            if (input.operation.operationId !== context.operation.operationId || input.operation.kind !== context.operation.kind
+                || input.keys.length !== entry.keys.length
+                || !input.keys.every(key => entry.keys.some(admitted => sameStrictJsonValue(key, admitted)))
+                || !entry.keys.every(key => input.keys.some(admitted => sameStrictJsonValue(key, admitted)))) {
+                throw new MachineNativeEffectAdmissionError('admission_unavailable');
+            }
+            return await this.runStage(context, () => effect(context));
         },
         async run<T>(input: Readonly<{
             operation: MachineNativeEffectOperation;

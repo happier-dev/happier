@@ -18,6 +18,20 @@ const template = DeploymentTemplateV1Schema.parse({ schemaVersion: 1, title: 'Po
 const templateRef = DeploymentTemplateRefV1Schema.parse({ sourceId: 'data', itemId: 'postgres', version: '1',
     ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } });
 const binding = createDeploymentSecretVariableBindingV1({ name: 'DB_PASSWORD', phase: 'runtime', resourceId: 'password', resourceRevision: 1 });
+
+it('prepares the collector App without a standalone Domain before selecting it on a monitored Environment', async () => {
+    const catalog = JSON.parse(await readFile(new URL('../../../plugins/deployment-templates/resources/registry/apps.json', import.meta.url), 'utf8')) as {
+        apps: { itemId: string; app: unknown }[];
+    };
+    const collector = DeploymentTemplateV1Schema.parse(catalog.apps.find(entry => entry.itemId === 'telemetry-collector')?.app);
+    const prepared = prepareDeploymentTemplateInstantiationV1({ template: collector,
+        templateRef: { ...templateRef, itemId: 'telemetry-collector' }, source: JSON.parse(collector.compose.document),
+        bindings: [createDeploymentVariableBindingV1({ name: 'HAPPIER_SERVER_URL', phase: 'runtime',
+            source: { kind: 'value', value: 'https://home.example.test' } })] });
+    expect(prepared.domains).toEqual([]);
+    expect(prepared.services).toEqual(['collector']);
+});
+
 function current(environment: Record<string, unknown> = {}) {
     const source = { services: { app: { image: 'app:1', environment, depends_on: ['cache'] }, cache: { image: 'redis:7' } } };
     const content: DeploymentEnvironmentContentV1 = { name: 'Existing', retainPreviousDeployments: 1, bindings: [],

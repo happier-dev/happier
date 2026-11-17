@@ -153,6 +153,15 @@ export type OwnServerDeploymentRuntime = Readonly<{
     }>): Promise<OwnServerDeploymentRuntimeAcquisition>;
 }>;
 export type OwnServerDeploymentRuntimeAcquisition = Readonly<{
+        /** Activated App services reuse ordinary terminal enrollment through native Compose custody. */
+        enrollAppServices?(input: Readonly<{
+            render: import('@/daemon/local/services/launch/nativeComposeLifecycle').NativeComposeProjectRender;
+            project: import('@/daemon/local/services/launch/nativeComposeLifecycle').NativeComposeActivatedProject;
+            services: readonly import('@/plugins/runtime/invocation/services/managedServicesOwner').EnvironmentProjectManagedServiceHandle[];
+            deployment: DeploymentReceiptHeaderV1;
+            nativeContext: MachineNativeEffectContext;
+            signal?: AbortSignal;
+        }>): Promise<void>;
         prepareReferenceContainerNetwork?(request: Readonly<{
             docker: import('@/plugins/runtime/invocation/services/managedProcessSupervisor').ProjectNativeDockerPort;
             engine: import('@happier-dev/cli-common/machineSetup').NativeDockerEngineFacts;

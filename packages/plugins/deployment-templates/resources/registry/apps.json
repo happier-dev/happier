@@ -2,6 +2,35 @@
   "schemaVersion": 1,
   "apps": [
     {
+      "itemId": "telemetry-collector",
+      "app": {
+        "schemaVersion": 1,
+        "title": "Telemetry collector",
+        "description": "A Happier daemon that receives telemetry from deployed apps. Enrollment connects it to your Home automatically.",
+        "category": "observability",
+        "compose": {
+          "document": "{\"services\":{\"collector\":{\"image\":\"happierdev/dev-box:preview\",\"restart\":\"unless-stopped\",\"command\":[\"sh\",\"-c\",\"if [ -x \\\"$${HAPPIER_HOME_DIR}/cli/current/happier\\\" ]; then exec \\\"$${HAPPIER_HOME_DIR}/cli/current/happier\\\" \\\"$$@\\\"; fi; exec happier \\\"$$@\\\"\",\"happier\",\"daemon\",\"start-sync\"],\"environment\":{\"HOME\":\"/home/happier\",\"HAPPIER_HOME_DIR\":\"/home/happier/.happier\",\"HAPPIER_SERVER_URL\":\"${HAPPIER_SERVER_URL}\",\"HAPPIER_PUBLIC_RELEASE_CHANNEL\":\"stable\",\"HAPPIER_RELEASE_RING\":\"stable\",\"HAPPIER_DAEMON_WAIT_FOR_AUTH\":\"1\",\"HAPPIER_DEPLOYED_TELEMETRY_PORT\":\"4318\"},\"volumes\":[\"collector-home:/home/happier\"]}},\"volumes\":{\"collector-home\":{}}}",
+          "profiles": [],
+          "services": ["collector"],
+          "primaryService": "collector"
+        },
+        "variables": [
+          {
+            "key": "HAPPIER_SERVER_URL",
+            "label": "Home URL",
+            "help": "The Home URL reachable from the collector container.",
+            "required": true,
+            "valueKind": "string",
+            "secret": false,
+            "sites": [{ "service": "collector", "path": ["environment", "HAPPIER_SERVER_URL"] }]
+          }
+        ],
+        "generatedSecrets": [],
+        "domains": [{ "key": "TELEMETRY", "service": "collector", "containerPort": 4318, "protocol": "http", "required": false }],
+        "volumes": [{ "id": "collector-home", "service": "collector", "target": "/home/happier", "persistent": true, "backup": false }]
+      }
+    },
+    {
       "itemId": "postgresql",
       "app": {
         "schemaVersion": 1,

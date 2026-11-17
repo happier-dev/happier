@@ -208,7 +208,8 @@ export type ProjectManagedServiceHandle = ManagedServiceHandle & ProjectManagedS
     isCurrent(): boolean;
     inspectCurrentOccurrence(): Promise<ManagedServiceSnapshot>;
     isServing(): boolean;
-    controlNative?(operation: 'start' | 'stop' | 'restart', options: Readonly<{ operation: MachineNativeEffectOperation; signal?: AbortSignal }>): Promise<ManagedServiceNativeControlResult>;
+    controlNative?(operation: 'start' | 'stop' | 'restart', options: Readonly<{ operation: MachineNativeEffectOperation;
+        admittedContext?: import('@/daemon/local/services/launch/machineNativeEffectAdmission').MachineNativeEffectContext; signal?: AbortSignal }>): Promise<ManagedServiceNativeControlResult>;
     nativeControlCapabilities?: ManagedServiceProcessHandle['nativeControlCapabilities'];
     executeServiceCommand?(command: ServiceCommandV1, options: Readonly<{ operation: MachineNativeEffectOperation; signal?: AbortSignal }>): Promise<ServiceCommandResultV1>;
     /** Host-private person-terminal handoff; no caller command/cwd/endpoint. */
@@ -4865,7 +4866,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     assertCurrent();
                     return request.nativeEffects.keys;
                 },
-                async controlNative(operation: 'start' | 'stop' | 'restart', options: Readonly<{ operation: MachineNativeEffectOperation; signal?: AbortSignal }>) {
+                async controlNative(operation: 'start' | 'stop' | 'restart', options: Readonly<{ operation: MachineNativeEffectOperation;
+                    admittedContext?: import('@/daemon/local/services/launch/machineNativeEffectAdmission').MachineNativeEffectContext; signal?: AbortSignal }>) {
                     assertCurrent();
                     await witness.release.assertCurrent();
                     assertCurrent();
@@ -4873,6 +4875,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     const signal = AbortSignal.any([lifetime.signal, ...(options.signal ? [options.signal] : []),
                         ...(options.operation.signal ? [options.operation.signal] : [])]);
                     return await runManagedServiceNativeControl(entry, { ...request.nativeEffects,
+                        ...(options.admittedContext ? { admittedContext: options.admittedContext } : {}),
                         operation: { ...options.operation, signal } }, async () => {
                         assertCurrent();
                         await witness.release.assertCurrent();

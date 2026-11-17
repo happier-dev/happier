@@ -57,6 +57,7 @@ import { readNativeComposePorts } from './nativeComposePorts';
 import { projectNativeComposeConfigurationDetails } from './nativeComposeConfigurationDetails';
 import { createNativeComposeProgressOutput } from './nativeComposeProgress';
 import { prepareNativeComposeReferenceNetwork, readNativeComposeReferenceNetwork } from './nativeComposeReferenceNetwork';
+import { projectNativeComposeAppEnrollments, type NativeComposeAppEnrollment } from './nativeComposeAppEnrollments';
 export type { NativeResticCommandInput } from './nativeResticCommand';
 import { activateNativeComposeStartFirst, assertNativeComposeStartFirstConfiguration, type NativeComposeRoutingGeneration, type NativeComposeStartFirstInput,
     type NativeComposeStartFirstResult } from './nativeComposeStartFirst';
@@ -88,6 +89,8 @@ export type NativeComposeProjectRender = Readonly<{
     /** Invocation-only source plan; never serialized as review/receipt content. */
     sharedData?: NativeComposeSharedDataPlan;
     namedVolumes: NonNullable<OwnServerDeploymentSourceV1['namedVolumes']>;
+    /** Host-only declarations for the existing managed Machine enrollment path. */
+    appEnrollments?: readonly NativeComposeAppEnrollment[];
     basis: Readonly<{
         manifestFingerprint: string;
         configInputDigests: readonly Readonly<{ path: string; digest: string }>[];
@@ -1151,6 +1154,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             model = nativeModel((await runAuthorized(actualLaunch, signal)).stdout);
             if (!actualLaunch.secretRedactionLease) return nativeRefusal('secret_redaction_unavailable');
             if (!record(model.services)) return nativeRefusal('native_compose_configuration_invalid');
+            const appEnrollments = projectNativeComposeAppEnrollments(model.services, () => nativeRefusal('native_compose_app_enrollment_invalid'));
             if (input.storage?.sharedData) {
                 const nativeBinds = createNativeComposeIncumbentBindReader({ projectName, run: args => run(args, signal),
                     readSourceCustody: input.storage.sharedData.readSourceCustody });
@@ -1227,6 +1231,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                     record(definition) && typeof definition.name === 'string' ? [{ volume, physicalName: definition.name }] : []) : [],
                 ...(health ? { health } : {}), healthServices: candidate?.startFirst ? services : services.filter(service => !excludedFromHealth.has(service)),
                 ...(sharedData ? { sharedData } : {}),
+                ...(appEnrollments ? { appEnrollments } : {}),
                 environmentInstanceId: input.source.environmentInstanceId, admissionProjectName,
                 keys: [{ kind: 'composeProject', dockerEndpoint: engineId, projectName: admissionProjectName }], review,
                 ...(actualLaunch.deploymentReferenceAddresses?.length

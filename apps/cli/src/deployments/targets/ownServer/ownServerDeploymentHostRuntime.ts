@@ -42,6 +42,7 @@ import type { ServiceExportMachineForward } from '@/daemon/peer/iroh/serviceExpo
 import { privateServiceForwardAcquisitionError, projectDeploymentFailure } from '../../deploymentFailure';
 import { openDeploymentBackupDestinationForHost, prepareOwnServerPreMigrationBackupOperandsForHost, prepareOwnServerBackupRunOperandsForHost, prepareOwnServerBackupRepositoryOperandsForHost } from './backupDestination';
 import { materializeCaddyInitialConfigV1 } from './caddyRouteMaterialization';
+import { enrollOwnServerAppServices } from './appEnrollment';
 export { openDeploymentBackupDestinationForHost, prepareOwnServerPreMigrationBackupOperandsForHost, prepareOwnServerBackupRunOperandsForHost } from './backupDestination';
 
 type LaunchInput = Parameters<typeof prepareEnvironmentSecretBindingsForLaunch>[0];
@@ -288,6 +289,11 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                     },
                 };
                 return { exec, nativeIo, projectManagedServices: retainedLease.registry.projectManagedServices,
+                    enrollAppServices: input => enrollOwnServerAppServices(input, {
+                        credentials: host.credentials, credentialProfileId: host.credentialProfileId,
+                        serverId: host.serverId, serverHttpBaseUrl: host.serverHttpBaseUrl,
+                        machineId: host.machineId, identity, context: request.context, nativeIo,
+                    }),
                     async prepareReferenceContainerNetwork(network) {
                         referenceContainerNetwork = network;
                         // The native owner lends Docker for this callback only.

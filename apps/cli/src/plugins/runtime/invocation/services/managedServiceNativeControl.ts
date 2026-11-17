@@ -17,6 +17,7 @@ export type ManagedServiceNativeControl = Readonly<{
 export async function runManagedServiceNativeControl<T>(
     entry: { nativeControl?: ManagedServiceNativeControl },
     input: Readonly<{ operation: MachineNativeEffectOperation; keys: readonly MachineNativeEffectKey[];
+        admittedContext?: MachineNativeEffectContext;
         settleNative?: () => Promise<void> }>,
     effect: (context: MachineNativeEffectContext) => Promise<T>,
     notify: () => void,
@@ -24,7 +25,10 @@ export async function runManagedServiceNativeControl<T>(
     if (entry.nativeControl) throw new MachineNativeEffectAdmissionError('effect_in_progress', entry.nativeControl.operation.operationId);
     const admitted: { control?: ManagedServiceNativeControl; settled?: () => void } = {};
     try {
-        return await machineNativeEffectAdmission.run(input, async context => {
+        const run = input.admittedContext
+            ? (effect: (context: MachineNativeEffectContext) => Promise<T>) => machineNativeEffectAdmission.runAdmitted(input.admittedContext!, input, effect)
+            : (effect: (context: MachineNativeEffectContext) => Promise<T>) => machineNativeEffectAdmission.run(input, effect);
+        return await run(async context => {
             if (entry.nativeControl) throw new MachineNativeEffectAdmissionError('effect_in_progress', entry.nativeControl.operation.operationId);
             admitted.control = { operation: input.operation, settlement: new Promise<void>(resolve => { admitted.settled = resolve; }) };
             entry.nativeControl = admitted.control;

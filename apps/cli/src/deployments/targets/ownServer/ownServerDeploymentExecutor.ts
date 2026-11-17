@@ -1422,6 +1422,12 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             signal: snapshot.signal, isCurrent: () => project.isCurrent(),
                             nativeEffects: { keys: activationRender.keys, settleNative: prepared.project.settleNative }, io: prepared.runtime.nativeIo, project });
                         prepared.runtime.retainServiceReferences?.(handles);
+                        if (activationRender.appEnrollments?.length) {
+                            if (!prepared.runtime.enrollAppServices) throw new PluginError({ code: 'admission_unavailable',
+                                message: 'App enrollment is unavailable on this deployment host' });
+                            await prepared.runtime.enrollAppServices({ render: activationRender, project, services: handles,
+                                deployment: selected.deployment, nativeContext: context, signal: snapshot.signal });
+                        }
                         await prepared.source.commit(); committed = true;
                         const staged = await stage(row(project.health));
                         if (!staged.ok) return staged;
