@@ -1,7 +1,6 @@
 import React from 'react';
 import { getAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { type View as RNView } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
 import { SelectionList, type SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 import { supportsManagedMachineSelection, useMachineSelectionListModel } from './machineSelection/useMachineSelectionListModel';
 import type { ManagedMachineSelectionOffer } from './machineSelection/managedMachineSelection';
@@ -12,7 +11,6 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { resolveMachinePickerPresence } from './resolveMachinePickerPresence';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { Icon } from '@/components/ui/icons/Icon';
 import type { MachineDestinationPurposeV1 } from '@happier-dev/protocol/machines/pools';
 import type { MachineDestinationPlacementFacts } from './machineSelection/buildMachineDestinationModel';
 import type { MachineDestinationWorkerPlacement } from '@/components/sessions/new/hooks/machines/useMachineDestinationWorkerStatus';
@@ -96,7 +94,6 @@ export interface MachineSelectorProps {
 }
 
 export function MachineSelector(props: MachineSelectorProps) {
-    const { theme } = useUnistyles();
     const presentation = props.presentation ?? 'list';
     const purpose = props.purpose ?? 'session';
     const groupServerId = props.serverId ?? getAppliedActiveServerSnapshot().serverId;
@@ -209,7 +206,7 @@ export function MachineSelector(props: MachineSelectorProps) {
             title: props.dropdownTitle ?? t('newSession.selectMachineTitle'),
             subtitle: props.dropdownSubtitle ?? selectedTitle ?? t('newSession.selectMachineDescription'),
             showSelectedDetail: false, showSelectedSubtitle: false,
-            icon: <Icon name="desktop" size={24} color={theme.colors.text.secondary} />,
+            // A Machine choice is a preference row (settings, Team defaults): preference rows carry no icon.
             itemProps: { testID: props.dropdownTestID },
         }} />;
     return props.dropdownInCallerSection ? dropdown : <ItemGroup title="">{dropdown}</ItemGroup>;

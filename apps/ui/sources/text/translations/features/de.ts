@@ -16068,7 +16068,7 @@ const german: TeamsTranslationRoot = {
                 machineNotMemberUsable: "Mitglieder können diese Maschine nicht nutzen. Teile sie mit dem Team oder wähle eine andere.",
                 teamDefault: "Team-Standard",
                 groupDefault: "Gruppen-Standard",
-                none: "Keine",
+                none: "Nicht festgelegt",
                 preset: "Eine Maschinenvorlage",
                 unavailableMachine: "Eine Maschine, die du nicht sehen kannst",
                 permissionMode: "Berechtigungsmodus",

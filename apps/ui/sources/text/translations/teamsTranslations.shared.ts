@@ -514,7 +514,7 @@ export const english = {
                 machineDefault: "Machine default",
                 homeDefault: "Home default",
                 policyDefault: "Organization policy",
-                none: "None",
+                none: "Not set",
                 preset: "A machine preset",
                 unavailableMachine: "A machine you can’t see",
                 permissionMode: "Permission mode",

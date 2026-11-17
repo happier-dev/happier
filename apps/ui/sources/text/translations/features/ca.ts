@@ -16269,7 +16269,7 @@ const catalan: TeamsTranslationRoot = {
                 machineNotMemberUsable: "Els membres no poden utilitzar aquesta màquina. Comparteix-la amb l’equip o tria’n una altra.",
                 teamDefault: "Predeterminat de l’equip",
                 groupDefault: "Predeterminat del grup",
-                none: "Cap",
+                none: "Sense definir",
                 preset: "Una configuració predefinida de màquina",
                 unavailableMachine: "Una màquina que no pots veure",
                 permissionMode: "Mode de permisos",

@@ -16193,7 +16193,7 @@ const japanese: TeamsTranslationRoot = {
                 machineNotMemberUsable: "メンバーはこのマシンを使用できません。チームと共有するか、別のマシンを選んでください。",
                 teamDefault: "チームの既定",
                 groupDefault: "グループの既定",
-                none: "なし",
+                none: "未設定",
                 preset: "マシンのプリセット",
                 unavailableMachine: "表示できないマシン",
                 permissionMode: "権限モード",

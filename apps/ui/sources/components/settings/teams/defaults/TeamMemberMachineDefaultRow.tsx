@@ -1,12 +1,10 @@
 import * as React from 'react';
-import { useUnistyles } from 'react-native-unistyles';
 import type { ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams';
 import type { OpenedManagedMachinePresetCreationV1, OpenedManagedMachinePresetV1, ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import { useManagedMachineSelectionOffers } from '@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers';
 import { useMachinePreset, useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
-import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
@@ -46,7 +44,6 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
     }>,
 ) {
     const { state } = props;
-    const { theme } = useUnistyles();
     const machines = useMachineListForServer(state.serverId, state.editable) ?? EMPTY_MACHINES;
     // The accessible inventory supplies candidates; the server checks audience
     // usability when saving the default and returns a typed refusal if needed.
@@ -148,7 +145,6 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
             subtitle={[inheritedSource, note].filter(Boolean).join(' ') || undefined}
             subtitleLines={0}
             detail={selectedPresetTitle ?? readOnlyMachineTitle ?? inheritedTitle ?? unseen ?? t('teams.settings.memberDefaults.none')}
-            icon={<Icon name="desktop" size={24} color={theme.colors.text.secondary} />}
             mode="info"
             showChevron={false}
         />}

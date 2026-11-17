@@ -16192,7 +16192,7 @@ const spanish: TeamsTranslationRoot = {
                 machineNotMemberUsable: "Los miembros no pueden usar esta máquina. Compártela con el equipo o elige otra.",
                 teamDefault: "Predeterminado del equipo",
                 groupDefault: "Predeterminado del grupo",
-                none: "Ninguno",
+                none: "Sin definir",
                 preset: "Una plantilla de máquina",
                 unavailableMachine: "Una máquina que no puedes ver",
                 permissionMode: "Modo de permisos",

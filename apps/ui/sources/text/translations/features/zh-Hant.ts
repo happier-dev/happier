@@ -16137,7 +16137,7 @@ const traditionalChinese: TeamsTranslationRoot = {
                 machineNotMemberUsable: "成員無法使用此機器。請與團隊共用，或選擇另一台機器。",
                 teamDefault: "團隊預設",
                 groupDefault: "群組預設",
-                none: "無",
+                none: "未設定",
                 preset: "機器預設",
                 unavailableMachine: "你看不到的機器",
                 permissionMode: "權限模式",

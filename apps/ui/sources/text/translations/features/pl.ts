@@ -16282,7 +16282,7 @@ const polish: TeamsTranslationRoot = {
                 machineNotMemberUsable: "Członkowie nie mogą używać tej maszyny. Udostępnij ją zespołowi lub wybierz inną.",
                 teamDefault: "Domyślne zespołu",
                 groupDefault: "Domyślne grupy",
-                none: "Brak",
+                none: "Nie ustawiono",
                 preset: "Szablon maszyny",
                 unavailableMachine: "Maszyna, której nie widzisz",
                 permissionMode: "Tryb uprawnień",

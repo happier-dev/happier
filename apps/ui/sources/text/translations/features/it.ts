@@ -16257,7 +16257,7 @@ const italian: TeamsTranslationRoot = {
                 machineNotMemberUsable: "I membri non possono usare questa macchina. Condividila con il team o scegline un’altra.",
                 teamDefault: "Predefinito del team",
                 groupDefault: "Predefinito del gruppo",
-                none: "Nessuno",
+                none: "Non impostato",
                 preset: "Un preset di macchina",
                 unavailableMachine: "Una macchina che non puoi vedere",
                 permissionMode: "Modalità permessi",

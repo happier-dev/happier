@@ -16284,7 +16284,7 @@ const russian: TeamsTranslationRoot = {
                 machineNotMemberUsable: "Участники не могут использовать эту машину. Предоставьте команде доступ к ней или выберите другую.",
                 teamDefault: "По умолчанию для команды",
                 groupDefault: "По умолчанию для группы",
-                none: "Нет",
+                none: "Не задан",
                 preset: "Шаблон машины",
                 unavailableMachine: "Машина, которую вы не видите",
                 permissionMode: "Режим разрешений",

@@ -16312,7 +16312,7 @@ const french: TeamsTranslationRoot = {
                 machineNotMemberUsable: "Les membres ne peuvent pas utiliser cette machine. Partage-la avec l’équipe ou choisis-en une autre.",
                 teamDefault: "Par défaut de l’équipe",
                 groupDefault: "Par défaut du groupe",
-                none: "Aucun",
+                none: "Non défini",
                 preset: "Un modèle de machine",
                 unavailableMachine: "Une machine que tu ne vois pas",
                 permissionMode: "Mode d’autorisation",
