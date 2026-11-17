@@ -86,6 +86,7 @@ export type ProjectSourcesActionInputById = {
             kind: 'team';
             teamId: string;
         };
+        sharedWithTeamId?: string | undefined;
         cursor?: string | undefined;
         limit?: number | undefined;
     };
@@ -143,6 +144,250 @@ export type ProjectSourcesActionInputById = {
         sourceId: string;
         expectedRevision: number;
         patch: {
+            sessionDefaults?: undefined | {
+                expectedRevision: 'absent' | number;
+                defaults: null | {
+                    placement?: undefined | {
+                        kind: 'machine';
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        projectFiles?: undefined | {
+                            kind: 'copy_once';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        } | {
+                            kind: 'git_clone';
+                            source: {
+                                provider: {
+                                    id: string;
+                                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                    displayName: string;
+                                    baseUrl: string;
+                                };
+                                repository: {
+                                    nameWithOwner: string;
+                                    defaultBranch?: null | string | undefined;
+                                    visibility?: 'internal' | 'private' | 'public' | undefined;
+                                    webUrl?: string | undefined;
+                                    cloneUrl?: string | undefined;
+                                    sshUrl?: string | undefined;
+                                };
+                                protocol: 'auto' | 'https' | 'ssh';
+                            };
+                            branch: string;
+                            gitAccount?: undefined | {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            kind: 'sync';
+                            mode: 'keep_both_in_sync' | 'keep_synced';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        };
+                        projectFilesSource?: undefined | {
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            directory: string;
+                        };
+                    } | {
+                        kind: 'preset';
+                        homeId: string;
+                        presetId: string;
+                        projectFiles?: undefined | {
+                            kind: 'copy_once';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        } | {
+                            kind: 'git_clone';
+                            source: {
+                                provider: {
+                                    id: string;
+                                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                    displayName: string;
+                                    baseUrl: string;
+                                };
+                                repository: {
+                                    nameWithOwner: string;
+                                    defaultBranch?: null | string | undefined;
+                                    visibility?: 'internal' | 'private' | 'public' | undefined;
+                                    webUrl?: string | undefined;
+                                    cloneUrl?: string | undefined;
+                                    sshUrl?: string | undefined;
+                                };
+                                protocol: 'auto' | 'https' | 'ssh';
+                            };
+                            branch: string;
+                            gitAccount?: undefined | {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            kind: 'sync';
+                            mode: 'keep_both_in_sync' | 'keep_synced';
+                            contentPolicy?: undefined | {
+                                v: 1;
+                                selection: 'all_files' | 'git_worktree';
+                                extraIgnorePatterns: readonly string[];
+                                extraIncludePatterns: readonly string[];
+                                policyDigest: string;
+                                contentOnly?: true | undefined;
+                            };
+                        };
+                        projectFilesSource?: undefined | {
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            directory: string;
+                        };
+                    };
+                    approvalProfileId?: null | string | undefined;
+                    permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
+                    modelByAgentTargetKey?: Record<string, {
+                        ref: {
+                            source: 'account_provider_connection';
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        v: 2;
+                        updatedAt: number;
+                    } | {
+                        ref: {
+                            source: 'native';
+                            agentTargetKey: string;
+                            modelId: string;
+                        };
+                        v: 2;
+                        updatedAt: number;
+                    } | {
+                        ref: {
+                            source: 'team_resource';
+                            resourceId: string;
+                            teamId: string;
+                            expectedResourceRevision: number;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            agentTargetKey: string;
+                            modelId: string;
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        };
+                        v: 2;
+                        updatedAt: number;
+                    } | {
+                        v: 1;
+                        ref: {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        updatedAt: number;
+                    }> | undefined;
+                    connectedServicesByAgentTargetKey?: Record<string, readonly {
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        service: {
+                            pluginId: 'happier';
+                            localId: 'mcp-sign-in';
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        target: null | {
+                            kind: 'account';
+                            account: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        } | {
+                            kind: 'group';
+                            service: {
+                                pluginId: 'happier';
+                                localId: 'mcp-sign-in';
+                            } | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            groupId: string;
+                        };
+                        teamResource: null | {
+                            selection: {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            };
+                            teamId: string;
+                        };
+                    }[]> | undefined;
+                    defaultAgentTarget?: undefined | {
+                        kind: 'agent';
+                        identity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        definitionId?: string | undefined;
+                    };
+                };
+            };
             name?: string | undefined;
             repository?: null | undefined | {
                 provider: {
@@ -207,6 +452,24 @@ export type ProjectSourcesActionInputById = {
                         artifactId: string;
                         serverId?: string | undefined;
                     };
+                } | {
+                    purpose: 'onboarding_task';
+                    ref: {
+                        artifactId: string;
+                        kind: 'doc';
+                        serverId?: string | undefined;
+                    };
+                } | {
+                    purpose: 'setup';
+                    ref: {
+                        kind: 'doc';
+                        artifactId: string;
+                        serverId?: string | undefined;
+                    };
+                    contentRevision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
                 };
             } | {
                 kind: 'budget';
@@ -221,6 +484,22 @@ export type ProjectSourcesActionInputById = {
                 purpose: 'dashboard';
                 ref: {
                     kind: 'bundle' | 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+            } | {
+                kind: 'detach';
+                purpose: 'onboarding_task';
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+            } | {
+                kind: 'detach';
+                purpose: 'setup';
+                ref: {
+                    kind: 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
@@ -321,9 +600,6 @@ export type ProjectSourcesActionResultById = {
     readonly "projects.sources.moveToTeam": {
         kind: 'completed';
         source: {
-            id: string;
-            revision: number;
-            name: string;
             audience: {
                 principal: {
                     kind: 'account';
@@ -339,6 +615,9 @@ export type ProjectSourcesActionResultById = {
                 level: 'view';
             }[];
             createdByAccountId: string;
+            id: string;
+            revision: number;
+            name: string;
             owner: {
                 kind: 'team';
                 teamId: string;
@@ -383,6 +662,24 @@ export type ProjectSourcesActionResultById = {
                     kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
+                };
+            } | {
+                purpose: 'onboarding_task';
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+            } | {
+                purpose: 'setup';
+                ref: {
+                    kind: 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
                 };
             })[] | undefined;
         };
@@ -445,9 +742,6 @@ export type ProjectSourcesActionResultById = {
             operationId: string;
         }[];
         source?: undefined | {
-            id: string;
-            revision: number;
-            name: string;
             audience: {
                 principal: {
                     kind: 'account';
@@ -463,6 +757,9 @@ export type ProjectSourcesActionResultById = {
                 level: 'view';
             }[];
             createdByAccountId: string;
+            id: string;
+            revision: number;
+            name: string;
             repository?: undefined | {
                 provider: {
                     id: string;
@@ -479,13 +776,6 @@ export type ProjectSourcesActionResultById = {
                     sshUrl?: string | undefined;
                 };
                 protocol: 'auto' | 'https' | 'ssh';
-            };
-            owner?: undefined | {
-                kind: 'account';
-                accountId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
@@ -511,7 +801,32 @@ export type ProjectSourcesActionResultById = {
                     artifactId: string;
                     serverId?: string | undefined;
                 };
+            } | {
+                purpose: 'onboarding_task';
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+            } | {
+                purpose: 'setup';
+                ref: {
+                    kind: 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
             })[] | undefined;
+            owner?: undefined | {
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            };
         };
         resourceEffects?: undefined | {
             machineGrants: {
@@ -561,12 +876,9 @@ export type ProjectSourcesActionResultById = {
         };
     } | {
         ok: false;
-        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'managed_default_machine_not_member_usable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
         effectAttempted?: boolean | undefined;
         current?: undefined | {
-            id: string;
-            revision: number;
-            name: string;
             audience: {
                 principal: {
                     kind: 'account';
@@ -582,6 +894,9 @@ export type ProjectSourcesActionResultById = {
                 level: 'view';
             }[];
             createdByAccountId: string;
+            id: string;
+            revision: number;
+            name: string;
             repository?: undefined | {
                 provider: {
                     id: string;
@@ -598,13 +913,6 @@ export type ProjectSourcesActionResultById = {
                     sshUrl?: string | undefined;
                 };
                 protocol: 'auto' | 'https' | 'ssh';
-            };
-            owner?: undefined | {
-                kind: 'account';
-                accountId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
@@ -630,17 +938,39 @@ export type ProjectSourcesActionResultById = {
                     artifactId: string;
                     serverId?: string | undefined;
                 };
+            } | {
+                purpose: 'onboarding_task';
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+            } | {
+                purpose: 'setup';
+                ref: {
+                    kind: 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
             })[] | undefined;
+            owner?: undefined | {
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            };
         };
     };
     readonly "projects.sources.list": {
         ok: false;
-        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'managed_default_machine_not_member_usable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
         effectAttempted?: boolean | undefined;
         current?: undefined | {
-            id: string;
-            revision: number;
-            name: string;
             audience: {
                 principal: {
                     kind: 'account';
@@ -656,6 +986,9 @@ export type ProjectSourcesActionResultById = {
                 level: 'view';
             }[];
             createdByAccountId: string;
+            id: string;
+            revision: number;
+            name: string;
             repository?: undefined | {
                 provider: {
                     id: string;
@@ -672,13 +1005,6 @@ export type ProjectSourcesActionResultById = {
                     sshUrl?: string | undefined;
                 };
                 protocol: 'auto' | 'https' | 'ssh';
-            };
-            owner?: undefined | {
-                kind: 'account';
-                accountId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
@@ -704,14 +1030,36 @@ export type ProjectSourcesActionResultById = {
                     artifactId: string;
                     serverId?: string | undefined;
                 };
+            } | {
+                purpose: 'onboarding_task';
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+            } | {
+                purpose: 'setup';
+                ref: {
+                    kind: 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
             })[] | undefined;
+            owner?: undefined | {
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            };
         };
     } | {
         ok: true;
         sources: {
-            id: string;
-            revision: number;
-            name: string;
             audience: {
                 principal: {
                     kind: 'account';
@@ -727,6 +1075,9 @@ export type ProjectSourcesActionResultById = {
                 level: 'view';
             }[];
             createdByAccountId: string;
+            id: string;
+            revision: number;
+            name: string;
             repository?: undefined | {
                 provider: {
                     id: string;
@@ -743,13 +1094,6 @@ export type ProjectSourcesActionResultById = {
                     sshUrl?: string | undefined;
                 };
                 protocol: 'auto' | 'https' | 'ssh';
-            };
-            owner?: undefined | {
-                kind: 'account';
-                accountId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
@@ -775,7 +1119,33 @@ export type ProjectSourcesActionResultById = {
                     artifactId: string;
                     serverId?: string | undefined;
                 };
+            } | {
+                purpose: 'onboarding_task';
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+            } | {
+                purpose: 'setup';
+                ref: {
+                    kind: 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
             })[] | undefined;
+            owner?: undefined | {
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            };
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
         }[];
         coverage: {
             complete: boolean;
@@ -784,12 +1154,9 @@ export type ProjectSourcesActionResultById = {
     };
     readonly "projects.sources.read": {
         ok: false;
-        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'managed_default_machine_not_member_usable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
         effectAttempted?: boolean | undefined;
         current?: undefined | {
-            id: string;
-            revision: number;
-            name: string;
             audience: {
                 principal: {
                     kind: 'account';
@@ -805,6 +1172,9 @@ export type ProjectSourcesActionResultById = {
                 level: 'view';
             }[];
             createdByAccountId: string;
+            id: string;
+            revision: number;
+            name: string;
             repository?: undefined | {
                 provider: {
                     id: string;
@@ -821,13 +1191,6 @@ export type ProjectSourcesActionResultById = {
                     sshUrl?: string | undefined;
                 };
                 protocol: 'auto' | 'https' | 'ssh';
-            };
-            owner?: undefined | {
-                kind: 'account';
-                accountId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
@@ -853,14 +1216,36 @@ export type ProjectSourcesActionResultById = {
                     artifactId: string;
                     serverId?: string | undefined;
                 };
+            } | {
+                purpose: 'onboarding_task';
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+            } | {
+                purpose: 'setup';
+                ref: {
+                    kind: 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
             })[] | undefined;
+            owner?: undefined | {
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            };
         };
     } | {
         ok: true;
         source: {
-            id: string;
-            revision: number;
-            name: string;
             audience: {
                 principal: {
                     kind: 'account';
@@ -876,6 +1261,9 @@ export type ProjectSourcesActionResultById = {
                 level: 'view';
             }[];
             createdByAccountId: string;
+            id: string;
+            revision: number;
+            name: string;
             repository?: undefined | {
                 provider: {
                     id: string;
@@ -892,13 +1280,6 @@ export type ProjectSourcesActionResultById = {
                     sshUrl?: string | undefined;
                 };
                 protocol: 'auto' | 'https' | 'ssh';
-            };
-            owner?: undefined | {
-                kind: 'account';
-                accountId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
@@ -924,18 +1305,285 @@ export type ProjectSourcesActionResultById = {
                     artifactId: string;
                     serverId?: string | undefined;
                 };
+            } | {
+                purpose: 'onboarding_task';
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+            } | {
+                purpose: 'setup';
+                ref: {
+                    kind: 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
             })[] | undefined;
+            owner?: undefined | {
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            };
         };
         canManage: boolean;
+        canManageSessionDefaults?: boolean | undefined;
+        sessionDefaults?: undefined | {
+            revision: number;
+            defaults: null | {
+                placement?: undefined | {
+                    kind: 'machine';
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    projectFiles?: undefined | {
+                        kind: 'copy_once';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    } | {
+                        kind: 'git_clone';
+                        source: {
+                            provider: {
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                            };
+                            repository: {
+                                nameWithOwner: string;
+                                defaultBranch?: null | string | undefined;
+                                visibility?: 'internal' | 'private' | 'public' | undefined;
+                                webUrl?: string | undefined;
+                                cloneUrl?: string | undefined;
+                                sshUrl?: string | undefined;
+                            };
+                            protocol: 'auto' | 'https' | 'ssh';
+                        };
+                        branch: string;
+                        gitAccount?: undefined | {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'sync';
+                        mode: 'keep_both_in_sync' | 'keep_synced';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    };
+                    projectFilesSource?: undefined | {
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory: string;
+                    };
+                } | {
+                    kind: 'preset';
+                    homeId: string;
+                    presetId: string;
+                    projectFiles?: undefined | {
+                        kind: 'copy_once';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    } | {
+                        kind: 'git_clone';
+                        source: {
+                            provider: {
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                            };
+                            repository: {
+                                nameWithOwner: string;
+                                defaultBranch?: null | string | undefined;
+                                visibility?: 'internal' | 'private' | 'public' | undefined;
+                                webUrl?: string | undefined;
+                                cloneUrl?: string | undefined;
+                                sshUrl?: string | undefined;
+                            };
+                            protocol: 'auto' | 'https' | 'ssh';
+                        };
+                        branch: string;
+                        gitAccount?: undefined | {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'sync';
+                        mode: 'keep_both_in_sync' | 'keep_synced';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    };
+                    projectFilesSource?: undefined | {
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory: string;
+                    };
+                };
+                approvalProfileId?: null | string | undefined;
+                permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
+                modelByAgentTargetKey?: Record<string, {
+                    ref: {
+                        source: 'account_provider_connection';
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    ref: {
+                        source: 'native';
+                        agentTargetKey: string;
+                        modelId: string;
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    ref: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        teamId: string;
+                        expectedResourceRevision: number;
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        agentTargetKey: string;
+                        modelId: string;
+                        nativeDelivery?: undefined | {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        };
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    v: 1;
+                    ref: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    updatedAt: number;
+                }> | undefined;
+                connectedServicesByAgentTargetKey?: Record<string, readonly {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    target: null | {
+                        kind: 'account';
+                        account: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'group';
+                        service: {
+                            pluginId: 'happier';
+                            localId: 'mcp-sign-in';
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        groupId: string;
+                    };
+                    teamResource: null | {
+                        selection: {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        };
+                        teamId: string;
+                    };
+                }[]> | undefined;
+                defaultAgentTarget?: undefined | {
+                    kind: 'agent';
+                    identity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    definitionId?: string | undefined;
+                };
+            };
+        };
     };
     readonly "projects.sources.create": {
         ok: false;
-        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'managed_default_machine_not_member_usable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
         effectAttempted?: boolean | undefined;
         current?: undefined | {
-            id: string;
-            revision: number;
-            name: string;
             audience: {
                 principal: {
                     kind: 'account';
@@ -951,6 +1599,9 @@ export type ProjectSourcesActionResultById = {
                 level: 'view';
             }[];
             createdByAccountId: string;
+            id: string;
+            revision: number;
+            name: string;
             repository?: undefined | {
                 provider: {
                     id: string;
@@ -967,13 +1618,6 @@ export type ProjectSourcesActionResultById = {
                     sshUrl?: string | undefined;
                 };
                 protocol: 'auto' | 'https' | 'ssh';
-            };
-            owner?: undefined | {
-                kind: 'account';
-                accountId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
@@ -999,14 +1643,36 @@ export type ProjectSourcesActionResultById = {
                     artifactId: string;
                     serverId?: string | undefined;
                 };
+            } | {
+                purpose: 'onboarding_task';
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+            } | {
+                purpose: 'setup';
+                ref: {
+                    kind: 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
             })[] | undefined;
+            owner?: undefined | {
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            };
         };
     } | {
         ok: true;
         source: {
-            id: string;
-            revision: number;
-            name: string;
             audience: {
                 principal: {
                     kind: 'account';
@@ -1022,6 +1688,9 @@ export type ProjectSourcesActionResultById = {
                 level: 'view';
             }[];
             createdByAccountId: string;
+            id: string;
+            revision: number;
+            name: string;
             repository?: undefined | {
                 provider: {
                     id: string;
@@ -1038,13 +1707,6 @@ export type ProjectSourcesActionResultById = {
                     sshUrl?: string | undefined;
                 };
                 protocol: 'auto' | 'https' | 'ssh';
-            };
-            owner?: undefined | {
-                kind: 'account';
-                accountId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
@@ -1070,18 +1732,285 @@ export type ProjectSourcesActionResultById = {
                     artifactId: string;
                     serverId?: string | undefined;
                 };
+            } | {
+                purpose: 'onboarding_task';
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+            } | {
+                purpose: 'setup';
+                ref: {
+                    kind: 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
             })[] | undefined;
+            owner?: undefined | {
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            };
         };
         canManage: boolean;
+        canManageSessionDefaults?: boolean | undefined;
+        sessionDefaults?: undefined | {
+            revision: number;
+            defaults: null | {
+                placement?: undefined | {
+                    kind: 'machine';
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    projectFiles?: undefined | {
+                        kind: 'copy_once';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    } | {
+                        kind: 'git_clone';
+                        source: {
+                            provider: {
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                            };
+                            repository: {
+                                nameWithOwner: string;
+                                defaultBranch?: null | string | undefined;
+                                visibility?: 'internal' | 'private' | 'public' | undefined;
+                                webUrl?: string | undefined;
+                                cloneUrl?: string | undefined;
+                                sshUrl?: string | undefined;
+                            };
+                            protocol: 'auto' | 'https' | 'ssh';
+                        };
+                        branch: string;
+                        gitAccount?: undefined | {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'sync';
+                        mode: 'keep_both_in_sync' | 'keep_synced';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    };
+                    projectFilesSource?: undefined | {
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory: string;
+                    };
+                } | {
+                    kind: 'preset';
+                    homeId: string;
+                    presetId: string;
+                    projectFiles?: undefined | {
+                        kind: 'copy_once';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    } | {
+                        kind: 'git_clone';
+                        source: {
+                            provider: {
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                            };
+                            repository: {
+                                nameWithOwner: string;
+                                defaultBranch?: null | string | undefined;
+                                visibility?: 'internal' | 'private' | 'public' | undefined;
+                                webUrl?: string | undefined;
+                                cloneUrl?: string | undefined;
+                                sshUrl?: string | undefined;
+                            };
+                            protocol: 'auto' | 'https' | 'ssh';
+                        };
+                        branch: string;
+                        gitAccount?: undefined | {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'sync';
+                        mode: 'keep_both_in_sync' | 'keep_synced';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    };
+                    projectFilesSource?: undefined | {
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory: string;
+                    };
+                };
+                approvalProfileId?: null | string | undefined;
+                permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
+                modelByAgentTargetKey?: Record<string, {
+                    ref: {
+                        source: 'account_provider_connection';
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    ref: {
+                        source: 'native';
+                        agentTargetKey: string;
+                        modelId: string;
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    ref: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        teamId: string;
+                        expectedResourceRevision: number;
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        agentTargetKey: string;
+                        modelId: string;
+                        nativeDelivery?: undefined | {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        };
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    v: 1;
+                    ref: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    updatedAt: number;
+                }> | undefined;
+                connectedServicesByAgentTargetKey?: Record<string, readonly {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    target: null | {
+                        kind: 'account';
+                        account: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'group';
+                        service: {
+                            pluginId: 'happier';
+                            localId: 'mcp-sign-in';
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        groupId: string;
+                    };
+                    teamResource: null | {
+                        selection: {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        };
+                        teamId: string;
+                    };
+                }[]> | undefined;
+                defaultAgentTarget?: undefined | {
+                    kind: 'agent';
+                    identity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    definitionId?: string | undefined;
+                };
+            };
+        };
     };
     readonly "projects.sources.update": {
         ok: false;
-        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'managed_default_machine_not_member_usable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
         effectAttempted?: boolean | undefined;
         current?: undefined | {
-            id: string;
-            revision: number;
-            name: string;
             audience: {
                 principal: {
                     kind: 'account';
@@ -1097,6 +2026,9 @@ export type ProjectSourcesActionResultById = {
                 level: 'view';
             }[];
             createdByAccountId: string;
+            id: string;
+            revision: number;
+            name: string;
             repository?: undefined | {
                 provider: {
                     id: string;
@@ -1113,13 +2045,6 @@ export type ProjectSourcesActionResultById = {
                     sshUrl?: string | undefined;
                 };
                 protocol: 'auto' | 'https' | 'ssh';
-            };
-            owner?: undefined | {
-                kind: 'account';
-                accountId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
@@ -1145,14 +2070,36 @@ export type ProjectSourcesActionResultById = {
                     artifactId: string;
                     serverId?: string | undefined;
                 };
+            } | {
+                purpose: 'onboarding_task';
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+            } | {
+                purpose: 'setup';
+                ref: {
+                    kind: 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
             })[] | undefined;
+            owner?: undefined | {
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            };
         };
     } | {
         ok: true;
         source: {
-            id: string;
-            revision: number;
-            name: string;
             audience: {
                 principal: {
                     kind: 'account';
@@ -1168,6 +2115,9 @@ export type ProjectSourcesActionResultById = {
                 level: 'view';
             }[];
             createdByAccountId: string;
+            id: string;
+            revision: number;
+            name: string;
             repository?: undefined | {
                 provider: {
                     id: string;
@@ -1184,13 +2134,6 @@ export type ProjectSourcesActionResultById = {
                     sshUrl?: string | undefined;
                 };
                 protocol: 'auto' | 'https' | 'ssh';
-            };
-            owner?: undefined | {
-                kind: 'account';
-                accountId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
@@ -1216,18 +2159,285 @@ export type ProjectSourcesActionResultById = {
                     artifactId: string;
                     serverId?: string | undefined;
                 };
+            } | {
+                purpose: 'onboarding_task';
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+            } | {
+                purpose: 'setup';
+                ref: {
+                    kind: 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
             })[] | undefined;
+            owner?: undefined | {
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            };
         };
         canManage: boolean;
+        canManageSessionDefaults?: boolean | undefined;
+        sessionDefaults?: undefined | {
+            revision: number;
+            defaults: null | {
+                placement?: undefined | {
+                    kind: 'machine';
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    projectFiles?: undefined | {
+                        kind: 'copy_once';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    } | {
+                        kind: 'git_clone';
+                        source: {
+                            provider: {
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                            };
+                            repository: {
+                                nameWithOwner: string;
+                                defaultBranch?: null | string | undefined;
+                                visibility?: 'internal' | 'private' | 'public' | undefined;
+                                webUrl?: string | undefined;
+                                cloneUrl?: string | undefined;
+                                sshUrl?: string | undefined;
+                            };
+                            protocol: 'auto' | 'https' | 'ssh';
+                        };
+                        branch: string;
+                        gitAccount?: undefined | {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'sync';
+                        mode: 'keep_both_in_sync' | 'keep_synced';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    };
+                    projectFilesSource?: undefined | {
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory: string;
+                    };
+                } | {
+                    kind: 'preset';
+                    homeId: string;
+                    presetId: string;
+                    projectFiles?: undefined | {
+                        kind: 'copy_once';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    } | {
+                        kind: 'git_clone';
+                        source: {
+                            provider: {
+                                id: string;
+                                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                                displayName: string;
+                                baseUrl: string;
+                            };
+                            repository: {
+                                nameWithOwner: string;
+                                defaultBranch?: null | string | undefined;
+                                visibility?: 'internal' | 'private' | 'public' | undefined;
+                                webUrl?: string | undefined;
+                                cloneUrl?: string | undefined;
+                                sshUrl?: string | undefined;
+                            };
+                            protocol: 'auto' | 'https' | 'ssh';
+                        };
+                        branch: string;
+                        gitAccount?: undefined | {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'sync';
+                        mode: 'keep_both_in_sync' | 'keep_synced';
+                        contentPolicy?: undefined | {
+                            v: 1;
+                            selection: 'all_files' | 'git_worktree';
+                            extraIgnorePatterns: readonly string[];
+                            extraIncludePatterns: readonly string[];
+                            policyDigest: string;
+                            contentOnly?: true | undefined;
+                        };
+                    };
+                    projectFilesSource?: undefined | {
+                        target: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory: string;
+                    };
+                };
+                approvalProfileId?: null | string | undefined;
+                permissionModeByAgentTargetKey?: Record<string, 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
+                modelByAgentTargetKey?: Record<string, {
+                    ref: {
+                        source: 'account_provider_connection';
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    ref: {
+                        source: 'native';
+                        agentTargetKey: string;
+                        modelId: string;
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    ref: {
+                        source: 'team_resource';
+                        resourceId: string;
+                        teamId: string;
+                        expectedResourceRevision: number;
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        agentTargetKey: string;
+                        modelId: string;
+                        nativeDelivery?: undefined | {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        };
+                    };
+                    v: 2;
+                    updatedAt: number;
+                } | {
+                    v: 1;
+                    ref: {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    updatedAt: number;
+                }> | undefined;
+                connectedServicesByAgentTargetKey?: Record<string, readonly {
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    service: {
+                        pluginId: 'happier';
+                        localId: 'mcp-sign-in';
+                    } | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    target: null | {
+                        kind: 'account';
+                        account: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    } | {
+                        kind: 'group';
+                        service: {
+                            pluginId: 'happier';
+                            localId: 'mcp-sign-in';
+                        } | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        groupId: string;
+                    };
+                    teamResource: null | {
+                        selection: {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        };
+                        teamId: string;
+                    };
+                }[]> | undefined;
+                defaultAgentTarget?: undefined | {
+                    kind: 'agent';
+                    identity: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    definitionId?: string | undefined;
+                };
+            };
+        };
     };
     readonly "projects.sources.delete": {
         ok: false;
-        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'managed_default_machine_not_member_usable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
         effectAttempted?: boolean | undefined;
         current?: undefined | {
-            id: string;
-            revision: number;
-            name: string;
             audience: {
                 principal: {
                     kind: 'account';
@@ -1243,6 +2453,9 @@ export type ProjectSourcesActionResultById = {
                 level: 'view';
             }[];
             createdByAccountId: string;
+            id: string;
+            revision: number;
+            name: string;
             repository?: undefined | {
                 provider: {
                     id: string;
@@ -1259,13 +2472,6 @@ export type ProjectSourcesActionResultById = {
                     sshUrl?: string | undefined;
                 };
                 protocol: 'auto' | 'https' | 'ssh';
-            };
-            owner?: undefined | {
-                kind: 'account';
-                accountId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
@@ -1291,7 +2497,32 @@ export type ProjectSourcesActionResultById = {
                     artifactId: string;
                     serverId?: string | undefined;
                 };
+            } | {
+                purpose: 'onboarding_task';
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+            } | {
+                purpose: 'setup';
+                ref: {
+                    kind: 'doc';
+                    artifactId: string;
+                    serverId?: string | undefined;
+                };
+                contentRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
             })[] | undefined;
+            owner?: undefined | {
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            };
         };
     } | {
         ok: true;
