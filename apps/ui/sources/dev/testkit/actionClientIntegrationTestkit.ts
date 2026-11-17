@@ -46,12 +46,16 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
     };
     try {
         const { id: configuredServerId } = await upsertServerProfile({ name: 'Composed Action client', serverUrl: profileUrl });
+        await setActiveServerId(configuredServerId, { scope: 'device' });
+        const discovery = await getServerFeaturesSnapshot({ serverId: configuredServerId, force: true });
+        if (discovery.status !== 'ready') {
+            throw new Error(`UI Home discovery did not become ready (${discovery.status}: ${discovery.reason}${
+                discovery.status === 'error' && discovery.httpStatus !== undefined ? `, HTTP ${discovery.httpStatus}` : ''})`);
+        }
+        // Discovery learns the Home's stable credential scope before this sign-in
+        // replaces it. Device reset can remove profiles while native credentials remain.
         if (!await TokenStorage.setCredentialsForServerUrl(profileUrl, { serverId: configuredServerId }, params.credentials)) {
             throw new Error('UI credential storage failed');
-        }
-        await setActiveServerId(configuredServerId, { scope: 'device' });
-        if ((await getServerFeaturesSnapshot({ serverId: configuredServerId, force: true })).status !== 'ready') {
-            throw new Error('UI Home discovery did not become ready');
         }
         bridge = await loadSyncSingletonForTests();
         await restoreConnectionToActiveServer(params.credentials);
@@ -78,6 +82,9 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
             execute,
             // The composed fixture supplies the designed user's explicit Confirm.
             executeConfirmed: confirmed.confirmed,
+            // An initial press lets the receiving owner supply its exact review
+            // before the fixture's person confirms through the real UI executor.
+            executePresented: confirmed,
             async readDeploymentReceipt(environmentId: string, deploymentId: string) {
                 const [{ captureLazyActionAccountContext }, { createDeploymentReadTransport }] = await Promise.all([
                     import('@/sync/ops/actions/actionAccountContext'),
@@ -188,7 +195,11 @@ export async function connectUiPersonActionClient(params: Readonly<{
             await waitForRegistry(args[0], args[1]);
             return client.executeConfirmed(...args);
         };
-        return { ...client, execute, executeConfirmed, async close() {
+        const executePresented: typeof client.executePresented = async (...args) => {
+            await waitForRegistry(args[0], args[1]);
+            return client.executePresented(...args);
+        };
+        return { ...client, execute, executeConfirmed, executePresented, async close() {
             try { await unmount?.(); } finally { await client.close(); }
         } };
     } catch (error) {

@@ -2,18 +2,21 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
+import { PROJECT_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import type { ProjectCommandSourceV1, ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { startProjectDaemonFixture, type ProjectDaemonFixture } from '../../src/testkit/daemon/projectDaemon';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
+import { fetchJson } from '../../src/testkit/http';
 
 const testDir = createRunDirs({ runLabel: 'project-consent-journey' }).testDir(randomUUID());
 let fixture: ProjectDaemonFixture | undefined;
+let account: Awaited<ReturnType<ProjectDaemonFixture['createAccount']>>;
 let ui: Awaited<ReturnType<typeof connectUiPersonActionClient>> | undefined;
 let machineId: string;
 
@@ -24,20 +27,47 @@ beforeAll(async () => {
   // capture and command execution; it replaces only acquiring the vendor binary.
   await writeFile(join(bin, 'mise'), '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2026.10.4 linux-x64"; exit; fi\nif [ "$1" = "exec" ]; then . "${MISE_OVERRIDE_CONFIG_FILENAMES%/*}/env.sh"; shift; shift; exec "$@"; fi\nexit 1\n', { mode: 0o755 });
   fixture = await startProjectDaemonFixture({ testDir });
-  const account = await fixture.createAccount('setup-owner');
+  account = await fixture.createAccount('setup-owner');
   const enrolled = await fixture.enrollDaemon(account, { env: { PATH: [bin, process.env.PATH].join(delimiter) } });
   machineId = enrolled.target.machineId;
+}, 0);
+
+beforeEach(async () => {
+  if (!fixture) throw new Error('Setup journey Home did not start');
+  // The UI boundary resets device profiles before each scenario. Sign in
+  // afterward, while retaining the real shared Home and enrolled daemon.
   ui = await connectUiPersonActionClient({ serverUrl: fixture.server.baseUrl, accountSecret: account.auth.accountSigningSeed });
-  await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId), { timeoutMs: 60_000 });
-});
+  try {
+    await waitFor(() => {
+      if (!ui!.isAccountReady()) throw new Error('UI Account is not ready');
+      if (!ui!.isMachineActive(machineId)) throw new Error('Enrolled Machine is not active in the UI');
+      return true;
+    }, { timeoutMs: 60_000, context: 'per-scenario UI reconnect to the shared Home and daemon' });
+  } catch (error) {
+    // Report only membership/liveness, never the census's keys or content.
+    const census = await fetchJson<unknown>(`${fixture.server.baseUrl}/v1/machines?includeRevoked=true`, {
+      headers: { Authorization: `Bearer ${account.auth.token}` },
+    });
+    const rows: readonly unknown[] = Array.isArray(census.data) ? census.data : [];
+    const enrolled = rows.find((row): row is Record<string, unknown> => typeof row === 'object' && row !== null
+      && 'id' in row && row.id === machineId);
+    throw new Error(`${error instanceof Error ? error.message : 'UI reconnect failed'}; Home census status=${census.status}, enrolled=${Boolean(enrolled)}, active=${enrolled?.active === true}`);
+  }
+}, 0);
 
-afterAll(async () => {
-  try { await ui?.close(); } finally { await fixture?.stop(); }
-});
+afterEach(async () => {
+  try { await ui?.close(); } finally { ui = undefined; }
+}, 0);
+afterAll(async () => { await fixture?.stop(); }, 0);
 
-async function action(id: Parameters<NonNullable<typeof ui>['executeConfirmed']>[0], input: unknown) {
+async function executeAction(id: Parameters<NonNullable<typeof ui>['executePresented']>[0], input: unknown) {
   if (!ui) throw new Error('Person Action connection unavailable');
-  const result = await ui.executeConfirmed(id, input, { surface: 'ui', authority: 'present_user', serverId: ui.serverId, actionCaller: { kind: 'host' } });
+  return await ui.executePresented(id, input, { surface: 'ui', authority: 'present_user', serverId: ui.serverId,
+    actionRequestId: randomUUID(), actionCaller: { kind: 'host' } });
+}
+
+async function action(id: Parameters<NonNullable<typeof ui>['executePresented']>[0], input: unknown) {
+  const result = await executeAction(id, input);
   expect(result.ok, JSON.stringify(result)).toBe(true);
   if (!result.ok) throw new Error(result.errorCode);
   return result.result;
@@ -107,7 +137,20 @@ it.skipIf(process.platform === 'win32').each(cases)('remembers setup consent the
   expect(opened.kind).toBe('opened');
   if (opened.kind !== 'opened') throw new Error('Project did not open');
   const workspace = opened.workspace;
-  const prepare = async () => ProjectCommandActionOutputV1Schema.parse(await action('projects.prepare', { workspace, phase: 'setup' })).operation;
+  const projectId = opened.facts?.projectKey;
+  if (!projectId) throw new Error('Opened Project identity unavailable');
+  const trust = async () => PROJECT_ACTION_OUTPUT_SCHEMAS_V1['projects.trust.list'].parse(await action('projects.trust.list', {
+    project: { serverId: ui!.serverId, projectId },
+  })).trust;
+  // The CLI requester passes its real Inbox review before its setup operation
+  // can hold for the person's separate This time / Remember decision in the UI.
+  // An initial own-UI press already consents to this invocation's setup effect.
+  const prepare = async () => {
+    const result = await account.executeReviewed('projects.prepare', { workspace, phase: 'setup' });
+    expect(result.ok, JSON.stringify(result)).toBe(true);
+    if (!result.ok) throw new Error(result.errorCode);
+    return ProjectCommandActionOutputV1Schema.parse(result.result).operation;
+  };
   // The same checkout/principal first completes an ordinary supported setup.
   // A later refusal is meaningful only after this real control has succeeded.
   const control = await prepare();
@@ -117,6 +160,7 @@ it.skipIf(process.platform === 'win32').each(cases)('remembers setup consent the
     expectedEffectDigest: controlReview.setupReview!.reviewedEffectDigest, consentScope: 'thisTime' });
   await waitFor(async () => (await observe(control.operationId)).state === 'succeeded', { context: 'same-fixture known-good setup control' });
   expect(await readFile(join(root, 'control-effects'), 'utf8')).toBe('control');
+  expect(await trust()).toEqual([]);
   await writeFile(manifestPath, JSON.stringify(manifest));
   const first = await prepare();
   const pending = await settledOrReview(first.operationId);
@@ -126,6 +170,7 @@ it.skipIf(process.platform === 'win32').each(cases)('remembers setup consent the
     expectedEffectDigest: digest, consentScope: 'untilChanged' });
   await waitFor(async () => (await observe(first.operationId)).state === 'succeeded', { context: 'approved setup succeeds' });
   expect(await readFile(join(root, 'effects'), 'utf8')).toBe('original');
+  expect(await trust()).toMatchObject([{ value: { reviewedEffectDigest: digest } }]);
 
   const remembered = await settledOrReview((await prepare()).operationId);
   expect(remembered.state).toBe('succeeded');
@@ -140,15 +185,19 @@ it.skipIf(process.platform === 'win32').each(cases)('remembers setup consent the
   expect(await readFile(join(root, 'effects'), 'utf8')).toBe('original');
   // A stale approval must not execute the new bytes. The next explicit person
   // decision uses the current review, so the journey proves recovery too.
-  await action('projects.prepare', { workspace, phase: 'setup', heldOperationId: changed.operationId,
+  const staleApproval = await executeAction('projects.prepare', { workspace, phase: 'setup', heldOperationId: changed.operationId,
     expectedEffectDigest: digest, consentScope: 'thisTime' });
+  expect(staleApproval).toMatchObject({ ok: false, errorCode: 'project_setup_effect_changed' });
   const refused = await observe(changed.operationId);
-  expect(refused.setupReview?.code).toBe('project_setup_effect_changed');
+  expect(refused.state).not.toBe('succeeded');
+  expect(refused.setupReview?.reviewedEffectDigest).toBe(changed.setupReview!.reviewedEffectDigest);
   expect(await readFile(join(root, 'effects'), 'utf8')).toBe('original');
+  expect(await trust()).toMatchObject([{ value: { reviewedEffectDigest: digest } }]);
   await action('projects.prepare', { workspace, phase: 'setup', heldOperationId: changed.operationId,
     expectedEffectDigest: refused.setupReview!.reviewedEffectDigest, consentScope: 'untilChanged' });
   await waitFor(async () => (await observe(changed.operationId)).state === 'succeeded', { context: 'changed setup succeeds after fresh consent' });
   expect(await readFile(join(root, 'effects'), 'utf8')).toBe('originalchanged');
+  expect(await trust()).toMatchObject([{ value: { reviewedEffectDigest: refused.setupReview!.reviewedEffectDigest } }]);
   if (scenario.name === 'literal script') {
     await expect(readFile(join(root, 'teardown-effects'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     const teardown = ProjectCommandActionOutputV1Schema.parse(await action('projects.prepare', { workspace, phase: 'teardown' })).operation;
@@ -158,4 +207,4 @@ it.skipIf(process.platform === 'win32').each(cases)('remembers setup consent the
     expect(await readFile(join(root, 'teardown-effects'), 'utf8')).toBe('removed');
     expect(await readFile(join(root, 'effects'), 'utf8')).toBe('originalchanged');
   }
-});
+}, 0);

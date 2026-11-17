@@ -3,7 +3,7 @@ import { createDeferred, createMachineFixture, countStoreNotifications, flushHoo
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, createServerAccountConnectionProbeHttpResponse, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { storage } from '@/sync/domains/state/storage';
 import { publishMachineContributionRegistryProjectionRefresh, publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
@@ -20,6 +20,7 @@ import { projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/m
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
+import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -33,6 +34,76 @@ afterEach(async () => {
 });
 
 describe('Machine census membership through public Sync and real stores', () => {
+    describe('cold UI restore across the real per-test device reset', () => {
+        const accountId = 'cold-ui-census-account';
+        const serverUrl = 'https://cold-ui-census.example.test';
+        const homeIdentityId = normalizeServerIdentityIdCapability('srv_cold_ui_census');
+        if (!homeIdentityId) throw new Error('Cold restore fixture requires a valid Home identity');
+        const secret = new Uint8Array(32).fill(73);
+        let row: import('@/sync/engine/machines/syncMachines').FetchedMachineRow;
+        let firstRestoreCompleted = false;
+        beforeAll(async () => {
+            const publisher = await Encryption.create(secret);
+            const key = new Uint8Array(32).fill(74);
+            const envelope = encodeBase64(await publisher.encryptEncryptionKey(key), 'base64');
+            const fixture = createMachineFixture({ id: 'cold-ui-census-machine', active: true, activeAt: Date.now(),
+                daemonState: { status: 'running' } });
+            const codec = await publisher.openEncryption(key);
+            const [metadata, daemonState] = await codec.encrypt([fixture.metadata, fixture.daemonState]);
+            row = { ...createPlainMachineRowFixture({ id: fixture.id, accountId, machine: fixture }),
+                metadata: encodeBase64(metadata!, 'base64'), daemonState: encodeBase64(daemonState!, 'base64'),
+                storageMode: 'e2ee', dataEncryptionKey: envelope,
+                keyBasis: { dataEncryptionKey: envelope, metadataVersion: fixture.metadataVersion, daemonStateVersion: fixture.daemonStateVersion },
+                access: AccessibleMachineAccessV1Schema.parse({ custodian: { accountId, displayName: 'Test Account' },
+                    role: 'manage', resourceMode: 'e2ee', accessState: 'ready' }) };
+        });
+
+        // Separate cases deliberately use the production Vitest beforeEach device
+        // reset. A same-test reconnect would omit the failing lifetime boundary.
+        it.each([0, 1])('restore %i publishes the retained Home Machine', async attempt => {
+            if (attempt === 1) expect(firstRestoreCompleted).toBe(true);
+            const credentials = { token: `e30.${btoa(JSON.stringify({ sub: accountId, attempt }))}.signature`,
+                secret: encodeBase64(secret, 'base64url') };
+            const boundary = installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary, {
+                serverUrl, token: credentials.token,
+            });
+            const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+            setRuntimeFetch(async (input, init) => {
+                const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+                if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({
+                    capabilities: { serverIdentity: { serverIdentityId: homeIdentityId } },
+                }));
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(createLegacyAccountEncryptionCurrentnessFixture({ secret }));
+                if (path === '/v1/machines') return Response.json([row]);
+                return createServerAccountConnectionProbeHttpResponse(path)
+                    ?? createEmptyAccountBootstrapHttpResponse(path, init)
+                    ?? new Response('{}', { status: 404 });
+            });
+            const { connectUiActionClient } = await import('@/dev/testkit/actionClientIntegrationTestkit');
+            disposeHome = async () => { boundary.dispose(); };
+            const client = await connectUiActionClient({ serverUrl, credentials });
+            disposeHome = async () => { try { await client.close(); } finally { boundary.dispose(); } };
+            const { getServerProfileById } = await import('@/sync/domains/server/serverProfiles');
+            expect(getServerProfileById(client.serverId)?.serverIdentityId).toBe(homeIdentityId);
+            // The person client's mounted UI reads its credential from this
+            // learned Home scope after the basic connection has bootstrapped.
+            const { TokenStorage, areCredentialsEqual } = await import('@/auth/storage/tokenStorage');
+            expect(areCredentialsEqual(await TokenStorage.getCredentialsForServerUrl(serverUrl), credentials)).toBe(true);
+            const { sync } = await import('@/sync/sync');
+            const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
+            const { readScopedAccountEncryption } = await import('@/sync/encryption/scopedAccountEncryption');
+            const owner = readScopedAccountEncryption(client.serverId);
+            expect(getSyncSingleton()).toBe(sync);
+            expect(sync.encryption).toBe(owner);
+            expect(owner?.getMachineEncryptionContext(row.id)?.isCurrent()).toBe(true);
+            expect(storage.getState().machines[row.id]).toMatchObject({ availability: { kind: 'available' },
+                daemonState: { status: 'running' } });
+            expect(client.isMachineActive(row.id)).toBe(true);
+            firstRestoreCompleted = true;
+        });
+    });
+
     it.each(['plain', 'e2ee'] as const)('keeps a fresh %s embed Machine wake inside its existing Session corridor without repeating the initial snapshot', async (encryptionMode) => {
         const { sync } = await import('@/sync/sync');
         const { createEmbedEncryption } = await import('@/embed/encryption/createEmbedEncryption');
