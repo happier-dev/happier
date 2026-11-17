@@ -101,7 +101,18 @@ describe('Voice Run MCP provisioning occurrence', () => {
       throw new Error(`Unexpected fixture Home request: ${new URL(String(url)).pathname}`);
     });
     const resource = 'https://mcp.example.test/voice';
-    const settings = accountSettingsParse({ mcpServersStrictMode: true });
+    // Both carriers consume this Account's explicit Agent tool policy.
+    const settings = accountSettingsParse({
+      mcpServersStrictMode: true,
+      actionsSettingsV1: { v: 1, actions: {
+        'approval.request.decide': { disabledSurfaces: ['agent'] },
+        'settings.list': { toolExposureModes: { agent: 'direct' } },
+        'settings.get': { toolExposureModes: { agent: 'direct' } },
+        'settings.set': { toolExposureModes: { agent: 'direct' } },
+        'settings.reset': { toolExposureModes: { agent: 'direct' } },
+        'settings.invoke': { toolExposureModes: { agent: 'direct' } },
+      } },
+    });
     const snapshot = { source: 'network' as const, settings, rawSettings: {}, settingsVersion: 1, loadedAtMs: 1,
       settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(fixtureCredentials.token),
       mcpServerCatalog: { status: 'ready' as const, authority: 'active' as const, revision: 1, diagnostics: [], catalog: { v: 1 as const,
@@ -376,6 +387,7 @@ describe('Voice Run MCP provisioning occurrence', () => {
         }),
         resolveExecutionRunProfileCatalog: async () => ({ profileCatalog, engineRegistry }) });
       const started = await bridge.start({ sessionId: parent.sessionId, intent: 'voice_agent', backendTarget: { kind: 'builtInAgent', agentId },
+        accountSettings: settings,
         permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
         chatModelId: 'voice-model', commitModelId: 'default', bootstrapMode: 'ready_handshake', initialContextMode: 'first_turn', connectedServices: null });
       expect(started).not.toHaveProperty('actionInvocation');

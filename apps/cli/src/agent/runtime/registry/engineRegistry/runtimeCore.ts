@@ -714,6 +714,12 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                             ? async ({ services: fallbackServices, signal: runtimeSignal, onInteractionUnavailable, readActiveTurnAdmissionWitness, readSessionRuntime, actionRequestAttributionV1 }) => {
                                     const sourceLifetime = new AbortController();
                                     const signal = AbortSignal.any([runtimeSignal, sourceLifetime.signal]);
+                                    // Retained Runs omit Account settings; acquire the current
+                                    // snapshot once with their native Session context.
+                                    const accountSettings = options.accountSettings
+                                        ?? (await options.resolveAccountSettingsSnapshot?.({ signal }))?.settings
+                                        ?? {};
+                                    signal.throwIfAborted();
                                     const sessionId = host.session.sessionId;
                                     const contributionId = runtimeLease.localAgentId;
                                     // A Session-owned Run writes into its own sidechain. The bridge's
@@ -776,9 +782,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                             session: host.session,
                                             machineId: host.machineId,
                                             resolveAccountSettingsSnapshot: options.resolveAccountSettingsSnapshot,
-                                            ...(options.accountSettings !== undefined
-                                                ? { accountSettings: options.accountSettings }
-                                                : {}),
+                                            accountSettings,
                                             permissionHandler: executionPermissionHandler ?? host.permissionHandler,
                                             readResolvedMcpServers: () => runToolBinding?.resolvedMcpServers ?? [],
                                             resolveMcpToolNaming: async (request, options) => runToolBinding?.resolveMcpToolNaming
@@ -916,7 +920,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                             readToolExecutionCapability: () => (
                                                 nativeAgentRuntime.toolExecution?.capability ?? null
                                             ),
-                                            accountSettings: options.accountSettings ?? {},
+                                            accountSettings,
                                             readCodingPromptBehavior: () => host.readCodingPromptBehavior?.() ?? null,
                                             sessionMachineId: host.machineId,
                                             ...(sessionOwners.terminalHost

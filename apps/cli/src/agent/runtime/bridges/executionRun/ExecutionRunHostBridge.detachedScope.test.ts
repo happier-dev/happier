@@ -490,7 +490,8 @@ describe('ExecutionRunHostBridge detached task scope', () => {
         requestId: permissionRequestId,
         status: 'approved',
         decision: 'approved',
-        answers: { 'Which branch?': ['dev'] },
+        extraCompletedFields: { decision: 'approved', answers: { 'Which branch?': ['dev'] } },
+        structuredAnswersV1: { 'Which branch?': ['dev'] },
       });
       expect(observedStores[0]?.readOutstandingRequest?.(permissionRequestId)).toBeNull();
       expect(observedStores[1]?.readOutstandingRequest?.(permissionRequestId)).toEqual(outstandingB);
@@ -521,6 +522,7 @@ describe('ExecutionRunHostBridge detached task scope', () => {
         requestId: booleanPermissionRequestId,
         status: 'approved',
         decision: 'approved',
+        extraCompletedFields: { decision: 'approved' },
       });
 
       outstandingB = null;

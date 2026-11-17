@@ -70,7 +70,7 @@ it('admits a Voice Run once and forwards two spoken turns without reevaluating b
     const otherConnectionId = ProviderConnectionIdSchema.parse('other-connection');
     let manager: InstanceType<typeof ExecutionRunHostBridge> | null = null;
     let sourceOpens = 0;
-    let consumerAdmissions = 0;
+    let consumerLivenessChecks = 0;
     let sourceAuthorityReads = 0;
     let consumerClosed = false;
     let runSignal: AbortSignal | null = null;
@@ -119,7 +119,7 @@ it('admits a Voice Run once and forwards two spoken turns without reevaluating b
                 },
                 resolveBindingIntent: purposeResolver,
                 admitConsumer: async request => {
-                    consumerAdmissions++;
+                    consumerLivenessChecks++;
                     return await isCurrent()
                         && request.executionRunOccurrenceId === executionRunOccurrenceId
                         && manager!.resolveLiveBrokerAuthority({ v: 1, executionRunId,
@@ -193,13 +193,13 @@ it('admits a Voice Run once and forwards two spoken turns without reevaluating b
             result: manager.getLatestToolResult(started.runId), sourceOpens })).toMatchObject({ intent: 'voice_agent', status: 'running' });
         expect(differentProviderAuthority).toMatchObject({ status: 'not_current', reason: 'identity_mismatch' });
         expect(sourceOpens).toBe(1);
-        expect(consumerAdmissions).toBeGreaterThan(0);
+        expect(consumerLivenessChecks).toBeGreaterThan(0);
         expect(sourceAuthorityReads).toBeGreaterThan(0);
         expect(providerRequests).toHaveLength(0);
-        const turnAuthorityEvaluations: { consumerAdmissions: number; sourceAuthorityReads: number }[] = [];
+        const turnAuthorityEvaluations: { consumerLivenessChecks: number; sourceAuthorityReads: number }[] = [];
         for (const [index, message] of ['First spoken question', 'Second spoken question'].entries()) {
             phase = `spoken turn ${index + 1}`;
-            const admittedCounts = { consumerAdmissions, sourceAuthorityReads };
+            const admittedCounts = { consumerLivenessChecks, sourceAuthorityReads };
             const stream = ExecutionRunTurnStreamStartResponseSchema.parse(await manager.startTurnStream(started.runId,
                 { message, userTranscript: { mode: 'suppress' } }));
             let read = ExecutionRunTurnStreamReadResponseSchema.parse(await manager.readTurnStream(started.runId,
@@ -213,7 +213,7 @@ it('admits a Voice Run once and forwards two spoken turns without reevaluating b
             expect(JSON.stringify(events)).toContain('Managed Voice reply');
             expect(providerRequests).toHaveLength(index + 1);
             expect(providerRequests[index]).toContain(message);
-            turnAuthorityEvaluations.push({ consumerAdmissions: consumerAdmissions - admittedCounts.consumerAdmissions,
+            turnAuthorityEvaluations.push({ consumerLivenessChecks: consumerLivenessChecks - admittedCounts.consumerLivenessChecks,
                 sourceAuthorityReads: sourceAuthorityReads - admittedCounts.sourceAuthorityReads });
             expect(sourceOpens).toBe(1);
             expect(manager.get(started.runId)).toMatchObject({ intent: 'voice_agent', status: 'running' });
@@ -229,9 +229,11 @@ it('admits a Voice Run once and forwards two spoken turns without reevaluating b
             .toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
         expect(providerRequests).toHaveLength(2);
         expect(manager.resolveLiveBrokerAuthority({ v: 1, executionRunId: started.runId, expectedOccurrenceId: null })).toMatchObject({ status: 'not_current', reason: 'terminal' });
+        // Each HTTP call checks only the admitted Run's local active witness;
+        // neither call reacquires the source or evaluates its authority again.
         expect(turnAuthorityEvaluations).toEqual([
-            { consumerAdmissions: 0, sourceAuthorityReads: 0 },
-            { consumerAdmissions: 0, sourceAuthorityReads: 0 },
+            { consumerLivenessChecks: 1, sourceAuthorityReads: 0 },
+            { consumerLivenessChecks: 1, sourceAuthorityReads: 0 },
         ]);
     } finally {
         await manager?.dispose();

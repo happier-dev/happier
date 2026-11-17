@@ -7,6 +7,11 @@ import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+
+// The publication fixture imports fs; load it before replacing that OS boundary.
+const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () => (
+  import('@/plugins/projection/registry/builtIn/locators.testkit')
+));
 import { readBackendTargetRefV2 } from '@happier-dev/protocol';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
@@ -29,7 +34,6 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
 }));
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
-  const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
   return createBundledPluginPublicationFsFixture(actual);
 });
 

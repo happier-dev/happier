@@ -1144,6 +1144,7 @@ async function startAdmittedExecutionRunInWorkspace(
                 ? { secretReferenceEnvironment: initialSecretReferenceEnvironment }
                 : {}),
               permissionMode: permissionIntent,
+              accountSettings: args.params.accountSettings ?? null,
               workspaceWrites: args.params.workspaceWrites,
               ...(args.params.causalPermissionAuthority
                 ? { causalPermissionAuthority: args.params.causalPermissionAuthority }

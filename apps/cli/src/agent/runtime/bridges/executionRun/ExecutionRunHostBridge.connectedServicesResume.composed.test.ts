@@ -33,6 +33,8 @@ import { createSessionFixture } from '../../../../../../ui/sources/dev/testkit/f
 import { normalizeVoiceSettingsLocalDelta } from '../../../../../../ui/sources/sync/domains/settings/voiceSettingsPersistence';
 import { readLocalConversationVoiceSettings, writeVoiceProviderSettingsConfig } from '../../../../../../ui/sources/sync/domains/settings/voiceSettings';
 import { createRpcCallError } from '../../../../../../ui/sources/sync/runtime/rpcErrors';
+import { absentAccountPluginAvailabilityHttpResponse } from '@/testkit/http/accountPluginAvailability';
+import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 // The CLI harness has no native theme runtime. Keep the UI owners real beneath
 // the same canonical platform boundary used by the existing composed Voice tests.
@@ -109,12 +111,15 @@ describe('connected execution-run resume custody', () => {
   it('attests backend and voice resumes and publishes only their successfully resumed registrations', async () => {
     let intent: 'agent' | 'voice_agent' = 'agent';
     transport.materialize.mockClear();
-    // This authenticated fixture has no Home data to fetch. Every transport
-    // outside its daemon/provider boundary fails immediately, never reaching
-    // a live Account with the fixture token.
+    // The fixture Home has no installed Account plugins. Other Home requests
+    // fail immediately rather than reaching a live Account with this token.
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => { throw new Error('Unexpected fixture Home request'); }));
     vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected fixture Home request'));
-    vi.spyOn(axios, 'post').mockRejectedValue(new Error('Unexpected fixture Home request'));
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      const availability = absentAccountPluginAvailabilityHttpResponse(String(url), body);
+      if (availability) return availability;
+      throw new Error('Unexpected fixture Home request');
+    });
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     const disclosedMember = { service, accountId: 'member' };
     let failLoad = false;
@@ -248,6 +253,12 @@ describe('connected execution-run resume custody', () => {
     const agent = { pluginId: plugin.manifest.id, localId: 'agent' };
     const agentId = `${agent.pluginId}/${agent.localId}`;
     const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController, happyHomeDir: directory,
+      runtimeOptions: { agentIsolation: {
+        requesterIdentity: selectHostRequesterExecutionIdentity({ hostHomeServerIdentityId: 'fixture-home',
+          hostAccountAgent: { accountId: 'fixture-account', custodianAccountId: 'fixture-account',
+            machineId: 'fixture-machine', installationId: 'fixture-installation' } }),
+        read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }),
+      } },
       plugins: [{ manifest: plugin.manifest, files: {
         'agent-runtime.mjs': `let open, openSession, openConversation; export function configure(callback, sessionCallback, conversationCallback) { open = callback; openSession = sessionCallback; openConversation = conversationCallback; }
           export function createRuntime() { return { sessions: {
@@ -391,7 +402,12 @@ describe('connected execution-run resume custody', () => {
             ? { source: 'team_resource' as const, resourceId: 'direct-resource', deliveryMode: 'direct' as const, disclosedMember }
             : { source: 'connected' as const, selection: 'profile' as const, profileId: 'voice-profile' }),
         } } } });
-      await providerOpened;
+      await Promise.race([
+        providerOpened,
+        bridge.waitForTerminal(started.runId).then(() => {
+          throw new Error(`Provider failed before opening: ${JSON.stringify(bridge!.get(started.runId)?.error)}`);
+        }),
+      ]);
       for (const occurrence of materializationOccurrences) {
         expect(occurrence.actual).toEqual(expect.any(String));
         expect(occurrence.actual).toBe(occurrence.expected);

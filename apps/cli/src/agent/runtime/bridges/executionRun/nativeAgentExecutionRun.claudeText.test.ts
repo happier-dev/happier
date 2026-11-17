@@ -110,14 +110,18 @@ it.each(['off', 'standard'] as const)('settles consecutive Claude SDK quota fail
             idleTtlSeconds: 60, initialContext: '' });
         let expectedProcesses = 0;
         for (const attempt of [1, 2]) {
+            const promptsBeforeTurn = readNativePromptCount();
             const { streamId } = await manager.startTurnStream({ voiceAgentId, userText: `Question ${attempt}` });
-            expectedProcesses += 1;
+            // Successful recovery retains its SDK query for the next ordinary
+            // turn; a terminal quota with continuation off closes that query.
+            if (attempt === 1 || resumeMode === 'off') expectedProcesses += 1;
             await vi.waitFor(() => expect(sdk.processes).toHaveLength(expectedProcesses));
+            await vi.waitFor(() => expect(readNativePromptCount()).toBe(promptsBeforeTurn + 1));
             const process = sdk.processes.at(-1)!;
             await vi.waitFor(() => expect(process.written).toContainEqual(expect.objectContaining({ type: 'user' })));
             // The process transport fixture carries unknown vendor JSON.
-            const submitted = process.written.find(record => record !== null && typeof record === 'object'
-                && 'type' in record && record.type === 'user') as { message: { content: string } };
+            const submitted = process.written.filter(record => record !== null && typeof record === 'object'
+                && 'type' in record && record.type === 'user').at(-1) as { message: { content: string } };
             persistedPrompt = submitted.message.content;
             await sdk.emitSessionHook('native-consecutive-quota', { hook_event_name: 'SessionStart',
                 source: attempt === 1 ? 'startup' : 'resume', transcript_path: '/tmp/claude-consecutive-quota/native.jsonl' });
@@ -197,8 +201,10 @@ it.each(['off', 'standard'] as const)('settles consecutive Claude SDK quota fail
             expect.objectContaining({ status: 'failed', reason: 'continuation_disabled' }),
         ] : [expect.objectContaining({ status: 'continue' }), expect.objectContaining({ status: 'continue' })]);
         expect(new Set(recoveryDecisions.map(result => result.turnId)).size).toBe(2);
+        const promptsBeforeNextTurn = readNativePromptCount();
         const { streamId } = await manager.startTurnStream({ voiceAgentId, userText: 'Next question' });
-        await vi.waitFor(() => expect(sdk.processes).toHaveLength(expectedProcesses + 1));
+        await vi.waitFor(() => expect(readNativePromptCount()).toBe(promptsBeforeNextTurn + 1));
+        expect(sdk.processes).toHaveLength(expectedProcesses + (resumeMode === 'off' ? 1 : 0));
         await sdk.processes.at(-1)!.emit({ type: 'result', subtype: 'success', is_error: false,
             session_id: 'native-consecutive-quota', result: 'The next turn completed.' });
         await vi.waitFor(async () => expect(await manager.readTurnStream({ voiceAgentId, streamId,
@@ -345,6 +351,7 @@ it.each([
     // Only the vendor process/stdio boundary is replaced. SDK decoding, native
     // Run events, host accumulation and completed-input publication are real.
     const exec = {
+        readEnvironment: () => ({}),
         systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'claude-cli' }, executablePath: '/managed/claude' }) },
         clients: { spawn: async () => {
             const handle = await sdk.service.spawnClient({ launch: { kind: 'agent-cli', agentId: 'claude' },
@@ -403,11 +410,12 @@ it.each([
     }));
     const text = quota ? "You've hit your weekly limit · resets Nov 10, 9pm (Europe/Amsterdam)" : 'BACKGROUND DONE';
     try {
-        await expect(sendBackendLongLivedRun({ runId, params: { message: 'Return the marker', localInputId: 'exact-input' },
+        const admission = await sendBackendLongLivedRun({ runId, params: { message: 'Return the marker', localInputId: 'exact-input' },
             runs, controllers, budgetRegistry: null, createRuntime: () => host, maxTurns: null, getNowMs: () => 2,
             finishRun: async () => {}, sendAcp: async () => {}, parentProvider: 'claude', streamedTranscriptSession: null,
             writeActivityMarker: async () => {},
-        })).resolves.toEqual({ ok: true });
+        });
+        expect(admission, JSON.stringify(admission)).toEqual({ ok: true });
         if (streamed) {
             for (const delta of ['BACKGROUND ', 'DONE']) {
                 await sdk.emit({ type: 'stream_event', uuid: `delta-${delta}`, session_id: 'native-claude', parent_tool_use_id: null,

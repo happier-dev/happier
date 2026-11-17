@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
+// The publication fixture imports fs; load it before replacing that OS boundary.
+const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () => (
+  import('@/plugins/projection/registry/builtIn/locators.testkit')
+));
+
 import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import { captureExecutionRunResumeMaterialization, resumeBackendControllerForResumableRun,
@@ -13,7 +18,6 @@ import { ExecutionRunConnectedServicesError } from './runtime/connectedServicesE
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
-  const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
   return createBundledPluginPublicationFsFixture(actual);
 });
 
