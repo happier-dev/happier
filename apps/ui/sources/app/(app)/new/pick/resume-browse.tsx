@@ -250,8 +250,8 @@ function ResumeBrowsePickerScreenContent(props: Readonly<{
                             testID="external-sessions-browse-route-unavailable"
                             kind="unavailable"
                             accessibilitySemantics="alert"
-                            title={t('common.unavailable')}
-                            reason={t('externalSessions.browseRouteAvailabilityUnknownSubtitle')}
+                            // One message: Retry and Close below are the next steps, so the copy does not repeat them.
+                            title={t('externalSessions.browseRouteAvailabilityUnknownTitle')}
                             diagnosticCode={inventory.reason}
                             action={{ label: t('common.retry'), onPress: inventory.retry }}
                             secondaryAction={{
