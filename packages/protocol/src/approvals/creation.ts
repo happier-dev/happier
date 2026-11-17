@@ -8,8 +8,6 @@ import { ApprovalRequestSchema, isHistoricalPublishApprovalRequestV2, type Appro
 import { settleApprovalRequestReplayInputs } from './approvalRequestTransition.js';
 import { TargetActionApprovalRequestV1Schema, type TargetActionApprovalRequestV1 } from './targetActionApprovalRequestV1.js';
 import { targetActionApprovalSubjectsEqual, settleTargetActionApprovalReplayInputs } from './targetActionApprovalRequestTransition.js';
-import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
-import { formatQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 
 type StoredArtifact = Readonly<{ header: Readonly<Record<string, unknown>>; body: unknown; access?: string }>;
 type CreationRequest = CurrentApprovalRequest | TargetActionApprovalRequestV1;
@@ -116,18 +114,11 @@ function deriveApprovalRequestSourceIdForSubject(request: CapturedRequest, origi
     accountId: accountId ?? origin.accountId ?? '',
     requesterId: request.requesterConfirmation?.requesterAccountId ?? origin.principalId ?? origin.accountId ?? '',
     requestId: publication ? JSON.stringify(['plugin_publication', publication.pluginId, publication.contributionLocalId, publication.localId, publication.requestInputDigest]) : origin.requestId,
-    actionId: isTargetActionRequest(request) ? request.qualifiedActionId : request.actionId,
+    // The invocation that awaits this Ask names it: a contributed target Ask
+    // belongs to its `action.invoke` origin, as Home's Ask purpose and the
+    // original-Account observer derive it. Children carry derived request ids.
+    actionId: origin.actionId,
     target });
-}
-
-/**
- * The Action whose Ask an invocation awaits. A contributed `action.invoke`
- * asks under its target Action, the identity its creation owner derives.
- */
-export function resolveApprovalRequestIdentityActionIdV1(actionId: string, input: unknown): string {
-  if (actionId !== 'action.invoke' || !input || typeof input !== 'object' || !('action' in input)) return actionId;
-  const action = PluginContributionIdentityV1Schema.safeParse(input.action);
-  return action.success ? formatQualifiedPluginActionId(action.data) : actionId;
 }
 
 /** Home and the Artifact creation owner share the same non-content identity. */

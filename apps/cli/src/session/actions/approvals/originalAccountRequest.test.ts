@@ -3,11 +3,7 @@ import { expect, it, onTestFinished, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
-import { deriveApprovalRequestSourceIdFromIdentityV1 } from '@happier-dev/protocol/approvals/creation';
-import { deriveAccountScopedArtifactIdV1 } from '@happier-dev/protocol/artifacts/idScope';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCliApprovalsArtifactStore } from './artifactStore';
@@ -17,14 +13,14 @@ const accountId = 'owner';
 const token = `fixture.${Buffer.from(JSON.stringify({ sub: accountId, session: 'terminal', tokenEpoch: 1,
   provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
 
-it.each(['deferred', 'blocking', 'target_durable', 'target_live_only'] as const)('presents original Account approval only through its %s flow owner', async flow => {
+it.each(['deferred', 'blocking', 'root_invoke_blocking', 'target_durable', 'target_live_only'] as const)('presents original Account approval only through its %s flow owner', async flow => {
   const socket = await createRequesterCurrentnessSocketHarness();
   onTestFinished(() => socket.close());
   const app = fastify();
   onTestFinished(() => app.close());
   const targetFlow = flow === 'target_durable' || flow === 'target_live_only';
-  const actionId = targetFlow ? 'action.invoke' : 'usage.sources.consent.set';
-  const input = targetFlow ? { action: { pluginId: 'acme.native', localId: 'write' }, input: { value: 'fixture' } }
+  const actionId = targetFlow || flow === 'root_invoke_blocking' ? 'action.invoke' : 'usage.sources.consent.set';
+  const input = actionId === 'action.invoke' ? { action: { pluginId: 'acme.native', localId: 'write' }, input: { value: 'fixture' } }
     : { serverId: 'srv_home', machineId: 'machine', sourceId: 'source' };
   const target = { kind: 'machine' as const, machineId: 'machine' };
   const homeId = 'srv_home';
@@ -72,21 +68,17 @@ it.each(['deferred', 'blocking', 'target_durable', 'target_live_only'] as const)
           actionId, requestId } }),
     }))).artifactId;
   } else {
-    artifactId = deriveAccountScopedArtifactIdV1(accountId, deriveApprovalRequestSourceIdFromIdentityV1({
-      homeId, accountId, requesterId: accountId, requestId, actionId, target,
-    }));
-    const request = ApprovalRequestV2Schema.parse({ v: 2, createdAtMs: 1, updatedAtMs: 1,
-      createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId, actionArgs: input,
-      summary: 'Stop usage collection', status: 'open', approval: { flow, result: 'required' },
-      executionOriginV1: { v: 1, serverId: 'local-home', serverIdentityId: homeId, accountId,
-        machineId: target.machineId, target, actionId, requestId, surface: 'cli',
-        authority: flow === 'deferred' ? 'account_automation' : 'present_user', caller: { kind: 'host' } },
-    });
-    rows.set(artifactId, { id: artifactId, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain', publicAudience: 'none',
-      header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(request)),
-      body: encodePlainArtifactStoredContent({ body: JSON.stringify(request) }),
-      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
-      seq: 1, createdAt: 1, updatedAt: 1 });
+    // A root built-in Ask, including the host's own `action.invoke` review,
+    // is created by the built-in producer under the same invocation origin.
+    artifactId = (await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => store.approvalsCreate({ serverId: 'local-home',
+      request: ApprovalRequestV2Schema.parse({ v: 2, createdAtMs: 1, updatedAtMs: 1,
+        createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId, actionArgs: input,
+        summary: 'Stop usage collection', status: 'open',
+        approval: { flow: flow === 'deferred' ? 'deferred' : 'blocking', result: 'required' },
+        executionOriginV1: { v: 1, serverId: 'local-home', serverIdentityId: homeId, accountId,
+          machineId: target.machineId, target, actionId, requestId, surface: 'cli',
+          authority: flow === 'deferred' ? 'account_automation' : 'present_user', caller: { kind: 'host' } },
+      }) }))).artifactId;
   }
   published = true;
   let observed!: () => void;
@@ -98,7 +90,7 @@ it.each(['deferred', 'blocking', 'target_durable', 'target_live_only'] as const)
   const lifetime = new AbortController();
   onTestFinished(() => lifetime.abort());
   const pending = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => executeOriginalAccountCliApprovalRequest({
-    actionId, input, requestId, homeId, accountId, target, token, serverHttpBaseUrl,
+    actionId, requestId, homeId, accountId, target, token, serverHttpBaseUrl,
     context: { surface: 'cli', authority: 'account_automation', runtimeAccountId: accountId, signal: lifetime.signal },
     execute: executor.execute,
     // Terminal presentation and the original Home HTTP response are the system
@@ -114,7 +106,7 @@ it.each(['deferred', 'blocking', 'target_durable', 'target_live_only'] as const)
     },
   }));
   await expect(pending).resolves.toEqual(proposal);
-  expect(presented).toHaveBeenCalledTimes(flow === 'blocking' || flow === 'target_live_only' ? 1 : 0);
-  if (flow === 'target_live_only') expect(presented.mock.calls[0]?.[0]).toBe(artifactId);
+  expect(presented).toHaveBeenCalledTimes(flow === 'deferred' || flow === 'target_durable' ? 0 : 1);
+  if (flow !== 'deferred' && flow !== 'target_durable') expect(presented.mock.calls[0]?.[0]).toBe(artifactId);
   expect(socket.clients.every(client => !client.active)).toBe(true);
 });

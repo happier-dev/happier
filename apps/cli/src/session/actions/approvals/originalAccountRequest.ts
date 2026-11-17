@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ActionExecuteResult, ActionExecutorContext, ExternalActionTargetV1 } from '@happier-dev/protocol';
 import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { deriveApprovalRequestSourceIdFromIdentityV1, resolveApprovalRequestIdentityActionIdV1 } from '@happier-dev/protocol/approvals/creation';
+import { deriveApprovalRequestSourceIdFromIdentityV1 } from '@happier-dev/protocol/approvals/creation';
 import { deriveAccountScopedArtifactIdV1 } from '@happier-dev/protocol/artifacts/idScope';
 import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { observeAccountChanges } from '@/api/observeAccountChanges';
@@ -10,7 +10,6 @@ import { executeLiveCliApprovalRequest, type CliApprovalRequestedHandler } from 
 /** Home retains the original private result; Account pushes expose only its existing Ask. */
 export async function executeOriginalAccountCliApprovalRequest(options: Readonly<{
   actionId: string;
-  input: unknown;
   requestId: string;
   homeId: string;
   accountId: string;
@@ -22,10 +21,11 @@ export async function executeOriginalAccountCliApprovalRequest(options: Readonly
   onApprovalRequested: CliApprovalRequestedHandler;
   run(signal: AbortSignal): Promise<ActionExecuteResult | null>;
 }>): Promise<ActionExecuteResult | null> {
+  // Every Ask this invocation awaits, built-in or contributed target, is
+  // identified by the invocation's own origin, as its creation owner derives it.
   const artifactId = deriveAccountScopedArtifactIdV1(options.accountId, deriveApprovalRequestSourceIdFromIdentityV1({
     homeId: options.homeId, accountId: options.accountId, requesterId: options.accountId,
-    requestId: options.requestId, actionId: resolveApprovalRequestIdentityActionIdV1(options.actionId, options.input),
-    target: options.target,
+    requestId: options.requestId, actionId: options.actionId, target: options.target,
   }));
   return await executeLiveCliApprovalRequest({ ...options, run: async (invocationSignal, notify) => {
     const lifetime = new AbortController();
