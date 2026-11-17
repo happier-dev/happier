@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
 import { resolveMachineIdForServerFromSettings } from '../../../../apps/cli/src/daemon/resolveMachineIdForServerFromSettings';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
@@ -112,6 +114,29 @@ describe('core e2e: machine installation identity replacement', () => {
         expect(await waitForFakeClaudeUserText(vendor.logPath, text => text.includes(message), { invocationId })).toContain(message);
       };
       await assertSessionControl(enrolled.target.machineId, 'before rotation');
+      // Inspect the real registration's recipient envelope, rather than a key
+      // supplied by this fixture. Account material opens it but must not be it.
+      const readPublishedKey = async (id: string) => {
+        const response = await fetchJson<{ machine: unknown }>(`${fixture!.server.baseUrl}/v1/machines/${id}`, {
+          headers: { Authorization: `Bearer ${account.auth.token}` },
+        });
+        expect(response.status).toBe(200);
+        const row = MachinePublishedRowV1Schema.parse(response.data.machine);
+        expect(row.storageMode).toBe('e2ee');
+        expect(typeof row.dataEncryptionKey).toBe('string');
+        const key = openEncryptedDataKeyEnvelopeV1({
+          envelope: Buffer.from(row.dataEncryptionKey!, 'base64'),
+          recipientSecretKeyOrSeed: account.auth.accountMachineKey,
+        });
+        expect(key).not.toBeNull();
+        expect(key).not.toEqual(account.auth.accountMachineKey);
+        expect(key).not.toEqual(account.auth.accountSigningSeed);
+        return { key, envelope: row.dataEncryptionKey };
+      };
+      const firstKey = await readPublishedKey(enrolled.target.machineId);
+      await enrolled.restart();
+      expect(await readPublishedKey(enrolled.target.machineId)).toEqual(firstKey);
+      await assertSessionControl(enrolled.target.machineId, 'after same-identity restart');
       // Leave no incumbent before exercising revoked-identity startup recovery.
       await enrolled.daemon.stop();
       const paired = { serverId: enrolled.cliServerId, machineId: enrolled.target.machineId };
@@ -136,6 +161,8 @@ describe('core e2e: machine installation identity replacement', () => {
       }, { timeoutMs: 60_000, context: 'rotated Machine persisted and control published' });
       if (!machineId) throw new Error('Registration did not publish its recovered Machine identity');
       await assertSessionControl(machineId, 'after rotation');
+      const replacementKey = await readPublishedKey(machineId);
+      expect(replacementKey.key).not.toEqual(firstKey.key);
     } finally {
       try { await ui?.close(); } finally {
         try { await daemon?.stop(); } finally {
