@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, type WorktreeRemovedEventV1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
@@ -96,7 +97,10 @@ it.each([
                 worktreePath: alias, ...(externallyRemoved
                     ? { missingWorktree: { physicalRootPath: captured, alreadyAbsent: true as const } }
                     : { skipCleanup: true }) };
-            await expect(prepareProjectCheckoutRemoval(removalInput)).rejects.toMatchObject({ code: 'workspace_root_in_use' });
+            const refusal = await prepareProjectCheckoutRemoval(removalInput).then(() => null, (error: unknown) => error);
+            // The live Action receiver classifies the original thrown exception.
+            // Operation-store diagnostics alone do not reach that receiver.
+            expect(normalizeActionExecutorThrownError(refusal)).toMatchObject({ errorCode: 'workspace_root_in_use' });
             expect(removals).toEqual([]);
             expect(JSON.parse(await readFile(statePath, 'utf8')).assignments[captured]).toEqual(before.assignments[captured]);
             expect(await service.stop()).toEqual({ status: 'stopped' });

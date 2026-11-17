@@ -1,7 +1,7 @@
 import { isPluginError } from '../plugins/errors.js';
 import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '../actions/actionExecutionResult.js';
 import { MachineAvailabilityDiagnosticV1Schema, type MachineAvailabilityDiagnosticV1 } from '../machines/machineAccessV1.js';
-import { FiniteCommandFailureDetailsV1Schema, type FiniteCommandFailureDetailsV1 } from '../actions/operations/finiteCommandFailureV1.js';
+import { readFiniteCommandFailureDetailsV1, type FiniteCommandFailureDetailsV1 } from '../actions/operations/finiteCommandFailureV1.js';
 import { SocketRpcAnsweringClientCandidatesV1Schema, type SocketRpcAnsweringClientCandidateV1 } from './answeringClient.js';
 
 export const MACHINE_RPC_TIMEOUT_ERROR_CODE = 'MACHINE_RPC_TIMEOUT';
@@ -102,8 +102,7 @@ export function createRpcCallError(opts: { error: string; errorCode?: string | n
   // Home owns availability; retain only its closed diagnostic, never infer one from the code.
   const availability = opts.errorCode === 'target_unavailable' && opts.details !== undefined
     ? MachineAvailabilityDiagnosticV1Schema.safeParse(opts.details) : undefined;
-  const finiteCommand = opts.errorCode === 'project_setup_step_failed' && opts.details !== undefined
-    ? FiniteCommandFailureDetailsV1Schema.safeParse(opts.details) : undefined;
+  const finiteCommand = readFiniteCommandFailureDetailsV1(opts.errorCode, opts.details);
   const clients = (opts.errorCode === 'client_ambiguous' || opts.errorCode === RPC_ERROR_CODES.CLIENT_AMBIGUOUS)
     && opts.details && typeof opts.details === 'object'
     ? SocketRpcAnsweringClientCandidatesV1Schema.safeParse('clients' in opts.details ? opts.details.clients : undefined) : undefined;
@@ -113,7 +112,7 @@ export function createRpcCallError(opts: { error: string; errorCode?: string | n
   if (typeof opts.effectAttempted === 'boolean') Object.assign(failure, { effectAttempted: opts.effectAttempted });
   if (availability?.success) return Object.assign(failure, { ok: false, errorCode: 'target_unavailable', error: opts.error, details: availability.data });
   if (clients?.success) return Object.assign(failure, { details: { clients: clients.data } });
-  return finiteCommand?.success ? Object.assign(failure, { details: finiteCommand.data }) : failure;
+  return finiteCommand ? Object.assign(failure, { details: finiteCommand }) : failure;
 }
 
 export function readRpcErrorCode(error: unknown): string | undefined {

@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { readFiniteCommandFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/finiteCommandFailureV1';
 import type { PileApplyResultV1, PileItemRefV1, StorageActorV1 } from '@happier-dev/protocol/storage/storageV1';
 import type { StorageCategoryAdapter, StorageCleanupItem } from './categories/types';
 import type { PileReviewDeps } from './reviewPile';
@@ -95,12 +97,24 @@ export async function applyPile(input: PileApplyInput, deps: PileApplyDeps): Pro
             return true;
         } catch (error) {
             const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
-            if (error instanceof PileFactError && code === 'storage_forbidden') {
+            const rpcCode = readRpcErrorCode(error);
+            if (rpcCode === 'workspace_root_in_use') {
+                result.outcomes.push({ itemId: checked.ref.itemId, status: 'refused',
+                    reason: { code: 'in_use', detail: { cause: rpcCode } } });
+            } else if (error instanceof PileFactError && code === 'storage_forbidden') {
                 result.outcomes.push({ itemId: checked.ref.itemId, status: 'refused', reason: error.reason });
             } else if (code === 'changed_since_review' || code === 'missing' || code === 'ENOENT' || code === 'facts_unavailable' || code === 'unauthorized' || code === 'policy_unavailable') {
                 result.outcomes.push({ itemId: checked.ref.itemId, status: 'skipped', reason: error instanceof PileFactError && error.reason
                     ? error.reason : { code: code === 'ENOENT' ? 'missing' : code } });
-            } else result.outcomes.push({ itemId: checked.ref.itemId, status: 'failed', reason: { code: 'operation_failed' } });
+            } else {
+                const finite = readFiniteCommandFailureDetailsV1(rpcCode,
+                    typeof error === 'object' && error !== null && 'details' in error ? error.details : undefined);
+                result.outcomes.push({ itemId: checked.ref.itemId, status: 'failed', reason: { code: 'operation_failed',
+                    ...(finite ? { detail: { cause: 'project_setup_step_failed', phase: finite.phase,
+                        ...(finite.step === undefined ? {} : { step: finite.step }),
+                        exitCode: finite.exitCode, signal: finite.signal } } : {}),
+                } });
+            }
             return false;
         }
     }

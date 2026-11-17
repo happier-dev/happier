@@ -1,3 +1,4 @@
+import { readFiniteCommandFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/finiteCommandFailureV1';
 import { isPluginError, type PluginErrorContractData } from '@happier-dev/protocol/plugins/errors';
 import { isScmRunStartRpcPurpose, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -1317,6 +1318,8 @@ export class RpcHandlerManager {
                     errorCode: rpcErrorCode ?? RPC_ERROR_CODES.UPDATE_REQUIRED });
             }
             const capabilityDetails = readCapabilityFailureDiagnostic(diagnostic.method, error);
+            const finiteDetails = readFiniteCommandFailureDetailsV1(rpcErrorCode,
+                error && typeof error === 'object' && 'details' in error ? error.details : undefined);
             const pluginError = isPluginError(error) ? error : null;
             const forwardedCause = ActionFailureCauseV1Schema.safeParse(
                 pluginError?.data.failureCause
@@ -1326,7 +1329,7 @@ export class RpcHandlerManager {
                 error: redactBugReportSensitiveText(capabilityDetails ? readOutcomeCode(error, true)
                     : error instanceof Error ? error.message : 'Unknown error'),
                 ...(rpcErrorCode ? { errorCode: rpcErrorCode } : {}),
-                ...(capabilityDetails ? { details: capabilityDetails } : {}),
+                ...(capabilityDetails || finiteDetails ? { details: capabilityDetails ?? finiteDetails } : {}),
                 failureCause: forwardedCause.success ? forwardedCause.data : projectActionFailureCauseV1(error, 'rpc.handler'),
             };
             const outcomeCode = readOutcomeCode(controller.signal.aborted ? controller.signal.reason : error, true);

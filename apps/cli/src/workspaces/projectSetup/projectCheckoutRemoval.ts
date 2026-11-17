@@ -1,5 +1,6 @@
 import type { BackendRuntimeContext } from '@happier-dev/plugin-sdk/scm/backend';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+import { createRpcCallError, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, type WorktreeRemovedEventV1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
@@ -62,7 +63,7 @@ export async function prepareProjectCheckoutRemoval(input: Readonly<{
         const services = lease.registry.projectManagedServices;
         if (!services) throw Object.assign(new Error('plugin_managed_service_unavailable'), { code: 'plugin_managed_service_unavailable' });
         if (!await services.isWorkspaceStopped(physicalRoot)) {
-            throw Object.assign(new Error('workspace_root_in_use'), { code: 'workspace_root_in_use' });
+            throw new RpcError('workspace_root_in_use', 'workspace_root_in_use');
         }
     } finally { await lease.release(); }
     let cleanup: ProjectCheckoutRemoval['cleanup'] = association ? 'completed' : 'unassociated';
@@ -76,7 +77,7 @@ export async function prepareProjectCheckoutRemoval(input: Readonly<{
         if (failure.success) {
             if (input.unattended && (failure.data.errorCode === 'project_setup_consent_required'
                 || failure.data.errorCode === 'project_setup_effect_changed')) cleanup = 'skipped';
-            else throw Object.assign(new Error(failure.data.error), { code: failure.data.errorCode, details: failure.data.details });
+            else throw createRpcCallError(failure.data);
         }
     } else if (association) cleanup = 'skipped';
     return { association, cleanup,

@@ -1,4 +1,6 @@
 import { appendFile, link, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import * as filesystem from 'node:fs/promises';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -14,6 +16,12 @@ import { createTrashStore } from './trash/trashStore';
 import { readStoragePathIdentity } from './trash/removeStoragePath';
 import { createActivityLog } from '@/daemon/guard/activityLog';
 import { bindFilesystemItem, filesystemAdapterForEntry } from './categories/filesystemAdapters';
+
+// Destructive filesystem IO is the OS boundary; review, adapters and settlement remain real.
+vi.mock('node:fs/promises', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>();
+    return { ...actual, rm: vi.fn(actual.rm) };
+});
 
 let disposeNative: (() => Promise<void>) | undefined;
 const actor: StorageActorV1 = { accountId: 'owner', kind: 'agent' };
@@ -184,6 +192,41 @@ describe.skipIf(process.platform === 'win32' && process.arch !== 'x64')('canonic
         const adapter = async (item: StorageCleanupItem): Promise<StorageCategoryAdapter> => bindFilesystemItem(item);
         return { candidates, deps, trash, adapter, fingerprints, verdicts, activityLog };
     }
+
+    it.each(['active', 'teardown', 'untyped'] as const)('retains completed items and the typed %s removal outcome', async kind => {
+        const f = await fixtures(`typed-removal-${kind}`);
+        const completed = join(f.candidates, 'completed'); const refused = join(f.candidates, 'refused');
+        await writeFile(completed, 'completed bytes'); await writeFile(refused, 'retained bytes');
+        const refs = [await ref(completed), await ref(refused)];
+        const store = createPileStore({ activeServerDir: join(scratch, `typed-pile-${kind}`) });
+        await store.set(actor.accountId, { add: refs }, actor);
+        const checked = await reviewPile(refs, f.deps);
+        const details = { kind: 'finiteCommand' as const, phase: 'teardown' as const, step: 1, exitCode: 7, signal: null };
+        const failure = kind === 'active' ? new RpcError('workspace_root_in_use', 'workspace_root_in_use')
+            : kind === 'teardown' ? Object.assign(new RpcError('PRIVATE_REMOVAL_SENTINEL', 'project_setup_step_failed'), { details })
+                : Object.assign(new Error('PRIVATE_REMOVAL_SENTINEL'), { code: 'workspace_root_in_use', details });
+        const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+        vi.mocked(filesystem.rm).mockImplementation(async (path, options) => {
+            if (String(path) === refused) throw failure;
+            await actual.rm(path, options);
+        });
+        try {
+            const result = PileApplyResultV1Schema.parse(await applyPile({ items: checked.items, mode: 'delete', actor,
+                custodianAccountId: 'owner', assertCurrentAuthority: async () => {} },
+            { ...f.deps, trashStore: f.trash, resolveAdapter: f.adapter, removeActed: store.removeActed }));
+            expect(result.outcomes).toEqual([
+                { itemId: completed, status: 'deleted' },
+                kind === 'active' ? { itemId: refused, status: 'refused', reason: { code: 'in_use', detail: { cause: 'workspace_root_in_use' } } }
+                    : { itemId: refused, status: 'failed', reason: { code: 'operation_failed', ...(kind === 'teardown'
+                        ? { detail: { cause: 'project_setup_step_failed', phase: 'teardown', step: 1, exitCode: 7, signal: null } } : {}) } },
+            ]);
+            expect(result.freedBytes).toBeGreaterThan(0);
+            expect(await readFile(refused, 'utf8')).toBe('retained bytes');
+            await expect(lstat(completed)).rejects.toMatchObject({ code: 'ENOENT' });
+            expect((await store.get(actor.accountId)).items.map(item => item.path)).toEqual([refused]);
+            expect(JSON.stringify(result)).not.toContain('PRIVATE_REMOVAL_SENTINEL');
+        } finally { vi.mocked(filesystem.rm).mockImplementation(actual.rm); }
+    });
 
     it('reviews one reduced union and ignores size growth in expect while rejecting identity/fingerprint changes', async () => {
         const f = await fixtures('review'); const folder = join(f.candidates, 'folder'); await mkdir(folder);

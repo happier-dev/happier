@@ -11,3 +11,10 @@ export const FiniteCommandFailureDetailsV1Schema = lazyZodSchema(() => z.strictO
   signal: z.nullable(z.number().check(z.int())),
 }));
 export type FiniteCommandFailureDetailsV1 = Readonly<z.infer<typeof FiniteCommandFailureDetailsV1Schema>>;
+
+/** The finite failure code and its closed scalar DTO travel together across receivers. */
+export function readFiniteCommandFailureDetailsV1(errorCode: unknown, details: unknown): FiniteCommandFailureDetailsV1 | undefined {
+  if (errorCode !== 'project_setup_step_failed') return undefined;
+  const parsed = FiniteCommandFailureDetailsV1Schema.safeParse(details);
+  return parsed.success ? parsed.data : undefined;
+}

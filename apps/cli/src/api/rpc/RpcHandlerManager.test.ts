@@ -1888,6 +1888,15 @@ describe('RpcHandlerManager.handleRequest (plaintext)', () => {
     rpc.registerHandler('demo.filesystemFailure', async () => {
       throw Object.assign(new Error('permission denied token=PRIVATE_TOKEN'), { code: 'EACCES' });
     });
+    const finiteDetails = { kind: 'finiteCommand' as const, phase: 'teardown' as const, step: 1, exitCode: 7, signal: null };
+    rpc.registerHandler('demo.teardownFailure', async () => {
+      throw Object.assign(new RpcError('project_setup_step_failed', 'project_setup_step_failed'), { details: finiteDetails });
+    });
+    rpc.registerHandler('demo.invalidTeardownFailure', async () => {
+      throw Object.assign(new RpcError('project_setup_step_failed', 'project_setup_step_failed'), {
+        details: { ...finiteDetails, output: 'PRIVATE_PLUGIN_DETAILS' },
+      });
+    });
     const producerCause = ActionFailureCauseV1Schema.parse({ phase: 'machine.setup.apply', errorClass: 'Error', errorCode: 'ENOSPC', httpStatus: null });
     rpc.registerHandler('demo.pluginFailure', async () => {
       throw new PluginError({ code: 'STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED', message: 'Provider acknowledgment pending token=PRIVATE_TOKEN',
@@ -1915,6 +1924,12 @@ describe('RpcHandlerManager.handleRequest (plaintext)', () => {
       errorCode: 'workspace_root_unsafe',
       failureCause: { phase: 'rpc.handler', errorClass: 'RpcError', errorCode: 'workspace_root_unsafe', httpStatus: null },
     });
+    await expect(invoke('demo.teardownFailure')).resolves.toMatchObject({
+      errorCode: 'project_setup_step_failed', details: finiteDetails,
+    });
+    const invalidFinite = await invoke('demo.invalidTeardownFailure');
+    expect(invalidFinite).toMatchObject({ errorCode: 'project_setup_step_failed' });
+    expect(invalidFinite).not.toHaveProperty('details');
     await expect(invoke('demo.pluginFailure')).rejects.toMatchObject({
       code: 'STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED', failureCause: producerCause,
       message: expect.stringContaining('Provider acknowledgment pending'),

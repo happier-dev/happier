@@ -1,5 +1,6 @@
 import type { core } from 'zod/mini';
 import { isRpcError } from '../../rpc/errors.js';
+import { readFiniteCommandFailureDetailsV1 } from '../operations/finiteCommandFailureV1.js';
 import { isPluginError } from '../../plugins/errors.js';
 import { readPluginActionError, readPluginActionFailureAuthorPayload } from '../../plugins/actions/invocation.js';
 import { ApprovalRequestConflict, ApprovalRequestInvalid } from '../../approvals/creation.js';
@@ -173,6 +174,10 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
   if (enrollmentFailure) return { errorCode: enrollmentFailure.code, error: enrollmentFailure.message,
     ...(enrollmentFailure.details ? { details: enrollmentFailure.details } : {}) };
   const rawDetails = errorRecord.details;
+  if (isRpcError(error)) {
+    const finite = readFiniteCommandFailureDetailsV1(error.rpcErrorCode, rawDetails);
+    if (finite) return { errorCode: error.rpcErrorCode, error: error.rpcErrorCode, details: finite };
+  }
   const details = rawDetails && typeof rawDetails === 'object'
     && Object.hasOwn(rawDetails, 'spawnResponse')
     && typeof (rawDetails as { spawnNonce?: unknown }).spawnNonce === 'string'
