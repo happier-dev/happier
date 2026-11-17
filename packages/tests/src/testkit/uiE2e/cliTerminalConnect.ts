@@ -4,9 +4,11 @@ import { resolve as resolvePath } from 'node:path';
 import {
   resolveCliTestLaunchSpec,
   resolveCliTestLaunchSpecOrOverride,
+  shouldUseCliSourceEntrypoint,
   type CliTestLaunchSpec,
 } from '../process/cliLaunchSpec';
 import { sanitizeCliTestEnv } from '../process/cliTestEnv';
+import { withWorkspaceSourceRuntime } from '../process/tsxImportHook';
 import {
   inspectOwnedProcess,
   registerProcessOwnershipLease,
@@ -246,7 +248,9 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   cliLaunchSpec?: CliTestLaunchSpec;
 }>): Promise<StartedCliTerminalConnect> {
   await mkdir(params.testDir, { recursive: true });
-  const sanitizedEnv = sanitizeCliTestEnv(params.env);
+  const sanitizedEnv = sanitizeCliTestEnv(shouldUseCliSourceEntrypoint(params.env)
+    ? withWorkspaceSourceRuntime(params.env)
+    : params.env);
   const currentOwnerInspection = inspectOwnedProcess(process.pid);
   if (currentOwnerInspection.ok) {
     await sweepProcessOwnershipLeases({
