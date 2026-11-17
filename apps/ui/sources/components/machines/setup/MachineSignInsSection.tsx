@@ -89,11 +89,24 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
     },
     [hostUser, props.machineId, props.machineName, props.serverId, terminalHost],
   );
-  // Only CLIs whose sign-in the Machine could read: one it can't check (today: not installed there) belongs to the
-  // Agents tab's install flow, not to a wall of "Couldn't check" rows here.
-  const rows = React.useMemo(() => signIns.items.filter((row) => row.authentication !== null
-    && (row.authentication.status !== 'unknown' || row.authentication.nativeLogin === 'unsupported')), [signIns.items]);
+  // The owner lists only CLIs installed on this Machine (512b12e307d); each row says what the Machine reported.
+  const rows = signIns.items;
   if (rows.length === 0) return null;
+  return <MachineSignInsList serverId={props.serverId} machineId={props.machineId} machineName={props.machineName}
+    rows={rows} editable={props.editable} onSignIn={(row) => { void open(row); }} />;
+});
+
+/** The rows themselves, drawn from the owner's reported rows; the section and its `/dev` specimen both mount it. */
+export const MachineSignInsList = React.memo(function MachineSignInsList(
+  props: Readonly<{
+    serverId: string;
+    machineId: string;
+    machineName: string;
+    rows: readonly MachineCliSignInRow[];
+    editable: boolean;
+    onSignIn: (row: MachineCliSignInRow) => void;
+  }>,
+) {
   return (
     <ItemGroup
       testID="machine-setup-sign-ins"
@@ -104,7 +117,7 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
         machine: props.machineName,
       })}
     >
-      {rows.map((row) => (
+      {props.rows.map((row) => (
         <Item
           key={row.id}
           testID={`machine-setup-sign-in:${row.id}`}
@@ -134,7 +147,7 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
                 size="small"
                 display="secondary"
                 title={t('machinePresets.setup.tab.signInAction')}
-                onPress={() => { void open(row); }}
+                onPress={() => props.onSignIn(row)}
               />
             ) : undefined
           }

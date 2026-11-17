@@ -10,6 +10,9 @@ import {
 } from '@/components/appShell/panes/paneHeaderSlot';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { DetectedLocalServicesPane, type ServicesScope } from '@/components/sessions/localServices/DetectedLocalServicesPane';
+import { WorktreePortsLine } from '@/components/sessions/localServices/WorktreePortsLine';
+import type { WorktreePortsResultV1 } from '@happier-dev/protocol/workspaces/projectSetup/worktreePortsV1';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import {
     applyLocalServiceInventorySnapshot,
@@ -117,6 +120,17 @@ const LAUNCHER = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherSta
     ],
 });
 
+/** `?ports=own|unavailable`: the checkout's own ports (lab L8 proposed), web's retained output shows as a terminal tab. */
+const WEB_TERMINAL = { kind: 'terminal_view' as const, machineId: MACHINE, terminalId: 'specimen-web-terminal',
+    terminalKey: 'service:web', cwd: '/work/happier', interactive: true as const };
+const LAUNCHER_PORTS = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
+    v: 1, machineId: MACHINE, sessionId: SESSION, updatedAt: 3_000,
+    targets: [{ ...runningTarget('web', 'web', 41873, SESSION), terminalView: WEB_TERMINAL },
+        runningTarget('storybook', 'storybook', 44219, undefined)],
+});
+const PORTS_OWN: WorktreePortsResultV1 = { kind: 'ready', assignment: { ports: [41873, 44219], listenerPorts: {} } };
+const PORTS_UNAVAILABLE: WorktreePortsResultV1 = { kind: 'unavailable', code: 'project_worktree_ports_unavailable', reason: 'state_read_failed' };
+
 /** The server allows both link types and up to a day; `web` already has a live link, `storybook` has none. */
 const PREVIEW_NOW_MS = Date.now();
 const PUBLIC_PREVIEW = applyLocalServicePublicPreviewSnapshot(createLocalServicePublicPreviewState(), {
@@ -185,8 +199,13 @@ function PublishedHeader(): React.ReactElement {
     );
 }
 
-export function ServicesSpecimen(props: Readonly<{ phone: boolean; scan?: 'denied'; remote?: boolean }>): React.ReactElement {
+export function ServicesSpecimen(props: Readonly<{ phone: boolean; scan?: 'denied'; remote?: boolean; ports?: 'own' | 'unavailable' }>): React.ReactElement {
     const [scope, setScope] = React.useState<ServicesScope>('workspace');
+    const account = useActiveServerAccountScope();
+    // A real Home id lets the line offer "Choose new ports…" (pressing it asks first; this checkout doesn't exist, so the owner refuses).
+    const portsWorkspace = account ? { serverId: account.serverId, machineId: MACHINE, workspaceId: 'checkout', rootPath: '/work/happier' } : null;
+    const scopeNote = props.ports ? <WorktreePortsLine result={props.ports === 'own' ? PORTS_OWN : PORTS_UNAVAILABLE}
+        workspace={portsWorkspace} testID="services-specimen-ports" /> : null;
     const onForget = React.useCallback(async (target: LocalServiceLaunchTarget) => {
         publishPresentationNotice({
             key: `services-specimen-forget:${target.id}`,
@@ -205,7 +224,9 @@ export function ServicesSpecimen(props: Readonly<{ phone: boolean; scan?: 'denie
                         <PaneHeaderSlotScope slotKey="services">
                             <DetectedLocalServicesPane
                                 inventoryState={props.scan === 'denied' ? INVENTORY_SCAN_DENIED : INVENTORY}
-                                launcherState={LAUNCHER}
+                                launcherState={props.ports ? LAUNCHER_PORTS : LAUNCHER}
+                                scopeNote={scopeNote}
+                                onShowServiceTerminal={async () => null}
                                 sessionId={SESSION}
                                 scope={scope}
                                 onChangeScope={setScope}
