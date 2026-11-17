@@ -21,6 +21,7 @@ import type { ArtifactBlobReferenceV1, ArtifactSavedByV1, ArtifactWorkspaceSourc
 import type { ArtifactPublicLinkKeyholdingResourceV1, WorkflowDefinitionArtifactOperations } from '@happier-dev/protocol/actions';
 import type { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
+import type { ReviewMetadataWriteV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { areServerProfileIdentifiersEquivalent, buildHomeConnectionDescriptorForProfile, getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -64,8 +65,8 @@ function readableRawArtifactHeader(artifact: DecryptedArtifact | null): Readonly
 }
 
 const artifactAccessProjectionSchema = pick(ArtifactAccessRecipientCensusResponseV1Schema, { ownerAccountId: true, access: true });
-type ArtifactCreateOperation = Readonly<{ artifactId?: string; idScope?: ArtifactIdScopeV1; header: Readonly<Record<string, unknown>>; body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1 | null; source?: ArtifactWorkspaceSourceV1; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal }>;
-type ArtifactUpdateOperation = Omit<Parameters<WorkflowDefinitionArtifactOperations['update']>[0], 'body' | 'savedBy'> & Readonly<{ body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1 | null }>;
+type ArtifactCreateOperation = Readonly<{ artifactId?: string; idScope?: ArtifactIdScopeV1; header: Readonly<Record<string, unknown>>; body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1 | null; source?: ArtifactWorkspaceSourceV1; memoryDecisionSource?: CoordinationMessageRefV1; reviewMetadata?: ReviewMetadataWriteV1; signal?: AbortSignal }>;
+type ArtifactUpdateOperation = Omit<Parameters<WorkflowDefinitionArtifactOperations['update']>[0], 'body' | 'savedBy'> & Readonly<{ body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1 | null; reviewMetadata?: ReviewMetadataWriteV1 }>;
 type ArtifactContentReadOptions = NonNullable<Parameters<WorkflowDefinitionArtifactOperations['read']>[1]> & ProjectSourceArtifactReadOptionsV1
     & Readonly<{ includeGrants?: boolean; includeAssociatedContentOpener?: boolean }>;
 type ArtifactContentRead = NonNullable<Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>>> & Readonly<{
@@ -586,11 +587,11 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
                     ...(page.hasUnclassified === undefined ? {} : { hasUnclassified: page.hasUnclassified }),
                     ...(nextCursor ? { nextCursor } : {}) };
         };
-        const createArtifactDocument = async ({ artifactId, idScope, header, body, savedBy, source, memoryDecisionSource, signal: operationSignal }: ArtifactCreateOperation) => {
+        const createArtifactDocument = async ({ artifactId, idScope, header, body, savedBy, source, memoryDecisionSource, reviewMetadata, signal: operationSignal }: ArtifactCreateOperation) => {
             assertCurrent();
             const publication: { artifact?: DecryptedArtifact } = {};
             await createArtifactWithHeaderViaApi({ ...await artifactParams(), artifactId, idScope, signal: operationSignal ?? signal,
-                header, body, source, memoryDecisionSource, savedBy: savedBy === undefined ? { kind: 'person', accountId } : savedBy,
+                header, body, source, memoryDecisionSource, reviewMetadata, savedBy: savedBy === undefined ? { kind: 'person', accountId } : savedBy,
                 addArtifact: (artifact) => {
                     publication.artifact = artifact;
                     if (canPublish()) storage.getState().addArtifact(artifact);
@@ -600,7 +601,7 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
             if (!created?.isDecrypted || created.bodyVersion === undefined) throw artifactContentUnavailable();
             return { artifactId: created.id, artifact: created, revision: { headerVersion: created.headerVersion, bodyVersion: created.bodyVersion } };
         };
-        const updateArtifactDocument = async ({ artifactId, expectedRevision, header, body, savedBy, memoryDecisionSource, signal: operationSignal }: ArtifactUpdateOperation) => {
+        const updateArtifactDocument = async ({ artifactId, expectedRevision, header, body, savedBy, memoryDecisionSource, reviewMetadata, signal: operationSignal }: ArtifactUpdateOperation) => {
                 // The caller validated its change against an exact read, which published this row. While
                 // the scoped store still holds that revision it is the write's basis; the CAS fences it.
                 const held = expectedRevision && canPublish() ? storage.getState().artifacts[artifactId] : undefined;
@@ -612,7 +613,7 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
                 const publication: { artifact?: DecryptedArtifact } = {};
                 try {
                     await updateArtifactWithHeaderViaApi({ ...await artifactParams(), artifactId, expectedRevision, signal: operationSignal ?? signal,
-                        header, body, memoryDecisionSource, savedBy: savedBy === undefined ? { kind: 'person', accountId } : savedBy, getArtifact: () => current,
+                        header, body, memoryDecisionSource, reviewMetadata, savedBy: savedBy === undefined ? { kind: 'person', accountId } : savedBy, getArtifact: () => current,
                         updateArtifact: (artifact) => {
                             publication.artifact = artifact;
                             if (canPublish()) storage.getState().updateArtifact(artifact);

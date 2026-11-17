@@ -71,6 +71,7 @@ import { isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, readWidgetAction
 import { readWidgetActionSessionTargetV1 } from '@happier-dev/protocol/widgets/actionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
+import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { setModelFavoriteV1 } from '@happier-dev/protocol/providers/modelFavoritesV1';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
@@ -2229,7 +2230,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         preparation,
       );
     },
-    ...(accountContext ? { homeHubArtifacts: createHomeHubArtifactPortV1(accountContext.homeHubArtifactTransport, {
+    ...(accountContext ? { reviewRecords: () => createReviewRecordPortV1(accountContext.homeHubArtifactTransport),
+      homeHubArtifacts: createHomeHubArtifactPortV1(accountContext.homeHubArtifactTransport, {
       accountId: accountContext.accountId,
       shouldContinue: accountContext.accountLifetime.isCurrent,
       readWidgets: async (signal, layout) => {

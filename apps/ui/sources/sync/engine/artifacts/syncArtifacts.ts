@@ -1550,6 +1550,7 @@ export async function createArtifactViaApi(params: {
 }
 
 export type CreateArtifactWithHeaderParams = {
+    reviewMetadata?: import('@happier-dev/protocol/reviews/reviewArtifactV1').ReviewMetadataWriteV1;
     idScope?: ArtifactIdScopeV1;
     memoryDecisionSource?: CoordinationMessageRefV1;
     credentials: AuthCredentials;
@@ -1638,6 +1639,7 @@ export async function createArtifactWithHeaderResultViaApi(params: CreateArtifac
         const privateMetadata = await prepareArtifactProvenanceWrite({ ...params, artifactId, bodyVersion: 1, mode: accountMode, provenance });
         const kind = tryDeriveArtifactStoredKindV1(rawHeader);
         const request: ArtifactCreateRequest = {
+            ...(params.reviewMetadata === undefined ? {} : { reviewMetadata: params.reviewMetadata }),
             ...(kind === undefined ? {} : { kind }),
             ...deriveApprovalArtifactQueryHintsV1(rawHeader),
             id: artifactId,
@@ -1730,6 +1732,7 @@ function stableStringifyJsonValue(value: unknown): string {
 }
 
 export async function updateArtifactWithHeaderViaApi(params: {
+    reviewMetadata?: import('@happier-dev/protocol/reviews/reviewArtifactV1').ReviewMetadataWriteV1;
     memoryDecisionSource?: CoordinationMessageRefV1;
     credentials: AuthCredentials;
     request?: ArtifactApiOptions['request'];
@@ -1867,6 +1870,8 @@ export async function updateArtifactWithHeaderViaApi(params: {
             updateRequest.blob = null;
         }
     }
+
+    if (params.reviewMetadata !== undefined) updateRequest.reviewMetadata = params.reviewMetadata;
 
     // Skip if no changes
     if (Object.keys(updateRequest).length === 0) {

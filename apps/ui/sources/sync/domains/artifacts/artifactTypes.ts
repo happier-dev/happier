@@ -8,6 +8,7 @@ import type { CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions
 import type { ArtifactCoarseKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import type { ApprovalArtifactStateV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import type { ArtifactIdScopeV1 } from '@happier-dev/protocol';
+import type { ReviewMetadataWriteV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
 /** Authorized opened bytes for the opaque local frame. */
 export type ArtifactHtmlPreview = Readonly<{ bundle: ArtifactHtmlBundleV1 }>;
@@ -156,6 +157,7 @@ export type DecryptedArtifact =
  * Request to create a new artifact
  */
 export interface ArtifactCreateRequest {
+    reviewMetadata?: ReviewMetadataWriteV1;
     idScope?: ArtifactIdScopeV1;
     approvalState?: ApprovalArtifactStateV1 | null;
     approvalSessionId?: string | null;
@@ -175,6 +177,7 @@ export interface ArtifactCreateRequest {
  * Request to update an existing artifact
  */
 export interface ArtifactUpdateRequest {
+    reviewMetadata?: ReviewMetadataWriteV1;
     approvalInputCustody?: import('@happier-dev/protocol/approvals/approvalInputCustody').ApprovalInputCustody;
     transcriptVisualPublication?: import('@happier-dev/protocol/sessions/messages/transcriptObservationV1').ApprovalTranscriptVisualPublicationV1;
     approvalState?: ApprovalArtifactStateV1 | null;

@@ -20,6 +20,7 @@ import { ArtifactAccessActionOutputSchemasV1, ArtifactRecipientKeyEnvelopeCommit
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createWidgetDefinitionArtifactPortV1 } from '@happier-dev/protocol/widgets/widgetDefinitionArtifactV1';
+import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import type { WidgetDefinitionV1 } from '@happier-dev/protocol/widgets/widgetDefinitionV1';
 import NativeAbortController from 'abort-controller';
 import { createArtifact as createArtifactApi, fetchArtifact as fetchArtifactApi } from '@/sync/api/artifacts/apiArtifacts';
@@ -131,6 +132,36 @@ afterEach(async () => {
     retireActiveServerAccountScopeLifetime();
     publishAppliedActiveServerRuntimeAvailability(false);
     await homes?.dispose();
+});
+
+it.each(['plain', 'e2ee'] as const)('persists Review start and settlement metadata on the captured Home (%s)', async mode => {
+    const home = homes.homes[mode === 'plain' ? 'b' : 'e']!;
+    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: mode });
+    const reviewId = '00000000-0000-4000-8000-000000000017';
+    const writes: Array<{ origin: string; payload: Record<string, unknown> }> = [];
+    network.mockImplementation(async (url, init) => {
+        if ((url.pathname === '/v1/artifacts' || url.pathname === `/v1/artifacts/${reviewId}`) && init?.method === 'POST') {
+            writes.push({ origin: url.origin, payload: JSON.parse(String(init.body)) });
+        }
+        return await artifacts.handle(url.pathname, init) ?? homes.fetch(url, init);
+    });
+    const account = await captureLazyActionAccountContext(home.id);
+    try {
+        const records = createReviewRecordPortV1(account.homeHubArtifactTransport);
+        const round = await records.start({ reviewId, title: 'Captured Review',
+            subjectKind: 'repository', sourceKind: 'direct', reviewerIds: ['codex'], startedAt: 100 });
+        expect(writes[0]).toMatchObject({ origin: home.serverUrl, payload: { reviewMetadata: {
+            projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
+            currentRoundOrdinal: 1, state: 'running', startedAt: 100, finishedAt: null,
+        } } });
+        await records.settle({ ...round, outcome: 'completed', finishedAt: 200, runs: [] });
+        expect(writes[1]).toMatchObject({ origin: home.serverUrl, payload: { reviewMetadata: {
+            currentRoundOrdinal: 1, state: 'completed', finishedAt: 200,
+        }, expectedBodyVersion: 1 } });
+        expect(await records.read(round.reviewId)).toMatchObject({ title: 'Captured Review', rounds: [
+            { ordinal: 1, state: 'completed', finishedAt: 200 },
+        ] });
+    } finally { account.dispose(); }
 });
 
 it('retains original Account-only cleanup custody after user cancellation, but not Account retirement', async () => {
