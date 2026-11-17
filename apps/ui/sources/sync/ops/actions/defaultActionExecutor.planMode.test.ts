@@ -1319,6 +1319,38 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(outgoing).toEqual([{ method: `machine-a:${RPC_METHODS.SESSION_CONTINUATION_INSPECT}`,
       params: { v: 1, sourceSessionId: 'inspect-session', selection } }]);
   });
+  it('switches an ordinary layout1 Session to qualified Pi before its owner control projection is resident', async () => {
+    const sessionId = 'cold-pi-session';
+    installSession(sessionId, { path: '/repo', machineId: 'machine-a', flavor: 'claude' }, serverId, 1);
+    const unresolved = buildSessionListRenderableFromSession({ ...storage.getState().sessions[sessionId],
+      metadataLayoutVersion: 1, ownerMetadataView: null });
+    storage.setState({ sessions: {}, sessionListRowsByServerId: { [serverId]: { [sessionId]: unresolved } } });
+    const request = { sessionId, expectedCurrentAgentId: 'claude',
+      selection: { v: 1, agentId: 'happier.agent.pi/pi', modelId: 'openai/fake-model' },
+      input: { localId: 'cold-pi-input', text: 'Continue with the same history', meta: {} } };
+    let received: unknown;
+    await answerExternalActionAccountForHome(homes, serverId, {
+      machineId: 'machine-a', tokenEpoch: 0, actionId: 'session.agent.transition',
+      execute: (input, { target }) => {
+        expect(target).toEqual({ kind: 'machine', machineId: 'machine-a' });
+        received = input;
+        return { type: 'accepted', localId: request.input.localId };
+      },
+    });
+    const features = createRootLayoutFeaturesResponse({ features: { sessions: { enabled: true, agentSwitching: { enabled: true } } } });
+    homes.answer(serverId, '/v1/features', { body: features });
+    homes.answer(serverId, '/v1/features/authenticated', { body: features });
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+    const { createFrontDoorActionExecute } = await import('./frontDoorRuntimeActionExecutor');
+    const execute = createFrontDoorActionExecute(createDefaultActionExecutor({ presentUserActionConfirmation: async () => true }));
+    const result = await execute.confirmed('session.agent.transition', request, {
+      ...context(), actionCaller: { kind: 'host' }, defaultSessionId: sessionId,
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'accepted', localId: request.input.localId } });
+    expect(received).toEqual(request);
+    expect(storage.getState().sessions[sessionId]).toBeUndefined();
+  });
   it.each(['accepted', 'rejected', 'agent_signed_out', 'credential_scope_denied', 'action_outcome_unknown'] as const)('switches through the same Session daemon without replacing the exact first input (%s)', async outcomeKind => {
     installSession('switch-session', { path: '/repo', machineId: 'machine-a', flavor: 'claude' });
     const machine = createMachineFixture({ id: 'machine-a', storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });

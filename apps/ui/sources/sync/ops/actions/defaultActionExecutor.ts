@@ -368,7 +368,6 @@ import { readAgentScopedPluginSettingsSnapshot } from '@/agents/registry/agentSc
 import { readSessionSnapshotForAuthority, SessionSnapshotReadError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
 import { getSessionRunnerRuntimeStatusSnapshotResult, restartSessionRunnerForProviderBindingChange, restartSessionRunnerOnCurrentRuntime } from '@/sync/ops/sessionRunnerRestart';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
-import { resolveMachineControlTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
 import {
   preflightWorkspaceDestinationReplacement,
   startSessionHandoff as startSessionHandoffOp,
@@ -497,7 +496,7 @@ import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registr
 import { canRollbackConversation } from '@/sync/domains/sessionRollback/rollbackUiSupport';
 import type { CurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { completeSessionForkNavigation } from '@/sync/domains/sessionFork/completeSessionForkNavigation';
-import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
+import { readMachineControlTargetForSession, readMachineControlTargetForSessionAuthority } from '@/sync/ops/sessionMachineTarget';
 import { createUiTriggerSessionResolver, createUiWorkflowAction } from './workflowActionDeps';
 import { normalizeWorkflowActionThrownError } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
 import { getAutomationDefinition } from '@/sync/api/automations/apiAutomations';
@@ -1299,6 +1298,16 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     return readMachineControlTargetForSession(exactServerId
       ? { sessionId, serverId: exactServerId }
       : sessionId)?.machineId ?? '';
+  };
+  const readAccountSessionControlTarget = async (account: LazyActionAccountContext, sessionId: string, signal?: AbortSignal) => {
+    const result = await runWithServerRequestAuthorityForServerAccountScope({
+      scope: account.accountLifetime.scope, activeRequest: account.request,
+    }, authority => readMachineControlTargetForSessionAuthority({
+      authority, sessionId, signal, isCurrent: account.accountLifetime.isCurrent,
+    }));
+    account.assertCurrent();
+    throwIfAborted(signal);
+    return result;
   };
 
   const readAccountAcpCatalog: NonNullable<ActionExecutorDeps['readAccountAcpCatalog']> = async ({ signal }) => {
@@ -2765,18 +2774,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if (intent === 'resume' || approvedNewDirectoryCreation === true) {
         if (!accountContext) return { ok: false, errorCode: 'not_authenticated', error: 'Exact Account scope is unavailable.' };
         accountContext.assertCurrent();
-        const state = storage.getState();
-        const { session } = await runWithServerRequestAuthorityForServerAccountScope({
-          scope: accountContext.accountLifetime.scope,
-          activeRequest: accountContext.request,
-        }, async (authority) => await readSessionSnapshotForAuthority({
-          authority, sessionId, isCurrent: accountContext.accountLifetime.isCurrent,
-        }));
-        accountContext.assertCurrent();
-        // Resolve from the fresh exact-Home snapshot, not a same-id row in the focused Home.
-        const machineTarget = resolveMachineControlTargetForSessionFromState({
-          ...state, sessions: { [sessionId]: session }, sessionListRowsByServerId: {},
-        }, { ...accountContext.accountLifetime.scope, sessionId });
+        const { session, target: machineTarget } = await readAccountSessionControlTarget(accountContext, sessionId, signal);
         const admittedTarget = context?.admittedMachineTarget;
         if (admittedTarget && (machineTarget?.machineId !== admittedTarget.machineId
           || admittedTarget.serverId && !areServerProfileIdentifiersEquivalent(admittedTarget.serverId, accountContext.serverId))) {
@@ -4159,7 +4157,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     spawnConnectedServicesList: async (args, context) => await listSpawnConnectedServicesForActions({ ...args, signal: context?.signal }),
 
     sessionContinuationInspect: async ({ input, context, serverId }) => {
-      const machineId = resolveSessionMachineId(input.sessionId, serverId);
+      const machineId = accountContext
+        ? (await readAccountSessionControlTarget(accountContext, input.sessionId, context.signal)).target?.machineId
+        : undefined;
       if ('selections' in input) {
         return { status: 'batch', inspections: machineId
           ? await readSessionContinuationsOnMachine({ ...input, machineId, serverId: serverId ?? null, signal: context.signal })
@@ -4170,7 +4170,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     },
     sessionAgentTransition: async ({ request, context, serverId }) => {
       if (!accountContext) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
-      const machineId = resolveSessionMachineId(request.sessionId, serverId);
+      const machineId = (await readAccountSessionControlTarget(accountContext, request.sessionId, context.signal)).target?.machineId;
       if (!machineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
       if (context.externalActionTarget && (context.externalActionTarget.kind !== 'session'
           || context.externalActionTarget.sessionId !== request.sessionId)) {
@@ -4209,16 +4209,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         try {
           if (ownedAccount) assertExpectedActionAccount(account, args.context);
           account.assertCurrent();
-          const { readSessionSnapshotForAuthority } = await import('@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority');
-          const { runWithServerRequestAuthorityForServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope');
-          const { resolveMachineControlTargetForSessionFromState } = await import('@/sync/domains/session/resolveMachineTargetForSessionFromState');
-          const { session } = await runWithServerRequestAuthorityForServerAccountScope({ scope: account.accountLifetime.scope,
-            activeRequest: account.request }, authority => readSessionSnapshotForAuthority({ authority, sessionId,
-              isCurrent: account.accountLifetime.isCurrent }));
-          account.assertCurrent();
-          throwIfAborted(signal);
-          const target = resolveMachineControlTargetForSessionFromState({ ...storage.getState(),
-            sessions: { [sessionId]: session }, sessionListRowsByServerId: {} }, { ...account.accountLifetime.scope, sessionId });
+          const { session, target } = await readAccountSessionControlTarget(account, sessionId, signal);
           if (!target) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
           if (requiresReplyCustody) {
             const machines = await withActionAccountRequestSignal(account, signal, ownedSignal => readMachineRows({
