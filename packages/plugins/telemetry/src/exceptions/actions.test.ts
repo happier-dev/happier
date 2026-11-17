@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { PluginError, type PluginServices } from '@happier-dev/plugin-sdk';
 import { createInMemoryAccountCollection } from '@happier-dev/plugin-sdk/collections';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 as limits, type DaemonDatabase, type DaemonDatabaseRow, type DaemonDatabaseValue } from '@happier-dev/plugin-sdk/storage';
 import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import * as database from '@happier-dev/database-protocol';
 import { DATABASE_CAPTURE_PLUGIN } from '../manifest.js';
@@ -38,6 +39,61 @@ const occurrence = (id: string, at: number, version: string) => ({
 });
 
 describe('native exception Actions on the collector', () => {
+  it.each([0, 137])('returns truthful counts for 100- and 101-bucket authored windows at offset %i across database pages', async (offset) => {
+    const fixture = createCaptureSqliteFixture();
+    // Preserve real SQLite and enforce the daemon host's per-query row boundary.
+    const db: DaemonDatabase = {
+      ...fixture.db,
+      async query<T extends DaemonDatabaseRow>(statement: string, params: readonly DaemonDatabaseValue[] = []) {
+        const rows = await fixture.db.query<T>(statement, params);
+        if (rows.length > limits.maximumResultRows) {
+          throw Object.assign(new Error('Host result row limit'), { code: 'daemon_database_result_too_large' });
+        }
+        return rows;
+      },
+    };
+    for (const migration of captureMigrations) await migration.up(db);
+    const storage = { daemon: { database: async () => db } } as unknown as PluginServices['storage'];
+    const deploymentDatabases = {
+      admitTelemetryRead: async () => ({
+        environment: { serverId: 'home', environmentId: 'env', revision: 1 },
+        collectorMachineId: 'collector',
+        capabilities: resolveDeploymentTelemetryCapabilitiesV1({ exceptions: true }),
+      }),
+    } as unknown as PluginServices['deploymentDatabases'];
+    const lease = await localCaptureBackground.acquireRuntime({
+      signal: new AbortController().signal, services: { storage },
+    });
+    try {
+      const host = await createPluginTestkit({
+        manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN,
+        services: { storage, deploymentDatabases },
+      });
+      const since = 17;
+      const buckets = Array.from({ length: 101 }, (_, index) => ({
+        since: since + index * 1000, until: since + (index + 1) * 1000, count: index % 3 + 1,
+      }));
+      await lease.runtime.store.write(buckets.flatMap((bucket, index) =>
+        Array.from({ length: bucket.count }, (_, ordinal) => ({
+          ...occurrence(`bucket:${index}:${ordinal}`, bucket.since + offset, 'build-1'),
+          fingerprint: 'fp-paging', traceId: `trace-${index}`,
+        })),
+      ));
+      const window = { since, until: since + 101_000, bucketMs: 1000 };
+      const read = (until: number) => host.invokeAction(
+        local(database.TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1),
+        { serverId: 'home', environmentId: 'env', fingerprint: 'fp-paging', page: { limit: 1 }, window: { ...window, until } },
+      );
+      expect(await read(since + 100_000)).toMatchObject({ status: 'ok', trend: buckets.slice(0, 100), requestsAffected: 100 });
+      expect.soft(await lease.runtime.store.exceptionTrend({ worktree: 'environment:env', fingerprint: 'fp-paging', ...window }))
+        .toEqual({ buckets, requestsAffected: 101 });
+      await expect(read(window.until)).resolves.toMatchObject({ status: 'ok', trend: buckets, requestsAffected: 101 });
+    } finally {
+      await lease.release();
+      fixture.close();
+    }
+  });
+
   it('admits each request through R16, reads occurrences on demand, and routes lifecycle edits only to the single writer', async () => {
     const fixture = createCaptureSqliteFixture();
     for (const migration of captureMigrations) await migration.up(fixture.db);
@@ -111,7 +167,7 @@ describe('native exception Actions on the collector', () => {
         ],
         requestsAffected: 1,
       });
-      await expect(read({ window: { since: 0, until: 10_000_000, bucketMs: 1 } })).rejects.toMatchObject({ code: 'invalid_parameters' });
+      await expect(read({ window: { since: 0, until: 0, bucketMs: 1 } })).rejects.toMatchObject({ code: 'invalid_parameters' });
       exceptions = false;
       expect(await read()).toEqual({ status: 'disabled' });
       exceptions = true;

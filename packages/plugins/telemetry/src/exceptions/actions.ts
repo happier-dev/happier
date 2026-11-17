@@ -117,10 +117,8 @@ export const exceptionActions = {
         });
         const last = items.at(-1);
         const window = input.window;
-        // The host's result-row bound is the only bucket ceiling; a larger demand is refused, never truncated.
-        if (window && (window.until <= window.since
-          || Math.ceil((window.until - window.since) / window.bucketMs) > PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1.maximumResultRows)) {
-          throw new PluginError({ code: 'invalid_parameters', message: 'The trend window has no buckets or more than one read can return.' });
+        if (window && window.until <= window.since) {
+          throw new PluginError({ code: 'invalid_parameters', message: 'The trend window must end after it starts.' });
         }
         const trend = window ? await runtime.store.exceptionTrend({ worktree: selected.partition, fingerprint: input.fingerprint, ...window }) : undefined;
         let stacktrace: string | null | undefined;

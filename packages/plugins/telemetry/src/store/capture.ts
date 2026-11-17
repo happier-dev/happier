@@ -210,9 +210,16 @@ FROM groups JOIN latest ON latest.fingerprint = groups.fingerprint AND latest.po
    buckets: readonly Readonly<{ since: number; until: number; count: number }>[]; requestsAffected: number }>> {
    const where = 'worktree = ? AND fingerprint = ? AND at >= ? AND at < ?';
    const params = [input.worktree, input.fingerprint, input.since, input.until];
-   const rows = await db.query(`SELECT (at - ?) / ? AS bucket, COUNT(*) AS count FROM captureExceptions WHERE ${where} GROUP BY bucket ORDER BY bucket LIMIT ?`,
-    [input.since, input.bucketMs, ...params, limits.maximumResultRows]);
-   const counts = new Map(rows.map(row => [Number(row.bucket), Number(row.count)]));
+   const counts = new Map<number, number>();
+   let afterAt = input.since;
+   while (true) {
+    const { rows, pageSize } = await queryPage(`SELECT CAST((at - ?) / ? AS INTEGER) AS bucket, COUNT(*) AS count FROM captureExceptions WHERE ${where} GROUP BY bucket ORDER BY bucket LIMIT ?`,
+     [input.since, input.bucketMs, input.worktree, input.fingerprint, afterAt, input.until], limits.maximumResultRows);
+    for (const row of rows) counts.set(Number(row.bucket), Number(row.count));
+    if (rows.length < pageSize) break;
+    // Resume at the next whole bucket, using the existing group/time index.
+    afterAt = input.since + (Number(rows.at(-1)!.bucket) + 1) * input.bucketMs;
+   }
    const [affected] = await db.query(`SELECT COUNT(DISTINCT traceId) AS requests FROM captureExceptions WHERE ${where} AND traceId IS NOT NULL`, params);
    const buckets: { since: number; until: number; count: number }[] = [];
    for (let start = input.since, index = 0; start < input.until; start += input.bucketMs, index++) {
