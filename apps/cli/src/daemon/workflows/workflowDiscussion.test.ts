@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
+import { MENTION_KIND_V1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
+import { buildWorkflowActionContext } from './workflowActionContext';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { sealSessionStoredContent, type SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionStoredContentCodec';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
@@ -72,7 +79,9 @@ async function fixture(mode: 'plain' | 'e2ee') {
     revokeAfterFirstPage: () => { revokeAfterFirstPage = true; } };
 }
 
-async function contextCoordinatorFixture(sessionContext: Parameters<typeof createWorkflowCoordinator>[0]['sessionContext']) {
+async function contextCoordinatorFixture(sessionContext: Parameters<typeof createWorkflowCoordinator>[0]['sessionContext'],
+  discussionAction?: Parameters<typeof createActionExecutor>[0]['discussionAction']) {
+  const actionBinding = discussionAction !== undefined;
   const store = createInMemoryWorkflowCoordinatorStore();
   const runId = 'discussion-read-recovery';
   await store.ensureIntent({ key: workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 }),
@@ -84,16 +93,28 @@ async function contextCoordinatorFixture(sessionContext: Parameters<typeof creat
     return { kind: 'completed', result: 'answer' };
   });
   const coordinator = createWorkflowCoordinator({ store, rootInvocationRecordId: 'root', sessionContext,
+    ...(actionBinding ? { action: { executor: createActionExecutor({ ...createUnavailableActionTransportDeps(), discussionAction }),
+      buildContext: async execution => buildWorkflowActionContext(execution),
+      observeRun: async (): Promise<never> => { throw new Error('Input refusal must not start an Action'); } } } : {}),
     executeStep, resolveWorkspace: async () => ({ ok: true,
       workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } }) });
   const executionTarget = { kind: 'session' } as const;
-  const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'step', id: 'answer',
+  const mention = { kind: MENTION_KIND_V1.workflowInput, ref: 'workflowInput:0', label: 'Context' };
+  const token = formatInlineReferenceTokenV1(mention);
+  const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: actionBinding ? [{ kind: 'action', id: 'answer',
+    actionId: 'discussion.rename', input: { discussionId: { kind: 'literal', value: discussion.discussionId },
+      title: { kind: 'text', input: [{ kind: 'discussion_context', scope: 'addressing_message' }], document: {
+        text: `READY243 context ${token}`, references: [
+          { ...mention, token },
+        ] } } } }] : [{ kind: 'step', id: 'answer',
     document: { text: 'Answer the question', references: [], attachments: [] },
     input: [{ kind: 'discussion_context', scope: 'addressing_message' }], result: { kind: 'text' } }] };
   const run: Parameters<typeof coordinator.run>[0] = { runId, inputs: {}, executionTarget,
     authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } } as const,
     definition, authoredDefinition: definition, frozenChildren: {}, workDepth: 0,
-    materializedLeaves: [{ sourceKey: '$root', blockId: 'answer', kind: 'step',
+    materializedLeaves: actionBinding ? [{ sourceKey: '$root', blockId: 'answer', kind: 'action', selection: {},
+      executionTarget, authoredWorkspace: { kind: 'inherit' }, actionId: 'discussion.rename',
+      actionContract: freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec('discussion.rename')))! }] : [{ sourceKey: '$root', blockId: 'answer', kind: 'step',
       selection: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
         conversation: { kind: 'fresh' } }, executionTarget, authoredWorkspace: { kind: 'inherit' } }] };
   return { store, coordinator, executeStep, run };
@@ -149,6 +170,26 @@ describe('Workflow production Discussion context', () => {
     vi.spyOn(test.store, 'readFrontier').mockRejectedValue(failure);
     await expect(test.coordinator.run(test.run)).rejects.toBe(failure);
     expect(test.store.readByLogicalInvocation('root')).toMatchObject({ lifecycle: 'running' });
+  });
+
+  it.each([
+    { status: 403, code: 'discussion_read_denied' },
+    { status: 404, code: 'discussion_not_found' },
+  ])('parks a refused Action context binding without replaying its pending intent ($code)', async ({ status, code }) => {
+    const state = await fixture('e2ee');
+    const test = await contextCoordinatorFixture(createProductionWorkflowDiscussionContextReader({
+      credentials: state.credentials, serverId: discussion.serverId, serverHttpBaseUrl, origin }),
+      createDiscussionActionDeps({ credentials: state.credentials, serverId: discussion.serverId, serverHttpBaseUrl,
+        resolveServerFeaturesSnapshot: () => ({ status: 'ready', features }) }).discussionAction);
+    // READY243: admission accepted this origin, then the owner transferred the
+    // Discussion and left it before the held Action reached its context read.
+    vi.mocked(axios.request).mockResolvedValue({ status, data: { error: code } });
+    expect(await test.coordinator.run(test.run)).toEqual({ state: 'interrupted', reason: code });
+    expect(test.store.readByLogicalInvocation('root')).toMatchObject({ lifecycle: 'needs_attention',
+      reason: code, failureCause: { errorCode: code } });
+    expect(test.store.list().find(row => row.blockId === 'answer')).toMatchObject({ lifecycle: 'pending', attempt: 0 });
+    expect(test.store.list().find(row => row.blockId === 'answer')?.execution).toBeUndefined();
+    expect(test.executeStep).not.toHaveBeenCalled();
   });
 
   it('does not turn an aborted Discussion read into recoverable attention', async () => {
