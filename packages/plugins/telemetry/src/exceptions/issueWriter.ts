@@ -168,24 +168,33 @@ export function createExceptionIssueWriter(
         await options.publish({ phase: 'open', row, regressed: false });
         continue;
       }
+      const browserOriginAdded = group.applicationOrigin === 'browser' && current.value.applicationOrigin !== 'browser';
       const resolution =
         current.value.status === 'resolved'
           ? current.value.resolution
           : undefined;
-      if (!resolution) continue;
-      const recurrence = await options.store.exceptionRecurrence(
+      const recurrence = resolution ? await options.store.exceptionRecurrence(
         environment.partition,
         group.fingerprint,
         resolution.atMs,
         resolution.priorVersions,
-      );
-      if (!recurrence) continue;
-      const row = await write(id, (existing) =>
-        existing && isQualifyingRecurrence(existing.value, recurrence)
-          ? regressExceptionIssue(existing.value, group, now())
-          : null,
-      );
-      if (row) await options.publish({ phase: 'open', row, regressed: true });
+      ) : null;
+      if (!recurrence && !browserOriginAdded) continue;
+      let regressed = false;
+      const row = await write(id, (existing) => {
+        regressed = false;
+        if (!existing) return null;
+        if (recurrence && isQualifyingRecurrence(existing.value, recurrence)) {
+          regressed = true;
+          return regressExceptionIssue(existing.value, group, now());
+        }
+        // A mixed group may acquire proven browser traffic after the issue was created.
+        // Retain that provenance once, without count churn or a lifecycle event.
+        return group.applicationOrigin === 'browser' && existing.value.applicationOrigin !== 'browser'
+          ? { ...existing.value, applicationOrigin: 'browser', updatedAtMs: now() }
+          : null;
+      });
+      if (row && regressed) await options.publish({ phase: 'open', row, regressed: true });
     }
     if (shareFailure) throw new PluginError({ code: 'telemetry_issue_share_unavailable', message: `Team sharing failed: ${shareFailure}` });
   }

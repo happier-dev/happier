@@ -186,6 +186,7 @@ function detailData(record: Item['value'], shared: boolean): ExceptionDetailData
   return {
     v: 1 as const,
     environmentId: record.environmentId,
+    ...(record.applicationOrigin ? { applicationOrigin: record.applicationOrigin } : {}),
     // A Team-shared read never carries the owner's fingerprint (the collector address of its occurrences).
     ...(shared ? {} : { fingerprint: record.fingerprint }),
     status: record.status,
@@ -199,6 +200,15 @@ function detailData(record: Item['value'], shared: boolean): ExceptionDetailData
     ...(record.topFrame ? { topFrame: record.topFrame } : {}),
     ...(record.lastServiceVersion ? { lastServiceVersion: record.lastServiceVersion } : {}),
     ...(record.resolution ? { resolution: record.resolution } : {}),
+  };
+}
+
+function exactReadProjection(record: Item['value'], shared: boolean) {
+  return {
+    detailData: detailData(record, shared),
+    ...(record.applicationOrigin === 'browser'
+      ? { investigationDefaults: { permissionMode: 'default' as const } }
+      : {}),
   };
 }
 
@@ -340,7 +350,7 @@ export async function getTelemetryException(
       });
       return row === null
         ? { kind: 'absent', localRef: input.localRef }
-        : { ...observation({ rowId: row.rowId, value: row.value }), detailData: detailData(row.value, false) };
+        : { ...observation({ rowId: row.rowId, value: row.value }), ...exactReadProjection(row.value, false) };
     }
     const row = await issues.sharing.get(
       { ownerAccountId: owner, rowId: input.localRef.entryId },
@@ -348,7 +358,7 @@ export async function getTelemetryException(
     );
     return {
       ...observation({ rowId: row.rowId, value: row.value, ownerAccountId: row.ownerAccountId }),
-      detailData: detailData(row.value, true),
+      ...exactReadProjection(row.value, true),
     };
   } catch (error) {
     if (context.signal.aborted) throw error;

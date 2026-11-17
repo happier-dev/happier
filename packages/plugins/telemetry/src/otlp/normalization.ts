@@ -143,7 +143,7 @@ function redactValue(value: TelemetryValue): TelemetryValue {
     return value;
 }
 
-function exceptionRecord(values: Record<string, TelemetryValue>, timeUnixNano: string): NormalizedException | undefined {
+function exceptionRecord(values: Record<string, TelemetryValue>, timeUnixNano: string, scopeName: string | undefined): NormalizedException | undefined {
     const type = attributeText(values, 'exception.type');
     const message = attributeText(values, 'exception.message');
     // OTel requires type or message on an exception record.
@@ -156,6 +156,7 @@ function exceptionRecord(values: Record<string, TelemetryValue>, timeUnixNano: s
             ? JSON.stringify(suppliedFingerprint) : undefined;
     return {
         timeUnixNano,
+        ...(scopeName === 'app.browser.errors' ? { applicationOrigin: 'browser' as const } : {}),
         ...(type !== undefined ? { type: redactBugReportSensitiveText(type) } : {}),
         ...(message !== undefined ? { message: redactBugReportSensitiveText(message) } : {}),
         ...(stacktrace !== undefined ? { stacktrace: redactBugReportSensitiveText(stacktrace) } : {}),
@@ -164,12 +165,12 @@ function exceptionRecord(values: Record<string, TelemetryValue>, timeUnixNano: s
     };
 }
 
-function spanExceptions(value: unknown): NonNullable<NormalizedSpan['exceptions']> {
+function spanExceptions(value: unknown, scopeName: string | undefined): NonNullable<NormalizedSpan['exceptions']> {
     const exceptions: (NormalizedException & { eventIndex: number })[] = [];
     list(value).forEach((eventValue, eventIndex) => {
         const event = record(eventValue);
         if (text(event.name) !== 'exception') return;
-        const exception = exceptionRecord(attributes(event.attributes), nanos(event.timeUnixNano));
+        const exception = exceptionRecord(attributes(event.attributes), nanos(event.timeUnixNano), scopeName);
         if (exception) exceptions.push({ ...exception, eventIndex });
     });
     return exceptions;
@@ -188,7 +189,7 @@ function resourceIdentity(values: Record<string, TelemetryValue>): NormalizedRes
     };
 }
 
-function span(value: unknown, resource: NormalizedResourceIdentity, normalizeStatement: NormalizeDatabaseStatement): NormalizedSpan {
+function span(value: unknown, resource: NormalizedResourceIdentity, normalizeStatement: NormalizeDatabaseStatement, scopeName: string | undefined): NormalizedSpan {
     const input = record(value);
     const traceId = identity(input.traceId, 16);
     const spanId = identity(input.spanId, 8);
@@ -210,7 +211,7 @@ function span(value: unknown, resource: NormalizedResourceIdentity, normalizeSta
     const parameters = Object.fromEntries(Object.entries(values).filter(([key]) => key.startsWith('db.query.parameter.')));
     const normalized = statement === undefined ? undefined : normalizeStatement(statement, parameters);
     const callsite = attributeText(values, 'code.function.name', 'code.function');
-    const exceptions = spanExceptions(input.events);
+    const exceptions = spanExceptions(input.events, scopeName);
     const genAi = genAiUsage(values, input.attributes);
     return {
         type: 'span', traceId, spanId, ...(parentSpanId ? { parentSpanId } : {}),
@@ -230,7 +231,7 @@ function span(value: unknown, resource: NormalizedResourceIdentity, normalizeSta
     };
 }
 
-function log(value: unknown, resource: NormalizedResourceIdentity): NormalizedLog {
+function log(value: unknown, resource: NormalizedResourceIdentity, scopeName: string | undefined): NormalizedLog {
     const input = record(value);
     const traceId = identity(input.traceId, 16, true);
     const spanId = identity(input.spanId, 8, true);
@@ -239,7 +240,7 @@ function log(value: unknown, resource: NormalizedResourceIdentity): NormalizedLo
     const timeUnixNano = nanos(input.timeUnixNano);
     const observedTimeUnixNano = nanos(input.observedTimeUnixNano);
     const recordUid = attributeText(values, 'log.record.uid');
-    const exception = exceptionRecord(values, timeUnixNano !== '0' ? timeUnixNano : observedTimeUnixNano);
+    const exception = exceptionRecord(values, timeUnixNano !== '0' ? timeUnixNano : observedTimeUnixNano, scopeName);
     return {
         type: 'log', timeUnixNano, observedTimeUnixNano,
         severityNumber: integer(input.severityNumber), ...(severityText ? { severityText } : {}),
@@ -368,8 +369,9 @@ export function normalizeOtlpEnvelope(signal: OtlpSignal, envelope: unknown, nor
             const scope = record(scopeValue);
             for (const item of list(scope[signal === 'traces' ? 'spans' : 'logRecords'])) {
                 try {
-                    if (signal === 'traces') spans.push(span(item, identity, normalizeStatement));
-                    else logs.push(log(item, identity));
+                    const scopeName = scope.scope === undefined ? undefined : text(record(scope.scope).name);
+                    if (signal === 'traces') spans.push(span(item, identity, normalizeStatement, scopeName));
+                    else logs.push(log(item, identity, scopeName));
                 } catch (error) {
                     if (!(error instanceof OtlpDecodeError)) throw error;
                     rejectedRecords += 1;

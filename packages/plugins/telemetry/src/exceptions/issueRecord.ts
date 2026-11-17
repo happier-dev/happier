@@ -8,6 +8,7 @@ import {
   defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 import type { CaptureExceptionGroup } from '../store/capture.js';
+import { exceptionApplicationOriginSchema } from './contracts.js';
 
 const millis = () => defineProtocolNumber({ integer: true, minimum: 0 });
 const status = defineProtocolUnion([
@@ -40,6 +41,7 @@ export const TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1 = defineAccountCollection(
         id: defineProtocolString(),
         environmentId: defineProtocolString(),
         fingerprint: defineProtocolString(),
+        applicationOrigin: exceptionApplicationOriginSchema.optional(),
         title: defineProtocolString(),
         serviceName: defineProtocolString().optional(),
         type: defineProtocolString().optional(),
@@ -92,6 +94,7 @@ function title(group: Pick<CaptureExceptionGroup, 'type' | 'message'>): string {
 function summary(group: CaptureExceptionGroup, now: number) {
   return {
     title: title(group),
+    ...(group.applicationOrigin ? { applicationOrigin: group.applicationOrigin } : {}),
     count: group.count,
     firstSeenAtMs: group.firstAt,
     lastSeenAtMs: group.lastAt,

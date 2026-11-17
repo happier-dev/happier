@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { TriageGetResultV1Schema } from '@happier-dev/triage-protocol/v1';
+import { exceptionLocalRefV1, getTelemetryException, TELEMETRY_EXCEPTION_SOURCE_DRAFT_V1, TELEMETRY_EXCEPTION_SOURCE_V1 } from './source.js';
+import { exceptionDetailDataSchema } from './contracts.js';
 import { createInMemoryAccountCollection } from '@happier-dev/plugin-sdk/collections';
 import { createPostgresqlObservationNormalizer } from '@happier-dev/databases/postgresql';
 import { createCaptureRuntime } from '../runtime.js';
@@ -128,8 +131,8 @@ async function fixture(share?: (row: { rowId: string; revision: number }) => Pro
       pending.push(writer.observe(environment, fingerprints).catch(() => {}));
     },
   });
-  async function post(body: unknown) {
-    const response = await fetch(`${receiver.endpoint}/v1/traces`, {
+  async function post(body: unknown, signal: 'traces' | 'logs' = 'traces') {
+    const response = await fetch(`${receiver.endpoint}/v1/${signal}`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -168,6 +171,61 @@ async function fixture(share?: (row: { rowId: string; revision: number }) => Pro
 }
 
 describe('native exception issue writer on the collector', () => {
+  it('retains scope-proven browser origin through mixed groups, Account issues and the native source, never inferring it from app text', async () => {
+    const f = await fixture();
+    const payload = (scopeName: string, atMs: number) => ({ resourceLogs: [{
+      resource: { attributes: [{ key: 'service.name', value: text('api') }] },
+      scopeLogs: [{ scope: { name: scopeName }, logRecords: [{
+        timeUnixNano: `${BigInt(atMs) * 1_000_000n}`,
+        attributes: [
+          { key: 'log.record.uid', value: text(`${scopeName}:${atMs}`) },
+          { key: 'exception.type', value: text('BrowserError') },
+          { key: 'exception.message', value: text('app.browser.errors in the browser') },
+          { key: 'exception.stacktrace', value: text('BrowserError: app.browser.errors\n    at browser (https://app.test/client.js:1:2)') },
+        ],
+      }] }],
+    }] });
+    try {
+      await f.post(payload('app.backend.errors', clock), 'logs');
+      const [backend] = await f.rows();
+      expect(backend).toBeDefined();
+      expect(backend!.value).not.toHaveProperty('applicationOrigin');
+      expect(f.published).toHaveLength(1);
+      await f.post(payload('app.browser.errors', clock + 1), 'logs');
+      const [browser] = await f.rows();
+      expect(browser!.rowId).toBe(backend!.rowId);
+      expect(browser!.value).toMatchObject({ applicationOrigin: 'browser' });
+      await f.post(payload('app.backend.errors', clock + 2), 'logs');
+      const [group] = await f.runtime.store.exceptionGroups({ worktree: environment.partition, limit: 10 });
+      expect(group).toMatchObject({ count: 3, applicationOrigin: 'browser' });
+      expect(await f.writer.refresh({ environment, rowId: browser!.rowId }))
+        .toMatchObject({ value: { count: 3, applicationOrigin: 'browser' } });
+      expect(f.published).toHaveLength(1); // A provenance update is not a new issue transition.
+      const context = {
+        signal: new AbortController().signal,
+        services: { storage: { account: { collection: () => f.account.collection } } },
+      } as unknown as PluginInvocationContext;
+      const got = TriageGetResultV1Schema.parse(await getTelemetryException({
+        v: 1,
+        instance: { v: 1, instance: { source: TELEMETRY_EXCEPTION_SOURCE_V1,
+          sourceInstanceId: '0b0e57a0-3c7e-4c7a-9f39-6a4f1f0a1b2c' },
+          binding: TELEMETRY_EXCEPTION_SOURCE_DRAFT_V1.binding,
+          localInstanceKey: TELEMETRY_EXCEPTION_SOURCE_DRAFT_V1.localInstanceKey,
+          configuration: TELEMETRY_EXCEPTION_SOURCE_DRAFT_V1.configuration },
+        localRef: exceptionLocalRefV1(browser!.rowId),
+      }, context));
+      expect(got).toMatchObject({ kind: 'present', detailData: { applicationOrigin: 'browser' }, investigationDefaults: { permissionMode: 'default' } });
+      if (got.kind !== 'present') throw new Error('Expected retained native issue');
+      expect(exceptionDetailDataSchema.parse(got.detailData)).toMatchObject({ applicationOrigin: 'browser' });
+      const browserSpan = failure('00000000000000f1', 'browser-release', clock + 3);
+      const browserScope = browserSpan.resourceSpans[0]!.scopeSpans[0]!;
+      await f.post({ resourceSpans: [{ ...browserSpan.resourceSpans[0],
+        scopeSpans: [{ ...browserScope, scope: { name: 'app.browser.errors' } }] }] });
+      expect((await f.rows()).find(row => row.rowId !== browser!.rowId)?.value)
+        .toMatchObject({ applicationOrigin: 'browser' });
+    } finally { await f.close(); }
+  });
+
   it('creates one Account issue per group, publishes only lifecycle transitions, and regresses only on a qualifying recurrence', async () => {
     const f = await fixture();
     try {

@@ -19,6 +19,7 @@ function exceptionEvent(input: Readonly<{ id: string; context: CapturePartition;
  const topFrame = exceptionTopFrame(exception.stacktrace);
  return { kind: 'exception', id: input.id, worktree: input.context.partition, origin: input.origin,
   at: Number(BigInt(exception.timeUnixNano) / 1_000_000n),
+  ...(exception.applicationOrigin ? { applicationOrigin: exception.applicationOrigin } : {}),
   fingerprint: exceptionFingerprint({ partition: input.context.partition, serviceName: resource.serviceName, exception }),
   serviceName: resource.serviceName, serviceVersion: resource.serviceVersion, type: exception.type, message: exception.message,
   topFrame, traceId: input.traceId, spanId: input.spanId, ...(exception.escaped === undefined ? {} : { escaped: exception.escaped }),

@@ -11,6 +11,10 @@ import {
   defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 
+/** Proven ingress provenance; absence does not identify a browser. */
+export const exceptionApplicationOriginSchema = defineProtocolLiteral('browser');
+export type ExceptionApplicationOrigin = ReturnType<typeof exceptionApplicationOriginSchema.parse>;
+
 const text = defineProtocolString({ minLength: 1 });
 const time = defineProtocolNumber({ integer: true, minimum: 0 });
 const environment = { serverId: text, environmentId: text };
@@ -168,6 +172,7 @@ export const exceptionDetailDataSchema = defineProtocolObject(
     v: defineProtocolLiteral(1),
     environmentId: text,
     fingerprint: text.optional(),
+    applicationOrigin: exceptionApplicationOriginSchema.optional(),
     status: issueStatus,
     regressed: defineProtocolLiteral(true).optional(),
     count: time,

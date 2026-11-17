@@ -2,6 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { captureMigrations, createCaptureStore } from './capture.js';
 import { createCaptureSqliteFixture as fixture } from '../testing/sqlite.js';
 describe('capture store through SQLite', () => {
+ it('adds browser provenance without relabeling or discarding retained pre-provenance exceptions', async () => {
+  const f = fixture();
+  try {
+   for (const migration of captureMigrations.filter(migration => migration.version <= 6)) await migration.up(f.db);
+   await f.db.execute('INSERT INTO captureExceptions(id,worktree,at,fingerprint,origin,message) VALUES(?,?,?,?,?,?)',
+    ['retained', 'chosen', 1, 'retained-fp', 'log', 'app.browser.errors in browser stack text']);
+   await f.db.execute('INSERT INTO captureDetails(id,worktree,at,body) VALUES(?,?,?,?)', ['retained', 'chosen', 1, '{"retained":true}']);
+   for (const migration of captureMigrations.filter(migration => migration.version > 6)) await migration.up(f.db);
+   const store = createCaptureStore(f.db, () => {});
+   const [retained] = await store.exceptionGroups({ worktree: 'chosen', limit: 10 });
+   expect(retained).toMatchObject({ fingerprint: 'retained-fp', count: 1 });
+   expect(retained).not.toMatchObject({ applicationOrigin: 'browser' });
+   expect(await store.detail('chosen', 'retained')).toEqual({ retained: true });
+   // Reach the genuine SQLite column after the append-only migration.
+   expect(await f.db.query('SELECT applicationOrigin FROM captureExceptions WHERE id = ?', ['retained']))
+    .toEqual([{ applicationOrigin: null }]);
+  } finally { f.close(); }
+ });
+
  it('keeps demanded details out of selected summary reads and clears only the selected worktree', async () => {
   const f = fixture();
   try {

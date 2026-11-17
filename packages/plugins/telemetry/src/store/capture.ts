@@ -6,6 +6,7 @@ import { costMigration, createCostStore } from './costs.js';
 import { worktreeMigration, createCaptureWorktrees } from './worktrees.js';
 import type { DatabaseCaptureCostMetadataV1 } from '@happier-dev/database-protocol';
 import type { NormalizedMetricPoint } from '../otlp/types.js';
+import type { ExceptionApplicationOrigin } from '../exceptions/contracts.js';
 import { REQUEST_DATABASE_TIME_SQL_CTES } from '../analysis/requests.js';
 
 export const captureMigrations: readonly DaemonDatabaseMigration[] = [{ version: 1, id: 'capture', async up(tx) {
@@ -20,7 +21,10 @@ export const captureMigrations: readonly DaemonDatabaseMigration[] = [{ version:
  // Raw occurrences stay on this collector; the Account issue record holds no stack.
  await tx.execute('CREATE TABLE captureExceptions (id TEXT NOT NULL, worktree TEXT NOT NULL, at INTEGER NOT NULL, fingerprint TEXT NOT NULL, origin TEXT NOT NULL, serviceName TEXT, serviceVersion TEXT, type TEXT, message TEXT, topFrame TEXT, traceId TEXT, spanId TEXT, escaped INTEGER, PRIMARY KEY(worktree,id))');
  await tx.execute('CREATE INDEX captureExceptionGroup ON captureExceptions(worktree,fingerprint,at)');
-} }, metricMigration, costMigration, worktreeMigration];
+} }, metricMigration, costMigration, worktreeMigration, { version: 7, id: 'exception-application-origin', async up(tx) {
+ // Earlier retained exceptions have no proven application origin; never infer one from their text.
+ await tx.execute('ALTER TABLE captureExceptions ADD COLUMN applicationOrigin TEXT');
+} }];
 const summaryFields = ['id','worktree','kind','source','at','shape','traceId','spanId','durationMs','outcome','parentSpanId','spanKind','serviceName','endpointMethod','endpointRoute','httpStatusCode','statementKind','parameterIdentity','executionIdentity','callsite','transactionId','retryOf','connectionId','severityNumber'] as const;
 const summaryWriteFields = [...summaryFields, 'serviceVersion', 'genAi'] as const;
 const changingFields = summaryWriteFields.filter(field => field !== 'id' && field !== 'worktree');
@@ -30,8 +34,9 @@ const summaryUpdateValue = (field: typeof changingFields[number]) => field === '
 const summarySql = `INSERT INTO captureSummaries(${summaryWriteFields.join(',')}) VALUES(${summaryWriteFields.map(() => '?').join(',')}) ON CONFLICT(worktree,id) DO UPDATE SET ${changingFields.map(field => `${field}=${summaryUpdateValue(field)}`).join(',')} WHERE ${changingFields.map(field => `${field} IS NOT ${summaryUpdateValue(field)}`).join(' OR ')}`;
 const detailSql = 'INSERT INTO captureDetails(id,worktree,at,body) VALUES(?,?,?,?) ON CONFLICT(worktree,id) DO UPDATE SET at=excluded.at,body=excluded.body WHERE body IS NOT excluded.body';
 const exceptionFields = ['id','worktree','at','fingerprint','origin','serviceName','serviceVersion','type','message','topFrame','traceId','spanId','escaped'] as const;
+const exceptionWriteFields = [...exceptionFields, 'applicationOrigin'] as const;
 /** An exporter retry repeats the same occurrence identity and changes nothing. */
-const exceptionSql = `INSERT INTO captureExceptions(${exceptionFields.join(',')}) VALUES(${exceptionFields.map(() => '?').join(',')}) ON CONFLICT(worktree,id) DO NOTHING`;
+const exceptionSql = `INSERT INTO captureExceptions(${exceptionWriteFields.join(',')}) VALUES(${exceptionWriteFields.map(() => '?').join(',')}) ON CONFLICT(worktree,id) DO NOTHING`;
 /** A detail is truncated visibly against the host's statement-input bound, never an invented telemetry cap. */
 function detailBody(event: Pick<CaptureSummaryEvent, 'id' | 'worktree' | 'detail'>): string {
  const budget = limits.maximumInputBytes - Buffer.byteLength(detailSql) - Buffer.byteLength(event.id) - Buffer.byteLength(event.worktree) - 8;
@@ -88,7 +93,7 @@ export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly 
       continue;
      }
      if (event.kind === 'exception') {
-      const inserted = await tx.execute(exceptionSql, exceptionFields.map(field => field === 'escaped'
+      const inserted = await tx.execute(exceptionSql, exceptionWriteFields.map(field => field === 'escaped'
        ? (event.escaped === undefined ? null : Number(event.escaped)) : event[field] ?? null));
       // The stack lives once, in the same detail table and retention as every other capture detail.
       if (inserted.changes) { await tx.execute(detailSql, [event.id, event.worktree, event.at, detailBody(event)]); changed.add(event.worktree); }
@@ -185,9 +190,9 @@ LEFT JOIN endpointDatabaseTimes timing USING(serviceName,method,route) ORDER BY 
    const after = input.after ? 'WHERE groups.lastAt < ? OR (groups.lastAt = ? AND groups.fingerprint > ?) ' : '';
    if (input.after) params.push(input.after.lastAt, input.after.lastAt, input.after.fingerprint);
    const statement = `WITH scoped AS (SELECT * FROM captureExceptions WHERE worktree = ?${scoped}),
-groups AS (SELECT fingerprint,COUNT(*) AS count,MIN(at) AS firstAt,MAX(at) AS lastAt FROM scoped GROUP BY fingerprint),
+groups AS (SELECT fingerprint,COUNT(*) AS count,MIN(at) AS firstAt,MAX(at) AS lastAt,MAX(applicationOrigin) AS applicationOrigin FROM scoped GROUP BY fingerprint),
 latest AS (SELECT fingerprint,id AS lastId,serviceName,serviceVersion AS lastServiceVersion,type,message,topFrame,ROW_NUMBER() OVER (PARTITION BY fingerprint ORDER BY at DESC,id DESC) AS position FROM scoped)
-SELECT groups.fingerprint,groups.count,groups.firstAt,groups.lastAt,latest.lastId,latest.serviceName,latest.lastServiceVersion,latest.type,latest.message,latest.topFrame
+SELECT groups.fingerprint,groups.count,groups.firstAt,groups.lastAt,groups.applicationOrigin,latest.lastId,latest.serviceName,latest.lastServiceVersion,latest.type,latest.message,latest.topFrame
 FROM groups JOIN latest ON latest.fingerprint = groups.fingerprint AND latest.position = 1 ${after}ORDER BY groups.lastAt DESC,groups.fingerprint LIMIT ?`;
    const { rows } = await queryPage(statement, params, Math.min(input.limit, limits.maximumResultRows));
    return rows as unknown as readonly CaptureExceptionGroup[];
@@ -266,6 +271,7 @@ export type CaptureSummaryEvent = CaptureSummary & Readonly<{ detail?: Readonly<
 /** One redacted exception occurrence; identity is span/event position or the emitter's log uid. */
 export type CaptureExceptionOccurrence = Readonly<{
  id: string; worktree: string; at: number; fingerprint: string; origin: 'span' | 'log';
+ applicationOrigin?: ExceptionApplicationOrigin;
  serviceName?: string | null; serviceVersion?: string | null; type?: string | null; message?: string | null; topFrame?: string | null;
  traceId?: string | null; spanId?: string | null; escaped?: boolean;
 }>;
@@ -274,6 +280,7 @@ export type CaptureMetricEvent = Readonly<{id:string;worktree:string;kind:'metri
 export type CaptureEvent = CaptureSummaryEvent | CaptureExceptionEvent | CaptureMetricEvent;
 export type CaptureExceptionGroup = Readonly<{
  fingerprint: string; count: number; firstAt: number; lastAt: number; lastId: string;
+ applicationOrigin?: ExceptionApplicationOrigin | null;
  serviceName: string | null; lastServiceVersion: string | null; type: string | null; message: string | null; topFrame: string | null;
 }>;
 export type CaptureExceptionGroupsInput = Readonly<{ worktree: string; limit: number; fingerprints?: readonly string[];

@@ -280,12 +280,14 @@ export {
     TriageGetInputV1Schema,
     triageGetInputFieldsV1,
     TriageGetResultV1Schema,
+    TriageInvestigationDefaultsV1Schema,
     TriageScanInputV1Schema,
     TriageScanResultV1Schema,
 } from './operations.js';
 export type {
     TriageGetInputV1,
     TriageGetResultV1,
+    TriageInvestigationDefaultsV1,
     TriageScanInputV1,
     TriageScanResultV1,
 } from './operations.js';

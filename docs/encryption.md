@@ -1216,8 +1216,15 @@ exception occurrence and its stack, in the collector's daemon database (P5
 retention). The shared secret redactor runs once at OTLP ingest, before storage,
 grouping or any read. The Account-native issue record (D30) is one row in the
 `happier.telemetry` `exception-issues` Account Collection. It holds the title,
-fingerprint, status, counts, first/last seen, last release and resolution. On an
-E2EE Account its logical fields are private Collection content. Only
+fingerprint, status, counts, first/last seen, last release and resolution. Optional
+`applicationOrigin: 'browser'` is private issue content, derived only from the
+OTLP instrumentation scope `app.browser.errors`. The collector retains it on
+occurrences and groups; a mixed group retains proven browser provenance even
+when its newest occurrence is from a backend. Older retained occurrences have
+unknown origin and are never relabeled from stack or message text. The native
+source carries the marker into the investigation projection so browser
+investigations can seed Ask through the Session authoring owner (D30).
+On an E2EE Account its logical fields are private Collection content. Only
 `environmentId` (already server-known) and the row id are server-readable. The
 row id is the Collection's Account-mode identity tag over Environment and
 fingerprint, so app error text never becomes plaintext metadata.

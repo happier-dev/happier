@@ -9,7 +9,7 @@ import {
     type ProtocolComposableSchema,
 } from '@happier-dev/plugin-sdk/protocol';
 import { ScmComparisonSourceSchema } from '@happier-dev/plugin-sdk/scm';
-import { SessionInputForgeEvidenceV1Schema } from '@happier-dev/plugin-sdk/sessions';
+import { AgentPermissionIntentV1Schema, SessionInputForgeEvidenceV1Schema } from '@happier-dev/plugin-sdk/sessions';
 
 import { TriageSourceFailureV1Schema } from './diagnostics.js';
 import { TriageTaskFieldChoicesV1Schema, TriageTaskFieldsV1Schema } from './tasks.js';
@@ -150,6 +150,12 @@ export type TriageGetInputV1 = ReturnType<typeof TriageGetInputV1Schema.parse>;
  * the durable observation: source configuration and executable routing remain
  * current read inputs, rather than duplicated in the corpus snapshot.
  */
+/** Source recommendation for a new investigation; Session owns permission resolution. */
+export const TriageInvestigationDefaultsV1Schema = defineProtocolObject({
+    permissionMode: AgentPermissionIntentV1Schema,
+}, { policy: 'closed' });
+export type TriageInvestigationDefaultsV1 = ReturnType<typeof TriageInvestigationDefaultsV1Schema.parse>;
+
 export const TriageGetResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
         ...TriageSourcePresentObservationV1Fields,
@@ -160,6 +166,8 @@ export const TriageGetResultV1Schema = defineProtocolUnion([
         taskFields: TriageTaskFieldsV1Schema.optional(),
         /** What the name-valued task fields can be set to, when the read asked. Exact-read-only, never retained. */
         taskFieldChoices: TriageTaskFieldChoicesV1Schema.optional(),
+        /** Exact-read-only initial choice for Investigate, never retained in corpus state. */
+        investigationDefaults: TriageInvestigationDefaultsV1Schema.optional(),
         /** Source-owned presentation from this exact read, never persisted or used as authority. */
         detailData: defineProtocolJsonValue().optional(),
         /** Fresh source detail for this exact dispatch. Descriptive data only;

@@ -87,6 +87,7 @@ describe('built-in Happier exceptions Triage source', () => {
       detailData: { v: 1, environmentId: 'production', fingerprint: 'fp-a', status: 'resolved', count: 3,
         firstSeenAtMs: 1, lastSeenAtMs: 10, lastServiceVersion: 'build-2', resolution: { atMs: 10, priorVersions: ['build-1'] } },
     });
+    expect(got).not.toHaveProperty('investigationDefaults');
     const scan = TriageScanResultV1Schema.parse(
       await scanTelemetryExceptions({ v: 1, instance, page: { kind: 'initial', limit: 5 } }, context()),
     );

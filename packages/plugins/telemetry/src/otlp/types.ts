@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'node:http';
+import type { ExceptionApplicationOrigin } from '../exceptions/contracts.js';
 import type { DatabaseCaptureCostMetadataV1 } from '@happier-dev/database-protocol';
 
 export type TelemetryValue = null | boolean | number | string | TelemetryValue[] | { [key: string]: TelemetryValue };
@@ -34,6 +35,8 @@ export interface NormalizedResourceIdentity {
  */
 export interface NormalizedException {
     timeUnixNano: string;
+    /** Derived only from the OTLP instrumentation scope, never app text. */
+    applicationOrigin?: ExceptionApplicationOrigin;
     type?: string;
     message?: string;
     stacktrace?: string;
