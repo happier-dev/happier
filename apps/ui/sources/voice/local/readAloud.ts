@@ -1,4 +1,6 @@
 import { speakAssistantText } from '@/voice/output/speakAssistantText';
+import { createSpeechTextContext } from '@/voice/output/speechText';
+import { createTtsChunker, resolveStreamingTtsChunkChars } from '@/voice/output/TtsChunker';
 import { resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
 import { localVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
 import { storage } from '@/sync/domains/state/storage';
@@ -79,28 +81,41 @@ export async function toggleReadAloud(params: Readonly<{
       if (!canReadAloud(settings)) return true;
     }
     const { config } = resolveLocalVoiceAdapterSettings(settings);
-    return await speakAssistantText({
-      text: params.text,
-      settings,
-      networkTimeoutMs: resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000),
-      // Registered with the shared controller (a live barge-in stops read-aloud) and tracked here
-      // (a live reply can stop read-aloud without counting as a barge-in).
-      registerPlaybackStopper: (stopper) => {
-        const stop = () => {
-          unregisterShared();
-          untrack();
-          stopper();
-        };
-        const unregisterShared = localVoicePlaybackController.registerStopper(stop);
-        const untrack = trackReadAloudStopper(stop);
-        return () => {
-          unregisterShared();
-          untrack();
-        };
-      },
-      onSpeaking: () => {},
-      takeOverReadAloud: false,
-    });
+    // Speak sentence-sized pieces, as live voice replies do: a provider that returns the whole
+    // audio at once (OpenAI-compatible endpoints) otherwise delays the first sound by the time it
+    // takes to render the entire message.
+    const chunker = createTtsChunker(resolveStreamingTtsChunkChars(config?.streaming?.ttsChunkChars));
+    const pieces = [...chunker.push(params.text), ...chunker.flush()];
+    const speechTextContext = createSpeechTextContext();
+    const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000);
+    for (const text of pieces) {
+      if (!isReadAloudRunCurrent(run)) return true;
+      const spoken = await speakAssistantText({
+        text,
+        speechTextContext,
+        settings,
+        networkTimeoutMs,
+        // Registered with the shared controller (a live barge-in stops read-aloud) and tracked here
+        // (a live reply can stop read-aloud without counting as a barge-in).
+        registerPlaybackStopper: (stopper) => {
+          const stop = () => {
+            unregisterShared();
+            untrack();
+            stopper();
+          };
+          const unregisterShared = localVoicePlaybackController.registerStopper(stop);
+          const untrack = trackReadAloudStopper(stop);
+          return () => {
+            unregisterShared();
+            untrack();
+          };
+        },
+        onSpeaking: () => {},
+        takeOverReadAloud: false,
+      });
+      if (!spoken) return false;
+    }
+    return true;
   } catch (error) {
     console.warn('[voice/readAloud] microphone cancellation failed', error instanceof Error ? error.message : error);
     return false;

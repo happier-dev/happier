@@ -212,4 +212,44 @@ describe('toggleReadAloud', () => {
         utterances[0].onDone?.();
         await live;
     });
+
+    describe('long messages', () => {
+        // Three ~120-character sentences: more than one default chunk, so synthesis must be split.
+        const sentences = ['A', 'B', 'C'].map(letter => `${letter.repeat(5)} ${'word '.repeat(22)}ends here.`);
+        const longText = sentences.join(' ');
+
+        it('speaks one sentence-sized piece at a time so the first sound is not delayed by the whole message', async () => {
+            const pending = toggleReadAloud({ key: 'm1', text: longText, settings });
+            expect(expoSpeech.speak).toHaveBeenCalledTimes(1);
+            expect(expoSpeech.speak.mock.calls[0][0]).toBe(sentences[0]);
+
+            await act(async () => { utterances[0].onDone?.(); });
+            expect(expoSpeech.speak.mock.calls.map(call => call[0])).toEqual(sentences.slice(0, 2));
+            await act(async () => { utterances[1].onDone?.(); });
+            await act(async () => { utterances[2].onDone?.(); });
+
+            await expect(pending).resolves.toBe(true);
+            expect(expoSpeech.speak.mock.calls.map(call => call[0])).toEqual(sentences);
+            expect(getReadAloudActiveKey()).toBeNull();
+        });
+
+        it('does not speak the remaining pieces once the message is stopped', async () => {
+            const pending = toggleReadAloud({ key: 'm1', text: longText, settings });
+            await toggleReadAloud({ key: 'm1', text: longText, settings }); // press again: stop
+            await act(async () => { utterances[0].onStopped?.(); });
+
+            await expect(pending).resolves.toBe(true);
+            expect(expoSpeech.speak).toHaveBeenCalledTimes(1);
+            expect(getReadAloudActiveKey()).toBeNull();
+        });
+
+        it('reports a provider failure part-way through and skips the rest', async () => {
+            const pending = toggleReadAloud({ key: 'm1', text: longText, settings });
+            expoSpeech.speak.mockImplementationOnce(() => { throw new Error('no voice'); });
+            await act(async () => { utterances[0].onDone?.(); });
+
+            await expect(pending).resolves.toBe(false);
+            expect(expoSpeech.speak).toHaveBeenCalledTimes(2);
+        });
+    });
 });
