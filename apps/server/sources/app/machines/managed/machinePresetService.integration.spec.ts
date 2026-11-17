@@ -178,7 +178,6 @@ describe("Machine preset relational owner", () => {
         expect(await db.managedMachinePreset.findUniqueOrThrow({ where: { id: copiedId } })).toMatchObject({ configurationRevision: 2 });
     });
 
-    it.each(['plain', 'e2ee'] as const)('reads retained raw %s-author presets without rewriting and seals only on normal save', async mode => {
     it.each(['plain', 'e2ee'] as const)('persists setup-only %s counters and returns bodyless revision headers', async mode => {
         const accountId = `preset-setup-counter-${mode}-owner`;
         const homeId = await getOrCreateServerIdentityId();
@@ -208,6 +207,7 @@ describe("Machine preset relational owner", () => {
         expect(headers.json()).toEqual({ kind: 'revisions', presets: [{ id, homeId, revision: 2, setupRevision: 3 }] });
     });
 
+    it.each(['plain', 'e2ee'] as const)('reads retained raw %s-author presets without rewriting and seals only on normal save', async mode => {
         const accountId = `preset-legacy-${mode}-owner`;
         const homeId = await getOrCreateServerIdentityId();
         const keys = tweetnacl.box.keyPair();
@@ -922,7 +922,7 @@ describe("Machine preset relational owner", () => {
             ] } });
 
         expect(resolved).toEqual({ sources: [
-            { kind: 'accountPresetOpaque', presetId, presetRevision: 0, contentEncryptionMode: 'e2ee',
+            { kind: 'accountPresetOpaque', presetId, presetRevision: 0, setupRevision: 0, contentEncryptionMode: 'e2ee',
                 presetContent: { content: sealed.content, recipientEnvelope: sealed.recipients[0]!.envelope } },
             { kind: 'direct', setup: {} },
         ] });
@@ -944,7 +944,7 @@ describe("Machine preset relational owner", () => {
                 { kind: 'direct' as const, setup: {} },
             ] } });
         expect(resolvedOverride).toEqual({ sources: [
-            { kind: 'accountPresetOpaque', presetId, presetRevision: 0, contentEncryptionMode: 'e2ee',
+            { kind: 'accountPresetOpaque', presetId, presetRevision: 0, setupRevision: 0, contentEncryptionMode: 'e2ee',
                 presetContent: { content: sealed.content, recipientEnvelope: sealed.recipients[0]!.envelope },
                 presetContentOverride: setupOverride },
             { kind: 'direct', setup: {} },
@@ -988,14 +988,13 @@ describe("Machine preset relational owner", () => {
             ] } });
 
         expect(resolved).toEqual({ sources: [
-            { kind: 'accountPresetOpaque', presetId, presetRevision: 0, contentEncryptionMode: 'plain',
+            { kind: 'accountPresetOpaque', presetId, presetRevision: 0, setupRevision: 0, contentEncryptionMode: 'plain',
                 presetContent: { content, recipientEnvelope: null } },
             { kind: 'direct', setup: {} },
         ] });
         expect(resolved.sources[0]).not.toHaveProperty('setup');
     });
 
-    it('publishes the shared preset collection discriminator only for real content mutations', async () => {
     it('resolves a new setup copy on a managed Machine while retaining its original creation snapshot', async () => {
         const accountId = 'preset-managed-setup-candidate-owner';
         const homeId = await getOrCreateServerIdentityId();
@@ -1036,6 +1035,7 @@ describe("Machine preset relational owner", () => {
         expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row);
     });
 
+    it('publishes the shared preset collection discriminator only for real content mutations', async () => {
         const accountId = 'preset-collection-publication-owner';
         const homeId = await getOrCreateServerIdentityId();
         await db.account.create({ data: { id: accountId, publicKey: null, encryptionMode: 'plain' } });
