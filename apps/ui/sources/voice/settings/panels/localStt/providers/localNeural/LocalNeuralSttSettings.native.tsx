@@ -71,7 +71,9 @@ export function LocalNeuralSttSettings(props: {
   const partialBytes = readPartialDownloadBytes(installSummary);
   const transferRow = resolveModelPackTransferRow({ status: modelStatus, progress, partialBytes });
   const partialRemoveRow = resolvePartialDownloadRemoveRow(partialBytes);
-  const downloadDetail = transferRow?.detail ?? (installed
+  const downloadDetail = transferRow?.detail ?? (installed === null
+    ? t('common.unavailable')
+    : installed
     ? installedBuild
       ? t('settingsVoice.local.localNeuralStt.status.installedWithBuild', { build: installedBuild })
       : t('settingsVoice.local.localNeuralStt.status.installed')

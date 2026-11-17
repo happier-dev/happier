@@ -50,8 +50,8 @@ export function useLocalNeuralModelPackState(params: {
   const prepareAbortRef = React.useRef<AbortController | null>(null);
   const [cancellationCommand, setCancellationCommand] = React.useState<ReturnType<typeof createVoiceModelCancellationCommand>>(null);
   useCurrentUiContextMountedCommand(cancellationCommand, t('common.cancel'));
-  const [installed, setInstalled] = React.useState(false);
   const [installSummary, setInstallSummary] = React.useState<Awaited<ReturnType<typeof getModelPackInstallSummary>> | null>(null);
+  const installed = installSummary?.installed ?? null;
   const [updateCheckedRemote, setUpdateCheckedRemote] = React.useState<{ build: string | null; updateAvailable: boolean } | null>(null);
 
   const isCurrent = React.useCallback(() => mountedRef.current && enabled
@@ -65,7 +65,6 @@ export function useLocalNeuralModelPackState(params: {
       const summary = await getModelPackInstallSummary({ packId: params.packId });
       if (!isCurrent() || !accountLifetime.isCurrent()) return;
       setInstallSummary(current => retainDeep(current, summary));
-      setInstalled(summary.installed);
       setModelStatus((cur) => cur === 'downloading' ? cur : summary.installed ? 'ready' : 'idle');
       setUpdateCheckedRemote(null);
       return summary;
@@ -73,7 +72,6 @@ export function useLocalNeuralModelPackState(params: {
       if (!isCurrent() || !accountLifetime.isCurrent()) return;
       console.warn('[modelPacks] Failed to refresh native model pack state', error);
       setInstallSummary(null);
-      setInstalled(false);
       setModelStatus((cur) => cur === 'downloading' ? cur : 'idle');
       setUpdateCheckedRemote(null);
     }
@@ -236,7 +234,6 @@ export function useLocalNeuralModelPackState(params: {
     setCancellationCommand(null);
     setModelStatus('idle');
     setDownloadProgress(null);
-    setInstalled(false);
     setInstallSummary(null);
     setUpdateCheckedRemote(null);
     fireAndForget((async () => {

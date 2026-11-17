@@ -64,6 +64,31 @@ describe('useLocalNeuralModelPackState (native)', () => {
     expect(account.persistedSettings.voice.privacy.recentMessagesCount).toBe(7);
   });
 
+  it('keeps an unread install unknown after a failed read and distinguishes a settled absence', async () => {
+    const manifest = { packId: input.packId, kind: 'tts_sherpa', model: 'kokoro', version: '1',
+      files: [{ path: 'model.bin', url: 'https://example.test/model.bin', sha256: 'a'.repeat(64), sizeBytes: 1 }] };
+    filesystem.files.set(`${filesystem.root}/${input.packId}/pack.json`, new TextEncoder().encode(JSON.stringify({ manifest })));
+    filesystem.files.set(`${filesystem.root}/${input.packId}/model.bin`, new Uint8Array([1]));
+    const answer = createDeferred<string>();
+    const text = vi.spyOn(filesystem.fs.File.prototype, 'text').mockImplementation(() => answer.promise);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const hook = await renderHook(useLocalNeuralModelPackState, { initialProps: input });
+      expect(hook.getCurrent().installed).toBeNull();
+      expect(hook.getCurrent().installSummary).toBeNull();
+      await act(async () => { answer.reject(new Error('storage_unavailable')); });
+      expect(hook.getCurrent().installed).toBeNull();
+      expect(hook.getCurrent().installSummary).toBeNull();
+      text.mockRestore();
+      await act(async () => { await hook.getCurrent().refreshInstallState(); });
+      expect(hook.getCurrent().installed).toBe(true);
+      filesystem.files.clear();
+      await act(async () => { await hook.getCurrent().refreshInstallState(); });
+      expect(hook.getCurrent().installed).toBe(false);
+      expect(hook.getCurrent().installSummary).toMatchObject({ installed: false });
+    } finally { text.mockRestore(); warning.mockRestore(); }
+  });
+
   it('publishes no equal device model or voice observations and preserves unchanged voice rows', async () => {
     const manifest = { packId: input.packId, kind: 'tts_sherpa', model: 'kokoro', version: '1',
       voices: [{ id: 'af_heart', title: 'Heart', sid: 0 }, { id: 'af_bella', title: 'Bella', sid: 1 }],
@@ -110,7 +135,7 @@ describe('useLocalNeuralModelPackState (native)', () => {
     expect(hook.getCurrent().voices[1]).toBe(initial.voices[1]);
   });
 
-  it('warns when native storage becomes unavailable, falls back, and recovers on a later refresh', async () => {
+  it('makes the observed install unknown when native storage becomes unavailable and recovers on a later refresh', async () => {
     const manifest = { packId: input.packId, kind: 'tts_sherpa', model: 'kokoro', version: '1',
       files: [{ path: 'model.bin', url: 'https://example.test/model.bin', sha256: 'a'.repeat(64), sizeBytes: 1 }] };
     filesystem.files.set(`${filesystem.root}/${input.packId}/pack.json`, new TextEncoder().encode(JSON.stringify({ manifest })));
@@ -128,7 +153,7 @@ describe('useLocalNeuralModelPackState (native)', () => {
     try {
       filesystem.fs.Directory = UnavailableDirectory;
       await act(async () => { await hook.getCurrent().refreshInstallState(); });
-      expect(hook.getCurrent().installed).toBe(false);
+      expect(hook.getCurrent().installed).toBeNull();
       expect(hook.getCurrent().installSummary).toBeNull();
       expect(hook.getCurrent().modelStatus).toBe('idle');
       expect(warning.mock.calls.some(call => call.some(value =>
@@ -152,7 +177,7 @@ describe('useLocalNeuralModelPackState (native)', () => {
     const hook = await renderHook(useLocalNeuralModelPackState, { initialProps: { ...input, readEnabled: false } });
     await act(async () => { await hook.getCurrent().prepareModel(); });
     expect(hook.getCurrent().modelStatus).toBe('idle');
-    expect(hook.getCurrent().installed).toBe(false);
+    expect(hook.getCurrent().installed).toBeNull();
     expect(hook.getCurrent().installSummary).toBeNull();
     expect(alert).toHaveBeenCalledWith(t('common.error'), t('settingsVoice.local.kokoro.alerts.runtimeUnsupported.body'), undefined);
     expect(filesystem.files.get(`${filesystem.root}/${input.packId}/model.bin`)).toEqual(new Uint8Array([1]));

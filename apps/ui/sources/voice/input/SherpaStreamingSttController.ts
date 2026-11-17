@@ -11,6 +11,7 @@ import {
   type SherpaNativeModule,
 } from '@happier-dev/sherpa-native';
 import { ensureModelPackInstalled } from '@/voice/modelPacks/installer.native';
+import { ModelPackInstallError } from '@happier-dev/voice-modelpacks';
 import { resolveModelPackManifestUrl } from '@/voice/modelPacks/manifests';
 import {
   createTurnEndpointController,
@@ -207,12 +208,14 @@ export function createSherpaStreamingSttController(deps: CreateSherpaStreamingSt
         signal: abortController.signal,
       });
       packDirUri = installed.packDirUri;
-    } catch {
+    } catch (error) {
       await releaseStartupResources();
       if (abortController.signal.aborted) {
         return;
       }
-      sink.onError(createVoiceMachineError({ kind: 'provider_error', reason: 'local_neural_pack_not_installed' }));
+      sink.onError(createVoiceMachineError({ kind: 'provider_error',
+        reason: error instanceof ModelPackInstallError && error.message === 'model_pack_not_installed'
+          ? 'local_neural_pack_not_installed' : 'local_neural_stt_unavailable', cause: error }));
       return;
     }
     if (abortController.signal.aborted) {

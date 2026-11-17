@@ -44,6 +44,7 @@ vi.mock('@/voice/settings/voiceDeviceModelPackOperation', () => import('@/voice/
 
 // Load the real owner graph during collection, outside rendered interaction timeouts.
 const { LocalNeuralSttSettings } = await import('./LocalNeuralSttSettings.native');
+const { LocalNeuralTtsSettings } = await import('../../../localTts/LocalNeuralTtsSettings.native');
 const { createVoiceSettingsAccountTestHarness } = await import('../../../voiceSettingsAccountTestHarness');
 const { settingsParse } = await import('@/sync/domains/settings/settings');
 const { voiceSettingsParse } = await import('@/sync/domains/settings/voiceSettings');
@@ -69,6 +70,48 @@ describe('LocalNeuralSttSettings native model download accessory', () => {
         download.resolve(signal);
         signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
       })));
+  });
+
+  it.each(['stt', 'tts'] as const)('keeps %s installed state unknown until the filesystem answers, including failed reads', async role => {
+    const selectedPack = getDefaultModelPackId(role === 'stt' ? 'stt_sherpa' : 'tts_sherpa');
+    if (!selectedPack) throw new Error('Expected the canonical model pack');
+    const manifest = { packId: selectedPack, kind: role === 'stt' ? 'stt_sherpa' : 'tts_sherpa',
+      model: role === 'stt' ? 'zipformer' : 'kokoro', version: '1',
+      files: [{ path: 'model.bin', url: 'https://example.test/model.bin', sha256: 'a'.repeat(64), sizeBytes: 1 }] };
+    filesystem.files.set(`${filesystem.root}/${selectedPack}/pack.json`, new TextEncoder().encode(JSON.stringify({ manifest })));
+    filesystem.files.set(`${filesystem.root}/${selectedPack}/model.bin`, new Uint8Array([1]));
+    const answer = createDeferred<string>();
+    const text = vi.spyOn(filesystem.fs.File.prototype, 'text').mockImplementation(() => answer.promise);
+    const renderSettings = () => role === 'stt'
+      ? <LocalNeuralSttSettings cfg={{ provider: 'local_neural', localNeural: {
+        assetId: selectedPack, language: null, execution: 'device' } }} setCfg={() => {}} />
+      : <LocalNeuralTtsSettings cfgKokoro={{ model: 'kokoro', assetId: selectedPack, voiceId: null, speed: 1, execution: 'device' }}
+        setKokoro={() => {}} networkTimeoutMs={1000} />;
+    const title = t(role === 'stt' ? 'settingsVoice.local.localNeuralStt.modelFiles.title' : 'settingsVoice.local.kokoro.model.title');
+    const screen = await renderScreen(renderSettings());
+    const detail = () => screen.tree.root.findAll(node => node.props.title === title && node.props.detail !== undefined)[0]?.props.detail;
+    try {
+      expect(detail()).toBe(t('common.unavailable'));
+      await act(async () => { answer.resolve(JSON.stringify({ manifest })); });
+      expect(detail()).toContain(t(role === 'stt' ? 'settingsVoice.local.localNeuralStt.status.installed' : 'settingsVoice.local.kokoro.modelStatus.ready'));
+      await act(async () => { screen.tree.unmount(); });
+      text.mockRestore();
+      const BaseDirectory = filesystem.fs.Directory;
+      class UnavailableDirectory extends BaseDirectory {
+        constructor(...args: unknown[]) { super(...args); throw new Error('storage_unavailable'); }
+      }
+      filesystem.fs.Directory = UnavailableDirectory;
+      try {
+        const failed = await renderScreen(renderSettings());
+        expect(failed.tree.root.findAll(node => node.props.title === title && node.props.detail !== undefined)[0]?.props.detail)
+          .toBe(t('common.unavailable'));
+        await act(async () => { failed.tree.unmount(); });
+      } finally { filesystem.fs.Directory = BaseDirectory; }
+      filesystem.files.clear();
+      const absent = await renderScreen(renderSettings());
+      expect(absent.tree.root.findAll(node => node.props.title === title && node.props.detail !== undefined)[0]?.props.detail)
+        .toBe(t(role === 'stt' ? 'settingsVoice.local.localNeuralStt.status.notInstalled' : 'settingsVoice.local.kokoro.modelStatus.notDownloaded'));
+    } finally { text.mockRestore(); }
   });
 
   it.each(['conversation', 'dictation'] as const)('keeps %s download cancellation outside the row with named button semantics', async purpose => {

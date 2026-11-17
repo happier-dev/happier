@@ -418,6 +418,33 @@ describe('SherpaStreamingSttController (native shared capture)', () => {
     }
   });
 
+  it.each(['manifest', 'directory'] as const)('reports a native %s read refusal as unavailable and recovers without claiming the pack is absent', async boundary => {
+    const filesystem = runtime.fs!;
+    const refusal = new Error('native_storage_refused');
+    const BaseDirectory = filesystem.fs.Directory;
+    const text = vi.spyOn(filesystem.fs.File.prototype, 'text');
+    if (boundary === 'manifest') text.mockRejectedValue(refusal);
+    else {
+      filesystem.fs.Directory = class extends BaseDirectory {
+        constructor(...args: unknown[]) { super(...args); throw refusal; }
+      };
+    }
+    const { createSherpaStreamingSttController } = await import('./SherpaStreamingSttController');
+    const sink = createSink();
+    const controller = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    try {
+      await controller.start({ micSession: createMicSession(), sink });
+      expect(sink.onError).toHaveBeenCalledWith(expect.objectContaining({ kind: 'provider_error', reason: 'local_neural_stt_unavailable' }));
+      expect(captureHarness.nativeModule.start).not.toHaveBeenCalled();
+    } finally { text.mockRestore(); filesystem.fs.Directory = BaseDirectory; }
+    const recoveredSink = createSink();
+    const recovered = createSherpaStreamingSttController({ getSettings: () => localNeuralSettings() });
+    await recovered.start({ micSession: createMicSession(), sink: recoveredSink });
+    expect(recoveredSink.onError).not.toHaveBeenCalled();
+    expect(sherpaStreamingCreate).toHaveBeenCalled();
+    await recovered.discardInput();
+  });
+
   it('surfaces pack/runtime/backpressure failures without leaking capture', async () => {
     runtime.fs!.files.delete(`${packDirUri}/pack.json`);
     const micSession = createMicSession();

@@ -1,6 +1,6 @@
 import { parseModelPackManifest, type ModelPackKind, type ModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
 import { getOptionalHappierSherpaNativeModule } from '@happier-dev/sherpa-native';
-import { hashModelPackManifest, installModelPackWithHost, type ModelPackCoreProgress, type ModelPackPromotionPriorInstallV1 } from '@happier-dev/voice-modelpacks';
+import { hashModelPackManifest, installModelPackWithHost, ModelPackInstallError, type ModelPackCoreProgress, type ModelPackPromotionPriorInstallV1 } from '@happier-dev/voice-modelpacks';
 
 import { uriToFilePath } from '@/platform/fileUri';
 import { forgetSpeakerCountForAssetsDir } from '@/voice/kokoro/runtime/kokoroSpeakerCountCache';
@@ -195,11 +195,11 @@ async function installPackWithLease(
         onProgress: opts.onProgress,
       });
     }
-    // Corrupt/unreadable meta: fall through to a fresh install below.
+    // Invalid metadata: fall through to a fresh install below.
   }
 
   if (opts.mode === 'require_installed') {
-    throw new Error('model_pack_not_installed');
+    throw new ModelPackInstallError('model_pack_not_installed');
   }
 
   if (!opts.manifestUrl || !opts.manifestUrl.trim()) {
@@ -230,8 +230,9 @@ async function installPackWithLease(
 }
 
 async function readInstalledManifest(meta: Pick<ExpoFsFile, 'text'>): Promise<ModelPackManifest | null> {
+  const contents = await meta.text();
   try {
-    const parsed = JSON.parse(await meta.text());
+    const parsed = JSON.parse(contents);
     return parseModelPackManifest(parsed?.manifest ?? parsed);
   } catch (error) {
     // Parser errors can include receipt contents, so report only their type.

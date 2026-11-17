@@ -106,7 +106,8 @@ export function LocalNeuralTtsSettings(props: {
   const transferRow = resolveModelPackTransferRow({ status: modelStatus, progress: downloadProgress, partialBytes });
   const partialRemoveRow = resolvePartialDownloadRemoveRow(partialBytes);
   const modelDetail = transferRow?.detail
-    ?? (installed ? readyDetail : t('settingsVoice.local.kokoro.modelStatus.notDownloaded'));
+    ?? (installed === null ? t('common.unavailable')
+      : installed ? readyDetail : t('settingsVoice.local.kokoro.modelStatus.notDownloaded'));
 
   const updateDetail = updateCheckedRemote
     ? updateCheckedRemote.updateAvailable

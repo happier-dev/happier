@@ -200,7 +200,7 @@ describe('modelPacks installer (native)', () => {
     expect(await checkModelPackUpdateAvailable(request, overrides)).toMatchObject({ updateAvailable: false });
   });
 
-  it.each(['corrupt', 'unreadable'] as const)('reports %s receipt fallback without exposing its contents', async (failure) => {
+  it.each(['corrupt', 'unreadable'] as const)('distinguishes %s receipts without exposing their contents', async (failure) => {
     const { fs, files, root } = createMemFs();
     const packId = 'receipt-warning';
     const privateContents = 'private_receipt_contents';
@@ -224,16 +224,23 @@ describe('modelPacks installer (native)', () => {
       expect((await getModelPackInstallSummary({ packId }, { fs: boundary })).installed).toBe(false);
       expect(warning).not.toHaveBeenCalled();
       files.set(`${root}/${packId}/pack.json`, new TextEncoder().encode(privateContents));
+      if (failure === 'unreadable') {
+        await expect(getModelPackInstallSummary({ packId }, { fs: boundary })).rejects.toThrow(privateContents);
+        await expect(checkModelPackUpdateAvailable({ packId, manifestUrl: null, timeoutMs: null,
+          signal: new AbortController().signal }, { fs: boundary })).rejects.toThrow(privateContents);
+        expect(warning).not.toHaveBeenCalled();
+        return;
+      }
       expect((await getModelPackInstallSummary({ packId }, { fs: boundary })).installed).toBe(false);
       expect(warning).toHaveBeenCalled();
-      expect(warning.mock.calls.flat()).toContain(failure === 'corrupt' ? 'SyntaxError' : 'Error');
+      expect(warning.mock.calls.flat()).toContain('SyntaxError');
       expect(warning.mock.calls.flat().map(String).join('\n')).not.toContain(privateContents);
       warning.mockClear();
       const update = await checkModelPackUpdateAvailable({ packId, manifestUrl: null, timeoutMs: null,
         signal: new AbortController().signal }, { fs: boundary, invalidatePackRuntime: async () => {} });
       expect(update.installed).toBe(false);
       expect(warning).toHaveBeenCalled();
-      expect(warning.mock.calls.flat()).toContain(failure === 'corrupt' ? 'SyntaxError' : 'Error');
+      expect(warning.mock.calls.flat()).toContain('SyntaxError');
       expect(warning.mock.calls.flat().map(String).join('\n')).not.toContain(privateContents);
     } finally { warning.mockRestore(); }
   });
@@ -699,6 +706,31 @@ describe('modelPacks installer (native)', () => {
 
     expect(summary.installed).toBe(false);
     expect(summary.manifest).toBe(null);
+  });
+
+  it.each(['summary', 'ensure', 'update'] as const)('propagates a refused native manifest read through %s and distinguishes invalid or missing installs', async caller => {
+    const { fs, files, root } = createMemFs();
+    const packId = `read-${caller}`;
+    const manifest = { packId, kind: 'tts_sherpa', model: 'kokoro', version: 'v1',
+      files: [{ path: 'model.bin', url: 'https://example.test/model.bin', sizeBytes: 1, sha256: 'a'.repeat(64) }] };
+    files.set(`${root}/${packId}/pack.json`, new TextEncoder().encode(JSON.stringify({ manifest })));
+    files.set(`${root}/${packId}/model.bin`, new Uint8Array([1]));
+    const read = () => caller === 'summary' ? getModelPackInstallSummary({ packId }, { fs })
+      : caller === 'ensure' ? ensureModelPackInstalled({ packId, mode: 'require_installed', manifestUrl: null,
+        timeoutMs: null, signal: new AbortController().signal }, { fs })
+        : checkModelPackUpdateAvailable({ packId, manifestUrl: null, timeoutMs: null,
+          signal: new AbortController().signal }, { fs });
+    const refusal = new Error('native_storage_refused');
+    const text = vi.spyOn(fs.File.prototype, 'text').mockRejectedValue(refusal);
+    try { await expect(read()).rejects.toBe(refusal); }
+    finally { text.mockRestore(); }
+    await expect(read()).resolves.toMatchObject(caller === 'ensure' ? { manifest } : { installed: true });
+    files.set(`${root}/${packId}/pack.json`, new TextEncoder().encode('{}'));
+    if (caller === 'ensure') await expect(read()).rejects.toThrow('model_pack_not_installed');
+    else await expect(read()).resolves.toMatchObject({ installed: false });
+    files.clear();
+    if (caller === 'ensure') await expect(read()).rejects.toThrow('model_pack_not_installed');
+    else await expect(read()).resolves.toMatchObject({ installed: false });
   });
 
   it('removes without throwing when the directory is missing', async () => {
