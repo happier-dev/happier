@@ -1,11 +1,11 @@
 import { useId } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View, type ColorValue } from 'react-native';
 import { Svg, Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { happierSurfaceGradientCssParts, type HappierSurfaceGradient } from './material.js';
 import { happierSvgGradientStop } from './svgGradientStop.js';
 
 /** One native paint layer. Web draws the same stops on its existing surface element. */
-export function HappierSurfaceGradientLayer(props: Readonly<{ gradient?: HappierSurfaceGradient | null; underlay?: HappierSurfaceGradient | null; borderRadius?: number; overrideBackgroundColor?: string | number }>) {
+export function HappierSurfaceGradientLayer(props: Readonly<{ gradient?: HappierSurfaceGradient | null; underlay?: HappierSurfaceGradient | null; borderRadius?: number; overrideBackgroundColor?: ColorValue | number }>) {
   const id = useId();
   if (Platform.OS === 'web' || props.overrideBackgroundColor !== undefined || (!props.gradient && !props.underlay)) return null;
   const paints = [props.underlay, props.gradient].filter((gradient): gradient is HappierSurfaceGradient => Boolean(gradient));

@@ -439,7 +439,7 @@ export const RoundButton = React.memo((props: {
                             style={StyleSheet.absoluteFillObject}
                         />
                     ) : null}
-                    {!display.gradient ? <HappierSurfaceGradientLayer overrideBackgroundColor={rootSurfaceStyle.backgroundColor} gradient={resolveThemeSurfaceFinish(theme, (props.display ?? 'default') === 'default' ? 'primaryButton' : 'secondaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled || props.display === 'inverted' || props.display === 'quietDestructive' })} borderRadius={props.capsuleHeight !== undefined ? props.capsuleHeight / 2 : theme.borderRadius.md} /> : null}
+                    {!display.gradient ? <HappierSurfaceGradientLayer overrideBackgroundColor={readSurfaceStyleProperty(rootSurfaceStyle, 'backgroundColor')} gradient={resolveThemeSurfaceFinish(theme, (props.display ?? 'default') === 'default' ? 'primaryButton' : 'secondaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled || props.display === 'inverted' || props.display === 'quietDestructive' })} borderRadius={props.capsuleHeight !== undefined ? props.capsuleHeight / 2 : theme.borderRadius.md} /> : null}
                     <View
                         style={[
                             styles.contentContainer,
