@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { ed25519 } from '@noble/curves/ed25519';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
 
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
@@ -22,7 +23,12 @@ import { StrictJsonValueSchema } from '@happier-dev/protocol';
 
 const { get, put, post } = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), post: vi.fn() }));
 // Only the authenticated Home transport is mocked; codecs, binding verification and recipient preparation are real.
-vi.mock('axios', () => ({ default: { get, put, post } }));
+beforeEach(() => {
+  vi.spyOn(axios, 'get').mockImplementation(get);
+  vi.spyOn(axios, 'put').mockImplementation(put);
+  vi.spyOn(axios, 'post').mockImplementation(post);
+});
+afterEach(() => vi.restoreAllMocks());
 
 const token = (accountId: string) => `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
 
@@ -44,6 +50,8 @@ async function fixture(mode: 'plain' | 'e2ee', recipientAccessAccountId: string 
   const actionArgs = { sessionId: 'bot-session', title: 'Request title' };
   const machineSeed = new Uint8Array(randomBytes(32));
   const machineSecretKey = new Uint8Array([...machineSeed, ...ed25519.getPublicKey(machineSeed)]);
+  const actionRequestAttributionV1 = { requestRef: 'bob-input', requester: { serverId: 'home', accountId: 'bob' },
+    persona: { serverId: 'home', sessionId: 'bot-session' }, origin: null };
   const signedOrigin = (actionId: ApprovalRequestV2['actionId'], input: unknown, requesterConfirmation: ApprovalRequesterConfirmationV1) => {
     const caller = { kind: 'session' as const, sessionId: 'bot-session', starterDepth: 0, turnDepth: 0 };
     const target = { kind: 'session' as const, sessionId: 'bot-session' };
@@ -52,15 +60,15 @@ async function fixture(mode: 'plain' | 'e2ee', recipientAccessAccountId: string 
         serverId: 'home', serverIdentityId: 'stable-home', actionRequestId: 'action-request',
         defaultSessionId: 'bot-session', actionCaller: caller, callerPermissionMode: 'yolo',
         sessionInputSource: { sourceSessionId: 'bot-session', sourceTurnId: 'turn-1', via: 'action' },
-        actionRequestAttributionV1: { requestRef: 'bob-input', requester: { serverId: 'home', accountId: 'bob' },
-          persona: { serverId: 'home', sessionId: 'bot-session' }, origin: null },
+        actionRequestAttributionV1,
         externalActionTarget: target,
         externalActionExecutionAuthorization: { v: 1, token: 'home-admitted-source', binding: {
           serverIdentityId: 'stable-home', accountId: 'alice', custodianAccountId: 'alice',
           machineId: 'machine-1', installationId: 'installation', actionId, requestId: 'action-request', target,
           authentication: { kind: 'account', tokenEpoch: 0 },
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId: 'action-request', target, input: StrictJsonValueSchema.parse(input) }),
-          sessionActionOrigin: { v: 1, caller, sourceTurnId: 'turn-1', callerPermissionMode: 'yolo', requestId: 'action-request' },
+          sessionActionOrigin: { v: 1, caller, sourceTurnId: 'turn-1', callerPermissionMode: 'yolo', requestId: 'action-request',
+            actionRequestAttributionV1 },
           sessionActionSource: { machineId: 'machine-1', installationId: 'installation' },
         } },
         signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
@@ -97,6 +105,9 @@ async function fixture(mode: 'plain' | 'e2ee', recipientAccessAccountId: string 
           contentPublicKey: encodeBase64(publicKey), contentPublicKeySignature: encodeBase64(binding) },
         contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey), encryptedDataKey: envelope?.encryptedDataKey ?? null,
         recipientContentPublicKeyFingerprint: envelope?.recipientContentPublicKeyFingerprint ?? null })) } };
+    if (!url.endsWith(`/v1/artifacts/${encodeURIComponent(stored.id)}`)) {
+      return { status: 404, data: { error: 'artifact_not_found' } };
+    }
     if (accountId !== 'alice' && !grants.includes(accountId)) return { status: 404, data: { error: 'artifact_not_found' } };
     return { status: 200, data: { ...stored, access: accountId === 'alice' ? stored.access : 'view',
       ...(accountId !== 'alice' && resource.mode === 'e2ee' ? { dataEncryptionKey: envelope?.encryptedDataKey } : {}) } };
@@ -180,8 +191,9 @@ describe('approval requester Artifact recipient', () => {
     expect(f.grants).toEqual(['bob']);
     const bob = createAccountArtifactStore({ credentials: { token: token('bob'), encryption: null },
       getAccountEncryptionMode: async () => 'plain' });
-    expect(await bob.read(created.artifactId, { includeSharedAudience: false }))
-      .toMatchObject({ ownerAccountId: 'alice', access: 'view', body: JSON.stringify(f.request) });
+    const preview = await bob.read(created.artifactId, { includeSharedAudience: false });
+    expect(preview).toMatchObject({ ownerAccountId: 'alice', access: 'view' });
+    expect(preview?.body && JSON.parse(preview.body)).toEqual(f.request);
   });
 
   it.each(['plain', 'e2ee'] as const)('opens Alice’s exact %s approval read-only for Bob and refuses Carol', async mode => {

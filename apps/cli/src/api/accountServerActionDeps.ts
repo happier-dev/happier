@@ -29,7 +29,7 @@ import { bindHomeDomainActionHttpRequestV1, bindPublicProfilePreparedHttpRequest
 import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { bindPublicProfileActionPorts } from '@happier-dev/protocol/actions/executor/publicProfileActions';
 import { buildPublicProfileSnapshot } from '@happier-dev/protocol/account/publicProfileSnapshot';
-import { bindHomeDomainHttpRequestV1, readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
+import { bindHomeDomainHttpRequestV1, classifyHomeDomainHttpMutationFailureV1, readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { bindSessionAccessActionHttpRequestV1 } from '@happier-dev/protocol/actions/sessionAccessActionFamily';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindMachineAccessActionHttpRequestV1 } from '@happier-dev/protocol/actions/machineAccessActionFamily';
@@ -420,48 +420,55 @@ export function createAccountServerActionDeps(input: Readonly<{
   };
   const prepareApiTokenBody = async (actionId: 'account.apiTokens.create' | 'account.apiTokens.update', value: unknown,
     context: ActionExecutorContext) => {
-    const authored = actionId === 'account.apiTokens.create' ? AccountApiTokensCreateActionInputV1Schema.parse(value)
-      : AccountApiTokensUpdateActionInputV1Schema.parse(value);
-    const assertCurrent = async () => {
-      context.signal?.throwIfAborted();
-      if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
-        throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+    try {
+      const authored = actionId === 'account.apiTokens.create' ? AccountApiTokensCreateActionInputV1Schema.parse(value)
+        : AccountApiTokensUpdateActionInputV1Schema.parse(value);
+      const assertCurrent = async () => {
+        context.signal?.throwIfAborted();
+        if (input.isCredentialCurrent && !await input.isCredentialCurrent()) {
+          throw Object.assign(new Error('action_account_scope_changed'), { code: 'action_account_scope_changed' });
+        }
+      };
+      await assertCurrent();
+      if (authored.deployment) {
+        const mismatch = await accountServerTargetMismatch({ serverId: authored.deployment.serverId });
+        if (mismatch) throw Object.assign(new Error(mismatch.errorCode), { code: mismatch.errorCode });
       }
-    };
-    await assertCurrent();
-    if (authored.deployment) {
-      const mismatch = await accountServerTargetMismatch({ serverId: authored.deployment.serverId });
-      if (mismatch) throw Object.assign(new Error(mismatch.errorCode), { code: mismatch.errorCode });
+      const { prepareApiTokenDeploymentAuthoring, resolveInitialDeploymentApprovalV1 } = await import('@happier-dev/protocol/actions/executor/workflowRunActions');
+      let initialDeployApproval: 'automatic' | 'ask' | undefined;
+      if (authored.deployment && authored.deployment.deployApproval === undefined && authored.grant?.deployApproval === undefined) {
+        const { createCliDeploymentActionDeps } = await import('@/deployments/createCliDeploymentActionDeps');
+        const reads = createCliDeploymentActionDeps({ serverHttpBaseUrl,
+          admitAccount: async requestedServerId => {
+            await assertCurrent();
+            return accountServerTargetMismatch({ serverId: requestedServerId });
+          },
+          resolveRequestHeaders: (readContext, readActionId, request) => {
+            const authorization = resolveRequestHeaders({ context: readContext,
+              effectActionId: readContext.externalActionExecutionAuthorization?.binding.actionId ?? readActionId, ...request });
+            return requireExternalActionHeaders(authorization);
+          },
+          dispatchReceipt: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' }),
+        });
+        const initial = await resolveInitialDeploymentApprovalV1({ serverId: authored.deployment.serverId,
+          environmentId: authored.deployment.environmentId, context, read: reads.deploymentAction! });
+        if (!initial.ok) throw Object.assign(new Error(initial.errorCode), { code: initial.errorCode });
+        initialDeployApproval = initial.mode;
+      }
+      const accountId = input.credentials?.token === input.token ? readAccountIdFromToken(input.token) : null;
+      const prepared = await prepareApiTokenDeploymentAuthoring({ actionId, value: authored, context,
+        host: { ...(initialDeployApproval ? { initialDeployApproval } : {}),
+          ...(accountId ? { nativeAccount: { accountId, serverId,
+            isCurrent: async () => { await assertCurrent(); return true; } } } : {}) } });
+      const body = prepared.body.deployment && serverIdentityId
+        ? { ...prepared.body, deployment: { ...prepared.body.deployment, serverId: serverIdentityId } } : prepared.body;
+      return { ok: true as const, body, assertCurrent };
+    } catch (error) {
+      const failure = classifyHomeDomainHttpMutationFailureV1({ error, issued: false, aborted: context.signal?.aborted === true });
+      const code = failure === 'cancelled' ? failure
+        : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'client_required';
+      return { ok: false as const, errorCode: code, error: code };
     }
-    const { prepareApiTokenDeploymentAuthoring, resolveInitialDeploymentApprovalV1 } = await import('@happier-dev/protocol/actions/executor/workflowRunActions');
-    let initialDeployApproval: 'automatic' | 'ask' | undefined;
-    if (authored.deployment && authored.deployment.deployApproval === undefined && authored.grant?.deployApproval === undefined) {
-      const { createCliDeploymentActionDeps } = await import('@/deployments/createCliDeploymentActionDeps');
-      const reads = createCliDeploymentActionDeps({ serverHttpBaseUrl,
-        admitAccount: async requestedServerId => {
-          await assertCurrent();
-          return accountServerTargetMismatch({ serverId: requestedServerId });
-        },
-        resolveRequestHeaders: (readContext, readActionId, request) => {
-          const authorization = resolveRequestHeaders({ context: readContext,
-            effectActionId: readContext.externalActionExecutionAuthorization?.binding.actionId ?? readActionId, ...request });
-          return requireExternalActionHeaders(authorization);
-        },
-        dispatchReceipt: async () => ({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' }),
-      });
-      const initial = await resolveInitialDeploymentApprovalV1({ serverId: authored.deployment.serverId,
-        environmentId: authored.deployment.environmentId, context, read: reads.deploymentAction! });
-      if (!initial.ok) throw Object.assign(new Error(initial.errorCode), { code: initial.errorCode });
-      initialDeployApproval = initial.mode;
-    }
-    const accountId = input.credentials?.token === input.token ? readAccountIdFromToken(input.token) : null;
-    const prepared = await prepareApiTokenDeploymentAuthoring({ actionId, value: authored, context,
-      host: { ...(initialDeployApproval ? { initialDeployApproval } : {}),
-        ...(accountId ? { nativeAccount: { accountId, serverId,
-          isCurrent: async () => { await assertCurrent(); return true; } } } : {}) } });
-    const body = prepared.body.deployment && serverIdentityId
-      ? { ...prepared.body, deployment: { ...prepared.body.deployment, serverId: serverIdentityId } } : prepared.body;
-    return { body, assertCurrent };
   };
   const readPrices = async (refresh: boolean, context: ActionExecutorContext) => {
     const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
@@ -1625,11 +1632,9 @@ export function createAccountServerActionDeps(input: Readonly<{
       const targetMismatch = await accountServerTargetMismatch(actionContext);
       if (targetMismatch) return targetMismatch;
       const spec = getActionSpec('account.apiTokens.create');
-      let prepared;
-      try { prepared = await prepareApiTokenBody('account.apiTokens.create', actionInput,
-        signal ? { ...actionContext, signal } : actionContext); }
-      catch (error) { const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'client_required';
-        return { ok: false, errorCode: code, error: code }; }
+      const prepared = await prepareApiTokenBody('account.apiTokens.create', actionInput,
+        signal ? { ...actionContext, signal } : actionContext);
+      if (!prepared.ok) return prepared;
       const { body } = prepared;
       const requestHeaders = resolveRequestHeaders({
         context: actionContext,
@@ -1661,11 +1666,9 @@ export function createAccountServerActionDeps(input: Readonly<{
       const targetMismatch = await accountServerTargetMismatch(actionContext);
       if (targetMismatch) return targetMismatch;
       const spec = getActionSpec('account.apiTokens.update');
-      let prepared;
-      try { prepared = await prepareApiTokenBody('account.apiTokens.update', actionInput,
-        signal ? { ...actionContext, signal } : actionContext); }
-      catch (error) { const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'client_required';
-        return { ok: false, errorCode: code, error: code }; }
+      const prepared = await prepareApiTokenBody('account.apiTokens.update', actionInput,
+        signal ? { ...actionContext, signal } : actionContext);
+      if (!prepared.ok) return prepared;
       const { body } = prepared;
       const requestHeaders = resolveRequestHeaders({
         context: actionContext,

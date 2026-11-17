@@ -1011,7 +1011,8 @@ describe('CLI and MCP personal usage Account transport', () => {
       serverHttpBaseUrl: 'http://usage.test' });
     expect(await deps.usageActions!.query({ queries: [normalizeUsageQuery({})] }, { surface: 'api',
       externalActionCredential: { accountId: 'account', principalId: 'principal', credentialId: 'credential', grant: API_TOKEN_FULL_GRANT_V1 } }))
-      .toMatchObject({ ok: false, errorCode: 'not_authenticated' });
+      .toMatchObject({ ok: false, errorCode: 'action_failed', effectAttempted: false,
+        details: { authorizationRefusalReason: 'external_credential_without_authorization' } });
     expect(disclosed).toBe(false);
     await app.close();
   });

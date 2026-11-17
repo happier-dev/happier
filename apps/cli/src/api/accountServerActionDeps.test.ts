@@ -39,6 +39,7 @@ import { encrypt, getRandomBytes } from './encryption';
 
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import {
+  createAccountEncryptionCurrentnessFixture,
   createCurrentSessionProjectionRecordFixture,
   createSessionRecordFixture,
 } from '@/testkit/backends/sessionFixtures';
@@ -60,6 +61,7 @@ import { getActiveProjectAccountRowsSnapshot, readProjectAccountRows } from '@/w
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { projectApprovalExecutionFailureV2, readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
+import { decodeExternalActionHttpBodyV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 
 /** Owner-row fields whose shared metadata opens under the Session key, so a reseal can prove the key is this Session's. */
@@ -191,8 +193,11 @@ function managedIdentityProviderFixture() {
 describe('Account API token HTTP adapter', () => {
   let app = fastify();
   let restore = () => {};
+  let routeErrors: Error[] = [];
   beforeEach(() => {
     app = fastify();
+    routeErrors = [];
+    app.addHook('onError', async (_request, _reply, error) => { routeErrors.push(error); });
     restore = installAxiosFastifyAdapter({ app, origin: 'http://account.test' });
   });
   afterEach(async () => { restore(); await app.close(); });
@@ -205,7 +210,7 @@ describe('Account API token HTTP adapter', () => {
         actionArgs: { homeId: 'srv_managed', managedId: 'waiting', expectedIntentRevision: 0 },
         executionOriginV1: { v: 1, actionId, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
           serverId: 'home', requestId: 'cancel-request' } });
-      const failure = { ok: false as const, errorCode: 'outcome_unknown', error: 'outcome_unknown', details: { category } };
+      const failure = { ok: false as const, errorCode: 'outcome_unknown', error: 'outcome_unknown', effectAttempted: true, details: { category } };
       const execution = projectApprovalExecutionFailureV2({ request, failure, executedAtMs: 2 });
       expect(execution).toMatchObject({ effectAttempted: true, ok: false, details: { category } });
       const stored = ApprovalRequestV2Schema.parse({ ...request, status: 'failed', updatedAtMs: 2,
@@ -404,7 +409,7 @@ describe('Account API token HTTP adapter', () => {
     const executor = createActionExecutor(deps as Parameters<typeof createActionExecutor>[0]);
     const automationContext = { surface: 'cli' as const, authority: 'account_automation' as const };
     expect(await executor.execute('account.apiTokens.update', { tokenId, label, grant }, automationContext))
-      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+      .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     expect(requests).toEqual([]);
     const context = { surface: 'cli' as const, authority: 'present_user' as const };
     expect(await executor.execute('account.apiTokens.update', { tokenId, label, grant }, {
@@ -457,6 +462,10 @@ describe('Account API token HTTP adapter', () => {
           expect(request.headers.authorization).toBe('Bearer captured-private-owner');
           return { mode: 'plain', updatedAt: 0 };
         });
+        app.get('/v1/account/encryption/currentness', async request => {
+          expect(request.headers.authorization).toBe('Bearer captured-private-owner');
+          return createAccountEncryptionCurrentnessFixture({ mode: 'plain' });
+        });
         app.post('/v1/projects/execution/config/read', async request => {
           reads++;
           expect(request.headers.authorization).toBe('Bearer captured-private-owner');
@@ -473,12 +482,16 @@ describe('Account API token HTTP adapter', () => {
         const executor = createActionExecutor({ ...createAccountProjectWorkerActionDeps(params), machinePoolAction: deps.machinePoolAction,
           accountApiTokensListAction: deps.accountApiTokensListAction });
         const poolId = '10000000-0000-4000-8000-000000000005';
+        const poolName = { kind: 'available' as const,
+          label: projectPrivateLabelForRecipientV1({ recipientAccountId: 'account-1',
+            stored: sealPrivateLabelV1({ mode: 'plain', value: 'Private workers',
+              binding: { entity: 'machine_pool', field: 'name', id: poolId } }) }) };
         let poolReads = 0;
         app.post('/v1/machines/pools/get', async request => {
           poolReads++;
           expect(request.headers.authorization).toBe('Bearer captured-private-owner');
           expect(request.body).toEqual({ poolId });
-          return { pool: { id: poolId, name: 'Private workers', description: null, revision: 1, createdAt: 1, updatedAt: 1,
+          return { pool: { id: poolId, name: poolName, description: null, revision: 1, createdAt: 1, updatedAt: 1,
             members: [] }, availability: { state: 'known', connectedCount: 0, enabledCount: 0 } };
         });
         let tokenListReads = 0;
@@ -882,9 +895,14 @@ describe('Account API token HTTP adapter', () => {
     expect(requests).toBe(0);
   });
 
-  it('settles a mutation cancelled before transport issuance without fabricating uncertainty', async () => {
+  it.each(['accountApiTokensCreateAction', 'accountApiTokensUpdateAction'] as const)(
+    'settles %s cancelled before transport issuance without fabricating uncertainty', async (action) => {
     let requests = 0;
     app.post('/v1/auth/api-tokens/create', async () => {
+      requests += 1;
+      return { unexpected: true };
+    });
+    app.post('/v1/auth/api-tokens/update', async () => {
       requests += 1;
       return { unexpected: true };
     });
@@ -896,7 +914,7 @@ describe('Account API token HTTP adapter', () => {
       serverHttpBaseUrl: 'http://account.test',
     });
 
-    await expect(deps.accountApiTokensCreateAction!({
+    await expect(deps[action]!({
       input: { tokenId: '12345678-1234-4234-8234-123456789abc', label: sealPrivateLabelV1({ mode: 'plain',
         binding: { entity: 'account_api_token', field: 'label', id: '12345678-1234-4234-8234-123456789abc' }, value: 'cancelled' }) },
       context: { surface: 'cli', serverId: 'home-a' },
@@ -1590,12 +1608,16 @@ describe('Account API token HTTP adapter', () => {
     app.post('/v1/teams/archive', async (request) => {
       requests += 1;
       expect(request.headers.authorization).toBeUndefined();
-      expect(request.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]).toBe('teams.archive');
-      expect(request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(authorization.token);
-      expect(request.headers[EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]).toBe(
+      const framed = decodeExternalActionHttpBodyV1(request.body);
+      expect(framed).not.toBeNull();
+      expect(framed!.body).toEqual({ v: 1, teamId: 'team-1' });
+      const headers = framed!.headers;
+      expect(headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]).toBe('teams.archive');
+      expect(headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(authorization.token);
+      expect(headers[EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]).toBe(
         encodeExternalActionResolvedTargetV1(authorization.binding.target),
       );
-      const signature = request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER];
+      const signature = headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER];
       expect(typeof signature).toBe('string');
       expect(verifyExternalActionMachineRequestV1({
         authorizationToken: authorization.token,
@@ -1605,7 +1627,7 @@ describe('Account API token HTTP adapter', () => {
         requestId: authorization.binding.requestId,
         method: 'POST',
         path: '/v1/teams/archive',
-        body: { v: 1, teamId: 'team-1' },
+        body: framed!.body,
         publicKey: installationIdentity.publicKey,
         signature: signature as string,
       })).toBe(true);
@@ -1620,7 +1642,7 @@ describe('Account API token HTTP adapter', () => {
       externalActionMachineInstallationId: 'installation-1',
     });
 
-    await expect(deps.homeDomainAction!({
+    const result = await deps.homeDomainAction!({
       actionId: 'teams.archive',
       input: { v: 1, teamId: 'team-1' },
       context: {
@@ -1629,7 +1651,9 @@ describe('Account API token HTTP adapter', () => {
         externalActionTarget: authorization.binding.target,
         externalActionExecutionAuthorization: authorization,
       },
-    })).resolves.toEqual(archivedTeamSummary);
+    }).catch(error => { throw routeErrors[0] ?? error; });
+    expect(routeErrors.map(error => error.message)).toEqual([]);
+    expect(result).toEqual(archivedTeamSummary);
     expect(requests).toBe(1);
   });
 
@@ -1648,15 +1672,19 @@ describe('Account API token HTTP adapter', () => {
     };
     app.post('/v1/machines/presets/archive', async (request, reply) => {
       expect(request.headers.authorization).toBeUndefined();
-      expect(request.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]).toBe('machines.presets.archive');
-      expect(request.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(authorization.token);
-      expect(request.headers[EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]).toBe(encodeExternalActionResolvedTargetV1(authorization.binding.target));
-      const signature = request.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER];
+      const framed = decodeExternalActionHttpBodyV1(request.body);
+      expect(framed).not.toBeNull();
+      expect(framed!.body).toEqual(body);
+      const headers = framed!.headers;
+      expect(headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]).toBe('machines.presets.archive');
+      expect(headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(authorization.token);
+      expect(headers[EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]).toBe(encodeExternalActionResolvedTargetV1(authorization.binding.target));
+      const signature = headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER];
       expect(typeof signature).toBe('string');
       expect(verifyExternalActionMachineRequestV1({
         authorizationToken: authorization.token, effectActionId: 'machines.presets.archive',
         target: authorization.binding.target, installationId: 'installation-1', requestId: authorization.binding.requestId,
-        method: 'POST', path: '/v1/machines/presets/archive', body,
+        method: 'POST', path: '/v1/machines/presets/archive', body: framed!.body,
         publicKey: installationIdentity.publicKey, signature: signature as string,
       })).toBe(true);
       return reply.code(403).send({ kind: 'refused', code: 'permission_denied' });
@@ -1666,11 +1694,13 @@ describe('Account API token HTTP adapter', () => {
       serverHttpBaseUrl: 'http://account.test', externalActionMachineRequestPrivateKey: installationIdentity.secretKey,
       externalActionMachineInstallationId: 'installation-1',
     });
-    await expect(deps.machinePresetAction!({
+    const result = await deps.machinePresetAction!({
       actionId: 'machines.presets.archive', input: body,
       context: { surface: 'api', authority: 'account_automation', externalActionTarget: authorization.binding.target,
         externalActionExecutionAuthorization: authorization },
-    })).resolves.toEqual({ kind: 'refused', code: 'permission_denied' });
+    }).catch(error => { throw routeErrors[0] ?? error; });
+    expect(routeErrors.map(error => error.message)).toEqual([]);
+    expect(result).toEqual({ kind: 'refused', code: 'permission_denied' });
   });
 
   it('does not send an externally authorized request when the Machine signing key is unavailable', async () => {

@@ -1416,9 +1416,12 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
           serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
           actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
         });
-        await expect(executor.execute('agents.models.list', ownMachineInput, { surface: 'cli', actionRequestId: 'request-1' }))
-          .resolves.toEqual(legacy ? { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' }
-            : { ok: true, result: ownMachineResult });
+        const result = await executor.execute('agents.models.list', ownMachineInput, { surface: 'cli', actionRequestId: 'request-1' });
+        if (legacy) {
+          expect(result).toMatchObject({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable',
+            effectAttempted: false, failureCause: { errorCode: 'admission_unavailable', phase: 'dispatch.requester_authentication' } });
+          expect(target.readReceived()).toBeUndefined();
+        } else expect(result).toEqual({ ok: true, result: ownMachineResult });
         expect(events).toEqual(legacy ? [] : ['home-authorized', 'dispatch']);
         if (separateHome) expect(control.readReceived()).toBeUndefined();
         if (!legacy) expect(ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived()).executionAuthorization?.binding)
