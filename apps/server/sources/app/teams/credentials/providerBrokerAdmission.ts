@@ -83,7 +83,8 @@ type BrokerRefusalReason = Extract<TeamCredentialBrokerPlacementResolution, { er
     | 'binding_broker_entitlement_missing' | 'runner_selection_missing' | 'resource_lookup_missing'
     | 'execution_run_resource_entitlement_unavailable' | 'execution_run_broker_entitlement_missing'
     | 'consumer_machine_access_missing' | 'session_missing_or_inactive' | 'session_turn_not_in_progress'
-    | 'session_turn_binding_mismatch' | 'execution_run_occurrence_mismatch' | 'execution_run_turn_not_active';
+    | 'session_turn_binding_mismatch' | 'execution_run_occurrence_mismatch' | 'execution_run_turn_not_active'
+    | 'broker_job_resource_moved';
 
 type Failure = Readonly<{
     ok: false;
@@ -842,38 +843,45 @@ async function openTeamCredentialProviderBrokerWithPrincipal(
             generation: false,
             executionRun,
         }), { isolationLevel: 'ReadCommitted' });
-        if (!job.ok) return job;
-        // The payload carries endpoint identity, not its dial hints. Consume
-        // the transport owner's projection for that exact signed target.
-        const endpoint = await readAvailableMachineIrohEndpointAuthority({
-            accountId: grant.target.custodianAccountId,
-            machineId: grant.target.machineId,
-        });
-        if (endpoint === null) return brokerUnavailable('placement_endpoint_missing');
-        if (endpoint.endpointId !== grant.target.endpointId) return brokerUnavailable('broker_endpoint_changed');
-        return {
-            ok: true,
-            authority: signProviderBrokerRouteGrantV1({
-                payload: {
-                    ...grant,
-                    grantId: input.grantId,
-                    issuedAt: input.nowMs,
-                    expiresAt: input.nowMs + PROVIDER_BROKER_ROUTE_GRANT_TTL_MS,
-                },
-                signingKey: input.signingKey,
-            }),
-            target: {
-                custodianAccountId: grant.target.custodianAccountId,
-                brokerMachineId: grant.target.machineId,
-                endpointId: grant.target.endpointId,
-                endpointRevision: endpoint.revision,
-                endpoint: IrohEndpointDescriptorV1Schema.parse({
-                    endpointId: endpoint.endpointId,
-                    relayUrls: endpoint.relayUrls,
-                    directAddresses: endpoint.directAddresses,
+        // A job the resource revision moved past (withdrawal, restoration,
+        // policy or placement edit) is over and is never renewed. Sessions
+        // refresh before each carrier stream, so this refresh is the consumer's
+        // next admission boundary: the open admission below decides it against
+        // the revision the request names and refuses a withdrawal as one.
+        if (!job.ok && job.refusalReason !== 'broker_job_resource_moved') return job;
+        if (job.ok) {
+            // The payload carries endpoint identity, not its dial hints. Consume
+            // the transport owner's projection for that exact signed target.
+            const endpoint = await readAvailableMachineIrohEndpointAuthority({
+                accountId: grant.target.custodianAccountId,
+                machineId: grant.target.machineId,
+            });
+            if (endpoint === null) return brokerUnavailable('placement_endpoint_missing');
+            if (endpoint.endpointId !== grant.target.endpointId) return brokerUnavailable('broker_endpoint_changed');
+            return {
+                ok: true,
+                authority: signProviderBrokerRouteGrantV1({
+                    payload: {
+                        ...grant,
+                        grantId: input.grantId,
+                        issuedAt: input.nowMs,
+                        expiresAt: input.nowMs + PROVIDER_BROKER_ROUTE_GRANT_TTL_MS,
+                    },
+                    signingKey: input.signingKey,
                 }),
-            },
-        };
+                target: {
+                    custodianAccountId: grant.target.custodianAccountId,
+                    brokerMachineId: grant.target.machineId,
+                    endpointId: grant.target.endpointId,
+                    endpointRevision: endpoint.revision,
+                    endpoint: IrohEndpointDescriptorV1Schema.parse({
+                        endpointId: endpoint.endpointId,
+                        relayUrls: endpoint.relayUrls,
+                        directAddresses: endpoint.directAddresses,
+                    }),
+                },
+            };
+        }
     }
     const preauthorized = await preauthorizeTeamCredentialProviderBrokerOpen(input, parsed.data);
     if (isFailure(preauthorized)) return preauthorized;
@@ -1132,7 +1140,7 @@ async function readActiveBrokerJobInTx(
     const placementFingerprint = resolveTeamCredentialBrokerPlacementFingerprint(resource);
     if (placementFingerprint === null) return bindingFailure('broker_unavailable', 'broker_unavailable');
     if (resolveTeamCredentialBrokerJobFingerprint(placementFingerprint, resource.revision)
-        !== grant.brokerPlacementFingerprint) return failure('operation_not_current');
+        !== grant.brokerPlacementFingerprint) return closedFailure('operation_not_current', 'broker_job_resource_moved');
     // The broker evaluates this request's model against the revision it sends;
     // Home checks that the policy read still names this current resource.
     if (resource.revision !== input.expectedResourceRevision) return failure('resource_changed');

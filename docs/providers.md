@@ -2986,7 +2986,11 @@ Resource access therefore has three distinct delivery/privacy contracts:
   Grant withdrawal advances the resource revision in the same transaction. The
   admitted resource revision is bound by the existing signed broker admission
   fingerprint. The cheap active-job lookup refuses a changed revision on the
-  next request or new stream. A fresh Start admits a new job. Already-open response
+  next request and never renews that job. A new stream's refresh is the consumer's next
+  admission boundary: the Home decides it through the ordinary open admission at the
+  revision the request names, so a withdrawal is refused as `resource_forbidden`, a
+  stale revision as `resource_changed`, and a restored or edited resource admits a new
+  job, as a fresh Start does. Already-open response
   bodies finish. This deliberately also interrupts
   unaffected recipients at their next request: they re-admit at their next Start,
   an accepted rare, visible and recoverable glitch. Connected Account catalog

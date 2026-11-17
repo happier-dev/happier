@@ -1716,12 +1716,20 @@ describe('Team credential Provider broker admission', () => {
                 .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
             await expect(fixture.catalog({ authority: runOpen.authority, resource,
                 resolveExecutionRunCurrentness: resolveRun })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
-            await expect(fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION,
-                refreshAuthority: sessionOpen.authority })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
-            await expect(fixture.open({ resource, consumer: runOpen.authority.payload.consumer,
-                authentication: TEST_AUTHENTICATION, refreshAuthority: runOpen.authority,
-                resolveExecutionRunCurrentness: resolveRun })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
             expect(await db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } })).toBe(usageBefore);
+            // The relocated job is over; its next refresh is decided by the open
+            // admission at the current placement, never renewed in place.
+            const relocatedSession = await fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION,
+                refreshAuthority: sessionOpen.authority });
+            expect(relocatedSession).toMatchObject({ ok: true });
+            expect(relocatedSession.ok && relocatedSession.authority.payload.brokerPlacementFingerprint)
+                .not.toBe(sessionOpen.authority.payload.brokerPlacementFingerprint);
+            const relocatedRun = await fixture.open({ resource, consumer: runOpen.authority.payload.consumer,
+                authentication: TEST_AUTHENTICATION, refreshAuthority: runOpen.authority,
+                resolveExecutionRunCurrentness: resolveRun });
+            expect(relocatedRun).toMatchObject({ ok: true });
+            expect(relocatedRun.ok && relocatedRun.authority.payload.brokerPlacementFingerprint)
+                .not.toBe(runOpen.authority.payload.brokerPlacementFingerprint);
             await expect(fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION }))
                 .resolves.toMatchObject({ ok: true });
         },
@@ -3524,7 +3532,9 @@ describe('Team credential Provider broker admission', () => {
         }));
         if (!policyEdit.ok) throw new Error(`expected Runner policy edit: ${policyEdit.error}`);
         expect(policyEdit.revision).toBe(resource.revision + 1);
-        await expect(refreshRunner()).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+        // The revision-moved job is never renewed; its refresh is decided by the
+        // Runner's open admission, which refuses the frozen selection's old revision.
+        await expect(refreshRunner()).resolves.toEqual({ ok: false, reasonCode: 'resource_changed' });
         await expect(admitTeamCredentialProviderBrokerRequest({
             authenticatedBrokerAccountId: custodian.id,
             request: { ...admissionRequest, authority: runnerRefreshed.authority,
@@ -3534,7 +3544,7 @@ describe('Team credential Provider broker admission', () => {
         })).resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
         // A new resource revision cannot replace the reviewed activation CAS.
         await expect(refreshRunner({ expectedResourceRevision: policyEdit.revision }))
-            .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+            .resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
         await expect(refreshRunner({ refreshAuthority: undefined }))
             .resolves.toEqual({ ok: false, reasonCode: 'resource_changed' });
 
@@ -3838,6 +3848,64 @@ describe('Team credential Provider broker admission', () => {
             db.$transaction = original;
             await client.$disconnect();
         }
+    });
+
+    it('decides a refresh whose job the resource moved past through the open admission: withdrawal refuses, restoration re-admits', async () => {
+        // A Session tunnel refreshes its signed job before each carrier stream,
+        // so that refresh is the consumer's next admission boundary. A job the
+        // resource revision moved past is over; the ordinary open admission
+        // decides the refresh against the revision it names (QA-MUSE-LIVE-1117 #50).
+        const fixture = await createBrokerFixture('restore-admission');
+        const resource = await fixture.createResource('connection-restore-admission');
+        const session = await fixture.createSession();
+        await fixture.selectForSession(session.id, resource, TEST_AUTHENTICATION);
+        const member = await db.teamMembership.findFirstOrThrow({
+            where: { teamId: fixture.team.id, accountId: fixture.requester.id }, select: { id: true } });
+        const opened = await fixture.open({ resource, sessionId: session.id, authentication: TEST_AUTHENTICATION });
+        if (!opened.ok) throw new Error(`expected the broker open to succeed: ${opened.reasonCode}`);
+        const refresh = (current: Readonly<{ id: string; revision: number; sourceBindingJson: string }>) => fixture.open({
+            resource: current, sessionId: session.id, authentication: TEST_AUTHENTICATION, refreshAuthority: opened.authority });
+        const setAudience = async (expectedRevision: number, granted: boolean) => await inTx(tx => setTeamCredentialAudienceInTx(tx, {
+            actorAccountId: fixture.custodian.id,
+            input: { resourceId: resource.id, expectedRevision, allMembersAllowedRoutes: null, groupGrants: [],
+                memberGrants: granted ? [{ teamMembershipId: member.id, allowedRoutes: ['brokered'] }] : [] },
+            authentication: { authenticationAuthority: 'present_user', authenticationEvidence: [] },
+        }));
+        const usage = () => db.usageEvent.count({ where: { teamCredentialResourceId: resource.id } });
+
+        // Control: an unchanged resource renews the same admitted job.
+        const renewed = await refresh(resource);
+        expect(renewed).toMatchObject({ ok: true });
+        if (!renewed.ok) return;
+        expect(renewed.authority.payload.brokerPlacementFingerprint).toBe(opened.authority.payload.brokerPlacementFingerprint);
+
+        // Withdrawal ends the job at its next request and refuses the next
+        // refresh as the withdrawal it is, not as a stale operation.
+        await expect(setAudience(resource.revision, false)).resolves.toMatchObject({ ok: true });
+        const withdrawn = await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } });
+        await expect(fixture.admit({ authority: opened.authority, resource: withdrawn, requestId: 'after-withdrawal' }))
+            .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+        await expect(refresh(withdrawn)).resolves.toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        await expect(refresh(resource)).resolves.toMatchObject({ ok: false });
+
+        // Restoration: the next refresh at the current revision is admitted
+        // as a fresh job; one naming the old revision is told it changed.
+        await expect(setAudience(withdrawn.revision, true)).resolves.toMatchObject({ ok: true });
+        const restored = await db.teamCredentialResource.findUniqueOrThrow({ where: { id: resource.id } });
+        expect(restored.revision).toBe(resource.revision + 2);
+        await expect(refresh(resource)).resolves.toEqual({ ok: false, reasonCode: 'resource_changed' });
+        const readmitted = await refresh(restored);
+        expect(readmitted).toMatchObject({ ok: true });
+        if (!readmitted.ok) return;
+        expect(readmitted.authority.payload.brokerPlacementFingerprint)
+            .not.toBe(opened.authority.payload.brokerPlacementFingerprint);
+        const usageBefore = await usage();
+        await expect(fixture.admit({ authority: readmitted.authority, resource: restored, requestId: 'after-restore' }))
+            .resolves.toMatchObject({ ok: true, operation: { kind: 'session', sessionId: session.id } });
+        // The superseded job stays over.
+        await expect(fixture.admit({ authority: opened.authority, resource: restored, requestId: 'old-job-after-restore' }))
+            .resolves.toEqual({ ok: false, reasonCode: 'operation_not_current' });
+        expect(await usage()).toBe(usageBefore + 1);
     });
 
     it.each(['all-members', 'group-derived'] as const)(
