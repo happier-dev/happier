@@ -3,7 +3,8 @@ import { ExternalActionExecutionAuthorizationV1Schema } from '../externalActionA
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { readExternalActionBindingAuthority } from '../externalActionBindingAuthority.js';
 import type { ActionExecutorContext } from './types.js';
-import { admitAccountActionInvokeConfirmationV1, admitPresentUserConfirmationV1, recordPresentUserApprovalV1 } from './approvalReview.js';
+import { admitAccountActionInvokeConfirmationV1, admitPresentUserConfirmationV1, bindPresentUserActionConfirmationV1, recordPresentUserApprovalV1 } from './approvalReview.js';
+import { admitDeploymentHomeInputV1 } from './deploymentHomeAdmission.js';
 
 function consentContext(): ActionExecutorContext {
   const target = { kind: 'machine', machineId: 'machine-local' } as const;
@@ -134,4 +135,17 @@ describe('terminal CLI confirmation binding', () => {
       expect(context.authority).toBe('account_automation');
     },
   );
+});
+
+describe('present-user confirmation over a Deployment Home', () => {
+  it('admits a host confirmation stated with the saved profile id after the executor names the portable Home', () => {
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'owner', serverId: 'home-profile', serverIdentityId: 'srv_portable_home', actionRequestId: 'teardown-request' };
+    const stated = { serverId: 'home-profile', environmentId: 'environment', requestKey: 'key', reason: 'manual', removeEnvironment: true };
+    const confirmed = bindPresentUserActionConfirmationV1('deployments.teardown', stated, context);
+    // The executor names the Home before digests (deploymentHomeAdmission); the confirmation must answer that same intent.
+    const admitted = admitDeploymentHomeInputV1(stated, confirmed, undefined);
+    if (!('input' in admitted)) throw new Error('Expected the admitted Home input');
+    expect(admitPresentUserConfirmationV1('deployments.teardown', admitted.input, confirmed)).not.toBeNull();
+  });
 });
