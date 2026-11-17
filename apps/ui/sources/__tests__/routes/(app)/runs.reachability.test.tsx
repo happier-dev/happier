@@ -10,6 +10,7 @@ import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionO
 import { createStackOptionsCapture } from '@/dev/testkit/mocks/router';
 import { installRouteRootCommonModuleMocks } from '../routeRootTestHelpers';
 import { t } from '@/text';
+import { CountedDisclosureItem } from '@/components/ui/lists/CountedDisclosureItem';
 
 const header = createStackOptionsCapture();
 installRouteRootCommonModuleMocks({
@@ -83,6 +84,8 @@ it('suppresses automatic run reads after request failure but explicit refresh st
     const screen = await renderScreen(<RunsScreen />);
     await flushHookEffects({ cycles: 4 });
     expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST)).toHaveLength(0);
+    // A skipped registry read establishes no Machine presence fact.
+    expect(screen.findByType(CountedDisclosureItem).props).toMatchObject({ title: t('common.unknown'), count: 1 });
     const HeaderRight = header.getResolved()?.headerRight as React.ComponentType | undefined;
     expect(HeaderRight).toBeDefined();
     const refresh = await renderScreen(React.createElement(HeaderRight!));
@@ -97,6 +100,7 @@ it('suppresses automatic run reads after request failure but explicit refresh st
         .toMatchObject({ outcome: 'succeeded' });
     await flushHookEffects({ cycles: 4 });
     expect(screen.findAll(node => node.props?.title === t('detailPages.runs.emptyRunning')).length).toBeGreaterThan(0);
+    expect(screen.findAllByType(CountedDisclosureItem)).toHaveLength(0);
     const settledReadCount = runReads().length;
     // Recovery publishes once; unrelated renders must not turn that publication into a read storm.
     await act(async () => { screen.update(<RunsScreen />); });

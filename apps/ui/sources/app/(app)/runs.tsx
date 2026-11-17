@@ -317,8 +317,8 @@ export default function RunsScreen() {
   const unavailableByAddressKey = new Map(state.status === 'loaded' ? state.unavailableMachines.map(machine =>
     [executionRunMachineAddressKey(machine.serverId, machine.machineId), machine] as const) : []);
   // A refused or failed read is a fact about that Machine, so it leads the quiet ones (nothing running).
-  // A Machine that was not asked (offline when the page read) folds into one counted row: dozens of
-  // offline machines must not bury the ones that answered.
+  // Machines whose registry was not read fold into one counted row with unknown run status.
+  // Keep these entries from burying the Machines that answered.
   const otherMachineEntries = machineRunEntries.filter(entry => !entry.runs || entry.runs.length === 0);
   const notReadEntries = otherMachineEntries.filter(entry => unavailableByAddressKey.get(entry.addressKey)?.reason === 'not_read');
   const answeredEntries = otherMachineEntries.filter(entry => unavailableByAddressKey.get(entry.addressKey)?.reason !== 'not_read')
@@ -522,7 +522,7 @@ export default function RunsScreen() {
               >
                 {answeredEntries.map(renderMachineRow)}
                 {notReadEntries.length > 0 ? (
-                  <CountedDisclosureItem testID="runs.offline-machines" title={t('status.offline')} count={notReadEntries.length}>
+                  <CountedDisclosureItem testID="runs.offline-machines" title={t('common.unknown')} count={notReadEntries.length}>
                     {notReadEntries.map(renderMachineRow)}
                   </CountedDisclosureItem>
                 ) : null}
