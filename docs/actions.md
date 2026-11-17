@@ -6304,6 +6304,13 @@ deduplicated by Trigger across the selected scope and independent of pagination.
 Private Workflow bodies and other Accounts' authored operands are not returned.
 Omitted-subject applicability still depends on its structural producer.
 
+The resource section controller consumes this selected page directly. Its `rows` contain direct
+attachments; `also` contains admitted context attachments. `read.attachedPage` retains the cursor,
+and `read.loadMore()` reads the next page while the producer's skipped count remains page independent.
+An empty or failed first read keeps Retry available; a failed refresh retains the last page.
+Canonical subjects can be read without execution placement; creation supplies its
+separate `executionContext`. The retained service host adapts to its Machine's canonical subject.
+
 The read Action `workflow.subjects.list` accepts `kind: 'healthCheck'` and optional
 saved `{ automationId, triggerId }` source locators. It lists saved check identities
 and config-free labels through the existing private source reader, without

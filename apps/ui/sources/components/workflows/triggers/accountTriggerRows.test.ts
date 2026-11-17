@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { normalizeWorkflowIngress} from '@happier-dev/protocol/workflows/workflowValidationV1';
-import { WorkflowTriggerSetV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { WorkflowAttachedTriggerPageV1Schema, WorkflowTriggerSetV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { AutomationActionTriggerSchema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 
@@ -30,6 +30,21 @@ function set(automationId: string, overrides: Record<string, unknown>): Workflow
 }
 
 describe('projectAccountTriggerRows', () => {
+    it('marks direct rows authored by this Account yours and presents other or context rows read only', () => {
+        const attachedPage = WorkflowAttachedTriggerPageV1Schema.parse({ attached: [
+            { automationId: 'own-direct', triggerId: 't1', workflowDefinitionId: null, relation: 'direct',
+                enabled: true, revision: 1, summary: { kind: 'schedule', schedule: daily('t1', '0 7 * * *').schedule },
+                setUpBy: { accountId: 'viewer', displayName: null } },
+            { automationId: 'other-direct', triggerId: 't2', workflowDefinitionId: null, relation: 'direct',
+                enabled: true, revision: 1, summary: { kind: 'schedule', schedule: daily('t2', '0 7 * * *').schedule },
+                setUpBy: { accountId: 'other', displayName: null } },
+            { automationId: 'own-context', triggerId: 't3', workflowDefinitionId: null, relation: 'context',
+                enabled: true, revision: 1, summary: { kind: 'schedule', schedule: daily('t3', '0 7 * * *').schedule },
+                setUpBy: { accountId: 'viewer', displayName: null } },
+        ], nextCursor: null, skippedNotSharedCount: 0 });
+        expect(projectAccountTriggerRows({ sets: [], attachedPage, accountId: 'viewer', resolveWorkflowTitle: () => null }))
+            .toMatchObject([{ yours: true, readOnly: false }, { yours: false, readOnly: true }, { yours: true, readOnly: true }]);
+    });
     it('projects a saved Action attachment through the ordinary trigger row owner', () => {
         const trigger = AutomationActionTriggerSchema.parse({ kind: 'action', phase: 'before', mode: 'wait', onFailure: 'ask',
             actionIds: ['machines.command.run'] });
@@ -38,6 +53,55 @@ describe('projectAccountTriggerRows', () => {
                 triggers: [{ ...trigger, id: 'action-trigger', revision: 1, enabled: true, createdAt: 1, updatedAt: 1 }] }),
         ] });
         expect(rows).toMatchObject([{ automationId: 'action-check', triggerId: 'action-trigger', subtitle: 'Shared check', off: false }]);
+    });
+    it('keeps every selected saved and inline attachment independently of execution placement', () => {
+        const workflow = '00000000-0000-4000-8000-000000000001';
+        const attachedPage = WorkflowAttachedTriggerPageV1Schema.parse({
+            attached: [
+                { automationId: 'saved', triggerId: 'saved-direct', workflowDefinitionId: workflow,
+                    relation: 'direct', enabled: false, revision: 2,
+                    summary: { kind: 'schedule', schedule: daily('saved-direct', '0 7 * * *').schedule },
+                    setUpBy: { accountId: 'owner', displayName: 'Owner' } },
+                { automationId: 'inline', triggerId: 'inline-context', workflowDefinitionId: null,
+                    relation: 'context', enabled: true, revision: 3,
+                    summary: { kind: 'schedule', schedule: daily('inline-context', '0 19 * * *').schedule },
+                    setUpBy: { accountId: 'member', displayName: null } },
+            ], nextCursor: 'selected-next', skippedNotSharedCount: 4,
+        });
+        const input = { attachedPage, resolveWorkflowTitle: () => 'Saved workflow',
+            subject: { kind: 'machine' as const, machineId: 'viewed-machine' },
+            sets: [
+                set('saved', { target: { kind: 'workflow', ref: workflow }, project: { machineId: 'elsewhere', directory: '~' },
+                    triggers: [daily('saved-direct', '0 7 * * *', false)] }),
+                set('inline', { target: inline(['Run here']), project: { machineId: 'elsewhere', directory: '~' },
+                    triggers: [daily('inline-context', '0 19 * * *')] }),
+                set('unselected', { target: inline(['Unrelated']), project: { machineId: 'viewed-machine', directory: '~' },
+                    triggers: [daily('unselected-trigger', '0 9 * * *')] }),
+            ] };
+        const rows = projectAccountTriggerRows(input);
+        expect(rows.map(row => row.triggerId)).toEqual(['saved-direct', 'inline-context']);
+        expect(rows).toMatchObject([
+            { subtitle: 'Saved workflow', off: true, relation: 'schedule', setUpBy: { accountId: 'owner', displayName: 'Owner' },
+                attachment: attachedPage.attached[0] },
+            { off: false, relation: 'schedule', setUpBy: { accountId: 'member', displayName: null }, attachment: attachedPage.attached[1] },
+        ]);
+    });
+    it.each(['before', 'after'] as const)('retains %s Action and latest-started Run facts without an opened Workflow body', phase => {
+        const startedAt = '2026-11-17T01:00:00.000Z';
+        const attachedPage = WorkflowAttachedTriggerPageV1Schema.parse({ attached: [{
+            automationId: 'shared-check', triggerId: 'shared-trigger',
+            workflowDefinitionId: '00000000-0000-4000-8000-000000000001',
+            workflowAccess: { ownerAccountId: 'author', access: 'view' },
+            relation: 'context', enabled: true, revision: 3,
+            summary: { kind: 'action', phase, actionIds: ['machines.command.run'] },
+            setUpBy: { accountId: 'author', displayName: 'Author' },
+            lastRun: { id: '00000000-0000-4000-8000-000000000002', state: 'running', workflowCustodyState: null,
+                attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, createdAt: startedAt, startedAt },
+        }], nextCursor: null, skippedNotSharedCount: 0 });
+        const rows = projectAccountTriggerRows({ sets: [], attachedPage, resolveWorkflowTitle: () => 'Shared check' });
+        expect(rows).toMatchObject([{ subtitle: 'Shared check', relation: phase,
+            setUpBy: { accountId: 'author', displayName: 'Author' }, outcome: { state: 'running', atMs: Date.parse(startedAt) } }]);
+        expect(rows[0]?.attachment).toBe(attachedPage.attached[0]);
     });
     it('names an inline document with declared inputs without flattening it to a form preset', () => {
         const base = inline([{ kind: 'step', id: 'digest', name: 'Morning digest',
@@ -88,77 +152,6 @@ describe('projectAccountTriggerRows', () => {
             expect.objectContaining({ automationId: 'off', off: true }),
             expect.objectContaining({ automationId: 'gone', subtitle: 'workflows.triggers.row.workflowUnavailable' }),
         ]);
-    });
-});
-
-describe('projectAccountTriggerRows subject', () => {
-    it('keeps saved repository deployment triggers with their fixed destination Environment', () => {
-        const triggerId = 'repository-push';
-        const push = set('push', { project: { machineId: 'controller', directory: '~' },
-            target: inline([{ kind: 'action', id: 'deploy', actionId: 'deployments.deploy', input: {} }]),
-            context: { workspace: { directory: '~' }, executionTarget: { kind: 'detached_run' },
-                inputs: { serverId: 'home', environmentId: 'staging', targetLinkId: 'runtime' },
-                deploymentTriggers: [{ triggerId }] },
-            triggers: [{ id: triggerId, revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
-                kind: 'pluginEvent', triggerDefinitionEnvelope: 'private',
-                sourceSelectorId: 'repository', sourceContractVersion: 1, observation: { kind: 'checkpointedPull', watcher: null },
-                sourceStatus: null, sourceCatalogStatus: null,
-                eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/repository-pushed-v1' } }],
-        });
-        expect(projectAccountTriggerRows({ sets: [push], resolveWorkflowTitle: () => null,
-            subject: { kind: 'environment', machineId: 'controller', environmentId: 'staging' },
-        }).map(row => row.triggerId)).toEqual([triggerId]);
-        expect(projectAccountTriggerRows({ sets: [push], resolveWorkflowTitle: () => null,
-            subject: { kind: 'environment', machineId: 'controller', environmentId: 'production' },
-        })).toEqual([]);
-    });
-    it('keeps scheduled service commands with their exact Environment and excludes unrelated schedules on the same Machine', () => {
-        const command = set('app-job', { project: { machineId: 'app-host', directory: '~' },
-            target: inline([{ kind: 'action', id: 'job', actionId: 'machines.services.exec', input: {
-                serverId: { kind: 'literal', value: 'home' }, machineId: { kind: 'literal', value: 'app-host' },
-                target: { kind: 'literal', value: { kind: 'current', serviceId: 'instance/web', expectedGeneration: 'release' } },
-                mode: { kind: 'literal', value: 'exec' }, argv: { kind: 'literal', value: ['task', 'run'] },
-            } }]), triggers: [daily('job-schedule', '0 3 * * *')] });
-        const unrelated = set('other', { project: command.project, target: inline(['Investigate']),
-            triggers: [daily('unrelated-schedule', '0 3 * * *')] });
-        const rows = projectAccountTriggerRows({ sets: [command, unrelated], resolveWorkflowTitle: () => null,
-            subject: { kind: 'environment', machineId: 'controller', environmentId: 'production' },
-            services: [{ machineId: 'app-host', serviceId: 'instance/web' }],
-        });
-        expect(rows.map(row => row.triggerId)).toEqual(['job-schedule']);
-        expect(projectAccountTriggerRows({ sets: [command], resolveWorkflowTitle: () => null,
-            subject: { kind: 'environment', machineId: 'controller', environmentId: 'staging' }, services: [],
-        })).toEqual([]);
-    });
-
-    it('lists only each Event\'s exact Environment subject, independently of its execution Machine', () => {
-        const event = (id: string) => set('fixture', { triggers: [{ id, revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
-            kind: 'pluginEvent', eventRef: { pluginId: 'happier.machine.services', localId: 'deployment-failed' },
-            sourceSelectorId: id, sourceContractVersion: 1, observation: { kind: 'checkpointedPull', watcher: null },
-            sourceStatus: null, sourceCatalogStatus: null, triggerDefinitionEnvelope: 'private' }] }).triggers[0]!;
-        const sets = [{ ...set('mixed', { project: { machineId: 'controller', directory: '~' } }), triggers: [
-            { ...event('production'), subject: { kind: 'environment' as const, environmentId: 'production' } },
-            { ...event('staging'), subject: { kind: 'environment' as const, environmentId: 'staging' } },
-            event('unknown'),
-        ] }, set('unscoped', { project: { machineId: 'same-target', directory: '~' }, triggers: [daily('schedule', '0 9 * * *')] })];
-        expect(projectAccountTriggerRows({ sets, resolveWorkflowTitle: () => null,
-            subject: { kind: 'environment', machineId: 'same-target', environmentId: 'production' } })
-            .map(row => row.triggerId)).toEqual(['production']);
-        expect(projectAccountTriggerRows({ sets, resolveWorkflowTitle: () => null })
-            .map(row => row.triggerId)).toEqual(['production', 'staging', 'unknown', 'schedule']);
-        expect(projectAccountTriggerRows({ sets, resolveWorkflowTitle: () => null,
-            subject: { kind: 'machine', machineId: 'controller' } }).map(row => row.triggerId))
-            .toEqual(['production', 'staging', 'unknown']);
-    });
-
-    it("keeps only the sets that run on the subject Machine, by their project or any placement", () => {
-        const rows = projectAccountTriggerRows({ resolveWorkflowTitle: () => null, subject: { kind: 'machine', machineId: 'm1' }, sets: [
-            set('project-here', { project: { machineId: 'm1', directory: '~' }, triggers: [daily('a', '0 9 * * *')] }),
-            set('placed-here', { placements: [{ machineId: 'm2', directory: '~' }, { machineId: 'm1', directory: '~/app' }], triggers: [] }),
-            set('elsewhere', { project: { machineId: 'm2', directory: '~' }, triggers: [daily('b', '0 9 * * *')] }),
-            set('nowhere', { triggers: [] }),
-        ] });
-        expect(rows.map((row) => row.automationId)).toEqual(['project-here', 'placed-here']);
     });
 });
 

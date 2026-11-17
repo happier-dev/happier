@@ -271,6 +271,98 @@ function writtenContext(input: ReturnType<typeof AutomationDefinitionReconcileRe
 // The retained Account adapter below exercises settings, source intake and legacy
 // links. Primary Library presentation consumes the unified view tested alongside it.
 describe('Account Workflow Library and settings', () => {
+    it('reads the selected resource page without a census and retains direct, context and skipped facts across failure and Retry', async () => {
+        const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { AutomationSubjectV1Schema } = await import('@happier-dev/protocol/automations/automationSubjectV1');
+        const { WorkflowAttachedTriggerPageV1Schema } = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const subject = AutomationSubjectV1Schema.parse({ kind: 'machine', serverId, machineId: project.machineId });
+        const context = AutomationSubjectV1Schema.parse({ kind: 'environment', serverId, environmentId: 'environment' });
+        const page = WorkflowAttachedTriggerPageV1Schema.parse({ attached: [
+            { automationId: 'saved-direct', triggerId: 'direct', workflowDefinitionId: 'builtin:review-and-converge',
+                relation: 'direct', enabled: false, revision: 2, summary: { kind: 'schedule', schedule: trigger('direct').schedule },
+                setUpBy: { accountId: 'account-a', displayName: 'Owner' } },
+            { automationId: 'saved-context', triggerId: 'context', workflowDefinitionId: 'builtin:review-and-converge',
+                relation: 'context', enabled: true, revision: 1, summary: { kind: 'schedule', schedule: trigger('context').schedule },
+                setUpBy: { accountId: 'member', displayName: 'Member' } },
+        ], nextCursor: 'next-selected-page', skippedNotSharedCount: 3 });
+        const requests: unknown[] = [];
+        let failed = true;
+        let empty = true;
+        home.answer(serverId, 'POST /v3/automations/query', { select: input => {
+            requests.push(input);
+            if (!failed && empty) return { body: AutomationDefinitionListResponseSchema.parse({ automations: [],
+                attached: [], nextCursor: null, skippedNotSharedCount: 0 }) };
+            if (!failed && typeof input === 'object' && input !== null && 'cursor' in input) return {
+                body: AutomationDefinitionListResponseSchema.parse({ automations: [], attached: [
+                    { ...page.attached[0]!, automationId: 'saved-next', triggerId: 'next' },
+                ], nextCursor: null, skippedNotSharedCount: 3 }),
+            };
+            return failed ? { status: 503, body: { error: 'database_transaction_timeout' } }
+                : { body: AutomationDefinitionListResponseSchema.parse({ automations: [], ...page }) };
+        } });
+        const hook = await renderHook((props: { subject: typeof subject }) => useResourceAutomationsSection({ subject: props.subject, contextSubjects: [context] }), {
+            initialProps: { subject },
+            wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider>,
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).not.toBe('loading'));
+        expect(requests).toContainEqual(expect.objectContaining({ subject, contextSubjects: [context] }));
+        expect(hook.getCurrent().read.status).toBe('failed');
+        expect(hook.getCurrent().rows).toEqual([]);
+        failed = false;
+        await act(async () => hook.getCurrent().read.retry());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
+        expect(hook.getCurrent().rows).toEqual([]);
+        expect(hook.getCurrent().also).toEqual([]);
+        empty = false;
+        await act(async () => hook.getCurrent().read.retry());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().rows).toHaveLength(1));
+        expect(hook.getCurrent().rows).toMatchObject([{ automationId: 'saved-direct', off: true, attachment: { relation: 'direct' } }]);
+        expect(hook.getCurrent().also).toMatchObject([{ automationId: 'saved-context', attachment: { relation: 'context' } }]);
+        expect(hook.getCurrent().skippedNotSharedCount).toBe(3);
+        await act(async () => hook.getCurrent().read.loadMore());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().rows).toHaveLength(2));
+        expect(hook.getCurrent().read.attachedPage?.nextCursor).toBeNull();
+        expect(hook.getCurrent().skippedNotSharedCount).toBe(3);
+        expect(requests).toContainEqual(expect.objectContaining({ subject, cursor: 'next-selected-page' }));
+        const otherSubject = AutomationSubjectV1Schema.parse({ kind: 'machine', serverId, machineId: 'other-machine' });
+        await hook.rerender({ subject: otherSubject });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
+        expect(requests.at(-1)).toMatchObject({ subject: otherSubject });
+        expect(requests.at(-1)).not.toHaveProperty('cursor');
+        expect(hook.getCurrent().rows).toHaveLength(1);
+        const retained = hook.getCurrent().rows;
+        failed = true;
+        await act(async () => hook.getCurrent().read.retry());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('failed'));
+        expect(hook.getCurrent().rows).toBe(retained);
+        expect(requests.every(input => typeof input === 'object' && input !== null && 'subject' in input)).toBe(true);
+        await hook.unmount();
+    });
+    it('reads a plugin resource without execution placement or opening a saved attachment body', async () => {
+        const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { AutomationSubjectV1Schema } = await import('@happier-dev/protocol/automations/automationSubjectV1');
+        const { WorkflowAttachedTriggerPageV1Schema } = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        serve({ ...fixture(), target: { kind: 'workflow', ref: 'builtin:review-and-converge' } });
+        const page = WorkflowAttachedTriggerPageV1Schema.parse({ attached: [{
+            automationId: 'digest', triggerId: 't1', workflowDefinitionId: 'builtin:review-and-converge',
+            relation: 'direct', enabled: true, revision: 1, summary: { kind: 'schedule', schedule: trigger('t1').schedule },
+            setUpBy: { accountId: 'account-a', displayName: 'Owner' },
+        }], nextCursor: null, skippedNotSharedCount: 0 });
+        home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({ automations: [], ...page }) });
+        const subject = AutomationSubjectV1Schema.parse({ kind: 'plugin', serverId, pluginId: 'acme.tickets',
+            subjectKindId: 'ticket', identity: { id: 'issue-1' } });
+        const hook = await renderHook(() => useResourceAutomationsSection({ subject }), {
+            wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider>,
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
+        expect(hook.getCurrent().project).toBeUndefined();
+        expect(hook.getCurrent().rows).toHaveLength(1);
+        const reads = () => home.requests.filter(request => request.method === 'GET' && request.path === '/v3/automations/digest');
+        expect(reads()).toEqual([]);
+        await hook.unmount();
+    });
     it('shows the captured built-in trigger on its ordinary catalog page and opens its editor', async () => {
         const set = WorkflowTriggerSetV1Schema.parse(capturedBuiltinTriggerSet);
         serve(set);

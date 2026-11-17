@@ -150,6 +150,14 @@ export async function listWorkflowTriggerSets(
     request: z.input<typeof WorkflowTriggerListRequestV1Schema>,
     options: CallOptions = {},
 ): Promise<readonly WorkflowTriggerSetV1[]> {
+    return (await listWorkflowTriggerPage(request, options)).sets;
+}
+
+/** Retain the selected owner's attachment page as well as opened trigger sets. */
+export async function listWorkflowTriggerPage(
+    request: z.input<typeof WorkflowTriggerListRequestV1Schema>,
+    options: CallOptions = {},
+): Promise<z.output<typeof WorkflowTriggerListResultV1Schema>> {
     const parsed = WorkflowTriggerListRequestV1Schema.parse(request);
     const lifetime = options.accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : options.accountLifetime;
     // A list result may predate a successful local write. Keep that publication
@@ -168,7 +176,7 @@ export async function listWorkflowTriggerSets(
                 isTriggerListCurrent: () => publication.current && !options.signal?.aborted
                     && options.isTriggerListCurrent?.() !== false });
         throwIfAborted(options.signal);
-        return result.sets;
+        return result;
     } finally {
         readers?.delete(publication);
         if (publications && readers?.size === 0 && publications.get(key) === readers) publications.delete(key);

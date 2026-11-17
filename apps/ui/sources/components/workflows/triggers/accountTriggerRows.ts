@@ -1,13 +1,10 @@
 import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
-import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
-
-import { MachineServiceExecInputV1Schema } from '@happier-dev/protocol/local/services/serviceExecV1';
+import type { WorkflowAttachedTriggerPageV1, WorkflowAttachedTriggerV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 
 import { formatTriggerSetSummary } from './formatTriggerSummary';
 import { describeLegacyTriggerSet, describeTriggerTarget, isWorkflowTriggerSourceGone } from './sessionTriggerGroups';
-import { readTriggerThen } from './sessionTriggerForm';
 import { resolveTriggerEventGroup } from './triggerEventGroups';
 
 export type AccountTriggerRow = Readonly<{
@@ -24,24 +21,27 @@ export type AccountTriggerRow = Readonly<{
     /** Its Workflow can no longer be opened: the row offers only Remove trigger. */
     sourceGone?: true;
     legacy?: NonNullable<ReturnType<typeof describeLegacyTriggerSet>>;
+    /** Admitted selected-row facts, including relation, author, access, source and last Run. */
+    attachment?: WorkflowAttachedTriggerV1;
+    /** The trigger kind/phase, distinct from the selected owner's direct/context membership. */
+    relation?: Extract<WorkflowAttachedTriggerV1['summary'], { kind: 'action' }>['phase'] | 'event' | 'schedule';
+    setUpBy?: WorkflowAttachedTriggerV1['setUpBy'];
+    /** Presentation of the admitted Automation author, independent of Workflow permissions. */
+    yours?: boolean;
+    readOnly?: boolean;
+    /** Latest-started Run evidence; omission is unread, null is no Run. */
+    outcome?: Readonly<{ state: NonNullable<WorkflowAttachedTriggerV1['lastRun']>['state']; atMs: number }> | null;
 }>;
 
 /**
- * What a page's Triggers section is about, and where its new triggers run. A Machine's triggers are the
- * sets that run on it (their project or any placement), as does a deployed service's Machine view.
- * An Environment lists its observed Events, saved deployment triggers and commands for its admitted services;
- * execution placement alone does not establish Environment membership.
+ * Retained host props translated by useResourceAutomationsSection into canonical subject identity.
+ * The service page is its Machine's view. New hosts pass AutomationSubjectV1 and explicit execution context.
  */
 export type TriggerSubject = Readonly<
     | { kind: 'machine'; machineId: string }
     | { kind: 'environment'; machineId: string; environmentId: string }
     | { kind: 'service'; machineId: string; serviceId: string }
 >;
-
-function runsOnSubject(set: WorkflowTriggerSetV1, subject: TriggerSubject): boolean {
-    return set.project?.machineId === subject.machineId
-        || (set.placements ?? []).some((placement) => placement.machineId === subject.machineId);
-}
 
 /**
  * The column's Triggers rows (F1): the Account's trigger sets that hold their own steps, exactly as
@@ -50,32 +50,46 @@ function runsOnSubject(set: WorkflowTriggerSetV1, subject: TriggerSubject): bool
  */
 export function projectAccountTriggerRows(params: Readonly<{
     sets: readonly WorkflowTriggerSetV1[];
+    /** The query owner already selected membership; placement never filters this page. */
+    attachedPage?: WorkflowAttachedTriggerPageV1;
+    accountId?: string;
     resolveWorkflowTitle: (ref: string) => string | null;
     resolveMachineTitle?: (id: string) => string | null;
-    /** A page's own section lists only the sets about its subject. */
-    subject?: TriggerSubject;
-    /** The Environment-filtered service Resource supplies membership, independently of execution placement. */
-    services?: readonly Readonly<{ machineId: string; serviceId: string }>[];
 }>): readonly AccountTriggerRow[] {
-    const subject = params.subject;
-    const sets = subject && subject.kind !== 'environment'
-        ? params.sets.filter((set) => runsOnSubject(set, subject)) : params.sets;
-    return sets.flatMap((set) => {
-        const then = subject?.kind === 'environment' && set.target
-            ? readTriggerThen(set.target, set.context?.executionTarget, set.context?.inputs) : null;
-        const command = then?.kind === 'doAction' && then.actionId === 'machines.services.exec'
-            ? MachineServiceExecInputV1Schema.safeParse(then.input) : null;
-        const commandTarget = command?.success ? command.data.target : null;
-        const serviceCommandHere = command?.success && commandTarget?.kind === 'current'
-            && params.services?.some(service => service.machineId === command.data.machineId
-                && service.serviceId === commandTarget.serviceId) === true;
-        const triggers = subject?.kind === 'environment'
-            ? set.triggers.filter((trigger) => trigger.kind === 'pluginEvent'
-                ? trigger.subject?.kind === 'environment' && trigger.subject.environmentId === subject.environmentId
-                    || set.context?.inputs?.environmentId === subject.environmentId
-                        && set.context.deploymentTriggers?.some(row => row.triggerId === trigger.id) === true
-                : trigger.kind === 'schedule' && serviceCommandHere)
-            : set.triggers.length > 0 ? set.triggers : [null];
+    if (params.attachedPage) {
+        const setsById = new Map(params.sets.map(set => [set.automationId, {
+            set, triggers: new Map(set.triggers.map(trigger => [trigger.id, trigger])),
+        }]));
+        return params.attachedPage.attached.map<AccountTriggerRow>(attachment => {
+            const yours = attachment.setUpBy.accountId === params.accountId;
+            const selected = setsById.get(attachment.automationId);
+            const set = selected?.set;
+            const trigger = selected?.triggers.get(attachment.triggerId);
+            const legacy = set ? describeLegacyTriggerSet(trigger ? { ...set, triggers: [trigger] } : set, params.resolveMachineTitle) : null;
+            const target = set ? set.health === 'available' ? set.target : undefined
+                : attachment.workflowDefinitionId ? { kind: 'workflow' as const, ref: attachment.workflowDefinitionId } : undefined;
+            return {
+                automationId: attachment.automationId,
+                triggerId: attachment.triggerId,
+                title: formatTriggerSetSummary([attachment.summary]),
+                glyph: resolveTriggerEventGroup(attachment.summary).glyph,
+                subtitle: legacy ? `${legacy.title}\n${legacy.qualifier}` : describeTriggerTarget(target, params.resolveWorkflowTitle),
+                off: !attachment.enabled,
+                ...(set && isWorkflowTriggerSourceGone(set) ? { sourceGone: true as const } : {}),
+                ...(legacy ? { legacy } : {}),
+                attachment,
+                relation: attachment.summary.kind === 'action' ? attachment.summary.phase
+                    : attachment.summary.kind === 'schedule' ? 'schedule' : 'event',
+                setUpBy: attachment.setUpBy,
+                yours,
+                readOnly: !yours || attachment.relation === 'context',
+                ...(attachment.lastRun === undefined ? {} : { outcome: attachment.lastRun === null ? null
+                    : { state: attachment.lastRun.state, atMs: Date.parse(attachment.lastRun.startedAt) } }),
+            };
+        });
+    }
+    return params.sets.flatMap((set) => {
+        const triggers = set.triggers.length > 0 ? set.triggers : [null];
         return triggers.map((trigger) => {
         const legacy = describeLegacyTriggerSet(trigger ? { ...set, triggers: [trigger] } : set, params.resolveMachineTitle);
         const when = formatTriggerSetSummary(trigger ? [trigger] : []);
