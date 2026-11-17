@@ -13,7 +13,7 @@ import { pickNextFreeTcpPort } from '../../utils/net/ports.mjs';
 import { killProcessTree, runCapture } from '../../utils/proc/proc.mjs';
 import { buildServerRuntimeEnv } from '../../utils/server/server_env.mjs';
 import { applyServerLightEnvDefaults } from '../../utils/server/apply_server_light_env_defaults.mjs';
-import { applyRuntimeServerDatabaseEnv } from '../../utils/server/apply_runtime_server_database_env.mjs';
+import { applyRuntimeServerDatabaseEnv, applySharedDatabaseSourceEnv } from '../../utils/server/apply_runtime_server_database_env.mjs';
 import { fetchHappierHealth, waitForServerReady } from '../../utils/server/server.mjs';
 import { resolveServerRuntimeLaunchSpec } from './resolveServerRuntimeLaunchSpec.mjs';
 import { spawnRuntimeServerAfterMigration } from './runServerRuntimeMigration.mjs';
@@ -50,6 +50,10 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
     // Reuse port allocation/availability policy; never stop an occupant.
     const port = await pickNextFreeTcpPort(40_000);
     const url = `http://127.0.0.1:${port}`;
+    // Resolve the real launch's existing secret before dropping shared-source
+    // references. Carry only that credential into the scratch storage layout.
+    const runtimeEnv = { ...env, ...server.env };
+    applySharedDatabaseSourceEnv({ env: runtimeEnv });
     const isolated = { ...env, ...server.env, HAPPIER_SERVER_HOST: '127.0.0.1',
       HAPPIER_HOME_DIR: scratch, HAPPIER_STACK_CLI_HOME_DIR: join(scratch, 'cli'),
       HAPPIER_SERVER_LIGHT_DATA_DIR: join(scratch, 'server-light'),
@@ -57,7 +61,7 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
       HAPPIER_SERVER_LIGHT_PRIVATE_FILES_DIR: join(scratch, 'private-files'),
       HAPPIER_SERVER_LIGHT_DB_DIR: join(scratch, 'pglite'),
       HAPPIER_CANONICAL_SERVER_URL: url, HAPPIER_PUBLIC_SERVER_URL: url,
-      HAPPIER_DB_PROVIDER: dbProvider, DATABASE_URL: '', HANDY_MASTER_SECRET: '',
+      HAPPIER_DB_PROVIDER: dbProvider, DATABASE_URL: '', HANDY_MASTER_SECRET: runtimeEnv.HANDY_MASTER_SECRET,
       HAPPIER_SQLITE_AUTO_MIGRATE: '1', HAPPY_SQLITE_AUTO_MIGRATE: '1',
       HAPPIER_STACK_SHARED_DB_SOURCE_STACK: '', HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE: '',
       HAPPIER_STACK_MIGRATE_MODE: '', HAPPIER_STACK_LOG_TEE_DIR: '', METRICS_ENABLED: 'false' };

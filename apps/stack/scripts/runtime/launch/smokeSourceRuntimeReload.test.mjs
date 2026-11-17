@@ -1,3 +1,4 @@
+// @happier-test-preparation source-condition
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -74,7 +75,7 @@ test('PostgreSQL replacement migrates, boots and serves /health on a scratch Pos
     import {appendFileSync} from 'node:fs';
     const url = new URL(process.env.DATABASE_URL);
     if (url.hostname !== '127.0.0.1' || process.env.DATABASE_URL.includes('retained')) throw new Error('not a scratch database');
-    if (process.env.HANDY_MASTER_SECRET === 'retained-secret' || process.env.HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE) throw new Error('retained database authority leaked');
+    if (process.env.HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE || process.env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK) throw new Error('retained database authority leaked');
     const reply = await new Promise((resolve, reject) => {
       const socket = connect(Number(url.port), url.hostname);
       const params = Buffer.from('user\\0postgres\\0database\\0postgres\\0\\0');
@@ -88,6 +89,8 @@ test('PostgreSQL replacement migrates, boots and serves /health on a scratch Pos
   await writeFile(migrate, `${probe}\nappendFileSync(${JSON.stringify(witness)}, 'migrated\\n');`);
   await writeFile(server.entrypoint, `${probe}
     import {createServer} from 'node:http';
+    if (!process.env.HANDY_MASTER_SECRET) throw new Error('HANDY_MASTER_SECRET is required');
+    if (process.env.HANDY_MASTER_SECRET !== 'fixture-owner-secret') throw new Error('wrong owner-provided master secret');
     appendFileSync(${JSON.stringify(witness)}, 'served\\n');
     createServer((_request,response)=>{
       response.setHeader('content-type','application/json');
@@ -95,8 +98,14 @@ test('PostgreSQL replacement migrates, boots and serves /health on a scratch Pos
     }).listen(Number(process.env.PORT),'127.0.0.1');
   `);
   server.migration = { mode: 'external', command: migrate, args: [], cwd: server.serverDir };
+  await writeFile(fixture.path('retained.env'), [
+    'HAPPIER_DB_PROVIDER=postgres', 'DATABASE_URL=postgresql://retained.invalid/live',
+    'HANDY_MASTER_SECRET=fixture-owner-secret',
+    `HAPPIER_SERVER_LIGHT_DATA_DIR=${fixture.path('retained-data')}`,
+  ].join('\n'));
   const env = { ...process.env, HAPPIER_STACK_REPO_DIR: repoDir, DATABASE_URL: 'postgresql://retained.invalid/live',
-    HANDY_MASTER_SECRET: 'retained-secret', HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE: fixture.path('retained.env'),
+    HANDY_MASTER_SECRET: '', HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'fixture-source',
+    HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE: fixture.path('retained.env'),
     HAPPIER_SERVER_LIGHT_DATA_DIR: fixture.path('retained-data') };
   await smokeSourceRuntimeReload({ components: { server }, env, logger: { log() {} } });
   assert.deepEqual((await readFile(witness, 'utf8')).trim().split('\n'), ['migrated', 'served']);

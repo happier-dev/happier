@@ -469,6 +469,10 @@ script delivery and boot exceptions, not later authenticated routes or tooltip
 interactions. Full-server infrastructure and external PostgreSQL/MySQL smoke
 databases are not provisioned by this path. Full-server and MySQL reloads fail
 before retirement; light PostgreSQL reloads use the scratch PGlite health smoke.
+The smoke reuses the real launch's existing master secret through its shared
+database environment owner before replacing database and file paths with scratch
+locations. It neither creates a secret nor passes source-database references to
+the smoke server.
 The complete named-Stack cutover remains a manual validation step for the
 operator applying these development tooling changes.
 
