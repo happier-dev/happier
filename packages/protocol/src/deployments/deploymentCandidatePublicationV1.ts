@@ -71,7 +71,7 @@ export const DeploymentBackupConfigureNativeAdmissionV1Schema = lazyZodSchema(()
 export type DeploymentBackupConfigureNativeAdmissionV1 = z.infer<typeof DeploymentBackupConfigureNativeAdmissionV1Schema>;
 /** Telemetry's closed public intent contains only placement and reviewed mutation facts. */
 export const DeploymentTelemetryNativeAdmissionV1Schema = lazyZodSchema(() => z.extend(
-  z.omit(DeploymentEnvironmentTelemetrySetInputV1Schema, { serverId: true }), {
+  z.omit(DeploymentEnvironmentTelemetrySetInputV1Schema, { serverId: true, capabilities: true }), {
     kind: z.literal('telemetry'), actionId: z.literal(DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1),
     inputDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
   }));
@@ -117,7 +117,7 @@ export function isDeploymentTelemetryNativeAdmissionV1(value: DeploymentNativeAd
 export function projectDeploymentNativeAdmissionV1(actionId: string, input: unknown): DeploymentNativeAdmissionV1 | undefined {
   if (actionId === DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1) {
     const value = DeploymentEnvironmentTelemetrySetInputV1Schema.parse(input);
-    const { serverId: _serverId, ...admitted } = value;
+    const { serverId: _serverId, capabilities: _capabilities, ...admitted } = value;
     return DeploymentTelemetryNativeAdmissionV1Schema.parse({ ...admitted, kind: 'telemetry', actionId,
       inputDigest: computeCanonicalDomainSeparatedDigest('happier-deployment-telemetry-input-v1',
         [createCanonicalJsonSigningInput(value)]) });

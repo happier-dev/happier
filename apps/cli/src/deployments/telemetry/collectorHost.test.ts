@@ -28,7 +28,7 @@ describe('production collector host', () => {
         const channel = await createRequesterCurrentnessSocketHarness();
         cleanups.push(channel.close);
         const changes: ChangeEntry[] = [];
-        let assignments = [{ environmentId: 'environment-a', tokenHash: 'a'.repeat(64) }];
+        let assignments = [{ environmentId: 'environment-a', tokenHash: 'a'.repeat(64), capabilities: { metrics: true, appLlmCost: false, exceptions: false } }];
         let assignmentReads = 0;
         let feedReads = 0;
         const server = createServer((request, response) => {
@@ -84,12 +84,12 @@ describe('production collector host', () => {
                 socket.emit('fx56-delivered', resolve);
             })));
         }
-        assignments = [{ environmentId: 'environment-a', tokenHash: 'b'.repeat(64) }];
+        assignments = [{ environmentId: 'environment-a', tokenHash: 'a'.repeat(64), capabilities: { metrics: false, appLlmCost: false, exceptions: true } }];
         await publish('machine', 'collector-a');
         await vi.waitFor(() => expect(latest).toEqual(assignments));
         await publish('machine', 'collector-other');
         await publish('account', 'unrelated-account-write');
-        assignments = [{ environmentId: 'environment-a', tokenHash: 'c'.repeat(64) }];
+        assignments = [{ environmentId: 'environment-a', tokenHash: 'c'.repeat(64), capabilities: { metrics: false, appLlmCost: false, exceptions: true } }];
         await publish('machine', 'collector-a');
         await vi.waitFor(() => expect(latest).toEqual(assignments));
         expect(assignmentReads).toBe(3);

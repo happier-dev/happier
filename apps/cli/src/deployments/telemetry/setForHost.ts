@@ -4,9 +4,10 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/action
 import { DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentEnvironmentTelemetrySetInputV1, DeploymentEnvironmentTelemetrySetSuccessV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
+import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1, isMachineRoleActiveV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
-import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { DeploymentEnvironmentDetailV1, DeploymentTargetLinkHeaderV1, EnvironmentSecretBindingInputV1, EnvironmentVariableBindingInputV1 } from '@happier-dev/deployment-protocol';
 import { TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1, resolveTelemetryCollectorSelectionV1 } from '@happier-dev/deployments/telemetry';
 import type { StoredCredentials } from '@/persistence';
@@ -43,6 +44,9 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
             if (!current.environment.capabilities.manageBindings) return refuse('deployment_access_denied');
             if (current.environment.revision !== input.expectedRevision) return refuse('deployment_conflict');
             const previousMachineId = current.environment.telemetryMachineId ?? null;
+            const previousCapabilities = resolveDeploymentTelemetryCapabilitiesV1(current.content.telemetry);
+            const capabilities = resolveDeploymentTelemetryCapabilitiesV1({ ...current.content.telemetry, ...input.capabilities });
+            const capabilitiesChanged = !sameStrictJsonValue(capabilities, previousCapabilities);
             const success = (revision: number): DeploymentEnvironmentTelemetrySetSuccessV1 => ({ ok: true,
                 environmentId: input.environmentId, revision, state: 'redeploy_required' });
             const keepCollector = input.rotate && input.collector === undefined && previousMachineId !== null;
@@ -65,7 +69,7 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
             const owned = current.content.bindings.filter((binding): binding is Extract<typeof binding, { purpose: 'variable' }> =>
                 binding.purpose === 'variable' && binding.managedBy === 'telemetry');
             const remove = owned.map(binding => ({ purpose: 'variable' as const, name: binding.name, phase: binding.phase }));
-            if (machineId === null && previousMachineId === null && owned.length === 0) return success(input.expectedRevision);
+            if (machineId === null && previousMachineId === null && owned.length === 0 && !capabilitiesChanged) return success(input.expectedRevision);
             const set: EnvironmentSecretBindingInputV1[] = [];
             if (machineId !== null) {
                 const headers = owned.find(binding => binding.name === 'OTEL_EXPORTER_OTLP_HEADERS');
@@ -100,6 +104,7 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                     OTEL_EXPORTER_OTLP_HEADERS: secret,
                     OTEL_SERVICE_NAME: { kind: 'value', value: `${project!.name}/${current.content.name}` },
                     OTEL_RESOURCE_ATTRIBUTES: { kind: 'value', value: `deployment.environment.name=${encodeURIComponent(current.content.name)}` },
+                    OTEL_METRICS_EXPORTER: { kind: 'value', value: capabilities.metrics ? 'otlp' : 'none' },
                 };
                 for (const name of TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1) {
                     set.push({ purpose: 'variable', phase: 'runtime', name, managedBy: 'telemetry', source: values[name],
@@ -107,7 +112,7 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                 }
                 const existing = TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1.flatMap(name => owned.filter(binding =>
                     binding.name === name && binding.phase === 'runtime'));
-                if (machineId === previousMachineId && !input.rotate && owned.length === set.length
+                if (machineId === previousMachineId && !input.rotate && !capabilitiesChanged && owned.length === set.length
                     && sameBindingIntent(existing, set)) return success(input.expectedRevision);
             }
             const child = context.hostReviewedChild ?? refuse('admission_unavailable');
@@ -115,6 +120,7 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
             const result = await child.invoke({ action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, role: DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1,
                 input: normalizeStrictJsonValue({ serverId: input.serverId, environmentId: input.environmentId,
                     expectedRevision: input.expectedRevision, telemetryMachineId: machineId, set,
+                    ...(capabilitiesChanged ? { telemetry: capabilities } : {}),
                     remove: remove.filter(binding => !replaced.has(`${binding.phase}:${binding.name}`)) }) });
             if (!result.ok) return result;
             const saved = DeploymentBindingsSetResultV1Schema.parse(result.result);

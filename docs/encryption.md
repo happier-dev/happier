@@ -125,6 +125,12 @@ the collector; the latter is SHA-256 of the high-entropy ingest token. Neither
 contains telemetry content. The token remains an ordinary Account-mode Saved
 Secret, accessed through the application's admitted runtime installation grants. The
 collector receives assignments containing hashes, never token secret grants.
+The same binding CAS projects the Environment's three deliberate telemetry
+choices (`metrics`, `appLlmCost`, `exceptions`) as operational booleans, all off
+when absent. The private Environment content owns those choices; their projection
+travels with the hash to the selected collector without granting that collector
+access to the Environment Artifact or its Source. Changing a choice publishes
+through the existing Machine change feed and keeps the delivered token hash.
 The signed successful deployment settlement carries the delivered collector id
 and hash together; Home applies the hash only while that collector remains the
 Environment's selection. Rotation retains the previous hash until redeploy.

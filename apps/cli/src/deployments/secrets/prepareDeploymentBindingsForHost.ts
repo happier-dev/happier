@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { DeploymentBindingsSetInputV1Schema, DeploymentBindingsPreparedInputV1Schema, captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1, applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentGetInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { createDeploymentEnvironmentContentArtifactIdV1, createDeploymentLinkContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -91,8 +92,9 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             const artifacts = host.accountArtifacts ?? createCredentialedAccountArtifactStore(credentials);
             const input = DeploymentBindingsSetInputV1Schema.parse(request.input);
             const child = readHostAdmittedReviewedChildV1(request.context);
-            if (input.telemetryMachineId !== undefined && readHostAdmittedReviewedChildRoleV1(request.context,
-                DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, request.input) !== DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1)
+            const telemetryChild = readHostAdmittedReviewedChildRoleV1(request.context,
+                DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, request.input) === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1;
+            if ((input.telemetryMachineId !== undefined || 'telemetry' in input && input.telemetry !== undefined) && !telemetryChild)
                 return refuse('action_forbidden');
             if ('set' in input && input.set.some(binding => binding.source.kind === 'secret'
                 && binding.source.ref === 'person_selects')) return refuse('client_required');
@@ -128,12 +130,13 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             const current = readDeploymentEnvironmentArtifactV1(loaded.environment, currentArtifact);
             if (!current.ok) return refuseDeploymentArtifactRead(current);
             const candidate = 'set' in input ? { ok: true as const, content: { ...current.content,
+                ...(input.telemetry === undefined ? {} : { telemetry: input.telemetry }),
                 bindings: applyEnvironmentSecretBindingsPatchV1(current.content.bindings,
                     { set: input.set, remove: input.remove }, randomUUID) } }
                 : readDeploymentEnvironmentArtifactV1(input, candidateArtifact);
             if (!candidate.ok) return refuseDeploymentArtifactRead(candidate);
             if (request.environmentUpdate ? false : request.buildMachineId ? !isDeepStrictEqual(current.content.bindings, candidate.content.bindings)
-                : !isDeploymentEnvironmentBindingsOnlyUpdateV1(current.content, candidate.content)) return refuse('deployment_invalid');
+                : !isDeploymentEnvironmentBindingsOnlyUpdateV1(current.content, candidate.content, telemetryChild ? 'telemetry' : 'bindings')) return refuse('deployment_invalid');
             if ('providerVariables' in input && input.providerVariables) {
                 const keep = new Set(input.providerVariables.keepTheirs);
                 candidate.content.bindings = candidate.content.bindings.filter(binding => binding.purpose !== 'variable' || !keep.has(binding.name));
@@ -150,7 +153,8 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 await admission?.assertCurrent();
             };
             const complete = async (grants: readonly MachineSecretGrantV1[]): Promise<PreparedDeploymentBindingStorageV1> => {
-                if ('contentArtifactId' in input) return { ...input, referencedSavedSecretRevisions: selectedCaptures, grants };
+                const telemetryCapabilities = resolveDeploymentTelemetryCapabilitiesV1(candidate.content.telemetry);
+                if ('contentArtifactId' in input) return { ...input, telemetryCapabilities, referencedSavedSecretRevisions: selectedCaptures, grants };
                 // Authored changes join the same private candidate and sole server CAS
                 // after current resource/installation custody has settled.
                 await assertCurrent();
@@ -169,7 +173,7 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
                 await assertCurrent();
                 return { ...DeploymentBindingsPreparedInputV1Schema.parse({ serverId: input.serverId,
                     environmentId: input.environmentId, expectedRevision: input.expectedRevision,
-                    ...(input.telemetryMachineId === undefined ? {} : { telemetryMachineId: input.telemetryMachineId }),
+                    ...(input.telemetryMachineId === undefined ? {} : { telemetryMachineId: input.telemetryMachineId }), telemetryCapabilities,
                     contentArtifactId: created.artifactId, contentHeaderVersion: created.revision.headerVersion,
                     contentBodyVersion: created.revision.bodyVersion, referencedSavedSecretRevisions: selectedCaptures }), grants };
             };

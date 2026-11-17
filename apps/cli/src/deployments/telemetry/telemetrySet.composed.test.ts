@@ -185,6 +185,29 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
         expect(await set()).toMatchObject({ ok: true });
         expect(fixture.writes).toHaveLength(4);
         expect(writes).toHaveLength(6);
+        // P7 M1: capability selection is private Environment content and shares
+        // the existing bindings CAS; repeating it performs no extra write.
+        const capabilities = { metrics: true, appLlmCost: false, exceptions: true };
+        expect(await set({ capabilities })).toMatchObject({ ok: true });
+        expect(writes).toHaveLength(7);
+        expect(writes[6]).toHaveProperty('telemetryCapabilities', capabilities);
+        const selectedBody = decodePlainArtifactStoredContent(String(rows.get(String(writes[6]!.contentArtifactId))?.body));
+        if (!selectedBody || typeof selectedBody !== 'object' || !('body' in selectedBody)
+            || typeof selectedBody.body !== 'string') throw new Error('Missing selected Environment body');
+        expect(JSON.parse(selectedBody.body)).toMatchObject({ telemetry: capabilities });
+        expect(JSON.parse(selectedBody.body).bindings).toContainEqual(expect.objectContaining({ name: 'OTEL_METRICS_EXPORTER',
+            source: { kind: 'value', value: 'otlp' } }));
+        expect(await set({ capabilities })).toMatchObject({ ok: true });
+        expect(writes).toHaveLength(7);
+        expect(await set({ capabilities: { metrics: false } })).toMatchObject({ ok: true });
+        expect(writes).toHaveLength(8);
+        expect(writes[7]).toHaveProperty('telemetryCapabilities', { ...capabilities, metrics: false });
+        const disabledBody = decodePlainArtifactStoredContent(String(rows.get(String(writes[7]!.contentArtifactId))?.body));
+        if (!disabledBody || typeof disabledBody !== 'object' || !('body' in disabledBody)
+            || typeof disabledBody.body !== 'string') throw new Error('Missing updated Environment body');
+        expect(JSON.parse(disabledBody.body)).toMatchObject({ telemetry: { ...capabilities, metrics: false } });
+        expect(JSON.parse(disabledBody.body).bindings).toContainEqual(expect.objectContaining({ name: 'OTEL_METRICS_EXPORTER',
+            source: { kind: 'value', value: 'none' } }));
         expect(JSON.stringify(writes)).not.toContain('Bearer');
     } finally { await fixture.close(); }
 });
