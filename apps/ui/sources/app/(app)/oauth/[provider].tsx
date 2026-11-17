@@ -337,6 +337,7 @@ function OAuthProviderReturnBody() {
     const resolvedResultHandle = paramString(params, 'resultHandle');
     const resolvedRegistrationId = paramString(params, 'registrationId');
     const resolvedInstallationVerified = paramString(params, 'verified');
+    const resolvedInstallationId = paramString(params, 'installationId');
     const resolvedManifestCreated = paramString(params, 'created');
     const resolvedCredentialTarget = paramString(params, 'credentialTarget');
     const resolvedEndpointUrl =
@@ -809,7 +810,19 @@ function OAuthProviderReturnBody() {
                     ? consumePendingGitHubAppVerification(resolvedRegistrationId)
                     : null;
                 const fallback = pendingVerification?.returnTo ?? '/settings';
-                if (!pendingVerification || error || resolvedInstallationVerified !== '1') {
+                const verified = Boolean(resolvedRegistrationId)
+                    && Boolean(resolvedInstallationId)
+                    && resolvedInstallationVerified === '1'
+                    && !error;
+                if (verified && !pendingVerification) {
+                    // The Home verified and stored the installation; only this browser lacks the
+                    // record of which App page started it (another origin or browser), so it
+                    // cannot open the App itself.
+                    await Modal.alertAsync(
+                        t('identityAdministration.githubInstallationVerifiedTitle'),
+                        t('identityAdministration.githubInstallationVerifiedElsewhere'),
+                    );
+                } else if (!verified) {
                     await Modal.alertAsync(t('common.error'), t('identityAdministration.error'));
                 }
                 safeReplace(fallback);

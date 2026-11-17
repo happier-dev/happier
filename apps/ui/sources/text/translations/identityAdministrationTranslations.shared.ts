@@ -253,6 +253,8 @@ export function build(w: Words, github: typeof githubAccessWords[keyof typeof gi
             githubVerificationOpened: 'Continue on GitHub. You\u2019ll come back here once the installation is verified.',
             githubManifestCreatedTitle: 'GitHub App created',
             githubManifestCreatedElsewhere: 'Find it under GitHub Apps in the Home or Team settings where you started the setup.',
+            githubInstallationVerifiedTitle: 'Installation verified',
+            githubInstallationVerifiedElsewhere: 'GitHub confirmed the installation and the Home saved it. Find the App under GitHub Apps in the Home or Team settings where you started the verification.',
             githubEnterpriseOriginNotApproved: 'This GitHub Enterprise host is not approved by this Home. Your changes are kept here. Open Home Policies, approve the exact HTTPS origin, then return and try again.',
             githubManifestSetup: 'Set up with GitHub',
             githubManifestSetupSubtitle: 'Create and register the App in GitHub, then return here automatically.',
