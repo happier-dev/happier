@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'vitest';
 import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
+import { runAgentAskDeploymentRegression, runTeamDeploymentTemplateRegression } from '../../src/scenarios/deploymentRegressions.scenario';
 import { runFreshDeploymentSourceSmoke } from '../../src/scenarios/deployments.scenario';
 
 describe('deployment journeys through CLI Actions, PostgreSQL Home and native daemon', () => {
@@ -15,6 +16,14 @@ describe('deployment journeys through CLI Actions, PostgreSQL Home and native da
       dbProvider: 'postgres', serverEnv: { DATABASE_URL: postgres.homeDatabaseUrl } });
   });
   afterEach(async () => { try { await fixture?.stop(); } finally { await postgres?.stop(); fixture = undefined; postgres = undefined; } });
+  it('Agent Ask preserves the nested UI caller for shared secrets and Team actions', async () => {
+    if (!fixture) throw new Error('Deployment journey fixture did not start');
+    await runAgentAskDeploymentRegression(fixture);
+  });
+  it('Team template instantiate succeeds or returns its typed next Action', async () => {
+    if (!fixture) throw new Error('Deployment journey fixture did not start');
+    await runTeamDeploymentTemplateRegression(fixture);
+  });
   it('fresh Account creates and reads its first Source and enrolls a working daemon', async () => {
     if (!fixture) throw new Error('Deployment journey fixture did not start');
     await runFreshDeploymentSourceSmoke(fixture);
