@@ -1,6 +1,9 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PetChooseInputV1Schema, PetChooseResultV1Schema } from '../../pets/selection.js';
+import { PetImportInputV1Schema, PetImportResultV1Schema } from '../../pets/importActionV1.js';
+import { AccountPetDeleteRequestV1Schema, AccountPetDeleteResponseV1Schema } from '../../pets/accountLibrary.js';
+import { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1 } from '../actionIdsPetsV1.js';
 import { AccountHomeContinuationInputV1Schema, AccountHomeContinuationResultV1Schema } from '../accountHomeContinuationV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { CurrentUiContextSnapshotV1Schema } from '../../plugins/ui/currentUiContext.js';
@@ -46,6 +49,28 @@ function createUiContextActionSpecs() {
       },
     outputSchema: StrictJsonValueSchema,
     inputSchema: EmptyObjectSchema,
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: PET_IMPORT_ACTION_ID_V1, title: 'Add to my pets',
+    description: 'Import a pet package from a Machine or a Store registry into the Account pet library. Returns the Account pet identity for choosing a companion or Bot face.',
+    approval: { result: 'required' },
+    approvalPolicy: { uiConfirmation: 'direct', agentDefault: 'authority', requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] },
+    safety: 'safe', sideEffectClass: 'write', executionPlacement: 'client', requiredAuthority: 'account_automation',
+    placements: [], bindings: { mcpToolName: 'pet_import' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    cli: { acceptsServerId: true, commands: [] }, inputHints: { fields: [] },
+    inputSchema: PetImportInputV1Schema, outputSchema: PetImportResultV1Schema,
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: PET_DELETE_ACTION_ID_V1, title: 'Remove from my pets',
+    description: 'Remove one imported pet from the Account library. Its source package stays on the Machine or registry.',
+    approval: { result: 'required' },
+    approvalPolicy: { uiConfirmation: 'direct', agentDefault: 'authority', requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] },
+    safety: 'danger', sideEffectClass: 'write', executionPlacement: 'client', requiredAuthority: 'account_automation',
+    placements: [], bindings: { mcpToolName: 'pet_delete' },
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    cli: { acceptsServerId: true, commands: [] }, inputHints: { fields: [] },
+    inputSchema: AccountPetDeleteRequestV1Schema, outputSchema: AccountPetDeleteResponseV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
     id: 'ui.pet.choose', approval: { result: 'optional', flow: 'deferred' },

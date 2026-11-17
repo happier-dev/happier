@@ -125,6 +125,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
         ? localState.targetServerId
         : null;
     const draft: NewSessionDraft = {
+        ...(localState?.intro === undefined ? {} : { intro: localState.intro }),
         ...(typeof sessionName === 'string' ? { sessionName } : {}),
         ...(initialSessionFacts ? { initialSessionFacts } : {}),
         ...(typeof memoryEnabled === 'boolean' ? { memoryEnabled } : {}),
@@ -280,6 +281,8 @@ export function writeNewSessionAuthoringDraftToRepository(input: Readonly<{
     if (!live && getSessionDraftSnapshot(input.scope, { kind: 'newSession', draftId: input.draftId })) return;
     const draft = {
         ...input.draft,
+        // Screen autosave owns editable authoring fields, while the host's intro stays with its draft.
+        ...(input.draft.intro === undefined && live?.intro !== undefined ? { intro: live.intro } : {}),
         // Pending attachment custody belongs to Composer. Authoring snapshots
         // neither drop waiting requests nor resurrect requests already settled.
         composerAttachmentSeeds: live?.composerAttachmentSeeds,

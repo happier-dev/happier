@@ -5,6 +5,7 @@ import type { ReadOnlySkillProvenanceV1 } from './skillLibraryItemV1.js';
 import type { FeatureId } from '../../../features/catalog.js';
 import { resolveReachV1, type ReachContextV1, type ReachDecisionV1 } from '../../../reach/resolveReachV1.js';
 import type { ReachRulesV1 } from '../../../reach/reachRuleV1.js';
+import { HATCH_PET_SKILL_FILES_V1 } from './hatchPetSkillV1.js';
 import { DEPLOYMENT_VALIDATION_RULES_V1 } from '../../../deployments/deploymentValidationV1.js';
 const DEPLOY_GUIDE_V1 = `---
 name: deploy
@@ -247,6 +248,11 @@ export const FIRST_PARTY_SKILLS_V1: readonly FirstPartySkillV1[] = [{
   description: 'Create or edit user Workflows, run a one-off Workflow, configure triggers and placement, or diagnose and repair a failed Run in Happier',
   provenance: { kind: 'first_party' },
   files: [{ path: 'SKILL.md', contentKind: 'utf8', contentBase64: encodeBase64(new TextEncoder().encode(WORKFLOWS_GUIDE_V1), 'base64') }],
+}, {
+  skillId: 'happier:hatch-pet', name: 'hatch-pet',
+  description: 'Create, repair, validate and add an animated pet from a concept or reference image',
+  provenance: { kind: 'first_party' },
+  files: HATCH_PET_SKILL_FILES_V1,
 }];
 
 /** Existing seed rules remain valid; new built-ins use read-only reach defaults. */

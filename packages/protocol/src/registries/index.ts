@@ -20,3 +20,4 @@ export * from './registryBrowserExtensionV1.js';
 export { chromeWebStoreRegistryAdapterV1 } from './formats/chromeWebStore.js';
 
 export * from './registryThemeV1.js';
+export * from './registryPetV1.js';

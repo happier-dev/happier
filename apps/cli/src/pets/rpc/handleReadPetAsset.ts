@@ -29,10 +29,11 @@ export async function handleReadPetPreviewAsset(
 
   // Trust boundary: preview callers provide only an opaque daemon sourceKey.
   // Local paths are recovered from daemon-owned discovery cache/managed registry
-  // records, then readPetAsset revalidates the package and expected source key.
-  const cachedSource = deps.discoveryCache?.get(parsed.data.sourceKey)?.source ?? null;
+  // records, then readPetAsset revalidates the package.
+  const cachedPackage = deps.discoveryCache?.get(parsed.data.sourceKey);
+  const cachedSource = cachedPackage?.source ?? null;
   let source = cachedSource;
-  if (!source) {
+  if (!source && !cachedPackage) {
     const managedLocalSource = await resolveManagedLocalPetSourceBySourceKey({
       sourceKey: parsed.data.sourceKey,
       managedRoot: deps.managedRoot,
@@ -47,12 +48,13 @@ export async function handleReadPetPreviewAsset(
       };
     }
   }
-  if (!source) {
+  const assetSource = source ? { source } : cachedPackage ? { packagePath: cachedPackage.packagePath } : null;
+  if (!assetSource) {
     return { ok: false, errorCode: 'not_found', error: 'Pet package source was not found.' };
   }
 
   const result = await readPetAsset({
-    source,
+    ...assetSource,
     maxBytes: parsed.data.maxBytes,
   });
   if (!result.ok) return result;

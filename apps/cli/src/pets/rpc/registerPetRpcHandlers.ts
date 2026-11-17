@@ -31,6 +31,7 @@ export function registerPetRpcHandlers(params: Readonly<{
     ...(await companionGate()),
   }));
   params.rpcHandlerManager.registerHandler(PET_DAEMON_RPC_METHODS.VALIDATE_PACKAGE, async (raw) => handleValidatePetPackage(raw, {
+    discoveryCache,
     ...(await companionGate()),
   }));
   params.rpcHandlerManager.registerHandler(PET_DAEMON_RPC_METHODS.IMPORT_LOCAL_PACKAGE, async (raw) => handleImportLocalPetPackage(raw, {

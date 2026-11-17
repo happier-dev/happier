@@ -603,6 +603,25 @@ refuses an entry whose version has changed; it cannot silently substitute the
 latest version or promise that historical registry versions remain available.
 The live-schema fixtures record their upstream URL and capture date.
 
+## Pets in 0.3 development source
+
+The shared registry host supports `codex-pets.net` and `petdex.dev` through
+[`pet` adapters](../packages/protocol/src/registries/formats/pets.ts). Listings
+retain publisher credit, sheet metadata and source rights/report links. A selected
+`readRegistryPet` acquires the package manifest and sheet through the existing
+admitted HTTP plan. Public native reads need no Machine. These sources are
+ineligible for direct browser HTTP because their listing APIs do not establish
+the required CORS contract; web uses the existing Machine carrier or returns
+`needs_machine`. Browser Add without a Machine remains blocked pending the
+transport decision.
+
+Sheet bytes use base64 across the JSON carrier and become bytes at the host API.
+Account library provenance retains only `{kind: 'registry', sourceId, itemId}`;
+the registry item id may differ from the package manifest id. Upstream sprite
+version labels remain informational: the Account import validator derives the
+atlas version from decoded sheet dimensions. Pet adapters do not define an
+update lifecycle.
+
 ## Actions and lifecycle
 
 `registries.*` and `skills.*` use the canonical Action executor, spec-owned

@@ -3,6 +3,9 @@ import { PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
 import type { DaemonPetValidatePackageResponseV1, PetPackageValidationIssueV1, PetPackageValidationResultV1 } from '@happier-dev/protocol';
 
 import { validatePetPackage } from '../validation/validatePetPackage';
+import { createPetSourceKey } from '../discovery/createPetSourceKey';
+import type { PetPackageDiscoveryCache } from '../discovery/petPackageDiscoveryCache';
+import { resolvePetPackagePath } from '../discovery/petPackageDiscoveryCache';
 import type { PetRpcRateLimiter } from './petRpcRateLimiter';
 
 function clampValidationByteLimit(value: number | undefined, max: number): number {
@@ -33,6 +36,7 @@ export async function handleValidatePetPackage(
   deps: Readonly<{
     companionFeatureEnabled?: boolean;
     rateLimiter?: PetRpcRateLimiter;
+    discoveryCache?: PetPackageDiscoveryCache;
   }> = {},
 ): Promise<DaemonPetValidatePackageResponseV1> {
   if (deps.companionFeatureEnabled === false) {
@@ -47,11 +51,29 @@ export async function handleValidatePetPackage(
     return { ok: false, errorCode: 'invalid_request', error: 'invalid_request' };
   }
 
+  const packagePath = resolvePetPackagePath({ ...parsed.data, discoveryCache: deps.discoveryCache });
+  if (!packagePath) return { ok: false, errorCode: 'invalid_request', error: 'Pet package source was not found.' };
   const validation = await validatePetPackage({
-    packagePath: parsed.data.packagePath,
+    packagePath,
     maxManifestBytes: clampValidationByteLimit(parsed.data.maxManifestBytes, PET_PACKAGE_LIMITS_V1.maxManifestBytes),
     maxSpritesheetBytes: clampValidationByteLimit(parsed.data.maxSpritesheetBytes, PET_PACKAGE_LIMITS_V1.maxCanonicalSpritesheetBytes),
     strict: parsed.data.strict,
   });
+  if (validation.ok && deps.discoveryCache) {
+    const sourceKey = createPetSourceKey(['validatedPackage', packagePath, validation.digest]);
+    deps.discoveryCache.remember([{
+      sourceKey,
+      petId: validation.manifest.id,
+      displayName: validation.manifest.displayName,
+      packageFormat: validation.packageFormat,
+      manifest: validation.manifest,
+      mediaType: validation.mediaType,
+      digest: validation.digest,
+      sizeBytes: validation.sizeBytes,
+      packagePath,
+      spritesheetPath: validation.spritesheetPath,
+    }]);
+    return { ok: true, validation: sanitizeValidationResult(validation), previewHandle: { kind: 'daemonSourceKey', sourceKey } };
+  }
   return { ok: true, validation: sanitizeValidationResult(validation) };
 }

@@ -1,5 +1,6 @@
 import type { ComposerAttachmentAuthorValueV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
+import type { HappierSceneId } from '@happier-dev/plugin-ui/presentation';
 import type {
     PluginUiNewSessionPlacementV1,
     PluginUiSessionCheckoutIntentV1,
@@ -68,7 +69,16 @@ export type NewSessionDraftAttachmentSeedV1 = Readonly<{
     value: ComposerAttachmentAuthorValueV1;
 }>;
 
+/** Host-authored first-screen copy; the draft's existing local supplement owns it. */
+export type NewSessionDraftIntroV1 = Readonly<{
+    title: string;
+    body: string;
+    scene: HappierSceneId;
+    suggestions: readonly string[];
+}>;
+
 export type NewSessionDraftSeedV1 = Readonly<{
+    intro?: NewSessionDraftIntroV1;
     actionDefault?: NewSessionDraft['actionDefault'];
     sessionName?: NewSessionDraft['sessionName'];
     initialSessionFacts?: NewSessionDraft['initialSessionFacts'];
@@ -109,7 +119,8 @@ function joinDraftInput(existingInput: string, promptText: string): string {
  * `updatedAt` and force `entryIntent` on a draft the reader is still editing.
  */
 export function newSessionDraftSeedDeclaresChangeV1(seed: NewSessionDraftSeedV1): boolean {
-    return seed.actionDefault !== undefined
+    return seed.intro !== undefined
+        || seed.actionDefault !== undefined
         || seed.sessionName !== undefined
         || seed.spaceMembership !== undefined
         || seed.initialSessionFacts !== undefined
@@ -173,6 +184,7 @@ export function applyNewSessionDraftSeedV1(input: Readonly<{
 
     return {
         ...base,
+        ...(input.seed.intro === undefined ? {} : { intro: input.seed.intro }),
         ...(input.seed.actionDefault === undefined ? {} : { actionDefault: input.seed.actionDefault }),
         ...(input.seed.sessionName === undefined ? {} : { sessionName: input.seed.sessionName }),
         ...(input.seed.spaceMembership === undefined ? {} : { spaceMembership: input.seed.spaceMembership }),

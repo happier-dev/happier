@@ -1,3 +1,5 @@
+import { PET_IMPORT_ACTION_ID_V1 } from '../actionIdsPetsV1.js';
+import { PetImportInputV1Schema } from '../../pets/importActionV1.js';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionPreparedOperation, HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from './types.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { SessionStatusResultSchema } from '../../sessions/control/contract.js';
@@ -251,6 +253,14 @@ export async function prepareApprovalRequest(params: Readonly<{
   executeCanonicalAction?: Parameters<NonNullable<ActionExecutorDeps['prepareDeploymentTemplateInstantiation']>>[0]['executeCanonicalAction'];
 }>): Promise<Readonly<{ actionArgs: unknown; preview: unknown }> | ActionExecuteFailure | null> {
   const spec = getActionSpec(params.actionId);
+  if (params.actionId === PET_IMPORT_ACTION_ID_V1) {
+    const input = PetImportInputV1Schema.parse(params.input);
+    if (input.source.kind === 'machine' && params.deps.preparePetImport) {
+      const prepared = await params.deps.preparePetImport({ input, context: params.context });
+      if ('ok' in prepared) return prepared;
+      return { actionArgs: prepared.input, preview: prepared.preview };
+    }
+  }
   if (params.actionId === SAVED_HEALTH_ALERT_TEST_ACTION_ID) {
     const unavailable = { ok: false as const, errorCode: 'notification_test_preparation_unavailable',
       error: 'notification_test_preparation_unavailable' };

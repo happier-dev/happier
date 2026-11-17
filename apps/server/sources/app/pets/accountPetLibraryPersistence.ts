@@ -78,6 +78,7 @@ type AccountPetPackageRow = Readonly<{
 // imported package manifest or requiring a second pixel scan on library reads.
 const StoredAccountPetManifestV1Schema = z.extend(PetPackageManifestV1Schema, {
     opaqueBounds: z.optional(PetCellBoundsV1Schema),
+    hasNeutralLookCell: z.optional(z.boolean()),
 });
 
 function toPrismaJson(value: unknown): Prisma.InputJsonValue {
@@ -115,7 +116,7 @@ function mapAccountPetRow(row: AccountPetPackageRow): PersistedAccountPet {
         };
     }
 
-    const { opaqueBounds, ...packageManifest } = manifest.data;
+    const { opaqueBounds, hasNeutralLookCell, ...packageManifest } = manifest.data;
     return {
         accountId: row.accountId,
         accountPetId: row.id,
@@ -125,6 +126,7 @@ function mapAccountPetRow(row: AccountPetPackageRow): PersistedAccountPet {
             packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
             manifest: packageManifest,
             ...(opaqueBounds ? { opaqueBounds } : {}),
+            ...(hasNeutralLookCell !== undefined ? { hasNeutralLookCell } : {}),
             spritesheetAssetRef: {
                 assetId: asset.id,
                 mediaType: mediaType.data,
@@ -212,6 +214,7 @@ export function createPrismaAccountPetLibraryPersistence(
                             manifest: toPrismaJson({
                                 ...params.entry.manifest,
                                 ...(params.entry.opaqueBounds ? { opaqueBounds: params.entry.opaqueBounds } : {}),
+                                ...(params.entry.hasNeutralLookCell !== undefined ? { hasNeutralLookCell: params.entry.hasNeutralLookCell } : {}),
                             }),
                             digest: params.entry.digest,
                             sizeBytes: params.entry.sizeBytes,

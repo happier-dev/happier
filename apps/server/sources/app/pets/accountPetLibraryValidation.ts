@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
-import { AccountPetCreateRequestV1Schema, type AccountPetCreateRequestV1, type PetAssetMediaTypeV1 } from '@happier-dev/protocol/pets/accountLibrary';
+import { AccountPetCreateRequestV1Schema, AccountPetOriginV1Schema, type AccountPetCreateRequestV1, type PetAssetMediaTypeV1 } from '@happier-dev/protocol/pets/accountLibrary';
+import { PetPackageManifestV1Schema } from '@happier-dev/protocol/pets/manifest';
 import { inspectPetAtlasRgbaPixelsV1, type PetCellBoundsV1 } from '@happier-dev/protocol/pets/atlasPixelInspection';
-import { PET_ATLAS_V1, PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
+import { PET_ATLAS_V2, getPetAtlasForDimensionsV1, PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
 import { loadSharp } from "@/storage/blob/sharpRuntime";
 
 export type PetAtlasInspection = Readonly<{
@@ -15,6 +16,7 @@ export type PetAtlasInspection = Readonly<{
     hasVisibleUsedCells?: boolean;
     hasTransparentUnusedCells?: boolean;
     opaqueBounds?: PetCellBoundsV1 | null;
+    hasNeutralLookCell?: boolean;
 }>;
 
 export type AccountPetCreateValidationOptions = Readonly<{
@@ -30,6 +32,7 @@ export type AccountPetCreateValidationResult =
         request: AccountPetCreateRequestV1;
         spritesheetBytes: Uint8Array;
         opaqueBounds?: PetCellBoundsV1;
+        hasNeutralLookCell?: boolean;
     }>
     | Readonly<{
         ok: false;
@@ -43,14 +46,12 @@ const INVALID_RESULT: AccountPetCreateValidationResult = {
     error: "invalid_request",
 };
 
-const TOP_LEVEL_KEYS = new Set(["manifest", "spritesheet", "origin"]);
-const MANIFEST_KEYS = new Set(["id", "displayName", "description", "spritesheetPath"]);
-const SPRITESHEET_KEYS = new Set(["mediaType", "encoding", "data", "sizeBytes", "digest"]);
-const ORIGIN_KEYS_BY_KIND: Readonly<Record<string, ReadonlySet<string>>> = {
-    builtInImport: new Set(["kind", "petId"]),
-    detectedCodexHome: new Set(["kind", "homeKind"]),
-    manualImport: new Set(["kind"]),
-};
+const TOP_LEVEL_KEYS = new Set(Object.keys(AccountPetCreateRequestV1Schema.def.shape));
+const MANIFEST_KEYS = new Set(Object.keys(PetPackageManifestV1Schema.def.shape));
+const SPRITESHEET_KEYS = new Set(Object.keys(AccountPetCreateRequestV1Schema.def.shape.spritesheet.def.shape));
+const ORIGIN_KEYS_BY_KIND: ReadonlyMap<string, ReadonlySet<string>> = new Map(AccountPetOriginV1Schema.def.options.map(schema => [
+    schema.def.shape.kind.def.values[0], new Set(Object.keys(schema.def.shape)),
+]));
 const BLOCKED_CLIENT_STORAGE_KEYS = new Set(["objectKey", "storageKey", "path", "packagePath", "filename"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -69,7 +70,7 @@ function hasBlockedClientStorageKeys(value: unknown): boolean {
 
 function hasUnexpectedOriginKeys(value: unknown): boolean {
     if (!isRecord(value) || typeof value.kind !== "string") return true;
-    const allowedKeys = ORIGIN_KEYS_BY_KIND[value.kind];
+    const allowedKeys = ORIGIN_KEYS_BY_KIND.get(value.kind);
     if (!allowedKeys) return true;
     return hasUnexpectedKeys(value, allowedKeys);
 }
@@ -153,8 +154,7 @@ export async function inspectPetAtlasWithSharp(bytes: Uint8Array): Promise<PetAt
 }
 
 function hasExpectedAtlasContract(inspection: PetAtlasInspection): boolean {
-    return inspection.width === PET_ATLAS_V1.width
-        && inspection.height === PET_ATLAS_V1.height
+    return getPetAtlasForDimensionsV1(inspection.width, inspection.height) !== null
         && inspection.hasAlpha === true
         && inspection.hasOpaqueBackground !== true
         && inspection.hasTransparentBackground !== false
@@ -214,12 +214,20 @@ export async function validateAccountPetCreateRequest(
 
     const inspectAtlas = options.inspectAtlas ?? inspectPetAtlasWithSharp;
     let opaqueBounds: PetCellBoundsV1 | undefined;
+    let hasNeutralLookCell: boolean | undefined;
     try {
         const inspection = await inspectAtlas(bytes, spritesheet.mediaType);
         if (!hasExpectedAtlasContract(inspection)) {
             return INVALID_RESULT;
         }
         opaqueBounds = inspection.opaqueBounds ?? undefined;
+        const atlas = getPetAtlasForDimensionsV1(inspection.width, inspection.height);
+        if (atlas === PET_ATLAS_V2) {
+            parsed.data.manifest.spriteVersionNumber = 2;
+            hasNeutralLookCell = inspection.hasNeutralLookCell === true;
+        } else if (parsed.data.manifest.spriteVersionNumber !== undefined) {
+            parsed.data.manifest.spriteVersionNumber = 1;
+        }
     } catch {
         return INVALID_RESULT;
     }
@@ -229,5 +237,6 @@ export async function validateAccountPetCreateRequest(
         request: parsed.data,
         spritesheetBytes: bytes,
         ...(opaqueBounds ? { opaqueBounds } : {}),
+        ...(hasNeutralLookCell !== undefined ? { hasNeutralLookCell } : {}),
     };
 }

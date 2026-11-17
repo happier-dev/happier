@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { DaemonPetDiscoverResponseV1Schema, DaemonPetForgetLocalPackageResponseV1Schema, DaemonPetImportLocalPackageResponseV1Schema, DaemonPetImportResponseV1Schema, PET_DAEMON_RPC_METHODS, type DaemonPetDiscoverRequestV1, type DaemonPetForgetLocalPackageRequestV1, type DaemonPetImportAccountPackageRequestV1, type DaemonPetImportLocalPackageRequestV1, type DiscoveredPetPackageV1, type ImportedLocalPetPackageV1 } from '@happier-dev/protocol/pets/daemonRpc';
+import { PET_IMPORT_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsPetsV1';
+import { PetImportResultV1Schema } from '@happier-dev/protocol/pets/importActionV1';
+import { DaemonPetDiscoverResponseV1Schema, DaemonPetForgetLocalPackageResponseV1Schema, DaemonPetImportLocalPackageResponseV1Schema, PET_DAEMON_RPC_METHODS, type DaemonPetDiscoverRequestV1, type DaemonPetForgetLocalPackageRequestV1, type DaemonPetImportLocalPackageRequestV1, type DiscoveredPetPackageV1, type ImportedLocalPetPackageV1 } from '@happier-dev/protocol/pets/daemonRpc';
 import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
 
 import type { SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -100,6 +102,7 @@ export function PetsSettingsScreen() {
     const applyLocalSettings = useApplyLocalSettings();
     const settingsScope = storage((state) => state.settingsScope);
     const resetPositionAction = useMountedActionExecution(settingsScope);
+    const importAccountAction = useMountedActionExecution(targetServerId);
     const selectPet = usePetSelectionAction();
     const companionEnabled = useFeatureEnabled('pets.companion');
     const syncEnabled = useFeatureEnabled('pets.sync');
@@ -318,21 +321,11 @@ export function PetsSettingsScreen() {
         if (!importPayload) return;
         const request = beginRequest('accountImport');
         try {
-            const payload: DaemonPetImportAccountPackageRequestV1 = {
-                ...importPayload,
-                petsSyncEnabled: true,
-            };
-            const raw = await machineRpcWithServerScope<unknown, DaemonPetImportAccountPackageRequestV1>({
-                machineId: target.machine.id,
-                serverId: target.serverId,
-                method: PET_DAEMON_RPC_METHODS.IMPORT_ACCOUNT_PACKAGE,
-                payload,
-                signal: request.signal,
-            });
+            const result = await importAccountAction.execute(PET_IMPORT_ACTION_ID_V1,
+                { source: { kind: 'machine', machineId: target.machine.id, ...importPayload } }, { signal: request.signal });
             if (request.signal.aborted || !isExecutionTargetCurrent(target)) return;
-            const parsed = DaemonPetImportResponseV1Schema.parse(raw);
-            if (!parsed.ok || parsed.target !== 'account' || !parsed.account.ok) return;
-            const pet = parsed.account.pet;
+            if (!result.ok) return;
+            const pet = PetImportResultV1Schema.parse(result.result).pet;
             storage.getState().upsertAccountPet(pet);
             setImportedAccountPets((pets) => upsertByKey(pets, pet, (entry) => entry.accountPetId));
             await selectPet({ petRef: { kind: 'accountPet', accountPetId: pet.accountPetId } }, { signal: request.signal });
@@ -341,7 +334,7 @@ export function PetsSettingsScreen() {
         } finally {
             finishRequest('accountImport', request);
         }
-    }, [administrationTargetSelection.resolveExecutionTarget, selectPet, beginRequest, finishRequest, isExecutionTargetCurrent, syncEnabled]);
+    }, [administrationTargetSelection.resolveExecutionTarget, importAccountAction.execute, selectPet, beginRequest, finishRequest, isExecutionTargetCurrent, syncEnabled]);
 
     const removeLocalPet = React.useCallback(async (pet: LocalDevicePetRow) => {
         const requestKey = `remove:${pet.sourceKey}`;

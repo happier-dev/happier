@@ -29,19 +29,29 @@ type PetAssetReadResult = {
   error: string;
 };
 
-export async function readPetAsset(input: Readonly<{
+export async function readPetAsset(input: Readonly<({
   source: PetPackageSourceV1;
+} | {
+  /** A path recovered from the daemon-owned discovery cache, never an RPC input. */
+  packagePath: string;
+}) & {
   maxBytes?: number;
 }>): Promise<PetAssetReadResult> {
-  if (input.source.kind !== 'detectedCodexHome' && input.source.kind !== 'happierManagedLocal') {
-    return { ok: false, errorCode: 'unsupported_source', error: 'Pet source does not refer to a local package.' };
+  const source = 'source' in input ? input.source : undefined;
+  let packagePath: string;
+  if ('source' in input) {
+    if (input.source.kind !== 'detectedCodexHome' && input.source.kind !== 'happierManagedLocal') {
+      return { ok: false, errorCode: 'unsupported_source', error: 'Pet source does not refer to a local package.' };
+    }
+    packagePath = input.source.packagePath;
+  } else {
+    packagePath = input.packagePath;
   }
-
-  const validation = await validatePetPackage({ packagePath: input.source.packagePath });
+  const validation = await validatePetPackage({ packagePath });
   if (!validation.ok) {
     return { ok: false, errorCode: 'validation_failed', error: 'Pet package validation failed.' };
   }
-  if (!isExpectedSourceKey(input.source, validation.digest)) {
+  if (source && !isExpectedSourceKey(source, validation.digest)) {
     return { ok: false, errorCode: 'unsupported_source', error: 'Pet source key is not recognized for this package.' };
   }
 

@@ -19,8 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
-import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type { LocalPetSourceMetadata } from '@/sync/domains/pets/localPetSourceTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -367,11 +366,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
     machineRpcWithServerScope: machineRpcWithServerScopeMock,
 }));
 
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const { createTokenStorageModuleMock } = await import('@/dev/testkit/mocks/tokenStorage');
-    return createTokenStorageModuleMock({ importOriginal, tokenStorage: {
-        getCredentialsForServerUrl: async () => ({ token: petPreviewCredentials.token }),
-    } });
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
+    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+    const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+    return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
 });
 
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => createPassThroughModule(['DropdownMenu']));
@@ -448,12 +446,17 @@ async function pressRowAction(screen: RenderScreenResult, rowTestID: string, act
     });
 }
 
+const importHomes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(importHomes);
+
 describe('PetsSettingsScreen', () => {
     beforeEach(async ({ task }) => {
         // Each test owns a separate credential scope, including completed preview assets.
         petPreviewCredentials.accountId = `pet-settings-${task.id}`;
         petPreviewCredentials.token = createAccountTokenForTests(petPreviewCredentials.accountId);
-        await upsertServerProfile({ serverUrl: 'https://server-pets' });
+        await importHomes.reset();
+        await importHomes.addHome({ name: 'Pets', serverUrl: 'https://server-pets',
+            accountId: petPreviewCredentials.accountId, active: false });
     });
 
     afterEach(async () => {
@@ -1255,6 +1258,7 @@ describe('PetsSettingsScreen', () => {
         const { PetsSettingsScreen } = await import('./PetsSettingsScreen');
         const screen = await renderScreen(<PetsSettingsScreen />);
         await screen.pressByTestIdAsync('settings-pets-detect-codex-pets');
+        await flushHookEffects();
         await act(async () => {
             void screen.findByTestId('settings-pets-use-on-this-device-blink-e2e-fixture')?.props.onPress?.();
             void screen.findByTestId('settings-pets-use-on-this-device-blink-e2e-fixture')?.props.onPress?.();
@@ -1580,19 +1584,18 @@ describe('PetsSettingsScreen', () => {
 
     it('uses only the scoped account import action test id for one detected pet', async () => {
         featureState.syncEnabled = true;
-        machineRpcWithServerScopeMock
-            .mockResolvedValueOnce({
-                ok: true,
-                pets: [detectedPet],
-            })
-            .mockResolvedValueOnce({
+        machineRpcWithServerScopeMock.mockImplementation(async ({ method }: { method: string }) => {
+            if (method === PET_DAEMON_RPC_METHODS.DISCOVER_PACKAGES) return { ok: true, pets: [detectedPet] };
+            if (method === PET_DAEMON_RPC_METHODS.IMPORT_ACCOUNT_PACKAGE) return {
                 ok: true,
                 target: 'account',
                 account: {
                     ok: true,
                     pet: accountPet,
                 },
-            });
+            };
+            return null;
+        });
 
         const { PetsSettingsScreen } = await import('./PetsSettingsScreen');
         const screen = await renderScreen(<PetsSettingsScreen />);
@@ -1601,15 +1604,17 @@ describe('PetsSettingsScreen', () => {
         expect(screen.findByTestId('settings-pets-import-to-account')).toBeNull();
         expect(screen.findByTestId('settings-pets-import-to-account-blink-e2e-fixture')).not.toBeNull();
         expect(findSettingsItemByTestId(screen, 'settings-pets-import-to-account-blink-e2e-fixture')).toBeNull();
+        await flushHookEffects();
         await screen.pressByTestIdAsync('settings-pets-import-to-account-blink-e2e-fixture');
 
-        expect(machineRpcWithServerScopeMock).toHaveBeenLastCalledWith({
+        expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
             machineId: 'machine-pets',
             serverId: 'server-pets',
             method: PET_DAEMON_RPC_METHODS.IMPORT_ACCOUNT_PACKAGE,
             signal: expect.any(AbortSignal),
-            payload: { sourceKey: detectedPet.sourceKey, petsSyncEnabled: true },
+            payload: { sourceKey: detectedPet.sourceKey },
         });
+        expect(upsertAccountPetSpy).toHaveBeenCalledWith(accountPet);
     });
 
     it('persists explicit account enablement and local device override actions', async () => {

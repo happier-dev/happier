@@ -19,7 +19,7 @@ import {
   retirePresentationNotice,
 } from '@/components/sessions/presentation/presentationNotices';
 import { openSessionAuthoringAction } from './sessionAuthoringActions';
-import { useCreatePetSession } from '@/components/pets/useCreatePetSession';
+import { CREATE_PET_SESSION_INTRO_V1, useCreatePetSession } from '@/components/pets/useCreatePetSession';
 import { renderHook } from '@/dev/testkit';
 import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
@@ -88,6 +88,7 @@ describe('session.authoring.open: one owner reads and presents the result', () =
       expect(draft).toMatchObject({ selectedMachineId: machine.id, selectedPath: 'C:\\Users\\pet-maker',
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
         capabilitySelection: { skills: { forceIncludeSkillIds: ['happier:hatch-pet'] } } });
+      expect(draft?.intro).toEqual(CREATE_PET_SESSION_INTRO_V1);
       const document = createNewSessionComposerDocumentOwner({ scope,
         ref: { kind: 'newSession', instanceId: outcome.draftId } }).read().document;
       expect(document.text).toBe('');

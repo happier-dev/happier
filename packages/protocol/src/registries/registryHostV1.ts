@@ -25,6 +25,8 @@ import type { RegistryUpdateCheckResultV1 } from './registryUpdatesV1.js';
 import { selectRegistryBotTemplateUpdatePointerV1 } from './registryBotTemplateUpdatePointerV1.js';
 import type { ResolvedBotTemplateReleaseV1 } from '../bots/templates/botTemplateV1.js';
 import type { PluginBotTemplateContributionV1 } from '../plugins/contributions/botTemplates.js';
+import type { RegistryPetAcquisitionV1 } from './registryPetV1.js';
+import { getCanonicalPetSpritesheetMediaTypeV1 } from '../pets/assetFormats.js';
 export type RegistryBotTemplateReaderV1 = (input: Readonly<{
   item: RegistryItemV1; source: RegistrySourceDescriptorV1; context: RegistryFetchContextV1;
   contributionId: string;
@@ -200,7 +202,18 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       throw new RegistryFetchErrorV1({ state: 'unreachable' });
     } };
     const item=parseRegistryItemV1(await adapter.read(formatCtx,{...request,source}));
-    if(request.op==='read') return {op:'read',item};
+    if(request.op==='read') {
+      if (request.petContent && item.payload.kind === 'pet') {
+        const response = await operationCtx.http.getBytes(item.payload.pet.spritesheetUrl, { source });
+        if (!response.ok) throw new RegistryFetchErrorV1(response.status);
+        const mediaType = getCanonicalPetSpritesheetMediaTypeV1(item.payload.pet.manifest.spritesheetPath);
+        if (!mediaType) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
+        return { op: 'read', item: { ...item, payload: { ...item.payload, spritesheet: {
+          mediaType, contentBase64: encodeBase64(response.value),
+        } } } };
+      }
+      return {op:'read',item};
+    }
     if(item.payload.kind!=='skill') throw new RegistryFetchErrorV1({state:'invalid_source'});
     if(item.summary.problem) throw new RegistryFetchErrorV1({state:'invalid_source'});
     if (item.payload.skill.ref.kind !== 'gitTree') throw new RegistryFetchErrorV1({ state: 'invalid_source' });
@@ -626,6 +639,15 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
   const host = {
     // The public fetch boundary always resolves Account authority; callers cannot supply a descriptor.
     execute, fetchRequest: (request: RegistryFetchRequestV1) => fetchRequest(request), readRegistryItem, readRegistryTheme, readRegistrySource: sourceById,
+    /** Selected registry assets use the same admitted HTTP owner and transport placement. */
+    readRegistryPet: async (pointer: Readonly<{ sourceId: string; itemId: string }>): Promise<RegistryPetAcquisitionV1> => {
+      const response = await fetchRequest({ op: 'read', ...pointer, kind: 'pet', petContent: true });
+      if (response.op !== 'read' || response.item.payload.kind !== 'pet' || !response.item.payload.spritesheet)
+        throw new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok' ? response.status : { state: 'invalid_source' });
+      return { manifest: response.item.payload.pet.manifest,
+        spritesheetBytes: decodeBase64(response.item.payload.spritesheet.contentBase64), mediaType: response.item.payload.spritesheet.mediaType,
+        origin: { kind: 'registry', sourceId: pointer.sourceId, itemId: pointer.itemId } };
+    },
     /** Discovery is metadata-only; template bodies are acquired only after a contribution is selected. */
     readBotTemplateContributions: async (pointer: RegistryItemPointerV1): Promise<readonly PluginBotTemplateContributionV1[]> => {
       const response = await fetchRequest({ op: 'read', kind: 'plugin', ...pointer });

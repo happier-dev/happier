@@ -19,6 +19,9 @@ import type { DaemonLspApplyRequest, DaemonLspApplyResponse, DaemonLspQueryReque
 import type { WorkspaceFilesReplacePreviewActionInput, WorkspaceFilesReplaceActionInput, WorkspaceFilesReplaceActionOutput } from '../actionSpecs.js';
 import type { DaemonWorkspaceFileReplacePreviewResponse } from '../../machines/workspaceFiles.js';
 import type { PetChooseInputV1 } from '../../pets/selection.js';
+import type { PetImportInputV1, PetImportPreviewV1 } from '../../pets/importActionV1.js';
+import type { AccountPetDeleteRequestV1 } from '../../pets/accountLibrary.js';
+import type { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1 } from '../actionIdsPetsV1.js';
 import type { UiPromptPickerOpenInputSchema, UiPromptPickerSelectInputSchema, UiPromptPickerApplyInputSchema, UiPromptHistoryInputSchema } from '../promptPickerActionSpecs.js';
 import type { SessionMessagePinsInputSchema } from '../sessionMessagePinActionSpecs.js';
 import type { QualifiedConnectedAccountPurposeV1 } from '../../connect/connectedAccountPurposeIdentity.js';
@@ -1795,6 +1798,13 @@ export type ActionExecutorDeps = Readonly<{
     input: PetChooseInputV1;
     context: ActionExecutorContext;
   }>) => Promise<ActionExecuteResult>;
+  petAction?: (args: Readonly<{
+    actionId: typeof PET_IMPORT_ACTION_ID_V1; input: PetImportInputV1; context: ActionExecutorContext;
+  }> | Readonly<{
+    actionId: typeof PET_DELETE_ACTION_ID_V1; input: AccountPetDeleteRequestV1; context: ActionExecutorContext;
+  }>) => Promise<ActionExecuteResult>;
+  preparePetImport?: (args: Readonly<{ input: PetImportInputV1; context: ActionExecutorContext }>) => Promise<
+    Readonly<{ input: PetImportInputV1; preview: PetImportPreviewV1 }> | ActionExecuteFailure>;
   /** Answering client's ordinary draft owner; never starts or sends a Session. */
   sessionSpaceMembershipSet?: (args: Readonly<{ input: SessionSpaceMembershipSetInputV1; context: ActionExecutorContext }>) => Promise<ActionExecuteResult>;
   sessionAuthoringOpen?: (args: Readonly<{

@@ -1,4 +1,5 @@
 import { openVsxThemesRegistryAdapterV1 } from './openVsxThemes.js';
+import { codexPetsRegistryAdapterV1, petdexRegistryAdapterV1 } from './pets.js';
 import { githubRegistryAdapterV1 } from './github.js';
 import { skillsShRegistryAdapterV1 } from './skillsSh.js';
 import { claudeMarketplaceRegistryAdapterV1 } from './claudeMarketplace.js';
@@ -11,6 +12,7 @@ import { composeTomlCatalogRegistryAdapterV1 } from './composeTomlCatalog.js';
 import { chromeWebStoreRegistryAdapterV1 } from './chromeWebStore.js';
 import type { RegistryFormatAdapterV1 } from './registryFormatAdapterV1.js';
 export const REGISTRY_FORMAT_ADAPTERS_V1 = {
+  'codex-pets': codexPetsRegistryAdapterV1, petdex: petdexRegistryAdapterV1,
   git:githubRegistryAdapterV1, 'skills-sh':skillsShRegistryAdapterV1, 'claude-marketplace':claudeMarketplaceRegistryAdapterV1,
   'happier-npm':happierNpmRegistryAdapterV1,
   // Catalog picks delegate through this table after module initialization.

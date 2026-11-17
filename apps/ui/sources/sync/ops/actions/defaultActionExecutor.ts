@@ -55,6 +55,7 @@ import { createUiProjectContextAction } from './projectContextAction';
 import { createUiSessionStatusGet } from './sessionStatusAction';
 import { createUiSessionHandoffRecoveryActionDeps } from './sessionHandoffRecoveryActionDeps';
 import { createUiPetChooseAction } from './petChooseAction';
+import { createUiPetActionExecute, createUiPetImportPrepare } from './petActionDeps';
 import { setClientEncryptionRequirement } from '@/sync/ops/settings/setClientEncryptionRequirement';
 import { readSessionTranscriptForAction } from '@/sync/api/session/sessionTranscriptActions';
 import { readUiMemoryInheritedContext, readUiMemoryScopeContext } from './readUiMemoryInheritedContext';
@@ -2398,6 +2399,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     },
     uiCommandPaletteAction: executeCommandPaletteAction,
     uiPetChooseAction: createUiPetChooseAction(accountContext ?? null, opts?.openRoute),
+    preparePetImport: createUiPetImportPrepare(accountContext ?? null),
+    petAction: createUiPetActionExecute(accountContext ?? null, async context => {
+      if (!accountContext || !promptLibraryStore?.organization) throw new Error('registry_catalog_unavailable');
+      return createUiRegistryHostV1(accountContext, promptLibraryStore.organization, context);
+    }),
     voiceConversationAction: async ({ actionId, input, context }) => {
       throwIfAborted(context.signal);
       if (!accountContext?.readLiveSettings()) return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };

@@ -138,26 +138,32 @@ export const PetPackageValidationResultV1Schema = lazyZodSchema(() => z.union([
 export type PetPackageValidationResultV1 = z.infer<typeof PetPackageValidationResultV1Schema>;
 
 export const DaemonPetValidatePackageRequestV1Schema = lazyZodSchema(() => z.looseObject({
-    packagePath: z.string().check(z.minLength(1), z.maxLength(10_000)),
+    packagePath: DaemonPetImportAccountPackageRequestV1Schema.def.shape.packagePath,
+    sourceKey: DaemonPetImportAccountPackageRequestV1Schema.def.shape.sourceKey,
     strict: z._default(z.optional(z.boolean()), false),
     maxManifestBytes: z.optional(z.number().check(z.int(), z.minimum(1))),
     maxSpritesheetBytes: z.optional(z.number().check(z.int(), z.minimum(1))),
-  }));
+  }).check(z.refine(hasPetPackageLocatorV1, { message: 'sourceKey or packagePath is required' })));
 
 export type DaemonPetValidatePackageRequestV1 = z.infer<typeof DaemonPetValidatePackageRequestV1Schema>;
 
 export const DaemonPetValidatePackageResponseV1Schema = lazyZodSchema(() => z.union([
-  z.looseObject({ ok: z.literal(true), validation: PetPackageValidationResultV1Schema }),
+  z.looseObject({ ok: z.literal(true), validation: PetPackageValidationResultV1Schema, previewHandle: z.optional(PetSourcePreviewHandleV1Schema) }),
   z.looseObject({ ok: z.literal(false), errorCode: z.enum(['invalid_request', 'feature_disabled', 'rate_limited', 'internal_error']), error: z.string().check(z.minLength(1)) }),
 ]));
 
 export type DaemonPetValidatePackageResponseV1 = z.infer<typeof DaemonPetValidatePackageResponseV1Schema>;
 
+/** Import may name a discovered source or an explicit package; explicit paths take precedence. */
+export function hasPetPackageLocatorV1(value: Readonly<{ sourceKey?: string; packagePath?: string }>): boolean {
+  return Boolean(value.sourceKey || value.packagePath);
+}
+
 export const DaemonPetImportLocalPackageRequestV1Schema = lazyZodSchema(() => z
   .object({
     sourceKey: z.optional(z.string().check(z.minLength(1), z.maxLength(500))),
     packagePath: z.optional(z.string().check(z.minLength(1), z.maxLength(10_000))),
-  }).check(z.refine((value) => Boolean(value.sourceKey || value.packagePath), {
+  }).check(z.refine(hasPetPackageLocatorV1, {
     message: 'sourceKey or packagePath is required',
   })));
 
@@ -204,7 +210,7 @@ export const DaemonPetImportAccountPackageRequestV1Schema = lazyZodSchema(() => 
     sourceKey: z.optional(z.string().check(z.minLength(1), z.maxLength(500))),
     packagePath: z.optional(z.string().check(z.minLength(1), z.maxLength(10_000))),
     petsSyncEnabled: z._default(z.optional(z.boolean()), false),
-  }).check(z.refine((value) => Boolean(value.sourceKey || value.packagePath), {
+  }).check(z.refine(hasPetPackageLocatorV1, {
     message: 'sourceKey or packagePath is required',
   })));
 

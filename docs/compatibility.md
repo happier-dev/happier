@@ -18,6 +18,25 @@ from the App definition while reusing the same Machine and retained Home volume.
 
 ## Bot pet faces (unreleased 0.3)
 
+Pet atlas readers accept the original 1536 × 1872 sheet and the v2
+1536 × 2288 sheet. The decoded sheet dimensions determine `spriteVersionNumber`,
+overriding registry labels. Both share the nine animation rows; v2 additionally
+has a neutral look cell and sixteen direction cells. The existing admission
+scan measures `hasNeutralLookCell` alongside opaque bounds; an absent neutral
+cell uses idle frame zero. These optional fields follow the existing pet
+metadata persistence path without a database migration. Existing v1 entries
+remain readable. Matching development writers and readers deploy together.
+
+The unreleased registry contract adds the `pet` kind, `codex-pets` and `petdex`
+formats, and a pet-content read through the existing ordered fetch plan. Binary
+sheet content uses a base64 carrier across remote registry transport. Account
+pet origins add `{ kind: 'registry', sourceId, itemId }`; server admission derives
+its accepted keys from the canonical schemas. Existing v1 pet records remain
+readable. Protocol, app and server development readers update together; no
+database migration or released-version adapter is introduced. Browser access
+without a Machine still requires upstream CORS support or an approved server
+transport; the adapters alone do not establish that availability.
+
 Bot faces accept an optional Account pet reference while retaining their seeded
 style. Template authoring permits built-in references only; the template owner
 projects Account pets to the seeded face when creating a shareable template.

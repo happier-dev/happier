@@ -98,6 +98,22 @@ function requestWithManifest(overrides: Record<string, unknown>) {
 }
 
 describe("validateAccountPetCreateRequest", () => {
+    it("admits registry origin ids and refuses extra client-owned origin fields", async () => {
+        const origin = { kind: "registry", sourceId: "builtin:petdex", itemId: "boba" };
+        const inspectAtlas = async () => ({ width: 1536, height: 1872, hasAlpha: true });
+        const request = { ...requestFor(WEBP_BYTES), origin };
+        expect(await validateAccountPetCreateRequest(request, { inspectAtlas }))
+            .toMatchObject({ ok: true, request: { origin } });
+        expect(await validateAccountPetCreateRequest({ ...request, origin: { ...origin, author: "not persisted" } }, { inspectAtlas }))
+            .toMatchObject({ ok: false, errorCode: "invalid_request" });
+    });
+    it.each([[1, 2288, 2], [2, 1872, 1]] as const)("derives the version from decoded dimensions (%i, %i → %i)", async (label, height, version) => {
+        const request = requestWithManifest({ spriteVersionNumber: label });
+        const result = await validateAccountPetCreateRequest(request, {
+            inspectAtlas: async () => ({ width: 1536, height, hasAlpha: true, hasNeutralLookCell: false }),
+        });
+        expect(result).toMatchObject({ ok: true, request: { manifest: { spriteVersionNumber: version } }, ...(version === 2 ? { hasNeutralLookCell: false } : {}) });
+    });
     it("accepts canonical WebP bytes that match the declared digest and atlas inspection", async () => {
         const result = await validateAccountPetCreateRequest(requestFor(WEBP_BYTES), {
             maxSpritesheetBytes: 1024,

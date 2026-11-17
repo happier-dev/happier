@@ -750,6 +750,40 @@ Ask first and Allowed use ordinary per-Action policy; rejected or failed choices
 leave selection unchanged. Account settings and device settings retain their
 existing storage shapes.
 
+In unreleased 0.3 source, `pet.import` imports a registry identity
+(`source: { kind: 'registry', sourceId, itemId }`) or a Machine package locator
+(`source: { kind: 'machine', machineId, packagePath }`, or `sourceKey`). Both
+return `{ pet }`, the Account-library entry. Registry acquisition uses the
+existing registry fetch owner; Machine acquisition uses the existing daemon
+importer. The Account endpoint validates the sheet and enforces the library
+quota. Registry origins retain only source and item ids. `pet.delete` takes
+`accountPetId` and uses the existing delete endpoint for Undo. Agent imports
+require ordinary Action approval; Store Add is the person's explicit approval.
+
+The existing approval preview carries `PetImportPreviewV1` (successful daemon
+validation and a daemon source-key preview handle). `readPetImportConfirmationV1`
+projects that pending request for Add as Keep; `readPetImportOutcomeV1` projects
+execution as `added`, `could_not_add`, `library_full` or `pet_sync_off` while
+retaining the owner's error code. An added result supplies the Account entry
+and a `pet.delete` Undo invocation; Undo leaves the original Machine package.
+
+The bundled Apache-2.0 `hatch-pet` skill uses `pet.import` for its final import.
+`useCreatePetSession` opens the existing Codex session-authoring flow with its
+ordinary skill inclusion. The skill checks Python, Pillow and WebP
+on the chosen Machine before generating images. No model allowlist or separate
+dependency preflight is added.
+
+Hatch progress uses the existing command-result carrier: the command's final
+stdout line contains `HatchPetProgressV1`, read by
+`readHatchPetProgressFromToolResultV1`. `projectHatchPetProgressPlanV1` derives
+the four checklist steps and the drawn pose count, retaining step and pose
+failures. The shared Create entry uses the existing New Session seed's optional
+`intro: { title, body, scene, suggestions }`. Its `scene` is a built-in
+`HappierSceneId`; Create declares `ideas`. The existing draft presentation
+exposes the intro for the shipped EmptyState, while unseeded Sessions retain
+their existing first screen. This host-only addition does not change the plugin
+New Session seed schema. It adds no Artifact type or Todo schema.
+
 In 0.3 development, `links.openExternal { url, clientId? }` opens an HTTP(S) link
 on the answering app through its existing platform opener. Explicit Provider,
 connected-account, documentation, terminal and content links, including plugin

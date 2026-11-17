@@ -1,4 +1,5 @@
 import { RegistryThemeListingV1Schema, RegistryThemePayloadV1Schema } from './registryThemeV1.js';
+import { RegistryPetMetadataV1Schema, RegistryPetListingV1Schema } from './registryPetV1.js';
 import { RegistryAppMappingV1Schema } from './registryAppMappingV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -12,6 +13,7 @@ import { DeploymentTemplateV1Schema } from '../plugins/contributions/deploymentT
 import { RegistryBrowserExtensionV1Schema } from './registryBrowserExtensionV1.js';
 import { RegistryStarterV1Schema } from './registryStarterV1.js';
 import { DeployShapeV1Schema } from '../deployments/deployShapeV1.js';
+import { PetAssetMediaTypeV1Schema } from '../pets/accountLibrary.js';
 export { RegistryGitTreeRefV1Schema, WellKnownSkillRefV1Schema, RegistrySkillContentRefV1Schema,
   RegistryContentRefV1Schema, RegistryItemPointerV1Schema } from './registryContentRefV1.js';
 export type { WellKnownSkillRefV1, RegistrySkillContentRefV1, RegistryContentRefV1, RegistryItemPointerV1 } from './registryContentRefV1.js';
@@ -81,6 +83,7 @@ export const RegistryItemSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   starterDeploy: z.optional(DeployShapeV1Schema),
   pluginListing: z.optional(RegistryPluginListingSummaryV1Schema),
   themeMetadata: z.optional(RegistryThemeListingV1Schema),
+  petMetadata: z.optional(RegistryPetMetadataV1Schema),
 }));
 export type RegistryItemSummaryV1 = z.infer<typeof RegistryItemSummaryV1Schema>;
 export const RegistrySkillSourceV1Schema = lazyZodSchema(() => z.strictObject({
@@ -133,6 +136,8 @@ export const AcpRegistryAgentV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 export type AcpRegistryAgentV1 = z.infer<typeof AcpRegistryAgentV1Schema>;
 export const RegistryItemPayloadV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('pet'), pet: RegistryPetListingV1Schema,
+    spritesheet: z.optional(z.strictObject({ mediaType: PetAssetMediaTypeV1Schema, contentBase64: z.string() })) }),
   RegistryThemePayloadV1Schema,
   z.discriminatedUnion('state', [
     z.strictObject({ kind: z.literal('app'), state: z.literal('ready'), app: DeploymentTemplateV1Schema, ref: RegistryContentRefV1Schema }),
@@ -164,6 +169,7 @@ export const RegistryItemV1Schema = lazyZodSchema(() => z.strictObject({
     : item.payload.kind === 'starter' ? item.payload.ref.kind === 'gitTree' ? item.payload.ref.commit
       : item.payload.ref.kind === 'version' ? item.payload.ref.version
       : item.payload.ref.kind === 'packageContent' ? item.payload.ref.pluginVersion : item.payload.ref.digest
+    : item.payload.kind === 'pet' ? undefined
     : item.payload.kind === 'theme' ? item.payload.version
     : item.payload.kind === 'agent' ? item.payload.agent.version
       : item.payload.kind === 'mcpServer' ? item.payload.server.version : item.payload.listing.distribution.version;

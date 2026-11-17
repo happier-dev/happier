@@ -25,6 +25,7 @@ export const AccountPetOriginV1Schema = lazyZodSchema(() => z.discriminatedUnion
   z.looseObject({ kind: z.literal('builtInImport'), petId: z.string().check(z.minLength(1), z.maxLength(200)) }),
   z.looseObject({ kind: z.literal('detectedCodexHome'), homeKind: z.enum(['user', 'connectedService']) }),
   z.looseObject({ kind: z.literal('manualImport') }),
+  z.looseObject({ kind: z.literal('registry'), sourceId: z.string().check(z.minLength(1)), itemId: z.string().check(z.minLength(1)) }),
 ]));
 
 export type AccountPetOriginV1 = z.infer<typeof AccountPetOriginV1Schema>;

@@ -119,6 +119,9 @@ import { queryCodeIntelligenceFallback } from '../machines/codeIntelligenceFallb
 import { ActionInvokeInputSchema } from './actionInvokeInput.js';
 import { InternalTaskActionIdSchema } from './internalTaskActions.js';
 import { PetChooseInputV1Schema } from '../pets/selection.js';
+import { PetImportInputV1Schema } from '../pets/importActionV1.js';
+import { AccountPetDeleteRequestV1Schema } from '../pets/accountLibrary.js';
+import { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1 } from './actionIdsPetsV1.js';
 import type { UiPromptPickerOpenInputSchema, UiPromptPickerSelectInputSchema, UiPromptPickerApplyInputSchema, UiPromptHistoryInputSchema } from './promptPickerActionSpecs.js';
 import type { SessionMessagePinsInputSchema } from './sessionMessagePinActionSpecs.js';
 import { QualifiedConnectedAccountPurposeV1Schema } from '../connect/connectedAccountPurposeIdentity.js';
@@ -5038,6 +5041,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (actionId === 'ui.pet.choose') {
         return deps.uiPetChooseAction
           ? await deps.uiPetChooseAction({ input: (parsed.data as z.infer<typeof PetChooseInputV1Schema>), context: ctx })
+          : clientActionUnavailable(actionId);
+      }
+      if (actionId === PET_IMPORT_ACTION_ID_V1) {
+        return deps.petAction ? await deps.petAction({ actionId, input: parsed.data as z.infer<typeof PetImportInputV1Schema>, context: ctx })
+          : clientActionUnavailable(actionId);
+      }
+      if (actionId === PET_DELETE_ACTION_ID_V1) {
+        return deps.petAction ? await deps.petAction({ actionId, input: parsed.data as z.infer<typeof AccountPetDeleteRequestV1Schema>, context: ctx })
           : clientActionUnavailable(actionId);
       }
       if (actionId === 'account.home_continuation.invoke') {

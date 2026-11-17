@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { copyFile, lstat, mkdir, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -8,6 +7,7 @@ import type {
   DaemonPetImportResponseV1,
 } from '@happier-dev/protocol';
 import { PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
+import { buildAccountPetCreateRequestV1 } from '@happier-dev/protocol/pets/importActionV1';
 
 import { createPetSourceKey } from '../discovery/createPetSourceKey';
 import { splitSafePetSpritesheetRelativePath } from '../validation/validatePetManifest';
@@ -17,10 +17,6 @@ import { resolveManagedPetRoot } from './resolveManagedPetRoot';
 import { ensureProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
 
 export { forgetManagedLocalPetSource } from './managedLocalPetRegistry';
-
-function sha256Digest(bytes: Buffer): string {
-  return `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
-}
 
 async function pathExists(path: string): Promise<boolean> {
   return await lstat(path)
@@ -62,17 +58,12 @@ export async function importPetPackage(input: Readonly<{
       return { ok: false, errorCode: 'account_upload_unavailable', error: 'Account pet upload is unavailable.' };
     }
     const spritesheetBytes = await readFile(validation.spritesheetPath);
-    const account = await input.createAccountPet({
+    const account = await input.createAccountPet(buildAccountPetCreateRequestV1({
       manifest: validation.manifest,
-      spritesheet: {
-        mediaType: validation.mediaType,
-        encoding: 'base64',
-        data: spritesheetBytes.toString('base64'),
-        sizeBytes: spritesheetBytes.byteLength,
-        digest: sha256Digest(spritesheetBytes),
-      },
+      mediaType: validation.mediaType,
+      spritesheetBytes,
       origin: { kind: 'manualImport' },
-    });
+    }));
     if (!account.ok) {
       return { ok: false, errorCode: account.errorCode, error: account.error };
     }

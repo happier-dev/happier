@@ -11,6 +11,8 @@ export { REGISTRY_SOURCE_DELETE_ACTION_ID_V1 } from '../registries/registryActio
 import { BOT_TEMPLATE_ACTION_IDS_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
 import { INTERNAL_TASK_ACTION_IDS } from './internalTaskActionIdsV1.js';
 import { RPC_METHODS } from '../rpc/methods.js';
+import { PET_ACTION_IDS_V1 } from './actionIdsPetsV1.js';
+export { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1, PET_ACTION_IDS_V1, isPetActionIdV1 } from './actionIdsPetsV1.js';
 export { isProjectCheckoutRemovalActionIdV1 } from './projectActionIdsV1.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
@@ -684,6 +686,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   session_message_pins: ['session.messages.pins'],
   companion_controls: [
     'ui.pet.choose',
+    ...PET_ACTION_IDS_V1,
   ],
   memory: [
     'memory.remember', 'memory.decision.save', 'memory.update', 'memory.forget', 'memory.read', 'memory.list',

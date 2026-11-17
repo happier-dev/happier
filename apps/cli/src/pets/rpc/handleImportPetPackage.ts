@@ -6,6 +6,7 @@ import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveCliFeatureDecisionForServer } from '@/features/featureDecisionService';
 
 import type { PetPackageDiscoveryCache } from '../discovery/petPackageDiscoveryCache';
+import { resolvePetPackagePath } from '../discovery/petPackageDiscoveryCache';
 import { importPetPackage } from '../storage/importPetPackage';
 import type { PetRpcRateLimiter } from './petRpcRateLimiter';
 
@@ -17,16 +18,6 @@ type ImportPetPackageDeps = Readonly<{
   companionFeatureEnabled?: boolean;
   rateLimiter?: PetRpcRateLimiter;
 }>;
-
-function resolvePackagePath(input: Readonly<{
-  packagePath?: string;
-  sourceKey?: string;
-  discoveryCache?: PetPackageDiscoveryCache;
-}>): string | null {
-  if (input.packagePath) return input.packagePath;
-  if (!input.sourceKey) return null;
-  return input.discoveryCache?.get(input.sourceKey)?.packagePath ?? null;
-}
 
 function localImportError(input: Readonly<{
   errorCode: string;
@@ -102,7 +93,7 @@ export async function handleImportLocalPetPackage(
     return { ok: false, errorCode: 'invalid_request', error: 'invalid_request' };
   }
 
-  const packagePath = resolvePackagePath({
+  const packagePath = resolvePetPackagePath({
     packagePath: parsed.data.packagePath,
     sourceKey: parsed.data.sourceKey,
     discoveryCache: deps.discoveryCache,
@@ -179,7 +170,7 @@ export async function handleImportAccountPetPackage(
     return { ok: false, errorCode: 'invalid_request', error: 'invalid_request' };
   }
 
-  const packagePath = resolvePackagePath({
+  const packagePath = resolvePetPackagePath({
     packagePath: parsed.data.packagePath,
     sourceKey: parsed.data.sourceKey,
     discoveryCache: deps.discoveryCache,

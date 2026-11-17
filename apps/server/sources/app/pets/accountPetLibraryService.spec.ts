@@ -670,9 +670,10 @@ describe("account pet library services", () => {
             persistence: createPrismaAccountPetLibraryPersistence(),
             inspectAtlas: async () => ({
                 width: 1536,
-                height: 1872,
+                height: 2288,
                 hasAlpha: true,
                 opaqueBounds: { x: 15, y: 20, width: 130, height: 170 },
+                hasNeutralLookCell: false,
             }),
         });
 
@@ -684,7 +685,8 @@ describe("account pet library services", () => {
         if (!created.ok) throw new Error("expected account pet creation to succeed");
 
         expect(created.pet.opaqueBounds).toEqual({ x: 15, y: 20, width: 130, height: 170 });
-        expect(created.pet.manifest).toEqual(requestFor(WEBP_BYTES).manifest);
+        expect(created.pet.manifest).toEqual({ ...requestFor(WEBP_BYTES).manifest, spriteVersionNumber: 2 });
+        expect(created.pet.hasNeutralLookCell).toBe(false);
 
         const secondServices = createAccountPetLibraryServices({
             privateFiles,

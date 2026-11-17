@@ -326,6 +326,7 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
                 updatedAt: timestamp,
                 origin: validated.request.origin,
                 ...(validated.opaqueBounds ? { opaqueBounds: validated.opaqueBounds } : {}),
+                ...(validated.hasNeutralLookCell !== undefined ? { hasNeutralLookCell: validated.hasNeutralLookCell } : {}),
             };
 
             return await withCreateLock(params.accountId, async () => {

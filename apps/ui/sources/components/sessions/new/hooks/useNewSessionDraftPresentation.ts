@@ -7,6 +7,7 @@ import { getSessionDraftDocumentFieldValue } from '@/sync/ops/sessionDrafts/sess
 import { readNewSessionDraftIdentity, type NewSessionDraftIdentity } from '@/components/sessions/drafts/newSessionDraftPresentation';
 
 type NewSessionDraftPresentation = Readonly<Pick<SessionDraftSnapshot, 'materialized' | 'conflict'> & {
+    intro?: NonNullable<SessionDraftSnapshot['localSupplement']['newSessionLocalState']>['intro'];
     /** Only the status the badge shows: `pending` flips with every remote flush of a typing burst. */
     badgeStatus: SessionDraftStatus | null;
     launchUserAttemptId: string | null;
@@ -44,6 +45,9 @@ export function useNewSessionDraftPresentation(scope: ServerAccountScope | null,
     // The repository must publish real text edits to its editor. The surrounding
     // screen needs only chrome/custody facts, never that document or revision.
     const selectPresentation = useShallow((snapshot: SessionDraftSnapshot | null): NewSessionDraftPresentation | null => snapshot ? {
+        ...(snapshot.localSupplement.newSessionLocalState?.intro === undefined ? {} : {
+            intro: snapshot.localSupplement.newSessionLocalState.intro,
+        }),
         materialized: snapshot.materialized,
         badgeStatus: selectSessionDraftSyncBadgeStatus(snapshot.status),
         conflict: snapshot.conflict,

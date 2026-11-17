@@ -15,6 +15,7 @@ import { ManagedMachineAcquisitionDraftSchema, ManagedMachineSelectionDraftSchem
  * record and clears the request after that transaction succeeds.
  */
 export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
+    | 'intro'
     | 'instructionsDraft'
     | 'isolationOverride'
     | 'entryIntent'
@@ -40,6 +41,7 @@ export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
 /** Device-local New Session choices that must not enter the synchronized document. */
 export function buildNewSessionDraftLocalState(draft: NewSessionDraft): NewSessionDraftLocalState {
     return {
+        ...(draft.intro === undefined ? {} : { intro: draft.intro }),
         ...(draft.isolationOverride === undefined ? {} : { isolationOverride: draft.isolationOverride }),
         ...(draft.placementExplicit === true ? { placementExplicit: true } : {}),
         ...(draft.permissionModeExplicit === true ? { permissionModeExplicit: true } : {}),

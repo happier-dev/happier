@@ -67,21 +67,32 @@ describe('handleValidatePetPackage', () => {
     });
   });
 
-  it('returns sanitized validation results without absolute package paths', async () => {
+  it('returns a generated package preview handle without exposing absolute paths', async () => {
     const root = tempRoot();
     const packagePath = join(root, 'codex-home', 'pets', 'blink');
     await writePetPackage(packagePath);
     const { handleValidatePetPackage } = await import('./handleValidatePetPackage');
+    const { createPetPackageDiscoveryCache } = await import('../discovery/petPackageDiscoveryCache');
+    const { handleReadPetPreviewAsset } = await import('./handleReadPetAsset');
+    const discoveryCache = createPetPackageDiscoveryCache();
 
     const result = await handleValidatePetPackage({
       packagePath,
       strict: true,
-    });
+    }, { discoveryCache });
 
     expect(result.ok).toBe(true);
     if (!result.ok || !result.validation.ok) throw new Error('expected sanitized validation to succeed');
     expect(result.validation.spritesheetPath).toBe('spritesheet.png');
     expect(JSON.stringify(result)).not.toContain(packagePath);
     expect(JSON.stringify(result)).not.toContain(root);
+    expect(result).toMatchObject({ previewHandle: { kind: 'daemonSourceKey', sourceKey: expect.any(String) } });
+    if (!result.previewHandle) throw new Error('expected a generated package preview handle');
+    const rechecked = await handleValidatePetPackage({ sourceKey: result.previewHandle.sourceKey, strict: true }, { discoveryCache });
+    expect(rechecked).toMatchObject({ ok: true, validation: { ok: true }, previewHandle: result.previewHandle });
+    const preview = await handleReadPetPreviewAsset({ sourceKey: result.previewHandle.sourceKey }, { discoveryCache });
+    expect(preview).toMatchObject({ mediaType: 'image/png', dataBase64: expect.any(String) });
+    expect('dataBase64' in preview && Buffer.from(preview.dataBase64, 'base64').equals(createTransparentPetSpritesheetPng())).toBe(true);
+    expect(JSON.stringify(preview)).not.toContain(root);
   });
 });

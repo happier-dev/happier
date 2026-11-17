@@ -173,6 +173,7 @@ const NewSessionDraftExecutionTargetSchema = z.strictObject({
 });
 
 export interface NewSessionDraft {
+    intro?: import('@/components/sessions/new/newSessionDraftSeed').NewSessionDraftIntroV1;
     actionDefault?: PluginUiNewSessionActionDefaultV1;
     input: string;
     sessionName?: string;
