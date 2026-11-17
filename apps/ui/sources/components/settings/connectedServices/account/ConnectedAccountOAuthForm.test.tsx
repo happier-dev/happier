@@ -122,6 +122,32 @@ describe('ConnectedAccountOAuthForm', () => {
         }
     });
 
+    it('says it waits on the sign-in page only once that page opened, as one status row rather than steps', async () => {
+        const { ConnectedAccountOAuthForm } = await import('./ConnectedAccountOAuthForm');
+        const tree = (await renderScreen(
+            <ConnectedAccountOAuthForm
+                authorizationUrl="https://claude.example/oauth/authorize"
+                callbackUrl="https://platform.claude.example/oauth/code/callback"
+                allowRawAuthorizationCode
+                submitting={false}
+                onSubmit={vi.fn()}
+            />,
+        )).tree;
+        const status = () => tree.find((node) => node.props.testID === 'connected-account-oauth:status');
+        const open = () => tree.find((node) => node.props.testID === 'connected-account-oauth:open');
+
+        expect(tree.findAll((node) => node.props.testID === 'connected-account-oauth:steps')).toHaveLength(0);
+        expect(status().props.accessibilityLabel).toContain('connectedServicesSettings.oauthOpenTitle');
+        expect(tree.findAll((node) => node.props.testID === 'connected-account-oauth:waiting-spinner')).toHaveLength(0);
+
+        await pressTestInstanceAsync(open());
+
+        expect(status().props.accessibilityLabel).toContain('connectedServicesSettings.oauthWaitingTitle');
+        expect(status().props.accessibilityLabel).toContain('connectedServicesSettings.oauthWaitingBodyCode');
+        expect(tree.findAll((node) => node.props.testID === 'connected-account-oauth:waiting-spinner').length).toBeGreaterThan(0);
+        expect(open().props.title).toBe('connectedServicesSettings.oauthOpenAgain');
+    });
+
     it('keeps OAuth recovery visible when the external authorization page cannot open', async () => {
         openExternalUrlMock.mockResolvedValueOnce(false);
         const { ConnectedAccountOAuthForm } = await import('./ConnectedAccountOAuthForm');
@@ -144,6 +170,9 @@ describe('ConnectedAccountOAuthForm', () => {
         );
         expect(failure.props.accessibilityRole).toBe('alert');
         expect(failure.props.accessibilityLiveRegion).toBe('assertive');
+        // Nothing opened, so nothing is waiting.
+        expect(tree.find((node) => node.props.testID === 'connected-account-oauth:status').props.accessibilityLabel)
+            .toContain('connectedServicesSettings.oauthOpenTitle');
     });
 
     it('associates an invalid callback with its exact recoverable field error', async () => {

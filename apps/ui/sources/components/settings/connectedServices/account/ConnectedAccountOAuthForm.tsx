@@ -2,14 +2,19 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { iconMatchedSpinnerSize } from '@happier-dev/plugin-ui/presentation';
+
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { FieldItem } from '@/components/ui/forms/FieldItem';
+import { fieldBoxShapeStyle } from '@/components/ui/forms/fieldBox';
 import { Icon } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ConnectedServiceSetupFlowActions } from '../setup/ConnectedServiceSetupFlowBody';
 import { ConnectedAccountFormSection } from './ConnectedAccountFormSection';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Text } from '@/components/ui/text/Text';
-import { SetupSteps } from '@/components/ui/setupBlocks/SetupSteps';
+import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { parseOauthCallbackUrl } from '@/utils/auth/oauthCore';
 import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
@@ -27,17 +32,34 @@ const stylesheet = StyleSheet.create((theme) => ({
     embedded: {
         gap: 14,
     },
-    openBlock: {
-        gap: theme.space.s6,
+    status: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s12,
+        paddingHorizontal: theme.space.s16,
+        paddingVertical: theme.space.s12,
+        borderRadius: fieldBoxShapeStyle.borderRadius,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border.default,
+    },
+    statusText: {
+        flex: 1,
+        minWidth: 0,
+    },
+    statusTitle: {
+        ...Typography.variant('body', 'medium'),
+        color: theme.colors.text.primary,
+    },
+    statusBody: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
     },
     pasteBlock: {
-        flex: 1,
         minWidth: 0,
         gap: theme.space.s6,
     },
     description: {
-        fontSize: 12.5,
-        lineHeight: 17,
+        ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
     },
     fieldRow: {
@@ -50,8 +72,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 0,
     },
     shapeOk: {
-        fontSize: 12,
-        lineHeight: 16,
+        ...Typography.variant('meta'),
         color: theme.colors.state.success.foreground,
     },
 }));
@@ -75,10 +96,11 @@ type ConnectedAccountOAuthFormProps = Readonly<{
 }>;
 
 /**
- * Signing in with a browser (lab `csvc` A3): three visible steps — open the provider's sign-in,
- * approve, paste back what the provider shows (a code, or the address the browser lands on). The
- * pasted answer is checked locally for its shape before anything is sent (G5); the daemon still
- * validates it.
+ * Signing in with a browser (lab `credentials` crSignin-bCode): nothing here is sequential (owner), so
+ * it is one status row and the field. The row offers the sign-in page; once that page opened it says
+ * it waits there, with Open again. Below it the person pastes what the provider shows (a code, or the
+ * address the browser lands on). The pasted answer is checked locally for its shape before anything
+ * is sent (G5); the daemon still validates it.
  */
 function ConnectedAccountOAuthFormBody(props: ConnectedAccountOAuthFormProps) {
     const { theme } = useUnistyles();
@@ -152,7 +174,7 @@ function ConnectedAccountOAuthFormBody(props: ConnectedAccountOAuthFormProps) {
         ? 'connectedServicesSettings.oauthPastePlaceholder'
         : 'connectedServices.oauthPaste.pasteRedirectUrl');
     const field = (
-        <View style={styles.pasteBlock}>
+        <FieldItem label={callbackLabel} labelNativeID="connected-account-oauth:callback-label" controlContainerStyle={styles.pasteBlock}>
             <View style={styles.fieldRow}>
                 <View style={styles.field}>
                     <FieldTextInput
@@ -167,7 +189,6 @@ function ConnectedAccountOAuthFormBody(props: ConnectedAccountOAuthFormProps) {
                             setCallbackInput(value);
                             setValidationFailed(false);
                         }}
-                        placeholder={t('connectedServicesSettings.oauthPastePlaceholder')}
                         editable={!props.submitting}
                         monospace
                         trailing={<IconButton testID="connected-account-oauth:paste" iconName="clipboard" variant="plain" size={20}
@@ -180,19 +201,46 @@ function ConnectedAccountOAuthFormBody(props: ConnectedAccountOAuthFormProps) {
                     {t('connectedServicesSettings.oauthShapeOk')}
                 </Text>
             ) : null}
-        </View>
+        </FieldItem>
     );
-    const open = (
-        <View style={styles.openBlock}>
-            <RoundButton
-                testID="connected-account-oauth:open"
-                size="small"
-                leading={<Icon name="arrow-square-out" size={14} color={theme.colors.button.primary.tint} />}
-                display={opened ? 'secondary' : 'default'}
-                title={t('connectedServices.oauthPaste.openAuthorizationUrl')}
-                disabled={props.submitting || !props.authorizationUrl}
-                onPress={() => void openAuthorizationUrl()}
-            />
+    const host = React.useMemo(() => {
+        try { return new URL(props.authorizationUrl).host || props.authorizationUrl; }
+        catch { return props.authorizationUrl; }
+    }, [props.authorizationUrl]);
+    const statusTitle = opened
+        ? t('connectedServicesSettings.oauthWaitingTitle', { host })
+        : t('connectedServicesSettings.oauthOpenTitle', { host });
+    const statusBody = !opened
+        ? t('connectedServicesSettings.oauthOpenBody')
+        : props.allowRawAuthorizationCode === true
+            ? t('connectedServicesSettings.oauthWaitingBodyCode')
+            : t('connectedServicesSettings.oauthWaitingBodyAddress');
+    const status = (
+        <View>
+            <View testID="connected-account-oauth:status" style={styles.status} accessible
+                accessibilityLabel={`${statusTitle}. ${statusBody}`} accessibilityLiveRegion="polite">
+                {opened ? (
+                    <View testID="connected-account-oauth:waiting-spinner">
+                        <ActivitySpinner size={iconMatchedSpinnerSize(16)} color={theme.colors.text.secondary} />
+                    </View>
+                ) : null}
+                <View style={styles.statusText}>
+                    <Text style={styles.statusTitle}>{statusTitle}</Text>
+                    <Text style={styles.statusBody}>{statusBody}</Text>
+                </View>
+                <RoundButton
+                    testID="connected-account-oauth:open"
+                    size="small"
+                    leading={<Icon name="arrow-square-out" size={14}
+                        color={opened ? theme.colors.button.secondary.tint : theme.colors.button.primary.tint} />}
+                    display={opened ? 'secondary' : 'default'}
+                    title={opened
+                        ? t('connectedServicesSettings.oauthOpenAgain')
+                        : t('connectedServices.oauthPaste.openAuthorizationUrl')}
+                    disabled={props.submitting || !props.authorizationUrl}
+                    onPress={() => void openAuthorizationUrl()}
+                />
+            </View>
             {openFailed ? (
                 <Text
                     testID="connected-account-oauth:open-error"
@@ -205,18 +253,11 @@ function ConnectedAccountOAuthFormBody(props: ConnectedAccountOAuthFormProps) {
             ) : null}
         </View>
     );
-    const pasted = callbackInput.trim().length > 0;
     return (
         <ConnectedAccountFormSection embedded={props.embedded}>
             <View style={props.embedded ? styles.embedded : styles.page}>
-                <SetupSteps
-                    testID="connected-account-oauth:steps"
-                    steps={[
-                        { key: 'open', state: opened ? 'done' : 'current', title: t('connectedServicesSettings.oauthStepOpen'), body: open },
-                        { key: 'approve', state: pasted ? 'done' : opened ? 'current' : 'upcoming', title: t('connectedServicesSettings.oauthStepApprove') },
-                        { key: 'paste', state: opened || pasted ? 'current' : 'upcoming', title: t('connectedServicesSettings.oauthStepPaste'), body: field },
-                    ]}
-                />
+                {status}
+                {field}
                 <ConnectedServiceSetupFlowActions
                     onCancel={props.onCancel}
                     primary={{
