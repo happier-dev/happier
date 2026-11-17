@@ -202,65 +202,67 @@ export const ExternalImportProgressCard = React.memo(function ExternalImportProg
             {presentation.actions.length > 0 ? (
                 // The operation's decisions: the recovery that moves it forward is the one primary, Cancel and
                 // Dismiss are secondary, and Discard keeps its destructive weight.
-                <SectionButtonRow testID="external-session-operation-actions">
-                    {presentation.actions.map((action) => {
-                        if (action.kind === 'dismiss') {
+                <ItemGroup surface="none">
+                    <SectionButtonRow testID="external-session-operation-actions">
+                        {presentation.actions.map((action) => {
+                            if (action.kind === 'dismiss') {
+                                const title = t(action.titleKey);
+                                return (
+                                    <RoundButton
+                                        key={action.kind}
+                                        testID="external-session-operation-action-dismiss"
+                                        controlRef={actionNodeRef(action.kind)}
+                                        size="small"
+                                        display="secondary"
+                                        title={title}
+                                        onPress={() => {
+                                            props.onTranscriptOperationActionTransition?.('dismiss');
+                                            props.onDismiss(actionRef);
+                                        }}
+                                        disabled={pendingAction !== null}
+                                        accessibilityLabel={title}
+                                    />
+                                );
+                            }
+                            const handler = availableHandlers[action.kind];
+                            const onPress = handler
+                                ? () => {
+                                    invokeAction(action.kind, async () => {
+                                        if (action.kind === 'discard') {
+                                            const confirmed = await Modal.confirm(
+                                                t('externalSessions.operationDiscardConfirmTitle'),
+                                                t('externalSessions.operationDiscardConfirmBody'),
+                                                {
+                                                    cancelText: t('common.cancel'),
+                                                    confirmText: t('externalSessions.operationActionDiscard'),
+                                                    destructive: true,
+                                                },
+                                            );
+                                            if (!confirmed) return;
+                                        }
+                                        await handler(actionRef);
+                                    });
+                                }
+                                : undefined;
                             const title = t(action.titleKey);
+
                             return (
                                 <RoundButton
                                     key={action.kind}
-                                    testID="external-session-operation-action-dismiss"
+                                    testID={`external-session-operation-action-${action.kind}`}
                                     controlRef={actionNodeRef(action.kind)}
                                     size="small"
-                                    display="secondary"
+                                    display={action.destructive ? 'destructive' : isPrimaryOperationAction(action.kind) ? undefined : 'secondary'}
                                     title={title}
-                                    onPress={() => {
-                                        props.onTranscriptOperationActionTransition?.('dismiss');
-                                        props.onDismiss(actionRef);
-                                    }}
-                                    disabled={pendingAction !== null}
+                                    onPress={onPress}
+                                    disabled={!action.enabled || !handler || pendingAction !== null}
+                                    loading={pendingAction === action.kind}
                                     accessibilityLabel={title}
                                 />
                             );
-                        }
-                        const handler = availableHandlers[action.kind];
-                        const onPress = handler
-                            ? () => {
-                                invokeAction(action.kind, async () => {
-                                    if (action.kind === 'discard') {
-                                        const confirmed = await Modal.confirm(
-                                            t('externalSessions.operationDiscardConfirmTitle'),
-                                            t('externalSessions.operationDiscardConfirmBody'),
-                                            {
-                                                cancelText: t('common.cancel'),
-                                                confirmText: t('externalSessions.operationActionDiscard'),
-                                                destructive: true,
-                                            },
-                                        );
-                                        if (!confirmed) return;
-                                    }
-                                    await handler(actionRef);
-                                });
-                            }
-                            : undefined;
-                        const title = t(action.titleKey);
-
-                        return (
-                            <RoundButton
-                                key={action.kind}
-                                testID={`external-session-operation-action-${action.kind}`}
-                                controlRef={actionNodeRef(action.kind)}
-                                size="small"
-                                display={action.destructive ? 'destructive' : isPrimaryOperationAction(action.kind) ? undefined : 'secondary'}
-                                title={title}
-                                onPress={onPress}
-                                disabled={!action.enabled || !handler || pendingAction !== null}
-                                loading={pendingAction === action.kind}
-                                accessibilityLabel={title}
-                            />
-                        );
-                    })}
-                </SectionButtonRow>
+                        })}
+                    </SectionButtonRow>
+                </ItemGroup>
             ) : null}
         </View>
     );
