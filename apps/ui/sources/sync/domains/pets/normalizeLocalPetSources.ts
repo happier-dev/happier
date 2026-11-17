@@ -9,8 +9,8 @@ type LocalPetSourceCandidate = DiscoveredPetPackageV1 | ImportedLocalPetPackageV
 
 function isLocalPetSourceCandidate(
     pet: LocalPetSourceCandidate,
-): pet is LocalPetSourceCandidate & { source: LocalPetSourceMetadata['source'] } {
-    return pet.source.kind === 'detectedCodexHome' || pet.source.kind === 'happierManagedLocal';
+): pet is LocalPetSourceCandidate & { kind: LocalPetSourceMetadata['kind'] } {
+    return pet.kind === 'detectedCodexHome' || pet.kind === 'happierManagedLocal';
 }
 
 export function normalizeLocalPetSourceMetadata(
@@ -21,9 +21,9 @@ export function normalizeLocalPetSourceMetadata(
         .filter(isLocalPetSourceCandidate)
         .map((pet) => ({
             sourceKey: pet.sourceKey,
-            source: pet.source,
+            kind: pet.kind,
             displayName: pet.displayName,
-            manifest: pet.manifest,
+            petId: pet.petId,
             mediaType: pet.mediaType,
             digest: pet.digest ?? null,
             sizeBytes: pet.sizeBytes ?? null,

@@ -2,7 +2,8 @@ import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { PET_DISCOVERY_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
-import type { DiscoveredPetPackageV1, PetDiscoveryDiagnosticV1, PetPackageValidationResultV1 } from '@happier-dev/protocol';
+import type { PetDiscoveryDiagnosticV1, PetPackageValidationResultV1 } from '@happier-dev/protocol';
+import type { PetPackageDiscoveryCacheEntry } from './petPackageDiscoveryCache';
 
 import type { PetDiscoveryRoot } from './resolveCodexPetRoots';
 import { createPetSourceKey } from './createPetSourceKey';
@@ -17,7 +18,7 @@ const INTERNAL_VALIDATION_ERROR: PetPackageValidationResultV1 = {
 
 export type DiscoverCodexPetsResult = Readonly<{
   ok: true;
-  pets: DiscoveredPetPackageV1[];
+  pets: PetPackageDiscoveryCacheEntry[];
   diagnostics: PetDiscoveryDiagnosticV1[];
   partial: boolean;
 }>;
@@ -94,7 +95,7 @@ export async function discoverCodexPets(input: Readonly<{
   const nowMs = input.nowMs ?? Date.now;
   const packageValidator = input.validatePackage ?? validatePetPackage;
   const startedAt = nowMs();
-  const pets: DiscoveredPetPackageV1[] = [];
+  const pets: PetPackageDiscoveryCacheEntry[] = [];
   const diagnostics: PetDiscoveryDiagnosticV1[] = [];
   let partial = false;
 

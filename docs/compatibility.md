@@ -33,6 +33,21 @@ pending library from a settled missing or unavailable pet. Companion preferences
 remain separate from face lookup. Animation still frames and playback timing
 come from the existing pet timeline owner.
 
+## Pet discovery and local imports (unreleased 0.3)
+
+Discovery and local-import responses use the redacted DTO already produced and
+consumed by the clean prospective `../0.2` frontier at
+`4ac21ea224781a9ee796064d8c07391f5be94d0e`: source kind, presentation metadata,
+manifest and opaque source/preview keys. Discovery/import results keep daemon
+filesystem paths with its discovery cache and managed-import registry. Existing
+explicit-path validation and direct-import APIs keep their contracts. The 0.3
+Protocol schema, CLI serializer, UI normalization and device-local metadata reader change together;
+the former path-bearing 0.3 discovery schema rejected the real daemon response.
+This is a direct repair of unpublished development contracts, with no wire epoch,
+new settings or database migration. Existing source keys and device selections
+retain their identities. Older device-local metadata carrying paths is projected
+to the redacted shape when read, preserving the selection and preview target.
+
 ## Managed acquisition child refusals (unreleased 0.3)
 
 Current Action operation failures retain the child Action's optional `requestId`

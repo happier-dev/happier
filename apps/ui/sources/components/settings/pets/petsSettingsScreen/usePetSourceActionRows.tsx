@@ -123,7 +123,7 @@ export function usePetSourceActionRows(params: UsePetSourceActionRowsParams): Re
             sourceKey: pet.sourceKey,
             petId: pet.petId,
             displayName: pet.displayName,
-            source: pet.source,
+            source: { kind: pet.kind, sourceKey: pet.sourceKey },
             previewAsset: {
                 sourceKey: pet.sourceKey,
                 mediaType: pet.mediaType,

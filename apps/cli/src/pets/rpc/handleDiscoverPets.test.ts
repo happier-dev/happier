@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { DaemonPetDiscoverResponseV1Schema, DaemonPetImportLocalPackageResponseV1Schema } from '@happier-dev/protocol/pets/daemonRpc';
 
 import { createPngPetAtlasBytes, createTransparentPetSpritesheetPng, createTransparentPetSpritesheetWebp } from '../testkit/petTestImages';
 
@@ -135,6 +136,8 @@ describe('handleDiscoverPets', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected discover to succeed');
+    // The settings screen parses this exact response before publishing local sources.
+    expect(DaemonPetDiscoverResponseV1Schema.safeParse(result).success).toBe(true);
     expect(result.pets).toEqual([
       expect.objectContaining({
         sourceKey: expect.any(String),
@@ -225,11 +228,14 @@ describe('handleDiscoverPets', () => {
         petId: 'blink',
         displayName: 'Blink',
         digest: expect.stringMatching(/^sha256:/),
-        source: expect.objectContaining({ kind: 'happierManagedLocal' }),
+        kind: 'happierManagedLocal',
       },
     });
 
     if ('ok' in imported) throw new Error('expected import to succeed');
+    expect(DaemonPetImportLocalPackageResponseV1Schema.safeParse(imported).success).toBe(true);
+    expectNoRawDiscoveryPathFields(imported.importedPet);
+    expectNoRawPathValues(imported.importedPet, [packagePath, happyHomeDir]);
     const preview = await handleReadPetPreviewAsset({
       sourceKey: imported.importedPet.sourceKey,
     }, { discoveryCache });

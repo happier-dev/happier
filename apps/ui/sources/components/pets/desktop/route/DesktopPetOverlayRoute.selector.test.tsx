@@ -2495,18 +2495,9 @@ describe('DesktopPetOverlayRoute selectors', () => {
         localPetSourcesState.current = {
             'managed:blink': {
                 sourceKey: 'managed:blink',
-                source: {
-                    kind: 'happierManagedLocal',
-                    sourceKey: 'managed:blink',
-                    packagePath: '/Users/tester/.happier/pets/managed-blink',
-                },
+                kind: 'happierManagedLocal',
                 displayName: 'Managed Blink',
-                manifest: {
-                    id: 'managed-blink',
-                    displayName: 'Managed Blink',
-                    description: 'Managed pet',
-                    spritesheetPath: 'spritesheet.png',
-                },
+                petId: 'managed-blink',
                 mediaType: 'image/png',
                 digest: 'sha256:managed',
                 sizeBytes: 3,

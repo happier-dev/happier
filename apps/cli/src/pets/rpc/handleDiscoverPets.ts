@@ -1,22 +1,13 @@
 import { DaemonPetDiscoverRequestV1Schema } from '@happier-dev/protocol/pets/daemonRpc';
-import type { DaemonPetDiscoverResponseV1, PetDiscoveryDiagnosticV1 } from '@happier-dev/protocol';
+import type { DaemonPetDiscoverResponseV1 } from '@happier-dev/protocol';
 
 import { discoverCodexPets } from '../discovery/discoverCodexPets';
 import { createPetSourceKey } from '../discovery/createPetSourceKey';
 import type { PetPackageDiscoveryCache } from '../discovery/petPackageDiscoveryCache';
 import { type PetDiscoveryRoot, resolveCodexPetRootsWithDiagnostics } from '../discovery/resolveCodexPetRoots';
 import { resolveManagedPetRoot } from '../storage/resolveManagedPetRoot';
-import { toDiscoveredPetPackageDto, type DiscoveredPetPackageDto } from './petSourceDto';
+import { toDiscoveredPetPackageDto } from './petSourceDto';
 import type { PetRpcRateLimiter } from './petRpcRateLimiter';
-
-type HandleDiscoverPetsResponse =
-  | Extract<DaemonPetDiscoverResponseV1, { ok: false }>
-  | Readonly<{
-    ok: true;
-    pets: DiscoveredPetPackageDto[];
-    diagnostics: Pick<PetDiscoveryDiagnosticV1, 'code' | 'message'>[];
-    partial: boolean;
-  }>;
 
 export async function handleDiscoverPets(
   raw: unknown,
@@ -28,7 +19,7 @@ export async function handleDiscoverPets(
     companionFeatureEnabled?: boolean;
     rateLimiter?: PetRpcRateLimiter;
   }> = {},
-): Promise<HandleDiscoverPetsResponse> {
+): Promise<DaemonPetDiscoverResponseV1> {
   if (deps.companionFeatureEnabled === false) {
     return { ok: false, errorCode: 'feature_disabled', error: 'pets.companion is disabled.' };
   }

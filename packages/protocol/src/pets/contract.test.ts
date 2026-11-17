@@ -33,7 +33,13 @@ describe('pet protocol contract', () => {
       hasTransparentBackground: true,
       hasVisibleUsedCells: true,
       hasTransparentUnusedCells: true,
+      opaqueBounds: { x: 96, y: 104, width: 1, height: 1 },
     });
+
+    // Different used frames share one cell-local box; alpha <= 24 is padding.
+    data[(12 * atlas.width + 20) * 4 + 3] = 25;
+    data[((atlas.cellHeight + 190) * atlas.width + atlas.cellWidth + 170) * 4 + 3] = 255;
+    data[(2 * atlas.width + 2) * 4 + 3] = 24;
 
     const unusedFrameX = 6 * atlas.cellWidth + Math.floor(atlas.cellWidth / 2);
     const unusedFrameY = Math.floor(atlas.cellHeight / 2);
@@ -47,6 +53,7 @@ describe('pet protocol contract', () => {
       hasOpaqueBackground: true,
       hasTransparentBackground: false,
       hasTransparentUnusedCells: false,
+      opaqueBounds: { x: 20, y: 12, width: 151, height: 179 },
     });
   });
 
@@ -205,6 +212,14 @@ describe('pet protocol contract', () => {
       mediaType: 'image/webp',
     });
     expect(JSON.stringify(parsed)).not.toContain('base64');
+    expect(pets.AccountPetLibraryEntryV1Schema.safeParse({
+      ...parsed,
+      opaqueBounds: { x: 190, y: 0, width: 3, height: 10 },
+    }).success).toBe(false);
+    expect(pets.AccountPetLibraryEntryV1Schema.parse({
+      ...parsed,
+      opaqueBounds: { x: 5, y: 5, width: 182, height: 198 },
+    }).opaqueBounds).toEqual({ x: 5, y: 5, width: 182, height: 198 });
 
     expect(pets.AccountPetLibraryEntryV1Schema.safeParse({
       ...parsed,
@@ -337,8 +352,11 @@ describe('pet protocol contract', () => {
 
     const discoveredPet = {
       sourceKey: 'pet:0123456789abcdef0123456789abcdef',
+      kind: 'detectedCodexHome',
       petId: 'blink',
       displayName: 'Blink',
+      description: 'Happier companion pet',
+      originLabel: 'Connected Codex home',
       packageFormat: 'codex-compatible-atlas-v1',
       manifest: {
         id: 'blink',
@@ -346,21 +364,20 @@ describe('pet protocol contract', () => {
         description: 'Happier companion pet',
         spritesheetPath: 'spritesheet.webp',
       },
-      source: {
-        kind: 'detectedCodexHome',
-        homeKind: 'connectedService',
-        homePath: '/tmp/codex-home',
-        packagePath: '/tmp/codex-home/pets/blink',
-        sourceKey: 'detected:abc',
+      previewHandle: {
+        kind: 'daemonSourceKey',
+        sourceKey: 'pet:0123456789abcdef0123456789abcdef',
       },
-      packagePath: '/tmp/codex-home/pets/blink',
-      spritesheetPath: '/tmp/codex-home/pets/blink/spritesheet.webp',
       mediaType: 'image/webp',
       digest: 'sha256:package',
       sizeBytes: 128,
     };
 
     expect(pets.DiscoveredPetPackageV1Schema.safeParse(discoveredPet).success).toBe(true);
+    expect(pets.DiscoveredPetPackageV1Schema.safeParse({
+      ...discoveredPet,
+      packagePath: '/tmp/codex-home/pets/blink',
+    }).success).toBe(false);
     expect(pets.DiscoveredPetPackageV1Schema.safeParse({
       ...discoveredPet,
       mediaType: 'image/png',
@@ -370,7 +387,7 @@ describe('pet protocol contract', () => {
       ok: true,
       packageFormat: 'codex-compatible-atlas-v1',
       manifest: discoveredPet.manifest,
-      spritesheetPath: discoveredPet.spritesheetPath,
+      spritesheetPath: '/tmp/codex-home/pets/blink/spritesheet.webp',
       mediaType: 'image/png',
       width: 1536,
       height: 1872,

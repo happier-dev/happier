@@ -34,7 +34,7 @@ export function createUiPetChooseAction(account: LazyActionAccountContext | null
             const override = input.deviceOverride;
             if (override.kind !== 'inherit') {
                 const source = storage.getState().localPetSourcesBySourceKey[override.sourceKey];
-                if (!source || source.source.kind !== override.kind) {
+                if (!source || source.kind !== override.kind) {
                     return { ok: false, errorCode: 'pet_not_found', error: 'pet_not_found' };
                 }
             }

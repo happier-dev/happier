@@ -133,19 +133,13 @@ const petManifest = {
 
 const detectedPet = {
     sourceKey: 'detected:blink-e2e-fixture',
+    kind: 'detectedCodexHome',
     petId: petManifest.id,
     displayName: petManifest.displayName,
+    description: petManifest.description,
+    originLabel: 'Codex home',
     packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
     manifest: petManifest,
-    source: {
-        kind: 'detectedCodexHome',
-        homeKind: 'user',
-        homePath: '/Users/tester/.codex',
-        packagePath: '/Users/tester/.codex/pets/blink-e2e-fixture',
-        sourceKey: 'detected:blink-e2e-fixture',
-    },
-    packagePath: '/Users/tester/.codex/pets/blink-e2e-fixture',
-    spritesheetPath: '/Users/tester/.codex/pets/blink-e2e-fixture/spritesheet.webp',
     mediaType: 'image/webp',
     digest: 'sha256:detected',
     sizeBytes: 128,
@@ -160,19 +154,13 @@ const alternatePetManifest = {
 
 const alternateDetectedPet = {
     sourceKey: 'detected:milo-e2e-fixture',
+    kind: 'detectedCodexHome',
     petId: alternatePetManifest.id,
     displayName: alternatePetManifest.displayName,
+    description: alternatePetManifest.description,
+    originLabel: 'Codex home',
     packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
     manifest: alternatePetManifest,
-    source: {
-        kind: 'detectedCodexHome',
-        homeKind: 'user',
-        homePath: '/Users/tester/.codex',
-        packagePath: '/Users/tester/.codex/pets/milo-e2e-fixture',
-        sourceKey: 'detected:milo-e2e-fixture',
-    },
-    packagePath: '/Users/tester/.codex/pets/milo-e2e-fixture',
-    spritesheetPath: '/Users/tester/.codex/pets/milo-e2e-fixture/spritesheet.webp',
     mediaType: 'image/webp',
     digest: 'sha256:alternate-detected',
     sizeBytes: 256,
@@ -180,14 +168,16 @@ const alternateDetectedPet = {
 
 const importedLocalPet = {
     sourceKey: 'managed:blink-e2e-fixture',
+    kind: 'happierManagedLocal',
     petId: petManifest.id,
     displayName: petManifest.displayName,
+    description: petManifest.description,
+    originLabel: 'This device',
     digest: 'sha256:managed',
     sizeBytes: 128,
     mediaType: 'image/webp',
-    source: {
-        kind: 'happierManagedLocal',
-        packagePath: '/Users/tester/.happy-dev/pets/imports/blink-e2e-fixture',
+    previewHandle: {
+        kind: 'daemonSourceKey',
         sourceKey: 'managed:blink-e2e-fixture',
     },
     manifest: petManifest,
@@ -195,9 +185,9 @@ const importedLocalPet = {
 
 const importedLocalPetMetadata = {
     sourceKey: importedLocalPet.sourceKey,
-    source: importedLocalPet.source,
+    kind: importedLocalPet.kind,
     displayName: importedLocalPet.displayName,
-    manifest: importedLocalPet.manifest,
+    petId: importedLocalPet.petId,
     mediaType: importedLocalPet.mediaType,
     digest: importedLocalPet.digest,
     sizeBytes: importedLocalPet.sizeBytes,
@@ -209,14 +199,16 @@ const importedLocalPetMetadata = {
 
 const alternateImportedLocalPet = {
     sourceKey: 'managed:milo-e2e-fixture',
+    kind: 'happierManagedLocal',
     petId: alternatePetManifest.id,
     displayName: alternatePetManifest.displayName,
+    description: alternatePetManifest.description,
+    originLabel: 'This device',
     digest: 'sha256:alternate-managed',
     sizeBytes: 256,
     mediaType: 'image/webp',
-    source: {
-        kind: 'happierManagedLocal',
-        packagePath: '/Users/tester/.happy-dev/pets/imports/milo-e2e-fixture',
+    previewHandle: {
+        kind: 'daemonSourceKey',
         sourceKey: 'managed:milo-e2e-fixture',
     },
     manifest: alternatePetManifest,
@@ -284,10 +276,18 @@ vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', ()
     ),
 }));
 
-vi.mock('@/utils/platform/desktopHost', () => ({
-    desktopHostKind: () => tauriDesktopState.current ? 'tauri' : null,
-    isDesktopHost: () => tauriDesktopState.current,
-}));
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => {
+    const { createDesktopHostModuleMock } = await import('@/dev/testkit/mocks/desktopHost');
+    return createDesktopHostModuleMock({
+        importOriginal,
+        overrides: {
+            desktopHostKind: () => tauriDesktopState.current ? 'tauri' : null,
+            isDesktopHost: () => tauriDesktopState.current,
+            getDesktopHostWindowLabel: () => null,
+            listenDesktopHostEvent: async () => () => {},
+        },
+    });
+});
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -1110,9 +1110,9 @@ describe('PetsSettingsScreen', () => {
         expect(upsertLocalPetSourcesSpy).toHaveBeenCalledWith([
             expect.objectContaining({
                 sourceKey: detectedPet.sourceKey,
-                source: detectedPet.source,
+                kind: detectedPet.kind,
                 displayName: detectedPet.displayName,
-                manifest: detectedPet.manifest,
+                petId: detectedPet.petId,
                 mediaType: detectedPet.mediaType,
                 digest: detectedPet.digest,
                 sizeBytes: detectedPet.sizeBytes,
@@ -1160,9 +1160,9 @@ describe('PetsSettingsScreen', () => {
         expect(upsertLocalPetSourcesSpy).toHaveBeenCalledWith([
             expect.objectContaining({
                 sourceKey: alternateImportedLocalPet.sourceKey,
-                source: alternateImportedLocalPet.source,
+                kind: alternateImportedLocalPet.kind,
                 displayName: alternateImportedLocalPet.displayName,
-                manifest: alternateImportedLocalPet.manifest,
+                petId: alternateImportedLocalPet.petId,
                 mediaType: alternateImportedLocalPet.mediaType,
                 digest: alternateImportedLocalPet.digest,
                 sizeBytes: alternateImportedLocalPet.sizeBytes,
@@ -1481,7 +1481,7 @@ describe('PetsSettingsScreen', () => {
         const staleManagedPet = {
             ...importedLocalPet,
             sourceKey: importedLocalPetMetadata.sourceKey,
-            source: importedLocalPetMetadata.source,
+            kind: importedLocalPetMetadata.kind,
         } satisfies ImportedLocalPetPackageV1;
         machineRpcWithServerScopeMock.mockImplementation(async (params: { method?: string }) => {
             if (params.method === PET_DAEMON_RPC_METHODS.READ_PREVIEW_ASSET) {

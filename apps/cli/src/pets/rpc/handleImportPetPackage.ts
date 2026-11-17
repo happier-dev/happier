@@ -154,7 +154,10 @@ export async function handleImportLocalPetPackage(
       digest: imported.digest,
       sizeBytes: imported.sizeBytes,
       mediaType: imported.mediaType,
-      source: imported.source,
+      kind: 'happierManagedLocal',
+      description: imported.manifest.description,
+      originLabel: 'This device',
+      previewHandle: { kind: 'daemonSourceKey', sourceKey },
       manifest: imported.manifest,
     },
   };

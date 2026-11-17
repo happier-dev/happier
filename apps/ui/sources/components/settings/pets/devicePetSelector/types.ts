@@ -1,16 +1,15 @@
 import type * as React from 'react';
-import type { PetPackageSourceV1 } from '@happier-dev/protocol/pets/source';
 
 import type { BuiltInPetPackage } from '@/components/pets/builtIns/builtInPetRegistry';
 import type { SelectedPetPackageSource } from '@/components/pets/source/resolveSelectedPetPackage';
-import type { LocalPetPreviewAsset } from '@/sync/domains/pets/localPetSourceTypes';
+import type { LocalPetPackageSource, LocalPetPreviewAsset } from '@/sync/domains/pets/localPetSourceTypes';
 
 export type LocalDevicePetSelectorItem = Readonly<{
     sourceKey: string;
     petId: string;
     displayName: string;
     selected: boolean;
-    source: Extract<PetPackageSourceV1, { kind: 'happierManagedLocal' }>;
+    source: LocalPetPackageSource & { kind: 'happierManagedLocal' };
     previewAsset: LocalPetPreviewAsset;
     sourceTestID: string;
     actions: React.ReactNode;
@@ -21,7 +20,7 @@ export type DetectedDevicePetSelectorItem = Readonly<{
     sourceKey: string;
     petId: string;
     displayName: string;
-    source: Extract<PetPackageSourceV1, { kind: 'detectedCodexHome' }>;
+    source: LocalPetPackageSource & { kind: 'detectedCodexHome' };
     previewAsset: LocalPetPreviewAsset;
     sourceTestID: string;
     previewTestID: string;
@@ -81,7 +80,7 @@ export type DevicePetTile = Readonly<
         subtitle: string;
         selected: boolean;
         pet: null;
-        source: Extract<PetPackageSourceV1, { kind: 'happierManagedLocal' }>;
+        source: LocalPetPackageSource & { kind: 'happierManagedLocal' };
         previewAsset: LocalPetPreviewAsset;
         actions: React.ReactNode;
         onPress: () => void;
@@ -113,7 +112,7 @@ export type DevicePetTile = Readonly<
         subtitle: string;
         selected: false;
         pet: null;
-        source: Extract<PetPackageSourceV1, { kind: 'detectedCodexHome' }>;
+        source: LocalPetPackageSource & { kind: 'detectedCodexHome' };
         previewAsset: LocalPetPreviewAsset;
         actions: React.ReactNode;
         onPress?: () => void;

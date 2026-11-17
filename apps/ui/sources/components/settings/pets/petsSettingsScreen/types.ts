@@ -8,17 +8,17 @@ import type { z } from 'zod/mini';
 import type {
     PetEnabledOverrideSchema,
 } from '@/sync/domains/settings/registry/local/localSettingDefinitions.activitySurfaces';
-import type { LocalPetPreviewAsset } from '@/sync/domains/pets/localPetSourceTypes';
+import type { LocalPetPackageSource, LocalPetPreviewAsset } from '@/sync/domains/pets/localPetSourceTypes';
 import type { PetDeviceOverrideV1 } from '@happier-dev/protocol/pets/selection';
 
 export type PetEnabledOverride = z.infer<typeof PetEnabledOverrideSchema>;
 
 export type ManagedLocalPet = (ImportedLocalPetPackageV1 | DiscoveredPetPackageV1) & {
-    source: Extract<DiscoveredPetPackageV1['source'], { kind: 'happierManagedLocal' }>;
+    kind: 'happierManagedLocal';
 };
 
 export type DetectedPet = DiscoveredPetPackageV1 & {
-    source: Extract<DiscoveredPetPackageV1['source'], { kind: 'detectedCodexHome' }>;
+    kind: 'detectedCodexHome';
 };
 
 export type PetImportCandidate = DiscoveredPetPackageV1 | ImportedLocalPetPackageV1;
@@ -27,7 +27,7 @@ export type LocalDevicePetRow = Readonly<{
     sourceKey: string;
     petId: string;
     displayName: string;
-    source: Extract<DiscoveredPetPackageV1['source'], { kind: 'happierManagedLocal' }>;
+    source: LocalPetPackageSource & { kind: 'happierManagedLocal' };
     previewAsset: LocalPetPreviewAsset;
 }>;
 

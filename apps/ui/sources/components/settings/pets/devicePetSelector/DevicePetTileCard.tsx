@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { PetPackageSourceV1 } from '@happier-dev/protocol/pets/source';
 
 import {
     DEFAULT_BUILT_IN_PET_ID,
@@ -13,7 +12,7 @@ import { usePetSpritesheetSourceResult } from '@/components/pets/render/usePetSp
 import type { SelectedPetPackageSource } from '@/components/pets/source/resolveSelectedPetPackage';
 import { Text } from '@/components/ui/text/Text';
 import { normalizePetCompanionSizeScale } from '@/sync/domains/pets/companionSizeScale';
-import type { LocalPetPreviewAsset } from '@/sync/domains/pets/localPetSourceTypes';
+import type { LocalPetPackageSource, LocalPetPreviewAsset } from '@/sync/domains/pets/localPetSourceTypes';
 
 import {
     DEVICE_PET_PREVIEW_HEIGHT,
@@ -138,7 +137,7 @@ function BuiltInPetPreview(props: Readonly<{
 }
 
 type DaemonPreviewSource =
-    | Extract<PetPackageSourceV1, { kind: 'detectedCodexHome' | 'happierManagedLocal' }>
+    | LocalPetPackageSource
     | Extract<SelectedPetPackageSource, { kind: 'accountPet' }>;
 
 function resolveDaemonPreviewSource(

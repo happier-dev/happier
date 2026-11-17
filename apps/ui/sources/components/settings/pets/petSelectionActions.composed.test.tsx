@@ -24,10 +24,11 @@ import { createCliActionExecutor } from '../../../../../cli/src/session/actions/
 import { createActionSettingsProvider } from '../../../../../cli/src/settings/actionsSettingsProvider';
 
 const routerPush = vi.hoisted(() => vi.fn());
+const confirmAction = vi.hoisted(() => vi.fn(async () => false));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: { confirm: confirmAction } }).module);
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push: routerPush } }).module);
 vi.mock('socket.io-client', async importOriginal =>
@@ -40,13 +41,14 @@ const { createUiClientActionReverseHandler } = await import('@/sync/ops/actions/
 const { useSelectedPetPackage } = await import('@/components/pets/source/useSelectedPetPackage');
 const originalState = storage.getState();
 const originalAuth = getCurrentAuth();
-afterEach(() => { standardCleanup(); setCurrentAuth(originalAuth); storage.setState(originalState, true); routerPush.mockClear(); });
+afterEach(() => { standardCleanup(); setCurrentAuth(originalAuth); storage.setState(originalState, true); routerPush.mockClear(); confirmAction.mockReset(); confirmAction.mockResolvedValue(false); });
 
 const manifest = { id: 'local-cat', displayName: 'Local cat', description: 'A local cat companion.', spritesheetPath: 'spritesheet.webp' };
 const localPet = ImportedLocalPetPackageV1Schema.parse({ sourceKey: 'managed:local-cat', petId: manifest.id,
     displayName: manifest.displayName, manifest,
-    source: { kind: 'happierManagedLocal', sourceKey: 'managed:local-cat', packagePath: '/pets/local-cat' },
-    packagePath: '/pets/local-cat', spritesheetPath: '/pets/local-cat/spritesheet.webp', mediaType: 'image/webp', digest: 'sha256:local', sizeBytes: 100 });
+    kind: 'happierManagedLocal', description: manifest.description, originLabel: 'This device',
+    previewHandle: { kind: 'daemonSourceKey', sourceKey: 'managed:local-cat' },
+    mediaType: 'image/webp', digest: 'sha256:local', sizeBytes: 100 });
 const accountPet = AccountPetLibraryEntryV1Schema.parse({ accountPetId: 'account-cat', packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1, manifest,
     spritesheetAssetRef: { assetId: 'asset-cat', mediaType: 'image/webp', digest: 'sha256:account', sizeBytes: 100 },
     digest: 'sha256:account', sizeBytes: 100, createdAt: 1, updatedAt: 1, origin: { kind: 'manualImport' } });
@@ -99,15 +101,14 @@ describe('pet selection through the canonical Action', () => {
             await decideApprovalAsInbox(account.scope.serverId, agentApproval.artifactId, 'reject');
             expect(account.settingsWrites).toEqual([]);
             await act(async () => { void choose(); });
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(2));
+            await vi.waitFor(() => expect(confirmAction).toHaveBeenCalledTimes(1));
             expect(storage.getState().localSettings.petsSelectedPetOverride).toEqual(initialOverride);
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[1]!.id, 'reject');
             expect(account.settingsWrites).toEqual([]);
             expect(storage.getState().localSettings.petsSelectedPetOverride).toEqual(initialOverride);
+            confirmAction.mockResolvedValue(true);
             await act(async () => { void choose(); });
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(3));
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[2]!.id, 'approve');
             await vi.waitFor(() => expect(account.persistedSettings.petsSelectedPetRef).toEqual({ kind: 'builtIn', petId: 'milo' }));
+            expect(confirmAction).toHaveBeenCalledTimes(2);
             expect(storage.getState().localSettings.petsSelectedPetOverride).toEqual({ kind: 'inherit' });
             expect(selected.getCurrent().source).toMatchObject({ kind: 'builtIn', petId: 'milo' });
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,
@@ -116,7 +117,8 @@ describe('pet selection through the canonical Action', () => {
             await screen.pressByTestIdAsync('settings-pets-built-in-source-fury');
             await vi.waitFor(() => expect(account.persistedSettings.petsSelectedPetRef).toEqual({ kind: 'builtIn', petId: 'fury' }));
             expect(account.persistedSettings.petsEnabled).toBe(true);
-            expect(account.artifacts.list()).toHaveLength(3);
+            expect(account.artifacts.list()).toHaveLength(1);
+            expect(confirmAction).toHaveBeenCalledTimes(2);
         } finally { standardCleanup(); await account.dispose(); }
     });
 
@@ -184,9 +186,9 @@ describe('pet selection through the canonical Action', () => {
                 actionsSettingsV1: { v: 1, actions: { 'ui.pet.choose': { approvalRequiredSurfaces: ['ui'] } } },
             })); });
             await screen.pressByTestIdAsync('settings-pets-remove-from-device-local-cat');
-            await vi.waitFor(() => expect(account.artifacts.list()).toHaveLength(1));
+            await vi.waitFor(() => expect(confirmAction).toHaveBeenCalledTimes(1));
             expect(storage.getState().localPetSourcesBySourceKey[localPet.sourceKey]).toBeDefined();
-            await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'reject');
+            expect(account.artifacts.list()).toEqual([]);
             expect(storage.getState().localPetSourcesBySourceKey[localPet.sourceKey]).toBeDefined();
             expect(storage.getState().localSettings.petsSelectedPetOverride).toEqual({ kind: 'happierManagedLocal', sourceKey: localPet.sourceKey });
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings,

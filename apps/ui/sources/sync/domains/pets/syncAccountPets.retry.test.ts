@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
@@ -21,15 +22,18 @@ it('rejects a transient currentness transport failure and applies the next autho
     const failure = new TypeError('Failed to fetch');
     const request = vi.fn(async (path: string) => new Response(JSON.stringify(
         path === '/v1/account/encryption/currentness'
-            ? { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }
+            ? createPlainAccountEncryptionCurrentnessFixture({ updatedAt: 1 })
             : { ok: true, pets: [] },
     ), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     request.mockRejectedValueOnce(failure);
     const applyAccountPets = vi.fn();
-    const params = { credentials: { token: 'token', secret: 'secret' }, request, applyAccountPets };
+    const setAccountPetsStatus = vi.fn();
+    const params = { setAccountPetsStatus, credentials: { token: 'token' }, request, applyAccountPets };
 
     await expect(fetchAndApplyAccountPets(params)).rejects.toBe(failure);
     expect(applyAccountPets).not.toHaveBeenCalled();
+    expect(setAccountPetsStatus).toHaveBeenLastCalledWith('unavailable');
     await expect(fetchAndApplyAccountPets(params)).resolves.toEqual({ status: 'applied', count: 0 });
     expect(applyAccountPets).toHaveBeenCalledWith([]);
+    expect(setAccountPetsStatus).toHaveBeenLastCalledWith('ready');
 });

@@ -36,15 +36,21 @@ export const PetDiscoveryDiagnosticV1Schema = lazyZodSchema(() => z.looseObject(
 
 export type PetDiscoveryDiagnosticV1 = z.infer<typeof PetDiscoveryDiagnosticV1Schema>;
 
-export const DiscoveredPetPackageV1Schema = lazyZodSchema(() => z.looseObject({
+const PetSourcePreviewHandleV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('daemonSourceKey'),
     sourceKey: z.string().check(z.minLength(1), z.maxLength(500)),
+  }));
+
+export const DiscoveredPetPackageV1Schema = lazyZodSchema(() => z.strictObject({
+    sourceKey: z.string().check(z.minLength(1), z.maxLength(500)),
+    kind: z.enum(PetPackageSourceV1Schema.def.options.map((source) => source.shape.kind.def.values[0])),
     petId: z.string().check(z.minLength(1), z.maxLength(200)),
     displayName: z.string().check(z.minLength(1), z.maxLength(200)),
+    description: PetPackageManifestV1Schema.shape.description,
+    originLabel: z.string().check(z.minLength(1), z.maxLength(200)),
     packageFormat: z.literal(PET_PACKAGE_FORMAT_CODEX_ATLAS_V1),
     manifest: PetPackageManifestV1Schema,
-    source: PetPackageSourceV1Schema,
-    packagePath: z.string().check(z.minLength(1), z.maxLength(10_000)),
-    spritesheetPath: z.string().check(z.minLength(1), z.maxLength(10_000)),
+    previewHandle: z.optional(PetSourcePreviewHandleV1Schema),
     mediaType: PetAssetMediaTypeV1Schema,
     digest: z.optional(z.string().check(z.minLength(1), z.maxLength(500))),
     sizeBytes: z.optional(z.number().check(z.int(), z.minimum(0))),
@@ -157,14 +163,17 @@ export const DaemonPetImportLocalPackageRequestV1Schema = lazyZodSchema(() => z
 
 export type DaemonPetImportLocalPackageRequestV1 = z.infer<typeof DaemonPetImportLocalPackageRequestV1Schema>;
 
-export const ImportedLocalPetPackageV1Schema = lazyZodSchema(() => z.looseObject({
-    sourceKey: z.string().check(z.minLength(1), z.maxLength(500)),
-    petId: z.string().check(z.minLength(1), z.maxLength(200)),
-    displayName: z.string().check(z.minLength(1), z.maxLength(200)),
+export const ImportedLocalPetPackageV1Schema = lazyZodSchema(() => z.strictObject({
+    sourceKey: DiscoveredPetPackageV1Schema.shape.sourceKey,
+    kind: z.literal('happierManagedLocal'),
+    petId: DiscoveredPetPackageV1Schema.shape.petId,
+    displayName: DiscoveredPetPackageV1Schema.shape.displayName,
+    description: DiscoveredPetPackageV1Schema.shape.description,
+    originLabel: DiscoveredPetPackageV1Schema.shape.originLabel,
     digest: z.string().check(z.minLength(1), z.maxLength(500)),
     sizeBytes: z.number().check(z.int(), z.minimum(0)),
     mediaType: PetAssetMediaTypeV1Schema,
-    source: PetPackageSourceV1Schema,
+    previewHandle: PetSourcePreviewHandleV1Schema,
     manifest: PetPackageManifestV1Schema,
   }).check(z.superRefine((value, ctx) => {
     appendCanonicalPetSpritesheetMediaTypeIssueV1({

@@ -17,14 +17,19 @@ export function useSelectedPetPackage(): ResolveSelectedPetPackageResult {
     const petsSelectedPetRef = useSetting('petsSelectedPetRef');
     const petsEnabledOverride = useLocalSetting('petsEnabledOverride');
     const petsSelectedPetOverride = useLocalSetting('petsSelectedPetOverride');
-    const accountPetsById = storage((state) => state.accountPetsById);
-    const localPetSourcesBySourceKey = storage((state) => state.localPetSourcesBySourceKey);
+    const accountPet = storage((state) => petsSelectedPetRef.kind === 'accountPet'
+        ? state.accountPetsById[petsSelectedPetRef.accountPetId]
+        : undefined);
+    const localPetSource = storage((state) => petsSelectedPetOverride.kind === 'detectedCodexHome'
+        || petsSelectedPetOverride.kind === 'happierManagedLocal'
+        ? state.localPetSourcesBySourceKey[petsSelectedPetOverride.sourceKey]
+        : undefined);
     const companionDecision = useFeatureDecision('pets.companion');
     const syncDecision = useFeatureDecision('pets.sync');
 
     return React.useMemo(() => {
         const accountPetSources = new Map<string, SelectedPetPackageSource>(
-            Object.values(accountPetsById ?? {}).map((pet) => [
+            (accountPet ? [accountPet] : []).map((pet) => [
                 pet.accountPetId,
                 {
                     kind: 'accountPet' as const,
@@ -37,15 +42,15 @@ export function useSelectedPetPackage(): ResolveSelectedPetPackageResult {
         );
         const detectedCodexHomeBySourceKey = new Map<string, SelectedPetPackageSource>();
         const happierManagedLocalBySourceKey = new Map<string, SelectedPetPackageSource>();
-        for (const source of Object.values(localPetSourcesBySourceKey ?? {})) {
+        for (const source of localPetSource ? [localPetSource] : []) {
             const entry = {
-                kind: source.source.kind,
+                kind: source.kind,
                 sourceKey: source.sourceKey,
                 mediaType: source.mediaType,
                 digest: source.digest ?? undefined,
                 daemonTarget: source.daemonTarget,
             };
-            if (source.source.kind === 'detectedCodexHome') {
+            if (source.kind === 'detectedCodexHome') {
                 detectedCodexHomeBySourceKey.set(source.sourceKey, entry);
             } else {
                 happierManagedLocalBySourceKey.set(source.sourceKey, entry);
@@ -72,9 +77,9 @@ export function useSelectedPetPackage(): ResolveSelectedPetPackageResult {
             },
         });
     }, [
-        accountPetsById,
+        accountPet,
         companionDecision,
-        localPetSourcesBySourceKey,
+        localPetSource,
         petsEnabled,
         petsEnabledOverride,
         petsSelectedPetOverride,

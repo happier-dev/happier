@@ -1,24 +1,5 @@
-import type { PetPackageDiscoveryCache } from '../discovery/petPackageDiscoveryCache';
-
-type PetPackageDiscoveryCacheEntry = NonNullable<ReturnType<PetPackageDiscoveryCache['get']>>;
-
-export type DiscoveredPetPackageDto = Readonly<{
-  sourceKey: string;
-  kind: PetPackageDiscoveryCacheEntry['source']['kind'];
-  petId: string;
-  displayName: string;
-  description: string;
-  originLabel: string;
-  packageFormat: PetPackageDiscoveryCacheEntry['packageFormat'];
-  manifest: PetPackageDiscoveryCacheEntry['manifest'];
-  previewHandle: Readonly<{
-    kind: 'daemonSourceKey';
-    sourceKey: string;
-  }>;
-  mediaType: PetPackageDiscoveryCacheEntry['mediaType'];
-  digest?: string;
-  sizeBytes?: number;
-}>;
+import type { DiscoveredPetPackageV1 } from '@happier-dev/protocol/pets/daemonRpc';
+import type { PetPackageDiscoveryCacheEntry } from '../discovery/petPackageDiscoveryCache';
 
 function originLabelForSource(source: PetPackageDiscoveryCacheEntry['source']): string {
   if (source.kind === 'happierManagedLocal') return 'This device';
@@ -26,7 +7,7 @@ function originLabelForSource(source: PetPackageDiscoveryCacheEntry['source']): 
   return 'Codex home';
 }
 
-export function toDiscoveredPetPackageDto(entry: PetPackageDiscoveryCacheEntry): DiscoveredPetPackageDto {
+export function toDiscoveredPetPackageDto(entry: PetPackageDiscoveryCacheEntry): DiscoveredPetPackageV1 {
   return {
     sourceKey: entry.sourceKey,
     kind: entry.source.kind,

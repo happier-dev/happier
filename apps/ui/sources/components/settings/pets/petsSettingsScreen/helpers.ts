@@ -51,21 +51,21 @@ export function upsertByKey<T>(rows: readonly T[], next: T, readKey: (row: T) =>
 }
 
 export const isManagedLocalPet = (pet: ImportedLocalPetPackageV1 | DiscoveredPetPackageV1): pet is ManagedLocalPet =>
-    pet.source.kind === 'happierManagedLocal';
-export const isDetectedPet = (pet: DiscoveredPetPackageV1): pet is DetectedPet => pet.source.kind === 'detectedCodexHome';
+    pet.kind === 'happierManagedLocal';
+export const isDetectedPet = (pet: DiscoveredPetPackageV1): pet is DetectedPet => pet.kind === 'detectedCodexHome';
 
 export function metadataToLocalPetRow(source: LocalPetSourceMetadata): LocalDevicePetRow | null {
-    if (source.source.kind !== 'happierManagedLocal') return null;
+    if (source.kind !== 'happierManagedLocal') return null;
     return {
         sourceKey: source.sourceKey,
-        petId: source.manifest.id,
+        petId: source.petId,
         displayName: source.displayName,
-        source: source.source,
+        source: { kind: source.kind, sourceKey: source.sourceKey },
         previewAsset: {
             sourceKey: source.sourceKey,
             mediaType: source.mediaType,
-            digest: source.digest,
-            sizeBytes: source.sizeBytes,
+            digest: source.digest ?? null,
+            sizeBytes: source.sizeBytes ?? null,
             target: source.daemonTarget,
         },
     };
@@ -79,7 +79,7 @@ export function managedPetToLocalPetRow(
         sourceKey: pet.sourceKey,
         petId: pet.petId,
         displayName: pet.displayName,
-        source: pet.source,
+        source: { kind: pet.kind, sourceKey: pet.sourceKey },
         previewAsset: {
             sourceKey: pet.sourceKey,
             mediaType: pet.mediaType,
@@ -92,12 +92,9 @@ export function managedPetToLocalPetRow(
 
 export function buildImportPayload(
     candidate: PetImportCandidate | null,
-): Pick<DaemonPetImportLocalPackageRequestV1, 'sourceKey' | 'packagePath'> | null {
+): Pick<DaemonPetImportLocalPackageRequestV1, 'sourceKey'> | null {
     if (!candidate) return null;
-    if (candidate.sourceKey) return { sourceKey: candidate.sourceKey };
-    const packagePath = 'packagePath' in candidate ? candidate.packagePath : null;
-    if (typeof packagePath === 'string' && packagePath.length > 0) return { packagePath };
-    return null;
+    return { sourceKey: candidate.sourceKey };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

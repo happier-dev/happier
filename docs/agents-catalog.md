@@ -2237,6 +2237,15 @@ for connected-service profile/group enumeration. Custody stops at the home:
 intentional shared-state symlinks inside it remain supported. This does not add a
 second native-home catalog or require a daemon merely to discover local pets.
 
+Pet package discovery in 0.3 development returns the Protocol-owned redacted
+discovery DTO: presentation metadata, package manifest, source kind and opaque
+`sourceKey`/preview handle. Absolute Codex-home, package and spritesheet paths stay
+with the daemon's discovery/cache and managed-import owners. The UI stores the
+redacted metadata with its existing server/Machine target, and uses `sourceKey`
+for import and preview requests. Local imports return the same redacted source
+identity; they do not publish the managed destination path. The manifest's
+package-relative spritesheet name remains part of the package format.
+
 External Sessions Browse in 0.3 development source pages each Agent source in
 newest-activity-first order from a cheap per-row fact: one stat pass over the
 native store (rollout or transcript mtime) or the provider's own recency column.

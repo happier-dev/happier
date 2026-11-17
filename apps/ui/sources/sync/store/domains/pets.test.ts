@@ -58,6 +58,17 @@ describe("createPetsDomain", () => {
         persistSet.mockRestore();
         persistDelete.mockRestore();
     });
+    it('settles an initially pending empty library and makes failures observable', async () => {
+        const { createPetsDomain } = await import('./pets');
+        const store = createStore<ReturnType<typeof createPetsDomain>>()((set, get) => createPetsDomain({ set, get }));
+        expect(store.getState().accountPetsStatus).toBe('pending');
+        store.getState().applyAccountPets([]);
+        expect(store.getState().accountPetsStatus).toBe('ready');
+        store.getState().setAccountPetsStatus('unavailable');
+        expect(store.getState().accountPetsStatus).toBe('unavailable');
+        store.getState().applyAccountPets([]);
+        expect(store.getState().accountPetsStatus).toBe('ready');
+    });
     beforeEach(() => {
         persistedStore.clear();
     });
@@ -89,18 +100,9 @@ describe("createPetsDomain", () => {
     function localMetadata(sourceKey: string): LocalPetSourceMetadata {
         return {
             sourceKey,
-            source: {
-                kind: "happierManagedLocal",
-                packagePath: "/Users/tester/.happy-dev/pets/imports/blink",
-                sourceKey,
-            },
+            kind: "happierManagedLocal",
             displayName: "Blink local",
-            manifest: {
-                id: "blink-local",
-                displayName: "Blink local",
-                description: "Imported from Codex.",
-                spritesheetPath: "spritesheet.webp",
-            },
+            petId: "blink-local",
             mediaType: "image/webp",
             digest: "sha256:local",
             sizeBytes: 256,
@@ -182,6 +184,31 @@ describe("createPetsDomain", () => {
             bytes: expect.anything(),
             spritesheetBytes: expect.anything(),
         }));
+    });
+
+    it('retains predecessor and former 0.3 local selections while persisting only redacted metadata', async () => {
+        const current = localMetadata('current');
+        // ../0.2 4ac21ea224781a9ee796064d8c07391f5be94d0e persistence.ts
+        // permits omitted asset facts; these entries must survive a UI upgrade.
+        const predecessor = { kind: 'happierManagedLocal', sourceKey: 'predecessor',
+            petId: 'blink', displayName: 'Blink', daemonTarget: current.daemonTarget };
+        const former = { ...current, sourceKey: 'former', kind: undefined, petId: undefined,
+            source: { kind: 'happierManagedLocal', sourceKey: 'former', packagePath: '/private/pets/blink' },
+            manifest: { id: 'blink-local', displayName: 'Blink local', description: 'Imported pet', spritesheetPath: 'spritesheet.webp' } };
+        persistedStore.set('local-pet-sources-v1', JSON.stringify({ predecessor, former,
+            mismatched: { ...former, sourceKey: 'mismatched' } }));
+        const { getState } = await createState();
+        const loaded = getState().localPetSourcesBySourceKey;
+        expect(loaded.predecessor).toEqual(predecessor);
+        expect(loaded.former).toEqual({ ...current, sourceKey: 'former' });
+        expect(loaded.mismatched).toBeUndefined();
+        expect(JSON.stringify(loaded)).not.toContain('/private/');
+
+        getState().upsertLocalPetSources([current]);
+        const saved = JSON.parse(persistedStore.get('local-pet-sources-v1') ?? '{}');
+        expect(saved).toEqual({ predecessor, former: { ...current, sourceKey: 'former' }, current });
+        const reloaded = await createState();
+        expect(reloaded.getState().localPetSourcesBySourceKey).toEqual(saved);
     });
 
     it("removes local pet source metadata by source key", async () => {

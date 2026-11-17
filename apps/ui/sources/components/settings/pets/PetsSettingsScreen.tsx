@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { DaemonPetDiscoverResponseV1Schema, DaemonPetForgetLocalPackageResponseV1Schema, DaemonPetImportLocalPackageResponseV1Schema, DaemonPetImportResponseV1Schema, PET_DAEMON_RPC_METHODS, ImportedLocalPetPackageV1Schema, type DaemonPetDiscoverRequestV1, type DaemonPetForgetLocalPackageRequestV1, type DaemonPetImportAccountPackageRequestV1, type DaemonPetImportLocalPackageRequestV1, type DiscoveredPetPackageV1, type ImportedLocalPetPackageV1 } from '@happier-dev/protocol/pets/daemonRpc';
+import { DaemonPetDiscoverResponseV1Schema, DaemonPetForgetLocalPackageResponseV1Schema, DaemonPetImportLocalPackageResponseV1Schema, DaemonPetImportResponseV1Schema, PET_DAEMON_RPC_METHODS, type DaemonPetDiscoverRequestV1, type DaemonPetForgetLocalPackageRequestV1, type DaemonPetImportAccountPackageRequestV1, type DaemonPetImportLocalPackageRequestV1, type DiscoveredPetPackageV1, type ImportedLocalPetPackageV1 } from '@happier-dev/protocol/pets/daemonRpc';
 import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
 
 import type { SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -287,12 +287,7 @@ export function PetsSettingsScreen() {
                 });
                 return;
             }
-            const importedPetResult = ImportedLocalPetPackageV1Schema.safeParse(parsed.importedPet);
-            if (!importedPetResult.success || importedPetResult.data.source.kind !== 'happierManagedLocal') {
-                setLocalImportDiagnostic({ code: 'invalid_response' });
-                return;
-            }
-            const importedPet = importedPetResult.data;
+            const importedPet = parsed.importedPet;
             forgottenLocalPetSourceKeysRef.current.delete(importedPet.sourceKey);
             setImportedLocalPets((pets) => upsertByKey(pets, importedPet, (pet) => pet.sourceKey));
             setImportedLocalPetsTargetKey(targetKey);

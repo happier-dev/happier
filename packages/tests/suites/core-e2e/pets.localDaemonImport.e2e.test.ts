@@ -246,7 +246,9 @@ describe('core e2e: pets local daemon import', () => {
       }));
       const detected = discover.pets.find((pet) => pet.petId === 'blink-e2e-fixture') ?? null;
       expect(detected).not.toBeNull();
-      expect(detected?.source.kind).toBe('detectedCodexHome');
+      expect(detected?.kind).toBe('detectedCodexHome');
+      expect(detected).not.toHaveProperty('source');
+      expect(detected).not.toHaveProperty('packagePath');
 
       const importedPet = requireImportedLocalPet(await callMachineRpc({
         ui,
@@ -259,8 +261,10 @@ describe('core e2e: pets local daemon import', () => {
         timeoutMs: 45_000,
       }));
       expect(importedPet.petId).toBe('blink-e2e-fixture');
-      expect(importedPet.source.kind).toBe('happierManagedLocal');
-      expect(importedPet.source.packagePath).not.toBe(detected?.source.packagePath);
+      expect(importedPet.kind).toBe('happierManagedLocal');
+      expect(importedPet.sourceKey).not.toBe(detected?.sourceKey);
+      expect(importedPet).not.toHaveProperty('source');
+      expect(importedPet).not.toHaveProperty('packagePath');
 
       const preview = requirePreviewAsset(await callMachineRpc({
         ui,
