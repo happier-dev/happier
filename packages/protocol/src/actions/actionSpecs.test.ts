@@ -452,6 +452,8 @@ const TEAM_DEFERRED_APPROVAL_REPLAY_SAFE_ACTION_ID_SET = new Set(
 );
 const WORKFLOW_READ_ACTION_ID_SET = new Set([
   'workflow.validate',
+  'workflow.subjects.list',
+  'workflow.activity.list',
   'workflow.definition.list',
   'workflow.definition.get',
   'workflow.definition.import',
@@ -3142,8 +3144,8 @@ describe('Action Spec Registry', () => {
         ...resolveRuntimeActionSurfaces(id as RuntimeActionIdV1),
         // The family now declares actual native-control ingress separately
         // from the generic runtime UI/Agent backing default.
-        ...(serviceFrontDoor ? { rpc: !answeringClient, cli: !answeringClient, voice: !answeringClient } : {}),
-        ...(domainRpc ? { cli: true, voice: true } : {}),
+        ...(serviceFrontDoor ? { rpc: true, cli: true, voice: !answeringClient } : {}),
+        ...(domainRpc ? { cli: true, voice: !answeringClient, ...(answeringClient ? { rpc: false } : {}) } : {}),
         ...(id === 'projects.service.relocate' ? { cli: true } : {}),
         ...(domainRpc || (serviceFrontDoor && !answeringClient) ? { mcp: true } : {}),
         ...(publicProjection && spec.requiredAuthority === 'present_user' ? { agent: true, mcp: true } : {}),
@@ -4394,14 +4396,18 @@ describe('Action Spec Registry', () => {
     expect(spec.inputSchema.safeParse({ ...canonicalSessionSpawnInput, ...legacyField }).success).toBe(false);
   });
 
+  it('requires a canonical directory for Session creation', () => {
+    expect(getActionSpec('session.spawn_new').inputSchema.safeParse({
+      ...canonicalSessionSpawnInput, directory: undefined,
+    }).success).toBe(false);
+  });
+
   it.each([
     ['execution target', { ...canonicalSessionSpawnInput, executionTarget: undefined }],
-    ['directory', { ...canonicalSessionSpawnInput, directory: undefined }],
     ['Agent target', { ...canonicalSessionSpawnInput, agentTarget: undefined }],
-  ] as const)('requires canonical %s for Session creation', (_label, input) => {
-    const spec = getActionSpec('session.spawn_new');
-
-    expect(spec.inputSchema.safeParse(input).success).toBe(false);
+  ] as const)('preserves an omitted %s for creation-default resolution', (_label, input) => {
+    const parsed = getActionSpec('session.spawn_new').inputSchema.parse(input);
+    expect(parsed).toEqual(input);
   });
 
   it('advertises dynamic option sources for rich session.spawn_new fields', () => {

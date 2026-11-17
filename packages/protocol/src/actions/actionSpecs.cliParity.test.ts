@@ -8,13 +8,17 @@ const clientOperations = [
   'machines.pairing.create', 'machines.managed.bootstrap.respond', 'homes.connect', 'homes.reconnect',
   'machines.local.service.status', 'machines.local.service.start', 'machines.local.service.stop',
   'machines.local.service.restart', 'machines.local.service.autostart.set', 'machines.local.service.update',
-  'machines.local.service.disconnect', 'plugins.permissions.grants.list', 'plugins.permissions.grants.revoke',
+  'machines.local.service.disconnect', 'plugins.permissions.grants.list',
   'plugins.sessionHooks.status.get',
 ] as const satisfies readonly ActionId[];
 
 describe('CLI parity for existing UI operations', () => {
   it.each(clientOperations)('advertises %s through its canonical CLI projection', id => {
     expect(getSerializedActionSpecForSurface({ id, surface: 'cli' })).toMatchObject({ id, surfaces: { cli: true } });
+  });
+
+  it('keeps host-stamped plugin self-revocation out of the standalone CLI catalog', () => {
+    expect(getSerializedActionSpecForSurface({ id: 'plugins.permissions.grants.revoke', surface: 'cli' })).toBeNull();
   });
 
   // 58d §D3: these operations need the answering App's SSH/setup owner;

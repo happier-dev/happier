@@ -94,6 +94,11 @@ describe('UI operation operands in public Action discovery', () => {
   it.each(operands)('elicits the declared operands for %s on Agent, MCP and CLI', (id, paths) => {
     for (const surface of ['agent', 'mcp', 'cli'] as const) {
       const definition = getSerializedActionSpecForSurface({ id, surface });
+      if (id === 'plugins.permissions.grants.revoke' && surface === 'cli') {
+        // Self-revocation needs the mounted plugin caller's host-stamped provenance.
+        expect(definition).toBeNull();
+        continue;
+      }
       expect(definition, `${surface}: ${id}`).not.toBeNull();
       expect(definition?.inputHints?.fields.map(field => field.path), `${surface}: ${id}`)
         .toEqual(expect.arrayContaining([...paths]));

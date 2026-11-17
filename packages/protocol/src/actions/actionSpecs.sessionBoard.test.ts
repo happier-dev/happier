@@ -64,9 +64,9 @@ describe('Session Board Action catalog rows', () => {
         plugin: true,
       });
       expect(spec.bindings?.mcpToolName, actionId).toBeTruthy();
-      // Native Agents receive the same canonical Action tools as MCP; exact-Home
-      // feature admission and shared Action settings still gate advertisement.
-      expect(getDefaultActionToolExposureMode(spec, 'agent'), actionId).toBe('direct');
+      // Board tools remain discoverable outside the default nine-tool core;
+      // exact-Home feature admission and shared Action settings still apply.
+      expect(getDefaultActionToolExposureMode(spec, 'agent'), actionId).toBe('discoverable_only');
     }
   });
 
