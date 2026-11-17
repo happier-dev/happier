@@ -1180,6 +1180,43 @@ describe('SessionView (direct sessions)', () => {
     expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['codex', { kind: 'codexHome', home: 'user' }, 'native_prevention', true],
+    ['muse', { kind: 'museNative', museHome: null }, 'unsupported', false],
+  ] as const)('projects takeover preflight for a completed %s import according to writer safety', async (agentId, source, writerSafety, offered) => {
+    const session = storageState.sessions.s1;
+    session.currentStorageState = 'snapshot_complete';
+    session.publishedThroughServerSeq = 1;
+    session.materializedThroughSourceAt = Date.now();
+    session.metadata.flavor = agentId;
+    session.metadata.externalSessionV1 = { ...session.metadata.externalSessionV1, agentId, source };
+    const identity = { pluginId: `happier.agent.${agentId}`, localId: agentId };
+    const projection = PluginProjectionV2Schema.parse({
+      v: 2,
+      generation: 42,
+      familiesById: {},
+      agentsById: { [agentId]: { id: agentId, identity, externalSessions: {
+        agent: identity,
+        generation: 42,
+        operations: { listCandidates: true, resolveLinkIdentity: true, pageTranscript: true, readAfterTranscript: true },
+        sources: [{
+          sourceKind: source.kind,
+          schema: { fields: [{ kind: 'literal', name: 'kind', value: source.kind }] },
+          key: { segments: [{ kind: 'literal', value: source.kind }] },
+        }],
+        writerSafety,
+      } } },
+    });
+    daemonMergedProjectionState.current = { phase: 'ready', inputs: { pluginProjectionById: {}, pluginProjectionV2: projection } };
+
+    await renderSessionView();
+
+    const footer = findWarningActionBannerProps('session-chatFooter-externalControl');
+    expect(footer).toBeDefined();
+    expect(footer?.actionTestID).toBe(offered ? 'session-chatFooter-takeOverDirect' : undefined);
+    expect(machineExternalSessionStatusGetSpy).not.toHaveBeenCalled();
+  });
+
   it('keeps the external control footer reference stable across unrelated shell renders', async () => {
     let forceShellRender: (() => void) | null = null;
     function ShellRenderHarness() {

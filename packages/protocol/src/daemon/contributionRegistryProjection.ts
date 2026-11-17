@@ -177,6 +177,7 @@ import {
 import { PluginAgentCliMetadataSchema } from '../plugins/contributions/agentCliMetadata.js';
 import { PluginOptionalStringSchema } from '../plugins/_shared.js';
 import {
+  PluginAgentExternalLinkedTakeoverWriterSafetyV1Schema,
   PluginBackendExternalSessionSourceDeclarationV1Schema,
 } from '../plugins/backendDefinitionV1.js';
 import {
@@ -1223,6 +1224,7 @@ export const PluginProjectedAgentExternalSessionsV2Schema = lazyZodSchema(() => 
   generation: z.number().check(z.int(), z.nonnegative()),
   operations: PluginProjectedAgentExternalSessionsOperationsV2Schema,
   sources: z.array(PluginBackendExternalSessionSourceDeclarationV1Schema).check(z.minLength(1)),
+  writerSafety: z.optional(PluginAgentExternalLinkedTakeoverWriterSafetyV1Schema),
 }));
 export type PluginProjectedAgentExternalSessionsV2 = z.infer<
   typeof PluginProjectedAgentExternalSessionsV2Schema

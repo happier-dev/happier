@@ -1596,6 +1596,8 @@ describe('buildPluginProjectionV2', () => {
             projection,
         });
         expect(admitted).not.toBeNull();
+        expect(admitted?.projection.agentsById.codex?.externalSessions?.writerSafety).toBe('native_prevention');
+        expect(admitted?.projection.agentsById.muse?.externalSessions?.writerSafety).toBe('unsupported');
         for (const [pluginId, serviceId] of [
             ['happier.agent.codex', 'openai-codex'],
             ['happier.agent.claude', 'claude-subscription'],

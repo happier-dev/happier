@@ -188,7 +188,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
             if (switchingToDirect) return t('chatFooter.switchingToDirectTakeover');
             if (preflightInFlight) return t('chatFooter.checkingExternalSessionTakeover');
             if (materialize?.inFlight) return t('externalSessions.operationComposerImporting');
-            if (externalControl.runnerActive) {
+            if (showTakeoverAction && externalControl.runnerActive) {
                 const guidance = t('chatFooter.externalSessionTakeoverBlocked');
                 const safetyGuidance = externalControl.trustedPid === null
                     ? guidance

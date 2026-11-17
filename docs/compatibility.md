@@ -9512,6 +9512,14 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+The unreleased 0.3 Machine Agent catalog's closed V2 `externalSessions`
+projection carries optional `writerSafety` from the Agent manifest. The linked
+Session footer uses an explicit `unsupported` declaration to hide takeover.
+Older projections can omit the field and retain their previous footer behavior.
+Under the unpublished development direct cut, load the matching daemon and UI
+together because earlier strict readers reject the new field. This uses the
+existing wire epoch and changes no persisted data or takeover admission.
+
 Unreleased 0.3 Triage descriptors add optional `accountDataInstance`, reusing the
 existing source-instance draft and UUID schemas within a closed declaration.
 The descriptor's additive-open/drop outer policy and existing descriptors remain

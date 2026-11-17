@@ -181,7 +181,9 @@ function projectAgentExternalSessions(
     const identity = agent.identity;
     const definition = agent.richDefinition?.definition;
     const surfaces = definition?.capabilities.surfaces ?? [];
-    const sources = definition?.surfaces?.externalSession?.sources ?? [];
+    const externalSession = definition?.surfaces?.externalSession;
+    const sources = externalSession?.sources ?? [];
+    const takeover = externalSession?.externalLinkedTakeover;
     if (
         !identity
         || !surfaces.includes('externalSessions')
@@ -192,6 +194,7 @@ function projectAgentExternalSessions(
     return {
         agent: identity,
         generation,
+        ...(takeover ? { writerSafety: takeover.writerSafety } : {}),
         operations: {
             listCandidates: true,
             resolveLinkIdentity: true,

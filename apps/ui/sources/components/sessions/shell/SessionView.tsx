@@ -188,6 +188,7 @@ import { PluginSurfacePaneLaunchScope, stagePluginSurfacePaneLaunch, type Plugin
 import type { PluginSurfaceOpenHandler, PluginSurfaceOpenOutcome } from "@/components/plugins/surfaces/openPluginSurface";
 import { useServerCredentialAccountScopeBindings, type ServerCredentialAccountScopeBinding } from "@/sync/domains/scope/useServerCredentialAccountScopes";
 import { resolveSessionViewExternalControlFooter } from "./view/resolveSessionViewExternalControlFooter";
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { readExternalSessionOperationPresentationFromMetadata } from "../transcript/items/externalSessionOperationMetadata";
 import { resolveSessionWorkspaceDisplayPresentation } from "@/sync/domains/session/listing/sessionWorkspaceDisplayPresentation";
 import { useSessionReachableMachineTarget } from "../model/useSessionMachineReachability";
@@ -2427,6 +2428,17 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
         requestMaterialize: requestExternalSessionMaterialize,
         openReplayFork: openExternalSessionReplayFork,
     });
+    const externalSessionLink = externalSessionRuntime.externalSessionLink;
+    const linkedAgentProjection = useDaemonMergedProjectionInputs({
+        sections: ['agentsById'],
+        machineId: externalSessionLink?.machineId,
+        serverId: externalSessionRuntime.sessionServerId ?? sessionRouteServerId,
+        accountLifetime: sessionAccountLifetime,
+        enabled: externalSessionLink !== null,
+    });
+    const takeoverWriterSafety = externalSessionLink && linkedAgentProjection.phase === 'ready'
+        ? linkedAgentProjection.inputs?.pluginProjectionV2?.agentsById[externalSessionLink.agentId]?.externalSessions?.writerSafety
+        : undefined;
     const externalControlFooter = React.useMemo(
         () => resolveSessionViewExternalControlFooter({
             externalSessionOperationRunning: externalSessionOperationShell.running,
@@ -2461,6 +2473,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                     : null,
             },
             externalSessionTakeover: {
+                writerSafety: takeoverWriterSafety,
                 takeoverInFlight: externalSessionTakeoverInFlight,
                 takeoverPreflightInFlight: externalSessionTakeoverPreflightInFlight,
                 requestTakeoverPreflight: requestExternalSessionTakeoverPreflight,
@@ -2501,6 +2514,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
             isHiddenSystemSessionSession,
             requestExternalSessionMaterialize,
             requestExternalSessionTakeoverPreflight,
+            takeoverWriterSafety,
         ],
     );
 

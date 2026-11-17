@@ -8,6 +8,7 @@ import { shouldOfferLocalControlRelease } from '@/sync/domains/session/control/l
 import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockState } from './transcriptTestHelpers';
 import { ChatFooter } from './ChatFooter';
 import { WarningActionBanner } from '@/components/sessions/shell/view/WarningActionBanner';
+import { resolveSessionViewExternalControlFooter } from '@/components/sessions/shell/view/resolveSessionViewExternalControlFooter';
 
 (
     globalThis as typeof globalThis & {
@@ -239,6 +240,30 @@ describe('ChatFooter (local control)', () => {
         // changes do not reintroduce the misleading "Switch to local" banner/button.
         expect(screen.findByTestId('session-chatFooter-switchToLocal')).toBeNull();
         expect(screen.getTextContent()).not.toContain('chatFooter.switchToLocal');
+    });
+
+    it.each([
+        ['Codex', 'native_prevention', true],
+        ['Muse', 'unsupported', false],
+    ] as const)('shows the Take over action for a completed %s import only when supported', async (agentLabel, writerSafety, offered) => {
+        const input = {
+            externalSessionLink: { machineId: 'machine-1' },
+            externalSessionIdentity: { agentLabel, machineLabel: 'Dev machine' },
+            externalSessionRuntimePresentation: null,
+            externalSessionRuntime: { status: null },
+            externalSessionTakeover: {
+                writerSafety,
+                takeoverInFlight: null,
+                takeoverPreflightInFlight: false,
+                requestTakeoverPreflight: vi.fn(),
+            },
+            isHiddenSystemSessionSession: false,
+        };
+        const screen = await renderFooter({ externalControl: resolveSessionViewExternalControlFooter(input) });
+
+        expect(screen.findByTestId('session-chatFooter-externalControl')).not.toBeNull();
+        expect(screen.findByTestId('session-chatFooter-takeOverDirect') !== null).toBe(offered);
+        expect(screen.getTextContent().includes('externalSessions.externalAgentTakeOverHint')).toBe(offered);
     });
 
     it('renders one takeover preflight action and leaves mode choices to the takeover dialog', async () => {

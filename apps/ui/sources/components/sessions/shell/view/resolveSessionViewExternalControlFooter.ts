@@ -1,3 +1,5 @@
+import type { PluginAgentExternalLinkedTakeoverWriterSafetyV1 } from '@happier-dev/protocol/plugins/backendDefinitionV1';
+
 import type { ChatFooterExternalControlState } from '@/components/sessions/transcript/ChatFooter';
 import type { ExternalSessionIdentityPresentation } from '@/components/sessions/presentation/externalSessionIdentityPresentation';
 import {
@@ -36,6 +38,7 @@ type Input = Readonly<{
         }> | null;
     }>;
     externalSessionTakeover: Readonly<{
+        writerSafety?: PluginAgentExternalLinkedTakeoverWriterSafetyV1;
         takeoverInFlight: 'direct' | 'persisted' | null;
         takeoverPreflightInFlight: boolean;
         requestTakeoverPreflight: () => void | Promise<void | boolean>;
@@ -79,6 +82,7 @@ export function resolveSessionViewExternalControlFooter(input: Input): SessionVi
     }
 
     const status = input.externalSessionRuntime.status;
+    const takeoverUnsupported = input.externalSessionTakeover.writerSafety === 'unsupported';
     const externalAgentState = input.externalSessionRuntimePresentation?.externalAgent.state ?? 'unknown';
     return {
         externalAgentPresentation: {
@@ -105,7 +109,7 @@ export function resolveSessionViewExternalControlFooter(input: Input): SessionVi
         takeoverPreflightInFlight: input.externalSessionTakeover.takeoverPreflightInFlight,
         takeoverInFlight: input.externalSessionTakeover.takeoverInFlight,
         onRequestTakeoverPreflight:
-            input.externalSessionOperationBlocksNewOperation === true
+            takeoverUnsupported || input.externalSessionOperationBlocksNewOperation === true
                 ? undefined
                 : createTakeoverPreflightCallback(input),
         materialize:
