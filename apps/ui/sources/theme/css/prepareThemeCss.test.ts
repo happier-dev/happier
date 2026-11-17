@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import parse from 'css-tree/lib/parser';
 
-import { prepareThemeCss, prepareThemeProfileCss } from './prepareThemeCss';
+import { prepareThemeCss, prepareThemeProfileCss, getThemeCssWebOnlyRules } from './prepareThemeCss';
 
 // The third-party parser boundary delegates to the real parser while counting work.
 vi.mock('css-tree/lib/parser', async (importOriginal) => {
@@ -11,6 +11,20 @@ vi.mock('css-tree/lib/parser', async (importOriginal) => {
 afterEach(() => vi.clearAllMocks());
 
 describe('theme CSS native projection and coverage', () => {
+    it('navigates Which rules using authored ranges from the retained preparation', () => {
+        const source = '[data-surface=composer]{padding:8px}\n[data-surface=composer]::before{content:"x"}\n[data-surface=composer]{backdrop-filter:blur(2px)}';
+        const prepared = prepareThemeProfileCss({ css: source });
+        const summary = prepared.coverage;
+        const rules = getThemeCssWebOnlyRules(prepared);
+        expect(summary).toMatchObject({ total: 3, native: 1, webOnly: 2 });
+        expect(rules).toHaveLength(summary.webOnly);
+        expect(rules.map(rule => rule.range.line)).toEqual([2, 3]);
+        for (const rule of rules) {
+            expect(source.slice(rule.range.start, rule.range.end)).toContain(rule.selector);
+            expect(prepared.detailedCoverage.rules[rule.ruleIndex]).toBe(rule);
+        }
+        expect(parse).toHaveBeenCalledTimes(1);
+    });
     it('shares one lazy preparation between facts and application of the retained profile body', () => {
         const profile = { css: '[data-surface=composer]{padding:8px}' };
         const facts = prepareThemeProfileCss(profile);

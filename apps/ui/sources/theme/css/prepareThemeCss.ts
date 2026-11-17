@@ -1,5 +1,5 @@
-import { isThemeSurfaceAddress, THEME_SURFACE_REGISTRY } from '@happier-dev/plugin-ui';
-import type { SurfaceAddress } from '@happier-dev/plugin-ui';
+import { isThemeSurfaceAddress, THEME_SURFACE_REGISTRY } from '@happier-dev/plugin-sdk/ui';
+import type { SurfaceAddress } from '@happier-dev/plugin-sdk/ui';
 import { convertNativeDeclaration } from './nativeDeclarations';
 import type { NativeDeclarationStyle } from './nativeDeclarations';
 import { themeCssResourceRejection } from './themeCssResourcePolicy';
@@ -281,6 +281,11 @@ const emptyCompilation: Compiled = {
 };
 
 const profilePreparations = new WeakMap<Readonly<{ css?: string }>, PreparedThemeCss>();
+
+/** Editor Which navigation retains the compiler's authored ranges and rule identities. */
+export function getThemeCssWebOnlyRules(prepared: PreparedThemeCss): readonly ThemeCssRuleCoverage[] {
+    return prepared.detailedCoverage.rules.filter(rule => !rule.native);
+}
 
 /** A retained profile body is shared by preview facts and native application. */
 export function prepareThemeProfileCss(profile: Readonly<{ css?: string }>): PreparedThemeCss {
