@@ -173,8 +173,8 @@ export const HappierWorkUpdateCard = memo(function HappierWorkUpdateCard(props: 
               {slot(fact.label, 'cardFact', theme.colors.secondaryText, `${prefix}-fact:${fact.id}`)}
             </View>
           ))}
-          <View style={styles.grow} />
-          {props.actions ? <View style={styles.actions}>{props.actions}</View> : null}
+          {/* The spacer only pushes actions to the end; without them a growing leading action keeps the whole row. */}
+          {props.actions ? <><View style={styles.grow} /><View style={styles.actions}>{props.actions}</View></> : null}
         </View>
       ) : null}
     </>

@@ -32,15 +32,17 @@ export type HappierSavedSkillCardProps = Readonly<{
 
 /**
  * Narrower than this the state sentence breaks into a ragged column beside its recovery button
- * (phone cards, lab R2 `skills-cardP`), so the footer's wrap moves the button beneath the line instead.
+ * (phone cards, lab R2 `skills-cardP`), so the line wraps the button beneath the sentence, on its edge.
  */
 const STATE_LINE_WRAP_WIDTH_PX = 220;
 
 const styles = StyleSheet.create({
   // The state line keeps the head's leading column: its glyph sits under the skill's mark.
-  stateLine: { flexDirection: 'row', alignItems: 'center', gap: 8, flexGrow: 1, flexShrink: 1, flexBasis: STATE_LINE_WRAP_WIDTH_PX, minWidth: 0, minHeight: 28 },
+  // The line owns its repair: the sentence takes the row, and the button sits at its end or, narrow, under the sentence.
+  stateLine: { flexDirection: 'row', alignItems: 'center', gap: 8, flexGrow: 1, flexShrink: 1, minWidth: 0, minHeight: 28 },
   stateMark: { flexShrink: 0, alignItems: 'center', justifyContent: 'center' },
-  stateText: { flexShrink: 1, minWidth: 0 },
+  stateBody: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: 8, rowGap: 8, flexGrow: 1, flexShrink: 1, minWidth: 0 },
+  stateText: { flexGrow: 1, flexShrink: 1, flexBasis: STATE_LINE_WRAP_WIDTH_PX, minWidth: 0 },
   // The description and saved line start on the title's edge, past the head's mark column.
   body: { paddingLeft: HAPPIER_WORK_UPDATE_CARD_MARK_SIZE_PX + 8, gap: 2 },
 });
@@ -62,12 +64,14 @@ export function HappierSavedSkillCard(props: HappierSavedSkillCardProps) {
     title={props.name} mark={props.mark} meta={props.viewControl} theme={theme} host={host} renderSurface={props.renderSurface}
     leadingAction={<View style={styles.stateLine}>
       {props.statusMark ? <View style={styles.stateMark}>{props.statusMark}</View> : null}
-      <Text role="cardWord" testID="saved-skill-status" style={[styles.stateText, { color: theme.colors.secondaryText }]}>
-        <Text role="cardWord" strong style={{ color: wordColor ?? theme.colors.text }}>{props.status}</Text>
-        {props.statusDetail ? ` · ${props.statusDetail}` : null}
-      </Text>
-    </View>}
-    actions={props.recoveryControl}>
+      <View style={styles.stateBody}>
+        <Text role="cardWord" testID="saved-skill-status" style={[styles.stateText, { color: theme.colors.secondaryText }]}>
+          <Text role="cardWord" strong style={{ color: wordColor ?? theme.colors.text }}>{props.status}</Text>
+          {props.statusDetail ? ` · ${props.statusDetail}` : null}
+        </Text>
+        {props.recoveryControl ?? null}
+      </View>
+    </View>}>
     <View style={styles.body}>
       {props.description ? <Text role="rowLine" style={{ color: theme.colors.secondaryText }}>{props.description}</Text> : null}
       <Text role="cardFact" testID="saved-skill-saved" style={{ color: theme.colors.mutedText }}>{savedLine}</Text>
