@@ -480,6 +480,53 @@ describe('Automation event V1 contracts', () => {
       .toBe(false);
   });
 
+  it.each([
+    { op: 'gt', below: false, equal: false, above: true },
+    { op: 'gte', below: false, equal: true, above: true },
+    { op: 'lt', below: true, equal: false, above: false },
+    { op: 'lte', below: true, equal: true, above: false },
+  ] as const)('evaluates $op numbers and exact decimal counters before admission', ({ op, below, equal, above }) => {
+    const filter = (value: number | string) => AutomationEventFilterV1Schema.parse({
+      v: 1, all: [{ op, field: '/counter', value }],
+    });
+    const numeric = filter(10);
+    expect(evaluateAutomationEventFilterV1(numeric, { counter: 9 })).toBe(below);
+    expect(evaluateAutomationEventFilterV1(numeric, { counter: 10 })).toBe(equal);
+    expect(evaluateAutomationEventFilterV1(numeric, { counter: 11 })).toBe(above);
+    const decimal = filter('10');
+    expect(evaluateAutomationEventFilterV1(decimal, { counter: '2' })).toBe(below);
+    expect(evaluateAutomationEventFilterV1(decimal, { counter: '10.0' })).toBe(equal);
+    expect(evaluateAutomationEventFilterV1(decimal, { counter: '11' })).toBe(above);
+    const exact = filter('9007199254740993.000000000000000002');
+    expect(evaluateAutomationEventFilterV1(exact, { counter: '9007199254740993.000000000000000001' })).toBe(below);
+    expect(evaluateAutomationEventFilterV1(exact, { counter: '09007199254740993.0000000000000000020' })).toBe(equal);
+    expect(evaluateAutomationEventFilterV1(exact, { counter: '9007199254740993.000000000000000003' })).toBe(above);
+    const signed = filter('-1.2');
+    expect(evaluateAutomationEventFilterV1(signed, { counter: '-1.21' })).toBe(below);
+    expect(evaluateAutomationEventFilterV1(signed, { counter: '-12e-1' })).toBe(equal);
+    expect(evaluateAutomationEventFilterV1(signed, { counter: '-1.19' })).toBe(above);
+    const zero = filter('0.000');
+    expect(evaluateAutomationEventFilterV1(zero, { counter: '-0.01' })).toBe(below);
+    expect(evaluateAutomationEventFilterV1(zero, { counter: '-0' })).toBe(equal);
+    expect(evaluateAutomationEventFilterV1(zero, { counter: '0.01' })).toBe(above);
+    // Exponent size never causes a huge scale allocation or Number rounding.
+    expect(evaluateAutomationEventFilterV1(filter('1e99999999999999999999'), {
+      counter: '2e99999999999999999999',
+    })).toBe(above);
+    for (const counter of [undefined, null, false, {}, 'NaN', 'Infinity', '0x10', ' 10 ', 'ten']) {
+      expect(evaluateAutomationEventFilterV1(numeric, { counter })).toBe(false);
+      expect(evaluateAutomationEventFilterV1(exact, { counter })).toBe(false);
+    }
+    expect(evaluateAutomationEventFilterV1(numeric, { counter: '10' })).toBe(false);
+    expect(evaluateAutomationEventFilterV1(filter('10'), { counter: 10 })).toBe(false);
+    expect(validateAutomationEventFilterAgainstPayloadSchemaV1({ filter: numeric,
+      payloadSchema: { type: 'object', properties: { counter: { type: 'number' } } },
+    })).toEqual({ kind: 'valid' });
+    expect(validateAutomationEventFilterAgainstPayloadSchemaV1({ filter: exact,
+      payloadSchema: { type: 'object', properties: { counter: { type: 'string' } } },
+    })).toEqual({ kind: 'valid' });
+  });
+
   it('bounds Event observation freshness by staleness alone, so a source clock that leads this host still admits', () => {
     const occurredAt = 1_700_000_000_000;
 

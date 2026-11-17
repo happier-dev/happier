@@ -6024,6 +6024,13 @@ even when their triggers are not copied.
 Inline definitions supplied to trigger add or update use the same validator
 against the Event being enrolled, including retained inline references.
 
+In unreleased 0.3, Event filters use the same pre-admission evaluator on the server
+and executing host. Alongside `eq` and `in`, `gt`, `gte`, `lt` and `lte` compare numbers
+numerically and decimal strings without losing precision, including signed,
+fractional and exponent forms. Filter operands must match the declared payload
+leaf type; numbers and strings are never coerced into each other. Missing fields
+and non-decimal strings do not match an ordered comparison.
+
 Action triggers use `event: { kind: 'action', phase: 'before' | 'after' }`;
 plugin Events retain their qualified `{ pluginId, localId }` identity. One Action
 phase declaration covers the trigger's whole Action set, and its payload retains

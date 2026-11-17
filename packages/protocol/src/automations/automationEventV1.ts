@@ -3,6 +3,7 @@ import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { PluginSubjectKindContributionV1Schema } from '../plugins/contributions/subjectKinds.js';
 import { PluginSubjectProjectionV1Schema } from '../plugins/actions/v2.js';
 import { AutomationSubjectV1Schema } from './automationSubjectV1.js';
+import { AUTOMATION_EVENT_DECIMAL_V1_PATTERN } from './automationEventFilterV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { AutomationObservationOnlyIntentV1Schema } from './automationEventSetupResultV1.js';
@@ -641,7 +642,7 @@ export function validateAutomationEventFilterAgainstPayloadSchemaV1(params: Read
         issue: { code: 'field_not_scalar', clauseIndex, field: clause.field },
       };
     }
-    const values = clause.op === 'eq' ? [clause.value] : clause.values;
+    const values = clause.op === 'in' ? clause.values : [clause.value];
     for (const [valueIndex, value] of values.entries()) {
       if (!leaf.validators.some((validator) => isValidPluginJsonSchemaValue(validator, value))) {
         return {
@@ -701,6 +702,30 @@ function sameAutomationJsonScalar(left: unknown, right: AutomationJsonScalarV1):
   return typeof left === 'number' && typeof right === 'number' && Number.isFinite(left) && left === right;
 }
 
+/** Compare decimal coefficients and exponents without rounding or allocating exponent-sized scales. */
+function compareAutomationEventDecimals(left: string, right: string): number {
+  const parts = (value: string) => {
+    const [coefficient, exponent = '0'] = value.replace(/^[+-]/u, '').split(/[eE]/u);
+    const [integer = '', fraction = ''] = coefficient!.split('.');
+    const digits = (integer + fraction).replace(/^0+/u, '');
+    return { negative: value.startsWith('-') && digits.length > 0, digits,
+      magnitude: BigInt(exponent) + BigInt(digits.length) - BigInt(fraction.length) };
+  };
+  const a = parts(left);
+  const b = parts(right);
+  if (!a.digits || !b.digits) {
+    if (!a.digits && !b.digits) return 0;
+    return !a.digits ? b.negative ? 1 : -1 : a.negative ? -1 : 1;
+  }
+  if (a.negative !== b.negative) return a.negative ? -1 : 1;
+  const direction = a.negative ? -1 : 1;
+  if (a.magnitude !== b.magnitude) return (a.magnitude < b.magnitude ? -1 : 1) * direction;
+  const length = Math.max(a.digits.length, b.digits.length);
+  const aDigits = a.digits.padEnd(length, '0');
+  const bDigits = b.digits.padEnd(length, '0');
+  return (aDigits === bDigits ? 0 : aDigits < bDigits ? -1 : 1) * direction;
+}
+
 /** A total, coercion-free runtime evaluator; authoring validates schema leaf types separately. */
 export function evaluateAutomationEventFilterV1(
   filter: AutomationEventFilterV1 | null,
@@ -713,7 +738,20 @@ export function evaluateAutomationEventFilterV1(
   return parsedFilter.data.all.every((clause) => {
     const candidate = resolveJsonPointer(parsedPayload.data, clause.field);
     if (clause.op === 'eq') return sameAutomationJsonScalar(candidate, clause.value);
-    return clause.values.some((value) => sameAutomationJsonScalar(candidate, value));
+    if (clause.op === 'in') return clause.values.some((value) => sameAutomationJsonScalar(candidate, value));
+    let comparison: number;
+    if (typeof candidate === 'number' && typeof clause.value === 'number') {
+      comparison = candidate === clause.value ? 0 : candidate < clause.value ? -1 : 1;
+    } else if (typeof candidate === 'string' && typeof clause.value === 'string'
+      && AUTOMATION_EVENT_DECIMAL_V1_PATTERN.test(candidate)) {
+      comparison = compareAutomationEventDecimals(candidate, clause.value);
+    } else return false;
+    switch (clause.op) {
+      case 'gt': return comparison > 0;
+      case 'gte': return comparison >= 0;
+      case 'lt': return comparison < 0;
+      case 'lte': return comparison <= 0;
+    }
   });
 }
 

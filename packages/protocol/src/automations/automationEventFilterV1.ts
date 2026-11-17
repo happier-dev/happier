@@ -7,18 +7,22 @@ export const MAX_AUTOMATION_EVENT_FILTER_IN_VALUES = 64;
 export const MAX_AUTOMATION_EVENT_FILTER_VALUE_CODE_POINTS = 256;
 const MAX_AUTOMATION_EVENT_FILTER_POINTER_DEPTH = 32;
 
-const AutomationJsonScalarV1Schema = lazyZodSchema(() => z.union([
-  z.null(),
-  z.boolean(),
-  z.number(),
-  z.string().check(z.superRefine((value, context) => {
+export const AUTOMATION_EVENT_DECIMAL_V1_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/u;
+
+const AutomationJsonStringV1Schema = lazyZodSchema(() => z.string().check(z.superRefine((value, context) => {
     if (value !== value.normalize('NFC')) {
       context.addIssue({ code: "custom", message: 'Filter strings must be NFC-normalized' });
     }
     if (Array.from(value).length > MAX_AUTOMATION_EVENT_FILTER_VALUE_CODE_POINTS) {
       context.addIssue({ code: "custom", message: 'Filter strings exceed the code-point limit' });
     }
-  })),
+  })));
+
+const AutomationJsonScalarV1Schema = lazyZodSchema(() => z.union([
+  z.null(),
+  z.boolean(),
+  z.number(),
+  AutomationJsonStringV1Schema,
 ]));
 export type AutomationJsonScalarV1 = z.infer<typeof AutomationJsonScalarV1Schema>;
 
@@ -31,6 +35,11 @@ export const AutomationJsonPointerV1Schema = lazyZodSchema(() => z.string().chec
 export type AutomationJsonPointerV1 = z.infer<typeof AutomationJsonPointerV1Schema>;
 
 const AutomationEventFilterClauseV1Schema = lazyZodSchema(() => z.discriminatedUnion('op', [
+  z.strictObject({
+    op: z.enum(['gt', 'gte', 'lt', 'lte']),
+    field: AutomationJsonPointerV1Schema,
+    value: z.union([z.number(), AutomationJsonStringV1Schema.check(z.regex(AUTOMATION_EVENT_DECIMAL_V1_PATTERN))]),
+  }),
   z.strictObject({
     op: z.literal('eq'),
     field: AutomationJsonPointerV1Schema,

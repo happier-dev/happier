@@ -1,5 +1,6 @@
 import {
     AutomationEventFilterV1Schema,
+    type AutomationEventFilterClauseV1,
     type AutomationEventFilterV1,
     type AutomationJsonScalarV1,
 } from '@happier-dev/protocol/automations/automationEventFilterV1';
@@ -8,8 +9,8 @@ import {
 export type PluginEventAutomationFilterClauseDraft = Readonly<{
     id: string;
     field: string;
-    op: 'eq' | 'in';
-    /** JSON encoding of one scalar (`eq`) or scalar array (`in`). */
+    op: AutomationEventFilterClauseV1['op'];
+    /** JSON encoding of one scalar or a scalar array (`in`). */
     valueText: string;
 }>;
 
@@ -39,12 +40,12 @@ function readClause(draft: PluginEventAutomationFilterClauseDraft): unknown | nu
     const field = draft.field.trim();
     if (!field) return null;
     const parsed = parseJson(draft.valueText);
-    if (draft.op === 'eq') {
+    if (draft.op !== 'in') {
         return isJsonScalar(parsed)
-            ? { op: 'eq', field, value: parsed }
+            ? { op: draft.op, field, value: parsed }
             : null;
     }
-    if (draft.op !== 'in' || !Array.isArray(parsed) || !parsed.every(isJsonScalar)) return null;
+    if (!Array.isArray(parsed) || !parsed.every(isJsonScalar)) return null;
     return { op: 'in', field, values: parsed };
 }
 
@@ -80,6 +81,6 @@ export function readPluginEventAutomationFilterClauses(
         id: `persisted-${index}`,
         field: clause.field,
         op: clause.op,
-        valueText: JSON.stringify(clause.op === 'eq' ? clause.value : clause.values),
+        valueText: JSON.stringify(clause.op === 'in' ? clause.values : clause.value),
     })));
 }

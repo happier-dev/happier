@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AutomationEventFilterV1Schema } from '@happier-dev/protocol/automations/automationEventFilterV1';
 
 import {
     readPluginEventAutomationFilterClauses,
@@ -58,5 +59,20 @@ describe('Plugin Event Automation filter builder', () => {
             },
         });
         expect(readPluginEventAutomationFilterDraft([])).toEqual({ valid: true, filter: null });
+    });
+
+    it('preserves ordered numeric and lossless decimal operands when editing a saved filter', () => {
+        const filter = AutomationEventFilterV1Schema.parse({
+            v: 1,
+            all: [
+                { op: 'gt', field: '/counter', value: '9007199254740993.000000000000000002' },
+                { op: 'gte', field: '/count', value: 10 },
+                { op: 'lt', field: '/counter', value: '1e99999999999999999999' },
+                { op: 'lte', field: '/count', value: 12 },
+            ],
+        });
+        const clauses = readPluginEventAutomationFilterClauses(filter);
+
+        expect(readPluginEventAutomationFilterDraft(clauses)).toEqual({ valid: true, filter });
     });
 });
