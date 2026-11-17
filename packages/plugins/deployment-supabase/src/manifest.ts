@@ -24,7 +24,7 @@ export const plugin = definePlugin({
     scope: { serviceRefs: ['supabase'], operations: ['use'], materializationKinds: ['httpHeaders'] } }], optional: [] },
   connectedAccountDescriptors: { supabase: {
     declaration: { title: 'Supabase',
-      description: 'Sign in with Supabase and approve access to one organization, or use a management personal access token (not an application anon or service-role key). Supabase checks permission for each operation. Project-scoped tokens cannot create organization projects.',
+      description: 'Create and manage Supabase projects and preview branches.',
       authentication: { account: { artifactId: 'account-runtime', exportName: 'activateAccount' }, defaultModeId: 'oauth', modes: [
       // No callbackUrl: the attempt uses the Home's Connected Account relay. The
       // client fields are written by the runtime's own registration, never typed.
@@ -44,16 +44,18 @@ export const plugin = definePlugin({
           createKeyTitle: 'Open Supabase access tokens',
         },
         directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
-        fields: [{ id: 'token', title: 'Personal access token', secret: true, schema: { type: 'string', minLength: 1 } }],
+        fields: [{ id: 'token', title: 'Personal access token', description: 'A management token from your Supabase account, not a project’s anon or service-role key.', secret: true, schema: { type: 'string', minLength: 1 } }],
         configuration: { scope: 'account', changeBehavior: 'reconnect', fields: [
           { id: 'organizationSlug', title: 'Organization slug', required: true, secret: false, schema: { type: 'string', minLength: 1 } },
-          { id: 'projectRef', title: 'Project reference', description: 'Optional exact project reference for a project-scoped token.', required: false, secret: false, schema: { type: 'string', minLength: 1 } },
+          { id: 'projectRef', title: 'Project reference', description: 'Only for a project-scoped token, which can’t create new projects.', required: false, secret: false, schema: { type: 'string', minLength: 1 } },
         ] },
       }] } }, runtime: supabaseConnectedAccountRuntime, accountRuntime: supabasePortableRuntime,
   } },
   actions: { ...dataActions, 'query-read': queryAction },
   inputTypes: dataInputTypes,
-  resources: { ...dataInputResources, 'projects-list-resource': resource('projects-list'), 'provision-options-resource': resource('provision-options'), 'branches-list-resource': resource('branches-list') },
+  // Supabase's mark beside its name: Simple Icons 13.21.0 (CC0-1.0), brand green #3FCF8E.
+  brand: { iconResourceId: 'brand-icon' },
+  resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }, ...dataInputResources, 'projects-list-resource': resource('projects-list'), 'provision-options-resource': resource('provision-options'), 'branches-list-resource': resource('branches-list') },
   deploymentTargets: { database: { role: 'data', title: 'Supabase', icon: 'server-outline', targetKind: 'supabase', targetSchema: empty, linkSchema: empty,
     dataV1: { database: { engineId: 'postgresql', runtime: supabaseDatabaseRuntime }, query: { readOnly: 'query-read' }, projects: { list: 'projects-list-resource', listAction: 'projects-list', provisionOptions: 'provision-options-resource', provisionOptionsAction: 'provision-options', provision: 'projects-provision', link: 'projects-link', delete: 'projects-delete', observe: 'projects-observe' },
       branches: { list: 'branches-list-resource', listAction: 'branches-list', create: 'branches-create', delete: 'branches-delete',

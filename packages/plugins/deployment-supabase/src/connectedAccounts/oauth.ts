@@ -12,6 +12,7 @@ import type {
   ConnectedAccountMutationContext,
   ConnectedAccountReadContext,
   ConnectedAccountRuntime,
+  PluginConnectedAccountConfigurationFieldV2,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
 
@@ -205,6 +206,43 @@ function clientConfiguration(
     secretValues: { oauthClientSecret: client.clientSecret },
   };
 }
+function organizationField(organizations: readonly Organization[]): PluginConnectedAccountConfigurationFieldV2 {
+  return {
+    id: 'organizationSlug',
+    title: 'Supabase organization',
+    required: true,
+    secret: false,
+    schema: { type: 'string', enum: organizations.map((item) => item.slug) },
+    presentation: {
+      options: organizations.map((item) => ({ value: item.slug, title: item.name })),
+    },
+  };
+}
+/** The client registered at begin, kept on the attempt until it is staged with the grant. */
+async function pendingClient(context: ConnectedAccountAuthenticationContext, signal: AbortSignal, redirectUri?: string): Promise<Client> {
+  const raw = await context.attemptCredentials.get(pendingClientKey, { signal });
+  const parsed: unknown = raw === null ? null : JSON.parse(raw);
+  const clientId = isObject(parsed) ? parsed.clientId : null;
+  const clientSecret = isObject(parsed) ? parsed.clientSecret : null;
+  const storedRedirect = isObject(parsed) ? parsed.redirectUri : null;
+  if (!text(clientId) || !text(clientSecret) || !text(storedRedirect) || (redirectUri !== undefined && storedRedirect !== redirectUri))
+    throw new OAuthFailure(rejected('supabase_oauth_attempt_missing'));
+  return { clientId, clientSecret, redirectUri: storedRedirect };
+}
+/**
+ * Stages this connection's client beside the chosen organization. A plugin
+ * attempt's configuration may change only together with provider-discovered
+ * fields (the attempt owner's OAuth snapshot rule), so it is staged here, after
+ * authorization, never while the attempt is starting.
+ */
+async function stageClient(context: ConnectedAccountAuthenticationContext, client: Client, organization: Organization, signal: AbortSignal) {
+  if (!context.stageAccountConfiguration) throw new OAuthFailure(unavailable());
+  await context.stageAccountConfiguration({
+    ...clientConfiguration(context, client, { organizationSlug: organization.slug }),
+    fields: [organizationField([organization])],
+  });
+  await context.attemptCredentials.delete(pendingClientKey, { signal });
+}
 
 async function exchange(
   context: Context,
@@ -352,16 +390,11 @@ export const supabaseOAuthMode: Extract<
     const signal = signalOf(context, options?.signal);
     signal.throwIfAborted();
     try {
-      if (!context.stageAccountConfiguration)
-        throw new OAuthFailure(unavailable());
       const stored = await storedClient(context, signal);
       const client =
         stored?.redirectUri === input.callbackUrl
           ? stored
           : await register(context, input.callbackUrl, signal);
-      await context.stageAccountConfiguration(
-        clientConfiguration(context, client),
-      );
       await context.attemptCredentials.set(
         pendingClientKey,
         JSON.stringify(client),
@@ -391,24 +424,7 @@ export const supabaseOAuthMode: Extract<
     const signal = signalOf(context, options?.signal);
     signal.throwIfAborted();
     try {
-      const raw = await context.attemptCredentials.get(pendingClientKey, {
-        signal,
-      });
-      const parsed: unknown = raw === null ? null : JSON.parse(raw);
-      const clientId = isObject(parsed) ? parsed.clientId : null;
-      const clientSecret = isObject(parsed) ? parsed.clientSecret : null;
-      if (
-        !text(clientId) ||
-        !text(clientSecret) ||
-        !isObject(parsed) ||
-        parsed.redirectUri !== input.callbackUrl
-      )
-        throw new OAuthFailure(rejected('supabase_oauth_attempt_missing'));
-      const client: Client = {
-        clientId,
-        clientSecret,
-        redirectUri: input.callbackUrl,
-      };
+      const client = await pendingClient(context, signal, input.callbackUrl);
       const grant = await exchange(
         context,
         client,
@@ -420,42 +436,18 @@ export const supabaseOAuthMode: Extract<
         },
         signal,
       );
-      await context.attemptCredentials.delete(pendingClientKey, { signal });
       await stageGrant(context.attemptCredentials, grant, signal);
       const organizations = await organizationsOf(context, grant.token, signal);
       const organization =
         chosen(context, organizations) ??
         (organizations.length === 1 ? organizations[0] : undefined);
       if (!organization && organizations.length > 1) {
-        return {
-          status: 'configurationRequired',
-          fields: [
-            {
-              id: 'organizationSlug',
-              title: 'Supabase organization',
-              required: true,
-              secret: false,
-              schema: {
-                type: 'string',
-                enum: organizations.map((item) => item.slug),
-              },
-              presentation: {
-                options: organizations.map((item) => ({
-                  value: item.slug,
-                  title: item.name,
-                })),
-              },
-            },
-          ],
-        };
+        // The client stays on the attempt until reconcile stages it with the choice.
+        return { status: 'configurationRequired', fields: [organizationField(organizations)] };
       }
       if (!organization)
         throw new OAuthFailure(rejected('supabase_organization_unavailable'));
-      await context.stageAccountConfiguration?.(
-        clientConfiguration(context, client, {
-          organizationSlug: organization.slug,
-        }),
-      );
+      await stageClient(context, client, organization, signal);
       return connected(organization, grant.scopes);
     } catch (error) {
       return failure(error, signal);
@@ -475,6 +467,7 @@ export const supabaseOAuthMode: Extract<
       );
       if (!organization)
         throw new OAuthFailure(rejected('supabase_organization_unavailable'));
+      await stageClient(context, await pendingClient(context, signal), organization, signal);
       return connected(
         organization,
         await retainedScopes(context.attemptCredentials, signal),

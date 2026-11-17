@@ -112,6 +112,7 @@ async function harness(
     },
   });
   const staged: {
+    fieldIds: string[];
     values: Record<string, JsonValue>;
     secretValues?: Record<string, string>;
   }[] = [];
@@ -145,7 +146,13 @@ async function harness(
     signal: new AbortController().signal,
     attemptCredentials: attempt.credentials,
     async stageAccountConfiguration(replacement) {
+      // The attempt owner keeps a plugin attempt's staged configuration fixed
+      // until the provider reports discovered fields (attemptTransactionAdapters
+      // sameSnapshotIdentity); only host runtimes may stage while starting.
+      if (!replacement.fields)
+        throw new Error('connected_account_attempt_snapshot_changed');
       staged.push({
+        fieldIds: replacement.fields.map((field) => field.id),
         values: { ...replacement.values },
         ...(replacement.secretValues
           ? { secretValues: { ...replacement.secretValues } }
@@ -229,10 +236,7 @@ it('registers this connection’s own client, signs in with PKCE and keeps token
     grant_types: ['authorization_code', 'refresh_token'],
     response_types: ['code'],
   });
-  expect(staged.at(-1)).toEqual({
-    values: { oauthClientId: 'client-1', oauthRedirectUri: callbackUrl },
-    secretValues: { oauthClientSecret: 'dcr-secret-1' },
-  });
+  expect(staged).toEqual([]);
 
   const done = await mode.complete(
     {
@@ -268,6 +272,7 @@ it('registers this connection’s own client, signs in with PKCE and keeps token
   expect(attempt.get('refreshToken')).toBe('refresh-1');
   expect(Number(attempt.get('expiresAtMs'))).toBeGreaterThan(Date.now());
   expect(staged.at(-1)).toEqual({
+    fieldIds: ['organizationSlug'],
     values: {
       oauthClientId: 'client-1',
       oauthRedirectUri: callbackUrl,
@@ -293,9 +298,7 @@ it('reuses the stored client on reconnect and registers again only for a differe
   expect(new URL(started.authorizationUrl).searchParams.get('client_id')).toBe(
     'client-0',
   );
-  expect(reused.staged.at(-1)?.secretValues).toEqual({
-    oauthClientSecret: 'dcr-secret-0',
-  });
+  expect(reused.staged).toEqual([]);
 
   const moved = await harness({
     values: {
