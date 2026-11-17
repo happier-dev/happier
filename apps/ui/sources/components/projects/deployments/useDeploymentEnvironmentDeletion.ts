@@ -84,7 +84,7 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
             try { result = await effect(now.options.actions, value, { ...operation, signal: controller.signal }); }
             catch (error) { result = readDeploymentActionError(error); }
             if (current.current.scope !== scope || !lifetime.isCurrent()) return refuse('action_account_scope_changed');
-            if (controller.signal.aborted) result = refuse('cancelled');
+            // The Action owns settlement. A local cleanup or abort cannot undo its terminal result.
             if (flight.current?.controller === controller) setState({ scope, busy: false, outcome: result });
             return result;
         } finally {

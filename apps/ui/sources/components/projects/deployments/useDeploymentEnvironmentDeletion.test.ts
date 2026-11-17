@@ -51,6 +51,38 @@ async function setup() {
 }
 
 describe('Environment deletion client over the Action owner', () => {
+    it.each(['unmount', 'abort'] as const)('returns the successful Stop and remove result after local %s', async cleanup => {
+        const f = await setup();
+        const entered = createDeferred<void>();
+        const reply = createDeferred<void>();
+        await answerExternalActionAccountForHome(homes, f.serverId, { actionId: 'deployments.teardown',
+            machineId: f.detail.environment.controllerMachineId!, installationId: 'installation-controller', tokenEpoch: 0,
+            requesterInvocation: 'required', execute: async () => {
+                entered.resolve();
+                await reply.promise;
+                return { ok: true, environmentId: f.detail.environment.id,
+                    revision: f.detail.environment.revision + 3, deploymentId: 'teardown-removed',
+                    deploymentRevision: 1, state: 'succeeded', environmentRemoved: true };
+            } });
+        const hook = await renderHook(() => useDeploymentEnvironmentDeletion({ environmentId: f.detail.environment.id,
+            lifetime: f.lifetime, snapshot: { status: 'ready', value: f.detail, failure: null }, actions: f.actions,
+            controller: null, demand: shown }));
+        let pending!: ReturnType<ReturnType<typeof hook.getCurrent>['stopAndRemove']>;
+        await act(async () => {
+            pending = hook.getCurrent().stopAndRemove(null);
+            await entered.promise;
+        });
+        if (cleanup === 'unmount') await hook.unmount();
+        else await act(async () => { hook.getCurrent().cancel(); });
+        reply.resolve();
+        expect(await pending).toEqual({ kind: 'deleted', detached: false });
+        if (cleanup === 'abort') {
+            await flushHookEffects();
+            expect(hook.getCurrent().outcome).toEqual({ kind: 'deleted', detached: false });
+            expect(hook.getCurrent().busy).toBe(false);
+        }
+    });
+
     it('replaces the selected first runtime link through the same confirmed Link Action', async () => {
         const f = await setup();
         const inputs: unknown[] = [];
@@ -331,7 +363,8 @@ describe('Environment deletion client over the Action owner', () => {
         if (observation === 'observer-cancelled') {
             await act(async () => {
                 hook.getCurrent().cancel();
-                expect(await pending).toMatchObject({ kind: 'refused', code: 'cancelled' });
+                // Cancelling local observation does not cancel the admitted remote teardown.
+                expect(await pending).toMatchObject({ kind: 'refused', code: 'outcome_unknown' });
             });
             const callsAfterCancel = operationRpc.mock.calls.length;
             publishHomeAccountChange(f.serverId, undefined, { source: 'connected' });
