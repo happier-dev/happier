@@ -295,7 +295,9 @@ export function areSessionHomeObservationsPresentedEqually(
     if (left === right) return true;
     const previous = resolveFreshness(left);
     const next = resolveFreshness(right);
-    return previous.state === next.state && readSessionHomeLastUpdatedAt(previous) === readSessionHomeLastUpdatedAt(next);
+    // Equal labels, not equal states: a Home never yet observed (unknown) and a current one both present nothing.
+    return resolveFreshnessLabel(previous.state) === resolveFreshnessLabel(next.state)
+        && readSessionHomeLastUpdatedAt(previous) === readSessionHomeLastUpdatedAt(next);
 }
 
 /**

@@ -73,6 +73,15 @@ describe('sessionContextPresentation', () => {
             .toEqual({ ...offline, 'home-b': { phase: 'ready', lastSuccessAt: 1 } });
     });
 
+    it('retains a first-loading Home once it turns current: both present no freshness', () => {
+        // A Sessions list remount re-demands its Home: loading with no success yet, then current. Measured live:
+        // republishing that redrew every mounted row although no row shows anything different.
+        const loading = { 'home-a': { phase: 'loading', lastSuccessAt: null } } as const;
+        expect(retainPresentedSessionHomeObservations(loading, { 'home-a': { phase: 'ready', lastSuccessAt: 9_000 } })).toBe(loading);
+        const failed = { 'home-a': { phase: 'error', lastSuccessAt: 9_000 } } as const;
+        expect(retainPresentedSessionHomeObservations(loading, failed)).toEqual(failed);
+    });
+
     it('schedules stale Home age changes without adding a freshness expiry to a reachable Home', () => {
         expect(readSessionHomeLastUpdatedRefreshAtMs({ phase: 'offline', lastSuccessAt: 1_000 }, 91_000)).toBe(121_000);
         expect(readSessionHomeLastUpdatedRefreshAtMs({ phase: 'error', lastSuccessAt: 1_000 }, 91_000)).toBe(121_000);
