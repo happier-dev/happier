@@ -25,6 +25,7 @@ import {
   type WorkflowEventPresentation,
 } from './useWorkflowEventPresentation';
 import { useWorkflowEventsFeed } from './WorkflowEventsList';
+import { WorkflowEventStartedRuns } from './WorkflowEventStartedRuns';
 
 /**
  * What a fact carries (on demand): one label and value per line, the same body in the Events page and the Live
@@ -165,6 +166,11 @@ export const WorkflowEventDetailPage = React.memo(
         />
         <WorkflowEventCarries
           presentation={presentation}
+          testID="workflow-events:detail"
+        />
+        <WorkflowEventStartedRuns
+          runs={presentation.runsStarted}
+          scope={scope}
           testID="workflow-events:detail"
         />
         {automate.builder}

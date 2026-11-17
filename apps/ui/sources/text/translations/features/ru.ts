@@ -19825,6 +19825,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         runFinished: ({ workflow }: { workflow: string }) => `${workflow} завершён`,
         runNeedsYou: ({ workflow }: { workflow: string }) => `${workflow} ждёт вас`,
         carries: 'Что оно несёт',
+        startedFromIt: 'Запущено отсюда',
         noTrigger: 'Процессы пока не могут запускаться от такого события.',
         session: 'Сессия',
         machine: 'Машина',

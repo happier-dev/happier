@@ -19733,6 +19733,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         runFinished: ({ workflow }: { workflow: string }) => `${workflow} が完了しました`,
         runNeedsYou: ({ workflow }: { workflow: string }) => `${workflow} があなたを待っています`,
         carries: '含まれる情報',
+        startedFromIt: 'ここから開始',
         noTrigger: 'この種類のイベントからはまだワークフローを開始できません。',
         session: 'セッション',
         machine: 'マシン',

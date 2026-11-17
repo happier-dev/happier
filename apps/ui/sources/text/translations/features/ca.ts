@@ -19810,6 +19810,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         runFinished: ({ workflow }: { workflow: string }) => `${workflow} ha acabat`,
         runNeedsYou: ({ workflow }: { workflow: string }) => `${workflow} et necessita`,
         carries: 'Què porta',
+        startedFromIt: 'Iniciat a partir d’aquí',
         noTrigger: 'Els fluxos de treball encara no poden començar amb aquest tipus d’esdeveniment.',
         session: 'Sessió',
         machine: 'Màquina',

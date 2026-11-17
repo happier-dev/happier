@@ -26,6 +26,7 @@ import {
   useWorkflowEventPresentation,
 } from './useWorkflowEventPresentation';
 import { WorkflowEventCarries } from './WorkflowEventDetail';
+import { WorkflowEventStartedRuns } from './WorkflowEventStartedRuns';
 import {
   WorkflowEventsFilters,
   WorkflowEventsListening,
@@ -142,6 +143,11 @@ const LiveEventBody = React.memo(function LiveEventBody(
     <View testID={`${props.testID}:expanded`} style={styles.body}>
       <WorkflowEventCarries
         presentation={presentation}
+        testID={`${props.testID}:expanded`}
+      />
+      <WorkflowEventStartedRuns
+        runs={presentation.runsStarted}
+        scope={props.scope}
         testID={`${props.testID}:expanded`}
       />
       <View style={styles.actions}>

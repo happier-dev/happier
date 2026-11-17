@@ -19677,6 +19677,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         runFinished: ({ workflow }: { workflow: string }) => `${workflow} 已完成`,
         runNeedsYou: ({ workflow }: { workflow: string }) => `${workflow} 需要你處理`,
         carries: '攜帶的資訊',
+        startedFromIt: '由此啟動',
         noTrigger: '工作流程暫時無法從此類事件啟動。',
         session: '工作階段',
         machine: '機器',

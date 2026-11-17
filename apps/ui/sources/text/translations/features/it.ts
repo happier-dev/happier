@@ -19798,6 +19798,7 @@ const it = translated(workflowValueReferenceTranslations.it, {
         runFinished: ({ workflow }: { workflow: string }) => `${workflow} è terminato`,
         runNeedsYou: ({ workflow }: { workflow: string }) => `${workflow} ha bisogno di te`,
         carries: 'Cosa porta',
+        startedFromIt: 'Avviato da qui',
         noTrigger: 'I flussi di lavoro non possono ancora partire da questo tipo di evento.',
         session: 'Sessione',
         machine: 'Macchina',
