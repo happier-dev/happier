@@ -1376,6 +1376,8 @@ const ACCOUNT_TRANSCRIPT_AND_TOOL_CATALOG_DEFINITIONS = {
     permissionPromptSurface: accountPreference(z.enum(['composer', 'transcript', 'both']), 'composer', 'permission mediation'),
 } as const;
 const ACCOUNT_RUNTIME_AND_WORKFLOW_CATALOG_DEFINITIONS = {
+    // PROGRAM D21: deliberate visible Activity cadence; zero disables automatic refresh.
+    databaseActivityAutoRefreshIntervalMs: accountPreference(accountNonNegativeInteger(), 5000, 'database workbench'),
     sessionReminderAutoClearOnOpen: accountPreference(z.boolean(), true, 'session reminders'),
     sessionReminderPresetsV1: accountPreference(SessionReminderPresetsV1Schema, [], 'session reminders', 16 * 1024),
     externalSessionsSettingsV1: accountPreference(ExternalSessionsSettingsV1Schema, ExternalSessionsSettingsV1Schema.parse({}), 'external session policy', 64 * 1024),

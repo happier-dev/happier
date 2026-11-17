@@ -6,6 +6,7 @@ import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { EMPTY_SCM_CAPABILITIES } from '@/scm/core/snapshotMappers';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { storage } from '@/sync/domains/state/storage';
@@ -105,7 +106,7 @@ describe('useScmSessionAutoRefresh', () => {
         const sessionId = 'hydrating-session';
         const serverId = 'hydrating-home';
         seedRepository(sessionId, serverId);
-        const machine = storage.getState().machines[`${sessionId}-machine`]!;
+        const machine = createMachineFixture({ ...storage.getState().machines[`${sessionId}-machine`]!, presenceProtocolVersion: 1 });
         const session = createSessionFixture({ id: sessionId, serverId, active: false,
             metadata: { path: `/${sessionId}`, host: machine.metadata!.host } });
         storage.setState({
@@ -122,6 +123,8 @@ describe('useScmSessionAutoRefresh', () => {
         expect(snapshotRequests()).toHaveLength(0);
 
         await act(async () => {
+            // Hydration is a fresh Home presence answer, not a retained unobserved active bit.
+            publishMachineActivityForTest([machine], { active: true, activeAt: Date.now() });
             storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] },
                 machineListStatusByServerId: { [serverId]: 'idle' } });
         });

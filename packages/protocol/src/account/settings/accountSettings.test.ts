@@ -48,6 +48,15 @@ describe('Bot motion preference', () => {
   });
 });
 
+describe('database Activity refresh preference', () => {
+  it('defaults older documents to the approved five seconds and retains deliberate intervals including off', () => {
+    expect(accountSettingsParse({})).toHaveProperty('databaseActivityAutoRefreshIntervalMs', 5000);
+    expect(accountSettingsParse({ databaseActivityAutoRefreshIntervalMs: 0 })).toHaveProperty('databaseActivityAutoRefreshIntervalMs', 0);
+    expect(accountSettingsParse({ databaseActivityAutoRefreshIntervalMs: 12000 })).toHaveProperty('databaseActivityAutoRefreshIntervalMs', 12000);
+    expect(accountSettingsParse({ databaseActivityAutoRefreshIntervalMs: -1 })).toHaveProperty('databaseActivityAutoRefreshIntervalMs', 5000);
+  });
+});
+
 describe('SCM resource preferences', () => {
   it('defaults resource links to Happier and retains an explicit GitHub choice independently of create-form placement', () => {
     expect(accountSettingsParse({})).toHaveProperty('scmResourceOpenLocation', 'happier');
