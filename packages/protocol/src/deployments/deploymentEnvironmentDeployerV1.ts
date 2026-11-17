@@ -11,13 +11,13 @@ export type DeploymentEnvironmentPeopleModeV1 = z.infer<typeof DeploymentEnviron
 export const DeploymentEnvironmentDataEditorModeV1Schema = lazyZodSchema(() => z.enum(['off', ...PEOPLE_MODES]));
 export type DeploymentEnvironmentDataEditorModeV1 = z.infer<typeof DeploymentEnvironmentDataEditorModeV1Schema>;
 
-/** The D13 agent level vocabulary a database owner chooses from. The approval applier consumes it as an
- * Action-time target input; admission and storage accept only `DatabaseAgentAccessV1` until the write
- * levels are enabled together with that applier input. Owned here because the Environment record stores it;
- * `@happier-dev/database-protocol` re-exports it for every other database consumer. */
+/** The D13 agent level a database owner chooses. The Environment stores it and the approval-scope admission
+ * hands it to the approval applier as an Action-time target input. Owned here because the Environment record
+ * stores it; `@happier-dev/database-protocol` re-exports it for every other database consumer. */
 export const DatabaseAgentLevelV1Schema = lazyZodSchema(() => z.enum(['none', 'read', 'readWriteAsk', 'readWriteNoApproval']));
 export type DatabaseAgentLevelV1 = z.infer<typeof DatabaseAgentLevelV1Schema>;
-/** Agent levels a database can be set to and admitted at today (P3 U1–U2: none and read). */
+/** Machine-local (manual/worktree) database levels: none and read until their level reaches the approval
+ * applier the way an Environment's does (P3 U3 residual). */
 export const DatabaseAgentAccessV1Schema = lazyZodSchema(() => z.enum(['none', 'read'] satisfies readonly DatabaseAgentLevelV1[]));
 export type DatabaseAgentAccessV1 = z.infer<typeof DatabaseAgentAccessV1Schema>;
 

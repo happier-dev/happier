@@ -2931,7 +2931,7 @@ export type DeploymentsActionInputById = {
                 kind: 'team';
                 teamId: string;
             })[] | undefined;
-            dataAgentAccess?: 'none' | 'read' | undefined;
+            dataAgentAccess?: 'none' | 'read' | 'readWriteAsk' | 'readWriteNoApproval' | undefined;
             ingress?: null | undefined | {
                 kind: 'cloudflareTunnel';
             } | {
@@ -6281,7 +6281,7 @@ export type DeploymentsActionResultById = {
                 purpose: 'preview' | 'standard';
                 deployerMode: 'chosen' | 'managers' | 'members';
                 dataEditorMode: 'chosen' | 'managers' | 'members' | 'off';
-                dataAgentAccess: 'none' | 'read';
+                dataAgentAccess: 'none' | 'read' | 'readWriteAsk' | 'readWriteNoApproval';
                 controllerMachineId: string;
                 deletedAtMs?: number | undefined;
                 deployerPrincipals?: ({
@@ -6466,7 +6466,7 @@ export type DeploymentsActionResultById = {
                 purpose: 'preview' | 'standard';
                 deployerMode: 'chosen' | 'managers' | 'members';
                 dataEditorMode: 'chosen' | 'managers' | 'members' | 'off';
-                dataAgentAccess: 'none' | 'read';
+                dataAgentAccess: 'none' | 'read' | 'readWriteAsk' | 'readWriteNoApproval';
                 controllerMachineId: string;
                 deletedAtMs?: number | undefined;
                 deployerPrincipals?: ({
@@ -13233,7 +13233,7 @@ export type DeploymentsActionResultById = {
             purpose: 'preview' | 'standard';
             deployerMode: 'chosen' | 'managers' | 'members';
             dataEditorMode: 'chosen' | 'managers' | 'members' | 'off';
-            dataAgentAccess: 'none' | 'read';
+            dataAgentAccess: 'none' | 'read' | 'readWriteAsk' | 'readWriteNoApproval';
             controllerMachineId: string;
             deletedAtMs?: number | undefined;
             deployerPrincipals?: ({
@@ -13842,7 +13842,7 @@ export type DeploymentsActionResultById = {
             purpose: 'preview' | 'standard';
             deployerMode: 'chosen' | 'managers' | 'members';
             dataEditorMode: 'chosen' | 'managers' | 'members' | 'off';
-            dataAgentAccess: 'none' | 'read';
+            dataAgentAccess: 'none' | 'read' | 'readWriteAsk' | 'readWriteNoApproval';
             controllerMachineId: string;
             deletedAtMs?: number | undefined;
             deployerPrincipals?: ({
@@ -14245,7 +14245,7 @@ export type DeploymentsActionResultById = {
             purpose: 'preview' | 'standard';
             deployerMode: 'chosen' | 'managers' | 'members';
             dataEditorMode: 'chosen' | 'managers' | 'members' | 'off';
-            dataAgentAccess: 'none' | 'read';
+            dataAgentAccess: 'none' | 'read' | 'readWriteAsk' | 'readWriteNoApproval';
             controllerMachineId: string;
             deletedAtMs?: number | undefined;
             deployerPrincipals?: ({

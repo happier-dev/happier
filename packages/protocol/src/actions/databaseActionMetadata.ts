@@ -39,7 +39,7 @@ export const databaseActionMetadata = {
         ...read, title: 'Read database cell', approvalInputCustody: 'live_only', secretInputPaths: ['key.[].value.value'],
     },
     [database.DATABASE_STATEMENT_RUN_ACTION_ID_V1]: {
-        ...write, title: 'Run SQL', placementBindings: ['toolbar'],
+        ...write, title: 'Run SQL', placementBindings: ['toolbar'], approvalScope: 'environment',
         approvalInputCustody: 'live_only',
         agentDefault: { read: 'allow', write: 'ask' },
         readOnly: { op: 'eq', path: 'mode', value: 'read' },
@@ -48,7 +48,7 @@ export const databaseActionMetadata = {
         secretInputPaths: ['statement.parameters.[].value', 'statements.[].parameters.[].value'],
     },
     [database.DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1]: {
-        ...write, title: 'Explain SQL', placementBindings: ['toolbar'],
+        ...write, title: 'Explain SQL', placementBindings: ['toolbar'], approvalScope: 'environment',
         agentDefault: { read: 'allow', write: 'ask' },
         readOnly: { op: 'or', any: [
             { op: 'eq', path: 'mode', value: 'plan' },

@@ -46,6 +46,8 @@ export type ActionApprovalPolicyScopeV1 =
 export type ActionEnvironmentApprovalScopeAdmissionV1 = Readonly<{
   /** Retains the child identity and its admitted template. Null is an admitted global-only operation. */
   scope: Extract<ActionApprovalPolicyScopeV1, { kind: 'environment' }> | null;
+  /** The admitted target's database agent level (D13), the AE 03 applier's Action-time target input. */
+  targetApproval?: Pick<ActionTargetApprovalV1, 'databaseAgentLevel'>;
 }>;
 
 type ApprovalInvocationContext = Pick<ActionExecutorContext,

@@ -1357,12 +1357,16 @@ describe('current Source deployment authority', () => {
         expect(await projection(member.id)).toMatchObject({ capabilities: { editData: false } });
         expect(await projection(owner.id)).toMatchObject({ capabilities: { editData: true } });
         expect(await update({ dataEditorMode: 'chosen' }, created.revision + 2)).toMatchObject({ ok: true, revision: created.revision + 3 });
+        // D13 (P3 U3): the Environment stores either agent write level.
+        expect(await update({ dataAgentAccess: 'readWriteNoApproval' }, created.revision + 3)).toMatchObject({ ok: true, revision: created.revision + 4 });
+        expect(await projection(member.id)).toMatchObject({ dataAgentAccess: 'readWriteNoApproval' });
+        expect(await update({ dataAgentAccess: 'readWriteAsk' }, created.revision + 4)).toMatchObject({ ok: true, revision: created.revision + 5 });
         expect(await projection(outsider.id)).toEqual({ ok: false, error: 'deployment_unavailable' });
         // Membership ends: the next admission refuses both the deploy and the database edit.
         await db.teamMembership.delete({ where: { id: membership.id } });
         expect(await projection(member.id)).toEqual({ ok: false, error: 'deployment_unavailable' });
         expect(await canEdit(member.id)).toBe(false);
-        expect(await update({ dataEditorMode: 'off' }, created.revision + 3)).toMatchObject({ ok: true, revision: created.revision + 4 });
+        expect(await update({ dataEditorMode: 'off' }, created.revision + 5)).toMatchObject({ ok: true, revision: created.revision + 6 });
         expect(await projection(owner.id)).toMatchObject({ capabilities: { editData: false } });
         expect(await canEdit(owner.id)).toBe(false);
     });

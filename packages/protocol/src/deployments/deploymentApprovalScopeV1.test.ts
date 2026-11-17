@@ -9,7 +9,7 @@ function environment(id: string, preview = false) {
   return DeploymentEnvironmentHeaderV1Schema.parse({
     v: 1, id, serverId: 'home', projectSourceId: 'source', revision: 3,
     owner: { kind: 'account', accountId: 'owner' }, protection: 'nonProduction',
-    purpose: preview ? 'preview' : 'standard', deployerMode: 'managers',
+    purpose: preview ? 'preview' : 'standard', deployerMode: 'managers', dataEditorMode: 'off', dataAgentAccess: 'read',
     controllerMachineId: 'controller', runtimeTargetLinkId: `${id}-runtime`,
     ...(preview ? { previewTemplateEnvironmentId: 'template', previewRepositoryId: 'source',
       previewPullRequestId: id, previewTargetLinkId: 'template-runtime' } : {}),
@@ -108,5 +108,41 @@ describe('preview template approval scope', () => {
     rows.set(unrelated.id, unrelated);
     expect(await resolve({ actionId: 'deployments.deploy', input: { serverId: 'home', environmentId: unrelated.id },
       context: {}, phase: 'prepare' })).toEqual({ scope: { kind: 'environment', environmentId: unrelated.id } });
+  });
+});
+
+describe('database Action approval scope (P3 U3)', () => {
+  const editsApply = 'happier.database/actions/edits/apply';
+  const deploymentTarget = { kind: 'deployment_service', environment: { serverId: 'home', environmentId: 'staging',
+    projectSourceId: 'source' }, deploymentId: 'deployment', targetLinkId: 'staging-runtime', serviceId: 'db', database: 'app' };
+  const manualTarget = { kind: 'manual', accountId: 'owner', installationId: 'installation', projectKey: 'project',
+    savedSecretId: 'secret', workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/project' } };
+
+  it('reads the Environment named by a deployment database target and carries its agent level', async () => {
+    const reads: unknown[] = [];
+    // The Environment read is the Home boundary; the resolver stays real.
+    const resolve = createDeploymentApprovalScopeResolverV1(async (_action, input) => {
+      reads.push(input);
+      return { ok: true, environment: { ...environment('staging'), dataEditorMode: 'managers', dataAgentAccess: 'none' }, targetLinks: [] };
+    });
+    expect(await resolve({ actionId: editsApply, input: { operation: 'edits.apply', target: deploymentTarget },
+      context: {}, phase: 'prepare' })).toEqual({ scope: { kind: 'environment', environmentId: 'staging' },
+      targetApproval: { databaseAgentLevel: 'none' } });
+    expect(reads).toEqual([{ serverId: 'home', environmentId: 'staging' }]);
+  });
+
+  it('admits a Machine-local database target as global-only without an Environment read', async () => {
+    let reads = 0;
+    const resolve = createDeploymentApprovalScopeResolverV1(async () => { reads++; throw new Error('No Environment read expected'); });
+    expect(await resolve({ actionId: editsApply, input: { operation: 'edits.apply', target: manualTarget },
+      context: {}, phase: 'prepare' })).toEqual({ scope: null });
+    expect(reads).toBe(0);
+  });
+
+  it('refuses a deployment database target that names another Project', async () => {
+    const resolve = createDeploymentApprovalScopeResolverV1(async () => ({ ok: true,
+      environment: { ...environment('staging'), projectSourceId: 'other' }, targetLinks: [] }));
+    expect(await resolve({ actionId: editsApply, input: { operation: 'edits.apply', target: deploymentTarget },
+      context: {}, phase: 'prepare' })).toMatchObject({ ok: false, errorCode: 'deployment_access_denied' });
   });
 });

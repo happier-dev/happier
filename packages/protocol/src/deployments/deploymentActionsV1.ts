@@ -172,7 +172,7 @@ export const DeploymentEnvironmentHeaderV1Schema = lazyZodSchema(() => z.strictO
   deployerPrincipals: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
   /** Database access (P3): server-readable decision facts, ids only (docs/encryption.md). */
   dataEditorMode: DeploymentEnvironmentDataEditorModeV1Schema, dataEditors: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
-  dataAgentAccess: DatabaseAgentAccessV1Schema,
+  dataAgentAccess: DatabaseAgentLevelV1Schema,
   telemetryMachineId: z.optional(z.nullable(DeploymentIdentifierV1Schema)),
   controllerMachineId: DeploymentIdentifierV1Schema, buildMachineId: z.optional(DeploymentIdentifierV1Schema),
   ingress: z.optional(DeploymentIngressV1Schema),
@@ -229,7 +229,7 @@ export const DeploymentEnvironmentUpdatePatchV1Schema = lazyZodSchema(() => z.st
     deployerPrincipals: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
     dataEditorMode: z.optional(DeploymentEnvironmentDataEditorModeV1Schema),
     dataEditors: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
-    dataAgentAccess: z.optional(DatabaseAgentAccessV1Schema),
+    dataAgentAccess: z.optional(DatabaseAgentLevelV1Schema),
 }));
 /** Content CAS and reviewed build/ingress placement share one manager-owned update. */
 export const DeploymentEnvironmentUpdateInputV1BaseSchema = lazyZodSchema(() => z.strictObject({

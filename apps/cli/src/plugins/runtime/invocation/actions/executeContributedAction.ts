@@ -1049,6 +1049,7 @@ export async function executeContributedAction(params: Readonly<{
             const routing = resolveActionApprovalRouting({ actionId: 'action.invoke', profileActionId: contributedActionSettingsId,
               spec: getActionSpec('action.invoke'), settings,
               approvalScope: environmentAdmission?.scope ?? undefined,
+              ...(environmentAdmission?.targetApproval ? { targetApproval: environmentAdmission.targetApproval } : {}),
               defaultSafety: action.definition.safety, input: admittedReviewOperation ? reviewedInput : parsedInput,
               defaultUiConfirmation: manifestDefault,
               defaultConfirmation: manifestDefault || sharedRequester && action.definition.dangerLevel === 'writesRemote'
