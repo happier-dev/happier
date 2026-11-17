@@ -20,7 +20,7 @@ import { ProviderRuntimeBindingBasisV1Schema } from '@happier-dev/protocol/provi
 import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import { QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
-import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteResultSchema as CanonicalActionExecuteResultSchema, ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { TeamCredentialRouteV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
@@ -78,14 +78,9 @@ const AgentStartPolicyV1Schema = z.strictObject({
   sessionAgentStartAllowListsV1: asHostProtocolZod(SessionAgentStartAllowListsV1StrictSchema),
   sessionAgentSpawnPolicyV1: asHostProtocolZod(SessionAgentSpawnPolicyV1StrictSchema),
 });
-const ActionExecuteSuccessSchema = z.strictObject({
-  ok: z.literal(true),
-  result: z.unknown(),
-});
 const ActionExecuteResultSchema = z.custom<ActionExecuteResult>((value) => {
-  if (ActionExecuteFailureSchema.safeParse(value).success) return true;
-  return ActionExecuteSuccessSchema.safeParse(value).success
-    && Object.prototype.hasOwnProperty.call(value, 'result');
+  const parsed = CanonicalActionExecuteResultSchema.safeParse(value);
+  return parsed.success && (!parsed.data.ok || Object.prototype.hasOwnProperty.call(value, 'result'));
 });
 const ProjectionTokenSchema = z.string().check(z.regex(/^[a-f0-9]{64}$/u));
 const CanonicalOriginSchema = z.string().check(z.trim(), z.minLength(1), z.maxLength(2_048));

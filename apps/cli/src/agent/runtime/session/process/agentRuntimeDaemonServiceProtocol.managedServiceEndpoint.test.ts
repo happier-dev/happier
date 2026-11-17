@@ -79,6 +79,19 @@ describe('Agent runtime daemon managed-server endpoint service protocol', () => 
       result: { kind: 'action.execution', requestId: 'action-1', outcome },
     });
     expect(AgentRuntimeDaemonServiceResponseV1Schema.safeParse(response({ ok: true, result: { triggers: [] } })).success).toBe(true);
+    const settled = { ok: true, result: { triggers: [] },
+      automationNotices: [{ code: 'action_automations_not_checked', reason: 'http_404' }],
+      operationCredentialUses: [{ v: 1, kind: 'connected_account', label: null,
+        owner: { kind: 'account', accountId: 'account-1' },
+        service: { pluginId: 'fixture.provider', localId: 'models' },
+        why: { kind: 'purpose_binding', purpose: {
+          consumer: { pluginId: 'fixture.agent', localId: 'agent' }, purpose: 'models' }, target: 'account' },
+        currentness: { kind: 'current_at_materialization' } }],
+    };
+    expect(AgentRuntimeDaemonServiceResponseV1Schema.parse(response(settled))).toEqual(response(settled));
+    expect(AgentRuntimeDaemonServiceResponseV1Schema.safeParse(response({ ...settled,
+      operationCredentialUses: [{ ...settled.operationCredentialUses[0], token: 'not-admission-metadata' }],
+    })).success).toBe(false);
     expect(AgentRuntimeDaemonServiceResponseV1Schema.safeParse(response({
       ok: false,
       errorCode: 'target_unavailable',
