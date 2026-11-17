@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { copyFile, mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { resolveServerGeneratedClients } from '../../build/server_generated_clients.mjs';
 import { promisify } from 'node:util';
 
 /**
@@ -15,12 +16,14 @@ const GENERATOR = `import { createHash } from 'node:crypto';
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveServerPrismaInstallLayout } from './prismaInstallLayout.mjs';
 const server = join(dirname(fileURLToPath(import.meta.url)), '..');
-for (const [schema, client] of [['prisma/schema.prisma', 'node_modules/.prisma/client'],
+const defaultClient = resolveServerPrismaInstallLayout({ serverRoot: server }).defaultClientDir;
+for (const [schema, client] of [['prisma/schema.prisma', defaultClient],
   ['prisma/sqlite/schema.prisma', 'generated/sqlite-client'], ['prisma/mysql/schema.prisma', 'generated/mysql-client']]) {
   const source = await readFile(join(server, schema));
   const fields = [...source.toString().matchAll(/^\\s+(\\w+)\\s+\\w+/gm)].map(match => match[1]);
-  const output = join(server, client);
+  const output = client === defaultClient ? client : join(server, client);
   await mkdir(output, { recursive: true });
   await writeFile(join(output, 'index.js'), 'exports.fields = ' + JSON.stringify(fields) + ';\\n');
   await writeFile(join(output, 'index.d.ts'), 'export type Machine = { ' + fields.map(field => field + ': string;').join(' ') + ' };\\n');
@@ -38,6 +41,14 @@ export const FIXTURE_MACHINE_SCHEMA = 'model Machine {\n  id String\n}\n';
 export async function installServerGeneratorFixture(repoDir, schema = FIXTURE_MACHINE_SCHEMA) {
   const server = join(repoDir, 'apps/server');
   await mkdir(join(server, 'scripts'), { recursive: true });
+  await copyFile(new URL('../../../../server/scripts/prismaInstallLayout.mjs', import.meta.url), join(server, 'scripts/prismaInstallLayout.mjs'));
+  // Match atomic installations: package bytes live outside the checkout.
+  const installation = await mkdtemp(join(dirname(repoDir), 'prisma-install-'));
+  const client = join(installation, '@prisma/client');
+  await mkdir(client, { recursive: true });
+  await writeFile(join(client, 'package.json'), JSON.stringify({ name: '@prisma/client' }));
+  await mkdir(join(server, 'node_modules/@prisma'), { recursive: true });
+  await symlink(client, join(server, 'node_modules/@prisma/client'), process.platform === 'win32' ? 'junction' : 'dir');
   await writeFile(join(server, 'scripts/generateClients.ts'), GENERATOR);
   await writeServerSchemas(repoDir, schema);
 }
@@ -57,8 +68,8 @@ export async function generateServerClients(repoDir) {
 /** Field names each generated client was generated with. */
 export async function readGeneratedClientFields(repoDir) {
   const fields = {};
-  for (const [name, client] of [['default', 'apps/server/node_modules/.prisma/client'], ['sqlite', 'apps/server/generated/sqlite-client'],
-    ['mysql', 'apps/server/generated/mysql-client']]) {
+  for (const [index, { client }] of resolveServerGeneratedClients({ repoDir }).entries()) {
+    const name = ['default', 'sqlite', 'mysql'][index];
     const text = await readFile(join(repoDir, client, 'index.js'), 'utf8');
     fields[name] = JSON.parse(text.slice(text.indexOf('=') + 1, text.lastIndexOf(';')));
   }

@@ -14,9 +14,10 @@ export { EMBEDDED_FEATURE_POLICIES_OUTPUT };
 
 const SOURCE_ROOTS = ['src', 'sources', 'scripts'];
 const TEST_DIRECTORY_NAMES = new Set(['__fixtures__', '__snapshots__', '__tests__', 'fixtures', 'test', 'testkit', 'tests', 'test-support']);
-// The server's Prisma install layout (apps/server/scripts/prismaInstallLayout.mjs): Prisma 7 is installed
-// under apps/server/node_modules; the drift test pins these to that owner.
-export const SERVER_GENERATED_INPUT_ROOTS = Object.freeze(['apps/server/node_modules/.prisma/client', 'apps/server/node_modules/@prisma/client', 'apps/server/generated']);
+// Generated outputs for owned and borrowed installations. @prisma/client itself
+// is an installed dependency: borrowing it preserves the server layout owner's
+// choice of a capture-local generated client instead of changing package ownership.
+export const SERVER_GENERATED_INPUT_ROOTS = Object.freeze(['apps/server/node_modules/.prisma/client', 'apps/server/generated']);
 export { SERVER_GENERATED_CLIENTS, SERVER_GENERATED_CLIENT_STAMP } from '../../build/server_generated_clients.mjs';
 // UI postinstall vendors these from installed packages into the served public tree.
 const UI_VENDORED_PUBLIC_ROOTS = ['apps/ui/public/monaco', 'apps/ui/public/pdfjs'];

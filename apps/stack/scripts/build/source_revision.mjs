@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 import { createGzip, gunzipSync } from 'node:zlib';
 import { BuildInputDriftError, mountInstalledNodeModules, unmountInstalledNodeModules } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { EMBEDDED_FEATURE_POLICIES_OUTPUT, isSourceGeneratedInput, isWorkspaceBuildInputIgnoredPath, readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
-import { readStaleServerGeneratedClients, SERVER_GENERATED_CLIENTS } from './server_generated_clients.mjs';
+import { readStaleServerGeneratedClients, resolveServerGeneratedClients, SERVER_GENERATED_CLIENTS } from './server_generated_clients.mjs';
 import { run } from '../utils/proc/proc.mjs';
 import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 
@@ -365,12 +365,12 @@ export function isRevisionGeneratorInput(path) {
 }
 
 /** The shared reuse rule against a capture directory's own schema and clients. */
-function readStaleCapturedClients(captureDir) {
+function readStaleCapturedClients(captureDir, clients) {
   const read = path => {
     try { return readFileSync(join(captureDir, path)); }
     catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null; throw error; }
   };
-  return readStaleServerGeneratedClients({ readSchema: read, readStamp: read });
+  return readStaleServerGeneratedClients({ repoDir: captureDir, clients, readSchema: read, readStamp: read });
 }
 
 /**
@@ -409,8 +409,7 @@ async function deriveEmbeddedFeaturePolicies({ captureDir, env, signal }) {
 }
 
 async function deriveServerGeneratedClients({ captureDir, sourceDir, env, signal }) {
-  const stale = readStaleCapturedClients(captureDir);
-  if (!stale.length) return [];
+  if (!SERVER_GENERATED_CLIENTS.some(({ schema }) => existsSync(join(captureDir, schema)))) return [];
   const started = performance.now();
   // Installed tools only, at the capture root: the captured physical clients stay
   // the generator's output, and no workspace link or package cache leads back
@@ -426,15 +425,20 @@ async function deriveServerGeneratedClients({ captureDir, sourceDir, env, signal
     await mountInstalledNodeModules({ ...modules, excludedNames: ['@happier-dev', '.prisma'] });
   }
   try {
+    // Physical captured packages and borrowed tools can select different output
+    // layouts. Ask the server owner after the actual tool mount, once.
+    const clients = resolveServerGeneratedClients({ repoDir: captureDir });
+    const stale = readStaleCapturedClients(captureDir, clients);
+    if (!stale.length) return [];
     await run(process.execPath, sourceBuildNodeArgs({ repoDir: captureDir, scriptPath: join(captureDir, 'apps/server/scripts/generateClients.ts') }), {
       cwd: join(captureDir, 'apps/server'), signal, stdio: ['ignore', 'ignore', 'inherit'], captureFailureDiagnostic: true,
       // Schema sync only checks: the capture's schemas are the revision's bytes.
       env: { ...env, HAPPIER_BUILD_DB_PROVIDERS: 'all', HAPPIER_DEV_TARGET_EXECUTION: '1' } });
+    const remaining = readStaleCapturedClients(captureDir, clients);
+    if (remaining.length) throw new Error(`[source-revision] generated server clients still differ from the captured schema: ${remaining.join(', ')}`);
+    console.error(`[source-revision] regenerated server clients from the captured schema (${stale.join(', ')}) elapsedMs=${Math.round(performance.now() - started)}`);
+    return stale;
   } finally {
     for (const modules of tools.toReversed()) await unmountInstalledNodeModules(modules);
   }
-  const remaining = readStaleCapturedClients(captureDir);
-  if (remaining.length) throw new Error(`[source-revision] generated server clients still differ from the captured schema: ${remaining.join(', ')}`);
-  console.error(`[source-revision] regenerated server clients from the captured schema (${stale.join(', ')}) elapsedMs=${Math.round(performance.now() - started)}`);
-  return stale;
 }

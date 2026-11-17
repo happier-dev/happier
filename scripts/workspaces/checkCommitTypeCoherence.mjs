@@ -39,7 +39,7 @@ import { uiTypedRoutesDeclaration } from '../../apps/ui/scripts/uiTypedRoutesDec
 import { commitProducerClosure } from './commitProducerClosure.mjs';
 import { kickRollingHeadTypecheck } from './commitPackageTypecheck.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
-import { readStaleServerGeneratedClients, SERVER_GENERATED_CLIENTS } from '../../apps/stack/scripts/build/server_generated_clients.mjs';
+import { readStaleServerGeneratedClients, resolveServerGeneratedClients } from '../../apps/stack/scripts/build/server_generated_clients.mjs';
 
 // The textual producer-closure scan (missing modules/exports, untracked lockfile importers) runs
 // before any compiler or admission on every commit path, including the fast private-index path.
@@ -229,7 +229,7 @@ function repository(repo) {
       return source;
     };
     const none = { files: {}, removedPaths: [] };
-    if (!readStaleServerGeneratedClients({ readSchema, readStamp: disk }).length) return none;
+    if (!readStaleServerGeneratedClients({ repoDir: repo, readSchema, readStamp: disk }).length) return none;
     const key = createHash('sha256').update(JSON.stringify(schemas.map(([path, bytes]) => [path, gitBlobId(bytes)]))).digest('hex');
     if (!derivedClients.has(key)) derivedClients.set(key, deriveGeneratedClients(tree, entries));
     return derivedClients.get(key);
@@ -242,22 +242,18 @@ function repository(repo) {
       const roots = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/server', 'scripts/workspaces', 'packages/cli-common']
         .filter(root => entries.has(root) || [...entries.keys()].some(path => path.startsWith(`${root}/`)));
       execFileSync('tar', ['-x', '-C', scratch], { input: git(['archive', '--format=tar', tree, '--', ...roots]) });
-      // Physical client roots and installed client package: generation must never write through a
-      // mounted link into the checkout's node_modules.
-      for (const { client } of SERVER_GENERATED_CLIENTS) mkdirSync(join(scratch, client), { recursive: true });
-      if (existsSync(abs('node_modules/@prisma/client'))) {
-        cpSync(abs('node_modules/@prisma/client'), join(scratch, 'node_modules/@prisma/client'), { recursive: true, verbatimSymlinks: true });
-      }
       execFileSync(process.execPath, ['--input-type=module', '--eval', `const { deriveRevisionGeneratedInputs } = await import(${JSON.stringify(
         pathToFileURL(fileURLToPath(new URL('../../apps/stack/scripts/build/source_revision.mjs', import.meta.url))).href)});
 await deriveRevisionGeneratedInputs({ captureDir: ${JSON.stringify(scratch)}, sourceDir: ${JSON.stringify(repo)} });`],
       { stdio: ['ignore', 'ignore', 'inherit'] });
       const files = {};
       const removedPaths = [];
-      for (const { client } of SERVER_GENERATED_CLIENTS) {
+      const sourceClients = resolveServerGeneratedClients({ repoDir: repo });
+      for (const { schema, client } of resolveServerGeneratedClients({ repoDir: scratch, sourceDir: repo })) {
+        const sourceClient = sourceClients.find(entry => entry.schema === schema).client;
         const derived = compilerInputsUnder(join(scratch, client));
-        for (const path of derived) files[abs(`${client}/${path}`)] = readFileSync(join(scratch, client, path), 'utf8');
-        for (const path of compilerInputsUnder(abs(client))) if (!derived.includes(path)) removedPaths.push(abs(`${client}/${path}`));
+        for (const path of derived) files[abs(`${sourceClient}/${path}`)] = readFileSync(join(scratch, client, path), 'utf8');
+        for (const path of compilerInputsUnder(abs(sourceClient))) if (!derived.includes(path)) removedPaths.push(abs(`${sourceClient}/${path}`));
       }
       return { files, removedPaths };
     } finally {

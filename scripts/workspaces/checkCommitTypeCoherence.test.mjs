@@ -1,3 +1,4 @@
+// @happier-test-preparation source-condition
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import childProcess from 'node:child_process';
@@ -1044,7 +1045,7 @@ async function prismaCheckout(t) {
   await mkdir(join(repo, 'apps/server'), { recursive: true });
   await write('apps/server/package.json', JSON.stringify({ name: '@happier-dev/server', type: 'module' }));
   await installServerGeneratorFixture(repo);
-  await write('machine.ts', "import type { Machine } from '.prisma/client';\nexport const id = (machine: Machine): string => machine.id;\n");
+  await write('machine.ts', "import type { Machine } from './apps/server/generated/default-client';\nexport const id = (machine: Machine): string => machine.id;\n");
   git('add', '-A');
   git('commit', '--quiet', '-m', 'schema');
   await generateServerClients(repo);
@@ -1052,7 +1053,7 @@ async function prismaCheckout(t) {
   return { ...fixture, withColumn };
 }
 
-const usesColumn = "import type { Machine } from '.prisma/client';\nexport const id = (machine: Machine): string => machine.metadataBytes;\n";
+const usesColumn = "import type { Machine } from './apps/server/generated/default-client';\nexport const id = (machine: Machine): string => machine.metadataBytes;\n";
 
 test('a packet that adds a Prisma column and uses it is coherent while the checkout clients predate the column', async (t) => {
   const { repo, write, commitOnly, withColumn } = await prismaCheckout(t);

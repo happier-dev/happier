@@ -586,7 +586,7 @@ createRequire(import.meta.url)('prisma/build/index.js');
 ` + await readFile(generatorPath, 'utf8'));
   await mkdir(join(repoDir, 'apps/server/node_modules/prisma/build'), { recursive: true });
   await writeFile(join(repoDir, 'apps/server/node_modules/prisma/build/index.js'), 'module.exports = {};');
-  await gitIn('add', '.gitignore', 'apps/server/scripts/generateClients.ts', 'apps/server/prisma');
+  await gitIn('add', '.gitignore', 'apps/server/scripts', 'apps/server/prisma');
   await gitIn('commit', '--quiet', '-m', 'schema');
   // Another lane's uncommitted schema edit, generated into the shared checkout.
   await writeServerSchemas(repoDir, FIXTURE_MACHINE_SCHEMA.replace('  id String\n', '  id String\n  metadataBytes Bytes\n'));
