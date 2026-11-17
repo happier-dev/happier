@@ -4,6 +4,9 @@ import { z } from '../zodRuntimePolicy.js';
 import { ScmBackendIdSchema } from '../scm/backendIdentity.js';
 import { ScmEntryKindSchema, ScmRepoModeSchema } from '../scm/workingSnapshot.js';
 
+export const ReviewScopeSchema = lazyZodSchema(() => z.enum(['changes', 'repository']));
+export type ReviewScope = z.infer<typeof ReviewScopeSchema>;
+
 export const ReviewScmScopeDiagnosticCodeV1Schema = lazyZodSchema(() => z.enum([
   'invalid_path',
   'not_repository',

@@ -24,6 +24,13 @@ export type ReviewNarratorSelection = z.infer<
   typeof ReviewNarratorSelectionSchema
 >;
 
+/** Original requested output, retained with the native launch for a new round. */
+export const ReviewOutputSelectionSchema = lazyZodSchema(() => z.strictObject({
+  outputs: z.array(z.literal('walkthrough')).check(z.minLength(1)),
+  narrator: z.optional(ReviewNarratorSelectionSchema),
+}));
+export type ReviewOutputSelection = z.infer<typeof ReviewOutputSelectionSchema>;
+
 export const ReviewWalkthroughObservationSchema = lazyZodSchema(() =>
   z.strictObject({
     kind: z.literal('review_walkthrough'),
