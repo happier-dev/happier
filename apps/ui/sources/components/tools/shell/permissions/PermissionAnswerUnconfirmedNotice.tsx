@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { HappierBodyEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import { log } from '@/log';
 import { t } from '@/text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -45,21 +46,24 @@ export function PermissionAnswerUnconfirmedNotice(props: Readonly<{
     };
 
     // One state line (glyph · sentence · inline recovery), the same composition as every other in-list state: it
-    // wraps on a narrow footer, announces itself, and "Check again" shows its own ring while the read runs.
+    // wraps on a narrow footer, announces itself, and "Check again" shows its own ring while the read runs. Its
+    // hosts (a permission footer, a question card) draw their own edge, so the glyph stands on it.
     return (
-        <SurfaceStateCard
-            testID={`${props.testIDPrefix}.answer-unconfirmed`}
-            kind="warning"
-            size="line"
-            iconName="clock"
-            accessibilitySemantics="alert"
-            title={couldNotCheck ? t('errors.permissionCheckAgainFailed') : t('errors.permissionAnswerUnconfirmed')}
-            action={readOutcome ? {
-                testID: `${props.testIDPrefix}.check-again`,
-                label: t('errors.permissionCheckAgain'),
-                busy: checking,
-                onPress: () => { void checkAgain(); },
-            } : undefined}
-        />
+        <HappierBodyEdgeContext.Provider value>
+            <SurfaceStateCard
+                testID={`${props.testIDPrefix}.answer-unconfirmed`}
+                kind="warning"
+                size="line"
+                iconName="clock"
+                accessibilitySemantics="alert"
+                title={couldNotCheck ? t('errors.permissionCheckAgainFailed') : t('errors.permissionAnswerUnconfirmed')}
+                action={readOutcome ? {
+                    testID: `${props.testIDPrefix}.check-again`,
+                    label: t('errors.permissionCheckAgain'),
+                    busy: checking,
+                    onPress: () => { void checkAgain(); },
+                } : undefined}
+            />
+        </HappierBodyEdgeContext.Provider>
     );
 }

@@ -7,7 +7,8 @@ import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { t } from '@/text';
 
 const styles = StyleSheet.create((theme) => ({
-    root: { flex: 1, justifyContent: 'center', paddingHorizontal: theme.space.s16 },
+    // The page column, centred in the pane like the route's other states (SessionInvalidLinkFallback).
+    root: { flex: 1, width: '100%', alignSelf: 'center', justifyContent: 'center', paddingHorizontal: theme.space.s16 },
 }));
 
 /**

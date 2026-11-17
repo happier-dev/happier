@@ -8,7 +8,7 @@ import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/server
 import type { NativePermissionChoicesV1, NativePermissionChoiceAvailabilityV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import React, { useRef, useState } from 'react';
 import { View, Platform, type LayoutChangeEvent } from 'react-native';
-import { isHappierPageRowNarrow } from '@happier-dev/plugin-ui/presentation';
+import { HappierBodyEdgeContext, isHappierPageRowNarrow } from '@happier-dev/plugin-ui/presentation';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
@@ -762,13 +762,16 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             testIDPrefix="permission-footer"
         />
     ) : actionFailure && isPending ? (
-        <SurfaceStateCard
-            testID="permission-footer.action-error"
-            kind="error"
-            size="line"
-            accessibilitySemantics="alert"
-            title={`${t('errors.operationFailed')} ${t('errors.tryAgain')}`}
-        />
+        // The footer draws its own edge (its answer buttons), so the line's glyph stands on it.
+        <HappierBodyEdgeContext.Provider value>
+            <SurfaceStateCard
+                testID="permission-footer.action-error"
+                kind="error"
+                size="line"
+                accessibilitySemantics="alert"
+                title={`${t('errors.operationFailed')} ${t('errors.tryAgain')}`}
+            />
+        </HappierBodyEdgeContext.Provider>
     ) : null;
 
     if (isApproved && permission.decisionActor?.kind === 'approvalReviewer') {
