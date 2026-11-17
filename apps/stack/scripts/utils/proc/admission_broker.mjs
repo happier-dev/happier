@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { appendFileSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, watch, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, watch, writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { dirname, isAbsolute, join, posix, relative } from 'node:path';
 import { availableParallelism } from 'node:os';
@@ -177,7 +177,15 @@ export async function readAdmissionMemorySample({ slots = [], waiters = [], read
 /** One Linux host authority. The control connection carries the finite
  * admission handshake; a client-owned pathname listener carries job lifetime.
  * The existing private root's OS permissions are the sole peer boundary. */
-export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyweight-admission-v3/lock',
+// The host's admission root (native_host_admission_state.sh) and the legacy
+// launchers' host-wide mutex. Only the host broker takes that mutex; a broker for
+// any other root (tests, scratch) keeps its own under that root, so it can never
+// block the host broker's succession (2026-11-17 20:47Z: a leaked test broker held
+// it and the controller's successor waited 8 min).
+const HOST_ADMISSION_ROOT = `/tmp/happier-heavyweight-admission-v3-${process.getuid?.()}`;
+const HOST_LEGACY_LOCK_PATH = '/tmp/happier-heavyweight-admission-v3/lock';
+export function createAdmissionBroker({ root,
+  oldLockPath = root === HOST_ADMISSION_ROOT ? HOST_LEGACY_LOCK_PATH : join(root, 'old-admission.lock'),
   oldLockFd, startupLockFd, sampleResources = readAdmissionMemorySample, readCpuCapacity = availableParallelism,
   readRecoveredSlotMemoryKiB = readProcessJobScopeCurrentKiB,
   admitDisk = request => request.cacheBaseDir
@@ -191,6 +199,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
   const watchers = new Map();
   const pendingResourceChanges = new Set();
   let resourceCatchUp;
+  let rootWatcher;
   let sample = { availableMemoryKiB: 0, totalMemoryKiB: 0, reservedMemoryKiB: 0,
     residentMemoryKiB: 0, unreservedMemoryKiB: 0, achievableMemoryKiB: 0 };
   let totalCpuCores;
@@ -1030,6 +1039,9 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
             }
           }
           await observe();
+          // A removed root ends this broker: its state, slots and clients are gone with it.
+          rootWatcher = watch(root, () => { if (!existsSync(root)) void this.close(); });
+          rootWatcher.on('error', () => {});
           started = true;
           for (const socket of pendingConnections) if (!socket.destroyed) accept(socket);
           pendingConnections.clear();
@@ -1043,6 +1055,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     async close() {
       if (closing) return;
       closing = true;
+      rootWatcher?.close();
       clearTimeout(overrunWake);
       clearTimeout(resourceCatchUp);
       resourceCatchUp = undefined;

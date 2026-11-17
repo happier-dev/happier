@@ -23,12 +23,15 @@ function connect(root) {
 }
 
 async function startBroker(root) {
+  // A node:test runner's child context would keep the detached broker attached to
+  // that test run (it never exits, even when its root is removed).
+  const { NODE_TEST_CONTEXT, ...env } = process.env;
   await new Promise((ready, reject) => {
     const child = spawn(process.execPath, [brokerPath, '--serve', root], {
       detached: true, stdio: ['ignore', 'pipe', 'ignore'],
       // Admission's payload identity must not turn the persistent host producer
       // into a descendant charged to that payload's resources.
-      env: { ...process.env, HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: '',
+      env: { ...env, HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: '',
         HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB: '' },
     });
     const lines = createInterface({ input: child.stdout });

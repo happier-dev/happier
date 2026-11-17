@@ -357,6 +357,29 @@ test('an interrupted reservation reconnects with released capacity and publicati
   finally { await unlocked.release?.(); }
 });
 
+test('a broker a client starts for a non-host root keeps its legacy lock under that root and exits when the root is removed', linux, async t => {
+  // 2026-11-17 20:47Z: a broker a test client started for its private root took the
+  // host-wide legacy lock, and the controller's real successor waited behind it (8 min).
+  // The client starts the broker exactly as in a test run (inheriting this runner's env).
+  const root = await mkdtemp('/tmp/happier-broker-isolated-');
+  await chmod(root, 0o700);
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const brokers = () => fs.readdirSync('/proc').filter(name => /^\d+$/.test(name)).filter(pid => {
+    try { return fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').includes(root); } catch { return false; }
+  });
+  t.after(() => { for (const pid of brokers()) process.kill(Number(pid), 'SIGKILL'); });
+  const started = await Promise.race([connectAdmissionBroker(root).then(socket => { socket.destroy(); return 'ready'; }),
+    new Promise(resolve => setTimeout(() => resolve('not ready within 10 s'), 10_000))]);
+  assert.equal(started, 'ready', 'the broker starts without waiting on the host-wide legacy lock');
+  assert.equal(brokers().length, 1);
+  const probe = spawnSync('flock', ['--nonblock', join(root, 'old-admission.lock'), 'true']);
+  assert.equal(probe.status, 1, 'the broker holds its legacy lock under its own root');
+  await rm(root, { recursive: true, force: true });
+  const deadline = Date.now() + 10_000;
+  while (brokers().length && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(brokers().length, 0, 'removing its root stops the broker');
+});
+
 function otherUserCommand(command, args) {
   return process.geteuid() === 0
     ? ['runuser', ['--user', 'nobody', '--', command, ...args]]
