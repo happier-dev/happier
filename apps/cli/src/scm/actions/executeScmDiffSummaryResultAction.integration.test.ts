@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { runWithScmAccountScope } from '@/scm/accountScope';
 import axios, { AxiosHeaders } from 'axios';
 import { createActionExecutor, getActionSpec, ScmDiffSummaryGenerateOutputSchema, ExecutionRunGetResponseSchema, ExecutionRunStartRequestSchema, ProviderBoundModelRefSchema, type ActionExecutorContext, type ActionExecutorDeps, type ScmActionExecute } from '@happier-dev/protocol';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -537,14 +538,20 @@ describe('saved SCM result Action boundary', () => {
     expect(starts).toEqual([expect.objectContaining({ kind: 'scm_diff_summary.v1', backendTarget: generator.backendTarget, modelId: 'chosen-model', modelSelection,
       intentInput: expect.objectContaining({ resultId: created.resultId, comparisonId, expectedRevision: 0, investigateSurroundingFiles: true }) })]);
   });
-  it.each(['matching', 'differentModel', 'differentProvider', 'differentAgent', 'missingGenerator', 'missingGeneratorTeam', 'legacyGeneratorTeam'] as const)(
+  it.each(['matching', 'differentModel', 'differentProvider', 'differentAgent', 'missingGenerator', 'missingGeneratorTeam', 'legacyGeneratorTeam', 'savedTeam'] as const)(
     'preserves legacy retained Connected Services only for the same saved route (%s)', async route => {
+      return runWithScmAccountScope('account', async () => {
       const backendTarget = { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const };
       const modelSelection = ProviderBoundModelRefSchema.parse({ agentTargetKey: buildBackendTargetKeyV2(backendTarget),
         providerConnectionId: route === 'missingGenerator' ? 'original-provider' : null, modelId: 'chosen-model' });
       const connectedServices = { v: 2 as const, bindingsByServiceId: {
         'happier.agent.codex/openai-codex': { source: 'connected' as const, selection: 'profile' as const, profileId: 'original-profile' },
       } };
+      const savedTeam = TeamCredentialProviderModelSelectionV1Schema.parse({
+        kind: 'team_credential_provider_model', resourceId: 'saved-resource', teamId: 'team', expectedResourceRevision: 3,
+        agentTargetKey: modelSelection.agentTargetKey, modelId: modelSelection.modelId, deliveryMode: 'brokered',
+      });
+      const { kind: _teamKind, ...savedTeamRef } = savedTeam;
       const originalTarget = route === 'differentAgent' ? { kind: 'builtInAgent' as const, agentId: 'claude' } : run.backendTarget;
       const originalModel = route === 'differentModel' ? 'other-model' : 'chosen-model';
       const original = ExecutionRunGetResponseSchema.parse({ run: { ...run, backendTarget: originalTarget,
@@ -560,7 +567,8 @@ describe('saved SCM result Action boundary', () => {
         output: ScmDiffSummaryGenerateOutputSchema.parse({ ...output, sourceKey: comparisonId,
           metadata: { ...output.metadata, sourceKey: comparisonId }, comparison: { ...output.comparison, id: comparisonId } }),
         ...(route === 'missingGenerator' || route === 'missingGeneratorTeam' ? {} : { generator: { backendTarget, modelId: 'chosen-model',
-          ...(route === 'legacyGeneratorTeam' ? {} : { modelSelection }) } }) });
+          ...(route === 'savedTeam' ? { modelSelection: { source: 'team_resource' as const, ...savedTeamRef } }
+            : route === 'legacyGeneratorTeam' ? {} : { modelSelection }) } }) });
       const starts: Record<string, unknown>[] = [];
       const response = await executeScmActionOperation({ actionId: 'scm.diffSummary.discuss',
         input: { cwd, resultId: saved.resultId, expectedRevision: 0, message: 'Explain this change', startNew: true }, workingDirectory: cwd,
@@ -579,8 +587,10 @@ describe('saved SCM result Action boundary', () => {
       }
       expect(response).toMatchObject({ success: true, runId: 'replacement' });
       expect(starts).toHaveLength(1);
-      expect(starts[0]?.modelSelection).toEqual(modelSelection);
+      expect(starts[0]?.modelSelection).toEqual(route === 'savedTeam' ? undefined : modelSelection);
+      if (route === 'savedTeam') expect(starts[0]?.teamCredentialModel).toEqual(savedTeam);
       expect(starts[0]?.connectedServices).toEqual(route === 'matching' || route === 'missingGenerator' ? connectedServices : undefined);
+      });
     });
   it.each([['connected', true], ['native', true], ['connected', false]] as const)(
     'keeps the saved %s credential choice over the original Run selection (available=%s)', async (choice, originalAvailable) => {

@@ -152,7 +152,7 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = bindScmExecution
       ...(sessionId ? { sessionId } : {}),
     });
     const trustedInput = { ...input, comparison: context.comparison, metadata: context.metadata };
-    let generatorModelRef: unknown = request.modelSelection;
+    let generatorModelRef: unknown = input.modelSelector?.modelSelection ?? request.modelSelection;
     if (request.teamCredentialModel) {
       const { kind: _kind, ...teamRef } = request.teamCredentialModel;
       generatorModelRef = { source: 'team_resource', ...teamRef };

@@ -228,9 +228,10 @@ describe('initial generation context', () => {
 async function exerciseSavedContinuation(operation: 'refine' | 'addOutputs' | 'replacement' | 'explicitChoice',
   assertContinuation: (observed: { prompt: string; admittedInstructions?: unknown; savedLanguage?: unknown; replacementLanguage?: unknown;
     savedConnectedServices?: unknown; replacementConnectedServices?: unknown; savedModelSelection?: unknown;
-    replacementTeamCredentialModel?: unknown; replacementModelSelection?: unknown }) => void,
+    replacementTeamCredentialModel?: unknown; replacementModelSelection?: unknown; replacementGeneratorModelSelection?: unknown }) => void,
   connectedRouteAtStartOnly = false,
-  teamCredentialModel?: import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1) {
+  teamCredentialModel?: import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1,
+  authoredAccountRef?: Extract<import('@happier-dev/protocol/providers/selection/v2').SessionModelRef, { source: 'account_provider_connection' }>) {
   const previous = getActiveAccountSettingsSnapshot();
   setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({ 'scm.diffSummary.outputLanguage': 'de' }),
     settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: 'saved-language-account' });
@@ -243,9 +244,12 @@ async function exerciseSavedContinuation(operation: 'refine' | 'addOutputs' | 'r
         } } };
       const request = { kind: 'scm_diff_summary.v1' as const, backendTarget: { kind: 'builtInAgent' as const, agentId: 'claude' }, intent: 'scm_diff_summary' as const,
         ...(teamCredentialModel ? { teamCredentialModel, modelId: teamCredentialModel.modelId } : {}),
+        ...(authoredAccountRef ? { modelSelection: { agentTargetKey: authoredAccountRef.agentTargetKey,
+          providerConnectionId: authoredAccountRef.providerConnectionId, modelId: authoredAccountRef.modelId } } : {}),
         ...(!connectedRouteAtStartOnly ? { connectedServices } : {}),
         permissionMode: 'read_only', retentionPolicy: 'resumable' as const, runClass: 'long_lived' as const, ioMode: 'streaming' as const,
-        intentInput: { cwd, source: captured.comparison.source, comparisonId: captured.comparison.id, outputs: ['summary'], outputLanguage: 'fr' } };
+        intentInput: { cwd, source: captured.comparison.source, comparisonId: captured.comparison.id, outputs: ['summary'], outputLanguage: 'fr',
+          ...(authoredAccountRef ? { modelSelector: { modelSelection: authoredAccountRef } } : {}) } };
       const initial = await ScmDiffSummaryProfile.prepareStartParams!({ cwd, sessionId: null, request });
       const preparedInitial = ExecutionRunStartRequestSchema.parse({ ...request, ...initial });
       const params = { ...start(preparedInitial.intentInput), sessionId: null, instructions: preparedInitial.instructions ?? '', connectedServices };
@@ -262,6 +266,7 @@ async function exerciseSavedContinuation(operation: 'refine' | 'addOutputs' | 'r
       let replacementConnectedServices: unknown;
       let replacementTeamCredentialModel: unknown;
       let replacementModelSelection: unknown;
+      let replacementGeneratorModelSelection: unknown;
       // Only Run transport is substituted; profile admission, capture, persistence, Action routing and strict readers are real.
       const executeCanonicalAction: Parameters<ScmActionExecute>[0]['executeCanonicalAction'] = async (id, input) => {
         if (id === 'execution.run.get') return operation === 'replacement' || operation === 'explicitChoice'
@@ -283,6 +288,7 @@ async function exerciseSavedContinuation(operation: 'refine' | 'addOutputs' | 'r
           replacementTeamCredentialModel = admitted.teamCredentialModel;
           replacementModelSelection = admitted.modelSelection;
           const prepared = await ScmDiffSummaryProfile.prepareStartParams!({ cwd, sessionId: null, request: admitted });
+          replacementGeneratorModelSelection = (prepared.intentInput as { resultGenerator?: { modelSelection?: unknown } }).resultGenerator?.modelSelection;
           prompt = ExecutionRunStartRequestSchema.parse({ ...admitted, ...prepared }).instructions ?? '';
           return { ok: true, result: { runId: 'replacement', callId: 'call', sidechainId: 'sidechain', status: 'running' } };
         }
@@ -297,7 +303,8 @@ async function exerciseSavedContinuation(operation: 'refine' | 'addOutputs' | 'r
       expect(result, JSON.stringify(result)).toMatchObject({ success: true });
       assertContinuation({ prompt, admittedInstructions, replacementLanguage, savedLanguage: saved.generator?.outputLanguage,
         savedConnectedServices: saved.generator?.connectedServices, replacementConnectedServices,
-        savedModelSelection: saved.generator?.modelSelection, replacementTeamCredentialModel, replacementModelSelection });
+        savedModelSelection: saved.generator?.modelSelection, replacementTeamCredentialModel, replacementModelSelection,
+        replacementGeneratorModelSelection });
     });
   } finally {
     if (previous) setActiveAccountSettingsSnapshot(previous); else clearActiveAccountSettingsSnapshot();
@@ -307,6 +314,17 @@ async function exerciseSavedContinuation(operation: 'refine' | 'addOutputs' | 'r
 const fence = '`'.repeat(3);
 
 describe('ScmDiffSummaryProfile', () => {
+
+  it('retains an authored account source through saved preparation and replacement', async () => {
+    return runWithScmAccountScope('account', async () => {
+      const modelSelection = { source: 'account_provider_connection' as const, agentTargetKey: 'agent:happier.agent.claude/claude',
+        providerConnectionId: 'account-provider', modelId: 'account-model' };
+      await exerciseSavedContinuation('replacement', ({ savedModelSelection, replacementGeneratorModelSelection }) => {
+        expect(savedModelSelection).toEqual(modelSelection);
+        expect(replacementGeneratorModelSelection).toEqual(modelSelection);
+      }, false, undefined, modelSelection);
+    });
+  });
 
   it('retains an admitted Team generator through saved preparation and replacement', async () => {
     return runWithScmAccountScope('account', async () => {

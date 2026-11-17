@@ -154,6 +154,7 @@ export async function executeScmDiffSummaryResultAction(params: Readonly<{
       ...(connectedServices !== undefined ? { connectedServices } : {}),
       permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
       intentInput: { cwd: scope.cwd, ...(sessionId ? { sessionId } : {}), source: result.output.comparison.source, comparisonId: result.output.comparison.id,
+        ...(generator.modelSelection ? { modelSelector: { modelSelection: generator.modelSelection } } : {}),
         resultId: result.resultId, expectedRevision: result.revision, outputs,
         ...(userInstructions ? { instructions: userInstructions } : {}),
         ...(outputLanguage ? { outputLanguage } : {}),
