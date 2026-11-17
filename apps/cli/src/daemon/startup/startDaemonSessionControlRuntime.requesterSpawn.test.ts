@@ -21,13 +21,19 @@ import { createSpawnNewSessionLifecycleActionHandler } from '@/session/actions/l
 import type { AdmittedRequesterSessionBootstrap } from '../sessionEncryption/requesterSessionCredentials';
 import { logger } from '@/ui/logger';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { readRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionContext';
 
 // The Home HTTP and physical process/listener are system boundaries. The installed
 // ingress, private Account admission, bootstrap and Session Action owners stay real.
 vi.mock('@/daemon/controlServer', () => ({ startDaemonControlServer: async () => ({ port: 44322, stop: async () => {} }) }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-it.each(['account', 'terminal'] as const)('prepares fresh admitted %s custody through real absent-surface daemon ingress', async authenticationKind => {
+it.each([
+    { authenticationKind: 'account', scenario: 'session start' },
+    { authenticationKind: 'terminal', scenario: 'session start' },
+    { authenticationKind: 'account', scenario: 'retained startup' },
+    { authenticationKind: 'terminal', scenario: 'retained startup' },
+] as const)('admits $authenticationKind custody through real daemon ingress for $scenario', async ({ authenticationKind, scenario }) => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-r35-requester-birth-'));
     const homeId = 'srv_requester_birth';
     const endpoint = 'https://requester-birth.test';
@@ -105,6 +111,37 @@ it.each(['account', 'terminal'] as const)('prepares fresh admitted %s custody th
         const boxed = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose: { kind: 'external_action' },
             installationPublicKey: decodeBase64(installation.publicKey, 'base64url'), credentials: { token: requesterToken },
             randomBytes: length => new Uint8Array(randomBytes(length)) });
+        if (scenario === 'retained startup') {
+            // READY152 admitted this request before startup published apiMachineForSessions.
+            // The fixture has the same null getter; transport publication is not custody retirement.
+            const prepared = await ingress.prepareRequesterAccountContext({ authorization: boxed,
+                purpose: { kind: 'external_action' } });
+            if (!prepared) throw new Error('Missing admitted requester context');
+            const operation = new AbortController();
+            let releaseRetained: (() => Promise<void>) | undefined;
+            try {
+                const requester = readRequesterAccountActionContext(prepared.authorization);
+                if (!requester?.retainForOperation) throw new Error('Missing real requester operation owner');
+                const retained = await requester.retainForOperation(operation.signal);
+                releaseRetained = retained.dispose;
+                await prepared.dispose();
+                const retainedRequester = readRequesterAccountActionContext(retained.authorization);
+                expect(await retainedRequester?.isCurrent()).toBe(true);
+                operation.abort();
+                expect(await retainedRequester?.isCurrent()).toBe(false);
+                const active = await requester.retainForOperation(new AbortController().signal);
+                try {
+                    const activeRequester = readRequesterAccountActionContext(active.authorization);
+                    expect(await activeRequester?.isCurrent()).toBe(true);
+                    await fixture.runtime.stopControlServer();
+                    expect(await activeRequester?.isCurrent()).toBe(false);
+                } finally { await active.dispose(); }
+            } finally {
+                await releaseRetained?.();
+                await prepared.dispose();
+            }
+            return;
+        }
         const invoke = (surface?: 'ui') => executeExternalAction({ actionId: 'session.spawn_new', envelope,
             ...(surface ? { surface } : {}),
             principal,

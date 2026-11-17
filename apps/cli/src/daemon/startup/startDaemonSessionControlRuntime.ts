@@ -11574,10 +11574,9 @@ export async function startDaemonSessionControlRuntime(
               ?? { kind: 'unavailable', code: 'plugin_account_execution_unavailable' },
           prepareRequesterAccountContext: async ({ authorization, purpose, signal, verifyWorkspaceSyncPrepareCurrent, verifyServiceMoveChildCurrent, deploymentChildExecution }) => {
             const privatePurpose = purpose ?? { kind: 'external_action' as const };
-            const custodyMachine = params.getApiMachineForSessions();
+            // Installed custody follows this control runtime, not its socket publication.
             const isRetainedCustodyCurrent = async () => !controlRuntimeResourcesDisposed && !isRuntimePublicationQuiescing()
-              && !shutdownCancellationDomains.daemonWorkSignal.aborted && Boolean(custodyMachine)
-              && params.getApiMachineForSessions() === custodyMachine;
+              && !shutdownCancellationDomains.daemonWorkSignal.aborted;
             let executeManagedFiniteWake: ((request: ManagedMachinePolicyRequest) => Promise<ActionExecuteResult>) | undefined;
             let requesterTargetResolver: ReturnType<typeof createDaemonExternalActionTargetResolver> | undefined;
             const prepared = await prepareInstalledRequesterAccountActionContext({ authorization, purpose: privatePurpose,
