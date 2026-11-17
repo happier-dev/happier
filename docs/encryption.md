@@ -2483,6 +2483,17 @@ It does not store repository bytes, setup commands, Git credentials, Artifact
 keys, or Machine encryption material. Source metadata is not converted into a
 private Account-row envelope when the Account changes encryption mode.
 
+A signed creation without requester Account context omits that private row and private
+member preferences; it does not read them with the Machine custodian's credentials.
+Public defaults still use the original signed creation selection and each resource's
+normal reader admission. A no-box creation without an admitted Project selection has
+no Home or Team defaults reader. A signed Account spawn may read only Home's
+session-defaults projection through its admitted child purpose. Retained recovery skips
+optional defaults reads; failures of an optional layer become typed creation-context notes
+without disclosing private content or refusing the spawn.
+Explicit Saved Secret references retain their existing
+requester-custody acquisition and refusal rules.
+
 The Source owner in `app/projects/sources/projectSourceService.ts` admits reads
 from current Account, Team and group membership. Management belongs to the
 creator or current Team administration; an audience grant supplies view/use,

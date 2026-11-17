@@ -1,7 +1,9 @@
 import axios, { AxiosHeaders } from 'axios';
 import nacl from 'tweetnacl';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { rebindRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse, SessionSpawnNewInputV2Schema, SessionSpawnNewResultV1Schema } from '@happier-dev/protocol';
@@ -25,7 +27,6 @@ import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemo
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { SpawnDaemonSessionRequest } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { ActionExecuteFailureSchema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { resolveSessionSpawnManagedDefaults } from './resolveSessionSpawnManagedDefaults';
 
 const target = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
@@ -171,31 +172,30 @@ describe('Session spawn defaults at admission', () => {
     expect(resolved.nativeSandbox).toBe(expected);
     expect(resolved.permissionMode).toBe('read-only');
   });
-  it.each(['home', 'team'] as const)('retains an admitted %s governance refusal and public diagnostic', async scope => {
+  it.each(['home', 'team'] as const)('retains authored choices and notes unreadable optional %s defaults', async scope => {
     const details = { requiredFact: 'governance_access', remedy: 'request_access' };
     const failureCause = projectActionFailureCauseV1({ name: 'Error', code: 'permission_denied', status: 403 },
       scope === 'home' ? 'home.governance.get' : 'teams.get');
-    // These adapters are the Home/Team HTTP read boundaries; defaults resolution
-    // and its thrown failure projection remain real.
     const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'permission_denied',
       error: 'Governance access refused', details, failureCause, effectAttempted: false });
     const refuse = async () => failure;
-    let thrown: unknown;
-    try {
-      await resolveSessionSpawnManagedDefaults({ executionTarget: { serverId: 'home', machineId: 'machine' }, agentTarget: target,
-        ...(scope === 'team' ? { primaryTeamId: 'team' } : {}) }, {
-        agentId: 'codex', accountSettings: accountSettingsParse({}), organizationPolicy: initialPolicy,
-        readTeam: refuse, readHome: refuse,
-      });
-    } catch (error) { thrown = error; }
-    expect(normalizeActionExecutorThrownError(thrown)).toMatchObject({ errorCode: 'permission_denied', details, failureCause, effectAttempted: false });
+    const resolved = await resolveSessionSpawnManagedDefaults({ executionTarget: { serverId: 'home', machineId: 'machine' },
+      agentTarget: target, approvalProfileId: 'explicit-profile', permissionMode: 'read-only',
+      modelSelection: model('explicit-model'), ...(scope === 'team' ? { primaryTeamId: 'team' } : {}) }, {
+      agentId: 'codex', accountSettings: accountSettingsParse({}), organizationPolicy: initialPolicy,
+      readTeam: refuse, readHome: refuse,
+    });
+    expect(resolved).toMatchObject({ permissionMode: 'read-only', modelSelection: model('explicit-model'),
+      approvalProfileId: 'explicit-profile', unavailableDefaults: [failure, ...(scope === 'team' ? [failure] : [])] });
   });
 
   it.each([
     { name: 'cross-Account signed spawn uses only acting Account settings and credentials', surface: 'mcp' as const, layer: 'requester', permission: 'read-only', modelId: 'member-model' },
+    { name: 'admitted requester retains private For me above public defaults', surface: 'mcp' as const, layer: 'requester-project', permission: 'safe-yolo', modelId: 'personal-project-model' },
     { name: 'unadmitted cross-Account request refuses', surface: 'mcp' as const, layer: 'unadmitted', permission: 'read-only', modelId: 'member-model' },
     { name: 'retired requester snapshot refuses', surface: 'mcp' as const, layer: 'retired', permission: 'read-only', modelId: 'member-model' },
     { name: 'MCP Team defaults', surface: 'mcp' as const, layer: 'team', permission: 'safe-yolo', modelId: 'team-model' },
+    { name: 'native recovery preserves authored facets when optional Account defaults are unavailable', surface: 'mcp' as const, layer: 'recovery', permission: 'read-only', modelId: 'retained-model' },
     { name: 'saved member defaults', surface: 'mcp' as const, layer: 'member', permission: 'read-only', modelId: 'member-model' },
     { name: 'Machine approval profile is captured at Session birth', surface: 'cli' as const, layer: 'approval-machine', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'explicit null clears the Machine approval profile at Session birth', surface: 'cli' as const, layer: 'approval-null', permission: 'safe-yolo', modelId: 'team-model' },
@@ -215,7 +215,7 @@ describe('Session spawn defaults at admission', () => {
     { name: 'isolated Machine refuses malformed native sandbox policy', surface: 'mcp' as const, layer: 'isolated-invalid-policy', permission: 'safe-yolo', modelId: 'team-model' },
   ])('$name', async testCase => {
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'requester' })).toString('base64url')}.signature`;
-    const crossAccount = ['requester', 'unadmitted', 'retired'].includes(testCase.layer);
+    const crossAccount = ['requester', 'requester-project', 'unadmitted', 'retired'].includes(testCase.layer);
     const custodianToken = `e30.${Buffer.from(JSON.stringify({ sub: 'custodian' })).toString('base64url')}.signature`;
     const reads: string[] = [];
     const launched: SpawnDaemonSessionRequest[] = [];
@@ -237,7 +237,16 @@ describe('Session spawn defaults at admission', () => {
     vi.spyOn(axios, 'request').mockImplementation(async config => {
       const path = new URL(String(config.url)).pathname;
       reads.push(path);
-      if (crossAccount) expect(AxiosHeaders.from(config.headers).get('Authorization')).toBe(`Bearer ${token}`);
+      if (crossAccount) {
+        const headers = AxiosHeaders.from(config.headers);
+        expect(headers.has('Authorization')).toBe(false);
+        expect(verifyExternalActionMachineRequestV1({ authorizationToken: 'admitted-root-proof',
+          effectActionId: path === '/v1/teams/get' ? 'teams.get' : 'home.governance.get',
+          target: { kind: 'machine', machineId: 'machine' }, installationId: 'installation',
+          requestId: `defaults-${testCase.layer}`, method: String(config.method).toUpperCase(), path, body: config.data,
+          publicKey: nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).publicKey,
+          signature: String(headers.get(EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER)) })).toBe(true);
+      }
       if (path === '/v1/teams/get') {
         const projection = { ...team(), viewerJoinedAt: 1700000000000, hasSetup: true };
         if (testCase.layer === 'approval-team') projection.policy.managedDefaults!.team.approvalProfileId = 'custom:team-profile';
@@ -252,12 +261,25 @@ describe('Session spawn defaults at admission', () => {
       if (path === '/v1/home/governance/get') return { status: 200, data: { homeDefaults: values('read-only', 'home-model') } };
       throw new Error(`Unexpected Home Action read: ${path}`);
     });
-    vi.spyOn(axios, 'get').mockImplementation(async url => {
+    vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      if (testCase.layer === 'requester-project' && String(url).endsWith('/v1/account/encryption')) {
+        expect(AxiosHeaders.from(config?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+        return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      }
       if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
         mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
       throw new Error(`Unexpected Home read: ${url}`);
     });
-    vi.spyOn(axios, 'post').mockImplementation(async url => {
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+      if (testCase.layer === 'requester-project' && String(url).endsWith('/v1/account/project-rows/read')) {
+        const key = { kind: 'project-session-defaults' as const, serverId: 'home', projectKey: 'personal-project' };
+        expect(body).toEqual({ key });
+        expect(AxiosHeaders.from(config?.headers).get('Authorization')).toBe(`Bearer ${token}`);
+        const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
+        return { status: 200, data: { status: 'present', row: { key, revision: 1, content: cipher.seal({ key, value: {
+          permissionModeByAgentTargetKey: { [targetKey]: 'safe-yolo' }, modelByAgentTargetKey: { [targetKey]: model('personal-project-model') },
+        } }) } } };
+      }
       if (String(url).endsWith('/v2/sessions/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
       throw new Error(`Unexpected Home write: ${url}`);
     });
@@ -272,10 +294,11 @@ describe('Session spawn defaults at admission', () => {
     };
     vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => invokeNative(request.method));
     vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(async request => invokeNative(request.method));
-    const params = { credentials: { token, encryption: null }, token, sessionId: '', mode: 'plain', ctx: null,
+    const params = { credentials: { token, encryption: null, credentialProvenance: 'stored_session' as const }, token, sessionId: '', mode: 'plain', ctx: null,
       serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test',
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: settings }),
-      savedSecretOperationContext: createInvocationSavedSecretOperationContextV1({ credentials: { token, encryption: null },
+      savedSecretOperationContext: createInvocationSavedSecretOperationContextV1({ credentials: { token, encryption: null, credentialProvenance: 'stored_session' },
+        ...(testCase.layer === 'recovery' ? { readSourceSnapshot: () => null } : {}),
         serverHttpBaseUrl: 'https://home.test', isCurrent: async () => true,
         snapshot: { settings, settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], source: 'network',
           scopeKey: resolveAccountSettingsScopeKeyForToken(token), whenRefreshed: null,
@@ -339,7 +362,12 @@ describe('Session spawn defaults at admission', () => {
     const input = SessionSpawnNewInputV2Schema.parse({ creationKey: `defaults-${testCase.layer}`,
       executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/tmp' }, agentTarget: target,
       ...(testCase.layer === 'approval-null' ? { approvalProfileId: null } : {}),
+      ...(testCase.layer === 'requester-project' ? { projectContext: { projectRef: { serverId: 'home', projectKey: 'personal-project' } } } : {}),
       ...(testCase.layer === 'home' ? {} : { primaryTeamId: 'team' }),
+      ...(testCase.layer === 'recovery' ? { permissionMode: 'read-only', modelSelection: model('retained-model'),
+        configuration: { providerSessionResume: { kind: 'provider_session.v1', providerSessionId: 'existing-provider-session' },
+          mode: { value: null, updatedAtMs: 1 }, model: { value: null, updatedAtMs: 1, selectionSource: 'inherited' },
+          permissionIntent: { value: null, updatedAtMs: 1 }, options: {} } } : {}),
       ...(testCase.layer === 'automatic' ? { configuration: { mode: { value: null, updatedAtMs: 1 },
         model: { value: null, updatedAtMs: 1, selectionSource: 'explicit' },
         permissionIntent: { value: null, updatedAtMs: 1 }, options: {} } } : {}),
@@ -407,6 +435,7 @@ describe('Session spawn defaults at admission', () => {
     expect(launched[0]).toMatchObject({ permissionMode: testCase.permission,
       ...(testCase.layer === 'team-resource' || testCase.layer === 'automatic' || testCase.layer === 'v2' ? {} : { modelSelection: model(testCase.modelId) }),
     });
+    if (testCase.layer === 'recovery') { expect(reads).toEqual([]); return; }
     if (testCase.layer.startsWith('approval-')) {
       const approvalProfileId = testCase.layer === 'approval-null' ? null
         : testCase.layer === 'approval-team' ? 'custom:team-profile' : 'custom:machine-profile';
@@ -422,7 +451,8 @@ describe('Session spawn defaults at admission', () => {
       ? { 'happier.agent.muse/muse-account': { source: 'connected', selection: 'profile', profileId: 'own-muse' } }
       : testCase.layer === 'pool-default'
         ? { [serviceId]: { source: 'connected', selection: 'group', groupId: 'saved-codex-pool' } }
-        : { [serviceId]: { source: 'connected', profileId: testCase.modelId.replace('-model', '-account') } };
+        : { [serviceId]: { source: 'connected', profileId: testCase.layer === 'requester-project'
+          ? 'member-account' : testCase.modelId.replace('-model', '-account') } };
     if (testCase.layer === 'muse' || testCase.layer === 'pool-default') {
       const connectedBindings = Object.fromEntries(Object.entries(launched[0]?.connectedServices?.bindingsByServiceId ?? {})
         .filter(([, binding]) => binding.source !== 'native'));

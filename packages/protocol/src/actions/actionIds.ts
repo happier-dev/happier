@@ -17,6 +17,14 @@ export { isProjectCheckoutRemovalActionIdV1 } from './projectActionIdsV1.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
 export const PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 = 'projects.sessionDefaults.get' as const;
+/** Public defaults layers read while preparing one admitted creation selection. */
+export function isProjectSessionDefaultsPreparationReadActionIdV1(actionId: string): boolean {
+  return actionId === 'projects.sources.read' || actionId === 'teams.get' || actionId === 'home.governance.get';
+}
+/** The Account spawn preparation may read only Home's public defaults projection. */
+export function isSessionSpawnHomeDefaultsReadEffectV1(rootActionId: string, effectActionId: string): boolean {
+  return rootActionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && effectActionId === 'home.governance.get';
+}
 export const SESSION_PERMISSION_MODE_SET_ACTION_ID_V1 = 'session.permission_mode.set' as const;
 export const EXTERNAL_SESSION_CANDIDATE_DELETE_ACTION_ID_V1 = 'sessions.external.candidate.delete' as const;
 export const SCM_REMOTE_PUSH_ACTION_ID_V1 = 'scm.remote.push' as const;

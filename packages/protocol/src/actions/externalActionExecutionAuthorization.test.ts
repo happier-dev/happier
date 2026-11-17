@@ -45,6 +45,43 @@ it.each(['plain', 'e2ee'] as const)('binds demanded Project defaults operands in
     { actionId, machineId: target.machineId, envelope })).toBe(false);
 });
 
+it.each(['session.spawn_new', 'template.instantiate'] as const)('binds %s defaults reads to its selected creation operands', actionId => {
+  const target = { kind: 'machine', machineId: 'controller' } as const;
+  const selection = { sourceRef: { serverId: 'srv_home', sourceId: 'selected-source' }, primaryTeamId: 'selected-team', sharedTeamIds: ['shared-team'] };
+  const creation = { executionTarget: { serverId: 'srv_home', machineId: target.machineId }, directory: { kind: 'path', path: '/repo' },
+    projectContext: { sourceRef: selection.sourceRef }, primaryTeamId: selection.primaryTeamId,
+    initialAccess: { grants: [{ subject: { kind: 'team', teamId: 'shared-team' }, accessLevel: 'view', canApprovePermissions: false }] } };
+  const input = actionId === 'session.spawn_new' ? creation : { creation };
+  for (const mode of ['plain', 'e2ee'] as const) {
+    const envelope = mode === 'plain' ? { v: 1, requestId: 'creation-defaults', target, input } as const
+      : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+        binding: { serverIdentityId: 'srv_home', accountId: 'actor', actionId, requestId: 'creation-defaults', target,
+          authentication: { kind: 'account', tokenEpoch: 1 } }, input,
+        material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) }, randomBytes: n => new Uint8Array(n).fill(2) });
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'proof', binding: {
+      accountId: 'actor', custodianAccountId: 'actor', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'srv_home', machineId: target.machineId, installationId: 'installation', actionId,
+      requestId: envelope.requestId, target, accountEncryptionMode: mode,
+      ...(envelope.v === 2 && envelope.machineRuntimeDemand ? { machineRuntimeDemand: envelope.machineRuntimeDemand } : {}),
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), projectSessionDefaultsAdmission: selection,
+    } });
+    expect(isExternalActionAuthorizationBoundToEnvelope(authorization.binding, { actionId, machineId: target.machineId, envelope })).toBe(true);
+    expect(isExternalActionAuthorizationBoundToEnvelope({ ...authorization.binding,
+      projectSessionDefaultsAdmission: { ...selection, primaryTeamId: 'unrelated-team' } },
+      { actionId, machineId: target.machineId, envelope })).toBe(false);
+  }
+});
+
+it.each(['session.spawn_new', 'template.instantiate'] as const)('omits %s Project defaults admission without a selected Project', actionId => {
+  const target = { kind: 'machine', machineId: 'controller' } as const;
+  const creation = { executionTarget: { serverId: 'srv_home', machineId: target.machineId }, directory: { kind: 'path', path: '/repo' } };
+  const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+    binding: { serverIdentityId: 'srv_home', accountId: 'actor', actionId, requestId: 'no-project', target,
+      authentication: { kind: 'account', tokenEpoch: 1 } }, input: actionId === 'session.spawn_new' ? creation : { creation },
+    material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) }, randomBytes: n => new Uint8Array(n).fill(2) });
+  expect(envelope).not.toHaveProperty('projectSessionDefaultsAdmission');
+});
+
 it.each([
   ['account', { authentication: { kind: 'account', tokenEpoch: 1 } }, 'present_user'],
   ['terminal', { authentication: { kind: 'terminal', tokenEpoch: 1 } }, 'account_automation'],

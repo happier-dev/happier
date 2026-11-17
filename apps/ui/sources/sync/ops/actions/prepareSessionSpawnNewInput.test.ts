@@ -1,3 +1,4 @@
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { describe, expect, it } from 'vitest';
 import { buildManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
 import { createUiPrepareSessionSpawnNewInput } from './prepareSessionSpawnNewInput';
@@ -8,6 +9,20 @@ const executionTarget = { serverId: 'home', machineId: 'selected' };
 const projectTarget = { serverId: 'home', machineId: 'project-machine' };
 
 describe('UI Session authoring preparation', () => {
+    it.each([false, true])('preserves typed optional defaults notes without refusing authored creation, captured=%s', async captured => {
+        const failure = { ok: false as const, errorCode: 'defaults_unavailable', error: 'defaults_unavailable', effectAttempted: false };
+        const unexpectedRead = async (): Promise<never> => { throw new Error('captured defaults must not reread'); };
+        const prepare = createUiPrepareSessionSpawnNewInput({ readSettings: captured ? unexpectedRead : async () => settingsDefaults,
+            createLoader: () => ({ readSource: unexpectedRead, readHome: async () => { throw new Error('Home unavailable'); } }) });
+        const prepared = await prepare({ executionTarget, agentTarget: authoredAgent, directory: { kind: 'path', path: '/repo' } }, {
+            surface: 'ui', ...(captured ? { sessionCreationDefaults: { context: buildManagedSessionDefaultsContext({}),
+                unavailableDefaults: [failure], authoredChoices: { executionTarget, agentTarget: authoredAgent } } } : {}),
+        });
+        expect(prepared.input.executionTarget).toEqual(executionTarget);
+        expect(prepared.input.agentTarget).toEqual(authoredAgent);
+        expect(prepared.defaults.unavailableDefaults).toEqual([failure]);
+    });
+
     it('uses native Account Agent preference for a Preset without querying its hidden controller inventory', async () => {
         const unexpectedRead = async (): Promise<never> => { throw new Error('captured defaults must not reread'); };
         const queriedTargets: unknown[] = [];

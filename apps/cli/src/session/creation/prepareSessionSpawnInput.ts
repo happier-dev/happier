@@ -16,7 +16,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
 import { readSettings } from '@/persistence';
 import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
-import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readRequesterAccountActionContext, resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { CliActionDepsParams } from '@/session/actions/cliActionDeps/types';
 import { createCliManagedSessionDefaultsContextLoader } from './cliManagedSessionDefaultsContext';
 import { resolveSessionCreationAgentTarget } from './resolveSessionCreationAgentTarget';
@@ -42,14 +42,19 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
         defaults: context.sessionCreationDefaults };
     }
     if (!params.credentials) return unavailable('requester_account_unavailable');
-    const custody = resolveRequesterSavedSecretActionCustody({ credentials: params.credentials,
-      authorization: context.externalActionExecutionAuthorization, operationContext: params.savedSecretOperationContext });
+    const custody = !context.externalActionExecutionAuthorization && !context.externalActionCredential
+      || readRequesterAccountActionContext(context.externalActionExecutionAuthorization)
+      ? resolveRequesterSavedSecretActionCustody({ credentials: params.credentials,
+        authorization: context.externalActionExecutionAuthorization, operationContext: params.savedSecretOperationContext })
+      : { credentials: params.credentials, operation: undefined };
     const requesterServerHttpBaseUrl = custody.operation?.serverHttpBaseUrl ?? home.serverHttpBaseUrl;
     const loader = createCliManagedSessionDefaultsContextLoader({ credentials: custody.credentials,
-      serverId: home.serverId, serverHttpBaseUrl: requesterServerHttpBaseUrl,
+      serverId: home.serverId, serverHttpBaseUrl: requesterServerHttpBaseUrl, context,
+      serverIdentityId: params.serverIdentityId, externalActionMachineInstallationId: params.externalActionMachineInstallationId,
+      externalActionMachineRequestPrivateKey: params.externalActionMachineRequestPrivateKey,
       ...(context.signal ? { signal: context.signal } : {}) });
     const retained = input.sourceContext !== undefined || input.configuration?.providerSessionResume !== undefined;
-    const captured = retained ? { context: buildManagedSessionDefaultsContext({}) }
+    const captured = retained ? { context: buildManagedSessionDefaultsContext({}), unavailableDefaults: undefined }
       : await loadManagedSessionDefaultsContextV1({ ...input.projectContext,
       primaryTeamId: input.primaryTeamId,
       sharedTeamIds: [...new Set(input.initialAccess?.grants.flatMap(({ subject }) =>
@@ -100,9 +105,13 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
     if (selected.placement.value?.kind === 'machine') executionTarget = selected.placement.value.target;
     else if (selected.placement.value?.kind === 'preset') {
       const placement = selected.placement.value;
+      // Preset acquisition still requires the original requester's private custody.
+      // Public defaults reads alone never lend the custodian's bearer to this write.
+      const presetCustody = resolveRequesterSavedSecretActionCustody({ credentials: params.credentials,
+        authorization: context.externalActionExecutionAuthorization, operationContext: params.savedSecretOperationContext });
       const bound = await prepareOriginalAccountManagedPresetAcquire({ input: { selection: {
         kind: 'preset', homeId: placement.homeId, id: placement.presetId } },
-        requestId: context.actionRequestId ?? input.creationKey ?? '', credentials: custody.credentials,
+        requestId: context.actionRequestId ?? input.creationKey ?? '', credentials: presetCustody.credentials,
         serverHttpBaseUrl: requesterServerHttpBaseUrl, ...(context.signal ? { signal: context.signal } : {}) });
       if (!bound || bound.kind === 'refused') return unavailable(bound?.code ?? 'controller_unavailable');
       if (!bound.input.controller) return unavailable('controller_unavailable');
@@ -127,6 +136,7 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
       ...(connectedServices ? { connectedServices } : {}),
     });
     return { input: projectSessionSpawnNewActionInputV2(exactInput), defaults: { context: captured.context,
+      ...(captured.unavailableDefaults ? { unavailableDefaults: captured.unavailableDefaults } : {}),
       ...(managedPresetAcquisition ? { managedPresetAcquisition } : {}),
       ...(managedPresetControllerAccess ? { managedPresetControllerAccess } : {}),
       authoredChoices: { ...(input.executionTarget ? { executionTarget: input.executionTarget } : {}),

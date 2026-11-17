@@ -447,6 +447,16 @@ its full V2 selection when the personal V1 carrier cannot represent it; that pro
 authorize falling back to a personal model. Managed presets still require the existing configurator's
 reviewed creation draft before launch.
 
+A signed API-token creation without requester Account context skips private For me and
+member preferences, without reading the custodian's Account settings. Its admitted
+Project, Team/Group and Home layers, explicit choices and locked policy still resolve
+through the same builder and resolver. Without an admitted Project selection, the
+no-box path omits Home and Team readers. A signed Account spawn may read Home's
+session-defaults projection without a Project. Recovery with retained source or provider
+configuration skips optional defaults reads. An unreadable layer is skipped independently;
+the creation context retains typed `unavailableDefaults` notes while the remaining layers
+resolve and creation continues. Already captured creation defaults are retained.
+
 Saved New Session drafts retain authored choices rather than resolved managed values, so reopening
 an untouched draft reads current defaults and a policy lock preserves the person's underlying choice.
 A target picked in a draft or supplied by a route, deep link or exact-target seed is explicit,

@@ -8,8 +8,10 @@ import { ExternalActionRequestIdV1Schema, ExternalActionPreOpenFailureCodeSchema
 import { ExternalActionWorkflowSessionLeafV1Schema } from './workflowSessionChildV1.js';
 export { ExternalActionWorkflowSessionLeafV1Schema, projectExternalActionWorkflowSessionLeafContextV1, type ExternalActionWorkflowSessionLeafV1,
   type InstalledWorkflowSessionLeafAdmission } from './workflowSessionChildV1.js';
-import { ACTION_INVOKE_ACTION_ID_V1, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, WorkflowActionIdV1Schema } from './actionIds.js';
-import { ProjectSessionDefaultsGetInputV1Schema, type ProjectSessionDefaultsGetInputV1 } from '../projects/projectSessionDefaultsSelectionV1.js';
+import { ACTION_INVOKE_ACTION_ID_V1, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WorkflowActionIdV1Schema } from './actionIds.js';
+import { ProjectSessionDefaultsAdmissionV1Schema, ProjectSessionDefaultsContextSelectionV1Schema, ProjectSessionDefaultsGetInputV1Schema, type ProjectSessionDefaultsAdmissionV1 } from '../projects/projectSessionDefaultsSelectionV1.js';
+import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
+import { SessionInitialAccessDraftV1Schema } from '../sessions/access/sessionInitialAccessDraftV1.js';
 export * from './externalActionHttpError.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -1005,7 +1007,7 @@ export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.stric
   deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
   deploymentNativeAdmission: z.optional(DeploymentNativeAdmissionV1Schema),
   registryAppUpdateAdmission: z.optional(RegistryAppUpdateAdmissionV1Schema),
-  projectSessionDefaultsAdmission: z.optional(ProjectSessionDefaultsGetInputV1Schema),
+  projectSessionDefaultsAdmission: z.optional(ProjectSessionDefaultsAdmissionV1Schema),
 }));
 export type ExternalActionRequestEnvelopeV2 = z.infer<typeof ExternalActionRequestEnvelopeV2Schema>;
 export const ExternalActionRequestEnvelopeSchema = lazyZodSchema(() => z.union([
@@ -1080,18 +1082,35 @@ export function projectExternalActionDiscussionEnvelopeIdV1(input: Readonly<{
   return input.envelope.v === 1 ? projectExternalActionDiscussionIdV1(input.actionId, input.envelope.input)
     : input.envelope.discussionId;
 }
-export function projectExternalActionProjectSessionDefaultsAdmissionV1(actionId: string, input: unknown): ProjectSessionDefaultsGetInputV1 | undefined {
-  return actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 ? ProjectSessionDefaultsGetInputV1Schema.parse(input) : undefined;
+/** One selection projection for editable defaults and creation preparation. */
+export function projectExternalActionProjectSessionDefaultsAdmissionV1(actionId: string, input: unknown): ProjectSessionDefaultsAdmissionV1 | undefined {
+  if (actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1) return ProjectSessionDefaultsGetInputV1Schema.parse(input);
+  if (actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 && actionId !== BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) return undefined;
+  const creation = actionId === BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 && input !== null && typeof input === 'object'
+    ? Reflect.get(input, 'creation') : input;
+  if (creation === null || typeof creation !== 'object' || Array.isArray(creation)) return undefined;
+  const projectContext = ProjectSessionDefaultsContextSelectionV1Schema.parse(Reflect.get(creation, 'projectContext') ?? {});
+  if (!projectContext.projectRef && !projectContext.sourceRef) return undefined;
+  const initialAccess = Reflect.get(creation, 'initialAccess');
+  const sharedTeamIds = initialAccess === undefined ? undefined : SessionInitialAccessDraftV1Schema.parse(initialAccess).grants
+    .flatMap(grant => grant.subject.kind === 'account' ? [] : [grant.subject.teamId]);
+  const primaryTeamId = Reflect.get(creation, 'primaryTeamId');
+  return ProjectSessionDefaultsAdmissionV1Schema.parse({ ...projectContext,
+    ...(primaryTeamId === undefined ? {} : { primaryTeamId }), ...(sharedTeamIds === undefined ? {} : { sharedTeamIds }) });
 }
 
 export function projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1(input: Readonly<{
   actionId: string; envelope: ExternalActionRequestEnvelope;
-}>): ProjectSessionDefaultsGetInputV1 | undefined {
-  if (input.actionId !== PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1) {
-    if (input.envelope.v === 2 && input.envelope.projectSessionDefaultsAdmission !== undefined) throw new TypeError('Unexpected Project defaults admission');
+}>): ProjectSessionDefaultsAdmissionV1 | undefined {
+  if (input.envelope.v === 1) return projectExternalActionProjectSessionDefaultsAdmissionV1(input.actionId, input.envelope.input);
+  if (input.actionId !== PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 && input.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1
+    && input.actionId !== BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {
+    if (input.envelope.projectSessionDefaultsAdmission !== undefined) throw new TypeError('Unexpected Project defaults admission');
     return undefined;
   }
-  return ProjectSessionDefaultsGetInputV1Schema.parse(input.envelope.v === 1 ? input.envelope.input : input.envelope.projectSessionDefaultsAdmission);
+  return input.envelope.projectSessionDefaultsAdmission === undefined ? undefined
+    : (input.actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 ? ProjectSessionDefaultsGetInputV1Schema
+      : ProjectSessionDefaultsAdmissionV1Schema).parse(input.envelope.projectSessionDefaultsAdmission);
 }
 
 export function projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1(input: Readonly<{
@@ -1422,7 +1441,7 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     deploymentLinkAdmission: z.optional(z.strictObject({ environmentId: DeploymentIdentifierV1Schema, owner: ProjectSourceOwnerV1Schema })),
     deploymentNativeAdmission: z.optional(DeploymentNativeAdmissionV1Schema),
     registryAppUpdateAdmission: z.optional(RegistryAppUpdateAdmissionV1Schema),
-    projectSessionDefaultsAdmission: z.optional(ProjectSessionDefaultsGetInputV1Schema),
+    projectSessionDefaultsAdmission: z.optional(ProjectSessionDefaultsAdmissionV1Schema),
   });
 export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionApiTokenServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
@@ -1430,9 +1449,11 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionTerminalServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
 ]).check(z.superRefine((value, context) => {
   const projectDefaults = value.projectSessionDefaultsAdmission;
-  if (value.actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 ? !projectDefaults
+  if (projectDefaults ? (value.actionId !== PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1
+    && value.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 && value.actionId !== BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1)
+    || value.actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 && !ProjectSessionDefaultsGetInputV1Schema.safeParse(projectDefaults).success
     || [projectDefaults.projectRef, projectDefaults.sourceRef].some(ref => ref && ref.serverId !== value.serverIdentityId)
-    : projectDefaults !== undefined) {
+    : value.actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1) {
     context.addIssue({ code: 'custom', path: ['projectSessionDefaultsAdmission'], message: 'Project defaults bind their exact selected Home operands.' });
   }
   if (value.workspaceSyncAdmission && (!isProjectWorkspaceSyncOpenActionV1(value.actionId) && !isProjectWorkspaceSyncPreparationActionV1(value.actionId)

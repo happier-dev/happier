@@ -109,9 +109,10 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
   purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
   organizationPolicy: OrganizationPolicyLoadResult;
   capturedContext?: ManagedSessionDefaultsContext;
+  unavailableDefaults?: NonNullable<ActionExecutorContext['sessionCreationDefaults']>['unavailableDefaults'];
   authoredChoices?: NonNullable<ActionExecutorContext['sessionCreationDefaults']>['authoredChoices'];
-  readTeam: (teamId: string) => Promise<unknown>;
-  readHome: () => Promise<unknown>;
+  readTeam?: (teamId: string) => Promise<unknown>;
+  readHome?: () => Promise<unknown>;
   readPersonalDefaults?: ManagedSessionDefaultsContextLoaderV1['readPersonalDefaults'];
   readSource?: ManagedSessionDefaultsContextLoaderV1['readSource'];
   resolveTeamCredentialResourceCatalog?: ResolveSpawnConnectedServicesTeamResourceCatalog;
@@ -161,21 +162,24 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
     ...(memberModel ? { modelByAgentTargetKey: { [targetKey]: memberModel } } : {}),
     connectedServicesByAgentTargetKey: { [targetKey]: memberPurposes },
   };
-  const capturedContext = params.capturedContext ?? (input.sourceContext || input.configuration?.providerSessionResume
-    ? buildManagedSessionDefaultsContext({}) : (await loadManagedSessionDefaultsContextV1({ ...input.projectContext,
+  const captured = params.capturedContext ? { context: params.capturedContext, unavailableDefaults: params.unavailableDefaults }
+    : input.sourceContext || input.configuration?.providerSessionResume
+      ? { context: buildManagedSessionDefaultsContext({}), unavailableDefaults: params.unavailableDefaults }
+      : await loadManagedSessionDefaultsContextV1({ ...input.projectContext,
     primaryTeamId: input.primaryTeamId, sharedTeamIds: [...sharedTeamIds], memberDefaults, policyDefaults: policy,
     creationMachineApprovalProfileId: tryNormalizeActionsSettingsV1(settings.actionsSettingsV1)
       ?.machineApprovalProfiles?.[input.executionTarget.machineId],
   }, {
-    readPersonalDefaults: project => params.readPersonalDefaults!(project),
+    ...(params.readPersonalDefaults ? { readPersonalDefaults: params.readPersonalDefaults } : {}),
     readSource: source => params.readSource!(source),
-    readTeam: async teamId => {
-      const raw = await params.readTeam(teamId);
+    ...(params.readTeam ? { readTeam: async (teamId: string) => {
+      const raw = await params.readTeam!(teamId);
       const failure = ActionExecuteFailureSchema.safeParse(raw);
       return failure.success ? failure.data : TeamSummaryV1Schema.parse(raw);
-    },
-    readHome: async () => HomeSessionDefaultsProjectionV1Schema.parse(readGovernanceResult(await params.readHome())),
-  })).context);
+    } } : {}),
+    ...(params.readHome ? { readHome: async () => HomeSessionDefaultsProjectionV1Schema.parse(readGovernanceResult(await params.readHome!())) } : {}),
+  });
+  const capturedContext = captured.context;
   const completedContext = buildManagedSessionDefaultsContext({ context: capturedContext, memberDefaults, policy,
     creationMachineApprovalProfileId: tryNormalizeActionsSettingsV1(settings.actionsSettingsV1)
       ?.machineApprovalProfiles?.[input.executionTarget.machineId] });
@@ -246,6 +250,7 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
   return {
     resolveIsolation: () => resolveSessionSpawnIsolation(input, params.openedMachineMetadata, params.startContext, params.admittedWorkflowPlacement),
     placement: resolved.placement,
+    ...(captured.unavailableDefaults ? { unavailableDefaults: captured.unavailableDefaults } : {}),
     primaryTeamId: capturedContext.primaryTeamId,
     approvalProfileId: resolved.approvalProfileId.value ?? null,
     approvalProfileTeamOrGroupDerived: resolved.approvalProfileId.teamOrGroupDerived,

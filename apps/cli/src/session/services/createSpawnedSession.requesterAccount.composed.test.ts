@@ -1,5 +1,8 @@
 import axios, { AxiosHeaders } from 'axios';
 import nacl from 'tweetnacl';
+import { io } from 'socket.io-client';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { createApiSessionSocketStub, respondToExactMachineSessionSpawnRpc } from '@/testkit/backends/apiSessionSocketHarness';
 import { afterEach, expect, it, vi } from 'vitest';
 import { API_TOKEN_FULL_GRANT_V1, FeaturesResponseSchema, SessionSpawnNewInputV2Schema, accountSettingsParse } from '@happier-dev/protocol';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
@@ -15,11 +18,12 @@ import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClie
 // Load the real lazy creation graph during collection, before the test budget.
 import '@/session/services/createSpawnedSession';
 
-// HTTP is the only replaced boundary: requester scope, Action admission,
+// HTTP and the remote Machine socket are replaced boundaries: requester scope, Action admission,
 // creation, mode resolution and metadata serialization remain real.
+vi.mock('socket.io-client', () => ({ io: vi.fn() }));
 vi.mock('axios', async importOriginal => {
   const actual = await importOriginal<typeof import('axios')>();
-  return { ...actual, default: { ...actual.default, get: vi.fn(), post: vi.fn() } };
+  return { ...actual, default: { ...actual.default, get: vi.fn(), post: vi.fn(), request: vi.fn() } };
 });
 let runningInvocation: Promise<unknown> | undefined;
 let cancellation: AbortController | undefined;
@@ -46,8 +50,32 @@ it.each([
   cancellation = new AbortController();
   const sessionId = `requester-${mode}-${credentialAccountId}-session`;
   const keys = nacl.sign.keyPair();
+  // Socket.IO is the remote Machine boundary used for directory preflight.
+  // The published Machine is Plain independently of the requester's Account mode.
+  vi.mocked(io).mockImplementation(() => createApiSessionSocketStub({
+    emitWithAck: (event, payload) => new Promise(resolve => {
+      const method = payload && typeof payload === 'object' ? Reflect.get(payload, 'method') : null;
+      // The Machine's installed catalog and CLI probe are native transport facts.
+      if (event === 'rpc-call' && method === `machine-1:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`) {
+        resolve({ ok: true, result: { protocolVersion: 1, projection: { v: 2, generation: 1,
+          familiesById: {}, agentsById: { codex: { id: 'codex', title: 'Codex', capabilities: {
+            sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } } } } } });
+        return;
+      }
+      if (event === 'rpc-call' && method === `machine-1:${RPC_METHODS.CAPABILITIES_DETECT}`) {
+        resolve({ ok: true, result: { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data: {
+          installed: true, version: '1.0', latestVersion: null, update: { supported: false, command: null },
+          signIn: { status: 'signedIn', loginSupport: 'unsupported' }, platform: { supported: true },
+          install: { available: false, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [] } } } } });
+        return;
+      }
+      if (!respondToExactMachineSessionSpawnRpc({ event, args: [payload, resolve], machineId: 'machine-1', sessionId })) {
+        throw new Error(`Unexpected Machine socket event ${event}:${payload && typeof payload === 'object' ? Reflect.get(payload, 'method') : ''}`);
+      }
+    }),
+  }) as ReturnType<typeof io>);
   const token = `e30.${Buffer.from(JSON.stringify({ sub: credentialAccountId })).toString('base64url')}.signature`;
-  const credentials = { token, encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(9) } };
+  const credentials = { token, encryption: mode === 'plain' ? null : { type: 'legacy' as const, secret: new Uint8Array(32).fill(9) } };
   const grant = { ...API_TOKEN_FULL_GRANT_V1,
     targets: { sessions: [], machines: ['machine-1'], environments: [] } };
   const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-template-root', binding: {
@@ -68,6 +96,20 @@ it.each([
   const events: string[] = [];
   const unexpectedRequests: string[] = [];
   let bornSession: Record<string, unknown> | undefined;
+  vi.mocked(axios.request).mockImplementation(async config => {
+    const url = new URL(String(config.url));
+    const headers = AxiosHeaders.from(config.headers);
+    expect(headers.has('Authorization')).toBe(false);
+    if (url.pathname === '/v1/home/governance/get') {
+      expect(config.data).toEqual({ projection: 'session_defaults' });
+      expect(verifyExternalActionMachineRequestV1({ ...signed, effectActionId: 'home.governance.get',
+        method: 'POST', path: url.pathname, body: config.data,
+        signature: String(headers.get(EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER)) })).toBe(true);
+      return { status: 200, data: { homeDefaults: null } };
+    }
+    unexpectedRequests.push(`REQUEST ${url}`);
+    throw new Error(`Unexpected HTTP request ${url}`);
+  });
   vi.mocked(axios.get).mockImplementation(async (url, config) => {
     if (String(url).includes('/v2/session-organization?')) {
       const path = new URL(String(url)).pathname + new URL(String(url)).search;
@@ -90,7 +132,8 @@ it.each([
       expect(headers.has('Authorization')).toBe(false);
       expect(verifyExternalActionMachineRequestV1({ ...signed, method: 'GET', path: '/v1/machines/machine-1',
         signature: String(headers.get(EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER)) })).toBe(true);
-      return { status: 200, data: { machine: { id: 'machine-1', active: true,
+      return { status: 200, data: { machine: { id: 'machine-1', active: true, storageMode: 'plain', dataEncryptionKey: null,
+        access: { custodian: { accountId: 'custodian', displayName: 'Custodian' }, role: 'use', resourceMode: 'plain', accessState: 'ready' },
         revokedAt: null, replacedByMachineId: null, operationProtocolCapabilitiesRevision: 1,
         operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1, 2, 3, 4] },
           sessionSpawnPlacementOrigin: { protocolVersions: [1] } } } } };
@@ -167,7 +210,7 @@ it.each([
   });
   vi.stubGlobal('fetch', vi.fn(async (url, init) => {
     expect(new Headers(init?.headers).has('Authorization')).toBe(false);
-    if (String(url).endsWith('/v1/features')) return Response.json(FeaturesResponseSchema.parse({ features: {},
+    if (String(url).endsWith('/v1/features')) return Response.json(FeaturesResponseSchema.parse({ features: { sessions: { enabled: true }, sharing: { session: { enabled: true } } },
       capabilities: { encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' } } }));
     unexpectedRequests.push(`FETCH ${url}`);
     throw new Error(`Unexpected fetch ${url}`);
@@ -179,6 +222,8 @@ it.each([
     actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({}) }),
     machineActionDirectTargetTransport: createLocalMachineActionTransportFixture('machine-1'),
     sessionSpawnDirectTargetTransport: { machineId: 'machine-1',
+      // The daemon supplies its already-opened local metadata at this boundary.
+      readMachineMetadataSnapshot: () => ({ status: 'ready', metadata: {}, metadataVersion: 1 }),
       prepare: async () => ({ ok: true, directory: '/repo', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
       spawnedSession: { spawn, resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) } },
   });
@@ -204,7 +249,8 @@ it.each([
     expect(births).toHaveLength(1);
     expect(unexpectedRequests).toEqual([]);
     expect(events).toEqual(['birth', 'machine-binding-read', 'machine-binding-write', 'onboarding']);
-    expect(spawn).not.toHaveBeenCalled();
+    expect(spawn).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ existingSessionId: sessionId, freshSessionCreation: true }),
+      expect.objectContaining({ localActionContext: expect.objectContaining({ runtimeAccountId: 'requester' }) }));
   } else {
     expect(result, JSON.stringify({ result, currentnessReads, birthCount: births.length })).toMatchObject({ ok: false, errorCode: 'requester_account_material_unavailable' });
     // A readable plugin release supplies content, never the requester's E2EE custody.

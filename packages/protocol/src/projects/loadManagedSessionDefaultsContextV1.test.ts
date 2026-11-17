@@ -2,6 +2,78 @@ import { describe, expect, it } from 'vitest';
 import { loadManagedSessionDefaultsContextV1, type ManagedSessionDefaultsContextLoaderV1 } from './loadManagedSessionDefaultsContextV1.js';
 
 describe('demanded project Session defaults context', () => {
+  it('omits an unavailable Home reader while retaining captured Machine defaults', async () => {
+    const loaded = await loadManagedSessionDefaultsContextV1({ creationMachineApprovalProfileId: 'captured-machine' }, {
+      readSource: async () => { throw new Error('no Source selected'); },
+      readTeam: async () => { throw new Error('no Team selected'); },
+    });
+    expect(loaded.context.homeDefaults).toBeNull();
+    expect(loaded.context.memberDefaults?.approvalProfileId).toBe('captured-machine');
+  });
+
+  it('notes an unexpected Source failure while retaining available Home and captured Machine defaults', async () => {
+    const loaded = await loadManagedSessionDefaultsContextV1({ sourceRef: { serverId: 'home', sourceId: 'selected' },
+      creationMachineApprovalProfileId: 'captured-machine' }, {
+      readSource: async () => { throw new Error('network disconnected'); },
+      readHome: async () => ({ homeDefaults: { approvalProfileId: 'home-profile' } }),
+    });
+    expect(loaded.context.homeDefaults).toEqual({ approvalProfileId: 'home-profile' });
+    expect(loaded.context.memberDefaults?.approvalProfileId).toBe('captured-machine');
+    expect(loaded.unavailableDefaults).toMatchObject([{ errorCode: 'defaults_unavailable', effectAttempted: false }]);
+    expect(loaded.source).toBeNull();
+    expect(loaded.canManageSource).toBe(false);
+  });
+
+  it('keeps admitted Project and Team layers when the personal row is unreadable', async () => {
+    const loaded = await loadManagedSessionDefaultsContextV1({ projectRef: { serverId: 'home', projectKey: 'private' },
+      sourceRef: { serverId: 'home', sourceId: 'selected' } }, {
+      readPersonalDefaults: async () => { throw new Error('private key unavailable'); },
+      readSource: async () => ({ ok: true, source: { id: 'selected', name: 'Shared', revision: 1,
+        owner: { kind: 'team', teamId: 'owner-team' } }, canManage: false,
+        sessionDefaults: { revision: 1, defaults: { approvalProfileId: 'project-profile' } } }),
+      readTeam: async id => ({ id, policy: { managedDefaults: { team: { approvalProfileId: 'team-profile' }, groups: {} } } }),
+    });
+    expect(loaded.personalDefaultsRow).toBeNull();
+    expect(loaded.context.projectDefaults).toEqual({ approvalProfileId: 'project-profile' });
+    expect(loaded.context.teamDefaults?.team).toEqual({ approvalProfileId: 'team-profile' });
+    expect(loaded.unavailableDefaults).toMatchObject([{ errorCode: 'defaults_unavailable', effectAttempted: false }]);
+  });
+
+  it('retains member and captured Machine defaults when Home is unreadable', async () => {
+    const loaded = await loadManagedSessionDefaultsContextV1({ memberDefaults: { defaultAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+      creationMachineApprovalProfileId: 'captured-machine' }, {
+      readSource: async () => { throw new Error('no Source selected'); },
+      readHome: async () => { throw new Error('Home unreachable'); },
+    });
+    expect(loaded.context.homeDefaults).toBeNull();
+    expect(loaded.context.memberDefaults).toMatchObject({ defaultAgentTarget: { identity: { localId: 'codex' } }, approvalProfileId: 'captured-machine' });
+    expect(loaded.unavailableDefaults).toMatchObject([{ errorCode: 'defaults_unavailable', effectAttempted: false }]);
+  });
+
+  it('skips unavailable requester-private rows while retaining admitted Project and Team defaults', async () => {
+    const loaded = await loadManagedSessionDefaultsContextV1({
+      projectRef: { serverId: 'home', projectKey: 'private-project' },
+      sourceRef: { serverId: 'home', sourceId: 'shared-project' },
+      creationMachineApprovalProfileId: 'machine-profile',
+    }, {
+      // No requester custody means there is no private reader to invoke.
+      readSource: async () => ({ ok: true, source: { id: 'shared-project', name: 'Shared', revision: 1,
+        owner: { kind: 'team', teamId: 'owner-team' } }, canManage: false,
+        sessionDefaults: { revision: 1, defaults: { approvalProfileId: 'project-profile' } } }),
+      readTeam: async teamId => ({ id: teamId, policy: {
+        managedDefaults: { team: { approvalProfileId: 'team-profile' }, groups: {} },
+        homeDefaults: { approvalProfileId: 'home-profile' },
+      } }),
+      readHome: async () => { throw new Error('selected Team supplies Home defaults'); },
+    });
+    expect(loaded.personalDefaultsRow).toBeNull();
+    expect(loaded.context).toMatchObject({ personalProjectDefaults: null,
+      projectDefaults: { approvalProfileId: 'project-profile' },
+      teamDefaults: { team: { approvalProfileId: 'team-profile' } },
+      homeDefaults: { approvalProfileId: 'home-profile' },
+      memberDefaults: { approvalProfileId: 'machine-profile' }, memberApprovalProfileSource: 'machine' });
+  });
+
   it('loads only selected addresses and uses the linked owner Team even without a defaults leaf', async () => {
     const reads: string[] = [];
     // Storage and governance I/O are the loader's boundaries. Context and
@@ -46,17 +118,15 @@ describe('demanded project Session defaults context', () => {
     expect(loaded.canManageSource).toBe(false);
   });
 
-  it('propagates an admitted Source refusal without reading another defaults scope', async () => {
-    let governanceReads = 0;
-    const ports: ManagedSessionDefaultsContextLoaderV1 = {
-      readPersonalDefaults: async () => null,
+  it('notes an optional Source refusal without disclosing its identity or edit authority', async () => {
+    const loaded = await loadManagedSessionDefaultsContextV1({ sourceRef: { serverId: 'home', sourceId: 'linked' } }, {
       readSource: async () => ({ ok: false, error: 'source_access_denied' }),
-      readTeam: async () => { governanceReads += 1; return { id: 'unused', policy: {} }; },
-      readHome: async () => { governanceReads += 1; return { homeDefaults: null }; },
-    };
-    await expect(loadManagedSessionDefaultsContextV1({ sourceRef: { serverId: 'home', sourceId: 'linked' } }, ports))
-      .rejects.toMatchObject({ errorCode: 'source_access_denied' });
-    expect(governanceReads).toBe(0);
+      readHome: async () => ({ homeDefaults: { approvalProfileId: 'available-home' } }),
+    });
+    expect(loaded.context.homeDefaults).toEqual({ approvalProfileId: 'available-home' });
+    expect(loaded.source).toBeNull();
+    expect(loaded.canManageSource).toBe(false);
+    expect(loaded.unavailableDefaults).toMatchObject([{ errorCode: 'source_access_denied', effectAttempted: false }]);
   });
 
   it('applies an admitted Account-owned Source layer without acquiring a Team projection', async () => {
@@ -83,7 +153,8 @@ describe('demanded project Session defaults context', () => {
       readTeam: async () => ({ ok: false, errorCode: 'team_not_found', error: 'team_not_found' }),
       readHome: async () => ({ homeDefaults: null }),
     });
-    expect(loaded.context).toMatchObject({ projectDefaults: { approvalProfileId: null }, teamDefaults: null });
+    expect(loaded.context).toMatchObject({ primaryTeamId: 'owner-team', projectDefaults: { approvalProfileId: null }, teamDefaults: null });
+    expect(loaded.unavailableDefaults).toMatchObject([{ errorCode: 'team_not_found' }]);
     expect(loaded.canManageSource).toBe(false);
   });
 });

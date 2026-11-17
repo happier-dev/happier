@@ -38,13 +38,14 @@ export function createUiPrepareSessionSpawnNewInput(ports: PreparationPorts): No
         const captured = context.sessionCreationDefaults;
         const retained = input.sourceContext !== undefined || input.configuration?.providerSessionResume !== undefined;
         const settings = captured || retained ? null : await ports.readSettings();
-        let defaultsContext = captured?.context ?? (retained ? buildManagedSessionDefaultsContext({})
-            : (await loadManagedSessionDefaultsContextV1({ ...input.projectContext, primaryTeamId: input.primaryTeamId,
+        const loaded = captured ?? (retained ? { context: buildManagedSessionDefaultsContext({}), unavailableDefaults: undefined }
+            : await loadManagedSessionDefaultsContextV1({ ...input.projectContext, primaryTeamId: input.primaryTeamId,
                 sharedTeamIds: [...new Set(input.initialAccess?.grants.flatMap(({ subject }) =>
                     subject.kind === 'account' ? [] : [subject.teamId]))],
                 memberDefaults: settings ? projectAccountManagedSessionDefaults(settings) : undefined,
                 policyDefaults: getOrganizationPolicySessionDefaults(readOrganizationPolicy()),
-            }, ports.createLoader(context))).context);
+            }, ports.createLoader(context)));
+        let defaultsContext = loaded.context;
         const authoredChoices = captured?.authoredChoices ?? {
             ...(input.agentTarget ? { agentTarget: input.agentTarget } : {}),
             ...(input.executionTarget ? { executionTarget: input.executionTarget } : {}),
@@ -102,6 +103,7 @@ export function createUiPrepareSessionSpawnNewInput(ports: PreparationPorts): No
         });
         context.onSessionCreationPrepared?.({ agentTarget: exact.agentTarget, executionTarget: exact.executionTarget });
         return { input: projectSessionSpawnNewActionInputV2(exact), defaults: { context: defaultsContext, authoredChoices,
+            ...(loaded.unavailableDefaults ? { unavailableDefaults: loaded.unavailableDefaults } : {}),
             ...(managedPresetAcquisition ? { managedPresetAcquisition } : {}),
             ...(managedPresetControllerAccess ? { managedPresetControllerAccess } : {}) } };
     };

@@ -15,6 +15,7 @@ import { SessionTeamCredentialBindingIntentsV1Schema } from '../../teams/credent
 import { SecretReferenceOverlayV1Schema } from '../../profiles/secretReferenceOverlayV1.js';
 import { SessionDirectoryIntentV1Schema, refineSessionDirectoryIntentCheckoutV1 } from './sessionDirectoryIntentV1.js';
 import { SessionAuthoringSelectionFieldsV1 } from '../authoring/selectionFieldsV1.js';
+import { ProjectSessionDefaultsContextSelectionV1Schema } from '../../projects/projectSessionDefaultsSelectionV1.js';
 
 /**
  * Raw launch environment forwarded verbatim to the spawned process. Session spawn input and
@@ -30,6 +31,7 @@ export const SessionSpawnNewSelectionV2BaseSchema = lazyZodSchema(() => z.strict
   placementOrigin: z.optional(MachinePoolSelectionOriginV1Schema),
   directory: SessionDirectoryIntentV1Schema,
   organizationPlacement: z.optional(SessionOrganizationPlacementV1Schema),
+  projectContext: z.optional(ProjectSessionDefaultsContextSelectionV1Schema),
   agentTarget: AgentExecutionTargetV1Schema,
   roleId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   modelSelection: z.optional(SessionModelSelectionSchema),

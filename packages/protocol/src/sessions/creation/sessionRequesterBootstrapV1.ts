@@ -1,3 +1,4 @@
+import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
 import { isMachineSetupNativeCodecActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -119,6 +120,7 @@ export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.e
   /** Creation-owner selection bound to this request by the existing private admission box. */
   sessionCreationDefaults: z.optional(z.strictObject({
     context: ManagedSessionDefaultsContextV1Schema,
+    unavailableDefaults: z.optional(z.array(ActionExecuteFailureSchema)),
     managedPresetAcquisition: z.optional(ManagedAcquireInputV1Schema),
     managedPresetControllerAccess: z.optional(ManagedControllerAccessV1Schema),
     authoredChoices: z.strictObject({

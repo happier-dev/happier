@@ -1,3 +1,4 @@
+import { isProjectSessionDefaultsPreparationReadActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { deliverExternalActionRequest } from './deliverExternalActionRequest';
 export { deliverExternalActionRequest } from './deliverExternalActionRequest';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -2127,7 +2128,11 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
     && input.path.split('?')[0] === managedMachineActionEndpointPathV1('machines.managed.get')
     ? managedAccountNativeReadEffectActionIdV1(binding.actionId, binding.managedAdmission?.input, input.effectActionId)
     : input.effectActionId;
-  const effectActionId = templateParentActionId ?? managedReadEffect;
+  // Creation defaults spend their exact bound selection, not the template's
+  // broader incumbent HTTP-purpose fallback.
+  const defaultsRead = binding.projectSessionDefaultsAdmission !== undefined
+    && isProjectSessionDefaultsPreparationReadActionIdV1(input.effectActionId);
+  const effectActionId = defaultsRead ? input.effectActionId : templateParentActionId ?? managedReadEffect;
   const reviewedChild = admittedChild?.actionId === input.effectActionId
     && !templateChild ? admittedChild : undefined;
   return {

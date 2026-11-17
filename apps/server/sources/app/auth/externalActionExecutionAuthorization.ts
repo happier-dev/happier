@@ -1,3 +1,4 @@
+import { isProjectSessionDefaultsPreparationReadActionIdV1, isSessionSpawnHomeDefaultsReadEffectV1 } from '@happier-dev/protocol/actions/actionIds';
 import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { PLUGIN_COLLECTION_SHARING_ACTION_IDS_BY_OPERATION_V1 as collectionSharingIds,
     isPluginCollectionSharingActionIdV1 } from '@happier-dev/protocol/plugins/data/collectionSharingActionIdsV1';
@@ -1458,9 +1459,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         archiveStop: isSessionArchiveStopEffect(binding.actionId, effectActionId),
         deploymentRead: isDeploymentReadPreparation(binding, effectActionId),
         projectPrepareReview: isProjectPrepareReviewEffect(binding.actionId, effectActionId),
-        projectSessionDefaults: binding.actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1
-            && binding.projectSessionDefaultsAdmission !== undefined
-            && (effectActionId === PROJECT_SOURCE_READ_ACTION_ID_V1 || effectActionId === 'teams.get' || effectActionId === 'home.governance.get'),
+        projectSessionDefaults: isAdmittedProjectSessionDefaultsRead(binding, effectActionId),
         registryRead: isRegistryAppUpdateReadEffect(binding, effectActionId),
         sectionArchive: isSessionSectionArchiveEffectV1(binding.actionId, effectActionId),
         stopChild: isSessionStopChildEffectV1(binding.actionId, effectActionId),
@@ -2083,6 +2082,9 @@ async function readBotTemplateHttpPurpose(verified: VerifiedExternalActionExecut
     const restrictedPat = !('authentication' in verified.binding)
         && isApiTokenGrantRestrictedV1(verified.binding.grant);
     if (!restrictedPat) return null;
+    if (verified.binding.projectSessionDefaultsAdmission !== undefined
+        && isProjectSessionDefaultsPreparationReadActionIdV1(verified.effectActionId))
+        return isProjectSessionDefaultsHttpPurpose(verified, proof);
     if (verified.effectActionId !== root || proof.reviewedChild) return false;
     const method = proof.method.toUpperCase();
     if (root === 'template.instantiate' && method === 'POST' && proof.path === '/v1/sessions') {
@@ -3048,13 +3050,26 @@ export function isDeploymentNativeHttpPurpose(verified: Pick<VerifiedExternalAct
     return readDeploymentNativeTransition(verified.binding, verified.effectActionId, proof) !== null;
 }
 
+function isAdmittedProjectSessionDefaultsRead(binding: ExternalActionExecutionAuthorizationBindingV1,
+    effectActionId: string): boolean {
+    return binding.projectSessionDefaultsAdmission !== undefined
+        && isProjectSessionDefaultsPreparationReadActionIdV1(effectActionId)
+        || 'authentication' in binding && binding.authentication.kind === 'account'
+            && isSessionSpawnHomeDefaultsReadEffectV1(binding.actionId, effectActionId);
+}
+
 /** A signed Account root spends its declared operation and required preparation reads. */
-async function isProjectSessionDefaultsHttpPurpose(verified: VerifiedSignedChildRequest,
+async function isProjectSessionDefaultsHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
     proof: ExternalActionExecutionRequestProof): Promise<boolean> {
     const selection = verified.binding.projectSessionDefaultsAdmission;
-    if (!selection) return false;
     const effect = verified.effectActionId;
-    if (effect === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1) {
+    if (isSessionSpawnHomeDefaultsReadEffectV1(verified.binding.actionId, effect)) {
+        return isAdmittedProjectSessionDefaultsRead(verified.binding, effect)
+            && isAccountActionHttpOperation(effect, proof)
+            && sameManagedInput(proof.routeInput ?? proof.body, { projection: 'session_defaults' });
+    }
+    if (!selection) return false;
+    if (effect === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 && verified.binding.actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1) {
         const read = proof.method.toUpperCase() === 'POST' && proof.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`
             ? ProjectAccountRowReadRequestV1Schema.safeParse(proof.body) : null;
         return Boolean(selection.projectRef && read?.success && sameManagedInput(read.data, {
@@ -3135,7 +3150,9 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
         }
         return false;
     }
-    if (root === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1) return isProjectSessionDefaultsHttpPurpose(verified, proof);
+    if (root === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1
+        || isAdmittedProjectSessionDefaultsRead(verified.binding, verified.effectActionId))
+        return isProjectSessionDefaultsHttpPurpose(verified, proof);
     if (isMachinePresetFiniteOperationActionIdV1(root)) {
         const admission = verified.binding.presetPreparationAdmission;
         if (!admission || verified.effectActionId !== root) return false;

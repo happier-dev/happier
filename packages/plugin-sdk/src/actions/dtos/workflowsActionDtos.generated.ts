@@ -122,14 +122,6 @@ export type WorkflowsActionInputById = {
             };
             visibleTeamId?: string | undefined;
         };
-        managedCreation?: undefined | {
-            homeId: string;
-            managedId: string;
-            controller?: undefined | {
-                machineId: string;
-                installationId: string;
-            };
-        };
         managedProjectFiles?: undefined | {
             kind: 'copy_once';
             contentPolicy?: undefined | {
@@ -177,6 +169,14 @@ export type WorkflowsActionInputById = {
                 extraIncludePatterns: readonly string[];
                 policyDigest: string;
                 contentOnly?: true | undefined;
+            };
+        };
+        managedCreation?: undefined | {
+            homeId: string;
+            managedId: string;
+            controller?: undefined | {
+                machineId: string;
+                installationId: string;
             };
         };
         metadata?: undefined | {
@@ -1145,16 +1145,6 @@ export type WorkflowsActionInputById = {
                 folderId: null | string;
                 tagIds: string[];
             };
-            projectContext?: undefined | {
-                projectRef?: undefined | {
-                    serverId: string;
-                    projectKey: string;
-                };
-                sourceRef?: undefined | {
-                    serverId: string;
-                    sourceId: string;
-                };
-            };
             secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
@@ -1488,16 +1478,6 @@ export type WorkflowsActionInputById = {
             organizationPlacement?: undefined | {
                 folderId: null | string;
                 tagIds: string[];
-            };
-            projectContext?: undefined | {
-                projectRef?: undefined | {
-                    serverId: string;
-                    projectKey: string;
-                };
-                sourceRef?: undefined | {
-                    serverId: string;
-                    sourceId: string;
-                };
             };
             secretReferenceOverlay?: undefined | {
                 v: 1;
@@ -3453,6 +3433,489 @@ export type WorkflowsActionInputById = {
             serverId: string;
             environmentId: string;
         };
+        actorConsent?: undefined | {
+            actionIds: string[];
+            phase: 'after' | 'before';
+            agentSteps: {
+                sourceKey: string;
+                blockId: string;
+                document: {
+                    text: string;
+                    displayText?: string | undefined;
+                    references?: undefined | {
+                        [x: string]: unknown;
+                        kind: string;
+                        ref: string;
+                        token: string;
+                        label?: string | undefined;
+                    }[];
+                    attachments?: undefined | {
+                        v: 1;
+                        instanceId: string;
+                        attachment: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        key: string;
+                        value: unknown;
+                        presentation: {
+                            label: string;
+                            typeLabel: string;
+                            description?: string | undefined;
+                            icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                            tone?: 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                            source?: undefined | {
+                                kind: 'session';
+                                session: {
+                                    serverId: string;
+                                    sessionId: string;
+                                };
+                                messageId: string;
+                            };
+                        };
+                        forgeEvidence?: undefined | {
+                            v: 1;
+                            items: readonly {
+                                source: {
+                                    kind: 'alert' | 'databaseFinding' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
+                                    label: string;
+                                    url?: string;
+                                };
+                                author: {
+                                    kind: 'bot' | 'person' | 'process' | 'unknown';
+                                    label?: string;
+                                };
+                                text: string;
+                            }[];
+                        };
+                    }[];
+                };
+                selection: WorkflowsActionSelection1;
+                executionTarget: {
+                    kind: 'detached_run';
+                } | {
+                    kind: 'session';
+                };
+                input?: undefined | unknown[];
+                inputMode?: 'none' | undefined;
+                participant?: undefined | {
+                    kind: 'model';
+                    launch: {
+                        executionTarget: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        directory: {
+                            kind: 'managed';
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        };
+                        agentTarget: {
+                            kind: 'agent';
+                            identity: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            definitionId?: string | undefined;
+                        };
+                        placementOrigin?: undefined | {
+                            kind: 'machine_pool';
+                            poolId: string;
+                        };
+                        organizationPlacement?: undefined | {
+                            folderId: null | string;
+                            tagIds: string[];
+                        };
+                        projectContext?: undefined | {
+                            projectRef?: undefined | {
+                                serverId: string;
+                                projectKey: string;
+                            };
+                            sourceRef?: undefined | {
+                                serverId: string;
+                                sourceId: string;
+                            };
+                        };
+                        roleId?: string | undefined;
+                        modelSelection?: undefined | {
+                            ref: {
+                                source: 'account_provider_connection';
+                                agentTargetKey: string;
+                                providerConnectionId: string;
+                                modelId: string;
+                            };
+                            v: 2;
+                            updatedAt: number;
+                        } | {
+                            ref: {
+                                source: 'native';
+                                agentTargetKey: string;
+                                modelId: string;
+                            };
+                            v: 2;
+                            updatedAt: number;
+                        } | {
+                            ref: {
+                                source: 'team_resource';
+                                resourceId: string;
+                                teamId: string;
+                                expectedResourceRevision: number;
+                                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                                agentTargetKey: string;
+                                modelId: string;
+                                nativeDelivery?: undefined | {
+                                    managedId: string;
+                                    controllerInstallationId: string;
+                                    guestInstallationId: string;
+                                    bindingKey: string;
+                                    placeholderRef: string;
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            };
+                            v: 2;
+                            updatedAt: number;
+                        } | {
+                            v: 1;
+                            ref: {
+                                agentTargetKey: string;
+                                providerConnectionId: null;
+                                modelId: string;
+                            } | {
+                                agentTargetKey: string;
+                                providerConnectionId: string;
+                                modelId: string;
+                            };
+                            updatedAt: number;
+                        };
+                        profileId?: string | undefined;
+                        approvalProfileId?: null | string | undefined;
+                        secretReferenceOverlay?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                        permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+                        agentModeId?: string | undefined;
+                        configuration?: unknown;
+                        connectedServices?: undefined | {
+                            v: 1;
+                            bindingsByServiceId: Record<string, {
+                                source: 'connected';
+                                profileId: string;
+                                selection?: 'profile' | undefined;
+                            } | {
+                                source: 'connected';
+                                selection: 'group';
+                                groupId: string;
+                                profileId?: string | undefined;
+                                appliedProfileId?: string | undefined;
+                            } | {
+                                source: 'native';
+                            }>;
+                        } | {
+                            v: 1;
+                            bindingsByServiceId: Record<string, {
+                                source: 'connected';
+                                profileId: string;
+                                selection?: 'profile' | undefined;
+                            } | {
+                                source: 'connected';
+                                selection: 'group';
+                                groupId: string;
+                                profileId?: string | undefined;
+                                appliedProfileId?: string | undefined;
+                            } | {
+                                source: 'native';
+                            }>;
+                        } | {
+                            v: 2;
+                            bindingsByServiceId?: Record<string, {
+                                source: 'connected';
+                                profileId: string;
+                                selection?: 'profile' | undefined;
+                            } | {
+                                source: 'connected';
+                                selection: 'group';
+                                groupId: string;
+                                profileId?: string | undefined;
+                                appliedProfileId?: string | undefined;
+                            } | {
+                                source: 'native';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            }> | undefined;
+                        };
+                        capabilitySelection?: undefined | {
+                            mcp?: undefined | {
+                                v?: 1 | undefined;
+                                managedServersEnabled?: boolean | undefined;
+                                happierToolsEnabled?: boolean | undefined;
+                                forceIncludeServerIds?: string[] | undefined;
+                                forceExcludeServerIds?: string[] | undefined;
+                            };
+                            skills?: undefined | {
+                                v?: 1 | undefined;
+                                forceIncludeSkillIds?: string[] | undefined;
+                                forceExcludeSkillIds?: string[] | undefined;
+                                excludeNativeSkillNames?: string[] | undefined;
+                            };
+                        };
+                        transcriptStorage?: 'direct' | 'persisted' | undefined;
+                        terminal?: undefined | {
+                            mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                            tmux?: undefined | {
+                                sessionName?: string | undefined;
+                                isolated?: boolean | undefined;
+                                tmpDir?: null | string | undefined;
+                            };
+                            herdr?: undefined | {
+                                sessionName?: string | undefined;
+                            };
+                            windows?: undefined | {
+                                launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
+                                console?: 'hidden' | 'visible' | undefined;
+                                windowName?: string | undefined;
+                            };
+                        };
+                        checkoutCreationDraft?: null | undefined | {
+                            kind: 'git_worktree';
+                            displayName: string;
+                            baseRef: null | string;
+                            branchMode?: 'existing' | 'new' | undefined;
+                        };
+                        title?: string | undefined;
+                        memoryEnabled?: boolean | undefined;
+                        primaryTeamId?: null | string | undefined;
+                        teamCredentialBindings?: ({
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: null;
+                        } | {
+                            v: 1;
+                            slot: {
+                                kind: 'connected_service_purpose';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                            } | {
+                                kind: 'provider_model';
+                            };
+                            resourceId: string;
+                            expectedResourceRevision: number;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            teamId?: string | undefined;
+                            providerModelSelection?: undefined | {
+                                agentTargetKey: string;
+                                modelId: string;
+                                application?: undefined | {
+                                    implementationIdentity: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    endpointTemplateId: string;
+                                    protocol: string;
+                                    agentTargetKey: string;
+                                };
+                                executionMachineId?: string | undefined;
+                                nativeSource?: undefined | {
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            };
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        })[] | undefined;
+                        allowedTools?: string[] | undefined;
+                        unlistedTools?: 'ask' | 'deny' | undefined;
+                    };
+                } | {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    machineId: string;
+                };
+                role?: undefined | {
+                    name: string;
+                    instructions: string;
+                    runsAs: {
+                        kind: 'background_run';
+                        intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+                    } | {
+                        kind: 'session';
+                    };
+                    workspaceWrites: 'allow' | 'deny';
+                    secondOpinion: 'encouraged' | 'off';
+                    enabled: boolean;
+                    roleId: string;
+                    engine?: undefined | {
+                        agentTargetKey: string;
+                        modelId?: string | undefined;
+                        providerConnectionId?: string | undefined;
+                        effort?: string | undefined;
+                    };
+                    profileId?: string | undefined;
+                    canDelegateToOtherRoles?: boolean | undefined;
+                    changedAt?: 'run' | 'session' | 'settings' | 'workflow' | undefined;
+                    profileUnavailable?: boolean | undefined;
+                };
+            }[];
+            subject?: undefined | {
+                checkId: string;
+                sourceInstanceId: string;
+                kind: 'healthCheck';
+                serverId: string;
+            } | {
+                kind: 'app';
+                serverId: string;
+                projectSourceId: string;
+            } | {
+                kind: 'approvalProfile';
+                serverId: string;
+                profileId: string;
+            } | {
+                kind: 'backup';
+                serverId: string;
+                environmentId: string;
+            } | {
+                kind: 'database';
+                serverId: string;
+                target: {
+                    kind: 'environment';
+                    environmentId: string;
+                    service: string;
+                    database: string;
+                } | {
+                    kind: 'managed_deployment';
+                    environmentId: string;
+                    targetLinkId: string;
+                    databaseName: string;
+                } | {
+                    savedSecretId: string;
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'manual';
+                } | {
+                    source: {
+                        kind: 'env_file';
+                        path: string;
+                        variable: string;
+                    } | {
+                        kind: 'service';
+                        serviceId: string;
+                        variable: string;
+                    } | {
+                        kind: 'sqlite_file';
+                        path: string;
+                    };
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'worktree';
+                };
+            } | {
+                kind: 'environment';
+                serverId: string;
+                environmentId: string;
+            } | {
+                kind: 'plugin';
+                serverId: string;
+                pluginId: string;
+                subjectKindId: string;
+                identity: unknown;
+            } | {
+                kind: 'session';
+                serverId: string;
+                sessionId: string;
+            } | {
+                serverId: string;
+                machineId: string;
+                kind: 'machine';
+            } | {
+                serverId: string;
+                projectKey: string;
+                kind: 'project';
+            };
+        };
         workflow?: string | undefined;
         target?: undefined | {
             kind: 'inline';
@@ -4214,6 +4677,489 @@ export type WorkflowsActionInputById = {
                 serverId: string;
                 environmentId: string;
             };
+            actorConsent?: undefined | {
+                actionIds: string[];
+                phase: 'after' | 'before';
+                agentSteps: {
+                    sourceKey: string;
+                    blockId: string;
+                    document: {
+                        text: string;
+                        displayText?: string | undefined;
+                        references?: undefined | {
+                            [x: string]: unknown;
+                            kind: string;
+                            ref: string;
+                            token: string;
+                            label?: string | undefined;
+                        }[];
+                        attachments?: undefined | {
+                            v: 1;
+                            instanceId: string;
+                            attachment: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            key: string;
+                            value: unknown;
+                            presentation: {
+                                label: string;
+                                typeLabel: string;
+                                description?: string | undefined;
+                                icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                tone?: 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                                source?: undefined | {
+                                    kind: 'session';
+                                    session: {
+                                        serverId: string;
+                                        sessionId: string;
+                                    };
+                                    messageId: string;
+                                };
+                            };
+                            forgeEvidence?: undefined | {
+                                v: 1;
+                                items: readonly {
+                                    source: {
+                                        kind: 'alert' | 'databaseFinding' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
+                                        label: string;
+                                        url?: string;
+                                    };
+                                    author: {
+                                        kind: 'bot' | 'person' | 'process' | 'unknown';
+                                        label?: string;
+                                    };
+                                    text: string;
+                                }[];
+                            };
+                        }[];
+                    };
+                    selection: WorkflowsActionSelection1;
+                    executionTarget: {
+                        kind: 'detached_run';
+                    } | {
+                        kind: 'session';
+                    };
+                    input?: undefined | unknown[];
+                    inputMode?: 'none' | undefined;
+                    participant?: undefined | {
+                        kind: 'model';
+                        launch: {
+                            executionTarget: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            directory: {
+                                kind: 'managed';
+                            } | {
+                                kind: 'path';
+                                path: string;
+                            };
+                            agentTarget: {
+                                kind: 'agent';
+                                identity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                definitionId?: string | undefined;
+                            };
+                            placementOrigin?: undefined | {
+                                kind: 'machine_pool';
+                                poolId: string;
+                            };
+                            organizationPlacement?: undefined | {
+                                folderId: null | string;
+                                tagIds: string[];
+                            };
+                            projectContext?: undefined | {
+                                projectRef?: undefined | {
+                                    serverId: string;
+                                    projectKey: string;
+                                };
+                                sourceRef?: undefined | {
+                                    serverId: string;
+                                    sourceId: string;
+                                };
+                            };
+                            roleId?: string | undefined;
+                            modelSelection?: undefined | {
+                                ref: {
+                                    source: 'account_provider_connection';
+                                    agentTargetKey: string;
+                                    providerConnectionId: string;
+                                    modelId: string;
+                                };
+                                v: 2;
+                                updatedAt: number;
+                            } | {
+                                ref: {
+                                    source: 'native';
+                                    agentTargetKey: string;
+                                    modelId: string;
+                                };
+                                v: 2;
+                                updatedAt: number;
+                            } | {
+                                ref: {
+                                    source: 'team_resource';
+                                    resourceId: string;
+                                    teamId: string;
+                                    expectedResourceRevision: number;
+                                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                                    agentTargetKey: string;
+                                    modelId: string;
+                                    nativeDelivery?: undefined | {
+                                        managedId: string;
+                                        controllerInstallationId: string;
+                                        guestInstallationId: string;
+                                        bindingKey: string;
+                                        placeholderRef: string;
+                                        sourceRevision: string;
+                                        providerTicket: string;
+                                    };
+                                };
+                                v: 2;
+                                updatedAt: number;
+                            } | {
+                                v: 1;
+                                ref: {
+                                    agentTargetKey: string;
+                                    providerConnectionId: null;
+                                    modelId: string;
+                                } | {
+                                    agentTargetKey: string;
+                                    providerConnectionId: string;
+                                    modelId: string;
+                                };
+                                updatedAt: number;
+                            };
+                            profileId?: string | undefined;
+                            approvalProfileId?: null | string | undefined;
+                            secretReferenceOverlay?: undefined | {
+                                v: 1;
+                                bindings: Record<string, {
+                                    ref: string;
+                                    revision?: number | undefined;
+                                }>;
+                            };
+                            permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+                            agentModeId?: string | undefined;
+                            configuration?: unknown;
+                            connectedServices?: undefined | {
+                                v: 1;
+                                bindingsByServiceId: Record<string, {
+                                    source: 'connected';
+                                    profileId: string;
+                                    selection?: 'profile' | undefined;
+                                } | {
+                                    source: 'connected';
+                                    selection: 'group';
+                                    groupId: string;
+                                    profileId?: string | undefined;
+                                    appliedProfileId?: string | undefined;
+                                } | {
+                                    source: 'native';
+                                }>;
+                            } | {
+                                v: 1;
+                                bindingsByServiceId: Record<string, {
+                                    source: 'connected';
+                                    profileId: string;
+                                    selection?: 'profile' | undefined;
+                                } | {
+                                    source: 'connected';
+                                    selection: 'group';
+                                    groupId: string;
+                                    profileId?: string | undefined;
+                                    appliedProfileId?: string | undefined;
+                                } | {
+                                    source: 'native';
+                                }>;
+                            } | {
+                                v: 2;
+                                bindingsByServiceId?: Record<string, {
+                                    source: 'connected';
+                                    profileId: string;
+                                    selection?: 'profile' | undefined;
+                                } | {
+                                    source: 'connected';
+                                    selection: 'group';
+                                    groupId: string;
+                                    profileId?: string | undefined;
+                                    appliedProfileId?: string | undefined;
+                                } | {
+                                    source: 'native';
+                                } | {
+                                    source: 'team_resource';
+                                    resourceId: string;
+                                    deliveryMode: 'brokered';
+                                } | {
+                                    source: 'team_resource';
+                                    resourceId: string;
+                                    deliveryMode: 'direct';
+                                    disclosedMember: {
+                                        service: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        accountId: string;
+                                    };
+                                }> | undefined;
+                            };
+                            capabilitySelection?: undefined | {
+                                mcp?: undefined | {
+                                    v?: 1 | undefined;
+                                    managedServersEnabled?: boolean | undefined;
+                                    happierToolsEnabled?: boolean | undefined;
+                                    forceIncludeServerIds?: string[] | undefined;
+                                    forceExcludeServerIds?: string[] | undefined;
+                                };
+                                skills?: undefined | {
+                                    v?: 1 | undefined;
+                                    forceIncludeSkillIds?: string[] | undefined;
+                                    forceExcludeSkillIds?: string[] | undefined;
+                                    excludeNativeSkillNames?: string[] | undefined;
+                                };
+                            };
+                            transcriptStorage?: 'direct' | 'persisted' | undefined;
+                            terminal?: undefined | {
+                                mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                                tmux?: undefined | {
+                                    sessionName?: string | undefined;
+                                    isolated?: boolean | undefined;
+                                    tmpDir?: null | string | undefined;
+                                };
+                                herdr?: undefined | {
+                                    sessionName?: string | undefined;
+                                };
+                                windows?: undefined | {
+                                    launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
+                                    console?: 'hidden' | 'visible' | undefined;
+                                    windowName?: string | undefined;
+                                };
+                            };
+                            checkoutCreationDraft?: null | undefined | {
+                                kind: 'git_worktree';
+                                displayName: string;
+                                baseRef: null | string;
+                                branchMode?: 'existing' | 'new' | undefined;
+                            };
+                            title?: string | undefined;
+                            memoryEnabled?: boolean | undefined;
+                            primaryTeamId?: null | string | undefined;
+                            teamCredentialBindings?: ({
+                                v: 1;
+                                slot: {
+                                    kind: 'connected_service_purpose';
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                } | {
+                                    kind: 'provider_model';
+                                };
+                                resourceId: null;
+                            } | {
+                                v: 1;
+                                slot: {
+                                    kind: 'connected_service_purpose';
+                                    purpose: {
+                                        consumer: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        purpose: string;
+                                    };
+                                } | {
+                                    kind: 'provider_model';
+                                };
+                                resourceId: string;
+                                expectedResourceRevision: number;
+                                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                                teamId?: string | undefined;
+                                providerModelSelection?: undefined | {
+                                    agentTargetKey: string;
+                                    modelId: string;
+                                    application?: undefined | {
+                                        implementationIdentity: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        endpointTemplateId: string;
+                                        protocol: string;
+                                        agentTargetKey: string;
+                                    };
+                                    executionMachineId?: string | undefined;
+                                    nativeSource?: undefined | {
+                                        sourceRevision: string;
+                                        providerTicket: string;
+                                    };
+                                };
+                                nativeDelivery?: undefined | {
+                                    managedId: string;
+                                    controllerInstallationId: string;
+                                    guestInstallationId: string;
+                                    bindingKey: string;
+                                    placeholderRef: string;
+                                    sourceRevision: string;
+                                    providerTicket: string;
+                                };
+                            })[] | undefined;
+                            allowedTools?: string[] | undefined;
+                            unlistedTools?: 'ask' | 'deny' | undefined;
+                        };
+                    } | {
+                        kind: 'session';
+                        session: {
+                            serverId: string;
+                            sessionId: string;
+                        };
+                        machineId: string;
+                    };
+                    role?: undefined | {
+                        name: string;
+                        instructions: string;
+                        runsAs: {
+                            kind: 'background_run';
+                            intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+                        } | {
+                            kind: 'session';
+                        };
+                        workspaceWrites: 'allow' | 'deny';
+                        secondOpinion: 'encouraged' | 'off';
+                        enabled: boolean;
+                        roleId: string;
+                        engine?: undefined | {
+                            agentTargetKey: string;
+                            modelId?: string | undefined;
+                            providerConnectionId?: string | undefined;
+                            effort?: string | undefined;
+                        };
+                        profileId?: string | undefined;
+                        canDelegateToOtherRoles?: boolean | undefined;
+                        changedAt?: 'run' | 'session' | 'settings' | 'workflow' | undefined;
+                        profileUnavailable?: boolean | undefined;
+                    };
+                }[];
+                subject?: undefined | {
+                    checkId: string;
+                    sourceInstanceId: string;
+                    kind: 'healthCheck';
+                    serverId: string;
+                } | {
+                    kind: 'app';
+                    serverId: string;
+                    projectSourceId: string;
+                } | {
+                    kind: 'approvalProfile';
+                    serverId: string;
+                    profileId: string;
+                } | {
+                    kind: 'backup';
+                    serverId: string;
+                    environmentId: string;
+                } | {
+                    kind: 'database';
+                    serverId: string;
+                    target: {
+                        kind: 'environment';
+                        environmentId: string;
+                        service: string;
+                        database: string;
+                    } | {
+                        kind: 'managed_deployment';
+                        environmentId: string;
+                        targetLinkId: string;
+                        databaseName: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: {
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        };
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: {
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        };
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
+                    };
+                } | {
+                    kind: 'environment';
+                    serverId: string;
+                    environmentId: string;
+                } | {
+                    kind: 'plugin';
+                    serverId: string;
+                    pluginId: string;
+                    subjectKindId: string;
+                    identity: unknown;
+                } | {
+                    kind: 'session';
+                    serverId: string;
+                    sessionId: string;
+                } | {
+                    serverId: string;
+                    machineId: string;
+                    kind: 'machine';
+                } | {
+                    serverId: string;
+                    projectKey: string;
+                    kind: 'project';
+                };
+            };
             project?: undefined | {
                 machineId: string;
                 directory: string;
@@ -4431,6 +5377,341 @@ type WorkflowsActionDefinition4 = {
     roles?: unknown;
     finalOutput?: unknown;
 };
+type WorkflowsActionSelection1 = {
+    allowedTools?: string[] | undefined;
+    unlistedTools?: 'ask' | 'deny' | undefined;
+    agentTarget?: null | undefined | {
+        kind: 'agent';
+        identity: {
+            pluginId: string;
+            localId: string;
+        };
+        definitionId?: string | undefined;
+    };
+    modelSelection?: null | undefined | {
+        ref: {
+            source: 'account_provider_connection';
+            agentTargetKey: string;
+            providerConnectionId: string;
+            modelId: string;
+        };
+        v: 2;
+        updatedAt: number;
+    } | {
+        ref: {
+            source: 'native';
+            agentTargetKey: string;
+            modelId: string;
+        };
+        v: 2;
+        updatedAt: number;
+    } | {
+        ref: {
+            source: 'team_resource';
+            resourceId: string;
+            teamId: string;
+            expectedResourceRevision: number;
+            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+            agentTargetKey: string;
+            modelId: string;
+            nativeDelivery?: undefined | {
+                managedId: string;
+                controllerInstallationId: string;
+                guestInstallationId: string;
+                bindingKey: string;
+                placeholderRef: string;
+                sourceRevision: string;
+                providerTicket: string;
+            };
+        };
+        v: 2;
+        updatedAt: number;
+    } | {
+        v: 1;
+        ref: {
+            agentTargetKey: string;
+            providerConnectionId: null;
+            modelId: string;
+        } | {
+            agentTargetKey: string;
+            providerConnectionId: string;
+            modelId: string;
+        };
+        updatedAt: number;
+    };
+    profileId?: null | string | undefined;
+    approvalProfileId?: null | string | undefined;
+    permissionMode?: null | string | undefined;
+    acpSessionModeId?: null | string | undefined;
+    sessionConfigOptionOverrides?: null | undefined | {
+        [x: string]: unknown;
+        v: 1;
+        updatedAt: number;
+        overrides: Record<string, {
+            [x: string]: unknown;
+            updatedAt: number;
+            value: boolean | null | number | string;
+        }>;
+    };
+    capabilitySelection?: null | undefined | {
+        mcp?: undefined | {
+            v?: 1 | undefined;
+            managedServersEnabled?: boolean | undefined;
+            happierToolsEnabled?: boolean | undefined;
+            forceIncludeServerIds?: string[] | undefined;
+            forceExcludeServerIds?: string[] | undefined;
+        };
+        skills?: undefined | {
+            v?: 1 | undefined;
+            forceIncludeSkillIds?: string[] | undefined;
+            forceExcludeSkillIds?: string[] | undefined;
+            excludeNativeSkillNames?: string[] | undefined;
+        };
+    };
+    connectedServices?: null | undefined | {
+        v: 1;
+        bindingsByServiceId: Record<string, {
+            source: 'connected';
+            profileId: string;
+            selection?: 'profile' | undefined;
+        } | {
+            source: 'connected';
+            selection: 'group';
+            groupId: string;
+            profileId?: string | undefined;
+            appliedProfileId?: string | undefined;
+        } | {
+            source: 'native';
+        }>;
+    } | {
+        v: 1;
+        bindingsByServiceId: Record<string, {
+            source: 'connected';
+            profileId: string;
+            selection?: 'profile' | undefined;
+        } | {
+            source: 'connected';
+            selection: 'group';
+            groupId: string;
+            profileId?: string | undefined;
+            appliedProfileId?: string | undefined;
+        } | {
+            source: 'native';
+        }>;
+    } | {
+        v: 2;
+        bindingsByServiceId?: Record<string, {
+            source: 'connected';
+            profileId: string;
+            selection?: 'profile' | undefined;
+        } | {
+            source: 'connected';
+            selection: 'group';
+            groupId: string;
+            profileId?: string | undefined;
+            appliedProfileId?: string | undefined;
+        } | {
+            source: 'native';
+        } | {
+            source: 'team_resource';
+            resourceId: string;
+            deliveryMode: 'brokered';
+        } | {
+            source: 'team_resource';
+            resourceId: string;
+            deliveryMode: 'direct';
+            disclosedMember: {
+                service: {
+                    pluginId: string;
+                    localId: string;
+                };
+                accountId: string;
+            };
+        }> | undefined;
+    };
+    transcriptStorage?: 'direct' | 'persisted' | null | undefined;
+    terminal?: null | undefined | {
+        mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+        tmux?: undefined | {
+            sessionName?: string | undefined;
+            isolated?: boolean | undefined;
+            tmpDir?: null | string | undefined;
+        };
+        herdr?: undefined | {
+            sessionName?: string | undefined;
+        };
+        windows?: undefined | {
+            launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
+            console?: 'hidden' | 'visible' | undefined;
+            windowName?: string | undefined;
+        };
+    };
+    windowsRemoteSessionLaunchMode?: 'console' | 'hidden' | 'windows_terminal' | null | undefined;
+    windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
+    windowsTerminalWindowName?: null | string | undefined;
+    runtimeDescriptorV1?: null | undefined | {
+        v: 1;
+        agentId: string;
+        agent: {
+            backendMode: string;
+            home?: 'connectedService' | 'user' | undefined;
+            connectedServiceId?: string | undefined;
+            connectedServiceProfileId?: string | undefined;
+            connectedServiceGroupId?: string | undefined;
+        };
+    };
+    title?: string | undefined;
+    primaryTeamId?: null | string | undefined;
+    organizationPlacement?: undefined | {
+        folderId: null | string;
+        tagIds: string[];
+    };
+    secretReferenceOverlay?: undefined | {
+        v: 1;
+        bindings: Record<string, {
+            ref: string;
+            revision?: number | undefined;
+        }>;
+    };
+    memoryEnabled?: boolean | undefined;
+    teamCredentialBindings?: ({
+        v: 1;
+        slot: {
+            kind: 'connected_service_purpose';
+            purpose: {
+                consumer: {
+                    pluginId: string;
+                    localId: string;
+                };
+                purpose: string;
+            };
+        } | {
+            kind: 'provider_model';
+        };
+        resourceId: null;
+    } | {
+        v: 1;
+        slot: {
+            kind: 'connected_service_purpose';
+            purpose: {
+                consumer: {
+                    pluginId: string;
+                    localId: string;
+                };
+                purpose: string;
+            };
+        } | {
+            kind: 'provider_model';
+        };
+        resourceId: string;
+        expectedResourceRevision: number;
+        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+        teamId?: string | undefined;
+        providerModelSelection?: undefined | {
+            agentTargetKey: string;
+            modelId: string;
+            application?: undefined | {
+                implementationIdentity: {
+                    pluginId: string;
+                    localId: string;
+                };
+                endpointTemplateId: string;
+                protocol: string;
+                agentTargetKey: string;
+            };
+            executionMachineId?: string | undefined;
+            nativeSource?: undefined | {
+                sourceRevision: string;
+                providerTicket: string;
+            };
+        };
+        nativeDelivery?: undefined | {
+            managedId: string;
+            controllerInstallationId: string;
+            guestInstallationId: string;
+            bindingKey: string;
+            placeholderRef: string;
+            sourceRevision: string;
+            providerTicket: string;
+        };
+    })[] | undefined;
+    permissionModeUpdatedAt?: number | undefined;
+    environmentVariables?: Record<string, string> | undefined;
+    providerSessionResume?: undefined | {
+        kind: 'provider_session.v1';
+        providerSessionId: string;
+    };
+    conversation?: undefined | {
+        kind: 'existing_session';
+        sessionId: string;
+        machineId: string;
+    } | {
+        kind: 'fresh';
+    } | {
+        kind: 'from_step';
+        producer: {
+            blockId: string;
+            scope?: undefined | {
+                kind: 'current';
+            } | {
+                kind: 'outer';
+                levels: number;
+            } | {
+                kind: 'previous_iteration';
+                loopBlockId: string;
+            };
+        };
+    } | {
+        kind: 'input';
+        name: string;
+    } | {
+        kind: 'origin_session';
+    } | {
+        kind: 'shared_run';
+    };
+    workspace?: undefined | {
+        kind: 'from_step';
+        producer: {
+            blockId: string;
+            scope?: undefined | {
+                kind: 'current';
+            } | {
+                kind: 'outer';
+                levels: number;
+            } | {
+                kind: 'previous_iteration';
+                loopBlockId: string;
+            };
+        };
+    } | {
+        kind: 'inherit';
+    } | {
+        kind: 'new_worktree';
+        source: {
+            kind: 'original';
+        } | {
+            kind: 'step';
+            producer: {
+                blockId: string;
+                scope?: undefined | {
+                    kind: 'current';
+                } | {
+                    kind: 'outer';
+                    levels: number;
+                } | {
+                    kind: 'previous_iteration';
+                    loopBlockId: string;
+                };
+            };
+        } | {
+            kind: 'workflow';
+        };
+        displayName?: string | undefined;
+        baseRef?: null | string | undefined;
+    } | {
+        kind: 'project_checkout';
+    };
+};
 type WorkflowsActionDefinition1 = Readonly<{
     version: 1;
     inputs: readonly {
@@ -4614,16 +5895,6 @@ type WorkflowsActionDefinition1 = Readonly<{
         organizationPlacement?: undefined | {
             folderId: null | string;
             tagIds: string[];
-        };
-        projectContext?: undefined | {
-            projectRef?: undefined | {
-                serverId: string;
-                projectKey: string;
-            };
-            sourceRef?: undefined | {
-                serverId: string;
-                sourceId: string;
-            };
         };
         secretReferenceOverlay?: undefined | {
             v: 1;
@@ -5064,16 +6335,6 @@ export type WorkflowsActionResultById = {
                 organizationPlacement?: undefined | {
                     folderId: null | string;
                     tagIds: string[];
-                };
-                projectContext?: undefined | {
-                    projectRef?: undefined | {
-                        serverId: string;
-                        projectKey: string;
-                    };
-                    sourceRef?: undefined | {
-                        serverId: string;
-                        sourceId: string;
-                    };
                 };
                 secretReferenceOverlay?: undefined | {
                     v: 1;
@@ -7293,7 +8554,7 @@ export type WorkflowsActionResultById = {
                 sourceKey: string;
                 blockId: string;
                 kind: 'action' | 'step' | 'wait' | 'workflow';
-                selection: WorkflowsActionSelection1;
+                selection: WorkflowsActionSelection2;
                 authoredWorkspace: {
                     kind: 'from_step';
                     producer: {
@@ -7734,7 +8995,7 @@ export type WorkflowsActionResultById = {
                         } | {
                             role: string;
                         };
-                        selection: WorkflowsActionSelection1;
+                        selection: WorkflowsActionSelection2;
                         executionTarget: {
                             kind: 'detached_run';
                         } | {
@@ -8323,7 +9584,7 @@ export type WorkflowsActionResultById = {
                             };
                             machineId: string;
                         };
-                        selection: WorkflowsActionSelection1;
+                        selection: WorkflowsActionSelection2;
                         executionTarget: {
                             kind: 'detached_run';
                         } | {
@@ -8548,16 +9809,6 @@ export type WorkflowsActionResultById = {
                     organizationPlacement?: undefined | {
                         folderId: null | string;
                         tagIds: string[];
-                    };
-                    projectContext?: undefined | {
-                        projectRef?: undefined | {
-                            serverId: string;
-                            projectKey: string;
-                        };
-                        sourceRef?: undefined | {
-                            serverId: string;
-                            sourceId: string;
-                        };
                     };
                     secretReferenceOverlay?: undefined | {
                         v: 1;
@@ -9155,7 +10406,7 @@ export type WorkflowsActionResultById = {
                 sourceKey: string;
                 blockId: string;
                 kind: 'action' | 'step' | 'wait' | 'workflow';
-                selection: WorkflowsActionSelection1;
+                selection: WorkflowsActionSelection2;
                 authoredWorkspace: {
                     kind: 'from_step';
                     producer: {
@@ -9596,7 +10847,7 @@ export type WorkflowsActionResultById = {
                         } | {
                             role: string;
                         };
-                        selection: WorkflowsActionSelection1;
+                        selection: WorkflowsActionSelection2;
                         executionTarget: {
                             kind: 'detached_run';
                         } | {
@@ -10185,7 +11436,7 @@ export type WorkflowsActionResultById = {
                             };
                             machineId: string;
                         };
-                        selection: WorkflowsActionSelection1;
+                        selection: WorkflowsActionSelection2;
                         executionTarget: {
                             kind: 'detached_run';
                         } | {
@@ -10410,16 +11661,6 @@ export type WorkflowsActionResultById = {
                     organizationPlacement?: undefined | {
                         folderId: null | string;
                         tagIds: string[];
-                    };
-                    projectContext?: undefined | {
-                        projectRef?: undefined | {
-                            serverId: string;
-                            projectKey: string;
-                        };
-                        sourceRef?: undefined | {
-                            serverId: string;
-                            sourceId: string;
-                        };
                     };
                     secretReferenceOverlay?: undefined | {
                         v: 1;
@@ -11159,16 +12400,6 @@ export type WorkflowsActionResultById = {
                 organizationPlacement?: undefined | {
                     folderId: null | string;
                     tagIds: string[];
-                };
-                projectContext?: undefined | {
-                    projectRef?: undefined | {
-                        serverId: string;
-                        projectKey: string;
-                    };
-                    sourceRef?: undefined | {
-                        serverId: string;
-                        sourceId: string;
-                    };
                 };
                 secretReferenceOverlay?: undefined | {
                     v: 1;
@@ -18614,16 +19845,6 @@ export type WorkflowsActionResultById = {
                     folderId: null | string;
                     tagIds: string[];
                 };
-                projectContext?: undefined | {
-                    projectRef?: undefined | {
-                        serverId: string;
-                        projectKey: string;
-                    };
-                    sourceRef?: undefined | {
-                        serverId: string;
-                        sourceId: string;
-                    };
-                };
                 secretReferenceOverlay?: undefined | {
                     v: 1;
                     bindings: Record<string, {
@@ -19107,16 +20328,6 @@ export type WorkflowsActionResultById = {
                 organizationPlacement?: undefined | {
                     folderId: null | string;
                     tagIds: string[];
-                };
-                projectContext?: undefined | {
-                    projectRef?: undefined | {
-                        serverId: string;
-                        projectKey: string;
-                    };
-                    sourceRef?: undefined | {
-                        serverId: string;
-                        sourceId: string;
-                    };
                 };
                 secretReferenceOverlay?: undefined | {
                     v: 1;
@@ -20725,16 +21936,6 @@ export type WorkflowsActionResultById = {
                             folderId: null | string;
                             tagIds: string[];
                         };
-                        projectContext?: undefined | {
-                            projectRef?: undefined | {
-                                serverId: string;
-                                projectKey: string;
-                            };
-                            sourceRef?: undefined | {
-                                serverId: string;
-                                sourceId: string;
-                            };
-                        };
                         secretReferenceOverlay?: undefined | {
                             v: 1;
                             bindings: Record<string, {
@@ -21069,7 +22270,7 @@ export type WorkflowsActionResultById = {
                             displayText?: string | undefined;
                         };
                         input: PluginActionWorkflowValueReferenceV1[];
-                        selection: WorkflowsActionSelection1;
+                        selection: WorkflowsActionSelection2;
                         executionTarget: {
                             kind: 'detached_run';
                         } | {
@@ -22908,16 +24109,6 @@ export type WorkflowsActionResultById = {
                             folderId: null | string;
                             tagIds: string[];
                         };
-                        projectContext?: undefined | {
-                            projectRef?: undefined | {
-                                serverId: string;
-                                projectKey: string;
-                            };
-                            sourceRef?: undefined | {
-                                serverId: string;
-                                sourceId: string;
-                            };
-                        };
                         secretReferenceOverlay?: undefined | {
                             v: 1;
                             bindings: Record<string, {
@@ -23252,7 +24443,7 @@ export type WorkflowsActionResultById = {
                             displayText?: string | undefined;
                         };
                         input: PluginActionWorkflowValueReferenceV1[];
-                        selection: WorkflowsActionSelection1;
+                        selection: WorkflowsActionSelection2;
                         executionTarget: {
                             kind: 'detached_run';
                         } | {
@@ -24749,16 +25940,6 @@ export type WorkflowsActionResultById = {
                             folderId: null | string;
                             tagIds: string[];
                         };
-                        projectContext?: undefined | {
-                            projectRef?: undefined | {
-                                serverId: string;
-                                projectKey: string;
-                            };
-                            sourceRef?: undefined | {
-                                serverId: string;
-                                sourceId: string;
-                            };
-                        };
                         secretReferenceOverlay?: undefined | {
                             v: 1;
                             bindings: Record<string, {
@@ -25093,7 +26274,7 @@ export type WorkflowsActionResultById = {
                             displayText?: string | undefined;
                         };
                         input: PluginActionWorkflowValueReferenceV1[];
-                        selection: WorkflowsActionSelection1;
+                        selection: WorkflowsActionSelection2;
                         executionTarget: {
                             kind: 'detached_run';
                         } | {
@@ -26594,16 +27775,6 @@ export type WorkflowsActionResultById = {
                             folderId: null | string;
                             tagIds: string[];
                         };
-                        projectContext?: undefined | {
-                            projectRef?: undefined | {
-                                serverId: string;
-                                projectKey: string;
-                            };
-                            sourceRef?: undefined | {
-                                serverId: string;
-                                sourceId: string;
-                            };
-                        };
                         secretReferenceOverlay?: undefined | {
                             v: 1;
                             bindings: Record<string, {
@@ -26938,7 +28109,7 @@ export type WorkflowsActionResultById = {
                             displayText?: string | undefined;
                         };
                         input: PluginActionWorkflowValueReferenceV1[];
-                        selection: WorkflowsActionSelection1;
+                        selection: WorkflowsActionSelection2;
                         executionTarget: {
                             kind: 'detached_run';
                         } | {
@@ -27751,16 +28922,6 @@ type WorkflowsActionDefinition2 = Readonly<{
             folderId: null | string;
             tagIds: string[];
         };
-        projectContext?: undefined | {
-            projectRef?: undefined | {
-                serverId: string;
-                projectKey: string;
-            };
-            sourceRef?: undefined | {
-                serverId: string;
-                sourceId: string;
-            };
-        };
         secretReferenceOverlay?: undefined | {
             v: 1;
             bindings: Record<string, {
@@ -27990,7 +29151,7 @@ type WorkflowsActionDefinition2 = Readonly<{
         optional?: true | undefined;
     };
 }>;
-type WorkflowsActionSelection1 = {
+type WorkflowsActionSelection2 = {
     allowedTools?: string[] | undefined;
     unlistedTools?: 'ask' | 'deny' | undefined;
     agentTarget?: null | undefined | {
@@ -28148,16 +29309,6 @@ type WorkflowsActionSelection1 = {
     organizationPlacement?: undefined | {
         folderId: null | string;
         tagIds: string[];
-    };
-    projectContext?: undefined | {
-        projectRef?: undefined | {
-            serverId: string;
-            projectKey: string;
-        };
-        sourceRef?: undefined | {
-            serverId: string;
-            sourceId: string;
-        };
     };
     secretReferenceOverlay?: undefined | {
         v: 1;
@@ -28501,16 +29652,6 @@ type WorkflowsActionExecution1 = undefined | {
                 ref: string;
                 revision?: number | undefined;
             }>;
-        };
-        projectContext?: undefined | {
-            projectRef?: undefined | {
-                serverId: string;
-                projectKey: string;
-            };
-            sourceRef?: undefined | {
-                serverId: string;
-                sourceId: string;
-            };
         };
     };
     turnId?: string | undefined;

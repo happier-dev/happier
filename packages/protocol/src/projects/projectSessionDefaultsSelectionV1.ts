@@ -10,10 +10,14 @@ export const ProjectSessionDefaultsContextSelectionV1Schema = lazyZodSchema(() =
 }));
 export type ProjectSessionDefaultsContextSelectionV1 = z.infer<typeof ProjectSessionDefaultsContextSelectionV1Schema>;
 
-export const ProjectSessionDefaultsGetInputV1Schema = lazyZodSchema(() => z.strictObject({
+/** Public creation operands bound to a signed defaults read; Home-only creation has no Project. */
+export const ProjectSessionDefaultsAdmissionV1Schema = lazyZodSchema(() => z.strictObject({
   ...ProjectSessionDefaultsContextSelectionV1Schema.shape,
   primaryTeamId: z.optional(z.nullable(z.string().check(z.minLength(1)))),
   sharedTeamIds: z.optional(z.array(z.string().check(z.minLength(1)))),
-}).check(z.refine(input => input.projectRef !== undefined || input.sourceRef !== undefined,
+}));
+export type ProjectSessionDefaultsAdmissionV1 = z.infer<typeof ProjectSessionDefaultsAdmissionV1Schema>;
+
+export const ProjectSessionDefaultsGetInputV1Schema = lazyZodSchema(() => ProjectSessionDefaultsAdmissionV1Schema.check(z.refine(input => input.projectRef !== undefined || input.sourceRef !== undefined,
   'Select a Project or Source')));
 export type ProjectSessionDefaultsGetInputV1 = z.infer<typeof ProjectSessionDefaultsGetInputV1Schema>;

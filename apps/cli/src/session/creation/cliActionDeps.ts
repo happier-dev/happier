@@ -1,3 +1,4 @@
+import { accountSettingsParse } from '@happier-dev/protocol';
 import { createActionExecuteFailureError, isActionExecuteFailure, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 import { sameStrictJsonValue, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -46,7 +47,7 @@ import type { createCliWorkflowTriggerActions } from '../actions/workflowTrigger
 import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { type RoleSourceReader } from '@/session/roles/roleSources';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import { readStoredCredentials } from '@/persistence';
+import { hasStoredSessionCredentialProvenance, readStoredCredentials } from '@/persistence';
 import type { createSpawnedSession, ReplaySeededSessionCreationV1 } from '@/session/services/createSpawnedSession';
 import type { buildReplaySeededSpawnRecipe } from '@/session/replay/buildReplaySeededSpawnRecipe';
 import type { resolveReplaySourceContextAuthority } from '@/session/replay/resolveReplaySourceContextAuthority';
@@ -687,30 +688,31 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       // already sent by New Session are explicit choices; file policy locks
       // still win at this canonical effect owner.
       const admittedRequester = readRequesterAccountActionContext(context?.externalActionExecutionAuthorization);
-      if (externalRequest && !admittedRequester && requesterAccountId
-        && requesterAccountId !== readAccountIdFromToken(params.credentials.token)) {
-        return { type: 'error', code: 'permission_denied', retryable: false };
-      }
-      const defaultsCustody = resolveRequesterSavedSecretActionCustody({
-        authorization: context?.externalActionExecutionAuthorization, credentials: params.credentials,
-        operationContext: params.savedSecretOperationContext,
-      });
-      const defaultsCredentials = defaultsCustody.credentials;
-      const defaultsOperation = defaultsCustody.operation;
+      // A signed no-box request has public defaults authority, but no private
+      // Account reader. Never borrow the installed custodian's preferences.
+      const retainedDefaults = sourceContext !== undefined || configurationSnapshot?.providerSessionResume !== undefined;
+      const defaultsCustody = !retainedDefaults && (admittedRequester
+        || !externalRequest && hasStoredSessionCredentialProvenance(params.credentials))
+        ? resolveRequesterSavedSecretActionCustody({
+          authorization: context?.externalActionExecutionAuthorization, credentials: params.credentials,
+          operationContext: params.savedSecretOperationContext,
+        }) : null;
+      const defaultsCredentials = defaultsCustody?.credentials ?? params.credentials;
+      const defaultsOperation = defaultsCustody?.operation;
       const retainedSettings = defaultsOperation?.readSnapshot();
       if (defaultsOperation && !retainedSettings) {
         return { type: 'error', code: 'permission_denied', retryable: false };
       }
-      const defaultsContext = retainedSettings ?? await runWithServerHttpBaseUrl(machineReferenceServerUrl,
+      const defaultsContext = defaultsCustody ? retainedSettings ?? await runWithServerHttpBaseUrl(machineReferenceServerUrl,
         () => bootstrapAccountSettingsContext({ credentials: defaultsCredentials, mode: 'blocking', publication: 'invocation',
-          deps: { applySideEffects: () => undefined }, ...(signal ? { signal } : {}) }));
-      const operation = defaultsOperation ?? createInvocationSavedSecretOperationContextV1({
+          deps: { applySideEffects: () => undefined }, ...(signal ? { signal } : {}) })) : null;
+      const operation = defaultsContext ? defaultsOperation ?? createInvocationSavedSecretOperationContextV1({
         credentials: defaultsCredentials, snapshot: defaultsContext, serverHttpBaseUrl: machineReferenceServerUrl,
         isCurrent: async () => admittedRequester ? admittedRequester.isCurrent()
           : params.isCredentialCurrent ? params.isCredentialCurrent()
           : (await readStoredCredentials())?.token === defaultsCredentials.token,
-      });
-      const purposeCatalog = agentSupportsSpawnConnectedServicesDefaults(resolvedAgentTarget.agentId)
+      }) : null;
+      const purposeCatalog = defaultsContext && operation && agentSupportsSpawnConnectedServicesDefaults(resolvedAgentTarget.agentId)
         ? defaultsContext.connectedPurposeCatalog?.status === 'ready' ? defaultsContext.connectedPurposeCatalog
           : await refreshConnectedAccountCatalogForAdmission({ credentials: defaultsCredentials, key: 'purposes',
             operationContext: operation, ...(signal ? { signal } : {}) })
@@ -719,11 +721,16 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable', 'purpose_binding',
           purposeCatalog.status === 'unavailable' ? purposeCatalog.reason : undefined);
       }
-      const defaultsSettings = operation.readSnapshot()?.settings ?? defaultsContext.settings;
+      const defaultsSettings = operation?.readSnapshot()?.settings ?? defaultsContext?.settings ?? accountSettingsParse({});
       const homeActions = createAccountServerActionDeps({ token: defaultsCredentials.token, credentials: defaultsCredentials,
-        serverId: executionTarget.serverId, serverHttpBaseUrl: machineReferenceServerUrl });
+        serverId: executionTarget.serverId, serverHttpBaseUrl: machineReferenceServerUrl,
+        serverIdentityId: params.serverIdentityId, externalActionMachineInstallationId: params.externalActionMachineInstallationId,
+        externalActionMachineRequestPrivateKey: params.externalActionMachineRequestPrivateKey });
       const contextLoader = createCliManagedSessionDefaultsContextLoader({ credentials: defaultsCredentials,
-        serverId: executionTarget.serverId, serverHttpBaseUrl: machineReferenceServerUrl, ...(signal ? { signal } : {}) });
+        serverId: executionTarget.serverId, serverHttpBaseUrl: machineReferenceServerUrl, context,
+        serverIdentityId: params.serverIdentityId, externalActionMachineInstallationId: params.externalActionMachineInstallationId,
+        externalActionMachineRequestPrivateKey: params.externalActionMachineRequestPrivateKey,
+        ...(signal ? { signal } : {}) });
       const { createSpawnConnectedServicesTeamResourceCatalogResolver } = await import('@/session/services/spawnConnectedServicesDefaults');
       let openedMachineMetadata: unknown;
       if (!sourceContext && !configurationSnapshot?.providerSessionResume) {
@@ -769,7 +776,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         organizationPolicy: configuration.organizationPolicy,
         ...contextLoader,
         resolveTeamCredentialResourceCatalog: createSpawnConnectedServicesTeamResourceCatalogResolver({
-          homeDomainAction: homeActions.homeDomainAction!, serverId: executionTarget.serverId,
+          homeDomainAction: request => homeActions.homeDomainAction!({ ...request, context: context ?? request.context }),
+          serverId: executionTarget.serverId,
           accountId: readAccountIdFromToken(defaultsCredentials.token) ?? '',
         }),
         ...(signal ? { signal } : {}),
