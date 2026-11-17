@@ -4,10 +4,13 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { View } from 'react-native';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installBrowserStorageLockBoundary } from '@/dev/testkit/harness/browserStorageLockBoundary';
 
 /**
@@ -17,6 +20,8 @@ import { installBrowserStorageLockBoundary } from '@/dev/testkit/harness/browser
  */
 
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
+// Select Metro's browser implementation; the editor and its focus owner stay real.
+vi.mock('@/components/ui/forms/MultiTextInput', async () => import('@/components/ui/forms/MultiTextInput.web'));
 vi.mock('expo-crypto', async () => ({ randomUUID: (await import('node:crypto')).randomUUID }));
 // A phone browser: the primary pointer is a finger (no hover). This is the platform boundary the
 // shared pointer owner reads and subscribes to as the screen mounts.
@@ -39,16 +44,14 @@ vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock().module;
 });
-const home = createHomeGovernanceHarness();
-installHomeGovernanceBoundaries(home);
 const restoreBrowserStorageLock = installBrowserStorageLockBoundary();
+// The catalog now reads the selected Machine through admitted Action discovery. Serve its real
+// protocol at the network boundary; the catalog, Account admission and projection loader stay real.
+const network = await installSessionOpsNetworkBoundary();
+await loadSyncSingletonForTests();
 let serverId: string;
-beforeAll(async () => {
-    serverId = await home.addHome({ name: 'Layout Home', serverUrl: 'https://blocklist-layout.test', accountId: 'account-a' });
-    MACHINE_SCOPE.serverId = serverId;
-});
 afterAll(async () => {
-    await home.reset();
+    await network.dispose();
     restoreBrowserStorageLock();
     if (originalMatchMedia) Object.defineProperty(window, 'matchMedia', originalMatchMedia);
     else Reflect.deleteProperty(window, 'matchMedia');
@@ -62,15 +65,14 @@ const settle = (replay: () => Promise<void>) => act(replay);
 
 let root: Root | null = null;
 let host: HTMLElement | null = null;
-let restoreAppliedHome: (() => void) | undefined;
 
 afterEach(async () => {
     await act(async () => root?.unmount());
     root = null;
     host?.remove();
     host = null;
-    restoreAppliedHome?.();
-    restoreAppliedHome = undefined;
+    const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+    await disconnectActiveServerConnection();
 });
 
 const AGENT_TARGET = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
@@ -81,19 +83,35 @@ function step(id: string, name: string, text: string) {
 }
 
 async function applyHomeFixture() {
-    const { storage } = await import('@/sync/domains/state/storageStore');
-    storage.setState({ profileScope: { serverId, accountId: 'account-a' }, settingsScope: { serverId, accountId: 'account-a' } });
-    const applied = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
-    const previous = applied.getAppliedActiveServerSnapshot();
-    const wasAvailable = applied.isAppliedActiveServerRuntimeAvailable();
-    restoreAppliedHome ??= () => applied.publishAppliedActiveServerSnapshot(previous, wasAvailable);
-    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
-    applied.publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    network.resetRequests();
+    const deferred = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+        protocolVersion: 1, projectionDigest: 'b'.repeat(64),
+        projection: { v: 2, generation: 1, installedPackagesById: {}, actionsById: {}, agentsById: {}, familiesById: {} },
+    }));
+    network.setHttpResponder(async input => new URL(String(input)).pathname === '/v1/account/encryption'
+        ? Response.json({ mode: 'plain', updatedAt: 1 }) : null);
+    network.setRpcAckResponder(async request => {
+        if (request.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+            return { ok: false, error: 'Unsupported fixture RPC', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
+        }
+        const read = (request.payload as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>).sectionRead;
+        return { ok: true, result: read ? deferred.read(read.digest, read.offset, read.includeDigests) : deferred.manifest };
+    });
+    const home = await network.addHome('https://blocklist-layout.test', 'account-a');
+    serverId = home.id;
+    MACHINE_SCOPE.serverId = serverId;
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    await upsertAndActivateServer({ serverUrl: home.serverUrl });
+    await restoreConnectionToActiveServer({ token: home.token });
+    const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+    clearDaemonMergedProjectionCacheForTests();
 }
 
-async function renderDocument(blocks: readonly unknown[], width: number, selectedBlockId: string | null = null) {
+async function renderDocument(blocks: readonly unknown[], width: number, selectedBlockId: string | null = null, documentGrid: 'wide' | 'compact' = 'wide') {
     await applyHomeFixture();
     const editor = await import('./WorkflowBlockListEditor');
+    const { WorkflowDocumentGridContext } = await import('./workflowEditorStyles');
     const drafts = await import('@/sync/domains/workflows/workflowEditorDraft');
     const edits = await import('@happier-dev/protocol/workflows/workflowDefinitionEditV1');
     const authoring = await import('@/sync/domains/workflows/workflowAuthoring');
@@ -106,14 +124,14 @@ async function renderDocument(blocks: readonly unknown[], width: number, selecte
     document.body.appendChild(host);
     root = createRoot(host);
     await act(async () => {
-        root!.render(React.createElement(View, { style: { width } }, React.createElement(editor.WorkflowBlockListEditor, {
+        root!.render(React.createElement(WorkflowDocumentGridContext.Provider, { value: documentGrid }, React.createElement(View, { style: { width } }, React.createElement(editor.WorkflowBlockListEditor, {
             draft, list: { kind: 'root' }, blocks: draft.blocks, depth: 0,
             composerScope: { ...MACHINE_SCOPE, serverId },
             composerCustody: custody.createWorkflowAuthoringComposerCustody(draft.draftId),
             selectedBlockId,
             validation: authoring.validateWorkflowEditorDraft(draft),
             onChange: () => {}, onSelect: () => {}, onCustomize: () => {},
-        })));
+        }))));
     });
     return host;
 }
@@ -127,14 +145,14 @@ const centre = (rect: Readonly<{ top: number; height: number }>) => rect.top + r
 /** A lane caption's line (the meta type role, web). */
 const LANE_LINE = 16;
 
-async function measureRhythm(width: number) {
+async function measureRhythm(width: number, documentGrid: 'wide' | 'compact') {
     const container = await renderDocument([
         step('gather', 'Gather changes', 'Gather the changes since the last tag.'),
         // A non-default edge names itself in its gap; the default one says nothing (lab E1).
         { ...step('write', 'Write changelog', 'Write the changelog.'), runWhen: 'always' },
         { kind: 'if', id: 'gate', when: { kind: 'exists', value: { kind: 'result', producer: { blockId: 'write', scope: { kind: 'current' } }, path: [] } },
             then: [step('fix', 'Fix it', 'Fix one thing.')], otherwise: [] },
-    ], width);
+    ], width, null, documentGrid);
     return measureWebLayout(container, { viewport: { width, height: 1600 }, texts: ['Either way', 'If it succeeds'], settle });
 }
 
@@ -142,8 +160,8 @@ function expectDocumentRhythm(layout: Awaited<ReturnType<typeof measureWebLayout
     expect(layout.textRects('If it succeeds')).toHaveLength(0);
     const [caption] = layout.textRects('Either way');
     for (const [card, next, edgeCaption] of [
-        ['workflow-editor-step-gather-prompt', 'workflow-editor-step-write-label', caption],
-        ['workflow-editor-step-write-prompt', 'workflow-editor-if-gate-label', undefined],
+        ['workflow-editor-step-gather-card', 'workflow-editor-step-write-label', caption],
+        ['workflow-editor-step-write-card', 'workflow-editor-if-gate-label', undefined],
     ] as const) {
         const cardBottom = layout.rect(card).bottom;
         const mark = headingMark(layout, next);
@@ -156,7 +174,7 @@ function expectDocumentRhythm(layout: Awaited<ReturnType<typeof measureWebLayout
         // on the name column like every other line of the block.
         expect(edgeCaption.top).toBeGreaterThanOrEqual(cardBottom + 2);
         expect(edgeCaption.bottom).toBeLessThanOrEqual(mark.top);
-        expect(Math.abs(edgeCaption.left - layout.rect(card).left)).toBeLessThanOrEqual(1);
+        expect(Math.abs(edgeCaption.left - layout.rect(next).left)).toBeLessThanOrEqual(1);
     }
 }
 
@@ -171,21 +189,19 @@ function expectHeadingsLevel(layout: Awaited<ReturnType<typeof measureWebLayout>
 
 describe('the document rhythm, as a browser lays it out', () => {
     it('keeps a phone document at the lab rhythm, with each edge caption inside its gap (DESIGN-7 M2, N28)', async () => {
-        const layout = await measureRhythm(390);
+        const layout = await measureRhythm(390, 'compact');
         expectDocumentRhythm(layout, { min: 24, max: 48 });
         expectHeadingsLevel(layout);
     });
 
     it('keeps the desktop document at the same rhythm under a precise pointer', async () => {
         pointer.coarse = false;
-        vi.resetModules();
         try {
-            const layout = await measureRhythm(900);
+            const layout = await measureRhythm(900, 'wide');
             expectDocumentRhythm(layout, { min: 20, max: 40 });
             expectHeadingsLevel(layout);
         } finally {
             pointer.coarse = true;
-            vi.resetModules();
         }
     });
 });
@@ -193,7 +209,6 @@ describe('the document rhythm, as a browser lays it out', () => {
 describe('the document grid, as a browser lays it out', () => {
     it('hangs each ordinal in the gutter so name, card and its lines share one left edge (lab E1)', async () => {
         pointer.coarse = false;
-        vi.resetModules();
         try {
             const container = await renderDocument([
                 { ...step('gather', 'Gather changes', 'Gather the changes.'), result: { kind: 'json', schema: { type: 'object', properties: { issues: { type: 'array' } } } } },
@@ -203,7 +218,7 @@ describe('the document grid, as a browser lays it out', () => {
                     repetition: { kind: 'items', items: { kind: 'input', name: 'issues' }, execution: 'sequential', failurePolicy: 'fail_stop' } },
             ], 900);
             const layout = await measureWebLayout(container, { viewport: { width: 900, height: 1400 }, settle });
-            const nameEdge = layout.rect('workflow-editor-step-gather-prompt').left;
+            const nameEdge = layout.rect('workflow-editor-step-gather-card').left;
             for (const id of ['workflow-editor-step-gather-label',
                 'workflow-editor-action-notify-label', 'workflow-editor-action-notify-card', 'workflow-editor-action-notify-only-when',
                 'workflow-editor-loop-each-label']) {
@@ -216,7 +231,6 @@ describe('the document grid, as a browser lays it out', () => {
             expect(Math.abs(layout.rect('workflow-editor-step-fix-label-ordinal').left - nameEdge)).toBeLessThanOrEqual(1);
         } finally {
             pointer.coarse = true;
-            vi.resetModules();
         }
     });
 });
@@ -224,7 +238,6 @@ describe('the document grid, as a browser lays it out', () => {
 describe('the flow, as a browser lays it out', () => {
     it('joins every mark to the next with one spine, and forks a branch off it and back (lab round 1106 F1)', async () => {
         pointer.coarse = false;
-        vi.resetModules();
         try {
             const container = await renderDocument([
                 step('build', 'Check the build', 'Run the release checks.'),
@@ -262,7 +275,6 @@ describe('the flow, as a browser lays it out', () => {
             expect(layout.rects.get('workflow-editor-if-gate-sentence')).toHaveLength(1);
         } finally {
             pointer.coarse = true;
-            vi.resetModules();
         }
     });
 });
@@ -276,6 +288,7 @@ describe('a typed card, as a browser lays it out', () => {
             ], 900);
             const { t } = await import('@/text');
             const noteLabel = t('workflows.page.blocks.actionSub');
+            await vi.waitFor(() => expect(container.textContent).toContain(noteLabel));
             const layout = await measureWebLayout(container, { viewport: { width: 900, height: 900 }, texts: [noteLabel], settle });
             const card = layout.rect('workflow-editor-action-notify-card');
             const [note] = layout.textRects(noteLabel);
@@ -296,7 +309,7 @@ describe('a lane, as a browser lays it out', () => {
                 { id: 'one', name: 'Changelog', blocks: [step('a', 'A', 'Draft the changelog.')] },
                 { id: 'two', name: 'Issues, edge cases and regressions found while preparing the release notes', blocks: [step('b', 'B', 'Check the issues.')] },
             ] },
-        ], 390);
+        ], 390, null, 'compact');
         const layout = await measureWebLayout(container, { viewport: { width: 390, height: 900 }, settle });
         for (const lane of ['one', 'two']) {
             const name = layout.rect(`workflow-editor-parallel-panel-branch-${lane}-label`);
@@ -318,7 +331,7 @@ describe('a typed card on a phone, as a browser lays it out', () => {
         const container = await renderDocument([
             { kind: 'workflow', id: 'review', name: 'Review the release', workflowRef: 'builtin:review-and-converge', input: {
                 apply: { kind: 'literal', value: 'report' } } },
-        ], 360);
+        ], 360, null, 'compact');
         const layout = await measureWebLayout(container, { viewport: { width: 360, height: 1200 }, settle,
             texts: ['Rounds before stopping', '3', 'Apply', 'Report only'] });
         const [roundsLabel] = layout.textRects('Rounds before stopping');
@@ -340,7 +353,7 @@ describe('a container heading on a phone, as a browser lays it out', () => {
         const container = await renderDocument([
             { kind: 'loop', id: 'panel', name: 'Review with a panel', body: [step('lane', 'Lane', 'Review it.')],
                 repetition: { kind: 'items', items: { kind: 'input', name: 'reviewEngines' }, maxConcurrent: 2 } },
-        ], 390);
+        ], 390, null, 'compact');
         const layout = await measureWebLayout(container, { viewport: { width: 390, height: 900 }, settle });
         const name = layout.rect('workflow-editor-loop-panel-label');
         const meta = layout.rect('workflow-editor-loop-panel-label-meta');
@@ -355,7 +368,6 @@ describe('a container heading on a phone, as a browser lays it out', () => {
 describe('selecting a step, as a browser lays it out', () => {
     it('moves nothing: the step footer carries only facts, selected or at rest (DESIGN-7 N27)', async () => {
         pointer.coarse = false;
-        vi.resetModules();
         try {
             const blocks = [step('plain', 'Plain', 'Write the notes.'), step('next', 'Next', 'Publish them.')];
             const measureNext = async (selected: string | null) => {
@@ -373,7 +385,6 @@ describe('selecting a step, as a browser lays it out', () => {
             expect(selected).toBe(atRest);
         } finally {
             pointer.coarse = true;
-            vi.resetModules();
         }
     });
 });
@@ -381,7 +392,6 @@ describe('selecting a step, as a browser lays it out', () => {
 describe('a step with issue lines, as a browser lays it out', () => {
     it('keeps the next edge caption as clear of its issue lines as of a card edge (DESIGN-9 N48)', async () => {
         pointer.coarse = false;
-        vi.resetModules();
         try {
             const clearance = async (firstText: string, last: string) => {
                 const container = await renderDocument([step('gather', 'Gather changes', firstText),
@@ -395,7 +405,7 @@ describe('a step with issue lines, as a browser lays it out', () => {
                 host = null;
                 return caption.top - above.bottom;
             };
-            const fromCard = await clearance('Gather the changes since the last tag.', 'workflow-editor-step-gather-prompt');
+            const fromCard = await clearance('Gather the changes since the last tag.', 'workflow-editor-step-gather-card');
             // An unwritten prompt is an issue: its line is the last thing the step shows.
             const fromIssue = await clearance('', 'workflow-editor-step-gather-issue');
             // A text line has no edge: its group ends with the block's own room (margins.xs), so the
@@ -403,7 +413,6 @@ describe('a step with issue lines, as a browser lays it out', () => {
             expect(fromIssue).toBeGreaterThanOrEqual(fromCard + 4);
         } finally {
             pointer.coarse = true;
-            vi.resetModules();
         }
     });
 });
@@ -437,14 +446,14 @@ describe('setting a card value in a browser', () => {
         document.body.appendChild(host);
         root = createRoot(host);
         await act(async () => root!.render(React.createElement(Document)));
-        const set = host.querySelector<HTMLElement>('[data-testid="workflow-editor-action-notify-field-message-set"]');
-        expect(set).not.toBeNull();
-        await act(async () => { set!.focus(); set!.click(); });
+        await vi.waitFor(() => expect(host!.querySelector('[data-testid="workflow-editor-action-notify-field-message-set"]')).not.toBeNull());
+        const readySet = host.querySelector<HTMLElement>('[data-testid="workflow-editor-action-notify-field-message-set"]');
+        await act(async () => { readySet!.focus(); readySet!.click(); });
         await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
-        const well = host.querySelector<HTMLElement>('[data-testid="workflow-editor-action-notify-field-message-literal"]');
+        const well = host.querySelector<HTMLElement>('[data-testid="workflow-editor-action-notify-field-message-text"]');
         expect(well).not.toBeNull();
         // The pressed "+ Set" is gone; focus lands in the value, never on the page body.
         expect(document.activeElement).toBe(well);
-        expect(well!.getAttribute('placeholder')).toBeTruthy();
+        expect(well!.getAttribute('data-placeholder')).toBeTruthy();
     });
 });
