@@ -12,6 +12,7 @@ import { UsageCoachDismissInputSchema, UsageCoachPreferenceResultSchema } from '
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createDaemonControlApp } from '@/daemon/controlServer';
 import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { SignedRootActionExecuteRequestSchema } from '@/daemon/externalActions/signedRootActionControl';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
 import { configuration } from '@/configuration';
@@ -691,6 +692,49 @@ describe('standalone MCP client Action admission', () => {
     } finally {
       await client.close(); await mcp.close();
       daemon.closeAllConnections();
+      await new Promise<void>(resolve => daemon.close(() => resolve()));
+    }
+  });
+
+  it('delivers Project readiness to the same captured daemon as Machine setup', async () => {
+    const deliveries: ReturnType<typeof SignedRootActionExecuteRequestSchema.parse>[] = [];
+    // Only the remote daemon's HTTP boundary is replaced. MCP registration,
+    // placement, host construction and control transport remain real.
+    const daemon = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      deliveries.push(SignedRootActionExecuteRequestSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8'))));
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ ok: false, errorCode: 'source_unavailable', error: 'source_unavailable',
+        details: { phase: 'readiness.source' } }));
+    });
+    daemon.listen(0, '127.0.0.1'); await once(daemon, 'listening');
+    const address = daemon.address();
+    if (!address || typeof address === 'string') throw new Error('Missing daemon address');
+    vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', JSON.stringify(normalizeActionsSettingsV1({ v: 1 })));
+    const { mcp } = createExternalMcpServer({ credentials, machineId: 'controller',
+      daemonControlTarget: { pid: process.pid, httpPort: address.port, controlToken: 'readiness-control' } });
+    const client = new Client({ name: 'standalone-readiness', version: '1' });
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await mcp.connect(serverTransport); await client.connect(clientTransport);
+      for (const invocation of [
+        { actionId: 'machines.setup.plan', input: { homeId: 'home', machineId: 'controller' } },
+        { actionId: 'projects.readiness.read', input: { serverId: configuration.activeServerId, machineId: 'controller',
+          projectId: 'project', environments: [{ environmentId: 'production', expectedRevision: 2 }] } },
+      ] as const) {
+        const input = getActionSpec(invocation.actionId).inputSchema.parse(invocation.input);
+        const response = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute',
+          arguments: { actionId: invocation.actionId, input } }));
+        const content = response.content.find(entry => entry.type === 'text');
+        if (!content || content.type !== 'text') throw new Error('Missing MCP text result');
+        expect(JSON.parse(content.text), invocation.actionId).toMatchObject({ errorCode: 'source_unavailable',
+          details: { phase: 'readiness.source' } });
+        expect(deliveries.at(-1)).toMatchObject({ actionId: invocation.actionId, input, surface: 'mcp',
+          target: { kind: 'machine', machineId: 'controller' } });
+      }
+    } finally {
+      await client.close(); await mcp.close(); daemon.closeAllConnections();
       await new Promise<void>(resolve => daemon.close(() => resolve()));
     }
   });
