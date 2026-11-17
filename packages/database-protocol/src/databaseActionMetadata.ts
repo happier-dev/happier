@@ -8,7 +8,7 @@ type Metadata = Pick<PluginActionContributionV2,
         agentDefault: 'allow' | 'ask' | 'authority' | Readonly<{ read: 'allow'; write: 'ask' }>;
     }>;
 
-const read = { dangerLevel: 'safe', readOnly: true, placementBindings: [], agentDefault: 'allow' } as const;
+const read = { dangerLevel: 'safe', readOnly: true, placementBindings: [], agentDefault: 'allow' } satisfies Omit<Metadata, 'title'>;
 const write = { dangerLevel: 'writesRemote', readOnly: false, agentDefault: 'ask' } as const;
 
 /** C6's one presentation/classification owner. Missing producers contribute no callable Action. */

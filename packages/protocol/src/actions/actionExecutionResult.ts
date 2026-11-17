@@ -301,7 +301,7 @@ export function projectActionFailureCauseV1(
 export type ActionExecuteResult = Readonly<{
   /** Host-only settlement annotation; public failure envelopes remain unchanged. Never Action input. */
   operationCredentialUses?: readonly ActionOperationCredentialUseV1[];
-  automationNotices?: readonly ActionAutomationNoticeV1[];
+  automationNotices?: readonly ActionAutomationNoticeV1[] | undefined;
 }> & (
   | Readonly<{ ok: true; result: unknown }>
   | ActionExecuteFailure);
