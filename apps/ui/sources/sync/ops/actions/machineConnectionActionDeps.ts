@@ -5,8 +5,9 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { startPairingForHome, type StartPairingForHomeResult } from '@/auth/pairing/startPairingForHome';
 import { buildMachineAddCommand, resolveWebDesktopSetupHandoffTarget } from '@/components/machines/add/machineAddCommand';
+import { readMachineAddHomeTargetForServerId } from '@/components/machines/add/machineAddHomeTarget';
 import { createDefaultSshCredentialsDraft } from '@/components/ssh/sshCredentialsDraft';
-import { areServerProfileIdentifiersEquivalent, buildHomeConnectionDescriptorForProfile, getServerProfileById, getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, getServerProfileById, getActiveServerSnapshot } from '@/sync/domains/server/serverProfiles';
 import { retryActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
 import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { connectHomeAtAddress } from '@/sync/ops/home/connectHomeAtAddress';
@@ -158,16 +159,18 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
             if (outcome.kind === 'unreachable') return { kind: 'unreachable' };
             return outcome;
         },
-        machineAddCommand: async (input) => {
-            const profile = getServerProfileById(input.serverId);
-            if (!profile) return { ok: false, errorCode: 'target_unavailable', error: 'Home not found' };
+        machineAddCommand: async (input, context) => {
             const policy = resolveSetupSurfacePolicy().machine;
             if (input.method === 'ssh' ? !policy.allowRemoteSshMachineSetup : !policy.allowLocalMachineSetup) {
                 return { ok: false, errorCode: 'machine_enroll_unavailable', error: 'Machine enrollment is unavailable' };
             }
-            const target = { descriptor: buildHomeConnectionDescriptorForProfile(profile), profileSource: profile.source ?? null, fallbackHomeUrl: profile.serverUrl, remote: true };
+            const homeTarget = await readMachineAddHomeTargetForServerId(input.serverId, context.signal);
+            if (!homeTarget) return { ok: false, errorCode: 'target_unavailable', error: 'Home not found' };
+            const target = { ...homeTarget, remote: true };
             const handoff = resolveWebDesktopSetupHandoffTarget(target);
-            if (handoff.kind === 'unavailable') return { ok: false, errorCode: handoff.code, error: 'message' in handoff ? handoff.message : 'This Home is not reachable from other machines. Add a public HTTPS, tailnet, or Iroh endpoint.' };
+            if (handoff.kind === 'unavailable') return { ok: false, errorCode: handoff.code, error: 'message' in handoff ? handoff.message
+                : handoff.code === 'guest_cli_identity_unavailable' ? 'This Home does not advertise its guest CLI identity.'
+                    : 'This Home is not reachable from other machines. Add a public HTTPS, tailnet, or Iroh endpoint.' };
             const command = buildMachineAddCommand({ ...target, os: input.os, ...(input.method === 'ssh' ? {
                 kind: 'sshMachine', enrollmentIdentity: input.enrollmentIdentity, sshDraft: { ...createDefaultSshCredentialsDraft(input.authMode), host: input.host,
                     username: input.username ?? '', port: input.port === undefined ? '' : String(input.port), identityFilePath: input.identityFilePath ?? '' },

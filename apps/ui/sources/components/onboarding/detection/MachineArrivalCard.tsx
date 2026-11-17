@@ -9,6 +9,7 @@ import { Typography } from '@/constants/Typography';
 import { t, tLoose } from '@/text';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { buildMachineAddCommand } from '@/components/machines/add/machineAddCommand';
+import { useMachineAddHomeTargetAtUrl } from '@/components/machines/add/machineAddHomeTarget';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
 import { useAwaitedMachineArrival, type AwaitedMachineArrivalBaseline } from './useAwaitedMachineArrival';
@@ -82,17 +83,20 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-function useSetupCommands(serverUrl: string | null | undefined): Readonly<{ posix: string; windows: string }> {
-    return React.useMemo(() => ({
-        posix: buildMachineAddCommand({ kind: 'joinHome', os: 'linux', descriptor: null, profileSource: null, fallbackHomeUrl: serverUrl ?? null }),
-        windows: buildMachineAddCommand({ kind: 'joinHome', os: 'windows', descriptor: null, profileSource: null, fallbackHomeUrl: serverUrl ?? null }),
-    }), [serverUrl]);
+function useSetupCommands(serverUrl: string | null | undefined): Readonly<{ posix: string; windows: string }> | null {
+    const target = useMachineAddHomeTargetAtUrl(serverUrl);
+    return React.useMemo(() => {
+        const posix = buildMachineAddCommand({ ...target, kind: 'joinHome', os: 'linux', remote: true });
+        const windows = buildMachineAddCommand({ ...target, kind: 'joinHome', os: 'windows', remote: true });
+        return posix && windows ? { posix, windows } : null;
+    }, [target]);
 }
 
 function CommandBlock(props: Readonly<{
     serverUrl?: string | null;
 }>): React.ReactElement {
     const commands = useSetupCommands(props.serverUrl);
+    if (!commands) return <Text>{t('common.unavailable')}</Text>;
     return (
         <OsCommandBlock
             testID="machine-arrival-card-command-setup"

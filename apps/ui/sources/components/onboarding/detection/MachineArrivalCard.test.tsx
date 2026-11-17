@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -15,8 +15,19 @@ import { Text } from '@/components/ui/text/Text';
 import { storage } from '@/sync/domains/state/storageStore';
 import { removeServerProfile, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { buildMachineAddCommand } from '@/components/machines/add/machineAddCommand';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
 import { MachineArrivalCard } from './MachineArrivalCard';
+
+const publicGuestCli = { source: 'public-release', line: '0.3', channel: 'stable' } as const;
+let commandHomeId: string;
+beforeEach(async () => {
+    const home = await upsertServerProfile({ serverUrl: 'https://relay.example.test', name: 'Command Home' });
+    commandHomeId = home.id;
+    primeServerFeaturesSnapshot({ serverId: home.id, snapshot: { status: 'ready',
+        features: createRootLayoutFeaturesResponse({ capabilities: { guestCli: publicGuestCli } }) } });
+});
 
 afterEach(() => {
     standardCleanup();
@@ -36,9 +47,19 @@ describe('MachineArrivalCard', () => {
         expect(screen.findByTestId('machine-arrival-card-status')).toBeNull();
         expect(screen.findAllByType(StatusPill as never)).toHaveLength(0);
         expect(normalizeRenderedCodeText(screen.getTextContent())).toContain(buildMachineAddCommand({
-            kind: 'joinHome', os: 'macos', descriptor: null, profileSource: null,
+            kind: 'joinHome', os: 'macos', descriptor: null, guestCli: publicGuestCli,
             fallbackHomeUrl: 'https://relay.example.test',
         }));
+    });
+
+    it('withdraws copied setup commands when the Home advertises its own payload', async () => {
+        const screen = await renderScreen(<MachineArrivalCard mode="instructional" serverUrl="https://relay.example.test" />);
+        expect(screen.findByTestId('machine-arrival-card-command-setup')).toBeTruthy();
+        await act(async () => primeServerFeaturesSnapshot({ serverId: commandHomeId, snapshot: { status: 'ready',
+            features: createRootLayoutFeaturesResponse({ capabilities: {
+                guestCli: { source: 'home-payload', line: '0.3', channel: 'publicdev' },
+            } }) } }));
+        expect(screen.findByTestId('machine-arrival-card-command-setup')).toBeNull();
     });
 
     it('renders live mode as watching, then flips to connected and calls onArrived once', async () => {
@@ -120,7 +141,7 @@ describe('MachineArrivalCard', () => {
 
         await screen.pressByTestIdAsync('machine-arrival-card-command-setup.os:windows');
         expect(normalizeRenderedCodeText(screen.getTextContent())).toContain(buildMachineAddCommand({
-            kind: 'joinHome', os: 'windows', descriptor: null, profileSource: null,
+            kind: 'joinHome', os: 'windows', descriptor: null, guestCli: publicGuestCli,
             fallbackHomeUrl: 'https://relay.example.test',
         }));
         expect(screen.findByTestId('machine-arrival-card-command-setup.os:windows')?.props.accessibilityState.checked).toBe(true);

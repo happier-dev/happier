@@ -1,7 +1,8 @@
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveRemoteHomeApplicationCarrier } from '@happier-dev/cli-common/homeEnrollment';
-import type { ServerProfileSource } from '@/sync/domains/server/serverProfiles';
+import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
+import type { GuestCliIdentityV1 } from '@happier-dev/protocol/features';
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { config } from '@/config';
 import { resolveAppVariant } from '@/sync/runtime/appVariant';
@@ -18,10 +19,11 @@ export type WebDesktopSetupHandoffTarget =
     | Readonly<{ kind: 'account_service' }>
     | Readonly<{ kind: 'descriptor_file_required' }>
     | Readonly<{ kind: 'unavailable'; code: 'guest_payload_missing'; message: string }>
+    | Readonly<{ kind: 'unavailable'; code: 'guest_cli_identity_unavailable' }>
     | Readonly<{ kind: 'unavailable'; code: 'home_not_guest_reachable' }>;
 export type MachineAddHomeTarget = Readonly<{
     descriptor: HomeConnectionDescriptorV1 | null;
-    profileSource: ServerProfileSource | null;
+    guestCli?: GuestCliIdentityV1;
     fallbackHomeUrl: string | null;
     /** Another computer and SSH targets cannot use this computer's loopback route. */
     remote?: boolean;
@@ -29,9 +31,13 @@ export type MachineAddHomeTarget = Readonly<{
 
 /** A descriptor without HTTPS needs a file; the installer's stdin cannot carry it. */
 export function resolveWebDesktopSetupHandoffTarget(params: MachineAddHomeTarget): WebDesktopSetupHandoffTarget {
-    // A Stack Home runs its own source payload. There is no browser export of
-    // that controller-local artifact, so a public installer is not its supplier.
-    if (params.profileSource === 'stack-env') return {
+    // A copied command has no controller-local payload installer. The Home's
+    // advertised artifact identity owns this decision regardless of profile provenance.
+    const delivery = readMachineProvisionerHostAvailability({ host: 'browser', guestCli: params.guestCli });
+    if (!delivery.available && delivery.code === 'guest_cli_identity_unavailable') return {
+        kind: 'unavailable', code: delivery.code,
+    };
+    if (!delivery.available) return {
         kind: 'unavailable', code: 'guest_payload_missing',
         message: 'This Home does not export its CLI payload to this app. Choose a connected controller to install this machine, then retry.',
     };

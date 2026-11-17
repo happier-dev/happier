@@ -59,6 +59,34 @@ beforeEach(async () => { await harness.reset(); await selectActiveTestHomeForTes
 afterEach(async () => { await act(async () => discardMachineAdd()); publishAppliedActiveServerRuntimeAvailability(false); vi.useRealTimers(); standardCleanup(); });
 describe('machine add flow lifetime', () => {
 
+    it('uses the URL Home guest CLI identity for copied commands and follows its pushed changes', async () => {
+        const serverId = await harness.addHome({ serverUrl: 'https://source-home.example.test', name: 'Source Home',
+            accountId: 'alice', currentAccount: true });
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        const features = createRootLayoutFeaturesResponse({ capabilities: {
+            guestCli: { source: 'home-payload', line: '0.3', channel: 'publicdev' },
+        } });
+        harness.answer(serverId, '/v1/features', { body: features });
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        const manual = createManualSystemTaskRunner();
+        const hook = await renderHook(() => useMachineAddFlow({ serverId, runner: manual.runner,
+            initialPath: 'anotherComputer', initialCreating: false }));
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().path).toBe('anotherComputer'));
+            expect(hook.getCurrent().commands).toBeNull();
+            const publicFeatures = { ...features, capabilities: { ...features.capabilities,
+                guestCli: { source: 'public-release' as const, line: '0.3', channel: 'stable' as const } } };
+            await act(async () => primeServerFeaturesSnapshot({ serverId,
+                snapshot: { status: 'ready', features: publicFeatures } }));
+            await vi.waitFor(() => expect(hook.getCurrent().commands?.linux).toContain('--home-url https://source-home.example.test'));
+            await act(async () => primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready',
+                features: { ...publicFeatures, capabilities: { ...publicFeatures.capabilities, guestCli: undefined } } } }));
+            expect(hook.getCurrent().commands).toBeNull();
+            expect(manual.bridge.start).not.toHaveBeenCalled();
+        } finally { await hook.unmount(); }
+    });
+
     it.each([
         { name: 'Create', initialPath: 'ssh', initialCreating: true, connectionPathVisible: true },
         { name: 'Another computer', initialPath: 'anotherComputer', initialCreating: false, connectionPathVisible: true },

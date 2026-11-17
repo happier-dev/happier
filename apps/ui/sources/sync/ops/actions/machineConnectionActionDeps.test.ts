@@ -671,7 +671,7 @@ describe('UI machine connection Actions', () => {
         }, { surface: 'ui', authority: 'present_user', serverId });
         expect(result).toMatchObject({ ok: true, result: { descriptorFileRequired: false } });
         if (!result.ok || typeof result.result !== 'object' || result.result === null || !('command' in result.result)) throw new Error('No setup command');
-        expect(result.result.command).toContain('happier machine enroll');
+        expect(result.result.command).toContain('-Run machine-enroll');
         expect(result.result.command).toContain('--ssh-port 2222');
         expect(result.result.command).toContain('--home-url https://setup.example');
         expect(boundary.rpc).not.toHaveBeenCalled();

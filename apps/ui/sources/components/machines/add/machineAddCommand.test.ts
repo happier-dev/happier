@@ -12,13 +12,32 @@ import { MachineAddCommandInputSchema } from '@happier-dev/protocol/actions/spec
 import { ManagedMachineEnrollmentIdentityV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 
-const home = { descriptor: null, profileSource: null, fallbackHomeUrl: 'https://home.example.test' };
+const home = { descriptor: null, fallbackHomeUrl: 'https://home.example.test',
+    guestCli: { source: 'public-release' as const, line: '0.3', channel: 'stable' as const } };
 describe('machine add commands', () => {
-    it.each(MACHINE_ADD_COMMAND_OS)('refuses public installation for a source Home (%s)', os => {
-        const target = { ...home, profileSource: 'stack-env' as const };
+    it.each(MACHINE_ADD_COMMAND_OS)('honors a source Home artifact identity even for a user-added address (%s)', os => {
+        const target = { ...home, fallbackHomeUrl: 'http://happier-agent-qa-l12-c.localhost:3039',
+            guestCli: { source: 'home-payload' as const, line: '0.3', channel: 'publicdev' as const } };
         expect(resolveWebDesktopSetupHandoffTarget(target)).toMatchObject({ kind: 'unavailable', code: 'guest_payload_missing' });
         expect(buildMachineAddCommand({ ...target, os, kind: 'joinHome' })).toBeNull();
-        expect(buildMachineAddCommand({ ...target, os, kind: 'sshMachine', sshDraft: createDefaultSshCredentialsDraft() })).toBeNull();
+        expect(buildMachineAddCommand({ ...target, os, remote: true, kind: 'sshMachine', sshDraft: createDefaultSshCredentialsDraft() })).toBeNull();
+        // Copied commands do not carry the managed enrollment's admitted pin.
+        const exported = { ...target, guestCli: { ...target.guestCli, payloads: [
+            { target: { os: 'linux' as const, arch: 'x64' as const }, sha256: '4b'.repeat(32),
+                url: '/v1/runtime/guest-cli/payloads/linux/x64' },
+        ] } };
+        expect(resolveWebDesktopSetupHandoffTarget(exported)).toMatchObject({ kind: 'unavailable', code: 'guest_payload_missing' });
+        expect(buildMachineAddCommand({ ...exported, os, kind: 'joinHome' })).toBeNull();
+    });
+    it.each(MACHINE_ADD_COMMAND_OS)('uses a declared public release regardless of profile provenance (%s)', os => {
+        const target = { ...home, profileSource: 'stack-env' as const };
+        expect(resolveWebDesktopSetupHandoffTarget(target)).toMatchObject({ kind: 'https' });
+        expect(buildMachineAddCommand({ ...target, os, kind: 'joinHome' })).toContain('--home-url https://home.example.test');
+    });
+    it('does not offer a public installer while the Home artifact identity is unknown', () => {
+        const target = { ...home, guestCli: undefined };
+        expect(resolveWebDesktopSetupHandoffTarget(target)).toMatchObject({ kind: 'unavailable', code: 'guest_cli_identity_unavailable' });
+        expect(buildMachineAddCommand({ ...target, os: 'linux', kind: 'joinHome' })).toBeNull();
     });
     it.each(['http://happier-agent-qa-unified-work-dev.localhost:3009', 'http://127.0.0.1:3009', 'https://[::1]:3009'])(
         'refuses controller-only setup on another computer while preserving same-computer setup (%s)', url => {

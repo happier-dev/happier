@@ -6,6 +6,8 @@ import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUse
 import { getActiveServerAccountScope, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { buildHomeConnectionDescriptorForProfile, getServerProfileById, reconcileServerProfileHomeConnectionDescriptor } from '@/sync/domains/server/serverProfiles';
 import { resolveWebDesktopSetupHandoffTarget } from '@/components/machines/add/machineAddCommand';
+import { readMachineAddHomeTargetForServerId } from '@/components/machines/add/machineAddHomeTarget';
+import { resolveRemoteHomeApplicationCarrier } from '@happier-dev/cli-common/homeEnrollment';
 import { buildLocalDaemonServiceSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec';
 import { waitForSystemTaskResult } from '@/components/systemTasks/createSystemTaskRunner';
 import { publishLocalDaemonStatus, startLocalCliUpdate } from '@/components/settings/machines/localControl/localDaemonSharedState';
@@ -166,15 +168,19 @@ export async function createMachineClientEnrollmentOutputFixture(options: Machin
         const profile = getServerProfileById(options.serverId);
         if (!profile) throw new Error('Enrollment outputs require the retained Home profile');
         const descriptor = buildHomeConnectionDescriptorForProfile(profile);
-        const target = resolveWebDesktopSetupHandoffTarget({ descriptor,
-            profileSource: profile.source ?? null, fallbackHomeUrl: profile.serverUrl, remote: true });
+        const target = resolveRemoteHomeApplicationCarrier(descriptor ?? {
+            endpoints: [{ kind: 'https', url: profile.serverUrl }],
+        });
         if (target.kind === 'unavailable') throw new Error('Enrollment output requires a Home-published public HTTPS, tailnet or Iroh endpoint');
         return descriptor;
     };
     const cases = new Map<ActionId, () => unknown | Promise<unknown>>([
         ['machines.cli.update', () => ({ target: { kind: 'local' } })],
-        ['machines.add.command', () => {
-            requirePublicHome();
+        ['machines.add.command', async () => {
+            const homeTarget = await readMachineAddHomeTargetForServerId(options.serverId, lifetime.signal);
+            if (!homeTarget || resolveWebDesktopSetupHandoffTarget({ ...homeTarget, remote: true }).kind === 'unavailable') {
+                throw new Error('Command output requires its Home-advertised guest CLI and reachable route');
+            }
             return { serverId: options.serverId, os: 'linux', method: 'another_computer' };
         }],
         ['machines.pairing.create', () => {
