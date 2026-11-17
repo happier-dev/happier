@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as changeOwner from './projectSetupChangeV1.js';
-import { projectSharedSetupDigestV1 } from './projectSetupV1.js';
+import { ProjectSetupSelectionV1Schema, ProjectSetupContentV1Schema, readAcceptedProjectSetupV1, projectSharedSetupDigestV1 } from './projectSetupV1.js';
 import { resolveProjectDefinitionV1 } from '../workspaces/projectSetup/projectDefinitionCompositionV1.js';
 import { ProjectManifestV1Schema, type ProjectManifestV1 } from '../workspaces/projectSetup/projectManifestV1.js';
 
@@ -23,6 +23,40 @@ describe('shared setup change presentation', () => {
     expect(result).toMatchObject({ kind: 'changed',
       before: { effectiveManifest: { workspace: { setup: [command('old setup')], teardown: [command('repo cleanup')] } } },
       after: { effectiveManifest: { workspace: { setup: [command('new setup')], teardown: [command('repo cleanup')] } } } });
+  });
+
+  it('retains Source audience labels through publication, accepted detail and update review without changing the effect selection', async () => {
+    const manifest: ProjectManifestV1 = { version: 1, workspace: { setup: [command('new shared setup')] } };
+    const artifact = { artifactId: 'setup', header: { kind: 'project_setup.v1' },
+      body: JSON.stringify({ kind: 'project_setup.v1', manifest }), revision: { headerVersion: 1, bodyVersion: 2 } };
+    const source = { id: 'source', revision: 3, name: 'Source', createdByAccountId: 'creator', audience: [],
+      attachments: [{ purpose: 'setup' as const, ref: { kind: 'doc' as const, artifactId: artifact.artifactId }, contentRevision: artifact.revision }] };
+    // A publication with no display metadata remains a valid admitted control.
+    const control = await changeOwner.readPublishedProjectSetupV1({ source, readArtifact: async () => artifact });
+    expect(control.digest).toBe(projectSharedSetupDigestV1(manifest));
+    const audienceTeams = [{ teamId: 'shared-team', name: 'Design Team' }];
+    const published = await changeOwner.readPublishedProjectSetupV1({ source: { ...source, audienceTeams }, readArtifact: async () => artifact });
+    expect(published).toMatchObject({ sourceAudienceTeams: audienceTeams });
+    const reviewed = changeOwner.reviewProjectSharedSetupChangeV1({ repositoryManifest: null,
+      acceptedSetup: { kind: 'ready', acceptedSharedSetup: publication({ version: 1 }) }, publication: published });
+    expect(reviewed).toMatchObject({ kind: 'changed', sourceAudienceTeams: audienceTeams });
+    const selection = ProjectSetupSelectionV1Schema.parse(reviewed.selection);
+    expect(selection).toEqual({ sourceId: 'source', digest: control.digest, contentRevision: artifact.revision });
+    const body = ProjectSetupContentV1Schema.parse({ kind: 'project_setup.v1', acceptedSharedSetup: published });
+    const local = { ...artifact, artifactId: 'accepted', body: JSON.stringify(body) };
+    const accepted = await readAcceptedProjectSetupV1({ setupContent: { artifactId: local.artifactId, ...local.revision },
+      setupSelection: selection, readArtifact: async () => local });
+    expect(accepted).toMatchObject({ kind: 'ready', acceptedSharedSetup: { sourceAudienceTeams: audienceTeams } });
+    if (accepted.kind !== 'ready') throw new Error('Expected accepted local setup');
+    const current = changeOwner.reviewProjectSharedSetupChangeV1({ repositoryManifest: null, acceptedSetup: accepted,
+      publication: published });
+    expect(changeOwner.ProjectSharedSetupChangeV1Schema.parse(current)).toMatchObject({ kind: 'current', sourceAudienceTeams: audienceTeams });
+    // A Team rename changes presentation only; declarations and the consent digest stay identical.
+    const renamedSource = { ...source, audienceTeams: [{ teamId: 'shared-team', name: 'Renamed Team' }] };
+    const renamed = await changeOwner.readPublishedProjectSetupV1({ source: renamedSource, readArtifact: async () => artifact });
+    expect(renamed.digest).toBe(control.digest);
+    expect(changeOwner.reviewProjectSharedSetupChangeV1({ repositoryManifest: null, acceptedSetup: accepted,
+      publication: renamed })).toMatchObject({ kind: 'current', sourceAudienceTeams: renamedSource.audienceTeams });
   });
 
   it('projects ordered lifecycle edits and typed login, source, requirement and port declarations', () => {

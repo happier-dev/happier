@@ -1,6 +1,6 @@
 import * as z from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { ProjectSetupSelectionV1Schema, type ProjectAcceptedSharedSetupV1 } from '../../projects/projectSetupV1.js';
+import { ProjectSetupSelectionV1Schema, projectSetupSelectionV1, type ProjectAcceptedSharedSetupV1 } from '../../projects/projectSetupV1.js';
 import { ProjectManifestV1Schema, type ProjectManifestV1 } from './projectManifestV1.js';
 
 export const ProjectDefinitionOriginV1Schema = z.strictObject({
@@ -87,6 +87,6 @@ export function resolveProjectDefinitionV1(input: Readonly<{
     throw Object.assign(new Error('invalid_manifest'), { code: 'invalid_manifest' });
   }
   if (!input.acceptedSharedSetup) return { effectiveManifest, origins };
-  const { manifest: _sharedManifest, ...sharedBasis } = input.acceptedSharedSetup;
+  const sharedBasis = projectSetupSelectionV1(input.acceptedSharedSetup);
   return { effectiveManifest, origins, sharedBasis };
 }

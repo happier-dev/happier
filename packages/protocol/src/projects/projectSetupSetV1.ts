@@ -4,7 +4,7 @@ import { QualifiedProjectKeyV1Schema, WorkspaceAddressV1Schema } from '../worksp
 import { ProjectManifestV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
 import { ProjectEffectiveDefinitionV1Schema, resolveProjectDefinitionV1 } from '../workspaces/projectSetup/projectDefinitionCompositionV1.js';
 import { ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema } from './projectAccountRowsV1.js';
-import { ProjectSetupContentV1Schema, ProjectSetupSelectionV1Schema,
+import { ProjectSetupContentV1Schema, ProjectSetupSelectionV1Schema, projectSetupSelectionV1,
   PROJECT_SETUP_ARTIFACT_KIND_V1, readAcceptedProjectSetupV1 } from './projectSetupV1.js';
 import { readPublishedProjectSetupV1 } from './projectSetupChangeV1.js';
 import { ProjectSourcesReadInputV1Schema, ProjectSourcesReadOutputV1Schema } from './sources/projectSourceV1.js';
@@ -105,7 +105,7 @@ export async function setProjectSetupV1(deps: ProjectSetupSetOwnerDepsV1, input:
           const publication = await readPublishedProjectSetupV1({ source: source.source,
             readArtifact: async (artifactId, projectSourceId) => ArtifactActionOutputSchemasV1['artifact.get'].parse(
               await execute('artifact.get', { artifactId, projectSourceId })).artifact });
-          const { manifest: _manifest, ...selection } = publication;
+          const selection = projectSetupSelectionV1(publication);
           const expected = input.intent.expectedSelection;
           if (expected && (expected.sourceId !== selection.sourceId || expected.digest !== selection.digest
             || expected.contentRevision.headerVersion !== selection.contentRevision.headerVersion
@@ -123,7 +123,7 @@ export async function setProjectSetupV1(deps: ProjectSetupSetOwnerDepsV1, input:
         if (JSON.stringify(content) === JSON.stringify(before)) return organization;
         const next = { ...organization };
         if (content.acceptedSharedSetup) {
-          const { manifest: _manifest, ...selection } = content.acceptedSharedSetup;
+          const selection = projectSetupSelectionV1(content.acceptedSharedSetup);
           next.setupSelection = selection;
         } else delete next.setupSelection;
         if (!content.acceptedSharedSetup && !content.setupOverrides) delete next.setupContent;

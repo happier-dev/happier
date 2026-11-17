@@ -43,6 +43,9 @@ describe('Source page capture cost', () => {
             const admitted = await resolveProjectSourcesAccessInTx(captured as unknown as Tx, 'actor', ['source']);
             expect(admitted.get('source')).toMatchObject({ ok: true, source: { id: 'source' } });
             expect(reads).toBe(1);
+            expect(admitted.get('source')).toMatchObject({ ok: true, source: {
+                audienceTeams: [{ teamId: 'team', name: 'Team' }],
+            } });
         } finally { await boundary.$disconnect(); vi.unstubAllEnvs(); }
     });
 });

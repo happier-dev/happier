@@ -13024,6 +13024,14 @@ selection and personal overrides. Source-selected `artifact.get` adds the exact
 requiring matching development components; no released skew fallback, alternate
 trust store or migration is introduced.
 
+Source demand reads expose optional `audienceTeams: [{ teamId, name }]` from
+Team facts already captured by Source admission. Accepted setup content retains
+that display snapshot as `acceptedSharedSetup.sourceAudienceTeams`; update
+inspection exposes the current labels as `sharedSetupChange.sourceAudienceTeams`.
+These labels are outside the setup selection, effective declarations and consent
+digest. Older accepted details without labels remain readable. No additional
+Team fetch or reconstructed publisher/time history is implied by these fields.
+
 ## Migration history
 
 Migration source has a stricter authoring boundary than ordinary internal code:

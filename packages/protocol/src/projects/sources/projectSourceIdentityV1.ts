@@ -18,3 +18,9 @@ export const ProjectSourceIdentityV1Schema = lazyZodSchema(() => z.strictObject(
   owner: z.optional(ProjectSourceOwnerV1Schema),
 }));
 export type ProjectSourceIdentityV1 = z.infer<typeof ProjectSourceIdentityV1Schema>;
+
+/** Display labels from the Source read's existing admitted Team snapshot; never grants. */
+export const ProjectSourceAudienceTeamV1Schema = lazyZodSchema(() => z.strictObject({
+  teamId: TeamPrincipalRefV1Schema.shape.teamId, name: z.string(),
+}));
+export type ProjectSourceAudienceTeamV1 = z.infer<typeof ProjectSourceAudienceTeamV1Schema>;

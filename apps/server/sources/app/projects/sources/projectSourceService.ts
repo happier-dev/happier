@@ -276,7 +276,13 @@ function admitProjectSourceEntries(entries: readonly Readonly<{ row: ProjectSour
         const parsed = sourceFromRow(row);
         if (!parsed.success) { result.set(row.id, { ok: false, failure: invalid() }); continue; }
         const currentOwner = sourceOwner(parsed.data);
-        result.set(row.id, { ok: true, source: parsed.data, owner: currentOwner, canManage: admission.canManage(currentOwner, grants),
+        const teamIds = new Set([currentOwner, ...grants.map(grant => grant.principal)]
+            .flatMap(principal => principal.kind === 'account' ? [] : [principal.teamId]));
+        const audienceTeams = [...teamIds].flatMap(teamId => {
+            const team = admission.admittedTeam(teamId)?.team;
+            return team ? [{ teamId: team.id, name: team.name }] : [];
+        });
+        result.set(row.id, { ok: true, source: { ...parsed.data, audienceTeams }, owner: currentOwner, canManage: admission.canManage(currentOwner, grants),
             canManageOwner: admission.canManageOwner(currentOwner), canDeployMember: admission.canDeployMember(currentOwner, grants),
             effectivePrincipals: admission.effectivePrincipals(currentOwner, grants) });
     }

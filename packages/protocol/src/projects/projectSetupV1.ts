@@ -1,5 +1,6 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { ProjectSourceAudienceTeamV1Schema } from './sources/projectSourceIdentityV1.js';
 import { ProjectManifestV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
 import { encodeArtifactKindV1 } from '../artifacts/artifactKindV1.js';
 import { computeSha256HexDigest } from '../crypto/canonicalDigest.js';
@@ -16,7 +17,15 @@ export const ProjectSetupSelectionV1Schema = lazyZodSchema(() => z.strictObject(
   sourceId: id, contentRevision: ProjectSetupContentRevisionV1Schema, digest: z.string().check(z.regex(/^[a-f0-9]{64}$/u)),
 }));
 export type ProjectSetupSelectionV1 = z.infer<typeof ProjectSetupSelectionV1Schema>;
-export const ProjectAcceptedSharedSetupV1Schema = lazyZodSchema(() => z.extend(ProjectSetupSelectionV1Schema, { manifest: ProjectManifestV1Schema }));
+/** Keep presentation and manifest fields outside the admitted effect identity. */
+export function projectSetupSelectionV1(value: ProjectSetupSelectionV1): ProjectSetupSelectionV1 {
+  return { sourceId: value.sourceId, contentRevision: value.contentRevision, digest: value.digest };
+}
+export const ProjectAcceptedSharedSetupV1Schema = lazyZodSchema(() => z.extend(ProjectSetupSelectionV1Schema, {
+  manifest: ProjectManifestV1Schema,
+  /** Snapshot retained with accepted content; never part of the effect selection or digest. */
+  sourceAudienceTeams: z.optional(z.array(ProjectSourceAudienceTeamV1Schema)),
+}));
 export type ProjectAcceptedSharedSetupV1 = z.infer<typeof ProjectAcceptedSharedSetupV1Schema>;
 /** One protected detail address; census never embeds executable declarations. */
 export const ProjectSetupContentRefV1Schema = lazyZodSchema(() => z.strictObject({ artifactId: id, ...ProjectSetupContentRevisionV1Schema.shape }));

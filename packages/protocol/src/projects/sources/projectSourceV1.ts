@@ -6,7 +6,7 @@ import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { ScmCredentialFreeRepositorySelectorV1Schema, ScmRepositoryContainedSubdirV1Schema } from '../../scm/repositoryClone.js';
 import { PrincipalRefV1Schema, TeamPrincipalRefV1Schema } from '../../teams/principal.js';
 import { ResourceTeamShareScopeV1Schema } from '../../teams/resourceGrantAccessV1.js';
-import { ProjectSourceIdentityV1Schema, ProjectSourceOwnerV1Schema } from './projectSourceIdentityV1.js';
+import { ProjectSourceIdentityV1Schema, ProjectSourceOwnerV1Schema, ProjectSourceAudienceTeamV1Schema } from './projectSourceIdentityV1.js';
 export { ProjectSourceOwnerV1Schema, type ProjectSourceOwnerV1 } from './projectSourceIdentityV1.js';
 import { PromptArtifactRefV1Schema, PromptDocArtifactRefV1Schema } from '../../prompts/library/promptArtifactRefsV1.js';
 import { PromptStackEntryV1Schema, PromptStackEntryAuthoringV1Schema, PromptStackSetEnabledIntentV1Schema } from '../../prompts/library/promptStacksV1.js';
@@ -62,6 +62,8 @@ export const ProjectSourceV1Schema = lazyZodSchema(() => z.strictObject({
   defaultRef: z.optional(z.string().check(z.trim(), z.minLength(1))), subdir: z.optional(ProjectSourceSubdirV1Schema),
   audience: z.array(ProjectSourceGrantV1Schema), createdByAccountId: z.string().check(z.minLength(1)),
   attachments: z.optional(z.array(SourceAttachmentV1Schema)),
+  /** Demand-read labels; not authorable or persisted on the Source. */
+  audienceTeams: z.optional(z.array(ProjectSourceAudienceTeamV1Schema)),
 }));
 export type ProjectSourceV1 = z.infer<typeof ProjectSourceV1Schema>;
 export const ProjectSourceV1StoredSchema = createStoredReadSchema(ProjectSourceV1Schema);
