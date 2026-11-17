@@ -301,6 +301,10 @@ delivery history, written by the mail boundary after the invitation transaction 
 - `null` means no recorded result. After a crash it does **not** prove no provider
   received the mail; it stays honestly unknown.
 - `sent` means the mail boundary accepted submission, never inbox delivery.
+- A submission or result-recording exception after commit returns the typed
+  invitation with unknown delivery (`null`), rather than failing an invitation
+  that already exists. Explicit reissue is recovery; a reported transport failure
+  that was successfully recorded remains `failed`.
 - The writer addresses one exact invitation id, so a slow delivery for a bearer that has
   since been reissued can never mark its replacement sent.
 

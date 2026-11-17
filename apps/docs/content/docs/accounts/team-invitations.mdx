@@ -95,8 +95,11 @@ itself does not prove Team membership.
   guessed server. Ask for the complete link again.
 - If this device has not added the named Home, add that Home and reopen the
   invitation afterwards.
-- If email delivery fails, the manager can retry delivery or reissue. An
-  email-bound invitation does not silently become a transferable link.
+- If email submission fails after the invitation is created, the invitation
+  remains valid and Happier reports failed or unknown delivery. Unknown means
+  mail may have been submitted without its result being recorded. Use **Send
+  again** to reissue it; this replaces the old link rather than silently retrying.
+  An email-bound invitation does not become a transferable link.
 - If Team authentication policy changes while you sign in, Happier preserves
   valid Home authentication and asks for a currently allowed alternative. It
   does not sign you out of unrelated personal work.

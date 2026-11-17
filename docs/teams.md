@@ -584,6 +584,11 @@ consumes that typed result and rejects an unavailable mode with
 from connection rows locally. The producer's presence does not certify the remaining mounted
 consumer and loaded-runtime journeys.
 
+Brokered Provider admission refuses the resource custodian's own Account with
+`resource_unavailable`; owners use their personal connection. Non-exportable
+Connected services can remain brokered: Muse sharing uses the Meta route in a
+compatible Agent, while the Muse Agent itself requires a personal login.
+
 ## Shared credential usage limits
 
 Team credential usage queries in 0.3 development use the canonical analytics
@@ -600,6 +605,11 @@ resource/member/Group limit and UTC period has one counter in the existing
 kind. Each-member limits have a separate counter for each requesting Account.
 Concurrent requests may overshoot a limit; recorded spend is authoritative for the
 whole period, including already-recorded observations later within that period.
+
+Usage-limit upsert, delete and resource replacement keep the resource's authority
+revision when only limits change. `resourceLimits.ts` and `resourceUpdate.ts`
+therefore preserve admitted broker jobs; the next request's usage admission
+enforces the updated limit with `team_credential_usage_limit`.
 
 `teamCredentialUsageCounters.ts` owns counter storage. The existing usage fold in
 `teamCredentialUsageLimitEvaluation.ts` owns measurement semantics and reconstructs

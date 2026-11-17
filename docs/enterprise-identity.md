@@ -364,6 +364,12 @@ result does not silently choose another provider. Test sign-in checks the curren
 profile without creating or linking an Account. Disablement stops new sign-ins without
 discarding existing identities, and removal retains the ordinary sole-login protections.
 
+WorkOS removal can return `disabled_pending_completion` after disablement has
+committed but upstream deletion or local completion fails.
+`teamIdentityConnectionAdministration.ts` owns that result for Home and Team
+connections; the shared detail presenter refreshes the disabled connection and
+keeps Remove as explicit recovery instead of navigating away as though deleted.
+
 Ordinary catalog publication and OAuth consume the connection lifecycle's `connected`
 state; missing/inactive upstream selections are not offered until restored. Admin Test
 remains available for repair. Anonymous email routing resolves only bindings with a

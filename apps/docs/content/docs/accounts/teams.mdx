@@ -319,6 +319,11 @@ Encrypted Saved Secrets shared with a Team or Group work the same way, except th
 only the secret's owner can share it with a new member. The owner's app does this
 when it is online, so a new member sees "Preparing encrypted access" until then.
 
+Encrypted Tasks shared with a Team or Group get keys for later eligible members
+when the Task owner's app is online. For shared Collection items, an owner or
+editor who already holds the key prepares access when they next read the item.
+Until then, access can remain pending; joining alone does not supply a key.
+
 ### Managed Session preferences (0.3 development)
 
 Unreleased development source also lets administrators supply Session preferences
@@ -328,6 +333,12 @@ people who can't change them see why. Agents can set the same values through the
 existing Team policy action. New Session, in the app and from the CLI, preselects
 the Team's model, Machine placement, connected services and permission mode for
 the selected Agent.
+
+**Approval profile** is also available in Team, Group and project defaults. A
+shared default can only tighten your approvals until you deliberately select a
+profile, even if you select the same one. Project defaults apply to everyone
+admitted to the project; its owner manages them for a personal project, and Team
+administrators manage them for a Team-owned project.
 
 Your explicit choice takes priority over Group and Team preferences. An agreeing
 Group preference comes before the Team preference; conflicting Groups fall back

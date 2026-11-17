@@ -184,6 +184,12 @@ directory provisioning remains scoped to a Team. Turning SSO off retains Account
 identities. Removal is refused when it would leave an Account without a usable sign-in
 method, and it does not delete the Account or native Team membership.
 
+If removing a WorkOS connection disables sign-in but cannot finish the upstream
+or local removal, Happier reports that sign-in is disabled and removal has not
+finished. The connection stays visible. Use its **Remove** action again to
+complete removal; a disabled result does not mean the connection was deleted.
+This recovery applies to both Home and Team connections in 0.3 development.
+
 ### Company sign-in for a Team
 
 Setup runs in three steps, and each one is separately visible in the Team's **Sign-in
