@@ -142,8 +142,15 @@ it('offers host MCP catalog consent and applies its captured native grant exactl
     await writeFile(recordingPath, JSON.stringify({ rows: [0, 1, 2, 6, 7, 8].map(index => advancedRows[index]).concat(turnRows).map(value => {
         const row = readMuseRecord(value);
         const message = readMuseRecord(row.message);
+        const params = readMuseRecord(message.params);
         return typeof message.method === 'string' && message.method.startsWith('approval/')
-            ? { ...row, message: { ...message, params: { ...readMuseRecord(message.params), toolName: 'mcp__probe__pebble', rawArgs: '{}' } } }
+            ? { ...row, message: { ...message, params: { ...params,
+                subject: { kind: 'tool', toolName: 'mcp__probe__pebble' }, toolName: 'mcp__probe__pebble', rawArgs: '{"query":"pebble"}',
+                availableChoices: Array.isArray(params.availableChoices)
+                    ? params.availableChoices.map(value => readMuseRecord(value).choiceId === 'allow_once'
+                        ? { ...readMuseRecord(value), label: 'Allow tool `mcp__probe__pebble`', rulePreview: 'tool `mcp__probe__pebble`' }
+                        : value) : [],
+            } } }
             : row;
     }) }));
     const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'approval-local-persistent', recordingPath,
@@ -167,6 +174,10 @@ it('offers host MCP catalog consent and applies its captured native grant exactl
         await vi.waitFor(() => {
             const pending = Object.values(fixture.host.getAgentStateSnapshot()?.requests ?? {}).find(request => request.tool === 'mcp__probe__pebble');
             expect(pending).toMatchObject({ turnId: 'catalog-choice-turn' });
+            expect(pending?.arguments).toEqual({ query: 'pebble' });
+            expect(pending?.nativeChoices?.choices.find(choice => choice.id === 'allow_once')).toMatchObject({
+                label: 'Allow tool mcp__probe__pebble', rulePreview: 'tool mcp__probe__pebble',
+            });
             expect(pending?.nativeChoices?.choices.find(choice => choice.id === 'mcp_always_allow')).toMatchObject({
                 scope: 'localPersistent', followUp: { actionId: 'mcp.servers.tools.set',
                     input: { serverId: 'catalog-probe', tools: { pebble: 'allow' } } },
@@ -551,7 +562,7 @@ it('preserves opaque native approval arguments on the canonical generic card', a
         expect(await fixture.waitForAudit(audit => audit.receiptCount === 1))
             .toMatchObject({ decisionCount: 0, released: false });
         await vi.waitFor(() => expect(fixture.host.getAgentStateSnapshot()?.requests?.[requestId]).toMatchObject({
-            kind: 'permission', tool: 'future_native_tool', arguments: { rawArgs, nativeApproval: subject },
+            kind: 'permission', tool: 'future_native_tool', arguments: { rawArgs },
         }));
         const pending = fixture.host.getAgentStateSnapshot()?.requests?.[requestId];
         if (!pending?.nativeChoices) throw new Error('Expected the opaque native approval in the canonical pending owner');

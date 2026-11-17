@@ -25,12 +25,15 @@ function mapDecision(value: JsonValue | undefined): SessionPermissionDecision | 
 function toolInput(params: NativeRecord): Record<string, JsonValue> {
     if (typeof params.rawArgs === 'string') {
         const parsed = readMuseNativeJson(params.rawArgs);
-        return { ...(parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? readMuseRecord(parsed) : { rawArgs: params.rawArgs }),
-            nativeApproval: params.subject ?? null };
+        return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? { ...readMuseRecord(parsed) } : { rawArgs: params.rawArgs };
     }
-    return { nativeApproval: params.subject ?? null };
+    return {};
 }
 function approvalChoices(params: NativeRecord, readNativeChildOrigin?: (subagentId: string) => Pick<NonNullable<NativePermissionChoicesV1['origin']>, 'subagentLabel'> | undefined): NativePermissionChoicesV1 {
+    // MSP formats tool identities as inline code; host choice labels/previews
+    // are plain text. Preserve literal backticks in commands and other operands.
+    const plainToolLabel = (text: string) => typeof params.toolName === 'string' && params.toolName
+        ? text.replaceAll('`' + params.toolName + '`', params.toolName) : text;
     const requirement = readMuseRecord(params.currentRequirementId);
     requiredString(requirement, 'approvalId');
     if (typeof requirement.sourceIndex !== 'number') throw protocolError('Muse omitted the approval requirement source index');
@@ -41,8 +44,8 @@ function approvalChoices(params: NativeRecord, readNativeChildOrigin?: (subagent
         if (!decision || (scope !== 'once' && scope !== 'session' && scope !== 'localPersistent')) {
             throw new PluginError({ code: 'unsupported', message: 'Muse offered an unsupported approval decision or scope.' });
         }
-        return { id: requiredString(choice, 'choiceId'), label: requiredString(choice, 'label'), decision, scope,
-            ...(typeof choice.rulePreview === 'string' ? { rulePreview: choice.rulePreview } : {}),
+        return { id: requiredString(choice, 'choiceId'), label: plainToolLabel(requiredString(choice, 'label')), decision, scope,
+            ...(typeof choice.rulePreview === 'string' ? { rulePreview: plainToolLabel(choice.rulePreview) } : {}),
             ...(choice.acceptsFeedback === true ? { allowsFeedback: true } : {}),
             response: { approved: decision !== 'denied' && decision !== 'abort', decision } };
     });
