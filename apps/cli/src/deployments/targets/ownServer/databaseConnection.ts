@@ -1,6 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import type { DatabaseDeploymentServiceTargetV1 } from '@happier-dev/database-protocol';
+import type { DatabaseDeploymentServiceTargetV1, DatabaseOperationResultV1,
+    DatabaseReadStatementInputV1, DatabaseStatsOperationInputV1 } from '@happier-dev/database-protocol';
 import { openPostgresqlConnection, type PostgresqlConnection } from '@happier-dev/databases/connection/postgresql';
 import { openMysqlConnection } from '@happier-dev/databases/connection/mysql';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -100,4 +101,16 @@ export async function openOwnServerDatabaseConnectionForHost(input: Readonly<{
         void work.catch(rejected);
         return await ready;
     } catch (error) { if (ownsScope) await scope.dispose(); throw error; }
+}
+
+/** Finite deployment reads share the same operation and native custody as the
+ * workbench; their lifecycle ends here without activating optional runtime. */
+export async function executeOwnServerDatabaseOperationForHost(input: Readonly<
+    Omit<Parameters<typeof openOwnServerDatabaseConnectionForHost>[0], 'target'> & {
+        request: (DatabaseReadStatementInputV1 | DatabaseStatsOperationInputV1) & { target: DatabaseDeploymentServiceTargetV1 };
+    }
+>): Promise<DatabaseOperationResultV1> {
+    const connection = await openOwnServerDatabaseConnectionForHost({ ...input, target: input.request.target });
+    try { return await connection.execute(input.request, input.signal); }
+    finally { await connection.close(); }
 }

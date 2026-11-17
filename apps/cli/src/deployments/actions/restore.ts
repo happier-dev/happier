@@ -17,6 +17,8 @@ import { projectDeploymentException } from '../deploymentFailure';
 import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { AdmittedDeploymentRestoreUpload } from '@/transfers/targets/deploymentRestoreUpload';
 import { DeploymentRestoreRecoveryPointV1Schema } from '@happier-dev/deployment-protocol';
+import { DatabaseReadStatementInputV1Schema, type DatabaseReadStatementInputV1,
+    type DatabaseDeploymentServiceTargetV1, type DatabaseOperationResultV1 } from '@happier-dev/database-protocol';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 type Confirm = Extract<DeploymentBackupRestoreInputV1, { mode: 'confirm' }>;
@@ -57,6 +59,8 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
             context: ActionExecutorContext }>): Promise<MachineProvisionerSnapshotResultV1 | ActionExecuteFailure>;
     }>;
     restore: OwnServerDeploymentTargetForHost['restore'];
+    checkData?(request: DatabaseReadStatementInputV1 & { target: DatabaseDeploymentServiceTargetV1 },
+        input: Confirm, context: ActionExecutorContext): Promise<DatabaseOperationResultV1>;
 }>) {
     const readRecovery = async (input: Recover, context: ActionExecutorContext) => {
         // The existing operation reader enforces requester and Machine custody.
@@ -130,6 +134,17 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
             ...(snapshot ? { details: normalizeStrictJsonValue({ steps: [], snapshot }),
                 ...(snapshot.kind === 'confirmed' ? { effectAttempted: true } : {}) } : {}) });
         try {
+            const check = input.mode !== 'recover' && input.dataCheck !== undefined
+                ? DatabaseReadStatementInputV1Schema.safeParse(input.dataCheck) : null;
+            if (check && (!check.success || check.data.target.kind !== 'deployment_service')) return refuse('invalid_input');
+            const dataCheck = check?.success && check.data.target.kind === 'deployment_service'
+                ? { ...check.data, target: check.data.target } : undefined;
+            if (dataCheck && (input.destination?.kind !== 'database'
+                || dataCheck.target.environment.serverId !== input.serverId
+                || dataCheck.target.environment.environmentId !== input.environmentId
+                || dataCheck.target.targetLinkId !== input.targetLinkId
+                || dataCheck.target.serviceId !== input.destination.service
+                || dataCheck.target.database !== input.destination.database)) return refuse('target_mismatch');
             await host.assertCurrent(context);
             if (input.serverId !== host.serverId || input.machineId !== host.machineId
                 || readInstallationIdentityIfExistsSync()?.installationId !== input.installationId) return refuse('target_mismatch');
@@ -211,7 +226,21 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
             }
             const confirmed = await host.restore({ input, context, prepared: retained.native, ...(upload ? { upload: upload.source } : {}) });
             if (confirmed.kind === 'prepared') return refuse('restore_prepare_required');
-            return projectResult(confirmed);
+            const restored = projectResult(confirmed);
+            if (restored.kind !== 'restored' || !dataCheck) return restored;
+            let checked: DatabaseOperationResultV1;
+            try {
+                checked = host.checkData ? await host.checkData(dataCheck, input, context)
+                    : { ok: false, status: 'unavailable', code: 'database_unavailable', reason: 'database_unavailable' };
+            } catch (error) {
+                const projected = projectDeploymentException(error, { signal: context.signal, phase: 'deployment.restore.dataCheck' });
+                checked = context.signal?.aborted ? { ok: false, status: 'cancelled', code: 'database_cancelled' }
+                    : { ok: false, status: 'unavailable', code: projected.errorCode, reason: projected.errorCode };
+            }
+            // The restore's outcome remains true even when the subsequent read is unavailable or incomplete.
+            return { ...restored, evidence: normalizeStrictJsonValue({
+                ...(isRecord(restored.evidence) ? restored.evidence : {}), dataCheck: checked,
+            }) };
         } catch (error) {
             const details = error && typeof error === 'object' && 'details' in error ? error.details : undefined;
             const steps = isRecord(details) && Array.isArray(details.steps) ? details.steps.flatMap(value => {

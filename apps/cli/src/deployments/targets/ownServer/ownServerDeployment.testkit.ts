@@ -87,6 +87,9 @@ fs.appendFileSync(path.join(__dirname, 'docker-invocations.jsonl'), JSON.stringi
         ? { path: '-', content: '[private native stdin omitted]' } : file),
     ...(state.expectedDockerHost !== undefined ? { dockerHostMatchesExpected: observedHost === state.expectedDockerHost } : {}) }) + '\n');
 const write = value => process.stdout.write(typeof value === 'string' ? value : JSON.stringify(value));
+if (args[0] === 'context' && args[1] === 'inspect') {
+    write(JSON.stringify(observedHost || 'unix:///var/run/docker.sock')); process.exit(0);
+}
 const writeOperation = value => state.operationStdoutBase64 === undefined ? write(value)
     : process.stdout.write(Buffer.from(state.operationStdoutBase64, 'base64'));
 const save = () => { fs.writeFileSync(statePath+'.next', JSON.stringify(state)); fs.renameSync(statePath+'.next', statePath); };
@@ -788,10 +791,27 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
 } else if (args[0] === 'exec') {
     // The SQL client is the external native boundary. Keep the production
     // service selection, process supervision, role setup and query parser real.
-    const script = fs.readFileSync(0, 'utf8');
     const container = state.containers.find(row => row.Id === args[2]);
-    if (!container || typeof state.readOnlyQueryOutput !== 'string') throw new Error('fixture_data_query_unconfigured');
-    if (script.includes('ALTER ROLE happier_ro')) {
+    if (!container) throw new Error('fixture_data_query_unconfigured');
+    if (state.nativePostgresql && args.includes('/bin/bash')) {
+        // Docker's container loopback maps to this fixture's actual PostgreSQL.
+        // Keep the driver protocol, authentication, SQL and cancellation real.
+        const socket = require('node:net').createConnection({ host: '127.0.0.1', port: state.nativePostgresql.port });
+        socket.on('error', () => { process.exitCode = 1; process.stdin.destroy(); });
+        socket.on('close', () => { process.stdin.unpipe(socket); process.stdin.destroy(); });
+        process.stdin.pipe(socket); socket.pipe(process.stdout);
+    } else {
+    const script = fs.readFileSync(0, 'utf8');
+    if (state.nativePostgresql) {
+        const environment = Object.fromEntries(container.Config.Env.map(value => {
+            const equal = value.indexOf('='); return [value.slice(0, equal), value.slice(equal + 1)];
+        }));
+        const result = require('node:child_process').spawnSync('/bin/sh', ['-s'], { input: script, encoding: 'utf8',
+            env: { ...process.env, ...environment, PATH: path.dirname(state.nativePostgresql.clientPath) + path.delimiter + process.env.PATH,
+                PGHOST: '127.0.0.1', PGHOSTADDR: '127.0.0.1' } });
+        if (script.includes('ALTER ROLE happier_ro')) { state.readRoleBootstrapCount = (state.readRoleBootstrapCount || 0) + 1; save(); }
+        process.stdout.write(result.stdout || ''); process.stderr.write(result.stderr || ''); process.exitCode = result.status ?? 1;
+    } else if (script.includes('ALTER ROLE happier_ro')) {
         if (state.expectedReadRolePassword && !script.includes(Buffer.from(state.expectedReadRolePassword).toString('base64'))) {
             throw new Error('fixture_data_role_password_mismatch');
         }
@@ -800,6 +820,7 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         if (!script.includes('happier_ro')) throw new Error('fixture_data_query_requires_dedicated_role');
         if (state.expectedReadRolePassword && !script.includes(state.expectedReadRolePassword)) throw new Error('fixture_data_query_password_mismatch');
         write(state.readOnlyQueryOutput);
+    }
     }
 } else if (args[0] === 'logs') {
     const emit = () => {
@@ -1075,6 +1096,19 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
             const state = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>;
             state.readOnlyQueryOutput = stdout;
             state.expectedReadRolePassword = expectedPassword;
+            await writeState(state);
+        },
+        /** Map the existing Docker process boundary to a real PostgreSQL fixture. */
+        async attachNativePostgresql(input: Readonly<{ port: number; psqlPath: string }>) {
+            const clientDirectory = join(directory, 'native-postgresql');
+            await mkdir(clientDirectory, { recursive: true });
+            const clientPath = join(clientDirectory, 'psql');
+            await writeFile(clientPath, `#!${process.execPath}\n` + `const { spawnSync } = require('node:child_process');\n`
+                + `const args = process.argv.slice(2).map((value, index, all) => value.startsWith('--port=') ? '--port=${input.port}' : all[index - 1] === '--port' ? '${input.port}' : value);\n`
+                + `const result = spawnSync(${JSON.stringify(input.psqlPath)}, args, { stdio: 'inherit', env: process.env }); process.exitCode = result.status ?? 1;\n`);
+            await chmod(clientPath, 0o755);
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>;
+            state.nativePostgresql = { ...input, clientPath };
             await writeState(state);
         },
         async readReadRoleBootstrapCount(): Promise<number> {

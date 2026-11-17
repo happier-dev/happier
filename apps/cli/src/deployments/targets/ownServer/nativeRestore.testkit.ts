@@ -30,7 +30,8 @@ export const sourceManifest = DeploymentBackupManifestV1Schema.parse({ schemaVer
  * Native admission, P42 custody, raw streams and the restore owner remain real.
  * This PostgreSQL/SQLite/restic substitute retains native state across processes.
  */
-export async function installRestoreBoundary(root: string, mode: string, options?: Readonly<{ toolDirectory: string; environmentId: string }>) {
+export async function installRestoreBoundary(root: string, mode: string, options?: Readonly<{ toolDirectory: string; environmentId: string;
+    archive?: Uint8Array; nativePostgresql?: Readonly<{ pgRestorePath: string; connectionString: string }> }>) {
     const toolDirectory = options?.toolDirectory ?? join(root, 'tools');
     if (mode === 'sqliteBackup') {
         // Keep SQLite's actual file/VACUUM behavior beneath the Docker boundary.
@@ -53,7 +54,8 @@ export async function installRestoreBoundary(root: string, mode: string, options
         await rename(`${stateFile}.parent.next`, stateFile);
     };
     await writeRestoreState({ names: mode === 'safety' ? [database] : [], mode, snapshot: nativeSnapshot,
-        runtimeImageLoaded: options === undefined, archive: archive.toString('base64') });
+        runtimeImageLoaded: options === undefined, archive: Buffer.from(options?.archive ?? archive).toString('base64'),
+        ...(options?.nativePostgresql ? { nativePostgresql: options.nativePostgresql } : {}) });
     await writeFile(eventsFile, '');
     await writeFile(executable, `#!${process.execPath}\n` + String.raw`
 const fs = require('node:fs');
@@ -347,12 +349,18 @@ if (['start','stop'].includes(args[0]) && !args.includes('--attach')) {
     else if (argv[0] === 'createdb') { state.names.push(argv.at(-1)); save(); }
     else if (argv[0] === 'pg_restore') {
         let bytes = 0;
+        const chunks = [];
         // Custom archives are self-delimiting: pg_restore can finish before
         // the restic/Docker producer closes stdout. It does not await pipe EOF.
-        process.stdin.on('data', data => { bytes += data.length;
+        process.stdin.on('data', data => { bytes += data.length; chunks.push(data);
             if (bytes >= Buffer.from(state.archive,'base64').length) {
+                if (state.nativePostgresql) require('node:child_process').execFileSync(state.nativePostgresql.pgRestorePath,
+                    argv.includes('--list') ? ['--list'] : ['--clean', '--if-exists', '--no-owner', '--no-privileges',
+                        '--dbname', state.nativePostgresql.connectionString], { input: Buffer.concat(chunks), stdio: ['pipe', 'ignore', 'pipe'] });
                 if (argv.includes('--list')) event({kind:'archiveListed'});
-                else { state.importedBytes = bytes; save(); event({kind:'imported',bytes}); }
+                else {
+                    state.importedBytes = bytes; save(); event({kind:'imported',bytes});
+                }
                 process.exit(0);
             }
         });

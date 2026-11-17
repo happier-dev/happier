@@ -5,12 +5,36 @@ import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '../a
 import { DeploymentNativeAdmissionV1Schema, projectDeploymentNativeAdmissionV1 } from '../../deployments/deploymentCandidatePublicationV1.js';
 import { describeApprovalActionFields } from '../actionApprovalPresentation.js';
 import { ExternalActionRequestEnvelopeV2Schema, projectExternalActionDeploymentNativeEnvelopeAdmissionV1 } from '../externalActionApi.js';
+import { readActionSecretInputPaths } from '../actionInputHintsRuntime.js';
 
 const actionId = 'deployments.backups.restore';
 const common = { serverId: 'home', environmentId: 'production', machineId: 'runtime', installationId: 'installed',
   targetLinkId: 'target', deploymentId: 'capture-receipt', source: { kind: 'repository' as const, snapshotId: 'backup' }, expectedRevision: 3 };
 
 describe('deployment backup restore Action', () => {
+  it('keeps restored-data parameters and cells out of shared Action observations', () => {
+    const spec = listActionSpecsForSurface('agent').find(candidate => String(candidate.id) === actionId)!;
+    const dataCheck = { operation: 'statement.run', mode: 'read', target: { kind: 'deployment_service',
+      environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'production' },
+      targetLinkId: 'target', deploymentId: 'active-receipt', serviceId: 'database', database: 'app' },
+      statement: { sql: 'SELECT $1::text', parameters: [{ type: 'text', value: 'private-check-value' }] } };
+    const input = spec.inputSchema.parse({ ...common, mode: 'prepare',
+      destination: { kind: 'database', service: 'database', database: 'app' }, dataCheck });
+    expect(input).toHaveProperty('dataCheck', dataCheck);
+    expect(readActionSecretInputPaths(spec, input)).toContain('dataCheck');
+    const projectedInput = spec.projectObservationInput?.(input);
+    expect(projectedInput).toHaveProperty('environmentId', 'production');
+    expect(JSON.stringify(projectedInput)).not.toContain('private-check-value');
+    const result = { kind: 'restored', verified: true, nextAction: 'none', evidence: { dataCheck: {
+      ok: true, operation: 'statement.run', results: [{ rows: [{ cells: [{ type: 'text', value: 'private-cell-value' }] }] }],
+    } } };
+    const projectedOutput = spec.projectObservationOutput?.(result);
+    expect(projectedOutput).toMatchObject({ kind: 'restored', verified: true });
+    expect(JSON.stringify(projectedOutput)).not.toContain('private-cell-value');
+    expect(JSON.stringify(spec.projectObservationOutput?.({ kind: 'prepared', operationId: 'prepared',
+      evidence: { input } }))).not.toContain('private-check-value');
+  });
+
   it('keeps the reviewed provider resource and billing evidence inside the private restore input', () => {
     const snapshotReview = {
       managedId: 'managed-database', intentRevision: 1,

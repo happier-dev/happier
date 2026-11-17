@@ -1,6 +1,5 @@
 import { DeploymentBackupRunInputV1Schema } from '../../deployments/deploymentBackupActionsV1.js';
 import { DeploymentBackupRestorePrepareInputV1Schema } from '../../deployments/deploymentBackupRestoreV1.js';
-import { DeploymentDataQueryInputV1Schema } from '../../deployments/deploymentReadsV1.js';
 import { ProjectReadinessReadInputV1Schema } from '../../projects/readinessV1.js';
 import type { WorkflowDefinitionV1 } from '../workflowV1.js';
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1,
@@ -37,11 +36,11 @@ export function createRestoreDrillWorkflowV1(): WorkflowDefinitionV1 {
     serviceId: { kind: 'item' as const, field: 'value' as const, path: ['serviceId'] },
     expectedGeneration: { kind: 'item' as const, field: 'value' as const, path: ['generation'] }, operation: literal(operation) });
   const restore = Object.fromEntries(Object.keys(DeploymentBackupRestorePrepareInputV1Schema.shape)
-    .filter(name => name !== 'mode').map(name => [name,
+    .filter(name => name !== 'mode' && name !== 'dataCheck').map(name => [name,
       name === 'source' ? input('restoreSource') : name === 'destination' ? input('restoreDestination')
         : input(name === 'deploymentId' ? 'backupTarget' : 'drillTarget', [name])]));
-  const query = Object.fromEntries(Object.keys(DeploymentDataQueryInputV1Schema.shape).map(name => [name,
-    name in DeploymentBackupRestorePrepareInputV1Schema.shape ? input('drillTarget', [name]) : input('dataCheck', [name])]));
+  const query = { operation: literal('statement.run'), mode: literal('read'),
+    target: input('dataCheck', ['target']), statement: input('dataCheck', ['statement']) };
   return {
     version: 1, defaults: {}, inputs: [targetInput,
       { name: 'restoreSource', valueType: 'json', required: true,
@@ -52,7 +51,7 @@ export function createRestoreDrillWorkflowV1(): WorkflowDefinitionV1 {
         description: 'The database or volume inside the isolated drill Environment.' },
       { name: 'verificationLevel', valueType: 'string', required: true },
       { name: 'dataCheck', valueType: 'json', required: true,
-        description: 'A service, read-only SQL statement and named parameters that prove the restored data is usable.' },
+        description: 'The selected drill database target and a read-only statement with ordered typed parameters that prove the restored data is usable.' },
     ],
     blocks: [
       { kind: 'parallel', id: 'drill', name: 'Restore and check the retained drill Environment', failurePolicy: 'collect_outcomes', branches: [
@@ -66,10 +65,9 @@ export function createRestoreDrillWorkflowV1(): WorkflowDefinitionV1 {
             snapshotId: input('restoreSource', ['snapshotId']), level: input('verificationLevel'),
           } },
           { kind: 'action', id: 'prepareRestore', name: 'Prepare restore into the isolated Environment', actionId: 'deployments.backups.restore',
-            input: { ...restore, mode: literal('prepare') } },
+            input: { ...restore, dataCheck: { kind: 'object', fields: query }, mode: literal('prepare') } },
           { kind: 'action', id: 'confirmRestore', name: 'Restore this recovery point', actionId: 'deployments.backups.restore',
-            input: { ...restore, mode: literal('confirm'), prepareOperationId: result('prepareRestore', ['operationId']) } },
-          { kind: 'action', id: 'checkData', name: 'Check restored data with the read-only database role', actionId: 'deployments.data.query', input: query },
+            input: { ...restore, dataCheck: { kind: 'object', fields: query }, mode: literal('confirm'), prepareOperationId: result('prepareRestore', ['operationId']) } },
         ] },
       ] },
       // Resolve current service generations after restore. A volume activation may

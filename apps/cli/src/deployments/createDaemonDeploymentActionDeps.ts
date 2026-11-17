@@ -1,4 +1,5 @@
 import { createEnvironmentTelemetrySetForHost } from './telemetry/setForHost';
+import { executeOwnServerDatabaseOperationForHost } from './targets/ownServer/databaseConnection';
 import { ApiClient } from '@/api/api';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -1378,7 +1379,15 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     finally { await lease?.release(); }
     };
     const deploymentRestore = createDeploymentRestoreActionForHost({ ...host, assertCurrent,
-        readPreparation: host.readOperation, restore: target.restore, nativeSnapshot });
+        readPreparation: host.readOperation, restore: target.restore, nativeSnapshot,
+        async checkData(request, input, context) {
+            const environment = await targetHostReaders.readEnvironment({ environmentId: input.environmentId,
+                targetLinkId: input.targetLinkId, context });
+            return executeOwnServerDatabaseOperationForHost({ host: { ...host, assertCurrent,
+                readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readAnyReceipt },
+                environment, installationId: input.installationId, request, context,
+                signal: context.signal ?? new AbortController().signal, operationId: context.operationAcceptance!.operationId });
+        } });
     const deploymentBackupConfigure = createDeploymentBackupConfigureForHost({ ...host, artifacts, assertCurrent,
         resolveRequestHeaders: headers,
         readEnvironment: request => readDeploymentEnvironmentForHost(request, { readMetadata: readEnvironmentMetadata, open, assertCurrent }),

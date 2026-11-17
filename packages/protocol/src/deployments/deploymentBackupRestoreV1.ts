@@ -54,11 +54,12 @@ const restoreTarget = () => ({ serverId: id, environmentId: id, machineId: id, i
   targetLinkId: id, deploymentId: id, expectedRevision: revision,
   source: DeploymentBackupRestoreSourceV1Schema, destination: z.optional(DeploymentBackupRestoreDestinationV1Schema) });
 export const DeploymentBackupRestorePrepareInputV1Schema = z.strictObject({
-  ...restoreTarget(), mode: z.literal('prepare'),
+  ...restoreTarget(), mode: z.literal('prepare'), dataCheck: z.optional(StrictJsonValueSchema),
 });
 export type DeploymentBackupRestorePrepareInputV1 = z.infer<typeof DeploymentBackupRestorePrepareInputV1Schema>;
 export const DeploymentBackupRestoreConfirmInputV1Schema = z.strictObject({
   ...restoreTarget(), mode: z.literal('confirm'), prepareOperationId: id,
+  dataCheck: z.optional(StrictJsonValueSchema),
   snapshot: z.optional(z.boolean()), snapshotReview: z.optional(DeploymentNativeSnapshotOfferV1Schema),
 });
 /** Recovery selects only the scoped operation's recorded native recovery point. */

@@ -8,6 +8,7 @@ import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, type D
 import { deploymentBindingSelectionNarrowing } from '../../deployments/deploymentBindingSelectionNarrowing.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { actionInputServerId } from './definition.js';
+import { redactObservationInputPaths } from './observationRedaction.js';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, isDeploymentTargetLinkActionIdV1, isDeploymentBackupActionIdV1, isDeploymentBackupReadActionIdV1, isDeploymentDataQueryActionIdV1, isDeploymentDomainChildActionIdV1, isDeploymentDomainRemoveActionIdV1, isDeploymentPromoteActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 import { isDeploymentNativeReadActionIdV1 } from '../../deployments/deploymentReadAdmissionV1.js';
 import { DEPLOYMENT_BACKUP_CONFIGURE_INTENT_OPTIONS_V1 } from '../../deployments/deploymentBackupConfigureV1.js';
@@ -97,6 +98,7 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       { path: 'deploymentId', title: 'Backup capture receipt', widget: 'text', required: true },
       { path: 'source', title: 'Repository snapshot or uploaded backup', widget: 'json', required: true },
       { path: 'destination', title: 'Database or named volume destination', widget: 'json' },
+      { path: 'dataCheck', title: 'Confidential restored-data statement', widget: 'secret' },
       { path: 'snapshot', title: 'Take a Machine snapshot before replacing data', widget: 'boolean' },
       { path: 'snapshotReview', title: 'Provider snapshot facts retained by preparation', widget: 'json' },
       { path: 'expectedRevision', title: 'Environment revision', widget: 'number', required: true },
@@ -425,6 +427,8 @@ function createDeploymentActionSpecsV1() {
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_ROLLBACK_ACTION_ID_V1, 'Roll back deployment', '/v1/deployments/environments/:environmentId/rollback'), deploymentPreparationScope: declareDeploymentPreparationScopeV1('membership'), requesterAccountContentDemandForInput: () => true },
   deploymentSpec(deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1, 'Restart deployed service', undefined),
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, 'Restore deployment backup', undefined),
+    projectObservationInput: redactObservationInputPaths('dataCheck'),
+    projectObservationOutput: redactObservationInputPaths('evidence.dataCheck', 'evidence.input.dataCheck'),
     deploymentReadScope: createDeploymentReadScopeV1({ target: 'restore_receipt', requireEnvironmentRevision: true }), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, 'Configure deployment backups', undefined), requesterAccountContentDemandForInput: () => true },
   { ...deploymentSpec(deploymentActionIds.DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1, 'Test backup destination', undefined),
