@@ -28,7 +28,7 @@ it('prepares an opted-in PostgreSQL Home and serves its advertised canonical gue
     assert.equal(guestCli?.source, 'home-payload');
     assert.ok(guestCli?.payloads?.length, 'An opted-in prepared Home must advertise a producer-owned guest archive');
     for (const payload of guestCli.payloads) {
-      const response = await fetch(new URL(payload.url, server.baseUrl));
+      const response: Response = await fetch(new URL(payload.url, server.baseUrl));
       assert.equal(response.status, 200, 'The advertised guest archive must be reachable through this Home');
       assert.ok(response.body);
       const digest = createHash('sha256');
