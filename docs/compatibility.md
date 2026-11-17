@@ -9829,6 +9829,15 @@ typed `SessionRuntimeIssueV1`, taken from the same exact-turn reader as
 direct cut; an older strict reader rejects the added variant. The inspected `../0.2`
 frontier has no inline reply projection.
 
+In unreleased 0.3, `session.input.result.get` failure results add optional
+`failureCause` using the existing closed `ActionFailureCauseV1` projection.
+The exact-input reader retains actual HTTP lookup and read failures, including
+the canonical missing-original 404, without changing result codes or inferring
+that an absent original is pending. Plugin caller and admission-receipt proof
+failures keep their existing generic non-disclosing result. Matching Protocol
+and CLI source reload together; older strict development readers reject the
+added field. No persistence migration, wire epoch or compatibility adapter is added.
+
 The legacy `session.message.send` completion wait also retains that typed issue on
 `{ status: 'failed', code: 'session_input_turn_failed', localId, runtimeIssueV1? }`.
 The optional field uses `SessionRuntimeIssueV1` and the same canonical failure

@@ -376,7 +376,9 @@ describe('waitForTranscriptEncryptedMessageByLocalId', () => {
       serverUrl: 'http://adapter.test',
       sessionId: 'sid',
       localId: 'missing-local',
-    })).resolves.toEqual({ type: 'not_found' });
+    })).resolves.toMatchObject({ type: 'not_found', error: expect.objectContaining({
+      response: expect.objectContaining({ status: 404 }),
+    }) });
   });
 
   it('classifies v2 lookup server and malformed-response failures instead of collapsing them to null', async () => {

@@ -12,6 +12,52 @@ import type { SessionMessageReplyReadResultV1 } from '@happier-dev/protocol/sess
 afterEach(() => vi.restoreAllMocks());
 
 describe('exact Session input result', () => {
+    it.each(['original', 'reply'] as const)('retains the actual HTTP read cause through the public Action output (%s)', async projection => {
+        const sessionId = 'c1234567890123456789012345';
+        let failure: 'refused' | 'not_found' | null = null;
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+            if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session: createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain' }) } };
+            if (failure === 'not_found') throw Object.assign(new Error('Message not found'), {
+                name: 'AxiosError', isAxiosError: true, response: { status: 404, data: { error: 'Message not found' } },
+            });
+            if (failure === 'refused') throw Object.assign(new Error('Private transport message'), {
+                name: 'AxiosError', isAxiosError: true, code: 'not_authenticated',
+                response: { status: 403, data: { error: 'Private response body' } },
+            });
+            if (projection === 'reply') return { status: 200, data: { v: 1, status: 'unavailable' } };
+            return { status: 200, data: { message: { id: 'original-message', seq: 1, localId: 'original',
+                createdAt: 1, updatedAt: 1, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Original' } } } } } };
+        });
+        const executor = createActionExecutor(createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
+            sessionId, mode: 'plain', ctx: null }));
+        const read = () => runWithServerHttpBaseUrl('https://input-result.test', () => executor.execute('session.input.result.get',
+            { sessionId, localId: 'original', ...(projection === 'reply' ? { projection } : {}) },
+            { surface: 'agent', authority: 'account_automation' }));
+        expect(await read()).toMatchObject({ ok: true, result: { ok: true } });
+        const outputSchema = getActionSpec('session.input.result.get').outputSchema;
+        if (!outputSchema) throw new Error('Expected the input-result Action output schema');
+        if (projection === 'original') {
+            failure = 'not_found';
+            const absent = await read();
+            expect(absent).toEqual({ ok: true, result: { ok: false, code: 'result_read_failed', failureCause: {
+                phase: 'session.input.result.get', errorClass: 'AxiosError', errorCode: null, httpStatus: 404,
+            } } });
+            if (!absent.ok) throw new Error('Expected the public input-result Action output');
+            expect(outputSchema.parse(absent.result)).toEqual(absent.result);
+            expect(await runWithServerHttpBaseUrl('https://input-result.test', () => readSessionInputResult({
+                credentials: { token: 'token', encryption: null }, idOrPrefix: sessionId, localId: 'original', callerPluginId: 'foreign.watch',
+            }))).toEqual({ ok: false, code: 'result_read_failed' });
+        }
+        failure = 'refused';
+        const result = await read();
+        expect(result).toEqual({ ok: true, result: { ok: false, code: 'result_read_failed', failureCause: {
+            phase: 'session.input.result.get', errorClass: 'AxiosError', errorCode: 'not_authenticated', httpStatus: 403,
+        } } });
+        if (!result.ok) throw new Error('Expected the public input-result Action output');
+        expect(outputSchema.parse(result.result)).toEqual(result.result);
+    });
     it.each(['plain', 'e2ee'] as const)('reads live Ask progress through the existing Action before an original materializes (%s)', async encryptionMode => {
         const sessionId = 'c1234567890123456789012345';
         let reply: Extract<SessionMessageReplyReadResultV1, { status: 'available' }> = {

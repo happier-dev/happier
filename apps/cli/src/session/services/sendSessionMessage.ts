@@ -1,4 +1,5 @@
 import { projectPendingDeliveryFailureCauseV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { randomUUID } from 'node:crypto';
 import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -1130,17 +1131,25 @@ export async function readSessionInputResult(params: Readonly<{
       sessionId: target.sessionId, localId, ...(params.signal ? { signal: params.signal } : {}),
       ...(params.resolveAuthorizationHeaders ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders } : {}) });
     params.signal?.throwIfAborted();
-    if (lookup.type === 'not_found' && lookup.inputDisposition && !params.callerPluginId) {
-      return { ok: false, code: lookup.inputDisposition.code };
-    }
+    if (lookup.type === 'not_found') {
+      if (!params.callerPluginId) {
+        if (lookup.inputDisposition) return { ok: false, code: lookup.inputDisposition.code };
+        if (lookup.error !== undefined) throw lookup.error;
+      }
+    } else if (lookup.type !== 'found') throw lookup.error;
     const message = lookup.type === 'found' ? lookup.message : null;
     if (!message || message.localId !== localId || message.sidechainId !== null) return { ok: false, code: 'result_read_failed' };
     if (params.callerPluginId) {
-      const opened = asRecord(decryptTranscriptRowContent({ content: message.content, ctx: target.ctx }));
-      const authority = readSessionInputAuthority(opened?.meta, 'stored');
-      if (authority?.producer !== 'pluginSession' || authority.caller?.kind !== 'plugin'
-        || authority.caller.pluginId !== params.callerPluginId) return { ok: false, code: 'result_read_failed' };
-      assertSessionInputAdmissionReceiptForAuthorityV1({ authority, inputAdmissionReceipt: message.inputAdmissionReceipt });
+      try {
+        const opened = asRecord(decryptTranscriptRowContent({ content: message.content, ctx: target.ctx }));
+        const authority = readSessionInputAuthority(opened?.meta, 'stored');
+        if (authority?.producer !== 'pluginSession' || authority.caller?.kind !== 'plugin'
+          || authority.caller.pluginId !== params.callerPluginId) return { ok: false, code: 'result_read_failed' };
+        assertSessionInputAdmissionReceiptForAuthorityV1({ authority, inputAdmissionReceipt: message.inputAdmissionReceipt });
+      } catch {
+        // An unproven plugin caller must not learn why this original cannot be opened.
+        return { ok: false, code: 'result_read_failed' };
+      }
     }
     if (params.projection === 'reply') return await readReply(target.sessionId);
     if (message.turn && message.turn.turnId !== message.turnStartWitnessId) return { ok: false, code: 'result_read_failed' };
@@ -1157,8 +1166,9 @@ export async function readSessionInputResult(params: Readonly<{
       ...(message.turn ? { turnStatus: message.turn.status } : {}),
       result: resultFromAssistantTurnOutcome(outcome, { serverId: params.serverId ?? configuration.activeServerId, sessionId: target.sessionId }),
     };
-  } catch {
-    return { ok: false, code: params.signal?.aborted ? 'cancelled' : 'result_read_failed' };
+  } catch (error) {
+    if (params.signal?.aborted) return { ok: false, code: 'cancelled' };
+    return { ok: false, code: 'result_read_failed', failureCause: projectActionFailureCauseV1(error, 'session.input.result.get') };
   }
 }
 

@@ -40,7 +40,7 @@ export type TranscriptMessageLookupResult = {
 
 export type TranscriptLookupOutcome =
     | { type: 'found'; message: TranscriptMessageLookupResult }
-    | { type: 'not_found'; inputDisposition?: SessionInputRefusalDispositionV1['result'] }
+    | { type: 'not_found'; error?: unknown; inputDisposition?: SessionInputRefusalDispositionV1['result'] }
     | { type: 'auth_failed'; statusCode: 401 | 403; error: unknown }
     | { type: 'unhealthy'; reason: 'timeout' | 'network' | 'server_5xx'; error: unknown }
     | { type: 'protocol_error'; error: unknown };
@@ -224,12 +224,12 @@ export async function findTranscriptEncryptedMessageByLocalIdV2(params: {
     } catch (error) {
         if (isV2MessageNotFoundError(error)) {
             const rawDisposition = asRecord(error.response?.data)?.inputDisposition;
-            if (rawDisposition === undefined) return { type: 'not_found' };
+            if (rawDisposition === undefined) return { type: 'not_found', error };
             const disposition = SessionInputRefusalDispositionV1Schema.safeParse(rawDisposition);
             if (!disposition.success || disposition.data.localId !== params.localId) {
                 return { type: 'protocol_error', error: createMalformedTranscriptLookupResponseError() };
             }
-            return { type: 'not_found', inputDisposition: disposition.data.result };
+            return { type: 'not_found', error, inputDisposition: disposition.data.result };
         }
         const authStatus = readAuthenticationStatus(error);
         if (authStatus !== null) return { type: 'auth_failed', statusCode: authStatus, error };

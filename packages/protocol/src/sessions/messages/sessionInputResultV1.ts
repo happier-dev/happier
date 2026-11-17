@@ -9,6 +9,7 @@ import { SessionTargetV1Schema } from '../../actions/sessionTargetV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { SessionMessageReplyReadResultV1Schema } from './sessionMessageReplyV1.js';
 import { SessionInputAdmissionRejectionCodeV1Schema } from './sessionInputAdmissionRejectionV1.js';
+import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 
 export const SessionInputUsageV1Schema = lazyZodSchema(() => z.strictObject({
     inputTokens: z.optional(z.number()), outputTokens: z.optional(z.number()), costUsd: z.optional(z.number()),
@@ -44,6 +45,6 @@ export const SessionInputResultGetResultV1Schema = lazyZodSchema(() => z.union([
         z.enum(['session_not_found', 'session_id_ambiguous', 'session_lookup_timeout',
             'unsupported', 'encryption_material_unavailable', 'invalid_local_id', 'cancelled', 'result_read_failed']),
         SessionInputAdmissionRejectionCodeV1Schema,
-    ]), candidates: z.optional(z.array(z.string())) }),
+    ]), candidates: z.optional(z.array(z.string())), failureCause: z.optional(ActionFailureCauseV1Schema) }),
 ]));
 export type SessionInputResultGetResultV1 = z.infer<typeof SessionInputResultGetResultV1Schema>;
