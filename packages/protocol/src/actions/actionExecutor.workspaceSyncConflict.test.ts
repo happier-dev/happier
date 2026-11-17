@@ -36,7 +36,8 @@ describe('workspace.sync.conflict.resolve Action authority', () => {
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('workspace.sync.conflict.resolve', input, {
-      surface: 'mcp', authority: 'account_automation', serverId: 'server-1', actionRequestId: 'conflict-request-1',
+      surface: 'agent', authority: 'account_automation', serverId: 'server-1', actionRequestId: 'conflict-request-1',
+      defaultSessionId: 'session-c', defaultSessionMachineId: 'machine-c',
     })).resolves.toEqual({
       ok: true,
       result: { kind: 'approval_request_created', artifactId: 'approval-1', actionId: 'workspace.sync.conflict.resolve' },
@@ -46,13 +47,16 @@ describe('workspace.sync.conflict.resolve Action authority', () => {
     const decision = await executor.execute('approval.request.decide', {
       artifactId: 'approval-1', decision: 'approve',
     }, { surface: 'ui', authority: 'present_user', serverId: 'server-1' });
-    expect(decision).toMatchObject({
+    expect(decision, JSON.stringify(decision)).toMatchObject({
       ok: true,
       result: { ok: true, status: 'executed', execution: { ok: true } },
     });
     expect(approvals.get('approval-1')).toMatchObject({ status: 'executed', execution: { ok: true } });
     expect(workspaceSyncConflictResolve).toHaveBeenCalledWith({
-      actionReceiptId: 'approval-1', input, context: expect.objectContaining({ authority: 'present_user', bypassApprovals: true }),
+      actionReceiptId: 'approval-1', input, context: expect.objectContaining({
+        authority: 'account_automation', bypassApprovals: true, serverId: 'server-1',
+        defaultSessionId: 'session-c', defaultSessionMachineId: 'machine-c',
+      }),
     });
   });
 
