@@ -6,7 +6,8 @@ import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
-import { admitProjectSourceAttachmentV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
+import { admitProjectSourceAttachmentV1, prepareProjectSourceUpdateV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
+import { PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
 import {
   ProjectSourcesListInputV1Schema, ProjectSourcesListOutputV1Schema,
   ProjectSourcesReadInputV1Schema, ProjectSourcesReadOutputV1Schema,
@@ -33,7 +34,7 @@ export function createCliProjectSourceActionDeps(params: Readonly<{
     context: ActionExecutorContext): ReturnType<SourceArtifactReader>;
 }>): SourceActionDeps {
   async function request<T>(actionId: SourceActionId, serverId: string, path: string, method: string, body: unknown,
-    schema: Schema<T>, context: ActionExecutorContext, prepare?: () => Promise<Readonly<{ ok: true }> | ProjectSourcesFailureV1>): Promise<T | ActionExecuteFailure | ProjectSourcesFailureV1> {
+    schema: Schema<T>, context: ActionExecutorContext, prepare?: () => Promise<Readonly<{ ok: true }> | ProjectSourcesFailureV1 | ActionExecuteFailure>): Promise<T | ActionExecuteFailure | ProjectSourcesFailureV1> {
     let issued = false;
     try {
       const denied = await params.admitAccount(serverId, context);
@@ -50,7 +51,9 @@ export function createCliProjectSourceActionDeps(params: Readonly<{
       context.signal?.throwIfAborted();
       let headers: Readonly<Record<string, string>> | null;
       try {
-        headers = await params.resolveRequestHeaders(context, actionId, { method, path,
+        const effectActionId = context.externalActionExecutionAuthorization?.binding.actionId === PROJECT_SOURCE_UPDATE_ACTION_ID_V1
+          ? PROJECT_SOURCE_UPDATE_ACTION_ID_V1 : actionId;
+        headers = await params.resolveRequestHeaders(context, effectActionId, { method, path,
           ...(body === undefined ? {} : { body }) });
       } catch (error) {
         if (context.signal?.aborted) throw error;
@@ -118,8 +121,12 @@ export function createCliProjectSourceActionDeps(params: Readonly<{
       const input = ProjectSourcesUpdateInputV1Schema.parse(raw);
       const attachment = input.patch.attachment;
       return request('projects.sources.update', input.serverId, `/v1/projects/sources/${encodeURIComponent(input.sourceId)}`, 'PATCH', input,
-        ProjectSourcesUpdateOutputV1Schema, context, attachment?.kind === 'attach' ? () => admitProjectSourceAttachmentV1({
-          attachment: attachment.attachment, sourceServerId: input.serverId, signal: context.signal,
+        ProjectSourcesUpdateOutputV1Schema, context,
+        attachment?.kind === 'attach' || input.patch.owner !== undefined || input.patch.audience !== undefined ? () => prepareProjectSourceUpdateV1({
+          input, signal: context.signal,
+          readSource: () => request('projects.sources.read', input.serverId,
+            `/v1/projects/sources/${encodeURIComponent(input.sourceId)}?serverId=${encodeURIComponent(input.serverId)}`,
+            'GET', undefined, ProjectSourcesReadOutputV1Schema, context),
           readArtifact: (ref, options) => params.readArtifact ? params.readArtifact(ref, options, context) : Promise.resolve(null),
         }) : undefined);
     },

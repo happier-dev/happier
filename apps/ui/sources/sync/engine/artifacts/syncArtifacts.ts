@@ -1270,6 +1270,8 @@ async function openArtifactReadBatchFromApi(params: Omit<Parameters<typeof fetch
 }
 
 export async function fetchArtifactWithBodyFromApi(params: {
+    projectSourceId?: string;
+    projectSourcePatch?: ArtifactApiOptions['projectSourcePatch'];
     ownerOnly?: boolean;
     serverId?: string;
     credentials: AuthCredentials;
@@ -1284,10 +1286,9 @@ export async function fetchArtifactWithBodyFromApi(params: {
     /** Signed decision preparation may read current content, never repair its audience. */
     prepareRecipientKeys?: boolean;
 }): Promise<DecryptedArtifact | null> {
-    // Keyless/inspection reads have no recipient preparation demand. Keep the
-    // opaque detail path so retained locked rows remain representable even
-    // when their unusable envelope cannot form a keyholding census.
-    if (!params.encryption || params.prepareRecipientKeys === false) {
+    // Keyless/inspection reads retain locked rows without demanding a census.
+    // Source publication reads this exact row, then acquires its scoped census.
+    if (!params.encryption || params.prepareRecipientKeys === false || params.projectSourceId) {
         try {
             throwIfAborted(params.signal);
             const artifact = await fetchArtifactApi(params.credentials, params.artifactId, params);
@@ -1310,6 +1311,8 @@ export async function fetchArtifactWithBodyFromApi(params: {
 
 /** Both authenticated read forms open content and prepare keys through the same owner. */
 async function openArtifactWithRecipientKeyPreparation(params: Readonly<{
+    projectSourceId?: string;
+    projectSourcePatch?: ArtifactApiOptions['projectSourcePatch'];
     ownerOnly?: boolean;
     credentials: AuthCredentials; request?: ArtifactApiOptions['request']; signal?: AbortSignal;
     serverId?: string; readTransport?: ArtifactApiOptions['readTransport'];
@@ -1327,16 +1330,16 @@ async function openArtifactWithRecipientKeyPreparation(params: Readonly<{
     if (opened?.isDecrypted && opened.storageMode === 'e2ee' && params.prepareRecipientKeys !== false) {
         const key = artifactDataKeys.get(artifact.id);
         const census = params.recipientCensus;
-        // Keyholding reads obtain this matching census in the selected-read response.
-        // The opaque inspection path cannot enter recipient preparation.
-        if (!key || key.envelope !== artifact.dataEncryptionKey || !census) {
+        // Ordinary keyholding reads carry the matching census; Source publication
+        // acquires that census through the selected Source's audience instead.
+        if (!key || key.envelope !== artifact.dataEncryptionKey || (!census && !params.projectSourceId)) {
             throw Object.assign(new Error('artifact_content_unavailable'), { code: 'artifact_content_unavailable' });
         }
         const accessApi = createArtifactAccessApi(params.credentials, params);
         await runArtifactRecipientKeyPreparationV1({ artifactId: artifact.id, dataKey: key.dataKey,
             provenanceDataKey: key.provenanceDataKey, openedProvenanceDataEncryptionKey: key.provenanceEnvelope,
             openedDataEncryptionKey: key.envelope, randomBytes: getRandomBytes, signal: params.signal,
-            readCensus: () => Promise.resolve(census),
+            readCensus: () => params.projectSourceId ? accessApi.readRecipients(artifact.id, params.signal) : Promise.resolve(census!),
             commit: input => accessApi.commitKeyEnvelopes(input, params.signal),
         });
     }

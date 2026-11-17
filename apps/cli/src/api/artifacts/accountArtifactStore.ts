@@ -23,6 +23,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encod
 import { createResourceDataKey, openResourceDataKey, ResourceDataKeyUnavailableError } from '@/api/encryption/resourceDataKey';
 import { ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema, ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema, ArtifactHttpReadV1Schema, ArtifactHttpLockedListItemV1Schema, type ArtifactLockedAvailabilityV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { completeArtifactAccessMutationPreparationV1, runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
+import type { ProjectSourceArtifactReadOptionsV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
 import type { ArtifactCallerAccessV1, ArtifactAccessGrantSetInputV1, ArtifactAccessGrantRemoveInputV1, ArtifactPublicLinkActionIdV1, ArtifactPublicLinkIssuedV1, ArtifactSavedByV1, ArtifactWorkspaceSourceV1, ArtifactRevisionProvenanceV1, ArtifactBodyV1, ArtifactBlobWriteV1, ArtifactListSelectionOptionsV1 } from '@happier-dev/protocol';
 import { ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactMutationHttpV1';
 import { ArtifactHeaderMetadataV1Schema, ArtifactPublicAudienceV1ReadSchema, type ArtifactPublicAudienceV1, ArtifactQuotaExceededV1Schema, ArtifactRevisionListResponseV1Schema, ArtifactStorageUsageV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
@@ -515,11 +516,12 @@ export function createAccountArtifactStore(params: Readonly<{
     ...(signal ? { signal } : {}), validateStatus: () => true });
   const authorizedAccessConfig = async (artifactId: string, leaf: string,
     method: 'GET' | 'POST' | 'PUT' | 'DELETE', signal?: AbortSignal,
-    authorizationHeaders?: ArtifactRequestAuthorizationHeaders, body?: unknown) => ({
-    headers: authorizationHeaders ? await authorizationHeaders({ method,
-      path: new URL(accessUrl(artifactId, leaf)).pathname, ...(body === undefined ? {} : { body }) }) : headers(),
-    ...(signal ? { signal } : {}), validateStatus: () => true,
-  });
+    authorizationHeaders?: ArtifactRequestAuthorizationHeaders, body?: unknown) => {
+    const url = new URL(accessUrl(artifactId, leaf));
+    return { headers: authorizationHeaders ? await authorizationHeaders({ method,
+      path: `${url.pathname}${url.search}`, ...(body === undefined ? {} : { body }) }) : headers(),
+      ...(signal ? { signal } : {}), validateStatus: () => true };
+  };
   const readAccessGrants = async (artifactId: string, signal?: AbortSignal, authorizationHeaders?: ArtifactRequestAuthorizationHeaders) =>
     ArtifactAccessGrantsListResponseV1Schema.parse(requireAccessResponse(await axios.get(accessUrl(artifactId, 'grants'),
       await authorizedAccessConfig(artifactId, 'grants', 'GET', signal, authorizationHeaders))));
@@ -544,17 +546,27 @@ export function createAccountArtifactStore(params: Readonly<{
     return response.data;
   };
   const prepare = async (stored: Pick<StoredArtifactHeader, 'id' | 'encryptionMode' | 'dataEncryptionKey' | 'provenanceDataEncryptionKey'>, codec: Codec, signal?: AbortSignal,
-    authorizationHeaders?: ArtifactRequestAuthorizationHeaders) => {
+    authorizationHeaders?: ArtifactRequestAuthorizationHeaders, publication?: ProjectSourceArtifactReadOptionsV1) => {
     if (codec.mode === 'plain') return;
     const provenanceCodec = stored.provenanceDataEncryptionKey
       ? await openCodec(contentCredentials, stored.provenanceDataEncryptionKey, stored.encryptionMode) : null;
+    const sourceQuery = new URLSearchParams();
+    if (publication?.projectSourceId) {
+      sourceQuery.set('projectSourceId', publication.projectSourceId);
+      if (publication.projectSourcePatch) sourceQuery.set('projectSourcePatch', JSON.stringify(publication.projectSourcePatch));
+    }
+    const recipientsLeaf = `recipients${sourceQuery.size ? `?${sourceQuery}` : ''}`;
     await runArtifactRecipientKeyPreparationV1({ artifactId: stored.id, dataKey: codec.dataKey,
       provenanceDataKey: provenanceCodec?.dataKey, openedProvenanceDataEncryptionKey: stored.provenanceDataEncryptionKey,
       openedDataEncryptionKey: stored.dataEncryptionKey, randomBytes: getRandomBytes, ...(signal ? { signal } : {}),
       readCensus: async () => ArtifactAccessRecipientCensusResponseV1Schema.parse(requireAccessResponse(
-        await axios.get(accessUrl(stored.id, 'recipients'), await authorizedAccessConfig(stored.id, 'recipients', 'GET', signal, authorizationHeaders)))),
-      commit: async (input) => ArtifactRecipientKeyEnvelopeCommitResponseV1Schema.parse(requireAccessResponse(
-        await axios.post(accessUrl(stored.id, 'key-envelopes'), input, await authorizedAccessConfig(stored.id, 'key-envelopes', 'POST', signal, authorizationHeaders, input)))),
+        await axios.get(accessUrl(stored.id, recipientsLeaf), await authorizedAccessConfig(stored.id, recipientsLeaf, 'GET', signal, authorizationHeaders)))),
+      commit: async (input) => {
+        const body = { ...input, ...(publication?.projectSourceId ? { projectSourceId: publication.projectSourceId,
+          ...(publication.projectSourcePatch ? { projectSourcePatch: publication.projectSourcePatch } : {}) } : {}) };
+        return ArtifactRecipientKeyEnvelopeCommitResponseV1Schema.parse(requireAccessResponse(
+          await axios.post(accessUrl(stored.id, 'key-envelopes'), body, await authorizedAccessConfig(stored.id, 'key-envelopes', 'POST', signal, authorizationHeaders, body))));
+      },
     });
   };
   const readAccountMode = async (options?: Readonly<{ authorizationHeaders?: ArtifactRequestAuthorizationHeaders;
@@ -684,6 +696,7 @@ export function createAccountArtifactStore(params: Readonly<{
   };
   const projectStoredArtifact = async (stored: StoredArtifact, options?: Readonly<{
     projectSourceId?: string;
+    projectSourcePatch?: ProjectSourceArtifactReadOptionsV1['projectSourcePatch'];
     signal?: AbortSignal;
     authorizationHeaders?: ArtifactRequestAuthorizationHeaders;
     /** Decision preparation observes content without repairing recipient key delivery. */
@@ -700,7 +713,7 @@ export function createAccountArtifactStore(params: Readonly<{
     if (!header || typeof header !== 'object' || Array.isArray(header)) throw new ArtifactEncryptionMaterialUnavailableError();
     requireBodyForArtifactKind(header as Readonly<Record<string, unknown>>, body);
     if (options?.prepareRecipients !== false) await timeWebLatencyPhase('artifact.read.recipients', () =>
-      prepare(stored, codec, options?.signal, options?.authorizationHeaders));
+      prepare(stored, codec, options?.signal, options?.authorizationHeaders, options));
     options?.signal?.throwIfAborted();
     const sharing = options?.includeSharedAudience === false ? undefined
       : await sharedWriteContext(stored, header as Readonly<Record<string, unknown>>, header as Readonly<Record<string, unknown>>, options?.signal,

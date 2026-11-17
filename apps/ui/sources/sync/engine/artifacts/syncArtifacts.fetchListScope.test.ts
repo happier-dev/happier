@@ -556,6 +556,8 @@ describe('fetchAndApplyArtifactsList', () => {
             body: await artifactEncryption.encryptBody({ body: `Profile body ${index}` }), publicAudience: 'none' as const })));
         const paths: string[] = [];
         let changed = false;
+        let sourcePublication = false;
+        const projectSourcePatch = { owner: { kind: 'team' as const, teamId: 'team' }, audience: [] };
         const signingSecret = new Uint8Array(32).fill(24);
         const signingPublic = ed25519.getPublicKey(signingSecret);
         const recipientSecret = new Uint8Array(32).fill(25);
@@ -582,6 +584,7 @@ describe('fetchAndApplyArtifactsList', () => {
             }
             if (target.pathname.endsWith('/key-envelopes')) {
                 const input = JSON.parse(String(init?.body)) as ArtifactRecipientKeyEnvelopeCommitInputV1;
+                if (sourcePublication) expect(input).toMatchObject({ projectSourceId: 'source', projectSourcePatch });
                 expect(input.expectedDataEncryptionKey).toBe(dataEncryptionKey);
                 expect(input.recipientKeyEnvelopes.map(item => item.recipientAccountId)).toEqual(['recipient']);
                 expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(input.recipientKeyEnvelopes[0]!.encryptedDataKey),
@@ -591,7 +594,13 @@ describe('fetchAndApplyArtifactsList', () => {
             }
             const artifact = rows.find(row => target.pathname === `/v1/artifacts/${row.id}`
                 || target.pathname === `/v1/artifacts/${row.id}/access/recipients`);
-            if (artifact) return json(target.pathname.endsWith('/recipients') ? census(artifact) : artifact);
+            if (artifact) {
+                if (sourcePublication) {
+                    expect(target.searchParams.get('projectSourceId')).toBe('source');
+                    if (target.pathname.endsWith('/recipients')) expect(JSON.parse(target.searchParams.get('projectSourcePatch')!)).toEqual(projectSourcePatch);
+                }
+                return json(target.pathname.endsWith('/recipients') ? census(artifact) : artifact);
+            }
             return json({ error: 'unexpected request' });
         });
         const { fetchArtifactsWithBodiesFromApi } = await import('./syncArtifacts');
@@ -610,6 +619,15 @@ describe('fetchAndApplyArtifactsList', () => {
             .resolves.toMatchObject({ body: 'Profile body 1' });
         expect(paths.filter(path => !path.endsWith('/key-envelopes'))).toEqual(['/v1/artifacts/read']);
         expect(prepared.map(input => input.artifactId)).toEqual([rows[0]!.id]);
+        paths.length = 0;
+        prepared.length = 0;
+        sourcePublication = true;
+        await expect(fetchArtifactWithBodyFromApi({ ...params, artifactId: rows[0]!.id,
+            projectSourceId: 'source', projectSourcePatch })).resolves.toMatchObject({ body: 'Profile body 1' });
+        expect(paths).toEqual([`/v1/artifacts/${rows[0]!.id}`, `/v1/artifacts/${rows[0]!.id}/access/recipients`,
+            `/v1/artifacts/${rows[0]!.id}/access/key-envelopes`]);
+        expect(prepared).toHaveLength(1);
+        sourcePublication = false;
         changed = true;
         prepared.length = 0;
         const refused = await fetchArtifactsWithBodiesFromApi({ ...params, artifactIds: rows.map(row => row.id) });

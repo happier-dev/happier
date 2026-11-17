@@ -11,12 +11,12 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
-import { admitProjectSourceAttachmentV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
+import { prepareProjectSourceUpdateV1, type ProjectSourceArtifactReadOptionsV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
 import { withUiPromptLibraryArtifactReader } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 type SourceAccountPort = Pick<LazyActionAccountContext, 'serverId' | 'accountId' | 'credentialAuthorityKind' | 'request' | 'assertCurrent'> & Readonly<{
-    workflowArtifacts: Pick<LazyActionAccountContext['workflowArtifacts'], 'read'>;
+    workflowArtifacts: Readonly<{ read(artifactId: string, options?: ProjectSourceArtifactReadOptionsV1): ReturnType<LazyActionAccountContext['workflowArtifacts']['read']> }>;
 }>;
 type Schema<T> = Readonly<{ parse(value: unknown): T }>;
 
@@ -96,10 +96,12 @@ export function createProjectSourceActionDeps(account: SourceAccountPort) {
         projectSourcesUpdate: async (raw: Parameters<typeof ProjectSourcesUpdateInputV1Schema.parse>[0], context?: ActionExecutorContext) => {
             const input = ProjectSourcesUpdateInputV1Schema.parse(raw);
             return inSourceHome(input.serverId, async () => {
-                if (input.patch.attachment?.kind === 'attach') {
+                if (input.patch.attachment?.kind === 'attach' || input.patch.owner !== undefined || input.patch.audience !== undefined) {
                     account.assertCurrent();
-                    const admission = await admitProjectSourceAttachmentV1({
-                        attachment: input.patch.attachment.attachment, sourceServerId: input.serverId, signal: context?.signal,
+                    const admission = await prepareProjectSourceUpdateV1({
+                        input, signal: context?.signal,
+                        readSource: () => request(`/v1/projects/sources/${encodeURIComponent(input.sourceId)}?serverId=${encodeURIComponent(input.serverId)}`,
+                            'GET', undefined, ProjectSourcesReadOutputV1Schema, context),
                         readArtifact: async (ref, options) => {
                             if (areServerProfileIdentifiersEquivalent(ref.serverId, account.serverId)) return account.workflowArtifacts.read(ref.artifactId, options);
                             // Delegation on this Home cannot borrow the user's foreign

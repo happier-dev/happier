@@ -26,6 +26,7 @@ import { createScopedBatchResolutionSingleFlight, createScopedResolutionSingleFl
 import type { CapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
+import type { ProjectSourcePublicationPatchV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { invalidateHomeAccountReadJoins, readHomeAccountReadRevision } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createBinaryUploadBody } from '@/sync/runtime/files/binaryUploadBody';
 import { publishRecipientKeyEnvelopes } from '@/sync/api/recipientKeyEnvelopePublication';
@@ -128,6 +129,9 @@ function readArtifactListItem(value: unknown): ArtifactListItem {
 
 export type ArtifactApiOptions = Readonly<{
     audience?: 'received';
+    /** Exact Source parent whose selected setup attachment admits this read. */
+    projectSourceId?: string;
+    projectSourcePatch?: ProjectSourcePublicationPatchV1;
     serverId?: string;
     coarseKind?: ArtifactCoarseKindV1;
     kinds?: readonly string[];
@@ -396,7 +400,7 @@ export async function postArtifactKindWriteBatch(credentials: AuthCredentials, i
 }
 
 /** The existing Artifact HTTP owner carries grants and fenced recipient keys. */
-export function createArtifactAccessApi(credentials: AuthCredentials, opts: Pick<ArtifactApiOptions, 'request' | 'serverId' | 'readTransport'> = {}) {
+export function createArtifactAccessApi(credentials: AuthCredentials, opts: Pick<ArtifactApiOptions, 'request' | 'serverId' | 'readTransport' | 'projectSourceId' | 'projectSourcePatch'> = {}) {
     const send = async <T>(artifactId: string, leaf: string, schema: { parse: (value: unknown) => T },
         method?: string, input?: unknown, signal?: AbortSignal,
         requestedAudience?: ArtifactAccessGrantsListInputV1['requestedAudience']): Promise<T> => {
@@ -405,9 +409,13 @@ export function createArtifactAccessApi(credentials: AuthCredentials, opts: Pick
         const mutationOptions = { ...opts, serverId: opts.serverId ?? active?.serverId };
         const request = opts.request ?? createServerFetchForActiveServer(active);
         const run = async () => {
-            const query = new URLSearchParams();
-            if (requestedAudience !== undefined) query.set('requestedAudience', JSON.stringify(requestedAudience));
-            const issue = () => request(`/v1/artifacts/${encodeURIComponent(artifactId)}/access/${leaf}${query.size ? `?${query}` : ''}`, {
+            const sourceQuery = new URLSearchParams();
+            if (requestedAudience !== undefined) sourceQuery.set('requestedAudience', JSON.stringify(requestedAudience));
+            if (leaf === 'recipients' && opts.projectSourceId) {
+                sourceQuery.set('projectSourceId', opts.projectSourceId);
+                if (opts.projectSourcePatch) sourceQuery.set('projectSourcePatch', JSON.stringify(opts.projectSourcePatch));
+            }
+            const issue = () => request(`/v1/artifacts/${encodeURIComponent(artifactId)}/access/${leaf}${sourceQuery.size ? `?${sourceQuery}` : ''}`, {
                 ...(method ? { method } : {}),
                 headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
                 ...(input === undefined ? {} : { body: JSON.stringify(input) }),
@@ -441,7 +449,9 @@ export function createArtifactAccessApi(credentials: AuthCredentials, opts: Pick
         readRecipients: (artifactId: string, signal?: AbortSignal) =>
             send(artifactId, 'recipients', ArtifactAccessRecipientCensusResponseV1Schema, undefined, undefined, signal),
         commitKeyEnvelopes: (input: ArtifactRecipientKeyEnvelopeCommitInputV1, signal?: AbortSignal) =>
-            send(input.artifactId, 'key-envelopes', ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, 'POST', input, signal),
+            send(input.artifactId, 'key-envelopes', ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, 'POST', { ...input,
+                ...(opts.projectSourceId ? { projectSourceId: opts.projectSourceId,
+                    ...(opts.projectSourcePatch ? { projectSourcePatch: opts.projectSourcePatch } : {}) } : {}) }, signal),
     };
 }
 
@@ -534,11 +544,11 @@ export async function fetchArtifact(
     throwIfAborted(opts.signal);
     const binding = captureArtifactReadBinding(opts);
     const key = JSON.stringify(['artifact-opaque-detail', binding.key,
-        resolveAuthCredentialsScopeKey(credentials), artifactId, opts.retry ?? 'default']);
+        resolveAuthCredentialsScopeKey(credentials), artifactId, opts.projectSourceId ?? null, opts.retry ?? 'default']);
     const result = await artifactOpaqueReads.run(key, async sharedSignal => {
         const run = () => {
             throwIfAborted(sharedSignal);
-            return binding.read(`/v1/artifacts/${artifactId}`, {
+            return binding.read(`/v1/artifacts/${artifactId}${opts.projectSourceId ? `?projectSourceId=${encodeURIComponent(opts.projectSourceId)}` : ''}`, {
                 signal: sharedSignal,
                 headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
             }, async response => {

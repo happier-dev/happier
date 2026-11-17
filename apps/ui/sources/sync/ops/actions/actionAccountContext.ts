@@ -5,6 +5,7 @@ import { TokenStorage, areCredentialsEqual, type AuthCredentials } from '@/auth/
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
 import type { ArtifactIdScopeV1 } from '@happier-dev/protocol';
+import type { ProjectSourceArtifactReadOptionsV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
 import { readCredentialAuthorityKind } from '@/auth/context/credentialAuthority';
 import { admitHomeCredential, readHomeAccountDepartures, retainsHomeAccountCredential, subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { ArtifactAccessRecipientCensusResponseV1Schema, type ArtifactAccessGrantMutationResponseV1, type ArtifactAccessGrantsListResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
@@ -65,7 +66,8 @@ function readableRawArtifactHeader(artifact: DecryptedArtifact | null): Readonly
 const artifactAccessProjectionSchema = pick(ArtifactAccessRecipientCensusResponseV1Schema, { ownerAccountId: true, access: true });
 type ArtifactCreateOperation = Readonly<{ artifactId?: string; idScope?: ArtifactIdScopeV1; header: Readonly<Record<string, unknown>>; body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1 | null; source?: ArtifactWorkspaceSourceV1; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal }>;
 type ArtifactUpdateOperation = Omit<Parameters<WorkflowDefinitionArtifactOperations['update']>[0], 'body' | 'savedBy'> & Readonly<{ body: ArtifactBodyInput; savedBy?: ArtifactSavedByV1 | null }>;
-type ArtifactContentReadOptions = NonNullable<Parameters<WorkflowDefinitionArtifactOperations['read']>[1]> & Readonly<{ includeGrants?: boolean; includeAssociatedContentOpener?: boolean }>;
+type ArtifactContentReadOptions = NonNullable<Parameters<WorkflowDefinitionArtifactOperations['read']>[1]> & ProjectSourceArtifactReadOptionsV1
+    & Readonly<{ includeGrants?: boolean; includeAssociatedContentOpener?: boolean }>;
 type ArtifactContentRead = NonNullable<Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>>> & Readonly<{
     /** Local capability bound to this admitted resource's exact mode/key; never serialized. */
     openAssociatedContent?: (content: Readonly<{ t: 'plain'; v: unknown } | { t: 'encrypted'; c: string }>) => Promise<unknown>;
@@ -74,7 +76,7 @@ type ArtifactContentRead = NonNullable<Awaited<ReturnType<WorkflowDefinitionArti
     grants?: ArtifactAccessGrantsListResponseV1['grants'] | null;
 }>;
 type ArtifactHtmlBundleRead = Readonly<{ bundle: ArtifactHtmlBundleV1; revision: Readonly<{ headerVersion: number; bodyVersion: number }> }>;
-type ArtifactReadOptions = Readonly<{ signal?: AbortSignal; prepareRecipientKeys?: boolean; fresh?: boolean; ownerOnly?: boolean }>;
+type ArtifactReadOptions = ProjectSourceArtifactReadOptionsV1 & Readonly<{ prepareRecipientKeys?: boolean; fresh?: boolean; ownerOnly?: boolean }>;
 type ActionEffectClass = ReturnType<typeof getActionSpec>['sideEffectClass'];
 
 function requireArtifactAccessProjection(artifact: DecryptedArtifact) {
@@ -444,6 +446,8 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
         const readArtifact = async (artifactId: string, options?: ArtifactReadOptions) => {
             return withArtifactReadSignal(options?.signal, async borrowerSignal =>
                 fetchArtifactWithBodyFromApi({ ...await artifactParams(), artifactId, signal: borrowerSignal,
+                    projectSourceId: options?.projectSourceId,
+                    projectSourcePatch: options?.projectSourcePatch,
                     prepareRecipientKeys: options?.prepareRecipientKeys, fresh: options?.fresh, ownerOnly: options?.ownerOnly }));
         };
         const fetchArtifact = async (artifactId: string, options?: ArtifactReadOptions) => {
