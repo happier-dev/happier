@@ -1,3 +1,4 @@
+import { createReviewRecordPortV1, type ReviewArtifactTransportV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { runWithScmAccountScope } from '@/scm/accountScope';
 import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -114,6 +115,51 @@ afterEach(async () => {
 });
 
 describe('canonical review Run comments', () => {
+  it('settles a retained clean Review before publication while its native conversation stays running', async () => {
+    let row: Awaited<ReturnType<ReviewArtifactTransportV1['read']>> = null;
+    let writes = 0;
+    const records = createReviewRecordPortV1({ read: async () => row,
+      create: async input => { writes++; row = { ...input, revision: { headerVersion: 1, bodyVersion: 1 } }; return row; },
+      update: async input => { writes++; row = { ...input, revision: { headerVersion: 2, bodyVersion: 2 } }; return { ok: true, revision: row.revision }; },
+    });
+    const reviewRound = await records.start({ reviewId: 'retained-review', title: 'Review', subjectKind: 'repository',
+      sourceKind: 'direct', reviewerIds: ['claude'], startedAt: 1 });
+    const initial = { ...run(), runClass: 'long_lived' as const, retentionPolicy: 'resumable' as const,
+      intentInput: { reviewRound, reviewRoundSettlement: 'execution' } };
+    const runs = new Map([[initial.runId, initial]]);
+    // Provider identity and output are the native runtime boundary.
+    const controller = { kind: 'backend', cancelled: false } as ExecutionRunBackendController;
+    const comments = createReviewRunCommentService({ cwd: root, scope: { workspace }, execute: transport(), reviewRecords: records });
+    await publishExecutionRunTurn({ runId: initial.runId, turnId: 'review-turn', controller,
+      controllers: new Map([[initial.runId, controller]]), runs, rawText: JSON.stringify({ reviewOutcome: 'complete', summary: 'Clean', overviewMarkdown: 'Clean', findings: [], questions: [], assumptions: [] }),
+      finishedAtMs: 2, parentProvider: 'claude', reviewComments: comments, sendAcp: async () => {
+        expect((await records.read(reviewRound.reviewId))?.rounds[0]?.state).toBe('completed');
+      } });
+    expect(runs.get(initial.runId)?.status).toBe('running');
+    expect(writes).toBe(2);
+  });
+  it.each(['succeeded', 'failed', 'cancelled'] as const)('settles a durable zero-finding Review on the real %s terminal path', async status => {
+    let row: Awaited<ReturnType<ReviewArtifactTransportV1['read']>> = null;
+    const records = createReviewRecordPortV1({ read: async () => row,
+      create: async input => { row = { ...input, revision: { headerVersion: 1, bodyVersion: 1 } }; return row; },
+      update: async input => { row = { ...input, revision: { headerVersion: 2, bodyVersion: 2 } }; return { ok: true, revision: row.revision }; },
+    });
+    const reviewRound = await records.start({ reviewId: 'review-record', title: 'Review', subjectKind: 'comparison',
+      sourceKind: 'direct', reviewerIds: ['claude'], startedAt: 1 });
+    const initial = { ...run(), intentInput: { reviewRound, reviewRoundSettlement: 'execution' } };
+    const runs = new Map([[initial.runId, initial]]);
+    const comments = createReviewRunCommentService({ cwd: root, scope: { workspace }, execute: transport(), reviewRecords: records });
+    await finishExecutionRun({ runId: initial.runId, next: { status, finishedAtMs: 2 }, toolResult: { output: { findings: [] } },
+      ...(status === 'succeeded' ? { structuredMeta: { kind: 'review_findings.v2', payload: {
+        runRef: { runId: initial.runId, callId: initial.callId, backendId: initial.backendId }, summary: 'Clean',
+        overviewMarkdown: 'Clean', findings: [], questions: [], assumptions: [], generatedAtMs: 2 } } } : {}),
+      runs, controllers: new Map(), budgetRegistry: null, parentProvider: 'claude', sendAcp: async () => {},
+      enqueueMarkerWrite: async (_runId, write) => { await write(); }, terminalMarkerWritePromises: terminalWrites, reviewComments: comments });
+    expect((await records.read(reviewRound.reviewId))?.rounds[0]).toMatchObject({
+      state: status === 'succeeded' ? 'completed' : status,
+      runs: [{ kind: 'execution', runId: initial.runId, machineId: workspace.machineId, sessionId: initial.sessionId }],
+    });
+  });
   it.each(['moved', 'changed', 'deleted'] as const)('publishes a finding against its captured comparison after the file is %s', async (change) => {
     return runWithScmAccountScope('account', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-historical-' });

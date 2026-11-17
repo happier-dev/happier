@@ -81,6 +81,7 @@ export type ExecutionRunRpcApprovalDeps = Pick<
   | 'approvalsWaitForDecision'
   | 'isApprovalExecutionOriginCurrent'
   | 'reviewCommentAction'
+  | 'reviewRecords'
   | 'executionRunHostActionApprovalReplay'
 > & Readonly<{
   resolveReviewHostPluginAuthority?: ReviewHostPluginAuthorityReader;

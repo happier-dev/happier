@@ -1,3 +1,4 @@
+import { ReviewRoundBindingV1Schema, type ReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { createHash, randomUUID } from 'node:crypto';
 
 import { buildReviewTriageTransitionRequestV1 } from '@happier-dev/protocol/reviews/comments/triageTransition';
@@ -63,10 +64,28 @@ export function createReviewRunCommentService(deps: Readonly<{
   cwd: string;
   scope: ReviewCommentScopeV1;
   execute: ReviewCommentActionExecutor;
+  reviewRecords?: Pick<ReviewRecordPortV1, 'settle'>;
   /** Host-bound live Session Agent; absence never falls back to Account user authority. */
   resolveTriageActor?: () => Extract<ReviewCommentPrincipalHeaderV1['actor'], { kind: 'agent' }> | null;
 }>) {
   return {
+    async settleRound(run: ExecutionRunState): Promise<void> {
+      const input = record(run.intentInput);
+      if (run.intent !== 'review' || input?.reviewRoundSettlement !== 'execution') return;
+      const binding = ReviewRoundBindingV1Schema.safeParse(input.reviewRound);
+      if (!binding.success) return;
+      if (!deps.reviewRecords || !deps.scope.workspace) {
+        throw Object.assign(new Error('Review record transport is unavailable'), { code: 'review_record_unavailable' });
+      }
+      const outcome = record(run.structuredMeta?.payload)?.reviewOutcome ?? record(run.latestToolResult)?.reviewOutcome;
+      await deps.reviewRecords.settle({ ...binding.data,
+        outcome: run.status === 'cancelled' ? 'cancelled' : outcome === 'partial' ? 'partial'
+          : run.status === 'failed' || outcome === 'failed' ? 'failed' : 'completed',
+        finishedAt: run.finishedAtMs ?? Date.now(), summary: run.summary,
+        runs: [{ kind: 'execution', runId: run.runId, machineId: deps.scope.workspace.machineId,
+          ...(run.sessionId ? { sessionId: run.sessionId } : {}) }],
+      });
+    },
     async materialize(params: Readonly<{
       run: ExecutionRunState;
       findings: readonly ReviewFinding[];

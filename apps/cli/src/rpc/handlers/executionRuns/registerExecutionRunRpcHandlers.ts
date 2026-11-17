@@ -212,6 +212,7 @@ export function registerExecutionRunRpcHandlers(
     ? createReviewRunCommentService({
         cwd: ctx.cwd, scope: { workspace: { machineId: ctx.machineId, path: ctx.cwd } },
         resolveTriageActor: ctx.resolveReviewCommentActor,
+        ...(ctx.actionApprovalDeps?.reviewRecords ? { reviewRecords: ctx.actionApprovalDeps.reviewRecords({}) } : {}),
         execute: async (actionId, input, options) => await reviewCommentAction({
           actionId, input, ...(options?.principal ? { reviewCommentPrincipal: options.principal } : {}),
           ...(options?.signal ? { signal: options.signal } : {}), ...(ctx.serverId ? { serverId: ctx.serverId } : {}),

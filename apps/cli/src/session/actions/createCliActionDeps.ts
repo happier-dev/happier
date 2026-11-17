@@ -1,3 +1,4 @@
+import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { createCliActionAutomationPortV1 } from '@/api/actionAutomations';
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/actions/approvalProfiles';
@@ -1544,6 +1545,17 @@ export function createCliActionDeps(params: CliActionDepsParams,
     roleActionExecute: rolesDeps.roleActionExecute,
     scmActionExecute: executeSessionBoundScmAction,
     ...executionRunActionDeps,
+    ...(roleArtifactStore ? { reviewRecords: (context: ActionExecutorContext) => {
+      const authorizationHeaders = (request: Readonly<{ method: string; path: string; body?: unknown }>) =>
+        resolveAccountStorageHeaders(context, 'review.start', request);
+      const invoke = <T>(operation: () => Promise<T>) => params.serverHttpBaseUrl
+        ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, operation) : operation();
+      return createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport({
+        read: (artifactId, options) => invoke(() => roleArtifactStore.read(artifactId, { ...options, authorizationHeaders })),
+        create: input => invoke(() => roleArtifactStore.create({ ...input, authorizationHeaders })),
+        update: input => invoke(() => roleArtifactStore.update({ ...input, authorizationHeaders })),
+      }));
+    } } : {}),
     ...(reviewCommentAction
       ? {
         reviewCommentAction: async ({ actionId, input, reviewCommentPrincipal, signal }) =>

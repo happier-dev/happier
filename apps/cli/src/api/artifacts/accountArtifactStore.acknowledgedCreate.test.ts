@@ -12,6 +12,22 @@ vi.mock('axios', async importOriginal => {
 describe('acknowledged Account Artifact creation', () => {
   beforeEach(() => { mockGet.mockReset(); mockPost.mockReset(); });
 
+  it('sends the explicit non-content Review start beside sealed Artifact content', async () => {
+    const store = createAccountArtifactStore({ accountContent: { accountId: 'owner', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    mockPost.mockImplementation(async (_url: string, wire: unknown) => ({ status: 200, data: {
+      ...readCarrierMutation(wire), id: '11111111-1111-4111-8111-111111111111', ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+      publicAudience: 'none', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+    } }));
+    const reviewMetadata = { projectSourceId: null, workflowId: null, subjectKind: 'comparison' as const,
+      sourceKind: 'direct' as const, state: 'running' as const, currentRoundOrdinal: 1, startedAt: 1, finishedAt: null };
+    await store.create({ artifactId: '11111111-1111-4111-8111-111111111111',
+      header: { kind: 'review.v1', v: 1, reviewId: '11111111-1111-4111-8111-111111111111', title: 'Private title' },
+      body: JSON.stringify({ v: 1, rounds: [] }), reviewMetadata,
+      authorizationHeaders: async () => ({ Authorization: 'Bearer test' }) });
+    expect(readCarrierMutation(mockPost.mock.calls[0]![1])).toMatchObject({ reviewMetadata });
+  });
+
   it('returns acknowledged created content without reading its own write', async () => {
     const store = createAccountArtifactStore({ accountContent: { accountId: 'owner', encryption: null },
       getAccountEncryptionMode: async () => 'plain' });

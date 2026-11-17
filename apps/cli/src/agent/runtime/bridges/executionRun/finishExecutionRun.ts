@@ -177,7 +177,9 @@ export async function finishExecutionRun(args: Readonly<{
     ...(existing.retentionPolicy === 'resumable' ? { resumeHandle } : {}),
   };
 
-  // Required comment materialization has completed before any terminal observation.
+  try { await args.reviewComments?.settleRound(updated); }
+  catch (error) { terminalizationError ??= error; }
+  // Required comment and Review record writes precede terminal observation.
   args.runs.set(args.runId, updated);
   args.budgetRegistry?.releaseExecutionRun(args.runId);
 

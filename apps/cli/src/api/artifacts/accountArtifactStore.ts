@@ -1,3 +1,4 @@
+import type { ReviewArtifactTransportV1, ReviewMetadataWriteV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import axios from '@/api/client/credentialAxios';
 import { readSettledApprovalInputCustodyV1 } from '@happier-dev/protocol/approvals/approvalInputCustody';
 import type { ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
@@ -914,7 +915,7 @@ export function createAccountArtifactStore(params: Readonly<{
     }
     return items;
   };
-  type UpdateInput = Readonly<{ artifactId: string; expectedRevision: AccountArtifactRevision; header: Readonly<Record<string, unknown>>; savedBy?: ArtifactSavedByV1 | null; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal; beforeWrite?: () => void | Promise<void>; mutationAuthorizationHeaders?: ArtifactRequestAuthorizationHeaders; authorizationHeaders?: ArtifactRequestAuthorizationHeaders; prepareRecipients?: boolean }> & ArtifactWriteContent;
+  type UpdateInput = Readonly<{ artifactId: string; expectedRevision: AccountArtifactRevision; header: Readonly<Record<string, unknown>>; reviewMetadata?: ReviewMetadataWriteV1; savedBy?: ArtifactSavedByV1 | null; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal; beforeWrite?: () => void | Promise<void>; mutationAuthorizationHeaders?: ArtifactRequestAuthorizationHeaders; authorizationHeaders?: ArtifactRequestAuthorizationHeaders; prepareRecipients?: boolean }> & ArtifactWriteContent;
   const prepareUpdateContent = async (input: UpdateInput, storedBasis?: StoredArtifact, openedCodec?: Codec) => {
     input.signal?.throwIfAborted();
     if (input.memoryDecisionSource && typeof input.body !== 'string')
@@ -945,6 +946,7 @@ export function createAccountArtifactStore(params: Readonly<{
     const approvalInputCustody = approval?.family === 'target_action' ? readSettledApprovalInputCustodyV1(approval.request) : undefined;
     const transcriptVisualPublication = readApprovalTranscriptVisualPublicationV1({ artifactId: input.artifactId, approval });
     const wire = { updateOperationId: randomUUID(), header, expectedHeaderVersion: input.expectedRevision.headerVersion,
+      ...(input.reviewMetadata ? { reviewMetadata: input.reviewMetadata } : {}),
       ...(approvalInputCustody ? { approvalInputCustody } : {}),
       ...(transcriptVisualPublication ? { transcriptVisualPublication } : {}),
       body, expectedBodyVersion: input.expectedRevision.bodyVersion,
@@ -1333,7 +1335,7 @@ export function createAccountArtifactStore(params: Readonly<{
         ...(kindCoverage ? { kindCoverage } : {}),
         ...(hasUnclassified === undefined ? {} : { hasUnclassified }) };
     },
-    create: async (input: Readonly<{ includeAcknowledgedContent?: boolean; artifactId?: string; idScope?: ArtifactIdScopeV1; noticeAccountId?: string; header: Readonly<Record<string, unknown>>; savedBy?: ArtifactSavedByV1 | null; source?: ArtifactWorkspaceSourceV1; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal; beforeWrite?: () => void | Promise<void>; authorizationHeaders?: ArtifactRequestAuthorizationHeaders; prepareRecipients?: boolean }> & ArtifactWriteContent) => {
+    create: async (input: Readonly<{ includeAcknowledgedContent?: boolean; artifactId?: string; idScope?: ArtifactIdScopeV1; noticeAccountId?: string; header: Readonly<Record<string, unknown>>; reviewMetadata?: ReviewMetadataWriteV1; savedBy?: ArtifactSavedByV1 | null; source?: ArtifactWorkspaceSourceV1; memoryDecisionSource?: CoordinationMessageRefV1; signal?: AbortSignal; beforeWrite?: () => void | Promise<void>; authorizationHeaders?: ArtifactRequestAuthorizationHeaders; prepareRecipients?: boolean }> & ArtifactWriteContent) => {
       input.signal?.throwIfAborted();
       if (input.memoryDecisionSource && typeof input.body !== 'string')
         throw Object.assign(new Error('memory_decision_source_unsupported'), { code: 'memory_decision_source_unsupported' });
@@ -1377,6 +1379,7 @@ export function createAccountArtifactStore(params: Readonly<{
           ...(kind === undefined ? {} : { artifactKind: kind }),
         }, content.blob.content)) : {
         id: artifactId, header, body, dataEncryptionKey: codec.dataEncryptionKey, ...provenance,
+        ...(input.reviewMetadata ? { reviewMetadata: input.reviewMetadata } : {}),
         ...(input.idScope === undefined ? {} : { idScope: input.idScope }),
         ...(kind === undefined ? {} : { kind, ...(isApprovalArtifactKindV1(nextHeader.kind)
           ? deriveApprovalArtifactQueryHintsV1(nextHeader) : {}) }),
@@ -1707,7 +1710,7 @@ export function createCredentialedAccountArtifactStore(credentials: StoredCreden
 /** Content owners consume the acknowledged resource, including a same-id incumbent. */
 export function createAcknowledgedAccountArtifactTransport(
   transport: Pick<ReturnType<typeof createAccountArtifactStore>, 'read' | 'create' | 'update'> & Partial<Pick<ReturnType<typeof createAccountArtifactStore>, 'list' | 'delete'>>,
-): HomeHubArtifactTransportV1 & Partial<Pick<ReturnType<typeof createAccountArtifactStore>, 'list' | 'delete'>> {
+): HomeHubArtifactTransportV1 & ReviewArtifactTransportV1 & Partial<Pick<ReturnType<typeof createAccountArtifactStore>, 'list' | 'delete'>> {
   return {
     read: transport.read,
     update: transport.update,

@@ -8,6 +8,8 @@ import type { ReviewCommentPrincipalHeaderV1 } from '@happier-dev/protocol';
 import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
 import { createExecutionRunHostActionCurrentIntentAdapter } from '@/session/actions/approvals/executionRunHostActionCurrentIntent';
 import { requestReviewCommentDirectWriteGrant } from '@/agent/executionRuns/profiles/review/directWriteGrantRequester';
+import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 
 import type { ExecutionRunRpcApprovalDeps } from './dispatchExecutionRunRpcAction';
 import { observeAccountChanges } from '@/api/observeAccountChanges';
@@ -48,8 +50,19 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
     if (!credentials) throw new Error('approval_credentials_unavailable');
     return createCliApprovalsArtifactStore({ credentials });
   };
+  const reviewRecords = createReviewRecordPortV1({
+    read: async (...args) => (await resolveReviewTransport()).read(...args),
+    create: async input => (await resolveReviewTransport()).create(input),
+    update: async input => (await resolveReviewTransport()).update(input),
+  });
+  async function resolveReviewTransport() {
+    const credentials = await params.readCredentials();
+    if (!credentials) throw Object.assign(new Error('review_record_credentials_unavailable'), { code: 'review_record_credentials_unavailable' });
+    return createAcknowledgedAccountArtifactTransport(createCredentialedAccountArtifactStore(credentials));
+  }
 
   return {
+    reviewRecords: () => reviewRecords,
     executionRunHostActionApprovalReplay: createExecutionRunHostActionApprovalDecision({
       read: async artifactId => (await resolveStore()).executionRunHostActionApprovalsGet({ artifactId }),
       update: async args => (await resolveStore()).executionRunHostActionApprovalsUpdate(args),

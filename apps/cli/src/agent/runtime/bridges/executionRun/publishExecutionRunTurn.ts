@@ -68,6 +68,11 @@ export async function publishExecutionRunTurn(args: Readonly<{
   if (!current()) return false;
   completion = { ...completion, toolResultOutput: projected.toolResult.output,
     toolResultMeta: projected.toolResult.meta, structuredMeta: projected.structuredMeta };
+  if (!args.started && (completion.status === 'succeeded' || completion.status === 'failed')) {
+    await args.reviewComments?.settleRound({ ...run, status: completion.status, finishedAtMs: args.finishedAtMs,
+      summary: completion.summary, latestToolResult: completion.toolResultOutput,
+      ...(completion.structuredMeta ? { structuredMeta: completion.structuredMeta } : {}) });
+  }
   if (completion.nextInput && projected.structuredMeta?.kind === 'review_findings.v2') {
     const payload = ReviewFindingsV2Schema.safeParse(projected.structuredMeta.payload);
     const narration = readReviewNarration(completion.nextInput.intentInput);
