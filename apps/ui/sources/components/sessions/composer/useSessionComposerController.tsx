@@ -150,6 +150,7 @@ import { readExecutionRunRequestedAction } from "@/sync/domains/input/participan
 import { captureSessionDraftCurrentness, getOrCreateSessionMessagingDraftMutationAttempt, clearSessionMessagingDraftMutationAttempt, flushSessionDraftLocally, clearSessionDraftCurrentnessLocal, flushSessionDraft, getSessionDraftSnapshot, readSessionDiscussionSelectionSourceFromDraft, readSessionNextPromptPermissionModeFromDraft, subscribeSessionDraft, writeExistingSessionDraft, type SessionDraftCurrentness } from "@/sync/ops/sessionDrafts/sessionDraftRepository";
 import { applyPermissionModeSelection } from "@/sync/domains/permissions/permissionModeApply";
 import { t, tLoose } from "@/text";
+import { translateUsageLimitRecoveryPresentationKey } from "@/components/sessions/usageLimitRecovery/translateUsageLimitRecoveryPresentationKey";
 import { isSessionMachineAccessRemoved } from "@/components/sessions/access/sessionMachineAccessRemoved";
 import { trackMessageSent } from "@/track";
 import { randomUUID } from "@/platform/randomUUID";
@@ -324,7 +325,7 @@ import { buildStructuredInputMetaOverrides, mergeMessageMetaOverrides } from "@/
 import { type SessionAuthSurfaceState } from "@/components/sessions/shell/sessionAuthSurfaceState";
 import { selectSessionViewShellSessionForRouteState } from "@/components/sessions/shell/sessionViewStableSession";
 import { useSessionRuntimeStatusSource } from "@/components/sessions/shell/useSessionRuntimeStatusSource";
-import { SESSION_USAGE_LIMIT_RECOVERY_BADGE_KEY, buildSessionUsageLimitRecoveryPresentation, resolveSessionUsageLimitRecoveryOperationStatus, isSessionUsageLimitRecoveryCheckNowAction, isSessionUsageLimitRecoveryCheckingOperationAction, readSessionUsageLimitRecoveryFromMetadata, type SessionUsageLimitRecoveryActionKind, type SessionUsageLimitRecoveryTranslate, type SessionUsageLimitRecoveryTranslationParams, type SessionUsageLimitRecoveryState, type UsageLimitRecoveryOperationStatus, type UsageLimitRecoverySettings } from "@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryPresentation";
+import { SESSION_USAGE_LIMIT_RECOVERY_BADGE_KEY, buildSessionUsageLimitRecoveryPresentation, resolveSessionUsageLimitRecoveryOperationStatus, isSessionUsageLimitRecoveryCheckNowAction, isSessionUsageLimitRecoveryCheckingOperationAction, readSessionUsageLimitRecoveryFromMetadata, type SessionUsageLimitRecoveryActionKind, type SessionUsageLimitRecoveryState, type UsageLimitRecoveryOperationStatus, type UsageLimitRecoverySettings } from "@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryPresentation";
 import { SessionUsageLimitRecoveryCard } from "@/components/sessions/usageLimitRecovery/SessionUsageLimitRecoveryBanner";
 import { resolveSessionStartFailureNotice } from "@/components/sessions/startFailure/sessionStartFailureNotice";
 import { buildSessionNearLimitPresentation, dismissSessionNearLimit, readDismissedSessionNearLimitKeys } from "@/components/sessions/usageLimitRecovery/sessionNearLimitPresentation";
@@ -439,20 +440,6 @@ function readUsageLimitRecoveryResetAtMs(params: Readonly<{
 }
 
 const EMPTY_AGENT_INPUT_STATUS_BADGES: readonly AgentInputStatusBadge[] = Object.freeze([]);
-
-const translateUsageLimitRecoveryPresentationKey: SessionUsageLimitRecoveryTranslate = (key, ...params) => {
-    if (key === 'session.usageLimitRecovery.banner.resetCreditSummary') {
-        const [resetCreditSummaryParams] = params as [
-            SessionUsageLimitRecoveryTranslationParams['session.usageLimitRecovery.banner.resetCreditSummary'],
-        ];
-        return t('session.usageLimitRecovery.banner.resetCreditSummary', resetCreditSummaryParams);
-    }
-    if (key === 'session.usageLimitRecovery.banner.retryAt') {
-        const [retryAtParams] = params as [SessionUsageLimitRecoveryTranslationParams['session.usageLimitRecovery.banner.retryAt']];
-        return t('session.usageLimitRecovery.banner.retryAt', retryAtParams);
-    }
-    return tLoose(key);
-};
 
 function isUsageLimitRecoverySwitchAction(kind: SessionUsageLimitRecoveryActionKind): boolean {
     return kind === 'switch_fallback_now'
