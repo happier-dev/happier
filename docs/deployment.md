@@ -2712,9 +2712,12 @@ a credential for the deployer's Account on that host, under the same
 trusted-custodian model as the deployment secrets that host already receives.
 Newly issued App credentials bind to the enrolled Machine and are revoked by
 the existing Machine owner on App teardown or Environment deletion. That binding
-survives redeploy and pairing-request retention. Pre-fix credentials whose pairing
-request has already been deleted cannot be individually identified for backfill;
-their withdrawal remains pending an owner decision.
+survives redeploy and pairing-request retention. Live sockets subscribe to the
+same terminal credential's withdrawal; an App first completes ordinary HTTP
+Machine registration before it can open a live stream. Unbound pre-D39 App
+credentials have the same signed shape as ordinary terminal credentials and retain
+ordinary terminal behavior. Re-enrollment issues a bound credential that follows
+the Machine lifecycle; it does not individually identify the old unbound bearer.
 
 Only this App placement declares `HAPPIER_DEPLOYED_TELEMETRY_PORT`. The same
 receiver uses that fixed container-interface port; all other placements retain

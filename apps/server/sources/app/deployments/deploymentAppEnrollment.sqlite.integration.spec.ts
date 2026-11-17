@@ -19,6 +19,9 @@ import { currentAccountStoredContentCompatibilityHeaders } from '@/app/api/testk
 import { registerTerminalAuthRequestRoutes } from '@/app/api/routes/auth/registerTerminalAuthRequestRoutes';
 import { resolveTerminalAuthRequestPolicyFromEnv } from '@/app/api/routes/auth/terminalAuthRequestPolicy';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
+import { io as ioClient } from 'socket.io-client';
+import { startSocket } from '@/app/api/socket';
+import { stopLocalMachinePresenceTimeout } from '@/app/presence/timeout';
 
 describe('deployment App enrollment through ordinary registration', () => {
     const homeId = `srv_${'c'.repeat(32)}`;
@@ -89,12 +92,16 @@ describe('deployment App enrollment through ordinary registration', () => {
             return encodeBase64(new TextEncoder().encode(JSON.stringify({ proof: { ...proof,
                 signatureBase64Url: encodeBase64(signature, 'base64url') } })), 'base64url');
         };
+        const sockets: ReturnType<typeof ioClient>[] = [];
+        let closeSocketServer: (() => Promise<void>) | undefined;
         await withAuthenticatedTestApp(app => {
+            closeSocketServer = startSocket(app);
             registerDeploymentRoutes(app); machinesRoutes(app);
             const terminalAuthPolicy = resolveTerminalAuthRequestPolicyFromEnv({});
             registerTerminalAuthRequestRoutes(app, { terminalAuthPolicy,
                 isTerminalAuthExpired: createdAt => Date.now() - createdAt.getTime() > terminalAuthPolicy.ttlMs });
         }, async app => {
+            try {
             const controlKeys = nacl.sign.keyPair(), controlId = randomUUID(), controlInstallationId = randomUUID();
             const control = await app.inject({ method: 'POST', url: '/v1/machines',
                 headers: { ...currentAccountStoredContentCompatibilityHeaders, authorization: `Bearer ${requesterBearer}` },
@@ -150,6 +157,27 @@ describe('deployment App enrollment through ordinary registration', () => {
             const pairingRequest = await db.terminalAuthRequest.findUniqueOrThrow({ where: { publicKey: privacyKit.encodeHex(pairing.publicKey) } });
             const preMarkerBearer = await auth.createToken(requester.id, { session: pairingRequest.id },
                 { kind: 'terminal', authority: 'account_automation' });
+            await app.listen({ port: 0, host: '127.0.0.1' });
+            const address = app.server.address();
+            if (!address || typeof address === 'string') throw new Error('Missing socket listener');
+            const connect = async (token: string) => {
+                const socket = ioClient(`http://127.0.0.1:${address.port}`, { path: '/v1/updates',
+                    transports: ['websocket'], reconnection: false, autoConnect: false,
+                    auth: { token, clientType: 'user-scoped' } });
+                sockets.push(socket);
+                const connected = new Promise<void>((resolve, reject) => {
+                    socket.once('connect', resolve); socket.once('connect_error', reject);
+                });
+                socket.connect();
+                await connected;
+                await socket.timeout(5_000).emitWithAck('ping');
+                return socket;
+            };
+            const pendingSocketOutcome = await connect(terminalBearer).then(() => ({ status: 'connected' }),
+                (error: unknown) => ({ status: 'refused', data: (error as { data?: unknown }).data }));
+            expect(pendingSocketOutcome).toMatchObject({ status: 'refused', data: { statusCode: 401, error: 'invalid-token' } });
+            // An unmarked terminal can have an open stream before ordinary App registration binds its selector.
+            const preMarkerSocket = await connect(preMarkerBearer);
             const childKeys = nacl.sign.keyPair();
             const childId = randomUUID(), installationId = randomUUID();
             const register = async (accountId: string, token: string, machineId = childId, registeredInstallationId = installationId) => app.inject({ method: 'POST', url: '/v1/machines',
@@ -163,8 +191,27 @@ describe('deployment App enrollment through ordinary registration', () => {
             expect((await register(custodian.id, bearer)).statusCode).toBe(409);
             expect((await register(requester.id, requesterBearer)).statusCode).toBe(409);
             expect(await db.machine.findUnique({ where: { id: childId } })).toBeNull();
+            if (disposition === 'teardown') {
+                // A fresh enrollment can retain the pre-binding Home's existing Machine identity.
+                await db.machine.create({ data: { id: childId, accountId: requester.id, installationId,
+                    installationPublicKey: new Uint8Array(childKeys.publicKey), deploymentAppDeploymentId: receipt.id,
+                    metadata: encodePlainMachineStoredContent({ host: 'Collector', platform: 'linux', happyCliVersion: 'test',
+                        homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+                    dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+            }
             const enrolled = await register(requester.id, disposition === 'delete' ? preMarkerBearer : terminalBearer);
             expect(enrolled.statusCode, enrolled.body).toBe(200);
+            expect(await db.machine.findUniqueOrThrow({ where: { id: childId } }))
+                .toMatchObject({ terminalAuthRequestId: pairingRequest.id });
+            const appSocket = await connect(terminalBearer);
+            const ordinarySocket = await connect(ordinaryTerminalBearer);
+            const packetReads: { model?: string; action: string }[] = [];
+            const stopPacketObserving = observePrismaRequests(db, { before: request => { packetReads.push(request); } });
+            try {
+                await appSocket.timeout(5_000).emitWithAck('ping');
+                await preMarkerSocket.timeout(5_000).emitWithAck('ping');
+                expect(packetReads.filter(request => request.model === 'Machine' || request.model === 'Deployment')).toEqual([]);
+            } finally { stopPacketObserving(); }
             if (!process.env.HAPPIER_DB_CONTRACT_CONTAINER_ID) {
                 const bindingPlan = await db.$queryRawUnsafe<{ detail: string }[]>('EXPLAIN QUERY PLAN SELECT "id" FROM "Machine" WHERE "terminalAuthRequestId" = ?', pairingRequest.id);
                 expect(bindingPlan.map(row => row.detail).join('\n')).toContain('Machine_terminalAuthRequestId_key');
@@ -326,12 +373,24 @@ describe('deployment App enrollment through ordinary registration', () => {
             expect((await accountRead(unboundBearer)).statusCode).toBe(401);
             expect((await accountRead(requesterBearer)).statusCode).toBe(200);
             expect((await accountRead(ordinaryTerminalBearer)).statusCode).toBe(200);
+            await expect.poll(() => appSocket.connected).toBe(false);
+            await expect.poll(() => preMarkerSocket.connected).toBe(false);
+            expect(ordinarySocket.connected).toBe(true);
+            await ordinarySocket.timeout(5_000).emitWithAck('ping');
+            const reconnectOutcome = await connect(terminalBearer).then(() => ({ status: 'connected' }),
+                (error: unknown) => ({ status: 'refused', data: (error as { data?: unknown }).data }));
+            expect(reconnectOutcome).toMatchObject({ status: 'refused', data: { statusCode: 401, error: 'invalid-token' } });
             expect(await db.machine.findUniqueOrThrow({ where: { id: childId } })).toMatchObject({ revokedAt: expect.any(Date) });
             expect(await db.machine.findUniqueOrThrow({ where: { id: controlId } })).toMatchObject({ revokedAt: null });
             expect(await db.machine.findUniqueOrThrow({ where: { id: controller.id } })).toMatchObject({ revokedAt: null });
             expect(await db.machine.findUniqueOrThrow({ where: { id: unrelatedApp.id } })).toMatchObject({ revokedAt: null });
             expect(await db.machine.findUniqueOrThrow({ where: { id: siblingApp.id } }))
                 .toMatchObject({ revokedAt: disposition === 'delete' ? expect.any(Date) : null });
+            } finally {
+                for (const socket of sockets) socket.disconnect();
+                await closeSocketServer?.();
+                await stopLocalMachinePresenceTimeout();
+            }
         }, { authentication: 'real' });
     });
 });

@@ -52,17 +52,24 @@ describe("machine-scoped socket admission across the room-join window", () => {
         await db.account.deleteMany();
     });
 
-    it.each([false, true])("refuses a Machine revoked between the handshake read and the room join (revoked: %s)", async (revokeInWindow) => {
+    it.each([
+        { revokeInWindow: false, appCredential: false }, { revokeInWindow: true, appCredential: false },
+        { revokeInWindow: false, appCredential: true }, { revokeInWindow: true, appCredential: true },
+    ])("confirms Machine admission after joining withdrawal rooms (revoked: $revokeInWindow, App credential: $appCredential)", async ({ revokeInWindow, appCredential }) => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const key = tweetnacl.sign.keyPair();
         const installationId = `installation-${account.id}`;
+        const terminalAuthRequestId = `terminal-auth-${account.id}`;
         const machine = await db.machine.create({ data: {
             id: `join-window-${account.id}`, accountId: account.id, installationId,
             installationPublicKey: new Uint8Array(key.publicKey),
+            ...(appCredential ? { terminalAuthRequestId } : {}),
             metadata: encodePlainMachineStoredContent({ host: "join-window" }),
             dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)),
         } });
-        const token = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
+        const token = appCredential
+            ? await auth.createToken(account.id, { session: terminalAuthRequestId }, { kind: 'terminal', authority: 'account_automation' })
+            : await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
         let revoked = false;
         let handshakeChecked = false;
         // The handshake's last Machine check is the capability withdrawal read (inside its own transaction).
@@ -71,6 +78,8 @@ describe("machine-scoped socket admission across the room-join window", () => {
             after: request => {
                 const select = (request.args as { select?: Record<string, unknown> } | undefined)?.select;
                 if (request.model === "Machine" && select?.operationProtocolCapabilities === true) handshakeChecked = true;
+                const where = (request.args as { where?: Record<string, unknown> } | undefined)?.where;
+                if (appCredential && request.model === 'Machine' && where?.terminalAuthRequestId === terminalAuthRequestId) handshakeChecked = true;
             },
             before: async request => {
                 if (!revokeInWindow || revoked || !handshakeChecked || request.transactionId !== undefined) return;
@@ -84,7 +93,7 @@ describe("machine-scoped socket admission across the room-join window", () => {
         const address = app.server.address();
         if (!address || typeof address === "string") throw new Error("Missing socket listener");
         const socket = ioClient(`http://127.0.0.1:${address.port}`, { path: "/v1/updates", transports: ["websocket"],
-            reconnection: false, autoConnect: false, auth: { token, clientType: "machine-scoped", machineId: machine.id,
+            reconnection: false, autoConnect: false, auth: appCredential ? { token, clientType: 'user-scoped' } : { token, clientType: "machine-scoped", machineId: machine.id,
                 runtimeId: "join-window-runtime", startupSource: "manual", serviceManaged: false,
                 installationId, installationPublicKey: encodeProtocolBase64(key.publicKey, "base64url"),
                 installationProof: signMachineInstallationProof({ payload: { version: 1, installationId,

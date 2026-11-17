@@ -82,6 +82,7 @@ import {
     getAccountRevocationSocketRoom,
     getAccountChangeRowsSocketRoom,
     getApiTokenRevocationSocketRoom,
+    getTerminalCredentialRevocationSocketRoom,
     getMachineInstallationSocketRoom,
     getProtectedSocketRooms,
     type SocketClientType,
@@ -555,6 +556,11 @@ export function startSocket(app: Fastify): () => Promise<void> {
                 observeHandshakeStage("error");
                 return rejectHandshake({ statusCode: 401, error: 'invalid-token' });
             }
+            // Ordinary HTTP registration binds the issued App credential before it opens a live stream.
+            if (verified.terminalCredential?.pendingDeploymentAppEnrollment) {
+                observeHandshakeStage('error');
+                return rejectHandshake({ statusCode: 401, error: 'invalid-token' });
+            }
             ephemeralRunnerAdmission = verified.authTokenKind === "ephemeral_session_runner" || verified.authTokenKind === "api_token"
                 ? resolveRestrictedSocketAdmission({
                     principal: verified.ephemeralSessionRunnerPrincipal,
@@ -732,6 +738,7 @@ export function startSocket(app: Fastify): () => Promise<void> {
             socket.data.userId = verified.userId;
             socket.data.tokenEpoch = verified.tokenEpoch;
             socket.data.authTokenKind = verified.authTokenKind;
+            socket.data.terminalAuthRequestId = verified.terminalCredential?.terminalAuthRequestId;
             socket.data.authTokenLegacy = verified.legacy;
             socket.data.authAuthority = narrowCredentialAuthority(verified.authority, socket.handshake.auth.authorityCeiling);
             socket.data.authTokenAuthenticationEvidence = verified.authenticationEvidence;
@@ -957,6 +964,9 @@ export function startSocket(app: Fastify): () => Promise<void> {
         socket.once("disconnect", releaseSessionScopedMachineAccessWatch);
         try {
             await socket.join(getAccountRevocationSocketRoom(userId));
+            if (socket.data.terminalAuthRequestId) {
+                await socket.join(getTerminalCredentialRevocationSocketRoom(userId, socket.data.terminalAuthRequestId));
+            }
             if (handshakeEphemeralRunnerAdmission?.kind === "api-token-session-viewer") {
                 const principal = handshakeEphemeralRunnerAdmission.principal;
                 await socket.join([getApiTokenRevocationSocketRoom(principal.credentialId),

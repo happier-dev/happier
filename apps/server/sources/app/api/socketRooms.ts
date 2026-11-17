@@ -10,6 +10,12 @@ export function getAccountRevocationSocketRoom(userId: string): string {
     return `account-revocation:${userId}`;
 }
 
+/** Credential withdrawal only; joining this room grants no resource delivery. */
+export function getTerminalCredentialRevocationSocketRoom(userId: string, terminalAuthRequestId: string): string {
+    if (!userId || !terminalAuthRequestId) throw new Error('getTerminalCredentialRevocationSocketRoom: Account and selector are required');
+    return `terminal-credential-revocation:${userId}:${terminalAuthRequestId}`;
+}
+
 export function getMachineSocketRoom(userId: string, machineId: string): string {
     if (!userId || !machineId) throw new Error("getMachineSocketRoom: userId and machineId are required");
     return `machine:${machineId}:${userId}`;

@@ -1,5 +1,6 @@
 import type { Socket } from 'socket.io';
-import { TransactionReplayRequiredError, type Tx } from '@/storage/inTx';
+import { inTx, TransactionReplayRequiredError, type Tx } from '@/storage/inTx';
+import { readCurrentDeploymentAppTerminalCredentialInTx } from '@/app/deployments/deploymentAppEnrollment';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 import { resolveCurrentMachineRecipientAccountIdsInTx, lockMachinePublicationInTx } from '@/app/machines/machineAccess';
@@ -74,12 +75,15 @@ export function hasCurrentMachineSocketInstallation(socket: Socket, installation
 }
 
 /**
- * Handlers trust a machine-scoped socket's handshake admission because revoke, replacement and
- * installation change disconnect it by push. That push targets the Machine room, so one read
- * after the room join (and after a possibly lost cluster push) closes the window in which it
- * could miss this socket. Never called per event.
+ * Handlers trust Machine and terminal-credential admission because withdrawal disconnects by
+ * push to their resource or credential room. One read after joining (and after a possibly lost
+ * cluster push) closes the window in which withdrawal could miss this socket. Never called per event.
  */
 export async function isMachineScopedSocketAdmissionCurrent(socket: Socket, accountId: string): Promise<boolean> {
+    const terminalAuthRequestId: unknown = socket.data.terminalAuthRequestId;
+    if (typeof terminalAuthRequestId === 'string' && !await inTx(tx =>
+        readCurrentDeploymentAppTerminalCredentialInTx(tx, { session: terminalAuthRequestId }, accountId),
+    { readOnly: true, singleStatementRead: true })) return false;
     const machineId = readAuthenticatedMachineId(socket);
     if (!machineId) return true;
     const machine = await db.machine.findFirst({ where: { accountId, id: machineId },
@@ -89,11 +93,12 @@ export async function isMachineScopedSocketAdmissionCurrent(socket: Socket, acco
     return verifiedInstallationId === null || machine.installationId === verifiedInstallationId;
 }
 
-/** Cluster backstop: re-check each local machine-scoped socket once and disconnect any that lost admission. */
+/** Cluster backstop: reconfirm local Machine and terminal-credential sockets after a possibly lost push. */
 export async function reconfirmMachineScopedSocketAdmissions(sockets: Iterable<Socket>): Promise<void> {
     for (const socket of [...sockets]) {
         const accountId = (socket.data as { userId?: unknown } | undefined)?.userId;
-        if (typeof accountId !== 'string' || !readAuthenticatedMachineId(socket)) continue;
+        if (typeof accountId !== 'string' || (!readAuthenticatedMachineId(socket)
+            && typeof socket.data.terminalAuthRequestId !== 'string')) continue;
         try {
             if (!await isMachineScopedSocketAdmissionCurrent(socket, accountId)) socket.disconnect(true);
         } catch (error) {

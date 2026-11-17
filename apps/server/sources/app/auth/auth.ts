@@ -64,7 +64,7 @@ import { withActionFailureDiagnostic } from '@happier-dev/protocol/actions/execu
 import { core } from 'zod/mini';
 import { admitAccountPrivateLabelWriteInTx, projectAccountPrivateLabelForRecipientV1 } from '@/app/encryption/accountPrivateLabelContent';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
-import { deploymentAppTerminalCredentialIsCurrentInTx } from '@/app/deployments/deploymentAppEnrollment';
+import { readCurrentDeploymentAppTerminalCredentialInTx, type CurrentTerminalCredential } from '@/app/deployments/deploymentAppEnrollment';
 
 interface TokenGeneratorLike {
     new: (payload: Readonly<{
@@ -151,6 +151,8 @@ export type ExternalActionExecutionAuthorizationMintInput =
 
 export type VerifiedAuthToken = Readonly<{
     userId: string;
+    /** Current signed terminal selector; live sockets subscribe to its Machine owner's withdrawal. */
+    terminalCredential?: CurrentTerminalCredential;
     /** Verified signed credential revocation selector; PATs have their own row lifecycle. */
     tokenEpoch?: number;
     extras?: unknown;
@@ -1667,15 +1669,17 @@ class AuthModule {
         }
 
         // Account and bound App Machine revocation are consumed at this request boundary, including cache hits.
-        const account = await inTx(
+        const currentCredential = await inTx(
             async tx => {
                 const current = await this.readCurrentSignedCredentialAccount(tx, decoded.userId, decoded.tokenEpoch);
-                return current && (decoded.provenance.kind !== 'terminal'
-                    || await deploymentAppTerminalCredentialIsCurrentInTx(tx, decoded.extras, decoded.userId)) ? current : null;
+                if (!current) return null;
+                if (decoded.provenance.kind !== 'terminal') return {};
+                const terminalCredential = await readCurrentDeploymentAppTerminalCredentialInTx(tx, decoded.extras, decoded.userId);
+                return terminalCredential ? { terminalCredential } : null;
             },
             { readOnly: true, singleStatementRead: decoded.provenance.kind !== 'terminal' },
         );
-        if (!account) {
+        if (!currentCredential) {
             return decoded.provenance.kind === "ephemeral_session_runner"
                 ? REJECTED_EPHEMERAL_SESSION_RUNNER_CREDENTIAL
                 : null;
@@ -1690,6 +1694,7 @@ class AuthModule {
 
         return {
             userId: decoded.userId,
+            ...currentCredential,
             tokenEpoch: decoded.tokenEpoch,
             extras: decoded.extras,
             authTokenKind: decoded.provenance.kind,

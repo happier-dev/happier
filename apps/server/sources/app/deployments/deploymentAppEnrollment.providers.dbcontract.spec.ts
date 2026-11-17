@@ -4,7 +4,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createDbMaintenanceClient, getDbProviderFromEnv } from '@/storage/prisma';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
-import { deploymentAppTerminalCredentialIsCurrentInTx, readDeploymentAppEnrollmentsForMachinesInTx } from './deploymentAppEnrollment';
+import { readCurrentDeploymentAppTerminalCredentialInTx, readDeploymentAppEnrollmentsForMachinesInTx } from './deploymentAppEnrollment';
 
 const provider = getDbProviderFromEnv(process.env, 'postgres');
 
@@ -61,17 +61,18 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('App enrollment
             requests.length = 0;
             stop = observePrismaRequests(client, { before: request => { requests.push(request); } });
             try {
-                expect(await client.$transaction(tx => deploymentAppTerminalCredentialIsCurrentInTx(tx,
-                    { session: child.terminalAuthRequestId }, account.id))).toBe(true);
+                expect(await client.$transaction(tx => readCurrentDeploymentAppTerminalCredentialInTx(tx,
+                    { session: child.terminalAuthRequestId }, account.id))).toEqual({ terminalAuthRequestId: child.terminalAuthRequestId,
+                        pendingDeploymentAppEnrollment: false });
                 expect(requests).toEqual([expect.objectContaining({ model: 'Machine', action: 'findUnique',
                     args: expect.objectContaining({ where: { terminalAuthRequestId: child.terminalAuthRequestId } }) })]);
                 requests.length = 0;
-                expect(await client.$transaction(tx => deploymentAppTerminalCredentialIsCurrentInTx(tx,
-                    undefined, account.id))).toBe(true);
+                expect(await client.$transaction(tx => readCurrentDeploymentAppTerminalCredentialInTx(tx,
+                    undefined, account.id))).toEqual({ pendingDeploymentAppEnrollment: false });
                 expect(requests).toEqual([]);
             } finally { stop(); }
-            expect(await client.$transaction(tx => deploymentAppTerminalCredentialIsCurrentInTx(tx,
-                { session: child.terminalAuthRequestId }, randomUUID()))).toBe(false);
+            expect(await client.$transaction(tx => readCurrentDeploymentAppTerminalCredentialInTx(tx,
+                { session: child.terminalAuthRequestId }, randomUUID()))).toBeNull();
             if (provider === 'postgres') {
                 const plan = await client.$transaction(async tx => {
                     await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');

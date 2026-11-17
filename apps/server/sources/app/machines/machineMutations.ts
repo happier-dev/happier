@@ -269,6 +269,7 @@ export async function revokeMachineInTx(
         eventRouter.disconnectMachineAndSessionSockets({
             accountId: params.accountId,
             machineId: params.machineId,
+            terminalAuthRequestId: updated.terminalAuthRequestId,
             sessionBindings: invalidatedSessionBindings,
         });
         eventRouter.emitUpdate({

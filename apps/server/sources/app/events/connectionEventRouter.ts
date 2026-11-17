@@ -2,7 +2,7 @@ import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/
 import { log } from "@/utils/logging/log";
 import { recordEventFanoutDrop, recordEventFanoutEmit } from "@/app/monitoring/metrics/index";
 import { readAccountStoredContentCompatibilityForSocket } from "@/app/clientCompatibility/accountStoredContentCompatibility";
-import { getAccountStoredContentV3SocketRoom } from "@/app/api/socketRooms";
+import { getAccountStoredContentV3SocketRoom, getTerminalCredentialRevocationSocketRoom } from "@/app/api/socketRooms";
 import {
     type ClientConnection,
     type RecipientFilter,
@@ -301,6 +301,7 @@ class EventRouter {
     disconnectMachineAndSessionSockets(params: Readonly<{
         accountId: string;
         machineId: string;
+        terminalAuthRequestId?: string | null;
         sessionBindings: readonly Readonly<{ accountId: string; sessionId: string }>[];
     }>): void {
         const accessLoss = { accountId: params.accountId, machineId: params.machineId };
@@ -310,6 +311,8 @@ class EventRouter {
         if (this.io) {
             this.io.to([...new Set([
                 getMachineSocketRoom(params.accountId, params.machineId),
+                ...(params.terminalAuthRequestId ? [getTerminalCredentialRevocationSocketRoom(
+                    params.accountId, params.terminalAuthRequestId)] : []),
                 ...params.sessionBindings.map((binding) => getMachineBoundSessionSocketRoom(
                     binding.accountId,
                     binding.sessionId,
@@ -328,6 +331,8 @@ class EventRouter {
             for (const connection of this.userConnections.get(accountId) ?? []) {
                 if (
                     (accountId === params.accountId && connection.connectionType === "machine-scoped" && connection.machineId === params.machineId)
+                    || (accountId === params.accountId && !!params.terminalAuthRequestId
+                        && connection.socket.data.terminalAuthRequestId === params.terminalAuthRequestId)
                     || (
                         connection.connectionType === "session-scoped"
                         && connection.machineId === params.machineId

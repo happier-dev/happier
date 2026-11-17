@@ -106,6 +106,7 @@ export async function applyMachineReplacement(params: ApplyMachineReplacementPar
         eventRouter.disconnectMachineAndSessionSockets({
             accountId: params.accountId,
             machineId: params.oldMachineId,
+            terminalAuthRequestId: machines.find(machine => machine.id === params.oldMachineId)?.terminalAuthRequestId,
             sessionBindings: invalidatedSessionBindings,
         });
         eventRouter.emitUpdate({
