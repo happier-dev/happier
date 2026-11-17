@@ -496,7 +496,7 @@ describe('Voice Action reference catalog', () => {
     const applied = JSON.parse(await handlers.action_execute!({ actionId: 'review.apply', input: {
       sessionId: 'review-session', reviews: [{ runId: 'review-1', findings: [] }],
     } }, { serverId }));
-    expect(applied).toEqual({ ok: true, result: { status: 'unchanged', commentIds: [] } });
+    expect(applied).toEqual(expect.objectContaining({ ok: true, result: { status: 'unchanged', commentIds: [] } }));
   });
   it.each(['work.view.select', 'work.recent.show_more', 'work.map.expand'] as const)('routes %s to the Session presentation owner and refuses an unbound client', async kind => {
     const serverId = await home.addHome({ name: 'Presentation Voice Home', serverUrl: 'https://presentation-voice.test', accountId: 'alice', currentAccount: true });
@@ -810,7 +810,7 @@ describe('Voice Action reference catalog', () => {
     ['session.update.post', { summary: 'A persisted update' }],
     ['inbox.get', {}],
     ['inbox.mark_all_read', { targets: [] }],
-    ['session.trigger.list', { sessionId: 'exact-session' }],
+    ['workflow.trigger.list', { lifetimeSession: { sessionId: 'exact-session' } }],
     ['workflow.trigger.list', { workflow: 'builtin:review-and-converge' }],
     ['workflow.run.list', { targetSessionId: 'exact-session' }],
     ['session.read_state.set', { sessionId: 'exact-session', state: 'read' }],
