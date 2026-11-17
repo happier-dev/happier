@@ -10,6 +10,7 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { buildCredentialsAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/buildAuthBootstrapStorageSnapshot';
 import { installAuthBootstrapStorageSnapshot } from '../../src/testkit/uiE2e/readLegacyAuthSecretFromLocalStorage';
+import { approveTerminalConnect } from '../../src/testkit/uiE2e/approveTerminalConnect';
 
 const run = createRunDirs({ runLabel: 'dbw-phone' });
 
@@ -18,9 +19,29 @@ const run = createRunDirs({ runLabel: 'dbw-phone' });
 test('DBW-F13 phone_browse_console_insights_review_continuity', async ({ page }) => {
   test.setTimeout(0);
   const testDir = run.testDir('phone-workbench');
-  const fixture = await startDatabaseWorkbenchInsightsFixture({ testDir });
+  let fixture: Awaited<ReturnType<typeof startDatabaseWorkbenchInsightsFixture>> | undefined;
   let ui: StartedUiWeb | undefined;
+  const storageScope = run.runId;
   try {
+    fixture = await startDatabaseWorkbenchInsightsFixture({ testDir,
+      completeTerminalConnect: async options => {
+        ui = await startUiWeb({ testDir: join(testDir, 'ui'), env: {
+          ...process.env, HAPPIER_E2E_UI_WEB_MODE: 'metro',
+          EXPO_PUBLIC_HAPPY_SERVER_URL: options.canonicalServerUrl,
+          EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: storageScope,
+        } });
+        await installAuthBootstrapStorageSnapshot(page, buildCredentialsAuthBootstrapStorageSnapshot({
+          serverUrl: options.canonicalServerUrl, serverIdentityId: options.homeServerIdentityId,
+          credentials: options.credentials, storageScope,
+        }));
+        const connectUrl = new URL(options.connectUrl);
+        const browserUrl = new URL(`${connectUrl.pathname}${connectUrl.search}${connectUrl.hash}`, ui.baseUrl);
+        await page.goto(browserUrl.href, { waitUntil: 'domcontentloaded' });
+        await approveTerminalConnect({ page });
+        await options.waitForSuccess();
+      },
+    });
+    const pairedFixture = fixture;
     const secretArrival = await fixture.owner.execute('secrets.create', {
       name: 'Phone native database', kind: 'other', value: fixture.postgres.selectedDatabaseUrl,
     }, { presentUserConfirmation: { actionId: 'secrets.create' } });
@@ -37,16 +58,7 @@ test('DBW-F13 phone_browse_console_insights_review_continuity', async ({ page })
     await fixture.postgres.sql('dbw_selected', `CREATE TABLE large_value (id bigint PRIMARY KEY, marker text, payload text);
       INSERT INTO large_value VALUES (1, 'large-sentinel', repeat('x', ${fullValueBytes}));`);
 
-    const storageScope = run.runId;
-    ui = await startUiWeb({ testDir: join(testDir, 'ui'), env: {
-      ...process.env, HAPPIER_E2E_UI_WEB_MODE: 'metro',
-      EXPO_PUBLIC_HAPPY_SERVER_URL: fixture.server.baseUrl,
-      EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: storageScope,
-    } });
-    await installAuthBootstrapStorageSnapshot(page, buildCredentialsAuthBootstrapStorageSnapshot({
-      serverUrl: fixture.server.baseUrl, serverIdentityId: fixture.serverId,
-      credentials: fixture.owner.uiCredentials, storageScope,
-    }));
+    if (!ui) throw new Error('Phone fixture did not open its pairing UI');
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`${ui.baseUrl}/projects/${encodeURIComponent(scope.workspace.workspaceId)}/services?happier_hmr=0`,
       { waitUntil: 'domcontentloaded' });
@@ -64,7 +76,7 @@ test('DBW-F13 phone_browse_console_insights_review_continuity', async ({ page })
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.getByText(/dbw_selected → phone-committed/)).toBeVisible();
     await page.getByRole('button', { name: 'Apply', exact: true }).click();
-    await expect.poll(() => fixture.postgres.sql('dbw_selected', 'SELECT target FROM sentinel WHERE id = 1'))
+    await expect.poll(() => pairedFixture.postgres.sql('dbw_selected', 'SELECT target FROM sentinel WHERE id = 1'))
       .toBe('phone-committed');
 
     // Resizing keeps the mounted workbench and its selected relation usable.
@@ -114,6 +126,6 @@ test('DBW-F13 phone_browse_console_insights_review_continuity', async ({ page })
     await page.getByText('phone-committed', { exact: true }).click();
     await expect(page.getByRole('textbox', { name: 'target', exact: true })).toHaveValue('phone-committed');
   } finally {
-    try { await ui?.stop(); } finally { await fixture.stop(); }
+    try { await ui?.stop(); } finally { await fixture?.stop(); }
   }
 });
