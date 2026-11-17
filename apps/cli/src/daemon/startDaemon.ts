@@ -20,6 +20,7 @@ import { projectDaemonRequesterWorkAttribution } from './lifecycle/requesterWork
 import { createExecutionRunLiveWorkProducer } from './executionRunRegistry';
 import { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus } from './startup/managedMachinePolicyRuntime';
 import { reconcileRecoveredSessionMachineControl } from './sessions/reconcileRecoveredSessionMachineControl';
+import { settleRequesterPendingSessionPreparationRefusal } from './sessions/pendingSessionActivationRecovery';
 import { readHttpStatus } from '@/api/client/httpStatusError';
 import type { ApiMachineClient, ApiMachineClientLifecycleDependencies } from '@/api/apiMachine';
 import { ApiClient } from '@/api/api';
@@ -2459,6 +2460,8 @@ export async function startDaemon(
       trackedSessions: trackedSessionsByKey,
       getCreateRuntime: () => createRequesterRuntime,
       whenRuntimeCreatable: whenRequesterRuntimeCreatable,
+      onRecoveryRefused: refusal => settleRequesterPendingSessionPreparationRefusal({ refusal,
+        onActivationRejected: async event => { await guardSessionRestoration?.onActivationRejected(event); } }),
       recoverBootstrap: ({ sessionId, attribution: stamp, tracked, signal, onRecoveryRefused }) => resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: configuration.happyHomeDir,
         serverId: requesterRuntimeServerId, sessionId, serverHttpBaseUrl: readRequesterRuntimeServerHttpBaseUrl(),
         signal,

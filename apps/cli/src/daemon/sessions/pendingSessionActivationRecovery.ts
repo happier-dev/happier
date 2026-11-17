@@ -7,7 +7,7 @@ import type { RawSessionListRow } from '@/session/transport/http/sessionsHttp';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { reportPendingSessionActivationFailure } from '@/api/session/pendingActivationTransport';
 import type { AdmittedRequesterSessionBootstrap, RequesterSessionCredentialBinding, RequesterSessionRuntimeContext,
-  ResolveRequesterSessionRuntimeContext, ReleaseRequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
+  ResolveRequesterSessionRuntimeContext, ReleaseRequesterSessionRuntimeContext, RequesterSessionRecoveryRefusal } from '../sessionEncryption/requesterSessionCredentials';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { activatePendingInactiveSession, type PendingInactiveSessionActivationRejected, type PendingSessionResumePort } from './activatePendingInactiveSession';
 import { logger } from '@/utils/logger';
@@ -59,30 +59,40 @@ export async function activateRequesterPendingSession(params: Readonly<{
   const context = await params.resolveRequesterSessionRuntimeContext(binding.sessionId, binding.attribution, undefined,
     async refusal => {
       if (refusal.sessionId !== binding.sessionId) return;
-      await runWithServerHttpBaseUrl(refusal.serverHttpBaseUrl, async () => {
-        // A stamped live hint needs no executable admission to report failure.
-        // Reconnect scans obtain the stamp through the same retained owner bearer.
-        const authorization = hint?.requestedAt !== undefined ? hint
-          : (await fetchSessionById({ reason: 'session-control', token: refusal.credentials.token,
-            sessionId: refusal.sessionId, serverUrl: refusal.serverHttpBaseUrl }))?.pendingActivationAuthorization;
-        if (refusal.signal?.aborted || !authorization || authorization.requestedAt === undefined) return;
-        let didFail: boolean | null = null;
-        try {
-          ({ didFail } = await reportPendingSessionActivationFailure({ token: refusal.credentials.token,
-            sessionId: refusal.sessionId, requestId: authorization.requestId, requestedAt: authorization.requestedAt,
-            failureCode: 'runtime_start_failed' }));
-          if (didFail) await params.onActivationRejected?.({ sessionId: refusal.sessionId,
-            reason: 'identity-unavailable', requester: binding.attribution });
-        } finally {
-          logger.infoFile('[DAEMON RUN] Requester Pending preparation refused', {
-            sessionId: refusal.sessionId, requestId: authorization.requestId, code: 'session_input_target_unavailable', didFail,
-          });
-        }
-      });
+      await settleRequesterPendingSessionPreparationRefusal({ refusal, hint, onActivationRejected: params.onActivationRejected });
     });
   if (!context) return;
   try { await activate(context); }
   finally { await params.releaseRequesterSessionRuntimeContext(context); }
+}
+
+/** Every cold requester recovery settles an existing Pending refusal through its original owner. */
+export async function settleRequesterPendingSessionPreparationRefusal(params: Readonly<{
+  refusal: RequesterSessionRecoveryRefusal;
+  hint?: PendingSessionActivationInput;
+  onActivationRejected?: (event: PendingInactiveSessionActivationRejected) => Promise<void>;
+}>): Promise<void> {
+  const { refusal, hint } = params;
+  await runWithServerHttpBaseUrl(refusal.serverHttpBaseUrl, async () => {
+    // A stamped live hint needs no executable admission to report failure.
+    // Reconnect scans obtain the stamp through the same retained owner bearer.
+    const authorization = hint?.requestedAt !== undefined ? hint
+      : (await fetchSessionById({ reason: 'session-control', token: refusal.credentials.token,
+        sessionId: refusal.sessionId, serverUrl: refusal.serverHttpBaseUrl }))?.pendingActivationAuthorization;
+    if (refusal.signal?.aborted || !authorization || authorization.requestedAt === undefined) return;
+    let didFail: boolean | null = null;
+    try {
+      ({ didFail } = await reportPendingSessionActivationFailure({ token: refusal.credentials.token,
+        sessionId: refusal.sessionId, requestId: authorization.requestId, requestedAt: authorization.requestedAt,
+        failureCode: 'runtime_start_failed' }));
+      if (didFail) await params.onActivationRejected?.({ sessionId: refusal.sessionId,
+        reason: 'identity-unavailable', requester: refusal.attribution });
+    } finally {
+      logger.infoFile('[DAEMON RUN] Requester Pending preparation refused', {
+        sessionId: refusal.sessionId, requestId: authorization.requestId, code: 'session_input_target_unavailable', didFail,
+      });
+    }
+  });
 }
 
 /** A protected local ref identifies the read; only fresh requester Home facts authorize recovery. */

@@ -13,7 +13,7 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 import { createRequesterSessionCredentialCustody, createRequesterSessionRuntimeContextResolver, resolveRequesterSessionBootstrap,
   resolveRequesterSessionBootstrapFromCustody,
   listRequesterSessionCredentialBindings, type RequesterSessionMachineAdmissionBoundary } from '../sessionEncryption/requesterSessionCredentials';
-import { activateRequesterPendingSession, readRequesterPendingSessionActivation } from './pendingSessionActivationRecovery';
+import { activateRequesterPendingSession, readRequesterPendingSessionActivation, settleRequesterPendingSessionPreparationRefusal } from './pendingSessionActivationRecovery';
 import { activatePendingInactiveSession } from './activatePendingInactiveSession';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
@@ -47,14 +47,17 @@ describe('requester pending reconnect through protected custody and the Home net
   it('recovers an exact retained requester target and settles cold refusals without re-admitting an existing lifetime', async () => {
     directory = await mkdtemp(join(tmpdir(), 'requester-pending-reconnect-'));
     const credentials = { token: 'bob-private', encryption: null } as const;
-    await createRequesterSessionCredentialCustody({ happyHomeDir: directory, sessionId: target.sessionId, attribution, credentials,
-      homeServerIdentityId: target.homeId });
+    const seedCustody = () => createRequesterSessionCredentialCustody({ happyHomeDir: directory!,
+      sessionId: target.sessionId, attribution, credentials, homeServerIdentityId: target.homeId });
+    await seedCustody();
     const discovery = await listRequesterSessionCredentialBindings({ happyHomeDir: directory,
       serverId: attribution.serverId, machineId: attribution.machineId, installationId: attribution.installationId });
     expect(discovery).toEqual({ status: 'ready', bindings: [{ sessionId: target.sessionId, attribution }] });
     app = fastify();
     const keyPair = tweetnacl.sign.keyPair();
     let grant = true;
+    let signedAdmissionAvailable = true;
+    let pendingAuthorizationStatus: 'waiting' | 'failed' | null = 'waiting';
     let receiptTarget = target;
     let observedHomeId = target.homeId;
     let sessionStatus = 200;
@@ -62,6 +65,7 @@ describe('requester pending reconnect through protected custody and the Home net
     let nextSessionRead: (() => void) | undefined;
     let acceptFailureReport = false;
     const reports: unknown[] = [];
+    const acceptedReports: unknown[] = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation(async input => {
       expect(String(input)).toBe(`${origin}/v1/features`);
       return new Response(JSON.stringify(FeaturesResponseSchema.parse({ features: {},
@@ -89,7 +93,7 @@ describe('requester pending reconnect through protected custody and the Home net
         && verifyMachineInstallationProof({ publicKey: keyPair.publicKey, proof: body.proof,
         payload: { version: 1, accountId: 'alice', machineId: attribution.machineId,
           installationId: attribution.installationId, rpcAdmission: { context: body.context, purpose: body.purpose } } });
-      return valid && grant ? { v: 1, ok: true } : reply.code(403).send({ error: 'access_denied' });
+      return valid && grant && signedAdmissionAvailable ? { v: 1, ok: true } : reply.code(403).send({ error: 'access_denied' });
     });
     app.get('/v1/access-keys/bob-session/alice-machine', async () => ({ accessKey: { id: 'exact-existing-tuple' } }));
     app.get('/v2/sessions/bob-session/pending', async () => ({ pending: [{ localId: 'input-1', messageRole: 'user',
@@ -97,7 +101,12 @@ describe('requester pending reconnect through protected custody and the Home net
     app.post('/v2/sessions/bob-session/pending/activation/fail', async request => {
       reports.push(request.body);
       const stamp = request.body as { requestId: string; requestedAt: number };
-      return { ok: true, didFail: acceptFailureReport && stamp.requestId === 'input-1' && stamp.requestedAt === 12 };
+      // Mirror the Home's atomic exact waiting-stamp transition. Concurrent
+      // same-stamp attempts can succeed only once, as updateMany does there.
+      const didFail = acceptFailureReport && pendingAuthorizationStatus === 'waiting'
+        && stamp.requestId === 'input-1' && stamp.requestedAt === 12;
+      if (didFail) { pendingAuthorizationStatus = 'failed'; acceptedReports.push(request.body); }
+      return { ok: true, didFail };
     });
     app.get('/v2/sessions/bob-session', async (_request, reply) => {
       const status = sessionStatus;
@@ -108,7 +117,10 @@ describe('requester pending reconnect through protected custody and the Home net
       encryptionMode: 'plain', metadata: JSON.stringify({ machineId: attribution.machineId, path: '/workspace',
         flavor: 'codex', codexSessionId: 'native-bob-session', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } }),
       dataEncryptionKey: null, share: null, pendingCount: 1, pendingVersion: 9,
-      pendingActivationAuthorization: { status: 'waiting', requestId: 'input-1', requestedAt: 12, admittedTarget: receiptTarget },
+      pendingActivationAuthorization: pendingAuthorizationStatus === null ? null
+        : pendingAuthorizationStatus === 'waiting'
+          ? { status: 'waiting', requestId: 'input-1', requestedAt: 12, admittedTarget: receiptTarget }
+          : { status: 'failed', requestId: 'input-1', requestedAt: 12, admittedTarget: receiptTarget, failureCode: 'runtime_start_failed' },
     }) }); });
     await app.ready();
     restore = installAxiosFastifyAdapter({ app, origin });
@@ -136,9 +148,16 @@ describe('requester pending reconnect through protected custody and the Home net
     expect(spawned).toHaveLength(1);
     expect(spawned[0]).toMatchObject({ existingSessionId: target.sessionId, machineId: attribution.machineId,
       requesterWorkAttributionV1: attribution, executionAuthorization: { requestId: 'input-1', requestedAt: 12 } });
+    const defaultRefusedSessions: string[] = [];
+    const defaultRejected: unknown[] = [];
     const createResolveRuntime = (machineAdmissionBoundary = boundary) => createRequesterSessionRuntimeContextResolver({ trackedSessions: new Map(),
       // A refused cold preparation must never reach runtime/process construction.
       getCreateRuntime: () => async () => { throw new Error('Refused preparation must not construct a runtime'); },
+      onRecoveryRefused: refusal => {
+        defaultRefusedSessions.push(refusal.sessionId);
+        return settleRequesterPendingSessionPreparationRefusal({ refusal,
+          onActivationRejected: async event => { defaultRejected.push(event); } });
+      },
       recoverBootstrap: input => resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: directory!,
         sessionId: input.sessionId, expectedAttribution: input.attribution, serverId: attribution.serverId,
         serverHttpBaseUrl: origin, machineAdmissionBoundary, signal: input.signal,
@@ -190,14 +209,18 @@ describe('requester pending reconnect through protected custody and the Home net
     }));
     let reconnect: Promise<void> | undefined;
     try {
+      acceptFailureReport = true;
       grant = false;
       if (!onConnect) throw new Error('Machine reconnect callback missing');
       reconnect = runWithServerHttpBaseUrl(origin, async () => { await onConnect!(); });
       await endpointEntered.promise;
       // A typed cold refusal proves the exact Pending owner ran; just listing
       // bindings or calling a mocked recovery function would not prove this.
-      await vi.waitFor(() => expect(reports).toEqual([
+      await vi.waitFor(() => expect(acceptedReports).toEqual([
         { requestId: 'input-1', requestedAt: 12, failureCode: 'runtime_start_failed' },
+      ]));
+      await vi.waitFor(() => expect(defaultRejected).toEqual([
+        { sessionId: target.sessionId, reason: 'identity-unavailable', requester: attribution },
       ]));
       expect(spawned).toHaveLength(1);
     } finally {
@@ -205,8 +228,19 @@ describe('requester pending reconnect through protected custody and the Home net
       await reconnect;
       await retireMachineSyncRuntimeAttempt(machineRuntime);
       grant = true;
-      reports.length = 0;
     }
+    expect(acceptedReports).toEqual([{ requestId: 'input-1', requestedAt: 12, failureCode: 'runtime_start_failed' }]);
+    for (const report of reports) expect(report).toEqual({ requestId: 'input-1', requestedAt: 12, failureCode: 'runtime_start_failed' });
+    const reconnectDefaultRefusals = [...defaultRefusedSessions];
+    reports.length = 0; acceptedReports.length = 0; defaultRejected.length = 0;
+    acceptFailureReport = false;
+    pendingAuthorizationStatus = 'waiting';
+    // A definite Home refusal retires protected custody. Each independent
+    // refusal scenario starts with a genuine owner write, not the retired file.
+    expect(await listRequesterSessionCredentialBindings({ happyHomeDir: directory,
+      serverId: attribution.serverId, machineId: attribution.machineId, installationId: attribution.installationId }))
+      .toEqual({ status: 'ready', bindings: [] });
+    await seedCustody();
     let hint = { sessionId: target.sessionId, requestId: 'input-1', requestedAt: 12, pendingVersion: 9, source: 'live' as const };
     const rejected: unknown[] = [];
     const settle = () => activateRequesterPendingSession({ machineId: attribution.machineId, binding: { sessionId: target.sessionId, attribution },
@@ -220,13 +254,18 @@ describe('requester pending reconnect through protected custody and the Home net
     expect(reports).toEqual([{ requestId: 'input-1', requestedAt: 12, failureCode: 'runtime_start_failed' }]);
     expect(spawned).toHaveLength(1);
     expect(rejected).toEqual([]);
+    // The explicit live-hint callback wins over the cold resolver default.
+    expect(defaultRefusedSessions).toEqual(reconnectDefaultRefusals);
     reports.length = 0; acceptFailureReport = true;
+    await seedCustody();
     refuseOnce();
     await settle();
     expect(reports).toHaveLength(1);
     expect(rejected).toEqual([{ sessionId: target.sessionId, reason: 'identity-unavailable', requester: attribution }]);
     expect(spawned).toHaveLength(1);
     reports.length = 0;
+    await seedCustody();
+    pendingAuthorizationStatus = 'waiting';
     invalidSessionResponse = true;
     nextSessionRead = () => { invalidSessionResponse = false; };
     await settle();
@@ -235,13 +274,20 @@ describe('requester pending reconnect through protected custody and the Home net
     // Unavailable evidence and cancellation retain waiting custody. Definite
     // refusals report through the owner bearer, even when recovery stays refused.
     reports.length = 0;
+    await seedCustody();
+    pendingAuthorizationStatus = 'waiting';
     sessionStatus = 503;
     await expect(settle()).rejects.toMatchObject({ code: 'project_requester_home_unavailable', retryable: true });
+    expect(await listRequesterSessionCredentialBindings({ happyHomeDir: directory,
+      serverId: attribution.serverId, machineId: attribution.machineId, installationId: attribution.installationId }))
+      .toEqual({ status: 'ready', bindings: [{ sessionId: target.sessionId, attribution }] });
     sessionStatus = 403;
     await settle();
     expect(reports).toHaveLength(1);
     reports.length = 0;
     sessionStatus = 200;
+    await seedCustody();
+    pendingAuthorizationStatus = 'waiting';
     invalidSessionResponse = true;
     await settle();
     invalidSessionResponse = false;
@@ -255,6 +301,8 @@ describe('requester pending reconnect through protected custody and the Home net
     expect(await resolveRuntime(target.sessionId, attribution, cancelled.signal, async () => {
       throw new Error('In-flight cancellation must not settle');
     })).toBeNull();
+    await seedCustody();
+    pendingAuthorizationStatus = 'waiting';
     const reconnectCancelled = new AbortController();
     sessionStatus = 403;
     nextSessionRead = () => {
@@ -271,22 +319,61 @@ describe('requester pending reconnect through protected custody and the Home net
       spawnSessionForInternalResume: activation.spawnSessionForInternalResume });
     expect(reconnectCancelled.signal.aborted).toBe(true);
     expect(reports).toEqual([]);
+    await seedCustody();
+    pendingAuthorizationStatus = 'waiting';
     receiptTarget = { ...target, installationId: 'stale-installation' };
     refuseOnce(); await settle();
     expect(reports).toHaveLength(1);
     reports.length = 0;
     receiptTarget = target;
+    await seedCustody();
+    pendingAuthorizationStatus = 'waiting';
     sessionStatus = 403; nextSessionRead = () => { sessionStatus = 200; grant = false; };
     await settle();
     expect(reports).toHaveLength(1);
     reports.length = 0;
     grant = true;
+    await seedCustody();
+    pendingAuthorizationStatus = 'waiting';
     hint = { ...hint, requestedAt: 11 };
     const rejectionCount = rejected.length;
     refuseOnce(); await settle();
     hint = { ...hint, requestedAt: 12 };
     expect(reports).toEqual([{ requestId: 'input-1', requestedAt: 11, failureCode: 'runtime_start_failed' }]);
     expect(rejected).toHaveLength(rejectionCount);
+    expect(defaultRefusedSessions).toEqual(reconnectDefaultRefusals);
+    expect(defaultRejected).toEqual([]);
+    // Cold active/non-Pending recovery must not invent a Pending transition.
+    reports.length = 0;
+    pendingAuthorizationStatus = null;
+    await seedCustody();
+    grant = false;
+    expect(await resolveRuntime(target.sessionId, attribution)).toBeNull();
+    expect(reports).toEqual([]);
+    expect(defaultRejected).toEqual([]);
+    expect(await listRequesterSessionCredentialBindings({ happyHomeDir: directory,
+      serverId: attribution.serverId, machineId: attribution.machineId, installationId: attribution.installationId }))
+      .toEqual({ status: 'ready', bindings: [] });
+    // The Home's stamped state owner refuses an already settled request.
+    pendingAuthorizationStatus = 'failed';
+    grant = true;
+    await seedCustody();
+    refuseOnce();
+    expect(await resolveRuntime(target.sessionId, attribution)).toBeNull();
+    expect(reports).toEqual([{ requestId: 'input-1', requestedAt: 12, failureCode: 'runtime_start_failed' }]);
+    expect(defaultRejected).toEqual([]);
+    // A null signed admission is unavailable support, not Machine withdrawal.
+    reports.length = 0;
+    pendingAuthorizationStatus = 'waiting';
+    signedAdmissionAvailable = false;
+    await seedCustody();
+    expect(await resolveRuntime(target.sessionId, attribution)).toBeNull();
+    expect(reports).toEqual([]);
+    expect(defaultRejected).toEqual([]);
+    expect(await listRequesterSessionCredentialBindings({ happyHomeDir: directory,
+      serverId: attribution.serverId, machineId: attribution.machineId, installationId: attribution.installationId }))
+      .toEqual({ status: 'ready', bindings: [{ sessionId: target.sessionId, attribution }] });
+    signedAdmissionAvailable = true;
     observedHomeId = 'srv_replacement_home';
     expect(await readRequesterPendingSessionActivation(recovery)).toBeNull();
     expect(await activatePendingInactiveSession(activation)).toEqual({ status: 'not-needed', reason: 'authorization-stale' });

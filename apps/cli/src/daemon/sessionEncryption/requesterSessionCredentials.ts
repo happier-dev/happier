@@ -140,7 +140,7 @@ export type RequesterSessionRuntimeContext = Readonly<{
 
 /** Protected bearer custody can report a refusal; it grants no executable authority. */
 export type RequesterSessionRecoveryRefusal = Readonly<{
-  sessionId: string; credentials: StoredCredentials; serverHttpBaseUrl: string;
+  sessionId: string; attribution: RequesterWorkAttributionV1; credentials: StoredCredentials; serverHttpBaseUrl: string;
   signal?: AbortSignal;
 }>;
 
@@ -160,6 +160,7 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
    * daemon must recover while starting (a host update hands its Sessions over then) waits.
    */
   whenRuntimeCreatable?(signal?: AbortSignal): Promise<void>;
+  onRecoveryRefused?: (refusal: RequesterSessionRecoveryRefusal) => Promise<void>;
   recoverBootstrap(input: Readonly<{ sessionId: string; attribution?: RequesterWorkAttributionV1; tracked: boolean; signal?: AbortSignal;
     onRecoveryRefused?: (refusal: RequesterSessionRecoveryRefusal) => Promise<void> }>): Promise<AdmittedRequesterSessionBootstrap | null>;
 }>): ResolveRequesterSessionRuntimeContext {
@@ -179,9 +180,10 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
     let stamp = tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1
       ?? context?.bootstrap.attribution ?? attribution;
     if (stamp && attribution && !isDeepStrictEqual(stamp, attribution)) return null;
+    const onRecoveryRefused = onPreparationRefused ?? input.onRecoveryRefused;
     const recoverBootstrap = () => input.recoverBootstrap({ sessionId, ...(stamp ? { attribution: stamp } : {}), tracked: tracked !== undefined,
       ...(signal ? { signal } : {}),
-      ...(onPreparationRefused ? { onRecoveryRefused: onPreparationRefused } : {}) });
+      ...(onRecoveryRefused ? { onRecoveryRefused } : {}) });
     const coldBootstrap = !context ? await recoverBootstrap() : null;
     stamp ??= coldBootstrap?.attribution;
     if (!stamp) return null;
@@ -682,7 +684,7 @@ export async function resolveRequesterSessionBootstrap(input: RequesterSessionCr
       const signal = input.signal && input.machineAdmissionBoundary.signal
         ? AbortSignal.any([input.signal, input.machineAdmissionBoundary.signal]) : input.signal ?? input.machineAdmissionBoundary.signal;
       if (refused && !signal?.aborted) await input.onRecoveryRefused?.({ sessionId: input.sessionId,
-        credentials: stored.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl, ...(signal ? { signal } : {}) });
+        attribution: input.attribution, credentials: stored.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl, ...(signal ? { signal } : {}) });
     };
     const credentials = (await resolveRequesterSessionCustody({ ...input,
       onSessionReadRefused: () => { refused = true; } }, read(stored.credentials)))?.credentials ?? null;
