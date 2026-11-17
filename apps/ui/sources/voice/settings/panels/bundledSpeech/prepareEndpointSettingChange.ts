@@ -49,8 +49,14 @@ export async function prepareSpeechEndpointSettingChange(input: Readonly<{
       t('settingsVoice.local.openAiCompatEndpoint.insecureBody', { origin, machine: machineLabel }),
       { confirmText: t('settingsVoice.local.openAiCompatEndpoint.allowAction') },
     ),
-    showInvalidEndpoint: async () => {
-      if (current()) await Modal.alert(t('common.error'), t('settingsVoice.local.openAiCompatEndpoint.invalidBody'));
+    showInvalidEndpoint: async (reason) => {
+      if (!current()) return;
+      if (reason === 'machine_unavailable') {
+        await Modal.alert(t('settingsVoice.local.voiceCredential.machineUnavailableTitle'),
+          t('settingsVoice.local.voiceCredential.machineUnavailable'));
+      } else {
+        await Modal.alert(t('common.error'), t('settingsVoice.local.openAiCompatEndpoint.invalidBody'));
+      }
     },
   });
   if (!patch || !current()) return null;

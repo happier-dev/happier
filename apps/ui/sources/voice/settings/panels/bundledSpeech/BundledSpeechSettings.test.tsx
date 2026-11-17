@@ -385,6 +385,33 @@ describe('BundledSpeechSettings', () => {
     expect(setVoice).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { value: 'http://localhost:33669/v1', title: 'settingsVoice.local.voiceCredential.machineUnavailableTitle',
+      body: 'settingsVoice.local.voiceCredential.machineUnavailable' },
+    { value: 'not an endpoint', title: 'common.error', body: 'settingsVoice.local.openAiCompatEndpoint.invalidBody' },
+  ])('distinguishes an unavailable endpoint consent machine from invalid syntax: $value', async ({ value, title, body }) => {
+    const { prepareSpeechEndpointSettingChange } = await import('./prepareEndpointSettingChange');
+    const entry = createDefaultVoiceProviderRegistry().get(OPENAI_COMPAT_TTS_ID);
+    if (!entry?.providerSettings) throw new Error('missing canonical speech entry');
+    account.replaceVoice({ ...voiceSettingsDefaults,
+      executionMachine: { mode: 'fixed', machineId: 'unavailable-machine' } });
+    const previousVoice = account.settings.voice;
+    nativeAlert.mockImplementationOnce((_title, _message, buttons) => {
+      buttons?.find(button => button.style !== 'cancel')?.onPress?.();
+    });
+
+    let result: Awaited<ReturnType<typeof prepareSpeechEndpointSettingChange>> | undefined;
+    await act(async () => {
+      result = await prepareSpeechEndpointSettingChange({
+        entry, settings: account.settings, value, isCurrent: () => true,
+      });
+    });
+
+    expect(result).toBeNull();
+    expect(nativeAlert.mock.calls[0]?.slice(0, 2)).toEqual([tLoose(title), tLoose(body)]);
+    expect(account.settings.voice).toEqual(previousVoice);
+  });
+
   it.each(['execution machine', 'Account', 'provider', 'retired provider', 'retired projection', 'unrelated settings', 'installed first-party'] as const)('applies an endpoint approval only to its current context while retaining unrelated changes: %s', async (change) => {
     const { createBundledLocalTtsProviderSpec } = await import('./BundledSpeechSettings');
     const entry = createDefaultVoiceProviderRegistry().get(OPENAI_COMPAT_TTS_ID);
