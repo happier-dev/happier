@@ -30,6 +30,15 @@ export function readArtifactKindsChangeHintV1(hint: unknown): readonly string[] 
     ? readArtifactKindsV1(hint.artifactKinds) : null;
 }
 
+/** Exact content-free hints exclude unrelated kinds; coarse/unknown hints retain recovery. */
+export function artifactKindsMayIncludeKindV1(value: unknown, selectedKinds: readonly string[]): boolean {
+  const kinds = readArtifactKindsV1(value);
+  return kinds === null || kinds.some(encoded => {
+    const { kindHint } = decodeArtifactKindV1(encoded);
+    return kindHint === null || selectedKinds.includes(kindHint);
+  });
+}
+
 export {
   PluginDomainAvailabilityChangeHintSchema,
   PluginDomainChangeEntrySchema,

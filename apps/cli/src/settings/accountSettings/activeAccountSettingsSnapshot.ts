@@ -39,6 +39,7 @@ export type ActiveAccountSettingsSnapshot = Readonly<{
   /** Value-free operation diagnostics; not persisted Account preferences or material readiness. */
   savedSecretLegacyImport?: SavedSecretLegacyImportResultV1;
   profileCatalog?: ProfileCatalogSnapshotV1;
+  approvalProfileCatalog?: readonly import('@happier-dev/protocol/actions/approvalProfiles').ReadableApprovalProfileV1[];
   providerConnectionsCatalog?: ProviderConnectionsCatalogSnapshotV1;
   promptLibraryCatalog?: PromptLibraryCatalogSnapshotV1;
   acpCatalog?: AcpCatalogSnapshotV1;
@@ -99,7 +100,7 @@ const listeners = new Set<ActiveAccountSettingsSnapshotListener>();
 
 // Opened domains belong to the Account lifetime, not the preference revision.
 const accountCatalogFields = [
-  'profileCatalog', 'providerConnectionsCatalog', 'promptLibraryCatalog', 'acpCatalog', 'mcpServerCatalog',
+  'profileCatalog', 'approvalProfileCatalog', 'providerConnectionsCatalog', 'promptLibraryCatalog', 'acpCatalog', 'mcpServerCatalog',
   'connectedConfigurationCatalog', 'connectedPurposeCatalog',
   'remoteHostCatalog', 'notificationChannelCatalog', 'connectedPresentationCatalog', 'connectedAcknowledgementsCatalog',
 ] as const satisfies readonly (keyof ActiveAccountSettingsSnapshot)[];
@@ -546,6 +547,12 @@ export function commitActiveProfileCatalog(input: Readonly<{
   catalog: ProfileCatalogSnapshotV1;
 }>): boolean {
   return commitActiveAccountCatalog({ ...input, facet: 'profileCatalog' });
+}
+
+export function commitActiveApprovalProfileCatalog(input: AccountCatalogIncumbent & Readonly<{
+  catalog: NonNullable<ActiveAccountSettingsSnapshot['approvalProfileCatalog']>;
+}>): boolean {
+  return commitActiveAccountCatalog({ ...input, facet: 'approvalProfileCatalog' });
 }
 
 /** Withdraw runtime admission synchronously while the existing loader reobserves its Home. */

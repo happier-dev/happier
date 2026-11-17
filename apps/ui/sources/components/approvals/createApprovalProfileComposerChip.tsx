@@ -13,13 +13,16 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type ChipParams = Readonly<{
     value: string | null | undefined;
-    profiles: readonly ApprovalProfileV1[];
+    profiles: readonly Pick<ApprovalProfileV1, 'id' | 'name'>[];
     /** The new Session's Machine and its default profile; null until a Machine is chosen. */
     machineDefault: ApprovalProfileMachineDefault;
     ready: boolean;
+    displayReady?: boolean;
+    requestCatalog?: () => Promise<void>;
     onChange: (value: string | null) => void;
 }>;
 
@@ -33,23 +36,30 @@ function buildRootStep(params: ChipParams): SelectionListStep {
         title: t('workflows.triggers.guided.profile.title'),
         sections: [{ kind: 'static', id: CHIP_KEY, options: choices.map(choice => ({
             id: choice.id, label: choice.title, ...(choice.subtitle ? { subtitle: choice.subtitle } : {}),
-            onSelect: () => params.onChange(approvalProfileChoiceValue(choice.id)),
+            onSelect: () => params.ready ? params.onChange(approvalProfileChoiceValue(choice.id)) : false,
         })) }],
     };
 }
 
-function chipLabel(params: ChipParams): string {
-    return approvalProfileChipLabel(params).label;
+function chipLabel(params: ChipParams) {
+    return approvalProfileChipLabel({ ...params, ready: params.displayReady ?? params.ready });
+}
+
+function requestProfiles(params: ChipParams): void {
+    if (params.requestCatalog) fireAndForget(params.requestCatalog(), { tag: 'ApprovalProfileChip.catalog' });
 }
 
 const ApprovalProfileChip = React.memo(function ApprovalProfileChip(props: ChipParams & Readonly<{ ctx: AgentInputExtraActionChipRenderContext }>) {
     const [open, setOpen] = React.useState(false);
     const anchorRef = React.useRef<React.ElementRef<typeof View> | null>(null);
     const rootStep = React.useMemo(() => buildRootStep(props), [props.profiles, props.onChange, props.ready, props.value, props.machineDefault]); // eslint-disable-line react-hooks/exhaustive-deps
-    const { label, chosen } = approvalProfileChipLabel(props);
+    const { label, chosen } = chipLabel(props);
     return <>
         <View ref={anchorRef} collapsable={false} style={{ alignSelf: 'flex-start' }}>
-            <AgentInputRailChip testID={`${CHIP_KEY}-chip`} onPress={() => setOpen(current => !current)}
+            <AgentInputRailChip testID={`${CHIP_KEY}-chip`} onPress={() => {
+                if (!open) requestProfiles(props);
+                setOpen(current => !current);
+            }}
                 style={(pressed) => props.ctx.chipStyle(Boolean(pressed))} accessibilityRole="button"
                 accessibilityLabel={chosen ? `${t('workflows.triggers.guided.profile.title')}: ${label}` : label}>
                 {normalizeNodeForView(<Icon name="list-checks" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={props.ctx.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}
@@ -73,9 +83,10 @@ export function createApprovalProfileComposerChip(params: ChipParams): AgentInpu
     return {
         key: CHIP_KEY,
         controlId: 'approvalProfile',
+        onIntent: () => requestProfiles(params),
         placement: { id: 'approvalProfile', title, icon: 'list-checks', defaultPlacement: 'pinned' },
         collapsedOptionsPopover: {
-            presentation: 'list', title, label: chipLabel(params),
+            presentation: 'list', title, label: chipLabel(params).label,
             icon: (tint) => normalizeNodeForView(<Icon name="list-checks" size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />),
             rootStep: buildRootStep(params),
             selectedOptionId: approvalProfileChoiceId('session', params.value),

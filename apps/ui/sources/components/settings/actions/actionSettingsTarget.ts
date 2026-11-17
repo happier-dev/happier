@@ -7,7 +7,9 @@ import type { ActionPolicySetInput } from '@happier-dev/protocol/actions/actionP
 import {
   applyApprovalProfileOverlayV1,
   type ApprovalProfileV1,
+  type ReadableApprovalProfileV1,
 } from '@happier-dev/protocol/actions/approvalProfiles';
+import { toApprovalProfileContentV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import {
   normalizeActionsSettingsV1,
   type ActionSettingsActionId,
@@ -15,6 +17,7 @@ import {
 } from '@happier-dev/protocol/actions/actionSettings';
 
 import { useSetting } from '@/sync/domains/state/storage';
+import { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 
 /** Whose Approval settings the Actions screens edit: the Account's own rows, or one saved profile's overlay of them. */
 export type ActionSettingsTarget =
@@ -30,25 +33,30 @@ export const ACCOUNT_ACTION_SETTINGS_TARGET: ActionSettingsTarget =
  */
 export function useActionSettingsForTarget(
   target: ActionSettingsTarget,
+  options?: Readonly<{ demandProfiles?: boolean }>,
 ): Readonly<{
   account: ActionsSettingsV1;
   profile: ApprovalProfileV1 | null;
+  profileRow: ReadableApprovalProfileV1 | null;
+  profiles: readonly ApprovalProfileV1[];
+  profileRows: readonly ReadableApprovalProfileV1[];
+  machineApprovalProfiles: Readonly<Record<string, string>>;
   settings: ActionsSettingsV1;
 }> {
   const raw = useSetting('actionsSettingsV1');
   const account = React.useMemo(() => normalizeActionsSettingsV1(raw), [raw]);
   const profileId = target.kind === 'profile' ? target.id : null;
-  const profile =
-    profileId === null
-      ? null
-      : (account.approvalProfiles?.find((row) => row.id === profileId) ?? null);
+  const { profiles, profileRows, selectionRow: profileRow, machineApprovalProfiles } = useApprovalProfiles(
+    profileId, undefined, { demand: target.kind === 'profile' || options?.demandProfiles === true },
+  );
+  const profile = profileRow?.profile ?? null;
   const settings = React.useMemo(
     () => (profile ? applyApprovalProfileOverlayV1(account, profile) : account),
     [account, profile],
   );
   return React.useMemo(
-    () => ({ account, profile, settings }),
-    [account, profile, settings],
+    () => ({ account, profile, profileRow, profiles, profileRows, machineApprovalProfiles, settings }),
+    [account, profile, profileRow, profiles, profileRows, machineApprovalProfiles, settings],
   );
 }
 
@@ -73,13 +81,15 @@ export function resolveActionSettingsTargetWrite(
   params: Readonly<{
     target: ActionSettingsTarget;
     account: ActionsSettingsV1;
+    profileRows: readonly ReadableApprovalProfileV1[];
     input: ActionPolicySetInput;
   }>,
 ): ActionPolicySetInput | null {
-  const { target, account, input } = params;
+  const { target, account, profileRows, input } = params;
   if (target.kind === 'account' || 'profileChange' in input) return input;
-  const profile = account.approvalProfiles?.find((row) => row.id === target.id);
-  if (!profile || ('scope' in input && input.scope !== undefined)) return null;
+  const row = profileRows.find((candidate) => candidate.id === target.id);
+  if (!row || ('scope' in input && input.scope !== undefined)) return null;
+  const profile = row.profile;
   const actionId = input.actionId as ActionSettingsActionId;
   if ('change' in input) {
     if (
@@ -89,14 +99,16 @@ export function resolveActionSettingsTargetWrite(
       return null;
     return {
       profileChange: {
-        kind: 'upsert',
-        profile: setApprovalProfileActionPolicyV1(
+        kind: 'update',
+        id: row.id,
+        expectedRevision: row.revision,
+        profile: toApprovalProfileContentV1(setApprovalProfileActionPolicyV1(
           account,
           profile,
           actionId,
           input.change.audience,
           input.change.enabled ? 'default' : 'off',
-        ),
+        )),
       },
     };
   }
@@ -104,27 +116,31 @@ export function resolveActionSettingsTargetWrite(
     return null;
   return {
     profileChange: {
-      kind: 'upsert',
-      profile: setApprovalProfileActionPolicyV1(
+      kind: 'update',
+      id: row.id,
+      expectedRevision: row.revision,
+      profile: toApprovalProfileContentV1(setApprovalProfileActionPolicyV1(
         account,
         profile,
         actionId,
         input.audience,
         input.mode,
-      ),
+      )),
     },
   };
 }
 
 /** "Use Account setting": the profile stops naming this Action, so it follows the Account again. */
 export function buildApprovalProfileActionResetChange(
-  profile: ApprovalProfileV1,
+  row: ReadableApprovalProfileV1,
   actionId: ActionSettingsActionId,
 ): ActionPolicySetInput {
   return {
     profileChange: {
-      kind: 'upsert',
-      profile: resetApprovalProfileActionV1(profile, actionId),
+      kind: 'update',
+      id: row.id,
+      expectedRevision: row.revision,
+      profile: toApprovalProfileContentV1(resetApprovalProfileActionV1(row.profile, actionId)),
     },
   };
 }

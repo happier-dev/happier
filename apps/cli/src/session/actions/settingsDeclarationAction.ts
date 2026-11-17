@@ -3,7 +3,9 @@ import { ACCOUNT_SETTING_DEFINITIONS, accountSettingsParse, type AccountSettings
 import { ActionPolicyInputSchemas, isActionPolicyActionId, type ActionPolicySetResult } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
 import { readActionAudiencePolicy, applyActionPolicyMutation } from '@happier-dev/protocol/actions/actionAudiencePolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
-import { listApprovalProfilesV1 } from '@happier-dev/protocol/actions/approvalProfiles';
+import { executeApprovalProfileArtifactChangeV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { refreshActiveApprovalProfileCatalog, publishApprovalProfileArtifactChange } from '@/settings/profiles/hydrateProfileCatalog';
 import { readPortableDomainSettingBindingV1,
   parseBuiltInAccountSettingValueV1, readBuiltInAccountSettingValueV1, buildBuiltInAccountSettingMutationV1,
   hasBuiltInAccountSettingBindingV1, resolveBuiltInAccountSettingResetValueV1,
@@ -64,6 +66,7 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
   serverId?: string;
   serverHttpBaseUrl?: string;
   isCredentialCurrent?: () => boolean | Promise<boolean>;
+  savedSecretOperationContext?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
   voiceBindingContext?: PortableVoiceSettingsBindingContextV1;
   readMachineAgentProjection?: (machineId: string, context: ActionExecutorContext) => Promise<PluginProjectionV2 | null>;
 }>): NonNullable<ActionExecutorDeps['settingsDeclarationAction']> {
@@ -76,16 +79,28 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
       if (params.isCredentialCurrent && !await params.isCredentialCurrent()) return refuse('credential_scope_retired');
       if (actionId === 'actions.policy.get') {
         const requested = ActionPolicyInputSchemas[actionId].parse(input);
+        if ('profiles' in requested) return { profiles: await refreshActiveApprovalProfileCatalog({ credentials: params.credentials,
+          operationContext: params.savedSecretOperationContext, signal: context.signal }) };
         const { bootstrapAccountSettingsContext } = await import("@/settings/accountSettings/bootstrapAccountSettingsContext");
         const current = await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'blocking', refresh: 'force', signal: context.signal });
         if (current.source === 'none' || !current.rawSettings) return refuse('account_settings_content_unavailable');
         const settings = accountSettingsParse(current.rawSettings).actionsSettingsV1;
-        if ('profiles' in requested) return { profiles: [...listApprovalProfilesV1(settings)] };
         return readActionAudiencePolicy(settings, requested.actionId, requested.audience,
           'scope' in requested ? requested.scope : undefined);
       }
       const requested = actionId === 'actions.policy.set' ? ActionPolicyInputSchemas[actionId].parse(input)
         : { ...ActionPolicyInputSchemas[actionId].parse(input), mode: 'default' as const };
+      let profileResult: ActionPolicySetResult | undefined;
+      if ('profileChange' in requested && requested.profileChange.kind !== 'machine_default') {
+        const changed = await executeApprovalProfileArtifactChangeV1(createCredentialedAccountArtifactStore(params.credentials),
+          requested.profileChange, context.signal);
+        if (!changed.ok) return changed;
+        await publishApprovalProfileArtifactChange({ credentials: params.credentials, operationContext: params.savedSecretOperationContext,
+          id: changed.result.profileChange.id, profile: changed.profile });
+        if (requested.profileChange.kind !== 'delete') return changed.result;
+        // The Artifact receipt is authoritative; the existing Account CAS clears deliberate Machine defaults.
+        profileResult = changed.result;
+      }
       let applied: ActionPolicySetResult | undefined;
       try {
         const { updateAccountSettingsV2WithRetry } = await import("@/settings/accountSettings/updateAccountSettingsV2WithRetry");
@@ -106,7 +121,7 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
         });
         if (result.status === 'invalid' && result.reason === 'tooLarge') return refuse('settings_too_large');
         if (result.status !== 'applied' && result.status !== 'unchanged' && result.status !== 'satisfied') return refuse(`account_settings_${result.status}`);
-        return applied ?? refuse('account_settings_content_unavailable');
+        return profileResult ?? applied ?? refuse('account_settings_content_unavailable');
       } catch (error) {
         if (error instanceof RejectedSettingMutation) return refuse(error.errorCode);
         throw error;

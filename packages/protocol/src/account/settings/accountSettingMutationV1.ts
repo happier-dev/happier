@@ -232,7 +232,7 @@ export function applyAccountSettingMutationV1(
     let value: unknown = operation.value;
     if (operation.key === 'actionsSettingsV1' && isRecord(value) && isRecord(currentActions)) {
       let retained: Record<string, unknown> = value;
-      for (const key of ['scopedApprovalPreferences', 'callerSurfacePolicies', 'approvalProfiles', 'machineApprovalProfiles'] as const) {
+      for (const key of ['scopedApprovalPreferences', 'callerSurfacePolicies', 'machineApprovalProfiles'] as const) {
         if (!Object.hasOwn(retained, key) && Object.hasOwn(currentActions, key)) retained = { ...retained, [key]: currentActions[key] };
       }
       value = retained;

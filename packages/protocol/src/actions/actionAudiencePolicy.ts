@@ -87,8 +87,8 @@ export function applyActionPolicyMutation(settings: ActionsSettingsV1, input: Ac
       return { settings: { ...normalized, machineApprovalProfiles: change.id === null ? others
         : { ...others, [change.machineId]: change.id } }, result: input };
     }
-    const id = change.kind === 'upsert' ? change.profile.id : change.id;
-    const remaining = normalized.approvalProfiles?.filter(profile => profile.id !== id) ?? [];
+    if (change.kind !== 'delete') throw new Error('profile_artifact_mutation_required');
+    const id = change.id;
     // A deleted profile stops being any Machine's default; its Sessions settle visibly as missing.
     const machineApprovalProfiles = change.kind === 'delete' && normalized.machineApprovalProfiles
       ? Object.fromEntries(Object.entries(normalized.machineApprovalProfiles).filter(([, profileId]) => profileId !== id))

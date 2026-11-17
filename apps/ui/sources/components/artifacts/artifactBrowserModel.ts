@@ -23,6 +23,7 @@ import { readBoardArtifactRoute } from '@/components/boards/boardsRoutes';
 import { memoryDocumentHref } from '@/components/memory/memoryDocumentRoutes';
 import { promptCollectionItemHref } from '@/components/settings/prompts/collection/promptCollectionRoutes';
 import { profileRoute } from '@/components/settings/profiles/profileCollectionRoutes';
+import { buildApprovalProfileSettingsRoute } from '@/components/settings/actions/approvalProfileSettingsRoute';
 import { roleRoute } from '@/components/settings/roles/roleCollectionRoutes';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
@@ -42,8 +43,8 @@ export const ARTIFACT_BROWSER_KINDS: readonly ArtifactBrowserKind[] = ['document
 
 const USE_TARGET_TO_BROWSER_KIND = {
     open: 'document', prompt_doc: 'prompt', prompt_bundle: 'prompt', memory: 'memory', board: 'board', widget: 'widget',
-    workflow: 'workflow', role: 'role', launch_profile: 'launchProfile', approval: 'document', bot_template: 'document',
-} as const satisfies Readonly<Record<ReturnType<typeof getArtifactUseTargetV1>['kind'], ArtifactBrowserKind>>;
+    workflow: 'workflow', role: 'role', launch_profile: 'launchProfile', approval: 'document', bot_template: 'document', approval_profile: null,
+} as const satisfies Readonly<Record<ReturnType<typeof getArtifactUseTargetV1>['kind'], ArtifactBrowserKind | null>>;
 
 /** The browser kind, or `null` for a row the browser does not list. Unresolved locked rows remain visible. */
 export type ArtifactBrowserArtifact = Readonly<{
@@ -111,6 +112,7 @@ export function resolveArtifactOpenRoute(artifact: Pick<ArtifactBrowserArtifact,
         case 'board': return readBoardArtifactRoute(artifact) ?? artifactViewRoute(artifact.id);
         case 'workflow': return createWorkflowDefinitionRoute(artifact.id);
         case 'role': return roleRoute(artifact.id);
+        case 'approval_profile': return buildApprovalProfileSettingsRoute(artifact.id);
         case 'launch_profile': {
             const profileId = artifact.header?.profileId;
             return typeof profileId === 'string' && profileId.length > 0 ? profileRoute(profileId) : artifactViewRoute(artifact.id);

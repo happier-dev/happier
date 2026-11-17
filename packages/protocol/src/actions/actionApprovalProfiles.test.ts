@@ -6,7 +6,8 @@ import { ActionPolicyInputSchemas, ActionPolicyOutputSchemas } from './actionPol
 import { applyActionPolicyMutation } from './actionAudiencePolicy.js';
 import { accountSettingsParse } from '../account/settings/accountSettings.js';
 import { applyAccountSettingMutationV1 } from '../account/settings/accountSettingMutationV1.js';
-import { listApprovalProfilesV1 } from './approvalProfiles.js';
+import { ApprovalProfileV1Schema } from './approvalProfiles.js';
+import { bindApprovalProfileV1 } from './approvalProfileArtifactV1.js';
 import { createActionExecutor, invokeHostReviewedChildV1 } from './actionExecutor.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from '../deployments/deploymentReceiptResultV1.js';
 import { prepareHostReviewedChildPolicyV1 } from './executor/deploymentRoleApproval.js';
@@ -15,15 +16,20 @@ import { formatQualifiedPluginActionId } from '../plugins/actions/qualifiedActio
 describe('Account approval profiles at Action admission', () => {
   const settings = normalizeActionsSettingsV1({ v: 1, actions: {},
     approvalWaivedSurfaces: { 'deployments.deploy': ['agent'] },
-    approvalProfiles: [
+  });
+  const profiles = [
       { id: 'reviewed-deploys', name: 'Only reviewed deploys', actions: { 'deployments.deploy': { approvalRequiredSurfaces: ['agent'] } } },
       { id: 'blank', name: 'Blank' },
-    ],
-  });
-  const deploy = (approvalProfileId: string, policy = settings) => resolveActionApprovalRouting({
+      { id: 'off', name: 'Off', actions: { 'deployments.deploy': { enabled: false } } },
+      { id: 'allow', name: 'Allow', actions: { 'deployments.deploy': { enabled: true } },
+        approvalWaivedSurfaces: { 'deployments.deploy': ['agent'] } },
+  ].map(profile => ({ id: profile.id, profile: ApprovalProfileV1Schema.parse(profile), access: 'owner' as const,
+    revision: { headerVersion: 1, bodyVersion: 1 } }));
+  const deploy = (approvalProfileId: string, policy = settings, catalog = profiles) => resolveActionApprovalRouting({
     actionId: 'deployments.deploy', spec: getActionSpec('deployments.deploy'),
     input: { environmentId: 'env' }, settings: policy,
-    context: { surface: 'agent', authority: 'account_automation', approvalProfileId },
+    context: { surface: 'agent', authority: 'account_automation', approvalProfileId,
+      approvalProfile: bindApprovalProfileV1(catalog, approvalProfileId) },
   });
 
   it('decides with the profile row in place of the Account row, and a blank profile equals Account settings', () => {
@@ -34,16 +40,39 @@ describe('Account approval profiles at Action admission', () => {
   });
 
   it('lets a profile Allowed waive Ask where the Account screen could, so a permissive profile is never a no-op', () => {
-    const strict = normalizeActionsSettingsV1({ v: 1, actions: { 'deployments.deploy': { approvalRequiredSurfaces: ['agent'] } },
-      approvalProfiles: [{ id: 'trusted', name: 'Trusted deploys', approvalWaivedSurfaces: { 'deployments.deploy': ['agent'] } }] });
+    const strict = normalizeActionsSettingsV1({ v: 1, actions: { 'deployments.deploy': { approvalRequiredSurfaces: ['agent'] } } });
     expect(deploy('blank', strict).required).toBe(true);
-    expect(deploy('trusted', strict).required).toBe(false);
+    expect(deploy('trusted', strict, [{ ...profiles[0]!, id: 'trusted', profile: ApprovalProfileV1Schema.parse({
+      id: 'trusted', name: 'Trusted deploys', approvalWaivedSurfaces: { 'deployments.deploy': ['agent'] } }) }]).required).toBe(false);
   });
 
   it('settles a deleted or legacy built-in reference at Account settings with a visible missing status', () => {
     for (const id of ['deleted', 'builtin:read-propose']) {
       expect(deploy(id)).toMatchObject({ required: false, profile: { status: 'missing', requestedId: id } });
     }
+  });
+
+  it.each([
+    { profileId: 'off', accountOff: false, derived: false, allowed: false },
+    { profileId: 'allow', accountOff: true, derived: false, allowed: true },
+    { profileId: 'allow', accountOff: true, derived: true, allowed: false },
+  ])('applies selected $profileId before builtin availability (Account Off=$accountOff, derived=$derived)', async ({ profileId, accountOff, derived, allowed }) => {
+    let effects = 0;
+    const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3, requestKey: 'deploy-request',
+      targetLinkId: 'link', expectedTargetLinkRevision: 4, contentArtifactId: 'definition', contentHeaderVersion: 1, contentBodyVersion: 1 };
+    const executor = createActionExecutor({
+      readActionApprovalProfileId: async () => ({ approvalProfileId: profileId, approvalProfileTeamOrGroupDerived: derived }),
+      readApprovalProfile: id => bindApprovalProfileV1(profiles, id),
+      resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'environment' } }),
+      prepareDeploymentAction: async () => ({ input, preview: { sourceMethod: 'gitIntegration' } }),
+      deploymentAction: async () => { effects++; return DeploymentReceiptAcceptedResultV1Schema.parse({ ok: true,
+        environmentId: 'environment', revision: 4, kind: 'pending', actionOperationId: 'operation' }); },
+    });
+    const result = await executor.execute('deployments.deploy', input, { surface: 'agent', authority: 'account_automation',
+      serverId: 'home', interactivePresentation: 'unavailable', actionsSettings: accountOff ? normalizeActionsSettingsV1({ ...settings,
+        actions: { 'deployments.deploy': { enabled: false } } }) : settings });
+    expect(result).toMatchObject(allowed ? { ok: true } : { ok: false, errorCode: 'action_disabled' });
+    expect(effects).toBe(allowed ? 1 : 0);
   });
 
   it('binds the calling Session profile once through composed deploy admission', async () => {
@@ -56,7 +85,8 @@ describe('Account approval profiles at Action admission', () => {
       revision: 4, kind: 'pending', actionOperationId: 'operation' });
     const executor = createActionExecutor({
       // The Session metadata store and deployment provider are process boundaries.
-      readActionApprovalProfileId: async () => { reads++; return sessionProfile; },
+      readActionApprovalProfileId: async () => { reads++; return { approvalProfileId: sessionProfile, approvalProfileTeamOrGroupDerived: false }; },
+      readApprovalProfile: id => bindApprovalProfileV1(profiles, id),
       resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'environment' } }),
       prepareDeploymentAction: async () => ({ input, preview: { sourceMethod: 'gitIntegration' } }),
       deploymentAction: async () => { effects++; return receipt; },
@@ -185,9 +215,9 @@ describe('Account approval profiles at Action admission', () => {
       const spec = getActionSpec(actionId);
       const viaAccount = resolveActionApprovalRouting({ actionId, spec, context: { surface: 'agent' },
         settings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['agent'] } }) });
-      const viaProfile = resolveActionApprovalRouting({ actionId, spec, context: { surface: 'agent', approvalProfileId: 'p' },
-        settings: normalizeActionsSettingsV1({ v: 1, approvalProfiles: [{ id: 'p', name: 'P',
-          approvalWaivedSurfaces: { [actionId]: ['agent'] } }] }) });
+      const viaProfile = resolveActionApprovalRouting({ actionId, spec, context: { surface: 'agent', approvalProfileId: 'p',
+        approvalProfile: { profile: ApprovalProfileV1Schema.parse({ id: 'p', name: 'P', approvalWaivedSurfaces: { [actionId]: ['agent'] } }),
+          resolution: { status: 'available', requestedId: 'p' } } }, settings: normalizeActionsSettingsV1({ v: 1 }) });
       expect(viaProfile.required, actionId).toBe(viaAccount.required);
     }
   });
@@ -196,10 +226,12 @@ describe('Account approval profiles at Action admission', () => {
     const child = { action: { pluginId: 'acme.deploy', localId: 'publish' }, role: 'publish', input: {} };
     const qualified = formatQualifiedPluginActionId(child.action);
     const context = { surface: 'agent' as const, authority: 'account_automation' as const, bypassApprovals: true,
-      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalProfiles: [{ id: 'careful', name: 'Careful agent',
-        actions: { [qualified]: { approvalRequiredSurfaces: ['agent'] } } }] }) };
+      actionsSettings: normalizeActionsSettingsV1({ v: 1 }) };
     expect(prepareHostReviewedChildPolicyV1(child, context)?.requiredActionIds).toEqual([]);
-    expect(prepareHostReviewedChildPolicyV1(child, { ...context, approvalProfileId: 'careful' })?.requiredActionIds)
+    expect(prepareHostReviewedChildPolicyV1(child, { ...context, approvalProfileId: 'careful',
+      approvalProfile: { profile: ApprovalProfileV1Schema.parse({ id: 'careful', name: 'Careful agent',
+        actions: { [qualified]: { approvalRequiredSurfaces: ['agent'] } } }),
+      resolution: { status: 'available', requestedId: 'careful' } } })?.requiredActionIds)
       .toContain(qualified);
   });
 
@@ -207,59 +239,51 @@ describe('Account approval profiles at Action admission', () => {
     const actionId = 'actions.policy.set';
     const spec = getActionSpec(actionId);
     const waived = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['agent'] } });
-    const route = (input: unknown, policy = waived) => resolveActionApprovalRouting({ actionId, spec, input, settings: policy,
-      context: { surface: 'agent', authority: 'account_automation', approvalProfileId: 'blank' } });
-    expect(route({ profileChange: { kind: 'upsert', profile: { id: 'blank', name: 'Blank',
+    const route = (input: unknown, policy = waived, profile = ApprovalProfileV1Schema.parse({ id: 'blank', name: 'Blank' })) => resolveActionApprovalRouting({ actionId, spec, input, settings: policy,
+      context: { surface: 'agent', authority: 'account_automation', approvalProfileId: 'blank',
+        approvalProfile: bindApprovalProfileV1([{ id: profile.id, profile, access: 'owner',
+          revision: { headerVersion: 1, bodyVersion: 1 } }], profile.id) } });
+    expect(route({ profileChange: { kind: 'create', profile: { name: 'Blank',
       approvalWaivedSurfaces: { 'deployments.deploy': ['agent'] } } } }).required).toBe(true);
     expect(route({ profileChange: { kind: 'machine_default', machineId: 'm', id: null } }).required).toBe(true);
     expect(route({ profileChange: { kind: 'delete', id: 'blank' } }).required).toBe(true);
     // Only an Account waiver of profile control answers it; the profile cannot waive its own control.
     expect(route({ profileChange: { kind: 'delete', id: 'blank' } }, normalizeActionsSettingsV1({ ...waived,
       approvalWaivedSurfaces: { ...waived.approvalWaivedSurfaces, 'session.approval_profile.set': ['agent'] } })).required).toBe(false);
-    expect(route({ profileChange: { kind: 'delete', id: 'blank' } }, normalizeActionsSettingsV1({ ...waived,
-      approvalProfiles: [{ id: 'blank', name: 'Blank', approvalWaivedSurfaces: { 'session.approval_profile.set': ['agent'] } }] })).required).toBe(true);
+    expect(route({ profileChange: { kind: 'delete', id: 'blank' } }, waived,
+      ApprovalProfileV1Schema.parse({ id: 'blank', name: 'Blank', approvalWaivedSurfaces: {
+        'session.approval_profile.set': ['agent'] } })).required).toBe(true);
   });
 
   it.each(['agent', 'mcp'] as const)('consumes an exact admitted profile review once on %s', surface => {
     const actionId = 'session.title.set';
     const spec = getActionSpec(actionId);
-    const careful = normalizeActionsSettingsV1({ v: 1, approvalProfiles: [{ id: 'careful', name: 'Careful agent',
-      actions: { [actionId]: { approvalRequiredSurfaces: [surface] } } }] });
-    const args = { actionId, spec, settings: careful,
-      context: { surface, authority: 'account_automation' as const, approvalProfileId: 'careful' } } as const;
+    const args = { actionId, spec, settings: normalizeActionsSettingsV1({ v: 1 }),
+      context: { surface, authority: 'account_automation' as const, approvalProfileId: 'careful',
+        approvalProfile: { profile: ApprovalProfileV1Schema.parse({ id: 'careful', name: 'Careful agent',
+          actions: { [actionId]: { approvalRequiredSurfaces: [surface] } } }),
+        resolution: { status: 'available' as const, requestedId: 'careful' } } } };
     expect(resolveActionApprovalRouting(args).required).toBe(true);
     expect(resolveActionApprovalRouting({ ...args, reviewAdmitted: true }).required).toBe(false);
   });
 
-  it('preserves the Account profile collection through normalization', () => {
-    expect(normalizeActionsSettingsV1(settings).approvalProfiles).toEqual(settings.approvalProfiles);
-    expect(settings.approvalProfiles).toHaveLength(2);
-  });
-
-  it('creates, edits and deletes profiles through the existing policy Action and Account mutation owner', () => {
+  it('keeps Machine defaults in the Account mutation owner and clears references after profile deletion', () => {
     expect(ActionPolicyInputSchemas['actions.policy.get'].parse({ profiles: true })).toEqual({ profiles: true });
-    expect(ActionPolicyOutputSchemas['actions.policy.get'].parse({ profiles: listApprovalProfilesV1(settings) }))
-      .toMatchObject({ profiles: expect.arrayContaining(settings.approvalProfiles ?? []) });
-    const custom = { id: 'custom', name: 'Reviewed changes', actions: { 'session.stop': { approvalRequiredSurfaces: ['agent'] } } };
-    const request = ActionPolicyInputSchemas['actions.policy.set'].parse({ profileChange: { kind: 'upsert', profile: custom } });
-    const changed = applyActionPolicyMutation(normalizeActionsSettingsV1({ v: 1 }), request);
-    expect(ActionPolicyOutputSchemas['actions.policy.set'].parse(changed.result)).toEqual(request);
-    expect(accountSettingsParse({ actionsSettingsV1: changed.settings }).actionsSettingsV1.approvalProfiles).toEqual([custom]);
-    const attached = applyActionPolicyMutation(changed.settings, ActionPolicyInputSchemas['actions.policy.set'].parse({
+    expect(ActionPolicyOutputSchemas['actions.policy.get'].parse({ profiles })).toEqual({ profiles });
+    const attached = applyActionPolicyMutation(settings, ActionPolicyInputSchemas['actions.policy.set'].parse({
       profileChange: { kind: 'machine_default', machineId: 'machine-a', id: 'custom' } }));
     expect(accountSettingsParse({ actionsSettingsV1: attached.settings }).actionsSettingsV1.machineApprovalProfiles)
       .toEqual({ 'machine-a': 'custom' });
-    // An older writer that omits the profile roots keeps both of them.
+    // An older writer that omits the Machine default root retains the deliberate preference.
     const stale = applyAccountSettingMutationV1({ actionsSettingsV1: attached.settings }, { operations: [
       { op: 'set', key: 'actionsSettingsV1', value: { v: 1, actions: {}, approvalWaivedSurfaces: { 'session.list': ['agent'] } } },
     ] });
     expect(stale.status).toBe('applied');
     if (stale.status === 'applied') expect(accountSettingsParse(stale.raw).actionsSettingsV1).toMatchObject({
-      approvalProfiles: changed.settings.approvalProfiles, machineApprovalProfiles: { 'machine-a': 'custom' } });
+      machineApprovalProfiles: { 'machine-a': 'custom' } });
     const removed = applyActionPolicyMutation(attached.settings, ActionPolicyInputSchemas['actions.policy.set'].parse({
-      profileChange: { kind: 'delete', id: 'custom' },
+      profileChange: { kind: 'delete', id: 'custom', expectedRevision: { headerVersion: 1, bodyVersion: 1 } },
     }));
-    expect(removed.settings.approvalProfiles).toEqual([]);
     expect(removed.settings.machineApprovalProfiles).toEqual({});
     expect(deploy('custom', removed.settings).profile?.status).toBe('missing');
   });

@@ -19,3 +19,7 @@ export function isDiscussionReplyActionIdV1(value: string): value is 'discussion
 export function isDiscussionPostActionIdV1(value: string): value is 'discussion.post' {
   return value === 'discussion.post';
 }
+
+export function isDiscussionInviteActionIdV1(value: string): value is 'discussion.invite' {
+  return value === 'discussion.invite';
+}

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -29,6 +30,13 @@ it('shows the chosen profile on the chip', async () => {
   const chip = createApprovalProfileComposerChip({ value: 'custom:careful', profiles, machineDefault: null, ready: true, onChange: () => {} });
   const screen = await renderScreen(<>{chip.render(ctx)}</>);
   expect(screen.getTextContent()).toMatch(/Careful agent/);
+});
+
+it('shows a confirmed missing selection while the unopened catalog remains cold', async () => {
+  const chip = createApprovalProfileComposerChip({ value: 'removed-profile', profiles: [], machineDefault: null,
+    ready: false, displayReady: true, onChange: () => {} });
+  const screen = await renderScreen(<>{chip.render(ctx)}</>);
+  expect(screen.getTextContent()).toMatch(/deletedName|Deleted profile/);
 });
 
 // Mockup "Machine default · Careful agent": a new Session that follows a Machine with a profile names that profile.

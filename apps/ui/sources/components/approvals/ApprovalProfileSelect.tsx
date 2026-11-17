@@ -9,6 +9,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { SessionAuthoringFieldSelectTrigger } from '@/components/sessions/authoring/controls/SessionAuthoringFieldSelectTrigger';
 import type { useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
 import { t } from '@/text';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { ApprovalProfileV1 } from '@happier-dev/protocol/actions';
 
 export const APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID = 'machine_default';
@@ -35,7 +36,7 @@ function machineDefaultTitle(machineDefault: ApprovalProfileMachineDefault): str
 }
 
 /** The one approval-profile choice list: the field's menu, the composer chip and the Machine row offer the same rows. */
-export function buildApprovalProfileChoices(mode: ApprovalProfileChoiceMode, profiles: readonly ApprovalProfileV1[],
+export function buildApprovalProfileChoices(mode: ApprovalProfileChoiceMode, profiles: readonly Pick<ApprovalProfileV1, 'id' | 'name'>[],
     testID: string, machineDefault: ApprovalProfileMachineDefault = null): DropdownMenuItem[] {
     const result: DropdownMenuItem[] = [];
     result.push(mode === 'session'
@@ -60,7 +61,7 @@ export function approvalProfileChoiceValue(id: string): string | null {
 
 /** The chosen row's words, for a sentence that names the current choice ("Changed elsewhere to …"). */
 export function approvalProfileChoiceTitle(mode: ApprovalProfileChoiceMode, value: string | null | undefined,
-    profiles: readonly ApprovalProfileV1[], machineDefault: ApprovalProfileMachineDefault = null): string {
+    profiles: readonly Pick<ApprovalProfileV1, 'id' | 'name'>[], machineDefault: ApprovalProfileMachineDefault = null): string {
     const id = approvalProfileChoiceId(mode, value);
     return buildApprovalProfileChoices(mode, profiles, '', machineDefault).find(choice => choice.id === id)?.title
         ?? t('workflows.triggers.guided.profile.deletedName');
@@ -72,7 +73,7 @@ export function approvalProfileChoiceTitle(mode: ApprovalProfileChoiceMode, valu
  */
 export function approvalProfileChipLabel(params: Readonly<{
     value: string | null | undefined;
-    profiles: readonly ApprovalProfileV1[];
+    profiles: readonly Pick<ApprovalProfileV1, 'id' | 'name'>[];
     machineDefault: ApprovalProfileMachineDefault;
     ready: boolean;
 }>): Readonly<{ label: string; chosen: boolean }> {
@@ -89,7 +90,8 @@ export function approvalProfileChipLabel(params: Readonly<{
 /** The profile owner's typed read drives both the picker and its missing-reference warning. */
 export function ApprovalProfileSelect(props: Choice & Readonly<{
     testID: string;
-    source: Pick<ReturnType<typeof useApprovalProfiles>, 'profiles' | 'ready' | 'unavailable'>;
+    source: Pick<ReturnType<typeof useApprovalProfiles>, 'profiles' | 'ready' | 'unavailable'>
+        & Partial<Pick<ReturnType<typeof useApprovalProfiles>, 'requestCatalog' | 'displayProfiles' | 'selectedDescriptor'>>;
     machineDefault?: ApprovalProfileMachineDefault;
     disabled?: boolean;
     titleMeta?: React.ReactNode;
@@ -105,25 +107,31 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
 }>) {
     const [open, setOpen] = React.useState(false);
     const machineDefault = props.machineDefault ?? null;
-    const items = React.useMemo(() => buildApprovalProfileChoices(props.mode, props.source.profiles, props.testID, machineDefault),
-        [props.mode, props.source.profiles, props.testID, machineDefault]);
-    const missing = props.source.ready && typeof props.value === 'string'
-        && !props.source.profiles.some(profile => profile.id === props.value);
-    const disabled = props.disabled === true || !props.source.ready;
+    const displayProfiles = props.source.displayProfiles ?? props.source.profiles;
+    const items = React.useMemo(() => buildApprovalProfileChoices(props.mode, displayProfiles, props.testID, machineDefault),
+        [props.mode, displayProfiles, props.testID, machineDefault]);
+    const displayReady = props.source.ready || props.source.selectedDescriptor !== undefined;
+    const missing = displayReady && typeof props.value === 'string'
+        && !displayProfiles.some(profile => profile.id === props.value);
+    const disabled = props.disabled === true || (!props.source.ready && !props.source.requestCatalog);
     const selectedId = approvalProfileChoiceId(props.mode, props.value);
     const select = (id: string) => {
-        if (disabled) return;
+        if (disabled || !props.source.ready) return;
         setOpen(false);
         props.onChange(approvalProfileChoiceValue(id));
     };
     const selectAnchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
     const chip = props.presentation === 'chips' || props.presentation === 'selects' ? approvalProfileChipLabel({ value: props.value,
-        profiles: props.source.profiles, machineDefault, ready: props.source.ready }) : null;
+        profiles: displayProfiles, machineDefault, ready: displayReady }) : null;
     const row = props.presentation === 'row';
     // A chip keeps its own width wherever it is placed; only the field presentation spans its row.
     return <View style={chip ? styles.chipHost : undefined}>
         <DropdownMenu testID={props.testID} open={open}
-            onOpenChange={next => { if (!disabled) setOpen(next); }}
+            onOpenChange={next => {
+                if (disabled) return;
+                setOpen(next);
+                if (next && props.source.requestCatalog) fireAndForget(props.source.requestCatalog(), { tag: 'ApprovalProfileSelect.catalog' });
+            }}
             items={items} selectedId={selectedId}
             onSelect={select}
             emptyLabel={t(props.source.unavailable ? 'common.unavailable' : 'common.loading')}
@@ -138,8 +146,8 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
                 title={t('workflows.triggers.guided.profile.title')} icon={props.icon} density="compact"
                 // The short choice ("Machine default", a profile's name) keeps the value beside its label; the menu names
                 // the Machine's own profile.
-                detail={props.source.ready
-                    ? approvalProfileChoiceTitle(props.mode, props.value, props.source.profiles)
+                detail={displayReady
+                    ? approvalProfileChoiceTitle(props.mode, props.value, displayProfiles)
                     : t(props.source.unavailable ? 'common.unavailable' : 'common.loading')}
                 disabled={disabled} onPress={toggle} /> : undefined}
             itemTrigger={chip || row ? undefined : { title: t('workflows.triggers.guided.profile.title'),

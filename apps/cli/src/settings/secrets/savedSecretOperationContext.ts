@@ -37,6 +37,7 @@ export type SavedSecretOperationContextV1 = Readonly<{
   replaceAccountSettings(snapshot: ActiveAccountSettingsSnapshot, signal?: AbortSignal): Promise<boolean>;
   commitLegacyImportResult(input: Readonly<{ expectedSettingsVersion: number; result: SavedSecretLegacyImportResultV1 }>): Promise<boolean>;
   commitProfileCatalog(input: Readonly<{ expectedSettingsVersion: number; catalog: ProfileCatalogSnapshotV1 }>): Promise<boolean>;
+  commitApprovalProfileCatalog(catalog: NonNullable<ActiveAccountSettingsSnapshot['approvalProfileCatalog']>): Promise<boolean>;
   commitNotificationChannelCatalog(input: Readonly<{ expectedSettingsVersion: number; catalog: NotificationChannelCatalogSnapshotV1; signal?: AbortSignal }>): Promise<boolean>;
   commitAcpCatalog(input: Readonly<{ catalog: AcpCatalogSnapshotV1 }>): Promise<boolean>;
   commitMcpCatalog(catalog: McpServerCatalogSnapshotV1): Promise<boolean>;
@@ -184,6 +185,11 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
     commitProfileCatalog: async (profile: Parameters<SavedSecretOperationContextV1['commitProfileCatalog']>[0]) => {
       if (!readSnapshot() || !snapshot || snapshot.settingsVersion !== profile.expectedSettingsVersion) return false;
       replaceSnapshot(replaceProfileCatalogInSnapshot(snapshot, profile.catalog));
+      return true;
+    },
+    commitApprovalProfileCatalog: async catalog => {
+      if (!await isCurrent() || !snapshot) return false;
+      if (!isDeepStrictEqual(snapshot.approvalProfileCatalog, catalog)) replaceSnapshot({ ...snapshot, approvalProfileCatalog: catalog });
       return true;
     },
     commitAcpCatalog: async ({ catalog }: Parameters<SavedSecretOperationContextV1['commitAcpCatalog']>[0]) => {

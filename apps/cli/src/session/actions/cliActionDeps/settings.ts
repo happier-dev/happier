@@ -7,7 +7,7 @@ import { configuration } from '@/configuration';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 export function createCliSettingsActionDeps(
-  params: Pick<CliActionDepsParams, 'credentials' | 'isCredentialCurrent' | 'serverHttpBaseUrl' | 'serverId'>,
+  params: Pick<CliActionDepsParams, 'credentials' | 'isCredentialCurrent' | 'serverHttpBaseUrl' | 'serverId' | 'savedSecretOperationContext'>,
   { callMachineAction }: Readonly<{
     callMachineAction: CliMachineActionCall;
   }>,
@@ -17,6 +17,7 @@ export function createCliSettingsActionDeps(
     settingsDeclarationAction: createCliSettingsDeclarationAction({ credentials: params.credentials,
       serverId: params.serverId ?? configuration.activeServerId,
       serverHttpBaseUrl: params.serverHttpBaseUrl, isCredentialCurrent: params.isCredentialCurrent,
+      savedSecretOperationContext: params.savedSecretOperationContext,
       readMachineAgentProjection: async (machineId, context) => {
         const readProjection = async () => {
           let raw: unknown;

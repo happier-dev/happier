@@ -20,10 +20,10 @@ export function SessionApprovalProfileSection(props: Readonly<{ session: Session
 function SessionApprovalProfileBody({ session, serverId }: Readonly<{ session: Session; serverId: string }>) {
     const metadata = readSessionOwnerMetadataView(session);
     const value = metadata?.approvalProfileId ?? null;
-    const source = useApprovalProfiles(value, serverId);
     const machineId = metadata?.machineId ?? null;
+    const source = useApprovalProfiles(value, serverId, { demand: false, machineId });
     const machineDefault = React.useMemo(() => resolveApprovalProfileMachineDefault(source, machineId),
-        [source.profiles, source.machineApprovalProfiles, machineId]); // eslint-disable-line react-hooks/exhaustive-deps
+        [source.displayProfiles, source.machineApprovalProfiles, machineId]); // eslint-disable-line react-hooks/exhaustive-deps
     const [pending, setPending] = React.useState<Readonly<{ value: string | null }> | null>(null);
     const [held, setHeld] = React.useState<Readonly<{ value: string | null }> | null>(null);
     const [refused, setRefused] = React.useState(false);

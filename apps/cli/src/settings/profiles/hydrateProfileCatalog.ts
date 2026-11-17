@@ -1,5 +1,6 @@
 import { $ZodError } from 'zod/v4/core';
 import { isRetryableAccountEncryptionCurrentnessError } from '@/api/client/accountEncryptionCurrentness';
+import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import type { StoredCredentials } from '@/persistence';
 import { readStoredCredentials } from '@/persistence';
@@ -13,6 +14,9 @@ import { normalizeCliAccountSettingsHistoryAfterTransfer } from '@/settings/acco
 import { loadAiLaunchProfileArtifacts } from '@happier-dev/protocol/profiles/read';
 import { runWithServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { loadReadableApprovalProfilesV1, listReadableApprovalProfilesV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
+import type { ReadableApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
+import { commitActiveApprovalProfileCatalog } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { beginActiveProfileCatalogRefresh, commitActiveAccountSettingsSnapshot, commitActiveProfileCatalog, getActiveAccountSettingsSnapshot,
   getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 export { readActiveProfileCatalog } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -172,4 +176,98 @@ export async function refreshDemandedActiveProfileCatalog(input: Readonly<{ toke
   const credentials = await readStoredCredentials();
   if (!credentials || credentials.token !== input.token) return;
   await refreshCapturedProfileCatalog({ credentials, signal: input.signal }, true);
+}
+
+const pendingApprovalProfiles = new Map<string, Promise<readonly ReadableApprovalProfileV1[]>>();
+const reobserveApprovalProfilesAfterPending = new Set<string>();
+
+/** Opened approval profiles share the existing Account lifetime and Artifact transport. */
+export function refreshActiveApprovalProfileCatalog(input: Readonly<{
+  credentials: StoredCredentials; signal?: AbortSignal; operationContext?: SavedSecretOperationContextV1;
+  artifactIds?: readonly string[]; reobserve?: boolean;
+}>): Promise<readonly ReadableApprovalProfileV1[]> {
+  const activate = async () => {
+    const context = input.operationContext;
+    const scopeKey = resolveAccountSettingsScopeKey(input.credentials);
+    if (!context && getActiveAccountSettingsSnapshot()?.scopeKey !== scopeKey) {
+      const { bootstrapAccountSettingsContext } = await import('@/settings/accountSettings/bootstrapAccountSettingsContext');
+      await bootstrapAccountSettingsContext({ credentials: input.credentials, mode: 'blocking', signal: input.signal });
+    }
+    const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+    const read = () => context ? context.readSnapshot() : getActiveAccountSettingsSnapshot();
+    const current = () => !input.signal?.aborted && read()?.source !== 'none' && read()?.scopeKey === scopeKey
+      && (context !== undefined || getActiveAccountSettingsSnapshotLifetimeToken() === lifetimeToken);
+    if (!current()) return [];
+    const key = `${scopeKey}:${lifetimeToken}`;
+    const existing = context ? undefined : pendingApprovalProfiles.get(key);
+    if (existing) {
+      if (input.reobserve || input.artifactIds) reobserveApprovalProfilesAfterPending.add(key);
+      return existing;
+    }
+    const work = (async () => {
+      const { createCredentialedAccountArtifactStore } = await import('@/api/artifacts/accountArtifactStore');
+      const store = createCredentialedAccountArtifactStore(input.credentials);
+      let artifactIds = input.artifactIds;
+      while (true) {
+        reobserveApprovalProfilesAfterPending.delete(key);
+        let catalog: readonly ReadableApprovalProfileV1[];
+        const prior = read()?.approvalProfileCatalog;
+        try {
+          if (artifactIds && prior) {
+            const ids = new Set(artifactIds);
+            const changed = await Promise.all([...ids].map(id => store.read(id, { signal: input.signal })));
+            catalog = [...prior.filter(row => !ids.has(row.id)), ...listReadableApprovalProfilesV1(changed.flatMap(row => row ? [row] : []))];
+          } else catalog = await loadReadableApprovalProfilesV1(store.list, input.signal);
+        } catch (error) {
+          input.signal?.throwIfAborted();
+          const { kind } = classifyServerEndpointError(error);
+          if (kind === 'network' || kind === 'timeout' || kind === 'server_error') {
+            if (prior) return prior;
+            throw error;
+          }
+          catalog = [];
+        }
+        if (!current()) return [];
+        if (!context && reobserveApprovalProfilesAfterPending.has(key)) {
+          artifactIds = undefined;
+          continue;
+        }
+        const committed = context ? await context.commitApprovalProfileCatalog(catalog)
+          : commitActiveApprovalProfileCatalog({ scopeKey, lifetimeToken, catalog });
+        return committed ? read()?.approvalProfileCatalog ?? [] : [];
+      }
+    })();
+    if (!context) pendingApprovalProfiles.set(key, work);
+    try { return await work; }
+    finally { if (pendingApprovalProfiles.get(key) === work) {
+      pendingApprovalProfiles.delete(key);
+      reobserveApprovalProfilesAfterPending.delete(key);
+    } }
+  };
+  return input.operationContext ? runWithServerHttpBaseUrl(input.operationContext.serverHttpBaseUrl, activate) : activate();
+}
+
+export async function refreshDemandedActiveApprovalProfileCatalog(input: Readonly<{
+  token: string; signal?: AbortSignal; artifactIds?: readonly string[];
+}>): Promise<void> {
+  const snapshot = getActiveAccountSettingsSnapshot();
+  if (snapshot?.approvalProfileCatalog === undefined && !pendingApprovalProfiles.has(
+    `${snapshot?.scopeKey}:${getActiveAccountSettingsSnapshotLifetimeToken()}`)) return;
+  const credentials = await readStoredCredentials();
+  if (!credentials || credentials.token !== input.token) return;
+  await refreshActiveApprovalProfileCatalog({ credentials, signal: input.signal, artifactIds: input.artifactIds, reobserve: true });
+}
+
+/** A mutation receipt updates an already complete catalog without rereading its write. */
+export async function publishApprovalProfileArtifactChange(input: Readonly<{
+  credentials: StoredCredentials; operationContext?: SavedSecretOperationContextV1;
+  id: string; profile?: ReadableApprovalProfileV1;
+}>): Promise<void> {
+  const context = input.operationContext;
+  const snapshot = context ? context.readSnapshot() : getActiveAccountSettingsSnapshot();
+  const scopeKey = resolveAccountSettingsScopeKey(input.credentials);
+  if (!snapshot?.approvalProfileCatalog || snapshot.scopeKey !== scopeKey || snapshot.source === 'none') return;
+  const catalog = [...snapshot.approvalProfileCatalog.filter(row => row.id !== input.id), ...(input.profile ? [input.profile] : [])];
+  if (context) await context.commitApprovalProfileCatalog(catalog);
+  else commitActiveApprovalProfileCatalog({ scopeKey, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(), catalog });
 }

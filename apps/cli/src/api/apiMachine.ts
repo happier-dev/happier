@@ -290,7 +290,10 @@ import { hydrateSavedSecretCatalog } from "@/settings/secrets/savedSecretCatalog
 import { createExecutionRunAccountSettingsSnapshotResolver } from './machine/resolveExecutionRunAccountSettingsSnapshot';
 import { changesRequireSavedSecretCatalogRefresh } from '@/settings/secrets/savedSecretCatalogChangeInvalidation';
 import { isProfileCatalogAccountChangeEntityIdV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
-import { refreshDemandedActiveProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
+import { refreshDemandedActiveProfileCatalog, refreshDemandedActiveApprovalProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
+import { artifactKindsMayIncludeKindV1, readArtifactKindsChangeHintV1 } from '@happier-dev/protocol/changes';
+import { launchProfileArtifactSharingAdapterV1 } from '@happier-dev/protocol/launchProfiles/launchProfileArtifactV1';
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { parsePromptLibraryPhysicalKeyV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { prepareActivePromptLibraryRecord, readActiveMachineSkillInstallArtifactIds, refreshDemandedActivePromptLibraryCatalog,
     type MachineSkillInstallCatalogDemand } from '@/settings/prompts/hydratePromptLibraryCatalog';
@@ -6540,6 +6543,7 @@ export class ApiMachineClient {
     }): Promise<void> {
         input.signal.throwIfAborted();
         await refreshDemandedActiveProfileCatalog(input);
+        await refreshDemandedActiveApprovalProfileCatalog(input);
         await this.refreshDemandedPromptLibraryCatalog({ signal: input.signal, initializeMachineInstallDemand: true });
         await refreshDemandedActiveProviderConnectionsCatalog(input);
         await refreshDemandedActiveMcpServerCatalog(input);
@@ -6815,7 +6819,11 @@ export class ApiMachineClient {
                 const hasNotificationChannelCatalogChange = changes.some(change => change.kind === 'account'
                     && change.entityId === NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1);
                 const hasProfileCatalogChange = changes.some((change) => change.kind === 'account'
-                    && isProfileCatalogAccountChangeEntityIdV1(change.entityId));
+                    && isProfileCatalogAccountChangeEntityIdV1(change.entityId)
+                    || change.kind === 'artifact' && artifactKindsMayIncludeKindV1(readArtifactKindsChangeHintV1(change.hint),
+                        [launchProfileArtifactSharingAdapterV1.kind]));
+                const approvalProfileChanges = changes.filter(change => change.kind === 'artifact'
+                    && artifactKindsMayIncludeKindV1(readArtifactKindsChangeHintV1(change.hint), [APPROVAL_PROFILE_ARTIFACT_KIND_V1]));
                 const hasPromptLibraryRowChange = changes.some((change) => change.kind === 'account'
                     && parsePromptLibraryPhysicalKeyV1(change.entityId) !== null);
                 const machineSkillInstalls = this.lifecycleDependencies.machineSkillInstalls;
@@ -6904,6 +6912,13 @@ export class ApiMachineClient {
                 }
                 if (reason !== 'live' || hasProfileCatalogChange) {
                     await refreshDemandedActiveProfileCatalog({ token: this.token, signal });
+                    signal.throwIfAborted();
+                }
+                if (reason !== 'live' || approvalProfileChanges.length > 0) {
+                    await refreshDemandedActiveApprovalProfileCatalog({ token: this.token, signal,
+                        ...(reason === 'live' && approvalProfileChanges.every(change =>
+                            !artifactKindsMayIncludeKindV1(readArtifactKindsChangeHintV1(change.hint), []))
+                            ? { artifactIds: [...new Set(approvalProfileChanges.map(change => change.entityId))] } : {}) });
                     signal.throwIfAborted();
                 }
                 const sourceSnapshotBeforeSettings = getActiveAccountSettingsSnapshot();

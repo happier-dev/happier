@@ -1,6 +1,8 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { ApprovalProfileIdV1Schema, ApprovalProfileV1Schema } from './approvalProfiles.js';
+import { ApprovalProfileIdV1Schema } from './approvalProfileIdV1.js';
+import { ApprovalProfileArtifactChangeV1Schema, ApprovalProfileArtifactChangeResultV1Schema,
+  ReadableApprovalProfileV1Schema } from './approvalProfileArtifactV1.js';
 import { ActionSurfaceSchema, ActionToolExposureModeSchema, ActionToolExposureSurfaceSchema } from './metadata.js';
 import { ActionUiPlacementSchema } from './actionUiPlacements.js';
 import { ActionApprovalScopeV1Schema, ActionPolicyAudienceV1Schema, normalizeActionSettingsActionId } from './actionSettings.js';
@@ -30,12 +32,12 @@ const changed = lazyZodSchema(() => z.union([
     kind: z.literal('plugin_host_capture'), pluginId: z.string().check(z.minLength(1)), approvalRequired: z.boolean(),
   }) }),
 ]));
-const profileChange = lazyZodSchema(() => z.strictObject({ profileChange: z.union([
-  z.strictObject({ kind: z.literal('upsert'), profile: ApprovalProfileV1Schema }),
-  z.strictObject({ kind: z.literal('delete'), id: ApprovalProfileIdV1Schema }),
+const machineDefault = lazyZodSchema(() =>
   /** The person's profile for their own Sessions on one Machine; null follows Account settings. */
   z.strictObject({ kind: z.literal('machine_default'), machineId: z.string().check(z.trim(), z.minLength(1)),
-    id: z.nullable(ApprovalProfileIdV1Schema) }),
+    id: z.nullable(ApprovalProfileIdV1Schema) }));
+const profileChange = lazyZodSchema(() => z.strictObject({ profileChange: z.union([
+  ApprovalProfileArtifactChangeV1Schema, machineDefault,
 ]) }));
 export const ActionPolicyInputSchemas = {
   'actions.policy.get': lazyZodSchema(() => z.union([selectedTarget, z.strictObject({ profiles: z.literal(true) })])),
@@ -44,8 +46,9 @@ export const ActionPolicyInputSchemas = {
   'actions.policy.reset': selectedTarget,
 } as const;
 export const ActionPolicyOutputSchemas = {
-  'actions.policy.get': lazyZodSchema(() => z.union([result, z.strictObject({ profiles: z.array(ApprovalProfileV1Schema) })])),
-  'actions.policy.set': lazyZodSchema(() => z.union([result, changed, profileChange])),
+  'actions.policy.get': lazyZodSchema(() => z.union([result, z.strictObject({ profiles: z.array(ReadableApprovalProfileV1Schema) })])),
+  'actions.policy.set': lazyZodSchema(() => z.union([result, changed,
+    z.strictObject({ profileChange: z.union([ApprovalProfileArtifactChangeResultV1Schema, machineDefault]) })])),
   'actions.policy.reset': result,
 } as const;
 export type ActionAudiencePolicyResult = z.infer<typeof result>;

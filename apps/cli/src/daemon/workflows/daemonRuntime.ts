@@ -312,7 +312,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
             const snapshot = savedSecretOperationContext.readSnapshot();
             if (!snapshot) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
             return snapshot;
-          }),
+          }, savedSecretOperationContext),
         } : {}),
         ...(requesterWorkAttributionV1 ? { workflowRequesterCustody: createWorkflowRequesterCustody({
           credentials: params.credentials, attribution: requesterWorkAttributionV1,

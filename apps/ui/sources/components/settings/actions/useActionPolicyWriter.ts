@@ -5,12 +5,13 @@ import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/action
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { getApprovalProfileCatalogRows } from '@/sync/engine/settings/approvalProfileCatalog';
 
 import { ACCOUNT_ACTION_SETTINGS_TARGET, resolveActionSettingsTargetWrite, type ActionSettingsTarget } from './actionSettingsTarget';
 
 /**
  * Submit one policy intent for the screen's target; mounted Action admission owns the Account and approval lifetime.
- * A profile target turns the intent into that profile's row from the Account settings current at the press.
+ * A profile target turns the intent into its held Artifact row and revision current at the press.
  */
 export function useActionPolicyWriter(
     target: ActionSettingsTarget = ACCOUNT_ACTION_SETTINGS_TARGET,
@@ -21,9 +22,10 @@ export function useActionPolicyWriter(
     return React.useCallback((input: ActionPolicySetInput) => {
         if (profileId === null) return execute('actions.policy.set', input);
         const account = normalizeActionsSettingsV1(getStorage().getState().settings.actionsSettingsV1);
-        const write = resolveActionSettingsTargetWrite({ target: { kind: 'profile', id: profileId }, account, input });
+        const write = resolveActionSettingsTargetWrite({ target: { kind: 'profile', id: profileId }, account,
+            profileRows: getApprovalProfileCatalogRows(scope), input });
         // The profile screens offer only what a profile carries, so a refused intent is a screen defect.
         if (!write) throw new Error('approval_profile_unsupported_change');
         return execute('actions.policy.set', write);
-    }, [execute, profileId]);
+    }, [execute, profileId, scope]);
 }

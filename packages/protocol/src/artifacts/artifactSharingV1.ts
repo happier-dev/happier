@@ -16,6 +16,7 @@ import { launchProfileArtifactSharingAdapterV1 } from '../launchProfiles/launchP
 import { botTemplateArtifactSharingAdapterV1 } from '../bots/templates/botTemplateArtifactSharingV1.js';
 import { BotTemplateArtifactHeaderV1Schema } from '../bots/templates/botTemplateV1.js';
 import { readWorkBoardArtifactV1 } from '../boards/workBoardArtifactV1.js';
+import { approvalProfileArtifactSharingAdapterV1 } from '../actions/approvalProfileArtifactV1.js';
 import { getWidgetSharedInputIssuesV1 } from '../widgets/widgetSharedInputAdmissionV1.js';
 import { WIDGET_DEFINITION_ARTIFACT_KIND_V1 } from '../widgets/widgetDefinitionArtifactV1.js';
 import { WidgetDefinitionV1StoredSchema } from '../widgets/widgetDefinitionV1.js';
@@ -70,7 +71,7 @@ export type ArtifactSharingKindAdapterV1 = Readonly<{
 /** Recipient intent and content admission only. Grants and content opening belong to the store. */
 export type ArtifactUseTargetV1 = Readonly<{
   artifactId: string;
-  kind: 'open' | 'prompt_doc' | 'prompt_bundle' | 'memory' | 'workflow' | 'role' | 'launch_profile' | 'board' | 'widget' | 'approval' | 'bot_template';
+  kind: 'open' | 'prompt_doc' | 'prompt_bundle' | 'memory' | 'workflow' | 'role' | 'launch_profile' | 'approval_profile' | 'board' | 'widget' | 'approval' | 'bot_template';
   canShare: boolean;
   browserListed: boolean;
   publicLinkAllowed: boolean;
@@ -209,6 +210,8 @@ const kindPolicies: readonly Readonly<Omit<ArtifactKindPolicyV1, keyof ArtifactC
     useKind: 'open', requiresTextBody: true, browserListed: false, publicLinkAllowed: false, signedInLinkAllowed: true, grantInspection: 'owner_only' },
   { ...documentPolicy, kind: WIDGET_SURFACE_ARTIFACT_KIND_V1, adapter: widgetSurfaceArtifactSharingAdapterV1, useKind: 'open', requiresTextBody: false,
     browserListed: false, ownerDeleteAllowed: false, publicLinkAllowed: false },
+  { ...privatePolicy, kind: approvalProfileArtifactSharingAdapterV1.kind, adapter: approvalProfileArtifactSharingAdapterV1,
+    peopleSharingAllowed: true, useKind: 'approval_profile', requiresTextBody: true },
   { ...privatePolicy, kind: THEME_PROFILE_ARTIFACT_KIND_V1, ownerDeleteAllowed: true, useKind: 'open', requiresTextBody: true },
   { ...privatePolicy, kind: HOME_HUB_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: false },
   { ...privatePolicy, kind: WIDGET_LAYOUT_FRAGMENT_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: true },

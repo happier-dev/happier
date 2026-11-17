@@ -80,6 +80,7 @@ export type AccountSettingsContext = Readonly<{
   savedSecretResources?: readonly SavedSecretCatalogResourceInputV1[];
   savedSecretCatalogState?: SavedSecretCatalogState;
   profileCatalog?: ProfileCatalogSnapshotV1;
+  approvalProfileCatalog?: readonly import('@happier-dev/protocol/actions/approvalProfiles').ReadableApprovalProfileV1[];
   providerConnectionsCatalog?: ProviderConnectionsCatalogSnapshotV1;
   promptLibraryCatalog?: PromptLibraryCatalogSnapshotV1;
   acpCatalog?: AcpCatalogSnapshotV1;

@@ -828,9 +828,9 @@ export function SessionAuthoringApprovalProfileField(props: Readonly<{
     value: string | null | undefined; serverId?: string | null; machineId?: string | null; testID: string; disabled?: boolean;
     presentation?: SessionAuthoringControlsPresentation; titleMeta?: React.ReactNode; onChange: (value: string | null | undefined) => void;
 }>) {
-    const source = useApprovalProfiles(props.value, props.serverId ?? undefined);
+    const source = useApprovalProfiles(props.value, props.serverId ?? undefined, { demand: false, machineId: props.machineId });
     const machineDefault = React.useMemo(() => resolveApprovalProfileMachineDefault(source, props.machineId),
-        [source.profiles, source.machineApprovalProfiles, props.machineId]); // eslint-disable-line react-hooks/exhaustive-deps
+        [source.displayProfiles, source.machineApprovalProfiles, props.machineId]); // eslint-disable-line react-hooks/exhaustive-deps
     return <ApprovalProfileSelect mode="session" value={props.value} source={source} machineDefault={machineDefault}
         testID={props.testID} disabled={props.disabled} titleMeta={props.titleMeta} presentation={props.presentation} onChange={props.onChange} />;
 }

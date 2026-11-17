@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
+import { bindApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { WorkflowTriggerAddRequestV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { AutomationTriggerDefinitionInputSchema } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 
@@ -97,7 +97,7 @@ describe('guided automation (four questions)', () => {
     const configured = draft({ when: { kind: 'pluginEvent', value: receipt }, mode: 'apply', approvalProfileId: 'deleted-profile' });
     const facts = { subjectName: 'Production', project,
       deploymentEnvironment: { serverId: 'home', projectSourceId: 'source-app', environmentId: 'production' },
-      controller: { machineId: 'controller', online: false }, approval: readApprovalProfileV1({ approvalProfiles: [] }, configured.approvalProfileId!) };
+      controller: { machineId: 'controller', online: false }, approval: bindApprovalProfileV1([], configured.approvalProfileId!) };
     const readBack = buildGuidedAutomationReadBack(configured, facts);
     expect(readBack).toMatchObject({
       wake: receipt, deploymentEnvironment: facts.deploymentEnvironment, controller: facts.controller,

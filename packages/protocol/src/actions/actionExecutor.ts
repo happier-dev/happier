@@ -67,7 +67,7 @@ import { observeApprovalReplayOutcome, settleApprovalDecisionFailure } from './e
 import { createConfidentialApprovalContinuation } from './executor/confidentialContinuation.js';
 export { projectApprovalExecutionOriginCaller, buildApprovalExecutionOriginV1 } from './executor/approvalOrigins.js';
 import { materializeSessionCreationActionInput, buildSessionSpawnNewArgs, sameSessionCreationDirectoryApproval } from './executor/sessionSpawn.js';
-import { resolveInheritedApprovalProfileIdV1 } from './approvalProfiles.js';
+import { resolveInheritedApprovalProfileIdV1, resolveProfiledActionsSettingsV1 } from './approvalProfiles.js';
 import { parseActionSurfaceKey, isAgentCaller, normalizeActionCallerContext, sessionAttestedContextCallerFailure, createPermissionPolicyResult, causalPermissionAuthorityFailure, resolveAgentEffectivePermission, assertAgentPermission, resolveSessionMessageSendAdmission, resolveAgentExecutionRunPermission, bindAgentExistingExecutionRunAuthority } from './executor/callerContext.js';
 import type { SessionMessageSendAdmission } from './executor/callerContext.js';
 import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, buildAvailableExecutionBackendOptionKeys, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, readCompleteExecutionRunStartIdentity, hasExecutionRunStartIdentityEvidence, classifyExecutionRunStartFailure, classifyExecutionRunStartPreDispatchFailure, parseExecutionRunWaitResult, isExecutionRunWaitCancellation } from './executor/executionRuns.js';
@@ -77,6 +77,7 @@ import { normalizeActionExecutorThrownError, completeActionResult, completeSessi
 export { settleActionOutput, completeActionResult } from './executor/resultProjection.js';
 import { MachineServiceLogsReadInputV1Schema, MachineServiceActionIdSchema,
   MACHINE_SERVICE_ACTION_INPUT_SCHEMAS, MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS } from './specs/machine/services.js';
+import { isWorkflowTriggerMutationActionId } from './workflowTriggerActionIds.js';
 import { ManagedServiceNativeLogResultV1Schema } from '../local/services/nativeLogsV1.js';
 import { readActionApprovalScopeAdmissionV1 } from './executor/approvalScope.js';
 import { isDeploymentActionIdV1, isDeploymentBackupActionIdV1, DeploymentActionInputSchemasV1 } from '../deployments/deploymentActionsV1.js';
@@ -425,7 +426,7 @@ import {
   AutomationEventActionInputSchemasV1,
 } from '../automations/automationActionSpecsV1.js';
 import { SessionBoardActionIdV1Schema } from '../sessions/board/actionIds.js';
-import { DiscussionActionIdV1Schema } from '../discussions/actionIds.js';
+import { DiscussionActionIdV1Schema, isDiscussionInviteActionIdV1 } from '../discussions/actionIds.js';
 import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DiscussionInviteInputV1Schema,
   DiscussionParticipantRemoveInputV1Schema, DiscussionDetailsResultV1Schema } from '../discussions/actions.js';
 import { DiscussionInitialParticipantsV1Schema, DiscussionInviteResponseV1Schema, DiscussionRemoveParticipantResponseV1Schema, DiscussionParticipantsListResponseV1Schema,
@@ -810,16 +811,28 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       identifier === ctx.serverId && ctx.serverIdentityId ? ctx.serverIdentityId
         : identifier === ctx.serverIdentityId ? ctx.serverIdentityId : deps.resolveServerProfileScopeId?.(identifier));
   const actionPolicyContext = (actionId: string, ctx: ActionExecutorContext): ActionExecutorContext => {
-    const reservation = actionId === 'discussion.invite' && ctx.actionCaller?.kind === 'workflowRun'
+    const reservation = isDiscussionInviteActionIdV1(actionId) && ctx.actionCaller?.kind === 'workflowRun'
       ? ctx.actionCaller.discussionModelReservation : undefined;
     return reservation?.policySurface ? { ...ctx, surface: reservation.policySurface } : ctx;
   };
   const policyAllowsAction = (id: ActionId, ctx: ActionExecutorContext) =>
     deps.isActionEnabled ? deps.isActionEnabled(id, actionPolicyContext(id, ctx)) : true;
   const isActionEnabledByPolicy = (spec: ActionSpec, ctx: ActionExecutorContext) => policyAllowsAction(spec.id, ctx);
-  const isActionEnabledWithoutSurface = (id: ActionId | QualifiedPluginActionId, ctx: ActionExecutorContext) =>
-    (!ctx.actionsSettings && !ctx.callerSurface) || isActionEnabledByActionsSettings(id,
-      ctx.actionsSettings ?? { v: 1, actions: {} }, { placement: ctx.placement, callerSurface: ctx.callerSurface });
+  const readAvailabilitySettings = (actionId: string, ctx: ActionExecutorContext): ActionsSettingsV1 | null => {
+    const settings = deps.readActionsSettings?.(ctx) ?? ctx.actionsSettings;
+    if (!settings && !ctx.approvalProfile?.profile) return null;
+    return resolveProfiledActionsSettingsV1(settings ?? { v: 1, actions: {} }, ctx.approvalProfileId, {
+      actionId,
+      boundProfile: ctx.approvalProfile ?? null,
+      approvalProfileTeamOrGroupDerived: ctx.approvalProfileTeamOrGroupDerived,
+      context: ctx,
+    }).settings;
+  };
+  const isActionEnabledWithoutSurface = (id: ActionId | QualifiedPluginActionId, ctx: ActionExecutorContext) => {
+    const settings = readAvailabilitySettings(id, ctx);
+    return (!settings && !ctx.callerSurface) || isActionEnabledByActionsSettings(id,
+      settings ?? { v: 1, actions: {} }, { placement: ctx.placement, callerSurface: ctx.callerSurface });
+  };
   // A missing or unknown caller surface is unavailable, never a wildcard (fail closed).
   const isActionEnabled = (spec: ActionSpec, ctx: ActionExecutorContext) =>
     resolveAvailabilityForContext(spec, ctx)?.available ?? false;
@@ -889,7 +902,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       actionId: spec.id,
       definition: spec,
       surface,
-      settings: ctx.actionsSettings ?? null,
+      settings: readAvailabilitySettings(spec.id, ctx),
       callerSurface: ctx.callerSurface,
       isActionEnabled: (id) => policyAllowsAction(id, ctx),
       ...(hostInternal ? { hostInternal: true, placement: ctx.placement } : {}),
@@ -2330,6 +2343,23 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const actionGrantFailure = options?.sessionTargetLeaf || existingAdmission ? null : credentialScopeFailure(actionId, ctx, actionId === 'action.invoke' || hostInternal ? input : undefined,
       true, undefined, hostInternal);
     if (actionGrantFailure) return actionGrantFailure;
+    if (!existingAdmission && ctx.approvalProfileId === undefined && deps.readActionApprovalProfileId) {
+      const reference = await deps.readActionApprovalProfileId(ctx);
+      if (reference !== undefined) {
+        if ('ok' in reference) return reference;
+        ctx = { ...ctx, ...reference };
+      }
+    }
+    if (!existingAdmission && ctx.approvalProfileId && ctx.approvalProfile === undefined) {
+      try {
+        ctx = { ...ctx, approvalProfile: deps.readApprovalProfile
+          ? await deps.readApprovalProfile(ctx.approvalProfileId, ctx)
+          : { profile: null, resolution: { status: 'missing', requestedId: ctx.approvalProfileId } } };
+      } catch {
+        const errorCode = ctx.signal?.aborted ? 'cancelled' : 'approval_context_unavailable';
+        return { ok: false, errorCode, error: errorCode };
+      }
+    }
     const liveEnvironmentScope = spec.approvalScope === 'environment';
     const availability = options?.sessionTargetLeaf || existingAdmission && !liveEnvironmentScope || hostInternal
       ? null : resolveAvailabilityForContext(spec, ctx);
@@ -3155,17 +3185,18 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       contextualUiConfirmation ??= declared.uiConfirmationRequired;
     }
     if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    if (!existingAdmission && isWorkflowTriggerMutationActionId(actionId) && deps.workflowAction?.prepareTriggerMutation) {
+      const prepared = await deps.workflowAction.prepareTriggerMutation({ actionId, input: admittedInput, context: ctx } as
+        import('./executor/types.js').WorkflowActionExecuteArgs<import('./workflowTriggerActionIds.js').WorkflowTriggerMutationActionId>);
+      if (prepared && 'ok' in prepared) return prepared;
+      if (prepared) ctx = { ...ctx, ...prepared };
+    }
     const scopeAdmission = existingAdmission ? { approvalScope: existingAdmission.approvalScope }
       : await readActionApprovalScopeAdmissionV1({ actionId, spec, input: admittedInput,
         context: ctx, deps, phase: options?.approvalReplay ? 'replay' : 'prepare',
         isSameHome: (left, right) => isSameHome(left, right, ctx) });
     if ('ok' in scopeAdmission) return scopeAdmission;
     const { approvalScope } = scopeAdmission;
-    if (!existingAdmission && ctx.approvalProfileId === undefined && deps.readActionApprovalProfileId) {
-      const reference = await deps.readActionApprovalProfileId(ctx);
-      if (typeof reference === 'object' && reference !== null) return reference;
-      if (reference !== undefined) ctx = { ...ctx, approvalProfileId: reference };
-    }
     if (!existingAdmission && spec.hostReviewedChildren) {
       const children = typeof spec.hostReviewedChildren === 'function'
         ? spec.hostReviewedChildren(admittedInput)

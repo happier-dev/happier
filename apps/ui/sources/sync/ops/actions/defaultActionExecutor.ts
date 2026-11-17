@@ -81,7 +81,6 @@ import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeader
 import { StoredApprovalRequestSchema, readApprovalRequesterDecisionV1, resolveApprovalExecutor, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { verifyExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { readOriginalAccountActionMachine } from '@/sync/api/externalActionAccountTransport';
-import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { sessionGoalGet, sessionGoalSet, sessionGoalClear } from '@/sync/ops/sessionGoals';
 import {
@@ -275,6 +274,7 @@ import { createUiSessionConfigOptionAction } from './sessionConfigOptionAction';
 import { resolveSessionPermissionBehavior } from '@/sync/ops/sessionPermissionAnswers';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { createSettingsDeclarationAction, isBuiltInLocalSettingMutation, readSettingsDeclarationOperation } from './settingsDeclarationAction';
+import { executeUiApprovalProfileChange, readApprovalProfileCatalog, readBoundApprovalProfile } from '@/sync/engine/settings/approvalProfileCatalog';
 import { createAtmosphereSettingServices } from './atmosphereSettingServices';
 import { createSettingsOwnerActionExecutor } from './settingsOwnerActionExecutor';
 import { getAutomationSettings, updateAutomationSettings } from '@/sync/api/automations/apiAutomations';
@@ -1804,6 +1804,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     hostExternalSessionAction: args => executeExternalSessionBrowseAction(args, opts?.isExternalSessionFollowIntentCurrent),
     settingsDeclarationAction: createSettingsDeclarationAction({
       serverId: accountContext?.serverId,
+      approvalProfiles: accountContext ? {
+        list: () => readApprovalProfileCatalog(accountContext),
+        change: (change, signal) => executeUiApprovalProfileChange(accountContext, change, signal),
+      } : undefined,
       host: settingsHost,
       tauriDesktop: settingsHosts.tauriDesktop(settingsHost),
       readPageGate: readSettingsPageGate,
@@ -2293,15 +2297,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         if (opts?.isActionEnabled && !opts.isActionEnabled(actionId, ctx)) {
           return false;
         }
-        if (
-          !isActionEnabledByActionsSettings(actionId, resolveActionsSettingsSnapshot(), {
-            surface: ctx.surface ?? null,
-            placement: ctx.placement ?? null,
-            callerSurface: ctx.callerSurface,
-          })
-        ) {
-          return false;
-        }
         if (actionId !== 'session.mode.set') {
           return true;
         }
@@ -2312,6 +2307,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         const session = (storage.getState() as any)?.sessions?.[sessionId] ?? null;
         return isSessionModeActionAvailable(session);
       },
+    readApprovalProfile: accountContext ? id => readBoundApprovalProfile(accountContext, id) : undefined,
     readActionApprovalProfileId: async context => {
       const caller = context.actionCaller;
       if (caller?.kind !== 'session') return undefined;
@@ -2324,7 +2320,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         .then(read => read.session, error => { if (error instanceof SessionSnapshotReadError) return null; throw error; });
       const metadata = session ? readSessionOwnerMetadataView(session) : null;
       if (!metadata) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
-      return resolveSessionApprovalProfileReferenceV1(metadata, context.actionsSettings);
+      const approvalProfileId = resolveSessionApprovalProfileReferenceV1(metadata, context.actionsSettings);
+      return { approvalProfileId, approvalProfileTeamOrGroupDerived: metadata.approvalProfileTeamOrGroupDerived === true };
     },
     // Host facts for the shared approval router: the person's settings (with the Source Control
     // preference) and installed Settings declarations' operations, classified like the built-ins.

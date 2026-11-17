@@ -6,6 +6,7 @@ import { createHappierToolInventory } from '@/agent/tools/happierTools/listBuilt
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import { createSessionActionSettingsView, type RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { createMcpActionEnablementWithServerFeatureAvailability } from './createMcpActionEnablement';
 import { prepareHappierMcpToolInventory } from './registerHappierMcpBuiltInTools';
 import { readCliFeatureBuildPolicyInputs } from '@/features/featureBuildPolicy';
@@ -75,6 +76,9 @@ export function createSessionMcpToolInventory(params: Readonly<{
     };
     const readPluginToolCatalog = async (signal?: AbortSignal): Promise<readonly ProjectedPluginToolCatalogEntry[]> => {
         signal?.throwIfAborted();
+        if (resolveSessionApprovalProfileReferenceV1(params.client.getMetadataSnapshot?.() ?? {}, params.actionSettingsProvider.getActionsSettings())) {
+            await params.actionSettingsProvider.prepareApprovalProfiles?.(signal);
+        }
         if (!(params.happierToolsEnabled ?? isSessionHappierToolsEnabled(params.client.getMetadataSnapshot?.()))) return [];
         if (params.pluginRuntimeRegistryLease) {
             return projectOccurrenceBoundExecutablePluginToolCatalog(params.pluginRuntimeRegistryLease.registry);

@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import {
   applyApprovalProfileOverlayV1,
-  readApprovalProfileV1,
+  ApprovalProfileV1Schema,
   resolveProfiledActionsSettingsV1,
   resolveSessionApprovalProfileReferenceV1,
 } from './approvalProfiles.js';
+import { bindApprovalProfileV1 } from './approvalProfileArtifactV1.js';
 
 describe('approval profile overlay', () => {
   const account = normalizeActionsSettingsV1({
@@ -18,8 +19,8 @@ describe('approval profile overlay', () => {
       'session.list': { disabledSurfaces: ['mcp'] },
     },
     approvalWaivedSurfaces: { 'session.stop': ['agent'] },
-    approvalProfiles: [
-      {
+  });
+  const careful = ApprovalProfileV1Schema.parse({
         id: 'careful',
         name: 'Careful agent',
         actions: {
@@ -28,10 +29,23 @@ describe('approval profile overlay', () => {
           'review.start': { disabledSurfaces: ['agent'] },
         },
         approvalWaivedSurfaces: { 'deployments.deploy': ['agent'] },
-      },
-    ],
   });
-  const careful = account.approvalProfiles![0]!;
+  const rows = [{ id: careful.id, profile: careful, access: 'owner' as const,
+    revision: { headerVersion: 1, bodyVersion: 1 } }];
+  const boundProfile = bindApprovalProfileV1(rows, careful.id);
+
+  it('applies a Team-derived Session profile only to tighten while explicit acceptance can replace policy', () => {
+    const inherited = resolveProfiledActionsSettingsV1(account, careful.id, {
+      boundProfile, approvalProfileTeamOrGroupDerived: true,
+    }).settings;
+    expect(inherited.actions['deployments.deploy']?.approvalRequiredSurfaces).toEqual(['agent']);
+    expect(inherited.approvalWaivedSurfaces?.['deployments.deploy']).toBeUndefined();
+    const accepted = resolveProfiledActionsSettingsV1(account, careful.id, {
+      boundProfile, approvalProfileTeamOrGroupDerived: false,
+    }).settings;
+    expect(accepted.actions['deployments.deploy']?.approvalRequiredSurfaces).toEqual([]);
+    expect(accepted.approvalWaivedSurfaces?.['deployments.deploy']).toEqual(['agent']);
+  });
 
   it("replaces only the profile Actions' policy rows and keeps Account placements", () => {
     const merged = applyApprovalProfileOverlayV1(account, careful);
@@ -53,14 +67,10 @@ describe('approval profile overlay', () => {
     expect(merged.actions['session.list']).toBe(
       account.actions['session.list'],
     );
-    expect(merged.approvalProfiles).toBe(account.approvalProfiles);
   });
 
   it('stores only policy fields on a profile row', () => {
-    const settings = normalizeActionsSettingsV1({
-      v: 1,
-      approvalProfiles: [
-        {
+    expect(ApprovalProfileV1Schema.safeParse({
           id: 'p',
           name: 'P',
           actions: {
@@ -70,12 +80,7 @@ describe('approval profile overlay', () => {
               toolExposureModes: { agent: 'direct' },
             },
           },
-        },
-      ],
-    });
-    expect(settings.approvalProfiles?.[0]?.actions?.['session.list']).toEqual({
-      enabled: false,
-    });
+    }).success).toBe(false);
   });
 
   it('settles a deleted or legacy built-in reference as missing, never a stricter or looser built-in', () => {
@@ -84,32 +89,26 @@ describe('approval profile overlay', () => {
       'builtin:full-trust',
       'builtin:read-propose',
     ]) {
-      expect(readApprovalProfileV1(account, id)).toEqual({
+      expect(bindApprovalProfileV1(rows, id)).toEqual({
         profile: null,
         resolution: { status: 'missing', requestedId: id },
       });
     }
-    expect(readApprovalProfileV1(account, 'careful')).toEqual({
+    expect(bindApprovalProfileV1(rows, 'careful')).toEqual({
       profile: careful,
       resolution: { status: 'available', requestedId: 'careful' },
     });
   });
 
   it('settles a stored pre-overlay profile as missing instead of an available empty overlay', () => {
-    const settings = normalizeActionsSettingsV1({
-      ...account,
-      approvalProfiles: [
-        ...account.approvalProfiles!,
-        { id: 'strict', name: 'Strict', defaultMode: 'require', categories: { danger: 'require' } },
-      ],
-    });
-    expect(settings.approvalProfiles).toEqual([careful]);
-    expect(readApprovalProfileV1(settings, 'strict')).toEqual({
+    expect(ApprovalProfileV1Schema.safeParse({ id: 'strict', name: 'Strict', defaultMode: 'require',
+      categories: { danger: 'require' } }).success).toBe(false);
+    expect(bindApprovalProfileV1(rows, 'strict')).toEqual({
       profile: null,
       resolution: { status: 'missing', requestedId: 'strict' },
     });
-    expect(resolveProfiledActionsSettingsV1(settings, 'strict')).toEqual({
-      settings,
+    expect(resolveProfiledActionsSettingsV1(account, 'strict')).toEqual({
+      settings: account,
       profile: { status: 'missing', requestedId: 'strict' },
     });
   });

@@ -4,7 +4,7 @@ import type { TriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/t
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import type { z } from 'zod/mini';
-import type { readApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
+import type { BoundApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, readDeploymentReceiptEventPendingObservationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
@@ -238,7 +238,7 @@ export type GuidedAutomationReadBack = Readonly<{
   /** Presence comes from the Machine owner; null means it has not been read. */
   controller: Readonly<{ machineId: string; online: boolean | null }> | null;
   pendingObservation: ReturnType<typeof readDeploymentReceiptEventPendingObservationV1>;
-  approval: ReturnType<typeof readApprovalProfileV1> | null;
+  approval: BoundApprovalProfileV1 | null;
   disclosure: Readonly<{ inbox: true; channelIds: readonly string[] }>;
 }>;
 

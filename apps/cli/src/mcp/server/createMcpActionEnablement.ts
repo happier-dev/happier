@@ -20,13 +20,14 @@ export type McpActionSettingsProvider = ActionSettingsProvider;
 
 /** Bind Session ingress to its admitted policy; standalone callers retain CLI precedence. */
 export function createMcpActionSettingsProvider(params: NonNullable<Parameters<typeof createActionSettingsProvider>[0]> & Readonly<{
-  credentials?: Pick<StoredCredentials, 'token'> | null;
+  credentials?: StoredCredentials | null;
   sessionCredentials?: Pick<StoredCredentials, 'token'> | null;
   authorityScope?: 'account' | 'session';
 }> = {}): ActionSettingsProvider {
   const credentials = params.authorityScope === 'session' ? null : params.credentials;
   return createActionSettingsProvider({
     accountSettings: params.accountSettings,
+    credentials,
     // Credential-derived MCP bindings follow the canonical Account snapshot.
     // Legacy host callbacks read ambient focus and cannot prove that scope;
     // explicitly scoped invocation getters retain their admitted authority.

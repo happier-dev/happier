@@ -1,7 +1,10 @@
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
-import { applySessionApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
+import { resolveProfiledActionsSettingsV1, resolveSessionApprovalProfileReferenceV1, type ReadableApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
+import { bindApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import type { AccountSettings, ActionsSettingsV1 } from '@happier-dev/protocol';
 import type { AccountRoleOverridesReadV1 } from '@happier-dev/protocol/prompts/roles/roleOverrideRecordV1';
+import type { StoredCredentials } from '@/persistence';
+import type { SavedSecretOperationContextV1 } from './secrets/savedSecretOperationContext';
 
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken, readActiveAccountRoleOverrides, readAccountRoleOverridesFromSnapshot, type ActiveAccountSettingsSnapshot } from './accountSettings/activeAccountSettingsSnapshot';
 import { readActionsSettingsOverrideFromEnv } from './actionsSettingsOverride';
@@ -11,20 +14,31 @@ export type RuntimeActionSettingsProvider = Readonly<{
   getActionsSettings: () => ActionsSettingsV1;
   getAccountSettings?: () => AccountSettings | null;
   getAccountRoleOverrides?: () => AccountRoleOverridesReadV1;
+  getApprovalProfiles?: () => readonly ReadableApprovalProfileV1[] | undefined;
+  prepareApprovalProfiles?: (signal?: AbortSignal) => Promise<void>;
 }>;
 
 export type ActionSettingsProvider = Readonly<{
   getAccountSettings: () => AccountSettings | null;
   getActionsSettings: () => ActionsSettingsV1;
   getAccountRoleOverrides: () => AccountRoleOverridesReadV1;
+  getApprovalProfiles: () => readonly ReadableApprovalProfileV1[] | undefined;
+  prepareApprovalProfiles?: (signal?: AbortSignal) => Promise<void>;
 }>;
 
 /** Invocation-owned policy follows its retained Account reader, never the focused host Account. */
-export function createSnapshotActionSettingsProvider(readSnapshot: () => ActiveAccountSettingsSnapshot): ActionSettingsProvider {
+export function createSnapshotActionSettingsProvider(readSnapshot: () => ActiveAccountSettingsSnapshot,
+  operationContext?: SavedSecretOperationContextV1): ActionSettingsProvider {
   return {
     getActionsSettings: () => readSnapshot().settings.actionsSettingsV1,
     getAccountSettings: () => readSnapshot().settings,
     getAccountRoleOverrides: () => readAccountRoleOverridesFromSnapshot(readSnapshot()),
+    getApprovalProfiles: () => { const snapshot = readSnapshot(); return snapshot.source === 'none' ? undefined : snapshot.approvalProfileCatalog; },
+    ...(operationContext ? { prepareApprovalProfiles: async (signal?: AbortSignal) => {
+      if (readSnapshot().approvalProfileCatalog !== undefined) return;
+      const { refreshActiveApprovalProfileCatalog } = await import('./profiles/hydrateProfileCatalog');
+      await refreshActiveApprovalProfileCatalog({ credentials: operationContext.credentials, operationContext, signal });
+    } } : {}),
   };
 }
 
@@ -49,10 +63,12 @@ export function createActionSettingsProvider(params: Readonly<{
   scopeKey?: string | null;
   /** Session ingress retains host policy rather than standalone CLI environment policy. */
   allowEnvironmentOverride?: boolean;
+  credentials?: StoredCredentials | null;
 }> = {}): ActionSettingsProvider {
   const initialSnapshot = getActiveAccountSettingsSnapshot();
   const scopeKey = params.scopeKey ?? null;
   const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+  let catalogLifetimeToken = initialSnapshot?.scopeKey === scopeKey ? lifetimeToken : undefined;
   let boundSettings = scopeKey && initialSnapshot?.scopeKey === scopeKey && initialSnapshot.source !== 'none'
     ? initialSnapshot.settings
     : params.accountSettings ?? null;
@@ -74,6 +90,19 @@ export function createActionSettingsProvider(params: Readonly<{
   };
   return {
     getAccountSettings,
+    getApprovalProfiles: () => {
+      const current = getActiveAccountSettingsSnapshot();
+      if (catalogLifetimeToken === undefined && current?.scopeKey === scopeKey) catalogLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
+      return current?.source !== 'none' && (!scopeKey || current?.scopeKey === scopeKey
+        && getActiveAccountSettingsSnapshotLifetimeToken() === catalogLifetimeToken) ? current?.approvalProfileCatalog : undefined;
+    },
+    ...(params.credentials ? { prepareApprovalProfiles: async (signal?: AbortSignal) => {
+      if (catalogLifetimeToken !== undefined && (getActiveAccountSettingsSnapshot()?.scopeKey !== scopeKey
+        || getActiveAccountSettingsSnapshotLifetimeToken() !== catalogLifetimeToken)) return;
+      if (getActiveAccountSettingsSnapshot()?.scopeKey === scopeKey && getActiveAccountSettingsSnapshot()?.approvalProfileCatalog !== undefined) return;
+      const { refreshActiveApprovalProfileCatalog } = await import('./profiles/hydrateProfileCatalog');
+      await refreshActiveApprovalProfileCatalog({ credentials: params.credentials!, signal });
+    } } : {}),
     getAccountRoleOverrides: () => {
       const current = getActiveAccountSettingsSnapshot();
       const roleScope = scopeKey ?? current?.scopeKey;
@@ -98,17 +127,22 @@ export function createActionSettingsProvider(params: Readonly<{
  * settings plus the profile reference and applies the same overlay itself.
  */
 export function createSessionActionSettingsView(provider: RuntimeActionSettingsProvider,
-  readSessionMetadata: () => Readonly<{ approvalProfileId?: unknown; machineId?: unknown }> | null | undefined,
+  readSessionMetadata: () => Readonly<{ approvalProfileId?: unknown; machineId?: unknown; approvalProfileTeamOrGroupDerived?: unknown }> | null | undefined,
 ): RuntimeActionSettingsProvider {
-  let last: Readonly<{ settings: ActionsSettingsV1; profileId: unknown; machineId: unknown; effective: ActionsSettingsV1 }> | undefined;
+  let last: Readonly<{ settings: ActionsSettingsV1; profileId: unknown; machineId: unknown; derived: boolean;
+    catalog: readonly ReadableApprovalProfileV1[] | undefined; effective: ActionsSettingsV1 }> | undefined;
   return { ...provider, getActionsSettings: () => {
     const settings = provider.getActionsSettings();
     const metadata = readSessionMetadata();
+    const catalog = provider.getApprovalProfiles?.();
     // Enablement runs once per tool per listing; rebuild only when a fact changed.
     if (last?.settings === settings && last.profileId === metadata?.approvalProfileId
-      && last.machineId === metadata?.machineId) return last.effective;
-    last = { settings, profileId: metadata?.approvalProfileId, machineId: metadata?.machineId,
-      effective: applySessionApprovalProfileV1(settings, metadata) };
+      && last.machineId === metadata?.machineId && last.catalog === catalog && last.derived === (metadata?.approvalProfileTeamOrGroupDerived === true)) return last.effective;
+    const approvalProfileId = metadata ? resolveSessionApprovalProfileReferenceV1(metadata, settings) : null;
+    last = { settings, profileId: metadata?.approvalProfileId, machineId: metadata?.machineId, derived: metadata?.approvalProfileTeamOrGroupDerived === true,
+      catalog, effective: resolveProfiledActionsSettingsV1(settings, approvalProfileId,
+        { boundProfile: approvalProfileId ? bindApprovalProfileV1(catalog ?? [], approvalProfileId) : null,
+          approvalProfileTeamOrGroupDerived: metadata?.approvalProfileTeamOrGroupDerived === true }).settings };
     return last.effective;
   } };
 }

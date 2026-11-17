@@ -191,8 +191,8 @@ describe('ActionSettingsDetailView', () => {
     it('admits host capture approval changes under Off, Ask and Allowed only for the selected plugin', async () => {
         daemonProjection.byMachineId = {
             'machine-a': { phase: 'ready', inputs: { pluginProjectionById: {
-                'acme.viewer': { pluginId: 'acme.viewer', title: 'My viewer', actions: [] },
-                'acme.other': { pluginId: 'acme.other', title: 'Other viewer', actions: [] },
+                'acme.viewer': { pluginId: 'acme.viewer', title: 'My viewer', actions: [], resources: [] },
+                'acme.other': { pluginId: 'acme.other', title: 'Other viewer', actions: [], resources: [] },
             } } },
         };
         administrationTargetSelection.controller.select('machine-a');
@@ -606,6 +606,7 @@ describe('ActionSettingsDetailView', () => {
                     pluginProjectionById: {
                         'happier.inspector': {
                             pluginId: 'happier.inspector',
+                            resources: [],
                             actions: [{
                                 id: 'self-check',
                                 title: 'Run Inspector self-check',

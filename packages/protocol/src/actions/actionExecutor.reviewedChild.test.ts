@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, readHostReviewedChildOperationV1 } from './actionExecutor.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
+import { ApprovalProfileV1Schema } from './approvalProfiles.js';
+import { bindApprovalProfileV1 } from './approvalProfileArtifactV1.js';
 import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deploymentApprovalScopeV1.js';
 import { DeploymentEnvironmentHeaderV1Schema } from '../deployments/deploymentActionsV1.js';
 import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, readHostReviewedParentV1 } from './executor/deploymentRoleChild.js';
@@ -507,13 +509,13 @@ describe('generic reviewed host children', () => {
     expect(routed).toBe(1);
   });
 
-  it.each(['settings', 'profile', 'profile-safe', 'profile-danger'] as const)('folds demanded child Require from %s into the parent and supplies its port only after exact review', async policy => {
+  it.each(['settings', 'profile'] as const)('folds demanded child Require from %s into the parent and supplies its port only after exact review', async policy => {
     const input = { serverId: 'home', machineId: 'machine', expectedInstallationId: 'installation' };
     const plan = { children: [child] };
     let entered = 0;
     const executor = createActionExecutor({
       listContributedActionDefinitions: () => [ActionDefinitionSummaryV1Schema.parse({ id: 'acme.fixture/actions/inspect',
-        title: 'Inspect', description: null, safety: policy === 'profile-danger' ? 'danger' : 'safe', placements: [], slash: null, bindings: null,
+        title: 'Inspect', description: null, safety: 'safe', placements: [], slash: null, bindings: null,
         examples: null, surfaces: { cli: true }, inputHints: null })],
       prepareHostReviewedChildren: async ({ actionId }) => actionId === 'machines.reboot' ? plan : null,
       machineReboot: async ({ context }) => {
@@ -523,11 +525,10 @@ describe('generic reviewed host children', () => {
     });
     const root = { ...context, interactivePresentation: 'unavailable' as const, bypassApprovals: true,
       ...(policy !== 'settings' ? { approvalProfileId: 'test:child-review', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
-        approvalProfiles: [{ id: 'test:child-review', name: 'Child review', defaultMode: 'allow',
-          ...(policy === 'profile-safe' ? { categories: { safe: 'require' } }
-            : policy === 'profile-danger' ? { categories: { danger: 'require' } }
-            : { actions: { 'acme.fixture/actions/inspect': 'require' } }) }],
-      }) } : {}) };
+      }), approvalProfile: bindApprovalProfileV1([{ id: 'test:child-review', access: 'owner',
+        revision: { headerVersion: 1, bodyVersion: 1 }, profile: ApprovalProfileV1Schema.parse({ id: 'test:child-review',
+          name: 'Child review', actions: { 'acme.fixture/actions/inspect': { approvalRequiredSurfaces: ['cli'] } } }) }],
+      'test:child-review') } : {}) };
     expect(await executor.execute('machines.reboot', input, root))
       .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
     expect(entered).toBe(0);

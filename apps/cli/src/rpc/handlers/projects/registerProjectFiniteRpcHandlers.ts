@@ -27,7 +27,7 @@ export async function createProjectFiniteActionExecutor(
         const snapshot = requester.savedSecretOperationContext.readSnapshot();
         if (!snapshot) throw new Error('requester_account_context_retired');
         return snapshot;
-    }) : actionsSettingsProvider;
+    }, requester.savedSecretOperationContext) : actionsSettingsProvider;
     return (await import('@/session/actions/createCliActionExecutorFromCredentials')).createCliActionExecutorFromCredentials({
         credentials, serverId: runtime.serverId, serverApiUrl: runtime.serverHttpBaseUrl,
         machineId: runtime.machineId, pluginActionExecutionOwner: 'current_process',

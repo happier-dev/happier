@@ -2,7 +2,8 @@ import { logger } from '@/ui/logger';
 import { StoredApprovalRequestSchema, isHistoricalPublishApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildActionExecuteResultFromRecordedApprovalExecution, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { settleApprovalRequestReplayInputs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
-import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, tightenActionsSettingsV1, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { normalizeActionsSettingsV1, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { isDiscussionInviteActionIdV1 } from '@happier-dev/protocol/discussions/actionIds';
 import { isActionEnabledWithSessionMemory } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
 import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -130,35 +131,18 @@ export function createCliActionExecutorHarness(
   const readHostActionsSettings = (ctx: ActionExecutorContext) => params.actionsSettingsProvider?.getActionsSettings()
     ?? ctx.actionsSettings ?? actionSettingsProvider.getActionsSettings();
   const hasAcceptedReservationPolicy = (id: string, ctx: ActionExecutorContext) =>
-    id === 'discussion.invite' && ctx.actionCaller?.kind === 'workflowRun'
+    isDiscussionInviteActionIdV1(id) && ctx.actionCaller?.kind === 'workflowRun'
       && ctx.actionCaller.discussionModelReservation !== undefined && ctx.actionsSettings != null;
-  const isActionEnabled: NonNullable<ActionExecutorDeps['isActionEnabled']> = (id, ctx) =>
-    isActionEnabledWithSessionMemory(id, params.sessionMemoryEnabled)
-    && (!hasAcceptedReservationPolicy(id, ctx) || isActionEnabledByActionsSettings(id, ctx.actionsSettings!, {
-      surface: ctx.surface ?? 'cli', placement: ctx.placement ?? null,
-    })) && isActionEnabledByActionsSettings(
-      id,
-      params.actionsSettingsProvider?.getActionsSettings()
-        ?? ctx.actionsSettings
-        ?? actionSettingsProvider.getActionsSettings(),
-      {
-        surface: ctx.surface ?? 'cli',
-        placement: ctx.placement ?? null,
-      },
-    );
+  const isActionEnabled: NonNullable<ActionExecutorDeps['isActionEnabled']> = id =>
+    isActionEnabledWithSessionMemory(id, params.sessionMemoryEnabled);
   const requiresOriginalCliFiniteAdmission = (id: string, ctx: ActionExecutorContext) =>
     Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, id)
       && params.credentials && !params.projectAction && !overrides?.projectAction && !params.machineActionDirectTargetTransport
       && (!params.actionsSettingsProvider || params.actionsSettingsProvider.getAccountSettings)
       && ctx.surface === 'cli' && !ctx.externalActionCredential && !ctx.externalActionExecutionAuthorization
       && !ctx.rpcSessionAuthorization && (!ctx.actionCaller || ctx.actionCaller.kind === 'host');
-  // Host facts for the shared approval router. A contained Workflow invitation keeps its admitted
-  // restrictions and every current restriction still applies (a later waiver is not consent).
-  const readActionsSettings = (ctx: ActionExecutorContext) => {
-    const current = readHostActionsSettings(ctx);
-    return ctx.actionCaller?.kind === 'workflowRun' && ctx.actionCaller.discussionModelReservation !== undefined
-      && ctx.actionsSettings != null ? tightenActionsSettingsV1(ctx.actionsSettings, current) : current;
-  };
+  // The canonical applier combines retained invitation restrictions after the current profile.
+  const readActionsSettings = readHostActionsSettings;
   // Original CLI finite admission defers Ask to the receiving signed Machine root; projectAction
   // refuses a host-only Ask that the Account cannot preserve before anything is sent.
   const readApprovalOwner = (id: string, ctx: ActionExecutorContext) =>
@@ -408,9 +392,9 @@ export function createCliActionExecutorHarness(
       ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
       ...(params.actionsSettingsProvider
         ? { actionsSettings: actionId && context && hasAcceptedReservationPolicy(actionId, context)
-          // Retain accepted invitation restrictions, but resolve references from
-          // the current Account collection at this new Action admission.
-          ? { ...context.actionsSettings!, approvalProfiles: params.actionsSettingsProvider.getActionsSettings().approvalProfiles }
+          // Retain accepted invitation restrictions. The executor binds the
+          // current opened Artifact separately at this new Action admission.
+          ? context.actionsSettings!
           : params.actionsSettingsProvider.getActionsSettings() }
         : {}),
       ...(params.getCurrentSessionMetadata ? {

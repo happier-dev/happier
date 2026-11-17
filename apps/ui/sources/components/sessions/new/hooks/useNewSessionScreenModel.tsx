@@ -4379,14 +4379,16 @@ export function useNewSessionScreenModel(input?: Readonly<{
         bridge: instructionsChipBridge,
     }) : null, [draftServerId, instructionsCreation, isBotDraft, sessionNameStore.getPrompt, instructionsChipBridge]);
     // The approval profile is one chip of the row (UI refinements 21:36Z), offering the field's own choices.
-    const approvalProfiles = useApprovalProfiles(approvalProfileId, targetServerId);
+    const approvalProfiles = useApprovalProfiles(approvalProfileId, targetServerId, { demand: false, machineId: selectedMachineId });
     // "Machine default" names the profile the chosen Machine gives my Sessions there (OWNER Q4).
     const approvalProfileMachineDefault = React.useMemo(() => resolveApprovalProfileMachineDefault(approvalProfiles, selectedMachineId),
-        [approvalProfiles.profiles, approvalProfiles.machineApprovalProfiles, selectedMachineId]); // eslint-disable-line react-hooks/exhaustive-deps
+        [approvalProfiles.displayProfiles, approvalProfiles.machineApprovalProfiles, selectedMachineId]); // eslint-disable-line react-hooks/exhaustive-deps
     const approvalProfileChip = React.useMemo(() => createApprovalProfileComposerChip({
-        value: approvalProfileId, profiles: approvalProfiles.profiles, machineDefault: approvalProfileMachineDefault,
-        ready: approvalProfiles.ready, onChange: changeApprovalProfile,
-    }), [approvalProfileId, approvalProfiles.profiles, approvalProfileMachineDefault, approvalProfiles.ready, changeApprovalProfile]);
+        value: approvalProfileId, profiles: approvalProfiles.displayProfiles, machineDefault: approvalProfileMachineDefault,
+        ready: approvalProfiles.ready, displayReady: approvalProfiles.ready || approvalProfiles.selectedDescriptor !== undefined,
+        requestCatalog: approvalProfiles.requestCatalog, onChange: changeApprovalProfile,
+    }), [approvalProfileId, approvalProfiles.displayProfiles, approvalProfileMachineDefault, approvalProfiles.ready,
+        approvalProfiles.selectedDescriptor, approvalProfiles.requestCatalog, changeApprovalProfile]);
     const composerExtraActionChips = React.useMemo(
         () => [...agentInputExtraActionChips, ...(instructionsChip ? [instructionsChip] : []), approvalProfileChip],
         [agentInputExtraActionChips, instructionsChip, approvalProfileChip],

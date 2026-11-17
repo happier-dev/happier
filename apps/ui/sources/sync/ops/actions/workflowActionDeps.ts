@@ -8,7 +8,7 @@ import { isExecutionRunTerminalStatus } from '@happier-dev/protocol/execution/ru
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { WorkflowActionOutputSchemasV1, WorkflowInvocationGetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
-import type { WorkflowActionExecute } from '@happier-dev/protocol/actions/executor/types';
+import type { WorkflowActionExecute, WorkflowActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 import { isWorkflowTriggerAgentCallerV1, type WorkflowTriggerActionsDependencies } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 import type { AutomationTemplateRetainedSessionV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
 import { WorkflowStepExecutionSelectionSchema } from '@happier-dev/protocol/workflows/workflowV1';
@@ -439,13 +439,22 @@ export function createUiWorkflowAction(params: Readonly<{
     };
     const executeAccount = createWorkflowActionExecutor({ definitions, runs, triggers, isWorkflowFeatureEnabled });
     const unavailable = { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' } as const;
-    return async (rawArgs) => {
+    const ordinaryAccountCredential = account.credentialAuthorityKind === 'account' || account.credentialAuthorityKind === 'terminal';
+    const usesAccountOwner = (args: WorkflowActionExecuteArgs) => {
+        const restrictedResource = args.context.externalActionTarget && args.context.externalActionTarget.kind !== 'machine';
+        const machineOrHostOperation = args.actionId === WORKFLOW_RUN_START_ACTION_ID_V1
+            || args.actionId === 'workflow.run.invocations.retry'
+            || (args.actionId === 'workflow.run.resume' && args.input.mode === 'recover')
+            || (args.actionId === 'workflow.trigger.run_now' && isWorkflowTriggerAgentCallerV1(args.context))
+            || (isWorkflowHostAdmittedChildActionIdV1(args.actionId) && args.context.authority !== 'present_user');
+        return ordinaryAccountCredential && !restrictedResource && !machineOrHostOperation;
+    };
+    const execute: WorkflowActionExecute = async (rawArgs) => {
         try { account.assertCurrent(); } catch { return unavailable; }
         if (!areServerProfileIdentifiersEquivalent(rawArgs.context.serverId, account.serverId)
             || rawArgs.context.runtimeAccountId !== account.accountId) return unavailable;
         const args = rawArgs.context.serverId === account.serverId ? rawArgs
             : { ...rawArgs, context: { ...rawArgs.context, serverId: account.serverId } };
-        const ordinaryAccountCredential = account.credentialAuthorityKind === 'account' || account.credentialAuthorityKind === 'terminal';
         const restrictedResource = args.context.externalActionTarget && args.context.externalActionTarget.kind !== 'machine';
         const savedOccurrence = args.actionId === 'workflow.trigger.run_now';
         const startingRun = args.actionId === WORKFLOW_RUN_START_ACTION_ID_V1;
@@ -453,14 +462,9 @@ export function createUiWorkflowAction(params: Readonly<{
         // reads and writes are Account data served here; any other caller's
         // trigger or definition write consumes the host's agent-start policy
         // and materializer.
-        const machineOrHostOperation = startingRun
-            || args.actionId === 'workflow.run.invocations.retry'
-            || (args.actionId === 'workflow.run.resume' && args.input.mode === 'recover')
-            || (savedOccurrence && isWorkflowTriggerAgentCallerV1(args.context))
-            || (isWorkflowHostAdmittedChildActionIdV1(args.actionId) && args.context.authority !== 'present_user');
         let result: unknown;
         try {
-            const accountOperation = ordinaryAccountCredential && !restrictedResource && !machineOrHostOperation;
+            const accountOperation = usesAccountOwner(args);
             // Account reads are admitted by the Workflow executor; ordinary Machine operations
             // consume the same UI policy before relaying. Scoped credentials keep host admission.
             if (ordinaryAccountCredential && !accountOperation && !await isWorkflowFeatureEnabled()) return unavailable;
@@ -540,6 +544,17 @@ export function createUiWorkflowAction(params: Readonly<{
         }
         return result as Awaited<ReturnType<WorkflowActionExecute>>;
     };
+    return Object.assign(execute, {
+        prepareTriggerMutation: async (rawArgs: Parameters<NonNullable<WorkflowActionExecute['prepareTriggerMutation']>>[0]) => {
+            try { account.assertCurrent(); } catch { return unavailable; }
+            if (!areServerProfileIdentifiersEquivalent(rawArgs.context.serverId, account.serverId)
+                || rawArgs.context.runtimeAccountId !== account.accountId) return unavailable;
+            // Relayed work is prepared by its receiving executor, which owns that invocation's row.
+            if (!usesAccountOwner(rawArgs)) return null;
+            return executeAccount.prepareTriggerMutation({ ...rawArgs,
+                context: { ...rawArgs.context, serverId: account.serverId } });
+        },
+    });
 }
 
 /**

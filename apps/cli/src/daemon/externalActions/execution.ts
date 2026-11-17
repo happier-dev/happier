@@ -1272,10 +1272,10 @@ resolveServerFeaturesSnapshot?: () =>
           : actionId === 'approval.request.decide' ? async () => credentials
           : async () => await readStoredCredentialsForServerId(params.serverId),
         ...(requesterAccountContext
-          ? { actionsSettingsProvider: createSnapshotActionSettingsProvider(readRequesterAccountSnapshot) }
+          ? { actionsSettingsProvider: createSnapshotActionSettingsProvider(readRequesterAccountSnapshot, requesterAccountContext.savedSecretOperationContext) }
           : requesterRuntime
           ? {
-              actionsSettingsProvider: createSnapshotActionSettingsProvider(() => requesterRuntime.readAccountSettingsSnapshot()),
+              actionsSettingsProvider: createSnapshotActionSettingsProvider(() => requesterRuntime.readAccountSettingsSnapshot(), requesterRuntime.bootstrap.savedSecretOperationContext),
             }
           : {}),
         serverId: params.serverId,

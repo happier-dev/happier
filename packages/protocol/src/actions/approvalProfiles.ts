@@ -1,22 +1,31 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ActionSurfaceSchema } from './metadata.js';
-import type { ActionSettingsOverride, ActionsSettingsV1 } from './actionSettings.js';
+import { isActionEnabledByActionsSettings, setActionApprovalOverride, setScopedActionApprovalPreference, tightenActionsSettingsV1,
+  type ActionSettingsActionId, type ActionSettingsOverride, type ActionsSettingsV1 } from './actionSettings.js';
+import { readExplicitActionApprovalPreferenceFromSettingsV1 } from './actionApprovalPreference.js';
+import type { ActionApprovalPolicyScopeV1 } from './actionApprovalPolicy.js';
+import type { ActionExecutorContext } from './executor/types.js';
+import type { DatabaseAgentLevelV1 } from '../deployments/deploymentEnvironmentDeployerV1.js';
+import type { ArtifactCallerAccessV1 } from '../artifacts/artifactAccessV1.js';
+import { isDiscussionInviteActionIdV1 } from '../discussions/actionIds.js';
 
 import { ApprovalProfileIdV1Schema } from './approvalProfileIdV1.js';
 export { ApprovalProfileIdV1Schema } from './approvalProfileIdV1.js';
 const ApprovalProfileSurfaceListV1Schema = lazyZodSchema(() => z.array(z.keyof(ActionSurfaceSchema)));
+export type ApprovalProfileMergeModeV1 = 'full' | 'tighten-only';
+
 /**
  * The Account Approval-settings policy fields of one Action. Placements and tool exposure
  * stay Account UI, so a stored row keeps only these keys.
  */
-export const ApprovalProfileActionRowV1Schema = lazyZodSchema(() => z.object({
+export const ApprovalProfileActionRowV1Schema = lazyZodSchema(() => z.strictObject({
   enabled: z.optional(z.boolean()),
   disabledSurfaces: z.optional(ApprovalProfileSurfaceListV1Schema),
   approvalRequiredSurfaces: z.optional(ApprovalProfileSurfaceListV1Schema),
 }));
 /**
- * A saved Account preference: a named per-Action overlay of the Account Approval settings,
+ * A named per-Action overlay opened from an approval-profile Artifact,
  * never authority or a copy carried by a Session. Only Actions the person changed are stored.
  * Strict, so a row in any other shape (such as a pre-overlay `defaultMode` policy) is unusable
  * rather than read as an empty overlay that silently follows the Account settings.
@@ -43,27 +52,21 @@ export const ApprovalProfileResolutionV1Schema = lazyZodSchema(() => z.strictObj
 }));
 export type ApprovalProfileResolutionV1 = Readonly<z.infer<typeof ApprovalProfileResolutionV1Schema>>;
 
-export function listApprovalProfilesV1(settings: Readonly<{ approvalProfiles?: readonly ApprovalProfileV1[] }>): readonly ApprovalProfileV1[] {
-  return settings.approvalProfiles ?? [];
-}
+/** The opened Artifact catalog row; access is decided by the Artifact transport. */
+export type ReadableApprovalProfileV1 = Readonly<{
+  id: string;
+  profile: ApprovalProfileV1;
+  access: ArtifactCallerAccessV1;
+  ownerAccountId?: string;
+  ownerDisplayName?: string | null;
+  revision: Readonly<{ headerVersion: number; bodyVersion: number }>;
+}>;
 
-/** Malformed stored rows are unavailable, so their references settle visibly as missing. */
-export function normalizeStoredApprovalProfilesV1(raw: unknown): ApprovalProfileV1[] {
-  if (!Array.isArray(raw)) return [];
-  const profiles = new Map<string, ApprovalProfileV1>();
-  for (const row of raw) {
-    const parsed = ApprovalProfileV1Schema.safeParse(row);
-    if (parsed.success) profiles.set(parsed.data.id, parsed.data);
-  }
-  return [...profiles.values()];
-}
-
-/** Selection only. A missing reference settles at the Account settings, with a visible status. */
-export function readApprovalProfileV1(settings: Readonly<{ approvalProfiles?: readonly ApprovalProfileV1[] }> | null | undefined,
-  requestedId: string): Readonly<{ profile: ApprovalProfileV1 | null; resolution: ApprovalProfileResolutionV1 }> {
-  const profile = settings?.approvalProfiles?.find(row => row.id === requestedId) ?? null;
-  return { profile, resolution: { status: profile ? 'available' : 'missing', requestedId } };
-}
+/** One host-bound lookup, consumed by all admission and advertisement policy readers. */
+export type BoundApprovalProfileV1 = Readonly<{
+  profile: ApprovalProfileV1 | null;
+  resolution: ApprovalProfileResolutionV1;
+}>;
 
 /**
  * The one Session → profile reference rule, read at each admission: the Session's own choice,
@@ -87,13 +90,27 @@ const EMPTY_ACTION_ROW: ActionSettingsOverride = Object.freeze({ enabledPlacemen
  * that Action; Account placements, tool exposure and every other Action stay as they are.
  * The routing owner then evaluates the merged settings with its usual floors.
  */
-export function applyApprovalProfileOverlayV1(settings: ActionsSettingsV1, profile: ApprovalProfileV1): ActionsSettingsV1 {
-  const ids = new Set([...Object.keys(profile.actions ?? {}), ...Object.keys(profile.approvalWaivedSurfaces ?? {})]);
+export function applyApprovalProfileOverlayV1(settings: ActionsSettingsV1, profile: ApprovalProfileV1,
+  mode: ApprovalProfileMergeModeV1 = 'full'): ActionsSettingsV1 {
+  const ids = new Set([...Object.keys(profile.actions ?? {}),
+    ...(mode === 'full' ? Object.keys(profile.approvalWaivedSurfaces ?? {}) : [])]);
   if (ids.size === 0) return settings;
   const actions = { ...settings.actions };
   const waivers = { ...settings.approvalWaivedSurfaces };
   for (const id of ids) {
     const row = profile.actions?.[id];
+    if (mode === 'tighten-only') {
+      const base = settings.actions[id] ?? EMPTY_ACTION_ROW;
+      const approvalRequiredSurfaces = [...new Set([...base.approvalRequiredSurfaces, ...row?.approvalRequiredSurfaces ?? []])];
+      actions[id] = { ...base,
+        ...(row?.enabled === false ? { enabled: false } : {}),
+        disabledSurfaces: [...new Set([...base.disabledSurfaces, ...row?.disabledSurfaces ?? []])],
+        approvalRequiredSurfaces };
+      const waived = waivers[id]?.filter(surface => !approvalRequiredSurfaces.includes(surface));
+      if (waived?.length) waivers[id] = waived;
+      else delete waivers[id];
+      continue;
+    }
     const { enabled: _accountEnabled, ...base } = settings.actions[id] ?? EMPTY_ACTION_ROW;
     actions[id] = { ...base, ...(row?.enabled === undefined ? {} : { enabled: row.enabled }),
       disabledSurfaces: row?.disabledSurfaces ?? [], approvalRequiredSurfaces: row?.approvalRequiredSurfaces ?? [] };
@@ -105,18 +122,66 @@ export function applyApprovalProfileOverlayV1(settings: ActionsSettingsV1, profi
   return { ...rest, actions, ...(Object.keys(waivers).length > 0 ? { approvalWaivedSurfaces: waivers } : {}) };
 }
 
-/** The settings an invocation with this profile reference is decided on, and the visible resolution. */
-export function resolveProfiledActionsSettingsV1(settings: ActionsSettingsV1, approvalProfileId: string | null | undefined):
-  Readonly<{ settings: ActionsSettingsV1; profile?: ApprovalProfileResolutionV1 }> {
-  if (!approvalProfileId) return { settings };
-  const selected = readApprovalProfileV1(settings, approvalProfileId);
-  return { settings: selected.profile ? applyApprovalProfileOverlayV1(settings, selected.profile) : settings,
-    profile: selected.resolution };
+/** A target policy already admitted by its owning domain, not a second target-access decision. */
+export type ActionTargetApprovalV1 = Readonly<{
+  actionId: ActionSettingsActionId;
+  databaseAgentLevel: DatabaseAgentLevelV1;
+  approvalScope?: ActionApprovalPolicyScopeV1;
+}>;
+
+export type ProfiledActionsSettingsOptionsV1 = Readonly<{
+  actionId?: string;
+  /** Already resolved by the host catalog once for this invocation. */
+  boundProfile?: BoundApprovalProfileV1 | null;
+  /** Produced once by the creation-default resolver; an explicit pick clears this bit. */
+  approvalProfileTeamOrGroupDerived?: boolean;
+  context?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'actionCaller' | 'actionsSettings'>;
+  targetApproval?: ActionTargetApprovalV1;
+}>;
+
+function applyAdmittedTargetApproval(account: ActionsSettingsV1, profiled: ActionsSettingsV1,
+  options: ProfiledActionsSettingsOptionsV1): ActionsSettingsV1 {
+  const target = options.targetApproval;
+  const surface = options.context?.surface;
+  if (!target || (surface !== 'agent' && surface !== 'mcp')
+    || (target.databaseAgentLevel !== 'readWriteAsk' && target.databaseAgentLevel !== 'readWriteNoApproval')) return profiled;
+  const ownAsk = readExplicitActionApprovalPreferenceFromSettingsV1(target.actionId, account, options.context, target.approvalScope) === true;
+  const required = target.databaseAgentLevel === 'readWriteAsk' || ownAsk;
+  // Project onto the same effective scope the preference reader consumes. This is
+  // an invocation-local overlay; inherited template identity is never persisted
+  // as part of a child preference.
+  const scope = target.approvalScope?.kind === 'environment'
+    ? { kind: 'environment' as const,
+      environmentId: target.approvalScope.inheritedEnvironmentId ?? target.approvalScope.environmentId }
+    : target.approvalScope;
+  let settings = scope
+    ? setScopedActionApprovalPreference({ settings: profiled, actionId: target.actionId, scope,
+      surface, mode: required ? 'required' : 'waived' })
+    : setActionApprovalOverride({ settings: profiled, actionId: target.actionId, surface, approvalRequired: required });
+  // A target's no-approval choice never turns on what this person explicitly turned off,
+  // even when a picked profile otherwise replaces the Account's row.
+  if (!isActionEnabledByActionsSettings(target.actionId, account, { surface })) {
+    const row = settings.actions[target.actionId] ?? EMPTY_ACTION_ROW;
+    settings = { ...settings, actions: { ...settings.actions, [target.actionId]: { ...row,
+      ...(account.actions[target.actionId]?.enabled === false ? { enabled: false } : {}),
+      disabledSurfaces: [...new Set([...row.disabledSurfaces, surface])] } } };
+  }
+  return settings;
 }
 
-/** A Session's effective Action policy: Account settings with that Session's profile applied. */
-export function applySessionApprovalProfileV1(settings: ActionsSettingsV1,
-  metadata: Readonly<{ approvalProfileId?: unknown; machineId?: unknown }> | null | undefined): ActionsSettingsV1 {
-  return resolveProfiledActionsSettingsV1(settings,
-    metadata ? resolveSessionApprovalProfileReferenceV1(metadata, settings) : null).settings;
+/** The settings an invocation with this profile reference is decided on, and the visible resolution. */
+export function resolveProfiledActionsSettingsV1(settings: ActionsSettingsV1, approvalProfileId: string | null | undefined,
+  options: ProfiledActionsSettingsOptionsV1 = {}):
+  Readonly<{ settings: ActionsSettingsV1; profile?: ApprovalProfileResolutionV1 }> {
+  const selected = options.boundProfile !== undefined ? options.boundProfile
+    : approvalProfileId ? { profile: null, resolution: { status: 'missing' as const, requestedId: approvalProfileId } } : undefined;
+  const profiled = selected?.profile ? applyApprovalProfileOverlayV1(settings, selected.profile,
+    options.approvalProfileTeamOrGroupDerived === true ? 'tighten-only' : 'full') : settings;
+  const effective = applyAdmittedTargetApproval(settings, profiled, options);
+  const context = options.context;
+  const retainedInvitationPolicy = options.actionId && isDiscussionInviteActionIdV1(options.actionId)
+    && context?.actionCaller?.kind === 'workflowRun' && context.actionCaller.discussionModelReservation !== undefined
+    ? context.actionsSettings : undefined;
+  return { settings: retainedInvitationPolicy ? tightenActionsSettingsV1(retainedInvitationPolicy, effective) : effective,
+    ...(selected ? { profile: selected.resolution } : {}) };
 }

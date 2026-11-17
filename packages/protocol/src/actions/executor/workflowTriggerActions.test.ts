@@ -26,6 +26,7 @@ import { AutomationEventTriggerDefinitionStoredPayloadV1Schema } from '../../aut
 import { markSessionListQueryResultV1 } from '../../sessions/awareness/action.js';
 import { ActionIdSchema } from '../actionIds.js';
 import { getActionSpec } from '../actionSpecs.js';
+import { resolveActionApprovalRouting } from '../actionApprovalPolicy.js';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1, readWorkflowActionOutputSchemaV1 } from '../actionCatalog.js';
 import { resolveActionCurrentSessionScopeFailure } from './sessionListAccess.js';
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
@@ -260,6 +261,121 @@ function fixture(savedDefinition = definition) {
     }),
   };
 }
+
+describe('profile subject mutation admission', () => {
+  it.each([null, 'session-one'] as const)(
+    'removes a whole set in scope %s with one admitted read and preserves Session authority', async scopeSessionId => {
+      const f = fixture();
+      const created = await f.actions.add({ workflow, project, trigger });
+      const row = f.rows.get(created.set.automationId)!;
+      f.rows.set(row.id, { ...row, scopeSessionId, ...(scopeSessionId ? { triggers: [] } : {}) });
+      let reads = 0;
+      const owner = createWorkflowTriggerActions({ ...f.deps, automations: { ...f.deps.automations,
+        get: async id => { reads++; return f.rows.get(id) ?? null; },
+      } });
+      const executor = f.executor(owner);
+      const context = { surface: 'mcp' as const, authority: 'account_automation' as const,
+        actionCaller: { kind: 'session' as const, sessionId: 'session-one' },
+        bypassApprovals: true,
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+          approvalWaivedSurfaces: { 'workflow.trigger.remove': ['mcp'] } }),
+        interactivePresentation: 'unavailable' as const };
+      const input = { automationId: row.id };
+      if (scopeSessionId) {
+        expect(await executor.execute('workflow.trigger.remove', input, { ...context,
+          actionCaller: { kind: 'session', sessionId: 'unrelated-session' } }))
+          .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        expect(f.rows.has(row.id)).toBe(true);
+        expect(reads).toBe(1);
+      }
+      const before = reads;
+      expect(await executor.execute('workflow.trigger.remove', input, context))
+        .toMatchObject({ ok: true, result: { automationId: row.id, deleted: true } });
+      expect(f.rows.has(row.id)).toBe(false);
+      expect(reads - before).toBe(1);
+      // Internal owner callers without Action preparation retain the same admission.
+      f.rows.set(row.id, { ...row, scopeSessionId, triggers: [] });
+      await expect(owner.remove(input, context)).resolves.toMatchObject({ automationId: row.id, deleted: true });
+      expect(reads - before).toBe(2);
+    });
+
+  it('keeps the prepared profile consequence on its own Action when a child inherits host context', () => {
+    const settings = ActionsSettingsV1Schema.parse({ v: 1,
+      approvalWaivedSurfaces: { 'workflow.trigger.add': ['mcp'], 'session.title.set': ['mcp'] } });
+    const context = { surface: 'mcp' as const, workflowTriggerMutationAdmission: {
+      actionId: 'workflow.trigger.add' as const, changesProfile: true,
+    } };
+    expect(resolveActionApprovalRouting({ actionId: 'workflow.trigger.add', spec: getActionSpec('workflow.trigger.add'),
+      context, settings }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId: 'session.title.set', spec: getActionSpec('session.title.set'),
+      context, settings }).required).toBe(false);
+  });
+
+  it.each(['workflow.trigger.update', 'workflow.trigger.remove'] as const)(
+    'asks before %s changes an incumbent profile link and dispatch reuses its admitted row', async actionId => {
+      const f = fixture();
+      const created = await f.actions.add({ workflow, project, trigger });
+      const row = f.rows.get(created.set.automationId)!;
+      const triggerId = row.triggers[0]!.id;
+      f.rows.set(row.id, { ...row, triggers: [AutomationTriggerDetailSchema.parse({
+        kind: 'action', id: triggerId, revision: 0, enabled: true, createdAt: 1, updatedAt: 1,
+        phase: 'before', mode: 'wait', actionIds: ['session.title.set'],
+        subjectKind: 'approvalProfile', subjectKey: 'profile-subject', triggerDefinitionEnvelope: '{}',
+      })] });
+      let reads = 0;
+      const owner = createWorkflowTriggerActions({ ...f.deps, automations: { ...f.deps.automations,
+        get: async id => { reads++; return f.rows.get(id) ?? null; },
+      }, resolveSubjectActionReach: async () => false,
+      openActionTrigger: async () => ({ kind: 'action', phase: 'before', mode: 'wait', actionIds: ['session.title.set'],
+        subject: { kind: 'approvalProfile', serverId: 'home', profileId: 'profile' } }) });
+      let featureReads = 0;
+      const executor = createActionExecutor({ workflowAction: createWorkflowActionExecutor({ definitions: f.definitions,
+        triggers: owner, isWorkflowFeatureEnabled: () => { featureReads++; return true; },
+        runs: { execute: async () => { throw new Error('Unexpected Run write'); } },
+      }) });
+      const context = { surface: 'mcp' as const, serverId: 'home', runtimeAccountId: 'owner', authority: 'account_automation' as const,
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: ['mcp'] } }),
+        interactivePresentation: 'unavailable' as const };
+      const input = actionId === 'workflow.trigger.update'
+        ? { automationId: row.id, triggerId, expectedRevision: row.templateVersion, patch: { enabled: false } }
+        : { automationId: row.id, triggerId };
+      expect(await executor.execute(actionId, input, context)).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+      expect(f.rows.get(row.id)?.triggers[0]?.enabled).toBe(true);
+      expect(reads).toBe(1);
+      const allowed = await executor.execute(actionId, input, { ...context, actionsSettings: ActionsSettingsV1Schema.parse({
+        v: 1, approvalWaivedSurfaces: { [actionId]: ['mcp'], 'session.approval_profile.set': ['mcp'] },
+      }) });
+      expect(allowed).toMatchObject({ ok: true });
+      expect(reads).toBe(2);
+      expect(featureReads).toBe(2);
+      expect(actionId === 'workflow.trigger.update' ? f.rows.get(row.id)?.triggers[0]?.enabled
+        : f.rows.get(row.id)?.triggers.length).toBe(actionId === 'workflow.trigger.update' ? false : 0);
+    });
+
+  it.each(['workflow.trigger.add', 'workflow.trigger.update'] as const)(
+    'asks when %s introduces a profile subject and keeps ordinary schedule edits available', async actionId => {
+      const f = fixture();
+      const saved = await f.actions.add({ workflow, project, trigger });
+      const owner = createWorkflowTriggerActions({ ...f.deps, resolveSubjectActionReach: async () => false });
+      const executor = f.executor(owner);
+      const context = { surface: 'mcp' as const, authority: 'account_automation' as const,
+        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { [actionId]: ['mcp'] } }),
+        interactivePresentation: 'unavailable' as const };
+      const profileTrigger = { kind: 'action' as const, phase: 'before' as const, mode: 'wait' as const,
+        actionIds: ['session.title.set'], subject: { kind: 'approvalProfile' as const, serverId: 'home', profileId: 'profile' } };
+      const input = actionId === 'workflow.trigger.add' ? { workflow, project, trigger: { ...profileTrigger, enabled: true } }
+        : { automationId: saved.set.automationId, triggerId: saved.triggerId!, expectedRevision: saved.set.revision,
+          patch: { trigger: profileTrigger } };
+      expect(await executor.execute(actionId, input, context))
+        .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+      expect(f.rows.size).toBe(1);
+      expect(f.rows.get(saved.set.automationId)?.triggers[0]?.kind).toBe('schedule');
+      const ordinary = actionId === 'workflow.trigger.add' ? { workflow, project, trigger }
+        : { automationId: saved.set.automationId, triggerId: saved.triggerId!, expectedRevision: saved.set.revision,
+          patch: { enabled: false } };
+      expect(await executor.execute(actionId, ordinary, context)).toMatchObject({ ok: true });
+    });
+});
 
 describe('inline Event reference authoring', () => {
   const event = { pluginId: 'com.acme.events', localId: 'pull-request' };

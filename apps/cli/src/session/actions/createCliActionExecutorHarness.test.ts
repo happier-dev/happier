@@ -1,4 +1,6 @@
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ApprovalProfileV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
+import { DeploymentReceiptAcceptedResultV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -531,24 +533,55 @@ describe('createCliActionExecutorHarness', () => {
     expect(posts).not.toHaveBeenCalled();
   });
   it.each([
-    { mode: 'allow', retainedRequire: false, currentRequire: false, retainedNull: false, held: false },
-    { mode: 'require', retainedRequire: false, currentRequire: false, retainedNull: false, held: true },
-    { mode: 'allow', retainedRequire: true, currentRequire: false, retainedNull: false, held: true },
+    { profileEnabled: false, accountEnabled: true },
+    { profileEnabled: true, accountEnabled: false },
+  ])('uses bound profile availability in the CLI host (profile=$profileEnabled, Account=$accountEnabled)', async ({ profileEnabled, accountEnabled }) => {
+    let effects = 0;
+    const policy = normalizeActionsSettingsV1({ v: 1, actions: { 'deployments.deploy': { enabled: accountEnabled } },
+      approvalWaivedSurfaces: { 'deployments.deploy': ['agent'] } });
+    const profile = ApprovalProfileV1Schema.parse({ id: 'picked', name: 'Picked',
+      actions: { 'deployments.deploy': { enabled: profileEnabled } }, approvalWaivedSurfaces: { 'deployments.deploy': ['agent'] } });
+    const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 3, requestKey: 'deploy-request',
+      targetLinkId: 'link', expectedTargetLinkRevision: 4, contentArtifactId: 'definition', contentHeaderVersion: 1, contentBodyVersion: 1 };
+    const { executor } = createCliActionExecutorHarness({ token: 'token', sessionId: 'origin', mode: 'plain', ctx: null,
+      serverId: 'home', actionsSettingsProvider: { getActionsSettings: () => policy, getApprovalProfiles: () => [{
+        id: profile.id, profile, access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 } }] },
+    }, {
+      prepareDeploymentAction: async () => ({ input, preview: { sourceMethod: 'gitIntegration' } }),
+      resolveEnvironmentApprovalScope: async () => ({ scope: { kind: 'environment', environmentId: 'environment' } }),
+      deploymentAction: async () => { effects++; return DeploymentReceiptAcceptedResultV1Schema.parse({ ok: true,
+        environmentId: 'environment', revision: 4, kind: 'pending', actionOperationId: 'operation' }); },
+    });
+    const result = await executor.execute('deployments.deploy', input, { surface: 'agent', authority: 'account_automation',
+      runtimeAccountId: 'owner', approvalProfileId: 'picked', interactivePresentation: 'unavailable' });
+    expect(result).toMatchObject(profileEnabled ? { ok: true } : { ok: false, errorCode: 'action_disabled' });
+    expect(effects).toBe(profileEnabled ? 1 : 0);
+  });
+
+  it.each([
+    { mode: 'allow', retainedOff: false, retainedRequire: false, currentRequire: false, retainedNull: false, held: false },
+    { mode: 'require', retainedOff: false, retainedRequire: false, currentRequire: false, retainedNull: false, held: true },
+    { mode: 'allow', retainedOff: false, retainedRequire: true, currentRequire: false, retainedNull: false, held: true },
     // A later Account Require still applies over the invitation's retained waiver.
-    { mode: 'allow', retainedRequire: false, currentRequire: true, retainedNull: false, held: true },
-    { mode: 'allow', retainedRequire: false, currentRequire: false, retainedNull: true, held: false },
-    { mode: 'allow', retainedRequire: false, currentRequire: true, retainedNull: true, held: true },
-  ] as const)('uses current approval profiles while retaining Workflow invitation restrictions ($mode, $retainedRequire, $currentRequire, null=$retainedNull)', async ({ mode, retainedRequire, currentRequire, retainedNull, held }) => {
+    { mode: 'allow', retainedOff: false, retainedRequire: false, currentRequire: true, retainedNull: false, held: true },
+    { mode: 'allow', retainedOff: false, retainedRequire: false, currentRequire: false, retainedNull: true, held: false },
+    { mode: 'allow', retainedOff: false, retainedRequire: false, currentRequire: true, retainedNull: true, held: true },
+    { mode: 'full_allow', retainedOff: true, retainedRequire: false, currentRequire: false, retainedNull: false, held: true },
+    { mode: 'full_allow', retainedOff: false, retainedRequire: true, currentRequire: false, retainedNull: false, held: true },
+  ] as const)('uses current approval profiles while retaining Workflow invitation restrictions ($mode, $retainedRequire, $currentRequire, null=$retainedNull)', async ({ mode, retainedOff, retainedRequire, currentRequire, retainedNull, held }) => {
     let effects = 0;
     let approval: ReturnType<typeof ApprovalRequestV2Schema.parse> | undefined;
     const waived = { 'discussion.invite': ['agent'] };
     const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: currentRequire ? {} : waived,
-      ...(currentRequire ? { actions: { 'discussion.invite': { approvalRequiredSurfaces: ['agent'] } } } : {}),
-      approvalProfiles: [{ id: 'profile:current', name: 'Current',
-        ...(mode === 'require' ? { actions: { 'discussion.invite': { approvalRequiredSurfaces: ['agent'] } } } : {}) }] });
+      ...(currentRequire ? { actions: { 'discussion.invite': { approvalRequiredSurfaces: ['agent'] } } } : {}) });
+    const profileCatalog = [{ id: 'profile:current', profile: ApprovalProfileV1Schema.parse({ id: 'profile:current', name: 'Current',
+      ...(mode === 'require' ? { actions: { 'discussion.invite': { approvalRequiredSurfaces: ['agent'] } } }
+        : mode === 'full_allow' ? { actions: { 'discussion.invite': { enabled: true } }, approvalWaivedSurfaces: waived } : {}) }),
+      access: 'owner' as const, revision: { headerVersion: 1, bodyVersion: 1 } }];
     const { executor } = createCliActionExecutorHarness({ token: 'token', mode: 'plain', ctx: null,
       sessionId: 'origin', serverId: 'home', serverHttpBaseUrl: 'https://workflow-home.example.invalid',
-      actionsSettingsProvider: { getActionsSettings: () => settings, getAccountSettings: () => null },
+      actionsSettingsProvider: { getActionsSettings: () => settings, getAccountSettings: () => null,
+        getApprovalProfiles: () => profileCatalog },
     }, { ...createUnavailableActionTransportDeps(),
       // Discussion HTTP and approval Artifact persistence are external boundaries.
       discussionAction: async () => { effects++; return { discussionId: 'discussion', ownerAccountId: 'owner',
@@ -561,15 +594,16 @@ describe('createCliActionExecutorHarness', () => {
       surface: 'agent', authority: 'account_automation', runtimeAccountId: 'owner', serverId: 'home',
       actionRequestId: 'invitation', defaultSessionId: 'origin', approvalProfileId: 'profile:current',
       actionsSettings: retainedNull ? null : normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: waived,
-        actions: retainedRequire ? { 'discussion.invite': { approvalRequiredSurfaces: ['agent'] } } : {} }),
+        actions: retainedOff ? { 'discussion.invite': { enabled: false } }
+          : retainedRequire ? { 'discussion.invite': { approvalRequiredSurfaces: ['agent'] } } : {} }),
       actionCaller: { kind: 'workflowRun', runId: 'run', authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
         authenticatedStarterV1: { requestRef: 'start', requester: { serverId: 'home', accountId: 'owner' } },
         discussionModelReservation: { discussionId: 'discussion', participantSlotId: 'slot' } },
     });
-    expect(result.ok ? true : result).toEqual(true);
-    expect(result).toMatchObject({ ok: true, result: held ? { kind: 'approval_request_created' } : { changed: true } });
+    expect(result, JSON.stringify(result)).toMatchObject(retainedOff ? { ok: false, errorCode: 'action_disabled' }
+      : { ok: true, result: held ? { kind: 'approval_request_created' } : { changed: true } });
     expect(effects).toBe(held ? 0 : 1);
-    expect(approval?.actionId).toBe(held ? 'discussion.invite' : undefined);
+    expect(approval?.actionId).toBe(held && !retainedOff ? 'discussion.invite' : undefined);
   });
   beforeEach(() => { wire.sockets.length = 0; wire.io.mockClear(); });
   afterEach(() => vi.restoreAllMocks());

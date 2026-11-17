@@ -5,6 +5,7 @@ import { deriveArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifac
 import { getWidgetSizeFootprintV1 } from '@happier-dev/protocol/widgets/widgetPresentationV1';
 import { readInboxItemFocus } from '@/components/inbox/inboxItemFocus';
 import { readBotTemplateRecipientRoute } from '@/components/sessions/bots/templates/botTemplateRecipientDestination';
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 
 import {
     classifyArtifactBrowserKind,
@@ -26,6 +27,12 @@ function artifact(id: string, header: Record<string, unknown> | null, extra: Par
 }
 
 describe('artifactBrowserModel', () => {
+    it('opens a shared approval profile in its settings owner and keeps it out of generic documents', () => {
+        const row = artifact('profile/id', { kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1, name: 'Deploy', title: 'Deploy' }, { access: 'view' });
+        expect(resolveArtifactOpenRoute(row)).toBe('/settings/actions/profiles/profile%2Fid');
+        expect(classifyArtifactBrowserKind(row)).toBeNull();
+        expect(readArtifactPreview(row)).toEqual({ kind: 'none' });
+    });
     it('opens a shared released Bot template at its transport-qualified recipient page', () => {
         const row = artifact('template/id', { v: 1, kind: 'bot_template.v1', state: 'released', title: 'Garden', description: '', version: '1.0.0', changelog: '' },
             { access: 'view', sourceServerId: 'recipient-home' });

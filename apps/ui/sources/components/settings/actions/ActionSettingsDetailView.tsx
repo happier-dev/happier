@@ -163,6 +163,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
     const [searchQuery, setSearchQuery] = React.useState('');
     const targetSettings = useActionSettingsForTarget(target);
     const profile = targetSettings.profile;
+    const profileRow = targetSettings.profileRow;
     const profileSetsAction = approvalProfileSetsAction(profile, props.actionId);
     const writePolicy = useActionPolicyWriter(target);
     const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
@@ -379,13 +380,13 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                             ? t(profileSetsAction ? 'workflows.triggers.guided.profile.actionSetByProfile'
                                 : 'workflows.triggers.guided.profile.actionFollowsAccount')
                             : parseQualifiedPluginResourcePolicyId(entry.actionId) ? undefined : t('settingsActions.approvalHelpBody')}
-                        action={inProfile && profile && profileSetsAction ? (
+                        action={inProfile && profileRow && profileSetsAction ? (
                             <RoundButton
                                 testID={`settings-actions:action:${entry.actionId}:use-account-setting`}
                                 size="small"
                                 display="inverted"
                                 title={t('workflows.triggers.guided.profile.useAccountSetting')}
-                                onPress={() => { void writePolicy(buildApprovalProfileActionResetChange(profile, entry.actionId as ActionSettingsActionId)); }}
+                                onPress={() => { void writePolicy(buildApprovalProfileActionResetChange(profileRow, entry.actionId as ActionSettingsActionId)); }}
                             />
                         ) : undefined}
                     >

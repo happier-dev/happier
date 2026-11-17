@@ -1,6 +1,8 @@
 import { z } from 'zod/mini';
 import { ActionPolicyInputSchemas, isActionPolicyActionId, readActionAudiencePolicy,
-    applyActionPolicyMutation, listApprovalProfilesV1, type ApprovalProfileV1, type ActionPolicyActionId, type ActionPolicySetResult } from '@happier-dev/protocol/actions';
+    applyActionPolicyMutation, type ActionPolicyActionId, type ActionPolicySetResult } from '@happier-dev/protocol/actions';
+import type { ReadableApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
+import type { ApprovalProfileArtifactChangeV1, executeApprovalProfileArtifactChangeV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { SettingsDeclarationActionInputSchemasV1, SettingsDeclarationActionOutputSchemasV1, SettingsDeclarationValueV1Schema, SettingsDeclarationMutationReversalV1Schema, SettingsDeclarationCapturedMutationV1Schema, type SettingsDeclarationActionIdV1, type SettingsDeclarationDescriptorV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { AccountSettingMutationV1Schema, applyAccountSettingMutationV1 } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
@@ -65,6 +67,10 @@ type SettingsDeclarationOwner = Readonly<{
     isCurrent?: () => boolean;
     mutationServices?: SettingsMutationServices;
     readAccountSettings: () => Promise<Settings>;
+    approvalProfiles?: Readonly<{
+        list: () => Promise<readonly ReadableApprovalProfileV1[]>;
+        change: (change: ApprovalProfileArtifactChangeV1, signal?: AbortSignal) => ReturnType<typeof executeApprovalProfileArtifactChangeV1>;
+    }>;
     setClientEncryptionRequirement?: (enabled: boolean) => Promise<'updated' | 'needs_e2ee'>;
     writeAccountSettings: (delta: SettingsWriteDelta) => Promise<void>;
     mutateAccountSettings: (mutate: (raw: Readonly<Record<string, unknown>>) => Record<string, unknown>, options?: RawSettingsMutationOptions)
@@ -88,7 +94,7 @@ class RejectedSettingMutation extends Error {
 }
 type SettingsDeclarationActionResult = z.output<(typeof SettingsDeclarationActionOutputSchemasV1)[SettingsDeclarationActionIdV1]>
     | ActionPolicySetResult
-    | Readonly<{ profiles: readonly ApprovalProfileV1[] }>
+    | Readonly<{ profiles: readonly ReadableApprovalProfileV1[] }>
     | ReturnType<typeof refuse> | ActionApprovalRequestCreatedResult;
 class ConditionalSettingConflict extends Error {}
 
@@ -186,14 +192,26 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
             if (!currentOwner()) return refuse('setting_not_bound');
             if (actionId === 'actions.policy.get') {
                 const requested = ActionPolicyInputSchemas[actionId].parse(input);
+                if ('profiles' in requested) {
+                    if (!owner.approvalProfiles) return refuse('setting_not_bound');
+                    const profiles = await owner.approvalProfiles.list();
+                    return currentOwner() ? { profiles } : refuse('setting_not_bound');
+                }
                 const current = await owner.readAccountSettings();
                 if (!currentOwner()) return refuse('setting_not_bound');
-                if ('profiles' in requested) return { profiles: listApprovalProfilesV1(current.actionsSettingsV1) };
                 return readActionAudiencePolicy(current.actionsSettingsV1, requested.actionId, requested.audience,
                     'scope' in requested ? requested.scope : undefined);
             }
             const requested = actionId === 'actions.policy.set' ? ActionPolicyInputSchemas[actionId].parse(input)
                 : { ...ActionPolicyInputSchemas[actionId].parse(input), mode: 'default' as const };
+            if ('profileChange' in requested && requested.profileChange.kind !== 'machine_default') {
+                if (!owner.approvalProfiles) return refuse('setting_not_bound');
+                const changed = await owner.approvalProfiles.change(requested.profileChange, context?.signal);
+                if (!changed.ok) return changed;
+                if (requested.profileChange.kind !== 'delete') return changed.result;
+                // The Artifact delete has committed. The existing Account CAS below
+                // clears only this person's Machine preferences that referred to it.
+            }
             let applied: ActionPolicySetResult | undefined;
             try {
                 const result = await owner.mutateAccountSettings(raw => {

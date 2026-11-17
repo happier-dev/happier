@@ -1,14 +1,12 @@
 import { ACTION_IDS } from './actionIds.js';
-import { resolveProfiledActionsSettingsV1, type ApprovalProfileResolutionV1 } from './approvalProfiles.js';
+import { resolveProfiledActionsSettingsV1, type ApprovalProfileResolutionV1, type ActionTargetApprovalV1 } from './approvalProfiles.js';
 import { isAutomationApprovalRequestSurface, canRequestPresentUserApprovalForActionInputV1 } from './decisionAuthority.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
 import type { ActionExecutorContext } from './actionExecutor.js';
 import {
-  readScopedActionApprovalPreference,
   type ActionApprovalScopeV1,
   type ActionSettingsActionId,
   type ActionsSettingsV1,
-  type ActionSettingsOverride,
 } from './actionSettings.js';
 import { resolveActionApprovalFlow, type ActionApprovalFlow, type ActionApprovalResult } from './actionApprovalMetadata.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput, type ActionSpec } from './actionSpecs.js';
@@ -22,6 +20,8 @@ import { isApiTokenDeploymentGrantV1 } from '../auth/apiTokenGrant.js';
 import type { WorkflowApprovedOperationV1 } from '../workflows/workflowDefinitionV1.js';
 import { isHostAdmittedReviewedChildPolicyV1 } from './executor/deploymentRoleChild.js';
 import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } from './invocationAuthority.js';
+import { readExplicitActionApprovalPreferenceFromSettingsV1 } from './actionApprovalPreference.js';
+import { PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
 export { isSharedRequesterActionV1 } from './actionRequestAttributionV1.js';
 export { isAgentOrUnresolvedSurface } from './actionApprovalSurface.js';
 
@@ -67,7 +67,9 @@ export type ResolveActionApprovalRoutingArgs = Readonly<{
   settings?: ActionsSettingsV1 | null;
   /** Exact scope proved by the host's Action admission, never raw caller context. */
   approvalScope?: ActionApprovalPolicyScopeV1;
-  context?: ApprovalInvocationContext & Pick<ActionExecutorContext, 'bypassApprovals' | 'isPluginSettingsIntentCurrent' | 'machineServiceLogsResource' | 'approvalProfileId' | 'approvalProfileChange'> | null;
+  /** Already admitted by the target owner; identity and scope come from this invocation. */
+  targetApproval?: Pick<ActionTargetApprovalV1, 'databaseAgentLevel'>;
+  context?: ApprovalInvocationContext & Pick<ActionExecutorContext, 'bypassApprovals' | 'isPluginSettingsIntentCurrent' | 'machineServiceLogsResource' | 'approvalProfileId' | 'approvalProfile' | 'approvalProfileTeamOrGroupDerived' | 'approvalProfileChange' | 'workflowTriggerMutationAdmission' | 'actionsSettings'> | null;
   requiredByPolicy?: boolean;
   /** Host fact: the receiving signed root owns this invocation's Ask, so the local host creates none. */
   approvalOwner?: 'receiver' | 'local';
@@ -301,33 +303,9 @@ export function readExplicitActionApprovalPreferenceV1(
   ctx?: ApprovalInvocationContext | null,
   approvalScope?: ActionApprovalPolicyScopeV1,
 ): boolean | undefined {
-  if (ctx?.callerSurface === 'foreign_session_html') {
-    const choice = settings.callerSurfacePolicies?.foreign_session_html?.[actionId];
-    return choice === undefined ? undefined : choice === 'ask_first';
-  }
-  const surface = resolveApprovalSurface(ctx);
-  const rawSurface = ctx?.surface;
-  const scoped = approvalScope ? readScopedActionApprovalPreference(settings, actionId, approvalScope) : undefined;
-  if (surface.kind !== 'ambiguous') {
-    if (scoped?.approvalRequiredSurfaces.includes(surface.surface)) return true;
-    // A preview inherits its template's current choice. A child's explicit Ask
-    // can tighten it; an old child waiver cannot weaken the inherited policy.
-    const inheritedEnvironmentId = approvalScope?.kind === 'environment' ? approvalScope.inheritedEnvironmentId : undefined;
-    const effective = inheritedEnvironmentId ? readScopedActionApprovalPreference(settings, actionId,
-      { kind: 'environment', environmentId: inheritedEnvironmentId }) : scoped;
-    if (effective?.approvalRequiredSurfaces.includes(surface.surface)) return true;
-    if (effective?.approvalWaivedSurfaces.includes(surface.surface)) return false;
-  }
-  const override: ActionSettingsOverride | undefined = settings.actions?.[actionId];
-  const required = Array.isArray(override?.approvalRequiredSurfaces) ? override.approvalRequiredSurfaces : [];
-  if (typeof rawSurface === 'string' && required.some((requiredSurface) => requiredSurface === rawSurface)) return true;
   const builtIn = ActionIdSchema.safeParse(actionId);
-  if (builtIn.success && getActionSpec(builtIn.data).approvalPolicy?.pluginCaptureWaiver === true) return undefined;
-  const waived = Array.isArray(settings.approvalWaivedSurfaces?.[actionId])
-    ? settings.approvalWaivedSurfaces[actionId]
-    : [];
-  if (surface.kind !== 'ambiguous' && waived.includes(surface.surface)) return false;
-  return undefined;
+  const ignoreGlobalWaiver = builtIn.success && getActionSpec(builtIn.data).approvalPolicy?.pluginCaptureWaiver === true;
+  return readExplicitActionApprovalPreferenceFromSettingsV1(actionId, settings, ctx, approvalScope, ignoreGlobalWaiver);
 }
 
 /**
@@ -353,7 +331,14 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   const policyActionId = args.profileActionId ?? args.actionId;
   // The caller's approval profile replaces the Account rows of the Actions it names. Everything
   // below decides once on the merged settings, with the same floors and person-class defaults.
-  const profiled = args.settings ? resolveProfiledActionsSettingsV1(args.settings, args.context?.approvalProfileId) : undefined;
+  const profiled = args.settings ? resolveProfiledActionsSettingsV1(args.settings, args.context?.approvalProfileId, {
+    actionId: policyActionId,
+    boundProfile: args.context?.approvalProfile,
+    approvalProfileTeamOrGroupDerived: args.context?.approvalProfileTeamOrGroupDerived,
+    context: args.context ?? undefined,
+    ...(args.targetApproval ? { targetApproval: { actionId: policyActionId,
+      databaseAgentLevel: args.targetApproval.databaseAgentLevel, approvalScope: args.approvalScope } } : {}),
+  }) : undefined;
   const settings = profiled?.settings ?? args.settings;
   const profile = profiled?.profile ?? (args.context?.approvalProfileId
     ? { status: 'missing' as const, requestedId: args.context.approvalProfileId } : undefined);
@@ -365,13 +350,20 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   // control's preference and surface defaults, at this one routing owner.
   const input = readRecord(args.input);
   const runProfileControl = args.actionId === 'execution.run.action' && input.actionId === 'approval_profile.set';
+  const projectDefaultChange = args.actionId === PROJECT_SOURCE_UPDATE_ACTION_ID_V1;
+  const projectDefaults = projectDefaultChange ? readRecord(readRecord(input.patch).sessionDefaults).defaults : undefined;
   const referenceInput = runProfileControl ? readRecord(input.input)
+    : projectDefaultChange ? readRecord(projectDefaults)
     : args.actionId === 'workflow.trigger.update' ? readRecord(input.patch) : input;
-  const reference = referenceInput.approvalProfileId;
+  const reference = projectDefaults === null ? null : referenceInput.approvalProfileId;
   const differsFromInherited = (value: unknown) => (value === null || typeof value === 'string')
-    && value !== (args.context?.approvalProfileId ?? null);
+    && (value !== (args.context?.approvalProfileId ?? null)
+      // Accepting an inherited id clears tighten-only just as choosing another id does.
+      || !projectDefaultChange && typeof value === 'string' && args.context?.approvalProfileTeamOrGroupDerived === true);
   // Editing a profile's rows or a Machine default changes what a running Session's profile means.
+  const triggerMutation = args.context?.workflowTriggerMutationAdmission;
   const changesProfile = args.context?.approvalProfileChange === true || runProfileControl
+    || triggerMutation?.actionId === args.actionId && triggerMutation.changesProfile
     || (args.actionId === 'actions.policy.set' && input.profileChange !== undefined)
     || differsFromInherited(reference)
     || (args.actionId === 'session.spawn_new' && Array.isArray(input.initialTriggers)

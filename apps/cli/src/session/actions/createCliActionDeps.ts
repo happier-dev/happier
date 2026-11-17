@@ -1,6 +1,8 @@
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
+import { bindApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
+import { refreshActiveApprovalProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
 import { createActionRefusalDetailsV1, isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { prepareCliProjectSourceTeamMove } from './projectSourceTeamMove';
@@ -303,7 +305,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
     ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, () => resolveAccountSettingsScopeKeyForToken(params.token))
     : resolveAccountSettingsScopeKeyForToken(params.token);
   const roleAccountLifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
-  const roleSettingsProvider = params.actionsSettingsProvider ?? createActionSettingsProvider({ scopeKey: roleAccountScopeKey });
+  const roleSettingsProvider = params.actionsSettingsProvider ?? createActionSettingsProvider({
+    scopeKey: roleAccountScopeKey, credentials: params.credentials });
+  const profileSettingsProvider = roleSettingsProvider.getApprovalProfiles ? roleSettingsProvider
+    : createActionSettingsProvider({ scopeKey: roleAccountScopeKey, credentials: params.credentials });
   const readAccountRoleOverrides = () => {
     if (params.savedSecretOperationContext) {
       const snapshot = params.savedSecretOperationContext.readSnapshot();
@@ -1074,7 +1079,24 @@ export function createCliActionDeps(params: CliActionDepsParams,
         return null;
       });
       if (!caller?.metadata) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
-      return resolveSessionApprovalProfileReferenceV1(caller.metadata, context.actionsSettings);
+      const approvalProfileId = resolveSessionApprovalProfileReferenceV1(caller.metadata, context.actionsSettings);
+      return { approvalProfileId, approvalProfileTeamOrGroupDerived: caller.metadata.approvalProfileTeamOrGroupDerived === true };
+    },
+    readApprovalProfile: async (id, context) => {
+      const read = () => params.savedSecretOperationContext
+        ? params.savedSecretOperationContext.readSnapshot()?.approvalProfileCatalog
+        : profileSettingsProvider.getApprovalProfiles?.();
+      let catalog = read();
+      if (catalog === undefined && params.credentials) {
+        const activate = async () => {
+          if (params.savedSecretOperationContext) await refreshActiveApprovalProfileCatalog({ credentials: params.credentials!,
+            operationContext: params.savedSecretOperationContext, signal: context.signal });
+          else await profileSettingsProvider.prepareApprovalProfiles?.(context.signal);
+        };
+        await (params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, activate) : activate());
+        catalog = read();
+      }
+      return bindApprovalProfileV1(catalog ?? [], id);
     },
     resolveEnvironmentApprovalScope: params.resolveEnvironmentApprovalScope ?? deploymentStorageDeps.resolveEnvironmentApprovalScope,
     ...(params.prepareDeploymentAction ? { prepareDeploymentAction: params.prepareDeploymentAction } : {}),

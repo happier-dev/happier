@@ -276,6 +276,7 @@ describe('ActionsSettingsView', () => {
           pluginProjectionById: {
             'com.acme.a': {
               pluginId: 'com.acme.a',
+              resources: [],
               actions: [
                 {
                   id: 'review/a',
@@ -296,6 +297,7 @@ describe('ActionsSettingsView', () => {
           pluginProjectionById: {
             'com.acme.b': {
               pluginId: 'com.acme.b',
+              resources: [],
               actions: [
                 {
                   id: 'review/b',
@@ -448,6 +450,7 @@ describe('ActionsSettingsView', () => {
           pluginProjectionById: {
             'happier.inspector': {
               pluginId: 'happier.inspector',
+              resources: [],
               actions: [
                 {
                   id: 'self-check',

@@ -16,7 +16,7 @@ export const MachineApprovalProfileSection = React.memo(function MachineApproval
     machineId: string;
     machineName: string;
 }>) {
-    const source = useApprovalProfiles(undefined, props.serverId);
+    const source = useApprovalProfiles(undefined, props.serverId, { demand: false, machineId: props.machineId });
     const stored = source.machineApprovalProfiles[props.machineId] ?? null;
     const [pending, setPending] = React.useState<Readonly<{ value: string | null }> | null>(null);
     const change = async (next: string | null) => {

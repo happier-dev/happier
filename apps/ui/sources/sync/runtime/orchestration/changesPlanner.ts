@@ -15,13 +15,12 @@ import {
     readConnectedServicesAccountChangeV1,
     readSessionUpdatedMessageChangeHintV1,
     readSessionUsageAccountingChangedV1,
-    readArtifactKindsV1,
+    artifactKindsMayIncludeKindV1,
     readArtifactKindsChangeHintV1,
     PluginDomainChangeEntrySchema,
     type ChangeKind,
 } from '@happier-dev/protocol/changes';
 import { AuthoringMemoryChangeHintV1Schema } from '@happier-dev/protocol/account/authoringMemory';
-import { decodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { USAGE_COACH_SUPPRESSIONS_KV_KEY } from '@happier-dev/protocol/usage/coach/coachActions';
 import { readSavedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { ProjectAccountRowChangeHintV1Schema, PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1, buildProjectAccountRowPhysicalKeyV1, parseProjectAccountRowPhysicalKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -1013,11 +1012,7 @@ export function plannedArtifactKinds(planned: PlannedChangeActions): readonly st
 export function homeAccountChangeAffectsArtifactKinds(event: HomeAccountChangeEvent, selectedKinds: readonly string[]): boolean {
     if (event.source === 'connected' || event.source === 'snapshot' || !event.changeKinds?.length) return true;
     if (!event.changeKinds.includes('artifact')) return false;
-    const changedKinds = readArtifactKindsV1(event.artifactKinds);
-    return changedKinds === null || changedKinds.some(kind => {
-        const hint = decodeArtifactKindV1(kind).kindHint;
-        return hint !== null && selectedKinds.includes(hint);
-    });
+    return artifactKindsMayIncludeKindV1(event.artifactKinds, selectedKinds);
 }
 
 /**
@@ -1041,7 +1036,7 @@ const WORKFLOW_DEFINITION_ARTIFACT_KIND = workflowDefinitionArtifactSharingAdapt
 function plannedArtifactChangesMayBeKind(planned: PlannedChangeActions, kind: string): boolean {
     if (!planned.invalidate.artifacts) return false;
     const changedKinds = plannedArtifactKinds(planned);
-    return changedKinds === undefined || changedKinds.some(stored => decodeArtifactKindV1(stored).kindHint === kind);
+    return artifactKindsMayIncludeKindV1(changedKinds, [kind]);
 }
 
 export type SessionReadinessChanges = 'all' | Readonly<{

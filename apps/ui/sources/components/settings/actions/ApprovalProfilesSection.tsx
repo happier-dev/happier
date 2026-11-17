@@ -11,6 +11,7 @@ import { t } from '@/text';
 
 import { createApprovalProfileFromStart, type ApprovalProfileWriter } from './approvalProfileWrites';
 import { useApprovalProfileMachineNames } from './useApprovalProfileMachineNames';
+import { buildApprovalProfileSettingsRoute } from './approvalProfileSettingsRoute';
 
 const BLANK_START_ID = 'blank';
 
@@ -45,7 +46,7 @@ export const ApprovalProfilesSection = React.memo(function ApprovalProfilesSecti
         setOpen(false);
         const source = startId === BLANK_START_ID ? null : props.profiles.find(profile => profile.id === startId) ?? null;
         const created = await createApprovalProfileFromStart(props.write, source);
-        if (created) router.push(`/settings/actions/profiles/${encodeURIComponent(created.id)}`);
+        if (created) router.push(buildApprovalProfileSettingsRoute(created.id));
     };
     return (
         <ItemGroup
@@ -86,7 +87,7 @@ export const ApprovalProfilesSection = React.memo(function ApprovalProfilesSecti
                     title={profile.name}
                     subtitle={describeProfile(profile, machineNames.defaultOn(profile.id))}
                     icon={<Icon name="list-checks" />}
-                    onPress={() => router.push(`/settings/actions/profiles/${encodeURIComponent(profile.id)}`)}
+                    onPress={() => router.push(buildApprovalProfileSettingsRoute(profile.id))}
                 />
             ))}
         </ItemGroup>

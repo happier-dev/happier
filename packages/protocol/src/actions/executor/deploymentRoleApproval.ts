@@ -30,7 +30,12 @@ export function prepareHostReviewedChildPolicyV1(child: HostReviewedChildrenPlan
   const surface = resolveApprovalSurface(context);
   if (!settings || surface.kind === 'ambiguous') return null;
   // Explicit child preferences are read on the same profiled settings the router decides on.
-  const profiled = resolveProfiledActionsSettingsV1(settings, context.approvalProfileId).settings;
+  const profiled = resolveProfiledActionsSettingsV1(settings, context.approvalProfileId, {
+    actionId: typeof child.action === 'string' ? child.action : formatQualifiedPluginActionId(child.action),
+    boundProfile: context.approvalProfile ?? null,
+    approvalProfileTeamOrGroupDerived: context.approvalProfileTeamOrGroupDerived,
+    context,
+  }).settings;
   const candidateIds: readonly ActionSettingsActionId[] = typeof child.action === 'string'
     ? [child.action] : ['action.invoke', formatQualifiedPluginActionId(child.action)];
   return { action: child.action, role: child.role, surface: surface.surface,

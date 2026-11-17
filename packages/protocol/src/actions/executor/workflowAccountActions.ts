@@ -187,6 +187,7 @@ export function createWorkflowActionExecutor(deps: Readonly<{
   resolveIngressContext?: (args: WorkflowActionExecuteArgs) => Promise<WorkflowIngressContextV1 | undefined>;
   resolveTargetValidation?: (args: WorkflowActionExecuteArgs<'workflow.validate'>) => Promise<WorkflowTargetValidation>;
 }>): WorkflowActionExecute & Readonly<{
+  prepareTriggerMutation: NonNullable<WorkflowActionExecute['prepareTriggerMutation']>;
   waitCombined: (args: WorkflowActionExecuteArgs<'workflow.run.wait'>) => Promise<ReturnType<typeof WorkflowRunWaitSnapshotV1Schema.parse> | WorkflowActionFailureV1>;
   prepareStartApproval: (args: WorkflowActionExecuteArgs<'workflow.run.start'>,
   presentationDeps: Pick<ActionExecutorDeps, 'homeDomainAction'>) => Promise<HostReviewedChildrenPreparationV1 | WorkflowActionFailureV1> }> {
@@ -196,7 +197,8 @@ export function createWorkflowActionExecutor(deps: Readonly<{
       rawArgs = { ...rawArgs, context: resolved.context };
       // A failed observation reaches the shared failure classifier. It grants
       // no availability, but is distinct from a settled disabled decision.
-      const featureEnabled = await deps.isWorkflowFeatureEnabled();
+      const featureEnabled = rawArgs.context.workflowTriggerMutationAdmission?.actionId === rawArgs.actionId
+        || await deps.isWorkflowFeatureEnabled();
       if (!featureEnabled) {
         throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
       }
@@ -336,7 +338,17 @@ export function createWorkflowActionExecutor(deps: Readonly<{
       } : undefined, preparing || getActionSpec(rawArgs.actionId).sideEffectClass === 'read', rawArgs.actionId);
     }
   };
-  return Object.assign(execute, { waitCombined: async (args: WorkflowActionExecuteArgs<'workflow.run.wait'>) => {
+  return Object.assign(execute, {
+    prepareTriggerMutation: async (args: WorkflowActionExecuteArgs<import('../workflowTriggerActionIds.js').WorkflowTriggerMutationActionId>) => {
+      try {
+        const prepared = await resolvePreparation(args);
+        if (!deps.triggers) throw Object.assign(new Error('content_unavailable'), { code: 'content_unavailable' });
+        return await deps.triggers.prepareMutation({ ...args, context: prepared.args.context });
+      } catch (error) {
+        return normalizeWorkflowActionThrownError(error, undefined, true, args.actionId);
+      }
+    },
+    waitCombined: async (args: WorkflowActionExecuteArgs<'workflow.run.wait'>) => {
     const startedAtMs = Date.now();
     try {
       const prepared = await resolvePreparation(args);

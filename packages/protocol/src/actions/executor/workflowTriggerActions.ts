@@ -77,6 +77,9 @@ import { readDeploymentBackupOccurrenceV1 } from '../../workflows/builtins/backu
 import { DeploymentEnvironmentGetInputV1Schema } from '../../deployments/deploymentActionsV1.js';
 import { WORKFLOW_TRIGGER_SET_STORAGE_NAME, workflowTriggerDisplayNameV1 } from '../../workflows/workflowStepLabel.js';
 
+import { WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID, WORKFLOW_TRIGGER_REMOVE_ACTION_ID,
+  type WorkflowTriggerMutationActionId } from '../workflowTriggerActionIds.js';
+
 type Caller = WorkflowActionExecuteArgs['context'];
 type AdmittedSessionWrite = Readonly<{
   sessionId: string; project: WorkflowProjectTargetV1; authority?: AgentStartContextV1;
@@ -143,6 +146,8 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
 }>;
 
 export interface WorkflowTriggerActions {
+  prepareMutation: (args: WorkflowActionExecuteArgs<WorkflowTriggerMutationActionId>)
+    => Promise<Pick<Caller, 'workflowTriggerMutationAdmission'>>;
   readWorkflowTriggerEvents: (input: Readonly<{ workflow: string; intendedTriggers?: readonly WorkflowIntendedTriggerV1[] }>)
     => Promise<readonly WorkflowTriggerEventDeclarationV1[]>;
   readSavedConsent: (input: Readonly<{ automationId: string; triggerId: string; ownerAccountId: string;
@@ -299,9 +304,19 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     const resolved = await deps.resolveSession(sessionId, caller, { checkNativeGoalOwner: false });
     return { ...resolved, ...admission };
   };
-  const read = async (automationId: string, sessionId: string | null = null) => {
-    const row = await deps.automations.get(automationId);
+  const read = async (automationId: string, sessionId: string | null = null, caller?: Caller) => {
+    const admission = caller?.workflowTriggerMutationAdmission;
+    const admitted = admission && 'row' in admission ? admission.row : undefined;
+    const row = admitted?.id === automationId ? admitted : await deps.automations.get(automationId);
     if (!row || (row.scopeSessionId ?? null) !== sessionId) refuse('content_unavailable');
+    return row;
+  };
+  const readRemovalSet = async (automationId: string, caller?: Caller) => {
+    // The Account census also exposes Session-scoped Manual sets. Authorize
+    // their scope without opening private recipes or requiring a live runtime.
+    const row = await deps.automations.get(automationId);
+    if (!row) refuse('content_unavailable');
+    if (row.scopeSessionId) await assertSessionAdmission(row.scopeSessionId, caller);
     return row;
   };
   const opened = async (row: AutomationDefinitionDetail, _projectionOnly = false, caller?: Caller): Promise<Readonly<{
@@ -670,6 +685,23 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       ...changes,
     }, row, undefined, signal);
   const actions = {
+    prepareMutation: async (args: WorkflowActionExecuteArgs<WorkflowTriggerMutationActionId>) => {
+      if (args.actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID) {
+        const input = WorkflowTriggerAddRequestV1Schema.parse(args.input);
+        return { workflowTriggerMutationAdmission: { actionId: args.actionId,
+          changesProfile: 'subject' in input.trigger && input.trigger.subject?.kind === 'approvalProfile' } };
+      }
+      const input = args.actionId === WORKFLOW_TRIGGER_UPDATE_ACTION_ID
+        ? WorkflowTriggerUpdateRequestV1Schema.parse(args.input) : WorkflowTriggerRemoveRequestV1Schema.parse(args.input);
+      // Move the mutation's authorized row read before routing; dispatch keeps its snapshot and normal CAS.
+      const row = args.actionId === WORKFLOW_TRIGGER_REMOVE_ACTION_ID && input.triggerId === undefined
+        ? await readRemovalSet(input.automationId, args.context) : await read(input.automationId);
+      const incumbentProfile = row.triggers.some(trigger => (input.triggerId === undefined || trigger.id === input.triggerId)
+        && 'subjectKind' in trigger && trigger.subjectKind === 'approvalProfile');
+      const next = 'patch' in input ? input.patch.trigger : undefined;
+      return { workflowTriggerMutationAdmission: { actionId: args.actionId, row, changesProfile: incumbentProfile
+        || next !== undefined && 'subject' in next && next.subject?.kind === 'approvalProfile' } };
+    },
     readSavedConsent: async (input: Parameters<WorkflowTriggerActions['readSavedConsent']>[0], caller: Caller): Promise<WorkflowApprovedOperationV1 | null> => {
       if (!['workflow.trigger.add', 'workflow.trigger.update'].includes(input.operation.parent.actionId)) return null;
       const row = await read(input.automationId);
@@ -990,7 +1022,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     update: async (raw: WorkflowTriggerUpdateRequestV1, caller?: Caller, scope?: AdmittedSessionWrite) => {
       const input = WorkflowTriggerUpdateRequestV1Schema.parse(raw);
       if ((input.patch.trigger?.kind === 'prComment' || input.patch.trigger?.kind === 'ciFailed') && !scope) refuseInput('session_trigger_scope_required');
-      const row = await read(input.automationId, scope?.sessionId);
+      const row = await read(input.automationId, scope?.sessionId, caller);
       if (row.templateVersion !== input.expectedRevision) refuse('currentness_conflict', { revision: row.templateVersion });
       if (input.triggerId && !row.triggers.some((item) => item.id === input.triggerId)) refuse('content_unavailable');
       if (row.observationOnly) {
@@ -1117,7 +1149,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     },
     remove: async (raw: WorkflowTriggerRemoveRequestV1 & { triggerId: string }, sessionId?: string, caller?: Caller) => {
       const input = WorkflowTriggerRemoveRequestV1Schema.parse(raw);
-      const row = await read(input.automationId, sessionId);
+      const row = await read(input.automationId, sessionId, caller);
       const trigger = row.triggers.find((item) => item.id === input.triggerId);
       if (!trigger) return writeResult(row, input.triggerId);
       // A missing source still projects as unavailable and never prevents removal.
@@ -1218,11 +1250,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     remove: async (raw: WorkflowTriggerRemoveRequestV1, caller?: Caller) => {
       const input = WorkflowTriggerRemoveRequestV1Schema.parse(raw);
       if (input.triggerId !== undefined) return actions.remove({ ...input, triggerId: input.triggerId }, undefined, caller);
-      // The Account census also exposes Session-scoped Manual sets. Authorize
-      // their scope without opening private recipes or requiring a live runtime.
-      const row = await deps.automations.get(input.automationId);
-      if (!row) refuse('content_unavailable');
-      if (row.scopeSessionId) await assertSessionAdmission(row.scopeSessionId, caller);
+      const admission = caller?.workflowTriggerMutationAdmission;
+      const row = admission?.actionId === WORKFLOW_TRIGGER_REMOVE_ACTION_ID && admission.row.id === input.automationId
+        ? admission.row : await readRemovalSet(input.automationId, caller);
       const deleted = await deps.automations.delete(row.id, row, caller?.signal);
       return { automationId: row.id, deleted: true as const,
         ...(deleted.removedRevision === undefined ? {} : { removedRevision: deleted.removedRevision }) };

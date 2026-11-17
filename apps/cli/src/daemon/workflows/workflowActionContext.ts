@@ -27,10 +27,13 @@ export function buildWorkflowActionContext(execution: Readonly<{
   const originSessionId = execution.origin?.originSessionId;
   const approvalProfileId = execution.approvalProfileId !== undefined
     ? execution.approvalProfileId : execution.origin?.actionPolicy?.approvalProfileId;
+  const approvalProfileTeamOrGroupDerived = execution.approvalProfileId === undefined
+    && execution.origin?.actionPolicy?.approvalProfileTeamOrGroupDerived === true;
   // The accepted starter is stamped only by authenticated direct person admission.
   // Agent-authored overrides consume ordinary profile-control consent at child admission.
   const approvalProfileChange = !starter && execution.approvalProfileId !== undefined
-    && execution.approvalProfileId !== (execution.origin?.actionPolicy?.approvalProfileId ?? null);
+    && (execution.approvalProfileId !== (execution.origin?.actionPolicy?.approvalProfileId ?? null)
+      || execution.origin?.actionPolicy?.approvalProfileTeamOrGroupDerived === true);
   const attribution = execution.origin?.actionRequestAttributionV1 ?? (starter && originSessionId
     ? { ...starter, persona: { serverId: starter.requester.serverId, sessionId: originSessionId }, origin: null }
     : undefined);
@@ -45,6 +48,7 @@ export function buildWorkflowActionContext(execution: Readonly<{
       runtimeAccountId: binding.accountId,
     } : {}),
     ...(approvalProfileId === undefined ? {} : { approvalProfileId }),
+    ...(approvalProfileId === undefined ? {} : { approvalProfileTeamOrGroupDerived }),
     ...(approvalProfileChange ? { approvalProfileChange: true } : {}),
     actionCaller: {
       kind: 'workflowRun' as const,
@@ -73,7 +77,7 @@ export async function readWorkflowActionPolicyContext(input: Readonly<{
   context: ActionExecutorContext;
 }> & (Readonly<{ actionId: string; input: unknown; phase?: 'dispatch' }>
   | Readonly<{ phase: 'approval_replay'; resolveContext: ReturnType<typeof createWorkflowActionContextResolver> }>)
-): Promise<Pick<ActionExecutorContext, 'actionCaller' | 'actionRequestAttributionV1' | 'approvalProfileId' | 'approvalProfileChange' | 'callerPermissionMode' | 'workflowSessionInput' | 'agentStartContext'> | null> {
+): Promise<Pick<ActionExecutorContext, 'actionCaller' | 'actionRequestAttributionV1' | 'approvalProfileId' | 'approvalProfileTeamOrGroupDerived' | 'approvalProfileChange' | 'callerPermissionMode' | 'workflowSessionInput' | 'agentStartContext'> | null> {
   const { admission, context } = input;
   const invocation = await admission.readActionInvocation(input.phase ?? 'dispatch');
   const execution = invocation?.progress.execution;
@@ -101,7 +105,8 @@ export async function readWorkflowActionPolicyContext(input: Readonly<{
   const policy = input.phase === 'approval_replay'
     ? await input.resolveContext(executionContext) : buildWorkflowActionContext(executionContext);
   return { actionCaller: policy.actionCaller, actionRequestAttributionV1: policy.actionRequestAttributionV1,
-    approvalProfileId: policy.approvalProfileId, approvalProfileChange: policy.approvalProfileChange,
+    approvalProfileId: policy.approvalProfileId, approvalProfileTeamOrGroupDerived: policy.approvalProfileTeamOrGroupDerived,
+    approvalProfileChange: policy.approvalProfileChange,
     callerPermissionMode: policy.callerPermissionMode, workflowSessionInput: policy.workflowSessionInput,
     ...(policy.agentStartContext ? { agentStartContext: policy.agentStartContext } : {}) };
 }

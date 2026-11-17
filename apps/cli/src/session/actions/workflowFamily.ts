@@ -709,6 +709,20 @@ export function createCliWorkflowFamily(
       }
     };
 
+  Object.assign(workflowActionPort, { prepareTriggerMutation: async (
+    args: Parameters<NonNullable<NonNullable<ActionExecutorDeps['workflowAction']>['prepareTriggerMutation']>>[0],
+  ) => {
+    if (params.workflowAction) return params.workflowAction.prepareTriggerMutation?.(args) ?? null;
+    if (!createOwnedWorkflowExecutor) return null;
+    try {
+      const execute = await createOwnedWorkflowExecutor(args);
+      return await execute.prepareTriggerMutation(args);
+    } catch (error) {
+      const { normalizeWorkflowActionThrownError } = await import('./workflowActionExecutor');
+      return normalizeWorkflowActionThrownError(error, undefined, true, args.actionId);
+    }
+  } });
+
   const prepareWorkflowRunStartApproval: CliWorkflowFamily['prepareWorkflowRunStartApproval'] = async (request, presentationDeps) => {
     if (request.actionId !== 'workflow.run.start' || !createOwnedWorkflowExecutor || params.workflowAction) return null;
     const startedAtMs = Date.now();

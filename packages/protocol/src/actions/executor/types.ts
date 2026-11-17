@@ -1098,8 +1098,17 @@ export type ActionExecutorContext = Readonly<{
   actionsSettings?: ActionsSettingsV1 | null;
   /** Host-bound reference from the invoking Session/Run/step; resolved once at Action admission. */
   approvalProfileId?: string | null;
+  /** Opened once by the host catalog, shared by admission and its consumers. */
+  approvalProfile?: import('../approvalProfiles.js').BoundApprovalProfileV1 | null;
+  /** Creation provenance of the inherited profile; private host context, never authored Action input. */
+  approvalProfileTeamOrGroupDerived?: boolean;
   /** Host-derived selection change from an admitted Workflow origin; never authored Action input. */
   approvalProfileChange?: boolean;
+  /** Incumbent row opened by the trigger mutation owner at this invocation's admission. */
+  workflowTriggerMutationAdmission?: Readonly<{ actionId: 'workflow.trigger.add'; changesProfile: boolean }>
+    | Readonly<{ actionId: 'workflow.trigger.update' | 'workflow.trigger.remove';
+      changesProfile: boolean;
+      row: import('../../automations/automationApiV3.js').AutomationDefinitionDetail }>;
 
   /** Host-only diagnostic correlation, separate from retry and approval identity. Never wire input. */
   operationRequestId?: string;
@@ -1295,10 +1304,13 @@ export type WorkflowActionExecuteArgs<TWorkflowActionId extends WorkflowActionId
   Extract<WorkflowActionExecuteArgsV1, { actionId: TWorkflowActionId }>;
 
 /** One host port for the complete canonical Workflow Action family. */
-export type WorkflowActionExecute = (args: WorkflowActionExecuteArgs) => Promise<
+export type WorkflowActionExecute = ((args: WorkflowActionExecuteArgs) => Promise<
   | { [TActionId in WorkflowActionIdV1]: ReturnType<(typeof WorkflowActionOutputSchemasV1)[TActionId]['parse']> }[WorkflowActionIdV1]
   | WorkflowActionFailureV1
->;
+>) & Readonly<{
+  prepareTriggerMutation?: (args: WorkflowActionExecuteArgs<import('../workflowTriggerActionIds.js').WorkflowTriggerMutationActionId>)
+    => Promise<Pick<ActionExecutorContext, 'workflowTriggerMutationAdmission'> | WorkflowActionFailureV1 | null>;
+}>;
 
 export type PluginSettingsAdministrationActionRequest = Readonly<{
   actionId: PluginSettingsAdministrationActionIdV1;
@@ -1443,7 +1455,13 @@ export type ActionExecutorDeps = Readonly<{
     signal?: AbortSignal;
   }>, context: ActionExecutorContext) => Promise<string | null>;
   /** Calling Session metadata reference, captured once before Action admission. */
-  readActionApprovalProfileId?: (context: ActionExecutorContext) => Promise<string | null | undefined | ActionExecuteFailure>;
+  readActionApprovalProfileId?: (context: ActionExecutorContext) => Promise<undefined | Readonly<{
+    approvalProfileId: string | null;
+    approvalProfileTeamOrGroupDerived: boolean;
+  }> | ActionExecuteFailure>;
+  /** Catalog owner may hydrate on cold demand; warm admission performs one held lookup. */
+  readApprovalProfile?: (id: string, context: ActionExecutorContext) => import('../approvalProfiles.js').BoundApprovalProfileV1
+    | Promise<import('../approvalProfiles.js').BoundApprovalProfileV1>;
   /**
    * Host domain preparation only: no effects; null for parents with no demanded roles.
    * A result envelope settles the parent without children (an admission refusal the

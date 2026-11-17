@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { ApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
+import type { ApprovalProfileV1, ReadableApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 
 import { Stack, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -23,22 +23,23 @@ const stylesheet = StyleSheet.create(() => ({
  * Sessions' default. A deleted or unknown profile says so instead of showing an Actions list it cannot edit.
  */
 export const ApprovalProfilePageHeader = React.memo(function ApprovalProfilePageHeader(props: Readonly<{
-    profile: ApprovalProfileV1 | null;
+    profileRow: ReadableApprovalProfileV1 | null;
     machineApprovalProfiles: Readonly<Record<string, string>> | undefined;
     write: ApprovalProfileWriter;
     machineChip: React.ReactNode;
 }>) {
     const router = useRouter();
-    const { profile, write } = props;
+    const { profileRow, write } = props;
+    const profile = profileRow?.profile ?? null;
     const title = profile?.name ?? t('workflows.triggers.guided.profile.notFoundTitle');
     const screenOptions = React.useMemo(() => ({ headerTitle: title }), [title]);
-    const menu = React.useMemo<PageHeaderMenuAction[]>(() => profile ? [
+    const menu = React.useMemo<PageHeaderMenuAction[]>(() => profileRow ? [
         { id: 'rename', testID: 'settings-actions:approval-profile-page:rename', title: t('workflows.triggers.guided.profile.rename'),
-            onSelect: () => renameApprovalProfile(write, profile) },
+            onSelect: () => renameApprovalProfile(write, profileRow) },
         { id: 'delete', testID: 'settings-actions:approval-profile-page:delete', title: t('common.delete'), destructive: true,
             // The profile's page has nothing left to show, so it returns to the Actions list it came from.
-            onSelect: async () => { if (await confirmDeleteApprovalProfile(write, profile)) router.replace('/settings/actions'); } },
-    ] : [], [profile, router, write]);
+            onSelect: async () => { if (await confirmDeleteApprovalProfile(write, profileRow)) router.replace('/settings/actions'); } },
+    ] : [], [profileRow, router, write]);
     return (
         <>
             <Stack.Screen options={screenOptions} />

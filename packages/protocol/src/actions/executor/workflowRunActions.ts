@@ -1426,17 +1426,18 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       // requester. Retain the origin location without editing the prior Run.
       const { actionRequestAttributionV1: _priorCause, authenticatedStarterV1: _priorStarter,
         ...origin } = replaySnapshot.origin ?? { kind: 'direct' as const };
-      const { approvalProfileId: _priorProfile, ...actionPolicy } = origin.actionPolicy
+      const { approvalProfileId: _priorProfile, approvalProfileTeamOrGroupDerived: _priorProfileSource, ...actionPolicy } = origin.actionPolicy
         ?? { authority: args.context.authority ?? 'account_automation' as const };
       replaySnapshot = { ...replaySnapshot, origin: { ...origin,
         actionPolicy: { ...actionPolicy,
-          ...(args.context.approvalProfileId === undefined ? {} : { approvalProfileId: args.context.approvalProfileId }) },
+          ...(args.context.approvalProfileId === undefined ? {} : { approvalProfileId: args.context.approvalProfileId }),
+          ...(args.context.approvalProfileTeamOrGroupDerived === undefined ? {}
+            : { approvalProfileTeamOrGroupDerived: args.context.approvalProfileTeamOrGroupDerived }) },
         ...(authenticatedStarter ? { authenticatedStarterV1: authenticatedStarter } : {}),
         ...(args.context.actionRequestAttributionV1 ? { actionRequestAttributionV1: args.context.actionRequestAttributionV1 } : {}) } };
     }
     const originActionsSettings = args.context.actionsSettings ? { ...args.context.actionsSettings } : undefined;
-    // Saved profiles remain current Account preferences, never frozen Run rules.
-    if (originActionsSettings) delete originActionsSettings.approvalProfiles;
+    // Profile bodies remain in the held Artifact catalog, never frozen Run rules.
     const materialized = await measureActionStartPhaseV1(args.context, 'workflow_materialization',
       () => materializeWorkflowAcceptedSnapshotV1({
       definition, definitionValidation, ...materialization,
@@ -1466,6 +1467,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         actionPolicy: { ...(args.context.surface ? { surface: args.context.surface } : {}),
           authority: args.context.authority ?? 'account_automation',
           ...(args.context.approvalProfileId === undefined ? {} : { approvalProfileId: args.context.approvalProfileId }),
+          ...(args.context.approvalProfileTeamOrGroupDerived === undefined ? {}
+            : { approvalProfileTeamOrGroupDerived: args.context.approvalProfileTeamOrGroupDerived }),
           ...(originActionsSettings ? { actionsSettings: originActionsSettings } : {}) },
         ...(args.context.actionRequestAttributionV1 ? { actionRequestAttributionV1: args.context.actionRequestAttributionV1 } : {}) },
       authorization: { principal: controller.principal,

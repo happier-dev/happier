@@ -37,6 +37,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { ApprovalProfilesSection } from './ApprovalProfilesSection';
 import { ApprovalProfilePageHeader } from './ApprovalProfilePageHeader';
+import { buildApprovalProfileSettingsRoute } from './approvalProfileSettingsRoute';
 import { ACCOUNT_ACTION_SETTINGS_TARGET, approvalProfileSetsAction, useActionSettingsForTarget,
     type ActionSettingsTarget } from './actionSettingsTarget';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
@@ -142,7 +143,6 @@ function ActionSettingsRowAccessory(props: Readonly<{
     );
 }
 
-const EMPTY_PROFILES: readonly ApprovalProfileV1[] = Object.freeze([]);
 const EMPTY_SEGMENTS: readonly ActionSettingsVirtualizedSegment[] = Object.freeze([]);
 
 /** In a profile, each row says whose answer it shows: the Account's until this profile changes it. */
@@ -189,7 +189,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView(props
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const [searchQuery, setSearchQuery] = React.useState('');
-    const targetSettings = useActionSettingsForTarget(target);
+    const targetSettings = useActionSettingsForTarget(target, { demandProfiles: true });
     const profile = targetSettings.profile;
     const writePolicy = useActionPolicyWriter(target);
     const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
@@ -265,7 +265,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView(props
 
     const openActionDetails = React.useCallback((actionId: ActionSettingsActionId) => {
         router.push(target.kind === 'profile'
-            ? `/settings/actions/profiles/${encodeURIComponent(target.id)}/${encodeURIComponent(actionId)}`
+            ? `${buildApprovalProfileSettingsRoute(target.id)}/${encodeURIComponent(actionId)}`
             : `/settings/actions/${encodeURIComponent(actionId)}`);
     }, [router, target]);
 
@@ -343,8 +343,8 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView(props
                 <>
                     {target.kind === 'profile' ? (
                         <ApprovalProfilePageHeader
-                            profile={profile}
-                            machineApprovalProfiles={targetSettings.account.machineApprovalProfiles}
+                            profileRow={targetSettings.profileRow}
+                            machineApprovalProfiles={targetSettings.machineApprovalProfiles}
                             write={writePolicy}
                             machineChip={(
                                 <MachineAdministrationTargetSelector
@@ -367,8 +367,8 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView(props
                                 )}
                             />
                             <ApprovalProfilesSection
-                                profiles={targetSettings.account.approvalProfiles ?? EMPTY_PROFILES}
-                                machineApprovalProfiles={targetSettings.account.machineApprovalProfiles}
+                                profiles={targetSettings.profiles}
+                                machineApprovalProfiles={targetSettings.machineApprovalProfiles}
                                 write={writePolicy}
                             />
                         </>

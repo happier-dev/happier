@@ -1859,18 +1859,18 @@ describe('shared Account workflow run owner', () => {
       persona: { serverId: 'home', sessionId: 'release-bot' }, origin: null };
     const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1, actions: {
       'discussion.invite': { approvalRequiredSurfaces: ['ui'] },
-    }, approvalProfiles: [{ id: 'profile:review', name: 'Review', defaultMode: 'require' }] });
+    } });
     const context = { surface: 'ui' as const, authority: 'present_user' as const, callerPermissionMode: 'default', defaultSessionId: 'origin-1',
-      actionRequestAttributionV1, actionsSettings, approvalProfileId: 'profile:review',
+      actionRequestAttributionV1, actionsSettings, approvalProfileId: 'profile:review', approvalProfileTeamOrGroupDerived: true,
       externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } };
     await expect(owner.execute({ actionId: 'workflow.run.start', input, context })).resolves.toMatchObject({ admission: 'created' });
     const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
       envelope: parseWorkflowStoredContentEnvelopeV1(committed!.acceptedEnvelope)!,
       binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId } });
     expect(accepted).toMatchObject({ kind: 'available', content: { origin: { kind: 'direct', originSessionId: 'origin-1', actionRequestAttributionV1,
-      actionPolicy: { surface: 'ui', authority: 'present_user', actionsSettings: { v: 1, actions: actionsSettings.actions }, approvalProfileId: 'profile:review' } },
+      actionPolicy: { surface: 'ui', authority: 'present_user', actionsSettings: { v: 1, actions: actionsSettings.actions },
+        approvalProfileId: 'profile:review', approvalProfileTeamOrGroupDerived: true } },
       materializedLeaves: [{ engineBindings: { selections: engines.map(value => ({ value, selection: { agentTarget: value.agentTarget, approvalProfileId: 'profile:review' } })) } }] } });
-    expect(accepted).not.toHaveProperty('content.origin.actionPolicy.actionsSettings.approvalProfiles');
     await expect(owner.execute({ actionId: 'workflow.run.start', input, context })).resolves.toMatchObject({ admission: 'existing' });
   });
   it.each(['plain', 'e2ee'] as const)('decodes each large accepted snapshot once per Run list open (%s)', async mode => {

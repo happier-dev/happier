@@ -267,6 +267,7 @@ export const WorkflowAcceptedOriginV1Schema = lazyZodSchema(() => z.strictObject
     authority: ActionRequiredAuthoritySchema,
     actionsSettings: z.optional(ActionsSettingsV1Schema),
     approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
+    approvalProfileTeamOrGroupDerived: z.optional(z.boolean()),
   })),
 }));
 export type WorkflowAcceptedOriginV1 = z.infer<typeof WorkflowAcceptedOriginV1Schema>;
