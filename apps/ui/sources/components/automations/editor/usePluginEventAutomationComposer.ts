@@ -587,7 +587,6 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         id: string,
         op: PluginEventAutomationFilterClauseDraft['op'],
     ) => {
-        if (op !== 'eq' && op !== 'in') return;
         setFilterClauses((current) => Object.freeze(current.map((clause) => (
             clause.id === id ? Object.freeze({ ...clause, op }) : clause
         ))));

@@ -305,6 +305,65 @@ async function refresh(hook: Awaited<ReturnType<typeof configureSeededComposer>>
 }
 
 describe('usePluginEventAutomationComposer webhook refresh', () => {
+    it('edits numeric comparisons through the Event controls and reopens the completed filter unchanged', async () => {
+        const { InlinePluginEventEditor } = await import('./PluginEventAutomationEditor');
+        const { pluginEventAutomationEditSeedFromCurrentInput } = await import('@/sync/domains/automations/pluginEventAutomationEditSeed');
+        const { t } = await import('@/text');
+        harness.answer(serverId, endpointReadPath, { body: endpointReadResult() });
+        const original = eligibleEvent();
+        const event = { ...original, event: { ...original.event, payloadSchema: {
+            type: 'object' as const, properties: { count: { type: 'number' as const } },
+            required: ['count'], additionalProperties: false,
+        } } };
+        const inputs = projectionInputs(event);
+        const comparisons = [
+            ['gt', 'workflows.condition.operatorGt', 'gte', 'workflows.condition.operatorGte'],
+            ['gte', 'workflows.condition.operatorGte', 'lt', 'workflows.condition.operatorLt'],
+            ['lt', 'workflows.condition.operatorLt', 'lte', 'workflows.condition.operatorLte'],
+            ['lte', 'workflows.condition.operatorLte', 'gt', 'workflows.condition.operatorGt'],
+        ] as const;
+        const seed: PluginEventAutomationEditSeed = { ...editSeed(event), filter: {
+            v: 1, all: comparisons.map(([op]) => ({ op, field: '/count', value: 10 })),
+        } };
+        const completed: Extract<AutomationTriggerDefinitionInput, { kind: 'pluginEvent' }>[] = [];
+        function Composer(props: Readonly<{ seed: PluginEventAutomationEditSeed }>) {
+            const model = usePluginEventAutomationComposer({ machineId: WATCHER_MACHINE_ID, serverId,
+                projectionPhase: 'ready', projectionInputs: inputs, initialEditSeed: props.seed });
+            return <InlinePluginEventEditor model={model} onCancel={() => {}} onComplete={value => completed.push(value)} />;
+        }
+        const screen = await renderScreen(<Composer seed={seed} />);
+        const model = () => screen.findByType(InlinePluginEventEditor).props.model as ReturnType<typeof usePluginEventAutomationComposer>;
+        await waitForHomeGovernance(() => expect(model().createDraft).not.toBeNull());
+        for (const [index, [, label, nextOp, nextLabel]] of comparisons.entries()) {
+            const prefix = `automation-event-filter-clause-persisted-${index}`;
+            const trigger = () => screen.findByProps({ testID: `${prefix}-operator-picker` });
+            expect(trigger().findAll(node => node.props.children === t(label))).not.toHaveLength(0);
+            await screen.pressByTestIdAsync(`${prefix}-operator-picker`);
+            const option = screen.findByTestId(`${prefix}-operator-option-${nextOp}`);
+            expect(option).not.toBeNull();
+            expect(option!.findAll(node => node.props.children === t(nextLabel))).not.toHaveLength(0);
+            await screen.pressByTestIdAsync(`${prefix}-operator-option-${nextOp}`);
+            await act(async () => screen.changeTextByTestId(`${prefix}-value`, '42.5'));
+            expect(trigger().findAll(node => node.props.children === t(nextLabel))).not.toHaveLength(0);
+        }
+        await screen.pressByTestIdAsync('automation-plugin-event-done');
+        expect(completed).toHaveLength(1);
+        const saved = completed[0]!;
+        expect(saved.filter).toEqual({ v: 1, all: comparisons.map(([, , op]) => ({ op, field: '/count', value: 42.5 })) });
+        await act(async () => screen.unmount());
+        const reopened = await renderScreen(<Composer seed={pluginEventAutomationEditSeedFromCurrentInput(seed, saved)} />);
+        await waitForHomeGovernance(() => expect(reopened.findByType(InlinePluginEventEditor).props.model.createDraft).not.toBeNull());
+        for (const [index, [, , , label]] of comparisons.entries()) {
+            const prefix = `automation-event-filter-clause-persisted-${index}`;
+            expect(reopened.findByProps({ testID: `${prefix}-operator-picker` })
+                .findAll(node => node.props.children === t(label))).not.toHaveLength(0);
+            expect(reopened.findByTestId(`${prefix}-value`)?.props.value).toBe('42.5');
+        }
+        await reopened.pressByTestIdAsync('automation-plugin-event-done');
+        expect(completed).toHaveLength(2);
+        expect(completed[1]!.filter).toEqual(saved.filter);
+    });
+
     it('publishes the original private edit input through the pushed Event page before newer draft values', async () => {
         const { TriggerPopover } = await import('@/components/workflows/triggers/TriggerPopover');
         const { InlinePluginEventEditor } = await import('./PluginEventAutomationEditor');

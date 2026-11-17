@@ -30,6 +30,7 @@ import { EYEBROW_TYPOGRAPHY, Typography } from '@/constants/Typography';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import { restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import { t } from '@/text';
+import { WORKFLOW_CONDITION_OPERATOR_LABEL_KEYS } from '@/components/workflows/presentation/workflowConditionPresentation';
 
 import type {
     PluginEventAutomationComposerModel,
@@ -40,6 +41,18 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 type Props = Readonly<{
     model: PluginEventAutomationComposerModel;
 }>;
+
+type FilterOperator = PluginEventAutomationComposerModel['filterClauses'][number]['op'];
+
+const filterOperatorLabelKeys = {
+    eq: 'settingsPlugins.eventAutomationComposer.filterEquals',
+    in: 'settingsPlugins.eventAutomationComposer.filterOneOf',
+    gt: WORKFLOW_CONDITION_OPERATOR_LABEL_KEYS.gt,
+    gte: WORKFLOW_CONDITION_OPERATOR_LABEL_KEYS.gte,
+    lt: WORKFLOW_CONDITION_OPERATOR_LABEL_KEYS.lt,
+    lte: WORKFLOW_CONDITION_OPERATOR_LABEL_KEYS.lte,
+} as const satisfies Record<FilterOperator, string>;
+const filterOperators = Object.keys(filterOperatorLabelKeys) as readonly FilterOperator[];
 
 /** The controls draw at the WCAG 2.2 pointer floor under every pointer; a finger reaches past it through `HappierPressable`'s hit area. */
 const minimumInteractiveTargetSize = HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE;
@@ -838,9 +851,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                         style={({ pressed }) => [styles.filterPicker, pressed ? styles.pressed : null]}
                                                     >
                                                         <Text numberOfLines={1} style={styles.filterPickerText}>
-                                                            {clause.op === 'eq'
-                                                                ? t('settingsPlugins.eventAutomationComposer.filterEquals')
-                                                                : t('settingsPlugins.eventAutomationComposer.filterOneOf')}
+                                                            {t(filterOperatorLabelKeys[clause.op])}
                                                         </Text>
                                                         <Icon name="caret-down" size={12} color={theme.colors.text.secondary} />
                                                     </HappierPressable>
@@ -886,7 +897,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                         testID={`automation-event-filter-clause-${clause.id}-operator-options`}
                                                         style={styles.filterOptionList}
                                                     >
-                                                        {(['eq', 'in'] as const).map((op) => (
+                                                        {filterOperators.map((op) => (
                                                             <HappierPressable
                                                                 key={op}
                                                                 testID={`automation-event-filter-clause-${clause.id}-operator-option-${op}`}
@@ -904,9 +915,7 @@ export function PluginEventAutomationComposerContent(props: Props) {
                                                                 ]}
                                                             >
                                                                 <Text style={styles.filterOptionText}>
-                                                                    {op === 'eq'
-                                                                        ? t('settingsPlugins.eventAutomationComposer.filterEquals')
-                                                                        : t('settingsPlugins.eventAutomationComposer.filterOneOf')}
+                                                                    {t(filterOperatorLabelKeys[op])}
                                                                 </Text>
                                                             </HappierPressable>
                                                         ))}
