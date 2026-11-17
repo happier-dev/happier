@@ -18,7 +18,7 @@ import { NewAccountTriggerPopover } from './AccountTriggersSection';
 import { DeploymentPushTriggerSetup } from './DeploymentPushTriggerSetup';
 import type { DeploymentPushSetupConfig } from './deploymentPushSetup';
 import { ScheduledServiceJobSetup } from './ScheduledServiceJobSetup';
-import { guidedStarterDraft, guidedStarterEventSeed, type GuidedStarter } from './guidedAutomation';
+import { subjectStarterWhen, subjectStarterEventSeed, type SubjectSentenceStarter } from './subjectTriggerStarters';
 import { buildTriggerDefinition } from './sessionTriggerForm';
 import {
   SUBJECT_TRIGGER_PERSISTENT_STARTERS,
@@ -62,15 +62,15 @@ export const SubjectTriggersSection = React.memo(
       ? props.deploymentEnvironment !== undefined : starter !== 'deployOnPush' || props.pushSetup !== undefined;
     const empty = rows.length === 0;
     const close = () => setOpening(null);
-    const openSentence = (starter: GuidedStarter | null) => {
+    const openSentence = (starter: SubjectSentenceStarter | null) => {
       const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
       if (!lifetime) return;
-      const eventSeed = starter === null ? undefined : guidedStarterEventSeed(starter, {
+      const eventSeed = starter === null ? undefined : subjectStarterEventSeed(starter, {
         subject: props.subject, deploymentEnvironment: props.deploymentEnvironment,
         controllerMachineId: props.controllerMachineId,
       });
       const trigger = starter === 'nightly' ? buildTriggerDefinition({
-        when: guidedStarterDraft('nightly').when, enabled: true, sessionId: null,
+        when: subjectStarterWhen('nightly'), enabled: true, sessionId: null,
       }) : null;
       const entry = prepareWorkflowSentenceEditorEntry({ name: props.subjectName, project,
         ...(eventSeed ? { eventSeed } : {}), ...(trigger ? { trigger } : {}),
@@ -154,7 +154,7 @@ export const SubjectTriggersSection = React.memo(
             onRequestClose={close}
             initialProject={project}
             accountLifetime={accountLifetime}
-            eventSeed={guidedStarterEventSeed('healthFailed', { subject: props.subject, controllerMachineId: props.controllerMachineId })}
+            eventSeed={subjectStarterEventSeed('healthFailed', { subject: props.subject, controllerMachineId: props.controllerMachineId })}
           />
         ) : null}
         {opening?.kind === 'deployOnPush' && props.pushSetup ? (

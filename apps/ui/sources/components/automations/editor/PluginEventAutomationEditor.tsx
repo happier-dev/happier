@@ -113,7 +113,6 @@ export function InlinePluginEventEditor(props: Readonly<{
     onComplete: PluginEventEditorCompletion;
     onCancel: () => void;
     maxHeight?: number;
-    guidedPreset?: boolean;
 }>) {
     const insideSheet = React.useContext(FloatingOverlaySheetContext);
     const complete = React.useCallback(async () => {
@@ -124,19 +123,19 @@ export function InlinePluginEventEditor(props: Readonly<{
             footer={<View style={styles.footer}>
                 <RoundButton testID="automation-plugin-event-cancel" size="small" display="inverted"
                     title={t('common.cancel')} onPress={props.onCancel} />
-                {!props.guidedPreset ? <RoundButton
+                <RoundButton
                     testID="automation-plugin-event-done"
                     title={t('common.done')}
                     size="small"
                     onPress={props.model.createDraft ? () => { void complete(); } : undefined}
                     disabled={!props.model.createDraft}
-                /> : null}
+                />
             </View>}>
             {/* One tree in the popover and its phone sheet: crossing the breakpoint keeps the open pickers and their
                 search. The sheet's header already names the step, so its section repeats no title (as a pushed page's). */}
             <ListPresentationProvider value="page"><ItemGroup surface="none" title={insideSheet ? undefined : t('workflows.triggers.popover.configureEvent')}>
                 <ListPresentationProvider value="grouped" floating={insideSheet}>
-                    <View style={styles.content}><PluginEventAutomationComposerContent model={props.model} guidedPreset={props.guidedPreset} /></View>
+                    <View style={styles.content}><PluginEventAutomationComposerContent model={props.model} /></View>
                 </ListPresentationProvider>
             </ItemGroup></ListPresentationProvider>
         </FloatingOverlay>
@@ -157,7 +156,6 @@ export function PluginEventAutomationEditor(props: Readonly<{
     /** Intent from retained activity; source setup still comes from the current catalog's real Action. */
     initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
-    guidedPreset?: boolean;
     observationOnly?: PluginEventAutomationEditorIntent['observationOnly'];
     authoringMachineId: string | null;
     serverId: string | null;
@@ -209,14 +207,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
         initialEventRef: props.initialEventRef,
         initialSetupSeed: props.initialSetupSeed,
         defaultWatcherMachineId: props.authoringMachineId,
-        guidedPreset: props.guidedPreset,
     });
-    const completedGuidedDraft = React.useRef<PluginEventAutomationComposerModel['createDraft']>(null);
-    React.useEffect(() => {
-        if (!props.guidedPreset || !model.createDraft || completedGuidedDraft.current === model.createDraft) return;
-        completedGuidedDraft.current = model.createDraft;
-        void completePluginEventAutomationEditor(model, props.onComplete);
-    }, [model, props.guidedPreset, props.onComplete]);
     React.useEffect(() => {
         // A new Event reads the authoring Machine's catalog and follows the selected watcher's Machine
         // (the composer pre-selects one there). Saved endpoint placement still belongs to the existing endpoint reader.
@@ -232,7 +223,6 @@ export function PluginEventAutomationEditor(props: Readonly<{
             onComplete={props.onComplete}
             onCancel={props.onCancel}
             maxHeight={props.maxHeight}
-            guidedPreset={props.guidedPreset}
         />
     );
 }

@@ -116,7 +116,7 @@ import { createArtifactListHttpResponse, createArtifactReadBatchHttpResponse } f
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import { buildKeepGoingTriggerAddRequest } from '@/components/sessions/workState/sessionGoalContinuation';
-import { buildGuidedAutomationRequest } from '@/components/workflows/triggers/guidedAutomation';
+import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
@@ -150,13 +150,17 @@ installDisconnectedServerSocketBoundary((socket) => {
 // Account composition, feature decisions, content codecs and Action execution stay real.
 const runtimeFetch = vi.hoisted(() => vi.fn());
 const machineRpc = vi.hoisted(() => vi.fn());
-vi.mock('@/utils/system/runtimeFetch', () => ({
-    runtimeFetch: (...args: unknown[]) => runtimeFetch(...args),
-    // Let the canonical Account connection harness configure this HTTP boundary.
-    setRuntimeFetch: (request: NonNullable<Parameters<typeof import('@/utils/system/runtimeFetch').setRuntimeFetch>[0]>) => runtimeFetch.mockImplementation(request),
-    resetRuntimeFetch: () => runtimeFetch.mockReset(),
-    get runtimeFetchManualResponse() { return this.runtimeFetch; },
-}));
+vi.mock('@/utils/system/runtimeFetch', () => {
+    // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type.
+    const mocked = {
+        runtimeFetch: (...args: unknown[]) => runtimeFetch(...args),
+        // Let the canonical Account connection harness configure this HTTP boundary.
+        setRuntimeFetch: (request: NonNullable<Parameters<typeof import('@/utils/system/runtimeFetch').setRuntimeFetch>[0]>) => runtimeFetch.mockImplementation(request),
+        resetRuntimeFetch: () => runtimeFetch.mockReset(),
+        get runtimeFetchManualResponse() { return this.runtimeFetch; },
+    };
+    return mocked;
+});
 // The machine RPC is the network boundary; projection parsing and cache ownership stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: machineRpc }));
 vi.mock('react-native-unistyles', async () => {
@@ -2249,19 +2253,17 @@ describe('UI Workflow Action front door', () => {
     it.each(['plain', 'e2ee'] as const)('preserves the %s Event declaration refusal through HTTP and the UI Workflow Action consumer', async mode => {
         const h = await createHarness(mode, { automationCreateRefusal: 'event_contribution_not_current' });
         try {
-            const request = buildGuidedAutomationRequest({
-                when: { kind: 'pluginEvent', value: { kind: 'pluginEvent', enabled: true,
+            const request = { target: { kind: 'inline' as const, definition: createWorkflowDefinitionFixture({
+                defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+            }) }, project: { machineId: 'machine-a', directory: '/repo' },
+                trigger: { kind: 'pluginEvent', enabled: true,
                     eventRef: { pluginId: 'happier.machine.services', localId: 'deployment-failed' },
                     sourceInstanceId: 'environment:qa', sourceContractVersion: 1,
                     displayLabel: 'QA deployment',
                     sourceConfig: { environmentId: 'qa', serverId: h.home.id, periodMs: 1000, v: 1 },
                     observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
                         machineId: 'machine-a', materializationId: 'machine-services-a', pluginId: 'happier.machine.services',
-                    } }, filter: null, maximumObservationAgeMs: null } },
-                lookAt: ['logs', 'health'], mode: 'investigate', channels: [],
-                selection: { agentTarget: { kind: 'agent',
-                    identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
-            }, { subjectName: 'QA deployment', project: { machineId: 'machine-a', directory: '/repo' } });
+                    } }, filter: null, maximumObservationAgeMs: null }, executionTarget: { kind: 'session' as const }, inputs: {}, approvalProfileId: null };
             expect(request).not.toBeNull();
             await expect(callWorkflowAction({ actionId: 'workflow.trigger.add', input: request,
                 context: h.context, execute: h.execute, parseResult: WorkflowTriggerWriteResultV1Schema.parse,

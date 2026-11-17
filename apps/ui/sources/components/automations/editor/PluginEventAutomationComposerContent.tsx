@@ -39,7 +39,6 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 type Props = Readonly<{
     model: PluginEventAutomationComposerModel;
-    guidedPreset?: boolean;
 }>;
 
 /** The controls draw at the WCAG 2.2 pointer floor under every pointer; a finger reaches past it through `HappierPressable`'s hit area. */
@@ -384,16 +383,6 @@ export function PluginEventAutomationComposerContent(props: Props) {
         ? props.model.webhookEndpoint
         : null;
 
-    if (props.guidedPreset) {
-        return <View testID="automation-event-composer" style={styles.section}>
-            {selectedEvent ? <Text style={styles.fieldLabel}>{props.model.getEventPresentation(selectedEvent).title}</Text> : null}
-            <Text style={styles.unavailableText}>{t(sourceUnavailable || props.model.eventCatalogStatus === 'unavailable'
-                ? 'automations.form.trigger.sourceUnavailable' : 'common.loading')}</Text>
-            {sourceFailureDetails}
-            {sourceUnavailable ? <RoundButton title={t('common.retry')} size="small"
-                disabled={sourceSetupDisabled} onPress={props.model.configureSource} /> : null}
-        </View>;
-    }
 
     return (
         <View testID="automation-event-composer" style={styles.section}>

@@ -160,13 +160,17 @@ it.each([
     { declared: true, catalogEvent: false, runtimeUnavailable: false },
     { declared: true, catalogEvent: false, runtimeUnavailable: true },
     { declared: true, catalogEvent: true, runtimeUnavailable: false },
-])('settles prebound guided deployment setup (declared=$declared, catalogEvent=$catalogEvent, runtimeUnavailable=$runtimeUnavailable)', async ({ declared, catalogEvent, runtimeUnavailable }) => {
+])('settles prebound deployment setup in the ordinary sentence control (declared=$declared, catalogEvent=$catalogEvent, runtimeUnavailable=$runtimeUnavailable)', async ({ declared, catalogEvent, runtimeUnavailable }) => {
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { PluginEventAutomationEditor, InlinePluginEventEditor } = await import('./PluginEventAutomationEditor');
     const { TriggerPluginEventRows } = await import('@/components/workflows/triggers/TriggerPluginEventRows');
-    const { GuidedAutomationSetup } = await import('@/components/workflows/triggers/GuidedAutomationSetup');
-    const { Item } = await import('@/components/ui/lists/Item');
+    const { WorkflowTriggerBlock } = await import('@/components/workflows/triggers/WorkflowTriggerBlock');
+    const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+    const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
+    const { router } = await import('expo-router');
+    const { HappierPressable } = await import('@happier-dev/plugin-ui/presentation');
     const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+    const { Item } = await import('@/components/ui/lists/Item');
     const { pressTestInstanceAsync } = await import('@/dev/testkit/render/renderScreen');
     const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
     const disposeLoader = await installRealActionExecutorModuleLoader();
@@ -246,6 +250,8 @@ it.each([
         return undefined;
     };
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    const press = (id: string) => pressTestInstanceAsync(screen?.findAllByType(RoundButton).find(row => row.props.testID === id)
+        ?? screen?.findAllByType(HappierPressable).find(row => row.props.testID === id), id);
     try {
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
         const { SubjectTriggersSection } = await import('@/components/workflows/triggers/SubjectTriggersSection');
@@ -256,21 +262,37 @@ it.each([
             metadata: { host: 'Controller studio', platform: 'linux', happyCliVersion: '0.3.0',
                 happyHomeDir: '/home/controller', homeDir: '/home/controller' } });
         storage.getState().applyMachines([controller], true, { sourceServerId: connection.serverId });
-        screen = await renderScreen(<SubjectTriggersSection subject={{ kind: 'environment',
+        screen = await renderScreen(<ListPresentationProvider value="page"><SubjectTriggersSection subject={{ kind: 'environment',
             environmentId: setupInput.environmentId, machineId: 'runtime-machine' }} subjectName="Production"
             controllerMachineId={machineId} deploymentSourceName="Application checkout"
             deploymentEnvironment={{ serverId: connection.serverId, projectSourceId: 'source-checkout',
-                environmentId: setupInput.environmentId }} />);
+                environmentId: setupInput.environmentId }} /></ListPresentationProvider>);
         await waitForHomeGovernance(() => expect(screen!.findByTestId('subject-triggers-starter:deploymentFailed')).not.toBeNull());
         await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === 'subject-triggers-starter:deploymentFailed'));
-        await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === 'guided-automation-configure-event'));
+        const route = vi.mocked(router.push).mock.calls.at(-1)?.[0];
+        if (typeof route !== 'object' || route === null || !('params' in route)) throw new Error('Expected the ordinary sentence route');
+        const seed = readWorkflowDefinitionDraftSeed(String(route.params?.definitionDraftSeedId), lifetime.scope);
+        if (!seed?.eventSeed) throw new Error('Expected the source enrollment intent in the ordinary draft');
+        expect(seed).toMatchObject({ name: 'Production', initialView: 'sentence', eventSeed: {
+            eventRef: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed, monitoringMachineId: machineId, setupInput,
+        } });
+        const eventSeed = seed.eventSeed;
+        function SentenceEventControl() {
+            const [when, setWhen] = React.useState<React.ComponentProps<typeof WorkflowTriggerBlock>['when']>({
+                kind: 'pluginEvent', value: null, eventRef: eventSeed.eventRef,
+            });
+            return <WorkflowTriggerBlock testID="deployment-sentence" title="Production" when={when}
+                enabled incomplete={when?.kind === 'pluginEvent' && when.value === null}
+                startOptions={[]} onSelectStart={vi.fn()} onChangeWhen={setWhen} onRemove={vi.fn()}
+                machineId="runtime-machine" serverId={connection.serverId} accountLifetime={lifetime}
+                initialEventSeed={eventSeed} />;
+        }
+        await screen.update(<SentenceEventControl />);
+        await press('deployment-sentence-configure-event');
         const editor = screen.findByType(PluginEventAutomationEditor);
         expect(editor.props.authoringMachineId).toBe(machineId);
         expect(editor.props.initialSetupSeed).toMatchObject({ eventRef: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed,
             monitoringMachineId: machineId, setupInput });
-        expect(screen.findAllHostsByTestId('automation-event-watcher-picker')).toHaveLength(0);
-        expect(screen.findAllHostsByTestId('automation-event-picker')).toHaveLength(0);
-        expect(screen.findAllByType(TextInput)).toHaveLength(0);
         if (!declared || !catalogEvent) {
             await waitForHomeGovernance(() => expect(screen!.findByType(InlinePluginEventEditor).props.model.eventCatalogStatus).toBe('ready'));
             const model = screen.findByType(InlinePluginEventEditor).props.model;
@@ -283,7 +305,7 @@ it.each([
                 ...(runtimeUnavailable ? { reason: 'plugin_account_execution_unavailable' } : {}),
             });
             const details = screen.findAllByType(Item).find(row => row.props.testID === 'automation-event-source-unavailable.details.header');
-            expect(details, 'A settled guided failure must retain its typed cause behind Details').toBeDefined();
+            expect(details, 'A settled source failure must retain its typed cause behind Details').toBeDefined();
             await pressTestInstanceAsync(details);
             expect(screen.getTextContent()).toContain(model.sourceFailure.code);
             expect(screen.getTextContent()).toContain(model.sourceFailure.reason);
@@ -291,7 +313,17 @@ it.each([
             expect(submitted).toEqual([]);
             return;
         }
-        setupResponse.resolve();
+        await waitForHomeGovernance(() => {
+            const configure = screen!.findAllByType(HappierPressable)
+                .find(row => row.props.testID === 'automation-event-configure-source');
+            const model = screen!.findByType(InlinePluginEventEditor).props.model;
+            expect(configure, JSON.stringify({ sourceStatus: model.sourceStatus, sourceFailure: model.sourceFailure,
+                watcherCandidates: model.watcherCandidates, selectedWatcherOrigin: model.selectedWatcherOrigin })).toBeDefined();
+            expect(configure?.props.disabled).toBe(false);
+        });
+        await press('automation-event-configure-source');
+        // This declaration has no input hints: the canonical Action selector validates
+        // its complete page-bound input and dispatches without an editable form.
         await waitForHomeGovernance(() => {
             const model = screen!.findAllByType(InlinePluginEventEditor)[0]?.props.model;
             expect(submitted, JSON.stringify({ requestedMethods, eventCatalogStatus: model?.eventCatalogStatus,
@@ -299,6 +331,9 @@ it.each([
                 selectedEvent: model?.selectedEvent?.event.identity, selectedWatcherOrigin: model?.selectedWatcherOrigin,
                 watcherCandidates: model?.watcherCandidates, watcherFailures: model?.watcherFailures })).toEqual([setupInput]);
         });
+        setupResponse.resolve();
+        await waitForHomeGovernance(() => expect(screen!.findByType(InlinePluginEventEditor).props.model.createDraft).toBeTruthy());
+        await press('automation-plugin-event-done');
         await waitForHomeGovernance(() => expect(screen!.findAllByType(PluginEventAutomationEditor)).toHaveLength(0));
         expect(screen.findByType(TriggerPluginEventRows).props.when).toMatchObject({ kind: 'pluginEvent', value: {
             eventRef: event.event.identity, sourceConfig: expect.objectContaining(setupInput),
@@ -306,30 +341,20 @@ it.each([
             observationTransport: expect.objectContaining({ kind: 'checkpointedPull',
                 watcherMaterializationRef: expect.objectContaining({ machineId }) }),
         } });
-        expect(screen.findByType(GuidedAutomationSetup).props).toMatchObject({ deploymentEnvironment: {
-            serverId: connection.serverId, environmentId: setupInput.environmentId } });
-        await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === 'guided-automation-configure-event'));
+        await press('deployment-sentence-configure-event');
         await waitForHomeGovernance(() => {
             const model = screen!.findAllByType(InlinePluginEventEditor)[0]?.props.model;
-            expect(screen!.findAllByType(PluginEventAutomationEditor), JSON.stringify({
+            expect(model?.createDraft, JSON.stringify({
                 sourceStatus: model?.sourceStatus, sourceFailure: model?.sourceFailure,
                 selectedEvent: model?.selectedEvent?.event.identity, watcherCandidates: model?.watcherCandidates,
-            })).toHaveLength(0);
+            })).toBeTruthy();
         });
         // Editing the freshly configured source reuses it; it must not enroll another observer.
         expect(submitted).toEqual([setupInput]);
-        const press = (id: string) => pressTestInstanceAsync(screen!.findAllByType(RoundButton).find(row => row.props.testID === id));
-        await press('guided-automation-next');
-        await press('guided-automation-next');
-        await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === 'guided-automation-then:apply'));
-        await press('guided-automation-next');
-        await press('guided-automation-next');
-        expect(screen.findByTestId('guided-automation-read-back')).toBeTruthy();
-        const readBack = screen.getTextContent();
-        for (const fact of [event.event.title, 'Production', 'Application checkout', 'Controller studio',
-            'workflows.triggers.guided.profile.machineDefault', 'workflows.triggers.guided.tellInbox']) expect(readBack).toContain(fact);
-        for (const id of [setupInput.environmentId, connection.serverId, machineId, 'source-checkout',
-            'deployment-production-failed']) expect(readBack).not.toContain(id);
+        await press('automation-plugin-event-done');
+        expect(screen.findByType(TriggerPluginEventRows).props.when).toMatchObject({ kind: 'pluginEvent', value: {
+            eventRef: event.event.identity, sourceConfig: expect.objectContaining(setupInput),
+        } });
     } finally {
         setupResponse.resolve();
         await screen?.unmount();
@@ -483,7 +508,21 @@ it.each([
             await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === `subject-triggers-starter:${starter}`));
         }
         if (starter === 'healthFailed') {
-            await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.testID === 'guided-automation-configure-event'));
+            const { router } = await import('expo-router');
+            const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
+            const { WorkflowTriggerBlock } = await import('@/components/workflows/triggers/WorkflowTriggerBlock');
+            const { HappierPressable } = await import('@happier-dev/plugin-ui/presentation');
+            const route = vi.mocked(router.push).mock.calls.at(-1)?.[0];
+            if (typeof route !== 'object' || route === null || !('params' in route)) throw new Error('Expected the ordinary Health sentence route');
+            const seed = readWorkflowDefinitionDraftSeed(String(route.params?.definitionDraftSeedId), accountLifetime.scope);
+            if (!seed?.eventSeed) throw new Error('Expected the retained Health source enrollment intent');
+            await screen.update(<WorkflowTriggerBlock testID="health-sentence" title="Health" enabled incomplete
+                when={{ kind: 'pluginEvent', value: null, eventRef: seed.eventSeed.eventRef }}
+                startOptions={[]} onSelectStart={vi.fn()} onChangeWhen={vi.fn()} onRemove={vi.fn()}
+                machineId={triggerSubject.machineId} serverId={connection.serverId} accountLifetime={accountLifetime}
+                initialEventSeed={seed.eventSeed} />);
+            await pressTestInstanceAsync(screen.findAllByType(HappierPressable)
+                .find(row => row.props.testID === 'health-sentence-configure-event'));
         }
         const editor = screen.findByType(PluginEventAutomationEditor);
         expect(editor).not.toBeNull();

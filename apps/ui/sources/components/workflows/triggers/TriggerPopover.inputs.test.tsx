@@ -161,56 +161,6 @@ describe('Run a workflow trigger inputs', () => {
         await reopened.pressByTestIdAsync('saved-once-submit');
         expect(submit.mock.calls[3]?.[1].trigger).toEqual(definition);
     });
-    it.each([true, false])('reads back the armed Event filter, exact Environment, controller, profile and destination on guided review (page controller: %s)', async (pageController) => {
-        const { GuidedAutomationSetup } = await import('./GuidedAutomationSetup');
-        const { TriggerPluginEventRows } = await import('./TriggerPluginEventRows');
-        const { PromptAgentRows } = await import('./TriggerPopover');
-        const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
-        const machine = createMachineFixture({ id: 'controller-review', metadata: {
-            host: 'Controller studio', platform: 'linux', happyCliVersion: '0.3.0', happyHomeDir: '/home/controller',
-            homeDir: '/home/controller',
-        } });
-        const runner = createMachineFixture({ id: 'agent-runner' });
-        getStorage().setState({ machines: { [machine.id]: machine, [runner.id]: runner }, settingsVersion: 1 });
-        publishMachineActivityForTest([machine]);
-        const screen = await renderScreen(<GuidedAutomationSetup anchorRef={React.createRef()} onRequestClose={vi.fn()}
-            subjectName="Production" initialProject={{ machineId: runner.id, directory: '/repo' }} starter="deploymentFailed"
-            {...(pageController ? { controllerMachineId: machine.id } : {})}
-            deploymentSourceName="Application checkout"
-            deploymentEnvironment={{ serverId, projectSourceId: 'source-checkout', environmentId: 'production-environment' }} />);
-        const value = AutomationTriggerDefinitionInputSchema.parse({ kind: 'pluginEvent', enabled: true,
-            eventRef: { pluginId: 'happier.machine.services', localId: 'deployment-failed' },
-            sourceInstanceId: 'source-failure', sourceContractVersion: 1,
-            sourceConfig: { v: 1, serverId, environmentId: 'production-environment', targetLinkId: 'runtime',
-                observingSince: 1, periodMs: 300000, credentialPrincipal: { kind: 'account', accountId: 'owner',
-                    purpose: { consumer: { pluginId: 'example.deploy', localId: 'selection' }, purpose: 'action-account' },
-                    target: { kind: 'account', account: { service: { pluginId: 'example.deploy', localId: 'account' }, accountId: 'provider-account' } } } },
-            displayLabel: 'Production failures', filter: { v: 1, all: [{ field: '/outcome', op: 'eq', value: 'failed' }] },
-            maximumObservationAgeMs: null,
-            observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
-                machineId: machine.id, pluginId: 'happier.machine.services', materializationId: 'services-review' } } });
-        if (value.kind !== 'pluginEvent' || !('sourceInstanceId' in value)) throw new Error('Expected configured Event');
-        // These are the public form emissions from the real source/Agent controls;
-        // the wizard, trigger builder, profile owner and rendered review stay real.
-        await act(async () => { screen.findByType(TriggerPluginEventRows).props.onChange({ kind: 'pluginEvent', value }); });
-        await screen.pressByTestIdAsync('guided-automation-next');
-        await screen.pressByTestIdAsync('guided-automation-next');
-        await screen.pressByTestIdAsync('guided-automation-then:apply');
-        await screen.pressByTestIdAsync('guided-automation-next');
-        await screen.pressByTestIdAsync('guided-automation-next');
-        const readBack = screen.findByTestId('guided-automation-read-back');
-        const text = screen.getTextContent();
-        expect(readBack).toBeTruthy();
-        for (const fact of ['workflows.triggers.kind.pluginEvent', '/outcome', 'failed', 'Application checkout', 'Production',
-            'Controller studio', 'machines.widgets.body.common.offline',
-            'workflows.triggers.guided.profile.machineDefault', '300000']) expect(text).toContain(fact);
-        for (const id of ['source-checkout', 'production-environment', 'controller-review', 'source-failure'])
-            expect(text).not.toContain(id);
-        expect(text).toContain('workflows.triggers.guided.tellInbox');
-        await act(async () => { screen.findByType(PromptAgentRows).props.onChange({ kind: 'sendPrompt', prompt: '',
-            selection: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } }); });
-        expect(screen.getTextContent()).toContain('Application checkout');
-    });
     it('edits and submits the same schedule through mounted agent commands and UI, retaining it after a failed save', async () => {
         const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
         const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');

@@ -27,7 +27,7 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
-import { guidedStarterEventSeed } from '@/components/workflows/triggers/guidedAutomation';
+import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 import { useDeploymentChangePress } from './deploymentActionOutcome';
@@ -326,7 +326,7 @@ export function DeploymentDomainsPanel(
         onRequestClose={() => setCheckSetup(null)}
         accountLifetime={props.healthSetup.lifetime}
         initialProject={{ machineId: props.healthSetup.controllerMachineId, directory: '~' }}
-        eventSeed={guidedStarterEventSeed('healthFailed', {
+        eventSeed={subjectStarterEventSeed('healthFailed', {
           subject: { kind: 'environment', environmentId: props.environmentId, machineId: props.healthSetup.controllerMachineId },
           controllerMachineId: props.healthSetup.controllerMachineId,
           domain: { domainId: checkSetup.item.domain.id, targetLinkId: checkSetup.item.domain.targetLinkId },

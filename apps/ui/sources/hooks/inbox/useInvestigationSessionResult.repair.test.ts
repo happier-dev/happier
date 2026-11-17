@@ -12,9 +12,7 @@ import { WorkflowRunStartRequestV1Schema, WorkflowRunStartResultV1Schema } from 
 import { act, renderHook, flushHookEffects, standardCleanup, createSessionFixture } from '@/dev/testkit';
 import { createUiActionExecutorBoundary } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createTriageFailureActionBoundaryFixture as createActionExecutorBoundaryFixture, TRIAGE_FAILURE_TEST_BINDING } from '@/dev/testkit/harness/triageFailureActionBoundary';
-import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
-import { buildGuidedAutomationRequest } from '@/components/workflows/triggers/guidedAutomation';
-import { createDefaultWhen } from '@/components/workflows/triggers/sessionTriggerForm';
+import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -110,7 +108,8 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
     };
     // Artifact persistence, remote Workflow runtime and native command IO are external ports.
     const executor = createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
-        readActionApprovalProfileId: async context => context.actionCaller?.kind === 'session' ? 'builtin:read-propose' : null,
+        readActionApprovalProfileId: async context => ({ approvalProfileId: context.actionCaller?.kind === 'session' ? 'builtin:read-propose' : null,
+            approvalProfileTeamOrGroupDerived: false }),
         isApprovalExecutionOriginCurrent: async () => true,
         approvalsCreate: async ({ request }) => {
             stored = ApprovalRequestSchema.parse(request);
@@ -183,22 +182,22 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
     try {
         const investigation = await owner.launch(subject, { actionId: 'investigate' }, { placement: { machine, workspace } });
         expect(investigation, JSON.stringify({ investigation, sessionBoundaryCalls: invoker.calls })).toMatchObject({ kind: 'started', handoff: { kind: 'sendResult', result: { status: 'accepted' } } });
-        const guided = buildGuidedAutomationRequest({ when: createDefaultWhen('schedule'),
-            lookAt: ['logs', 'receipts', 'health'], mode: 'chain', channels: [],
-            selection: { agentTarget },
-            approvalProfileId: 'builtin:read-propose',
-        }, { subjectName: 'Production', project: { machineId: 'machine', directory: '/repo' } });
-        if (guided?.target.kind !== 'inline') throw new Error('Expected guided repair chain');
+        const repair = { target: { kind: 'inline' as const, definition: createWorkflowDefinitionFixture({
+            defaults: { agentTarget }, blocks: ['Investigate the failure', 'Propose and validate a repair', 'Review the repair'].map((text, index) => ({
+                kind: 'step' as const, id: `repair-${index}`, document: { text, references: [], attachments: [] },
+                input: [], result: { kind: 'text' as const },
+            })),
+        }) }, inputs: {}, executionTarget: { kind: 'session' as const }, approvalProfileId: 'builtin:read-propose' };
         // This deliberate repair reuses the already linked Session; automatic triggers retain their own defaults.
         const start = WorkflowRunStartRequestV1Schema.parse({ runId: '11111111-1111-4111-8111-111111111111',
-            source: { kind: 'inline', definition: { ...guided.target.definition,
-                defaults: { ...guided.target.definition.defaults,
+            source: { kind: 'inline', definition: { ...repair.target.definition,
+                defaults: { ...repair.target.definition.defaults,
                     conversation: { kind: 'existing_session', sessionId: 'repair', machineId: 'machine' } } } },
-            inputs: guided.inputs, executionTarget: guided.executionTarget });
+            inputs: repair.inputs, executionTarget: repair.executionTarget });
         expect(await execute.confirmed('workflow.run.start', start, {
             surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
             serverId: 'home', runtimeAccountId: 'account', actionRequestId: 'repair-chain',
-            approvalProfileId: guided.approvalProfileId,
+            approvalProfileId: repair.approvalProfileId,
         })).toMatchObject({ ok: true, result: { admission: 'created', run: { id: start.runId } } });
         // The designed Confirm admits this start; the inherited profile governs subsequent agent Actions.
         expect(started).toEqual([{ input: start, approvalProfileId: 'builtin:read-propose' }]);
@@ -206,7 +205,7 @@ it('carries a linked repair journey through proposal, command evidence, redeploy
             defaults: { conversation: { kind: 'existing_session', sessionId: 'repair', machineId: 'machine' } },
             blocks: expect.arrayContaining([expect.objectContaining({ kind: 'step' })]),
         });
-        expect(guided.target.definition.blocks).toHaveLength(3);
+        expect(repair.target.definition.blocks).toHaveLength(3);
         const hook = await renderHook(() => useInvestigationSessionResult(owner, subject, null));
         await flushHookEffects();
         const outcome = () => {

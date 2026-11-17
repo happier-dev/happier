@@ -171,8 +171,8 @@ describe('PluginEventAutomationComposerContent currentness', () => {
         const current = createModel({ eventAvailable: true });
         const model: PluginEventAutomationComposerModel = { ...current, eventCatalogStatus: 'loading', watcherCandidates: [],
             getPluginPresentation: event => ({ ...current.getPluginPresentation(event), availability: 'loading' }) };
-        const screen = await renderScreen(<PluginEventAutomationComposerContent model={model} guidedPreset />);
-        expect(screen.getTextContent()).toContain('common.loading');
+        const screen = await renderScreen(<PluginEventAutomationComposerContent model={model} />);
+        expect(screen.getTextContent()).toContain('automations.form.trigger.eventCatalogLoading');
         expect(screen.getTextContent()).not.toContain('automations.form.trigger.sourceUnavailable');
     });
 

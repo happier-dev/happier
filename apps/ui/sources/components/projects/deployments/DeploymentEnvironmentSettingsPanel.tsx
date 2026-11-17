@@ -33,7 +33,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useSettingReveal } from '@/components/settings/shell/SettingRow';
 import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
 import { useWorkflowTriggerSets } from '@/components/workflows/triggers/useWorkflowTriggerSets';
-import { guidedStarterEventSeed } from '@/components/workflows/triggers/guidedAutomation';
+import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
@@ -483,7 +483,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             onRequestClose={() => setOpeningCheckSetup(false)}
             accountLifetime={checkLifetime}
             initialProject={{ machineId: detail.environment.controllerMachineId, directory: '~' }}
-            eventSeed={guidedStarterEventSeed('healthFailed', {
+            eventSeed={subjectStarterEventSeed('healthFailed', {
               subject: { kind: 'environment', environmentId: detail.environment.id,
                 machineId: detail.environment.controllerMachineId },
               controllerMachineId: detail.environment.controllerMachineId,

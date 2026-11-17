@@ -48,8 +48,8 @@ function watcherFailure(reason: PluginEventAutomationWatcherFailure['reason']): 
 
 export const EVENT_OBSERVER_BINDING_UNAVAILABLE = Object.freeze(watcherFailure('observer_binding_unavailable'));
 
-/** A hidden guided picker must settle when its owners have finished discovery. */
-export function readGuidedPluginEventAutomationSetupFailure(params: Readonly<{
+/** A seed-bound observer must settle when its owners have finished discovery. */
+export function readSeededPluginEventAutomationSetupFailure(params: Readonly<{
     catalogReady: boolean;
     event: DaemonContributionRegistryProjectionAutomationEligibleEventV1 | null;
     plugin?: Pick<PluginProjectionEntry, 'enabled' | 'diagnostics'>;

@@ -492,7 +492,7 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
             const exactReadsBeforeMount = harness.requestsFor(exactPath).length;
             const hook = await renderHook(() => usePluginEventAutomationComposer({ machineId: WATCHER_MACHINE_ID, serverId,
                 projectionPhase: 'ready', projectionInputs: inputs, initialEventRef: event.event.identity,
-                guidedPreset: true, initialSetupSeed: { eventRef: event.event.identity, monitoringMachineId: WATCHER_MACHINE_ID,
+                initialSetupSeed: { eventRef: event.event.identity, monitoringMachineId: WATCHER_MACHINE_ID,
                     setupInput: { v: 1, serverId, environmentId: 'production-environment' } },
             }));
             await flushHookEffects();

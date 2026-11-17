@@ -28,7 +28,7 @@ import {
 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { resolveFreshPluginMachineExecutionOrigin } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 import { readCurrentAppShellPluginUiExecutionOriginCandidates, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
-import { readGuidedPluginEventAutomationSetupFailure, readPluginEventAutomationWatcherFailure, resolvePluginEventAutomationObserverMaterialization,
+import { readSeededPluginEventAutomationSetupFailure, readPluginEventAutomationWatcherFailure, resolvePluginEventAutomationObserverMaterialization,
     type PluginEventAutomationWatcherFailure } from './pluginEventAutomationObservationBinding';
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -71,14 +71,6 @@ import {
     getPluginEventAutomationEligibleSetupPresentationKey as eventPresentationKey,
     type PluginEventAutomationSetupFailure,
 } from './pluginEventAutomationSetup';
-
-const submitGuidedSetupForm: NonNullable<
-    Parameters<typeof configurePluginEventAutomationSetup>[0]['present']
-> = ({ form }) => {
-    void form.submit().then(result => {
-        if (result.kind !== 'settled' || !result.outcome.ok) form.cancel();
-    }).catch(() => form.cancel());
-};
 
 export type PluginEventAutomationComposerSourceStatus =
     | 'idle'
@@ -280,8 +272,6 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
     /** The surface's Machine (a workflow's Runs on): a new Event watches from its installation unless the person picks another. */
     defaultWatcherMachineId?: string | null;
-    /** The guided caller has already bound every setup operand. */
-    guidedPreset?: boolean;
 }>): PluginEventAutomationComposerModel {
     const commandBridge = useCurrentUiContextCommandBridge();
     const accountLifetime = captureActiveServerAccountScopeLifetime();
@@ -458,13 +448,15 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         [availabilityReader],
     );
     const watcherPluginId = selectedEvent?.event.identity.pluginId ?? initialEditSeed?.eventRef.pluginId ?? initialEventRef?.pluginId ?? '';
-    const monitoringMachineId = params.initialSetupSeed?.monitoringMachineId;
+    const monitoringMachineId = params.initialSetupSeed && (!selectedEvent
+        || arePluginContributionIdentitiesEqual(params.initialSetupSeed.eventRef, selectedEvent.event.identity))
+        ? params.initialSetupSeed.monitoringMachineId : undefined;
     React.useEffect(() => {
-        if (!params.guidedPreset || !watcherPluginId || !monitoringMachineId || !availabilityReader) return;
+        if (!watcherPluginId || !monitoringMachineId || !availabilityReader) return;
         fireAndForget(availabilityReader.ensureAutomationEventDeclarations({ pluginId: watcherPluginId, machineId: monitoringMachineId }), {
-            tag: 'PluginAvailability.guidedEventDeclarations',
+            tag: 'PluginAvailability.seedEventDeclarations',
         });
-    }, [availabilityReader, monitoringMachineId, params.guidedPreset, watcherPluginId]);
+    }, [availabilityReader, monitoringMachineId, watcherPluginId]);
     const readWatcherFacts = React.useCallback(() => readCurrentAppShellPluginUiExecutionOriginCandidates(watcherPluginId), [watcherPluginId]);
     const suppliedWatcherFacts = React.useSyncExternalStore(subscribeCommittedAppShellPluginUiProjection, readWatcherFacts, readWatcherFacts);
     const executionOriginCandidates = React.useMemo(() => combinePluginMachineExecutionOriginCandidates(buildPluginMachineExecutionOriginCandidates({
@@ -493,8 +485,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     // before restoration can select that Event in the editor.
     const watcherEvent = selectedEvent ?? editSeedEvent;
     const watcherCandidates = React.useMemo(() => {
-        if (!params.guidedPreset) return executionOriginCandidates;
-        const controllerMachineId = params.initialSetupSeed?.monitoringMachineId;
+        if (!monitoringMachineId) return executionOriginCandidates;
+        const controllerMachineId = monitoringMachineId;
         const serverId = params.serverId;
         const server = serverId ? machineSnapshots.find(snapshot => snapshot.kind === 'resolved'
             && areServerProfileIdentifiersEquivalent(snapshot.profileId, serverId)) : null;
@@ -511,8 +503,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                     machineId: getPluginMachineExecutionOriginRef(origin).machineId,
                 }) != null;
         });
-    }, [availabilityReader, executionOriginCandidates, machineSnapshots, params.guidedPreset,
-        params.initialSetupSeed?.monitoringMachineId, params.serverId, watcherEvent]);
+    }, [availabilityReader, executionOriginCandidates, machineSnapshots, monitoringMachineId,
+        params.serverId, watcherEvent]);
     const { watcherFailures, selectableWatchers } = React.useMemo(() => {
         const watcherFailures: (PluginEventAutomationWatcherFailure & Readonly<{ origin: PluginMachineExecutionOriginV1 }>)[] = [];
         const selectableWatchers: PluginExecutionOriginCandidateV1[] = [];
@@ -524,19 +516,18 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         return { watcherFailures, selectableWatchers };
     }, [watcherEvent, watcherCandidates]);
 
-    // Guided setup hides the watcher picker. A settled empty selection cannot
-    // wait for a choice the person has no control to make. Only the projection
-    // owner's explicit establishing target represents pending discovery.
-    const guidedSetupFailure = React.useMemo(() => params.guidedPreset ? readGuidedPluginEventAutomationSetupFailure({
+    // A source seed can bind its observer to one Machine. Keep that owner's
+    // settled failure visible while the ordinary editor configures that source.
+    const seedSetupFailure = React.useMemo(() => monitoringMachineId ? readSeededPluginEventAutomationSetupFailure({
         catalogReady: eventCatalogStatus === 'ready',
         event: watcherEvent,
         plugin: params.projectionInputs?.pluginProjectionById[watcherPluginId],
         selectableWatchers,
         watcherFailures,
         discoveryPending: suppliedWatcherFacts.establishingTargets.some(target =>
-            target.machineId === params.initialSetupSeed?.monitoringMachineId
+            target.machineId === monitoringMachineId
             && Boolean(params.serverId && areServerProfileIdentifiersEquivalent(target.serverIdentityId, params.serverId))),
-    }) : null, [eventCatalogStatus, params.guidedPreset, params.initialSetupSeed?.monitoringMachineId,
+    }) : null, [eventCatalogStatus, monitoringMachineId,
         params.serverId, params.projectionInputs, watcherPluginId, watcherEvent, selectableWatchers,
         suppliedWatcherFacts.establishingTargets, watcherFailures]);
 
@@ -940,7 +931,6 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                         ? { initialSource: initialEditSeed.source } : {}),
                 ...(params.initialSetupSeed && arePluginContributionIdentitiesEqual(params.initialSetupSeed.eventRef, currentEvent.event.identity)
                     ? { initialSetupSeed: params.initialSetupSeed } : {}),
-                ...(params.guidedPreset ? { present: submitGuidedSetupForm } : {}),
                 observationTransport: effectiveObservationTransport,
                 filter: filter.value,
                 maximumObservationAgeMs: maximumObservationAgeMs.value,
@@ -996,17 +986,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         resolveExecutionOrigin,
         setupScope,
         params.initialSetupSeed,
-        params.guidedPreset,
     ]);
-
-    const configuredGuidedPreset = React.useRef(false);
-    React.useEffect(() => {
-        if (!params.guidedPreset || !params.initialSetupSeed || initialEditSeed || configuredGuidedPreset.current
-            || eventCatalogStatus !== 'ready' || !selectedEvent || !selectedWatcherOrigin || sourceStatus !== 'idle') return;
-        configuredGuidedPreset.current = true;
-        configureSource();
-    }, [configureSource, eventCatalogStatus, initialEditSeed, params.guidedPreset, params.initialSetupSeed,
-        selectedEvent, selectedWatcherOrigin, sourceStatus]);
 
     const webhookEndpointId = webhookEndpoint?.webhookEndpointId ?? null;
     const webhookEndpointPluginId = configuredSetup?.draft.eventRef.pluginId ?? null;
@@ -1127,8 +1107,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         selectEvent: chooseEvent,
         getPluginPresentation,
         getEventPresentation,
-        sourceStatus: guidedSetupFailure ? 'unavailable' : sourceStatus,
-        sourceFailure: guidedSetupFailure ?? sourceFailure,
+        sourceStatus: seedSetupFailure ? 'unavailable' : sourceStatus,
+        sourceFailure: seedSetupFailure ?? sourceFailure,
         sourceDisplayLabel,
         sourceInstanceId,
         configureSource,
@@ -1195,7 +1175,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         sourceInstanceId,
         sourceStatus,
         sourceFailure,
-        guidedSetupFailure,
+        seedSetupFailure,
         setFilterClauseField,
         setFilterClauseOperator,
         setFilterClauseValueText,

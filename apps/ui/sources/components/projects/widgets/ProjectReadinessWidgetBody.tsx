@@ -18,7 +18,7 @@ import { Typography } from '@/constants/Typography';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
-import { guidedStarterEventSeed } from '@/components/workflows/triggers/guidedAutomation';
+import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
 import { WidgetGlanceRow } from '@/components/widgets/glance/WidgetGlanceRow';
 import { useWidgetFrameResourceActivity } from '@/components/widgets/frame/widgetFrameResourceActivity';
 import { InvestigationOutcomeBanner } from '@/components/inbox/detail/InvestigationOutcomeBanner';
@@ -177,7 +177,7 @@ function ReadinessFact(props: Readonly<{ fact: ProjectReadinessFactV1; serverId:
     </View> : null}
     {openingChecks ? <NewAccountTriggerPopover anchorRef={anchor} onRequestClose={() => setOpeningChecks(false)}
       accountLifetime={props.lifetime} initialProject={{ machineId: props.machineId, directory: '~' }}
-      eventSeed={guidedStarterEventSeed('healthFailed', { subject: { kind: 'environment', environmentId: props.environmentId,
+      eventSeed={subjectStarterEventSeed('healthFailed', { subject: { kind: 'environment', environmentId: props.environmentId,
         machineId: props.machineId }, controllerMachineId: props.machineId })} /> : null}
     {investigation.showOutcome && investigation.outcome ? <InvestigationOutcomeBanner outcome={investigation.outcome}
       serverId={props.serverId} testID={`${props.testID}.handoff`} onChoosePlacement={investigation.investigateWithPlacement}
