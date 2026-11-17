@@ -470,6 +470,7 @@ import { listServersForVoiceTool } from '@/voice/tools/actionImpl/serversList';
 import { listReviewEnginesForVoiceTool } from '@/voice/tools/actionImpl/reviewEnginesList';
 import { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } from '@/voice/tools/actionImpl/agentCatalogList';
 import { createReviewCommentsHttpActionExecutor } from '@/sync/domains/reviews/comments/api';
+import { REVIEW_COMMENT_RESOURCE_COMMITMENT_DOMAIN_V1 } from '@happier-dev/protocol/reviews/comments/content';
 import { createPluginPermissionGrantHttpActionExecutor } from '@/sync/domains/plugins/permissions/api';
 import { createPluginWebhookEndpointHttpActionExecutor } from '@/sync/api/plugins/webhooks/endpointActions';
 import { sessionFollowAction } from '@/sync/api/session/sessionFollowApi';
@@ -1339,6 +1340,17 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   const resolveActionsSettingsSnapshot = () => resolveActionsSettingsV1FromState({ settings: readAccountSettingsSnapshot() });
   const executeReviewCommentAction = createReviewCommentsHttpActionExecutor(accountContext ? {
     request: accountContext.request,
+    resolveReviewResourceContext: async (reviewId, signal) => {
+      const artifact = await accountContext.readArtifactContent(reviewId, { includeAssociatedContentOpener: true, signal });
+      if (!artifact?.openAssociatedContent || !artifact.sealAssociatedContent || !artifact.associatedContentCommitment) {
+        throw Object.assign(new Error('review_comment_encryption_material_unavailable'), { code: 'review_comment_encryption_material_unavailable' });
+      }
+      return { accountId: accountContext.accountId, resource: {
+        reviewId, mode: artifact.storageMode, open: artifact.openAssociatedContent, seal: artifact.sealAssociatedContent,
+        commitment: (purpose, canonicalInput) => artifact.associatedContentCommitment!(
+          REVIEW_COMMENT_RESOURCE_COMMITMENT_DOMAIN_V1, [purpose, canonicalInput]),
+      } };
+    },
     resolveEventStorageContext: async usage => {
       const { mode } = await fetchAccountEncryptionMode(accountContext.credentials, { request: accountContext.request, usage });
       accountContext.assertCurrent();

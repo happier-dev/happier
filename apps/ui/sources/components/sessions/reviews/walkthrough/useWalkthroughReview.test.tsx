@@ -83,6 +83,18 @@ async function refresh() {
 }
 
 describe('a walkthrough reads findings before declaring a review complete', () => {
+    it('waits for the run payload to supply comment scope before reading comments', async () => {
+        const pending = createDeferred<unknown>();
+        boundary.read = () => pending.promise;
+        const hook = await renderHook(() => useWalkthroughReview(params));
+        await waitForHomeGovernance(() => expect(sessionRequests).toHaveLength(1));
+        await flushHookEffects();
+        const commentReads = () => harness.requests.filter(request => new URL(request.path, request.serverUrl).pathname === '/v1/reviews/comments');
+        expect(commentReads()).toHaveLength(0);
+        await act(async () => pending.resolve(response(true)));
+        await waitForHomeGovernance(() => expect(hook.getCurrent()?.comments[0]?.status).toBe('loaded'));
+        expect(commentReads()).toHaveLength(1);
+    });
     it('reads only an exactly hinted reviewer, omits the unused tool result, and refreshes all on an unscoped hint', async () => {
         const runIds = Array.from({ length: 24 }, (_, index) => `review-${index}`);
         boundary.read = async runId => response(false, runId);

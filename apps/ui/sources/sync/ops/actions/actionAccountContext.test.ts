@@ -154,13 +154,45 @@ it.each(['plain', 'e2ee'] as const)('persists Review start and settlement metada
             projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
             currentRoundOrdinal: 1, state: 'running', startedAt: 100, finishedAt: null,
         } } });
-        await records.settle({ ...round, outcome: 'completed', finishedAt: 200, runs: [] });
+        await records.settle({ ...round, outcome: 'completed', finishedAt: 200, runs: [],
+            reviewerOutcomes: [{ key: 'codex', outcome: 'completed', materialization: { kind: 'complete' } }] });
         expect(writes[1]).toMatchObject({ origin: home.serverUrl, payload: { reviewMetadata: {
             currentRoundOrdinal: 1, state: 'completed', finishedAt: 200,
         }, expectedBodyVersion: 1 } });
         expect(await records.read(round.reviewId)).toMatchObject({ title: 'Captured Review', rounds: [
             { ordinal: 1, state: 'completed', finishedAt: 200 },
         ] });
+    } finally { account.dispose(); }
+});
+
+it.each(['plain', 'e2ee'] as const)('captures associated content callbacks for one Artifact and the Account lifetime (%s)', async mode => {
+    const home = homes.homes[mode === 'plain' ? 'b' : 'e']!;
+    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: mode });
+    network.mockImplementation(async (url, init) => await artifacts.handle(url.pathname, init) ?? homes.fetch(url, init));
+    const account = await captureLazyActionAccountContext(home.id);
+    try {
+        const firstId = await account.createArtifact({ title: 'First Review' }, 'first');
+        const secondId = await account.createArtifact({ title: 'Second Review' }, 'second');
+        const first = await account.readArtifactContent(firstId, { includeAssociatedContentOpener: true });
+        const second = await account.readArtifactContent(secondId, { includeAssociatedContentOpener: true });
+        if (!first?.openAssociatedContent || !first.sealAssociatedContent || !first.associatedContentCommitment
+            || !second?.openAssociatedContent || !second.associatedContentCommitment) throw new Error('Missing admitted Artifact callbacks');
+        const logical = { reviewId: firstId, body: 'Another author’s private finding' };
+        const sealed = await first.sealAssociatedContent(logical);
+        expect(first.storageMode).toBe(mode);
+        expect(await first.openAssociatedContent(sealed)).toEqual(logical);
+        expect(first.associatedContentCommitment('test-associated-content', ['same input']))
+            .not.toBe(second.associatedContentCommitment('test-associated-content', ['same input']));
+        if (mode === 'e2ee') {
+            expect(sealed.t).toBe('encrypted');
+            expect(JSON.stringify(sealed)).not.toContain(logical.body);
+            await expect(second.openAssociatedContent(sealed)).rejects.toMatchObject({ code: 'content_unavailable' });
+        } else expect(sealed).toEqual({ t: 'plain', v: logical });
+        await TokenStorage.removeCredentialsForServerUrl(home.serverUrl, { serverId: home.id });
+        await expect(first.openAssociatedContent(sealed)).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+        await expect(first.sealAssociatedContent(logical)).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+        expect(() => first.associatedContentCommitment!('test-associated-content', ['same input']))
+            .toThrow('action_account_scope_changed');
     } finally { account.dispose(); }
 });
 

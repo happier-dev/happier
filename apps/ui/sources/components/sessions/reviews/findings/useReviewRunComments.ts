@@ -23,6 +23,7 @@ export function useReviewRunsComments(params: Readonly<{
     scope: ServerAccountScope | null;
     sessionId: string;
     runIds: readonly string[];
+    reviewIdsByRunId?: Readonly<Record<string, string | undefined>>;
     commentIdsByRunId?: Readonly<Record<string, readonly string[]>>;
     enabled: boolean;
     refresh?: boolean;
@@ -38,29 +39,33 @@ export function useReviewRunsComments(params: Readonly<{
     const runIds = React.useMemo(() => (runKey && scope ? runKey.split('\u0000') : []), [runKey, scope]);
     const referenceKey = JSON.stringify(params.commentIdsByRunId ?? {});
     const references = React.useMemo(() => JSON.parse(referenceKey) as Readonly<Record<string, readonly string[]>>, [referenceKey]);
+    const reviewKey = JSON.stringify(params.reviewIdsByRunId ?? {});
+    const reviewIds = React.useMemo(() => JSON.parse(reviewKey) as Readonly<Record<string, string>>, [reviewKey]);
+    const targets = React.useMemo(() => scope ? runIds.map(runId => ({ scope, sessionId, runId,
+        ...(reviewIds[runId] ? { reviewId: reviewIds[runId] } : {}) })) : [], [runIds, scope, sessionId, reviewIds]);
     const cacheRef = React.useRef<ReviewRunsCommentsSnapshot>([]);
     const subscribe = React.useCallback((listener: () => void) => {
-        const unsubscribers = scope ? runIds.map((runId) => subscribeReviewRunComments({ scope, sessionId, runId }, listener)) : [];
+        const unsubscribers = targets.map(target => subscribeReviewRunComments(target, listener));
         return () => {
             for (const unsubscribe of unsubscribers) unsubscribe();
         };
-    }, [runIds, scope, sessionId]);
+    }, [targets]);
     const getSnapshot = React.useCallback(() => {
-        const next = scope ? runIds.map((runId) => readReviewRunComments({ scope, sessionId, runId })) : [];
+        const next = targets.map(target => readReviewRunComments(target));
         const previous = cacheRef.current;
         if (previous.length === next.length && previous.every((snapshot, index) => snapshot === next[index])) return previous;
         cacheRef.current = next;
         return next;
-    }, [runIds, scope, sessionId]);
+    }, [targets]);
     const snapshot = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
     React.useEffect(() => {
         if (!enabled || !scope) return;
         const load = refresh ? loadReviewRunComments : ensureReviewRunComments;
-        for (const runId of runIds) {
-            fireAndForget(load({ scope, sessionId, runId, commentIds: references[runId] }).catch(() => undefined), { tag: 'useReviewRunsComments.load' });
+        for (const target of targets) {
+            fireAndForget(load({ ...target, commentIds: references[target.runId] }).catch(() => undefined), { tag: 'useReviewRunsComments.load' });
         }
-    }, [enabled, references, refresh, runIds, scope, sessionId]);
+    }, [enabled, references, refresh, scope, targets]);
 
     return snapshot;
 }

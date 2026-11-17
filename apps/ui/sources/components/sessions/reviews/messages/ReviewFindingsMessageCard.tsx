@@ -68,6 +68,7 @@ import { useSessionMessages } from '@/sync/domains/state/storage';
 import {
     decideReviewRunFinding,
     loadReviewRunComments,
+    reviewRunCommentsTargetFromFindings,
 } from '@/sync/domains/reviews/comments/reviewRunComments';
 import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding, useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -244,13 +245,17 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
     ], [normalized, siblings]);
     const waitingSiblings = React.useMemo(() => siblings.filter((sibling) => sibling.payload === null), [siblings]);
     const memberRunIds = React.useMemo(() => resultMembers.map((member) => member.runRef.runId), [resultMembers]);
+    const reviewIdsByRunId = React.useMemo(() => Object.fromEntries(resultMembers.map(member => {
+        const target = reviewRunCommentsTargetFromFindings(member);
+        return [target.runId, target.reviewId];
+    })), [resultMembers]);
     const commentIdsByRunId = React.useMemo(() => Object.fromEntries(resultMembers.map((member) => [
         member.runRef.runId, member.findings.flatMap((finding) => finding.comment ? [finding.comment.id] : []),
     ])), [resultMembers]);
     const hasFindings = resultMembers.some((member) => member.findings.length > 0);
 
     // Read-only viewers need the same canonical finding identity for the merged result.
-    const commentSnapshots = useReviewRunsComments({ scope, sessionId, runIds: memberRunIds, commentIdsByRunId, enabled: hasFindings, refresh: isPage });
+    const commentSnapshots = useReviewRunsComments({ scope, sessionId, runIds: memberRunIds, reviewIdsByRunId, commentIdsByRunId, enabled: hasFindings, refresh: isPage });
     const allComments = React.useMemo(() => commentSnapshots.flatMap((snapshot) => snapshot.comments), [commentSnapshots]);
     const allPending = React.useMemo(() => Object.assign({}, ...commentSnapshots.map((snapshot) => snapshot.pending)) as Readonly<Record<string, ReviewTriageStatus>>, [commentSnapshots]);
     const members = React.useMemo<readonly CardMember[]>(() => resultMembers.map((member) => {
@@ -362,7 +367,8 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
             if (decidedIds.has(source.comment.id)) continue;
             decidedIds.add(source.comment.id);
             fireAndForget(
-                decideReviewRunFinding({ scope, sessionId, runId: source.member.runId, commentId: source.comment.id, decision }).then((saved) => {
+                decideReviewRunFinding({ scope, sessionId, runId: source.member.runId,
+                    ...(source.comment.reviewId ? { reviewId: source.comment.reviewId } : {}), commentId: source.comment.id, decision }).then((saved) => {
                     if (!saved) setError(t('runPage.review.couldNotSaveChoice'));
                 }),
                 { tag: 'ReviewFindingsMessageCard.decide' },
@@ -745,7 +751,9 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                                 onPress={() => {
                                     for (const memberRunId of memberRunIds) {
                                         if (!scope) continue;
-                                        fireAndForget(loadReviewRunComments({ scope, sessionId, runId: memberRunId }).catch(() => undefined), { tag: 'ReviewFindingsMessageCard.reload' });
+                                        fireAndForget(loadReviewRunComments({ scope, sessionId, runId: memberRunId,
+                                            ...(reviewIdsByRunId[memberRunId] ? { reviewId: reviewIdsByRunId[memberRunId] } : {}),
+                                            commentIds: commentIdsByRunId[memberRunId] }).catch(() => undefined), { tag: 'ReviewFindingsMessageCard.reload' });
                                     }
                                 }}
                             >

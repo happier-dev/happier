@@ -29,7 +29,17 @@ export type ReviewRunCommentsTarget = Readonly<{
     scope: ServerAccountScope;
     sessionId: string;
     runId: string;
+    reviewId?: string;
 }>;
+
+/** The materializer's typed comment reference supplies native Review identity; old runs remain unbound. */
+export function reviewRunCommentsTargetFromFindings(payload: Readonly<{
+    runRef: Readonly<{ runId: string }>;
+    findings: readonly Readonly<{ comment?: Readonly<{ reviewId?: string }> }>[];
+}>): Pick<ReviewRunCommentsTarget, 'runId' | 'reviewId'> {
+    const reviewId = payload.findings.find(finding => finding.comment?.reviewId)?.comment?.reviewId;
+    return { runId: payload.runRef.runId, ...(reviewId ? { reviewId } : {}) };
+}
 
 export type ReviewRunCommentsSnapshot = Readonly<{
     status: 'idle' | 'loading' | 'loaded' | 'failed';
@@ -73,7 +83,8 @@ function resolveExecutor(scope: ServerAccountScope, execute?: ReviewCommentUiAct
 }
 
 function keyOf(target: ReviewRunCommentsTarget): string {
-    return `${serverAccountScopeKeySuffix(target.scope)}\u0000${target.sessionId}\u0000${target.runId}`;
+    const resource = target.reviewId ? `review\u0000${target.reviewId}` : `session\u0000${target.sessionId}`;
+    return `${serverAccountScopeKeySuffix(target.scope)}\u0000${resource}\u0000${target.runId}`;
 }
 
 function entryFor(target: ReviewRunCommentsTarget): Entry {
@@ -117,15 +128,15 @@ function upsert(entry: Entry, comment: ReviewCommentV1): void {
 /** Reconciles confirmed server revisions across loaded runs holding the same canonical comment. */
 export function recordReviewCommentReads(comments: readonly ReviewCommentV1[], scope: ServerAccountScope): void {
     for (const comment of comments) {
-        if (!comment.sessionId || !comment.runId) continue;
         // A comment id is Home-local, even when both Homes sign in as the same Account.
         const holding: Entry[] = [];
         let latest = comment;
         for (const entry of entries.values()) {
             const { target } = entry;
-            if (target.sessionId !== comment.sessionId) continue;
+            if (!areServerAccountScopesEqual(target.scope, scope) || entry.snapshot.status === 'idle') continue;
+            if (target.reviewId ? target.reviewId !== comment.reviewId
+                : comment.reviewId || target.sessionId !== comment.sessionId || target.scope.accountId !== comment.accountId) continue;
             if (target.runId !== comment.runId && !entry.snapshot.comments.some((held) => held.id === comment.id)) continue;
-            if (!areServerAccountScopesEqual(target.scope, scope) || target.scope.accountId !== comment.accountId || entry.snapshot.status === 'idle') continue;
             holding.push(entry);
             const held = entry.snapshot.comments.find((item) => item.id === comment.id);
             if (held && held.serverRevision > latest.serverRevision) latest = held;
@@ -193,7 +204,7 @@ export function loadReviewRunComments(params: ReviewRunCommentsTarget & Readonly
             let cursor: string | undefined;
             do {
                 const page = await execute('reviews.comments.list', {
-                    sessionId: params.sessionId,
+                    ...(params.reviewId ? { reviewId: params.reviewId } : { sessionId: params.sessionId }),
                     runId: params.runId,
                     includeHistory: true,
                     // The card shows every finding of the run: read it in the fewest pages.
@@ -203,7 +214,9 @@ export function loadReviewRunComments(params: ReviewRunCommentsTarget & Readonly
                 comments.push(...page.items);
                 cursor = page.cursor ?? undefined;
             } while (cursor);
-            for (const commentId of new Set(params.commentIds)) {
+            // Native run lists are selected by canonical appearances, including reused earlier-round comments.
+            // Only legacy unbound runs need their historical per-reference adapter.
+            for (const commentId of new Set(params.reviewId ? [] : params.commentIds)) {
                 if (comments.some((comment) => comment.id === commentId)) continue;
                 const result = await execute('reviews.comments.get', { commentId, includeHistory: true }) as ReviewCommentGetResponseV1;
                 if (result.comment.sessionId !== params.sessionId) throw new Error('review_comment_reference_scope_mismatch');

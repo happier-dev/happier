@@ -21,7 +21,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import type { ScmDiffSummaryHost } from '@/sync/ops/scmDiffSummary/results';
 import { subscribeExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { loadReviewRunComments } from '@/sync/domains/reviews/comments/reviewRunComments';
+import { loadReviewRunComments, reviewRunCommentsTargetFromFindings } from '@/sync/domains/reviews/comments/reviewRunComments';
 
 import { buildWalkthroughReviewOverlay, type WalkthroughReviewOverlay } from './reviewWalkthroughOverlay';
 import { resolveReviewWalkthroughProgress, type ReviewWalkthroughProgress } from './reviewWalkthroughProgress';
@@ -145,6 +145,9 @@ export function useWalkthroughReview(params: Readonly<{
         return () => { current = false; unsubscribe(); };
     }, [runIds, readKey, scope, sessionId, machineId, params.cwd, retryVersion]);
     const runReads = reads.key === readKey ? reads.reads : NO_READS;
+    const commentRunIds = React.useMemo(() => runReads.filter(read => read.state !== 'loading').map(read => read.runId), [runReads]);
+    const reviewIdsByRunId = React.useMemo(() => Object.fromEntries(runReads.flatMap(read => read.payload
+        ? [[read.runId, reviewRunCommentsTargetFromFindings(read.payload).reviewId]] : [])), [runReads]);
 
     const commentIdsByRunId = React.useMemo(() => Object.fromEntries(runIds.map(runId => [
         runId, [...new Set([
@@ -152,14 +155,15 @@ export function useWalkthroughReview(params: Readonly<{
             ...(runReads.find(read => read.runId === runId)?.payload?.findings ?? []).flatMap(finding => finding.comment ? [finding.comment.id] : []),
         ])],
     ])), [runIds, runReads, producer]);
-    const comments = useReviewRunsComments({ scope: sessionId ? scope : null, sessionId, runIds, commentIdsByRunId, enabled: Boolean(sessionId) && runIds.length > 0 });
+    const comments = useReviewRunsComments({ scope: sessionId ? scope : null, sessionId, runIds: commentRunIds, reviewIdsByRunId, commentIdsByRunId, enabled: Boolean(sessionId) && commentRunIds.length > 0 });
     // Effective findings read structured follow-up meta, never streamed text.
     const { messages } = useSessionMessages(sessionId, { enabled: Boolean(sessionId) && runIds.length > 0, textUpdates: false });
     const retry = React.useCallback(async () => {
         setRetryVersion(version => version + 1);
-        if (scope && sessionId) await Promise.all(runIds.map(runId => loadReviewRunComments({ scope, sessionId, runId,
+        if (scope && sessionId) await Promise.all(commentRunIds.map(runId => loadReviewRunComments({ scope, sessionId, runId,
+            ...(reviewIdsByRunId[runId] ? { reviewId: reviewIdsByRunId[runId] } : {}),
             commentIds: commentIdsByRunId[runId] }).catch(() => undefined)));
-    }, [scope, sessionId, runIds, commentIdsByRunId]);
+    }, [scope, sessionId, commentRunIds, reviewIdsByRunId, commentIdsByRunId]);
 
     return React.useMemo(() => {
         if (runIds.length === 0) return null;
@@ -177,7 +181,7 @@ export function useWalkthroughReview(params: Readonly<{
             reviewerLabelByRunId[runId] = resolveExecutionRunBackendLabel(backendTarget)
                 ?? payload?.runRef.backendId ?? recorded?.backendId ?? runId;
             const runRef = payload?.runRef ?? { runId, callId: read?.run?.callId ?? recorded?.callId ?? runId, backendId: recorded?.backendId ?? '' };
-            const snapshot = comments[runIds.indexOf(runId)];
+            const snapshot = comments[commentRunIds.indexOf(runId)];
             const output = resolveReviewRunOutput({ payload, recorded, comments: snapshot });
             outputReadStateByRunId[runId] = output.readState;
             const findings = payload ? resolveEffectiveReviewFindings({ runRef, initialFindings: payload.findings, messages }).findings : output.findings;
@@ -229,5 +233,5 @@ export function useWalkthroughReview(params: Readonly<{
             comparisonFreshness: producer?.kind === 'review' ? producer.comparisonFreshness ?? null : null,
             retry,
         };
-    }, [comments, comparison, messages, producer, runIds, runReads, walkthrough, retry]);
+    }, [comments, commentRunIds, comparison, messages, producer, runIds, runReads, walkthrough, retry]);
 }

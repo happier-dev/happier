@@ -1,5 +1,5 @@
 import { getActionSpec } from '@happier-dev/protocol/actions';
-import { buildReviewCommentPlainMutationTransportInputV1 } from '@happier-dev/protocol/reviews/comments/content';
+import { buildReviewCommentPlainMutationTransportInputV1, type ReviewCommentResourceCryptoV1 } from '@happier-dev/protocol/reviews/comments/content';
 import { buildReviewCommentPublicationTransportRequestV1, openReviewCommentPublicationTransportResponseV1 } from '@happier-dev/protocol/reviews/comments/publicationTransport';
 import { executeReviewCommentTransportV1 } from '@happier-dev/protocol/reviews/comments/transport';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -23,6 +23,9 @@ export type CreateReviewCommentsHttpActionExecutorParams = Readonly<{
     request?: ServerFetch;
     resolveEventStorageContext?: (usage: AccountEncryptionReadUsage) => Promise<ReviewCommentEventStorageContext>;
     randomBytes?: (length: number) => Uint8Array;
+    resolveReviewResourceContext?: (reviewId: string, signal?: AbortSignal) => Promise<Readonly<{
+        accountId: string; resource: ReviewCommentResourceCryptoV1;
+    }>>;
 }>;
 
 export type ReviewCommentEventStorageContext =
@@ -140,6 +143,25 @@ export function createReviewCommentsHttpActionExecutor(
     const resolveEventStorageContext = params.resolveEventStorageContext ?? resolveDefaultEventStorageContext;
     const randomBytes = params.randomBytes ?? getRandomBytes;
     return async (actionId, input, options) => {
+        const logicalInput = parseReviewCommentInput<Record<string, unknown>>(actionId, input);
+        if (typeof logicalInput.reviewId === 'string' && actionId !== 'reviews.comments.claimPublicationDispatch') {
+            if (!params.resolveReviewResourceContext) throw Object.assign(new Error('review_comment_encryption_material_unavailable'), {
+                code: 'review_comment_encryption_material_unavailable',
+            });
+            const { accountId, resource } = await params.resolveReviewResourceContext(logicalInput.reviewId, options?.signal);
+            return executeReviewCommentTransportV1({ actionId, input: logicalInput,
+                context: { accountId, mode: resource.mode, material: null, resource },
+                actor: { kind: 'user', userId: accountId }, randomBytes,
+                request: async ({ method, path, query, body }) => {
+                    const search = new URLSearchParams();
+                    for (const [key, value] of Object.entries(query ?? {})) appendQueryValue(search, key, value);
+                    const suffix = search.toString();
+                    return requestReviewCommentJson(request, suffix ? `${path}?${suffix}` : path,
+                        { ...(body === undefined ? { method: method.toUpperCase() } : withJsonBody(body)),
+                            ...(options?.signal ? { signal: options.signal } : {}) });
+                },
+            });
+        }
         const storage = await resolveEventStorageContext('identity');
         const actionRequest: ServerFetch = async (path, init, requestOptions) => {
             const method = (init?.method ?? 'GET').toUpperCase();

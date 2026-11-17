@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewCommentListRequestV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
+import { createReviewCommentsHttpActionExecutor } from './api';
+import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
+import { computeCanonicalDomainSeparatedKeyedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { deriveReviewCommentStructuralMutationV1, ReviewCommentPrepareMutationRequestV1Schema,
+    ReviewCommentPrepareMutationResponseV1Schema, ReviewCommentCommitMutationRequestV1Schema,
+    type ReviewCommentPrepareMutationResponseV1 } from '@happier-dev/protocol/reviews/comments/mutation';
 
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { buildReviewCommentFixture, storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
@@ -71,6 +77,76 @@ async function serveTwoHomes() {
 }
 
 describe('review run comments (one cache, bound to its Home and Account)', () => {
+    it('shares Review-key comments across Sessions and authors while isolating another Review', async () => {
+        const dataKey = new Uint8Array(32).fill(19);
+        const codec = new ArtifactEncryption(dataKey);
+        const durable = comment('another-author', { reviewId: 'review-1', sessionId: 'original-session', runId: 'earlier-round',
+            appearances: [{ roundOrdinal: 2, runId: 'current-round', reviewerId: 'reviewer', sessionId: 'opened-session' }] });
+        const stored = storePlainReviewCommentFixture(durable);
+        if (stored.sensitiveEnvelope.t !== 'plain') throw new Error('Expected logical content');
+        const encrypted = { ...stored, sensitiveEnvelope: { t: 'encrypted' as const,
+            c: await codec.encryptHeader(stored.sensitiveEnvelope.v as Record<string, unknown>) } };
+        const reads: string[] = [];
+        let preparation: ReviewCommentPrepareMutationResponseV1 | undefined;
+        // Only HTTP and acquisition of the Artifact codec are supplied; the real comment transport opens its envelope.
+        const execute = createReviewCommentsHttpActionExecutor({
+            request: async (path, init) => {
+                reads.push(path);
+                if (path.endsWith('/mutations/prepare')) {
+                    const request = ReviewCommentPrepareMutationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                    const derived = deriveReviewCommentStructuralMutationV1({ mutation: request.mutation, accountId: 'recipient',
+                        actor: { kind: 'user', userId: 'recipient' }, current: [encrypted.structural],
+                        runtime: { now: () => 10, createId: prefix => `${prefix}-1` } });
+                    preparation = ReviewCommentPrepareMutationResponseV1Schema.parse({ v: 1, request,
+                        receipt: 'native-transition', replayed: false, ...derived,
+                        records: derived.records.map(record => ({ ...record, previous: { structural: encrypted.structural,
+                            source: { v: 1, layout: 'canonical_v1', envelope: encrypted.sensitiveEnvelope } } })) });
+                    return Response.json(preparation);
+                }
+                if (path.endsWith('/mutations/commit')) {
+                    const request = ReviewCommentCommitMutationRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                    if (!preparation) throw new Error('Expected prepared transition');
+                    return Response.json({ v: 1, replayed: false, failed: [], comments: request.records.map(record => ({
+                        v: 1, structural: preparation!.records[0]!.structural, sensitiveEnvelope: record.sensitiveEnvelope,
+                    })) });
+                }
+                return Response.json({ items: [encrypted], cursor: null });
+            },
+            resolveEventStorageContext: async () => { throw new Error('Recipient Account key is unavailable'); },
+            resolveReviewResourceContext: async reviewId => ({ accountId: 'recipient', resource: {
+                reviewId, mode: 'e2ee',
+                open: async content => content.t === 'encrypted' ? codec.decryptHeaderRaw(content.c) : null,
+                seal: async value => ({ t: 'encrypted', c: await codec.encryptHeader(value as Record<string, unknown>) }),
+                commitment: (purpose, value) => computeCanonicalDomainSeparatedKeyedDigest(dataKey, 'review-test', [reviewId, purpose, value]),
+            } }),
+        });
+        const target = { scope: { serverId: 'shared-home', accountId: 'recipient' }, sessionId: 'opened-session',
+            runId: 'current-round', reviewId: 'review-1' };
+        await loadReviewRunComments({ ...target, execute, commentIds: [durable.id, 'unavailable-reference'] });
+        expect(reads.map(path => new URL(path, 'https://home.test').pathname)).toEqual(['/v1/reviews/comments']);
+        expect(reads.map(path => new URL(path, 'https://home.test').searchParams.get('reviewId'))).toEqual(['review-1']);
+        expect(reads.some(path => path.includes('sessionId='))).toBe(false);
+        const anotherSession = { ...target, sessionId: 'another-session' };
+        expect(readReviewRunComments(anotherSession)).toBe(readReviewRunComments(target));
+        expect(readReviewRunComments(target).comments).toEqual([durable]);
+        expect(await decideReviewRunFinding({ ...anotherSession, execute, commentId: durable.id, decision: 'accept' })).toBe(true);
+        expect(readReviewRunComments(target).comments[0]).toMatchObject({ reviewId: 'review-1', accountId: 'another-author',
+            state: 'open', serverRevision: 4, reviewTriageStatus: 'accept' });
+        expect(reads.filter(path => path.endsWith('/mutations/prepare'))).toHaveLength(1);
+        expect(reads.filter(path => path.endsWith('/mutations/commit'))).toHaveLength(1);
+        const unrelated = { ...target, reviewId: 'review-2' };
+        const unrelatedBefore = readReviewRunComments(unrelated);
+        const notify = vi.fn();
+        const stop = subscribeReviewRunComments(anotherSession, notify);
+        try {
+            recordReviewCommentWrites([{ ...durable, serverRevision: 5, reviewTriageStatus: 'reject' }], target.scope);
+            expect(readReviewRunComments(anotherSession).comments[0]?.reviewTriageStatus).toBe('reject');
+            expect(notify).toHaveBeenCalledTimes(1);
+            recordReviewCommentWrites([{ ...durable, serverRevision: 5, reviewTriageStatus: 'reject' }], target.scope);
+            expect(notify).toHaveBeenCalledTimes(1);
+            expect(readReviewRunComments(unrelated)).toBe(unrelatedBefore);
+        } finally { stop(); }
+    });
     it('retains equal confirmed comments and reloads without hiding a same-revision content change', async () => {
         const target = { scope: { serverId: 'publication-home', accountId: 'account-b' }, sessionId: 'sess_1', runId: 'run_1' };
         const item = comment('account-b');

@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
+import { computeCanonicalDomainSeparatedKeyedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 
 import {
     ReviewCommentPublicationTransportRequestV1Schema,
@@ -11,6 +13,7 @@ import {
     type ReviewCommentPrepareMutationResponseV1,
 } from '@happier-dev/protocol/reviews/comments/mutation';
 import {
+    ReviewCommentActionOutputSchemasV1,
     createReviewCommentPublicationSettlementRequestV1,
     type ReviewCommentClaimPublicationDispatchResponseV1,
     type ReviewCommentPublicationPlanV1} from '@happier-dev/protocol/reviews/comments/actions';
@@ -231,6 +234,29 @@ describe('review comments HTTP action executor', () => {
         serverFetchSpy.mockReset();
     });
 
+    it('opens another author’s Review-key content without acquiring an Account key', async () => {
+        const dataKey = new Uint8Array(32).fill(31);
+        const codec = new ArtifactEncryption(dataKey);
+        const durable = comment({ reviewId: 'review-resource', accountId: 'another-author', body: 'PRIVATE-shared-comment' });
+        const stored = storedComment(durable, 'plain');
+        if (stored.sensitiveEnvelope.t !== 'plain') throw new Error('Expected logical payload');
+        stored.sensitiveEnvelope = { t: 'encrypted', c: await codec.encryptHeader(stored.sensitiveEnvelope.v as Record<string, unknown>) };
+        serverFetchSpy.mockResolvedValueOnce(jsonResponse({ comment: stored }));
+        const { createReviewCommentsHttpActionExecutor } = await import('./api');
+        const execute = createReviewCommentsHttpActionExecutor({
+            resolveEventStorageContext: async () => { throw new Error('A recipient Account key is unavailable'); },
+            resolveReviewResourceContext: async reviewId => ({ accountId: 'recipient', resource: {
+                reviewId, mode: 'e2ee',
+                open: async content => content.t === 'encrypted' ? codec.decryptHeaderRaw(content.c) : null,
+                seal: async value => ({ t: 'encrypted', c: await codec.encryptHeader(value as Record<string, unknown>) }),
+                commitment: (purpose, value) => computeCanonicalDomainSeparatedKeyedDigest(dataKey, 'review-test', [reviewId, purpose, value]),
+            } }),
+        });
+        await expect(execute('reviews.comments.get', { commentId: durable.id, reviewId: durable.reviewId }))
+            .resolves.toEqual({ comment: durable });
+        expect(JSON.stringify(stored)).not.toContain(durable.body);
+    });
+
     it('executes list actions through the authenticated review comments API', async () => {
         const durableComment = comment({
             body: 'Loaded through HTTP.', sessionId: 'session-1',
@@ -318,7 +344,7 @@ describe('review comments HTTP action executor', () => {
         }
     });
 
-    it('filters opened E2EE comments across server pages without disclosing a private path', async () => {
+    it('filters one demanded E2EE page and continues explicitly without disclosing a private path', async () => {
         const skipped = comment({ id: 'comment-skipped', anchor: { kind: 'file', filePath: 'src/other.ts' } });
         const matched = comment({ id: 'comment-matched', anchor: { kind: 'file', filePath: 'PRIVATE-source/file.ts' } });
         serverFetchSpy
@@ -329,8 +355,15 @@ describe('review comments HTTP action executor', () => {
             resolveEventStorageContext: async () => ({ accountId: 'account-1', mode: 'e2ee', material: e2eeMaterial }),
         });
 
-        await expect(execute('reviews.comments.list', {
+        const first = await execute('reviews.comments.list', {
             projectId: 'project-1', filePath: 'PRIVATE-source/file.ts', includeHistory: true, limit: 1,
+        });
+        expect(first).toEqual({ items: [], cursor: expect.any(String) });
+        const { cursor } = ReviewCommentActionOutputSchemasV1['reviews.comments.list'].parse(first);
+        if (!cursor) throw new Error('Expected explicit continuation');
+        expect(serverFetchSpy).toHaveBeenCalledTimes(1);
+        await expect(execute('reviews.comments.list', {
+            projectId: 'project-1', filePath: 'PRIVATE-source/file.ts', includeHistory: true, limit: 1, cursor,
         })).resolves.toEqual({ items: [matched], cursor: null });
         expect(serverFetchSpy.mock.calls.map(([path]) => String(path)).join('\n')).not.toContain('PRIVATE-');
         expect(String(serverFetchSpy.mock.calls[1]?.[0])).toContain('cursor=next-page');

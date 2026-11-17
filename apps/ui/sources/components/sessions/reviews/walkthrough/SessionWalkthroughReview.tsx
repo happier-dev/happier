@@ -83,7 +83,8 @@ export function useSessionWalkthroughReviewPresentation(params: Readonly<{
                 disabled={!comment}
                 onDecide={(next: ReviewFindingDecision) => {
                     if (!comment) return;
-                    fireAndForget(decideReviewRunFinding({ scope, sessionId, runId: view.runId, commentId: comment.id, decision: next }), { tag: 'SessionWalkthroughReview.decide' });
+                    fireAndForget(decideReviewRunFinding({ scope, sessionId, runId: view.runId,
+                        ...(comment.reviewId ? { reviewId: comment.reviewId } : {}), commentId: comment.id, decision: next }), { tag: 'SessionWalkthroughReview.decide' });
                 }}
             />
         );

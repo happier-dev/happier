@@ -4,6 +4,7 @@ import type { CoordinationMessageRefV1 } from '@happier-dev/protocol/discussions
 import { TokenStorage, areCredentialsEqual, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
+import { computeCanonicalDomainSeparatedDigest, computeCanonicalDomainSeparatedKeyedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import type { ArtifactIdScopeV1 } from '@happier-dev/protocol';
 import type { ProjectSourceArtifactReadOptionsV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
 import { readCredentialAuthorityKind } from '@/auth/context/credentialAuthority';
@@ -72,6 +73,9 @@ type ArtifactContentReadOptions = NonNullable<Parameters<WorkflowDefinitionArtif
 type ArtifactContentRead = NonNullable<Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>>> & Readonly<{
     /** Local capability bound to this admitted resource's exact mode/key; never serialized. */
     openAssociatedContent?: (content: Readonly<{ t: 'plain'; v: unknown } | { t: 'encrypted'; c: string }>) => Promise<unknown>;
+    sealAssociatedContent?: (value: unknown) => Promise<Readonly<{ t: 'plain'; v: unknown } | { t: 'encrypted'; c: string }>>;
+    associatedContentCommitment?: (domain: string, components: readonly string[]) => string;
+    storageMode: 'plain' | 'e2ee';
     ownerDisplayName?: DecryptedArtifact['ownerDisplayName'];
     publicAudience?: DecryptedArtifact['publicAudience'];
     grants?: ArtifactAccessGrantsListResponseV1['grants'] | null;
@@ -653,7 +657,7 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
                 assertCurrent();
                 throwIfAborted(options?.signal);
                 const associatedDataKey = options?.includeAssociatedContentOpener ? artifactDataKeys.get(artifactId)?.dataKey : undefined;
-                return { artifactId: artifact.id, header, body: artifact.body,
+                return { artifactId: artifact.id, header, body: artifact.body, storageMode: artifact.storageMode,
                     ...(options?.includeAssociatedContentOpener ? { openAssociatedContent: async (content: Readonly<
                         { t: 'plain'; v: unknown } | { t: 'encrypted'; c: string }>): Promise<unknown> => {
                         assertCurrent(); throwIfAborted(options?.signal);
@@ -666,6 +670,19 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
                         assertCurrent(); throwIfAborted(options?.signal);
                         if (opened === null) throw artifactContentUnavailable();
                         return opened;
+                    }, sealAssociatedContent: async (value: unknown) => {
+                        assertCurrent(); throwIfAborted(options?.signal);
+                        if (artifact.storageMode === 'plain') return { t: 'plain' as const, v: value };
+                        if (!associatedDataKey) throw artifactContentUnavailable();
+                        if (!value || typeof value !== 'object' || Array.isArray(value)) throw artifactContentUnavailable();
+                        const c = await new ArtifactEncryption(associatedDataKey).encryptHeader(value as Record<string, unknown>);
+                        assertCurrent(); throwIfAborted(options?.signal);
+                        return { t: 'encrypted' as const, c };
+                    }, associatedContentCommitment: (domain: string, components: readonly string[]) => {
+                        assertCurrent(); throwIfAborted(options?.signal);
+                        if (artifact.storageMode === 'plain') return computeCanonicalDomainSeparatedDigest(domain, [artifactId, ...components]);
+                        if (!associatedDataKey) throw artifactContentUnavailable();
+                        return computeCanonicalDomainSeparatedKeyedDigest(associatedDataKey, domain, [artifactId, ...components]);
                     } } : {}),
                     ...(artifact.ownerDisplayName === undefined ? {} : { ownerDisplayName: artifact.ownerDisplayName }),
                     ...(artifact.sharedTeamIds === undefined ? {} : { sharedTeamIds: artifact.sharedTeamIds }),
