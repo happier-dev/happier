@@ -42,8 +42,13 @@ import { runTracedExternalActionStage } from '@/daemon/externalActions/externalA
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
+import type { ProjectSessionDefaultsV1 } from '@happier-dev/protocol/projects/projectSessionDefaultsV1';
 
 export type OpenedProjectAccountRow = Readonly<{ key: ProjectAccountRowKeyV1; revision: number; payload: ProjectAccountRowPayloadV1 | null }>;
+function payloadHasKind<K extends ProjectAccountRowKeyV1['kind']>(payload: ProjectAccountRowPayloadV1, kind: K):
+  payload is Extract<ProjectAccountRowPayloadV1, { key: { kind: K } }> {
+  return payload.key.kind === kind;
+}
 export type ActiveProjectAccountRowsSnapshot = ProjectAccountSnapshotV1 & Readonly<{
   source: 'network';
   organizations: readonly Readonly<{
@@ -93,7 +98,7 @@ function mergeProjectSnapshots(previous: ActiveProjectAccountRowsSnapshot, incom
       rows.set(identity, row);
       if (row.key.kind === 'workspace-ref') refs.add(identity);
       else if (row.key.kind === 'project-organization') organizations.add(identity);
-      else graphChanged = true;
+      else if (row.key.kind === 'relationship-graph') graphChanged = true;
     }
   }
   // Admitted rows and their projected facts are immutable within a revision.
@@ -233,6 +238,8 @@ function selectedProjection(snapshot: ActiveProjectAccountRowsSnapshot, selectio
     const key = selection.key;
     if (key.kind === 'workspace-ref') return resolveWorkspaceRefById(snapshot.workspaceRefs, key.id, key.serverId);
     if (key.kind === 'relationship-graph') return snapshot.relationships;
+    if (key.kind === 'project-session-defaults') return snapshot.rows.find(row =>
+      buildProjectAccountRowPhysicalKeyV1(row.key) === buildProjectAccountRowPhysicalKeyV1(key));
     return snapshot.organizations.find(row => row.key.serverId === key.serverId && row.key.projectKey === key.projectKey);
   }
   // The installed owner already projects these domains. A refs-only fence must
@@ -381,8 +388,8 @@ async function fetchSnapshot(input: ReadInput, mode: 'plain' | 'e2ee', selection
 }
 async function fetchChangedSnapshot(input: ProjectAccountRowsReadInput, mode: 'plain' | 'e2ee', keys: readonly ProjectAccountRowKeyV1[]): Promise<ActiveProjectAccountRowsSnapshot> {
   if (input.publication !== 'installed' || !canPublish(input) || input.selection) throw rowError('project_requester_authority_unavailable');
-  // Pinned services are not part of the daemon's Project projection; their hints change nothing it holds.
-  const uniqueKeys = [...new Map(keys.filter(key => key.kind !== 'services-organization')
+  // Pinned services and demanded defaults are outside the daemon's Project census.
+  const uniqueKeys = [...new Map(keys.filter(key => key.kind !== 'services-organization' && key.kind !== 'project-session-defaults')
     .map(key => [buildProjectAccountRowPhysicalKeyV1(key), key])).values()];
   // Graph endpoints and their hints may straddle feed pages. Read their complete
   // domain together, never an isolated graph against potentially missing refs.
@@ -419,8 +426,7 @@ function projectSnapshotFromRows(rows: readonly OpenedProjectAccountRow[], scope
       graphRevision = row.revision;
       if ('relationships' in payload.value) relationships.push(...payload.value.relationships);
     } else if (row.key.kind === 'project-organization') {
-      const value = payload.value;
-      if (!('id' in value) && !('relationships' in value) && !('pinnedEnvironmentIds' in value)) organizations.push({ key: row.key, revision: row.revision, value });
+      if (payloadHasKind(payload, 'project-organization')) organizations.push({ key: row.key, revision: row.revision, value: payload.value });
     }
   }
   const snapshot: ActiveProjectAccountRowsSnapshot = { workspaceRefs, relationships, source: 'network', organizations, rows, graphRevision,
@@ -615,6 +621,41 @@ export async function migrateProjectPromptStackSkillRules(input: Readonly<{
   });
 }
 
+/** Defaults are opened only on demand; this exact read never establishes a Project census. */
+export async function readProjectSessionDefaults(input: ReadInput & Readonly<{
+  serverId: string; projectKey: string;
+}>): Promise<Readonly<{ revision: number; defaults: ProjectSessionDefaultsV1 | null }> | null> {
+  return runWithServerHttpBaseUrl(baseUrl(input), async () => {
+    const key = { kind: 'project-session-defaults' as const, serverId: input.serverId, projectKey: input.projectKey };
+    const [row] = await fetchRows(input, await readMode(input), { key });
+    if (!row) return null;
+    if (!row.payload) return { revision: row.revision, defaults: null };
+    if (!payloadHasKind(row.payload, 'project-session-defaults')) throw rowError('project_account_row_invalid');
+    return { revision: row.revision, defaults: row.payload.value };
+  });
+}
+
+/** The editor supplies its observed revision, so a changed pick needs no pre-read. */
+export async function mutateProjectSessionDefaults(input: ReadInput & Readonly<{
+  serverId: string; projectKey: string; expectedRevision: number | 'absent'; defaults: ProjectSessionDefaultsV1 | null;
+}>): Promise<Readonly<{ status: 'updated'; revision: number; value: ProjectSessionDefaultsV1 | null }>
+  | Readonly<{ status: 'conflict'; revision: number }>> {
+  return runWithServerHttpBaseUrl(baseUrl(input), async () => {
+    const key = { kind: 'project-session-defaults' as const, serverId: input.serverId, projectKey: input.projectKey };
+    const result = await submitOpenedRows({ ...input, request: {
+      mutations: [{ key, expectedRevision: input.expectedRevision, payload: input.defaults === null ? null : { key, value: input.defaults } }],
+      expectedRefs: [], topologyChange: false,
+    } }, await readMode(input));
+    if (result.status === 'conflict') return { status: 'conflict', revision: result.revision };
+    if (result.status !== 'updated') throw rowError(`project_account_rows_${result.status}`);
+    const acknowledged = result.openedRows[0];
+    if (!acknowledged) throw rowError('project_account_row_acknowledgement_invalid');
+    if (!acknowledged.payload) return { status: 'updated', revision: acknowledged.revision, value: null };
+    if (!payloadHasKind(acknowledged.payload, 'project-session-defaults')) throw rowError('project_account_row_invalid');
+    return { status: 'updated', revision: acknowledged.revision, value: acknowledged.payload.value };
+  });
+}
+
 export async function mutateProjectAccountOrganization(input: ReadInput & Readonly<{
   serverId: string;
   projectKey: string;
@@ -664,7 +705,7 @@ export async function mutateProjectAccountOrganization(input: ReadInput & Readon
     const acknowledged = result.openedRows.find(value => buildProjectAccountRowPhysicalKeyV1(value.key) === identity);
     if (!acknowledged?.payload) throw rowError('project_account_row_acknowledgement_invalid');
     const payload = acknowledged.payload;
-    if ('id' in payload.value || 'relationships' in payload.value) throw rowError('project_account_row_invalid');
+    if (!payloadHasKind(payload, 'project-organization')) throw rowError('project_account_row_invalid');
     await acceptMutationSnapshot(input, applyAcknowledgedRows(snapshot, result.openedRows));
     return { status: 'updated', key, revision: acknowledged.revision, value: payload.value };
   });

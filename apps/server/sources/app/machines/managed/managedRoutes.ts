@@ -412,6 +412,8 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             ? ExternalActionRetainedWorkflowRootV1Schema.parse({ binding: projectExternalActionEncryptionBindingV2(rootBinding),
                 envelope: request.body.originalActionEnvelope }) : undefined;
         return await admitManagedAcquire({ custodianAccountId, requesterAccountId: request.userId,
+            ...(reviewedCreationAcquire && isSessionSpawnNewActionIdV1(rootBinding?.actionId ?? '') && rootBinding?.sessionPresetAcquisition
+                ? { sessionPresetAcquisition: rootBinding.sessionPresetAcquisition } : {}),
             ...(workflowRoot ? { workflowRoot } : {}),
             managedAcquireDelegation: request.externalActionExecutionAuthorizationBinding?.managedAcquireDelegation, authentication: readTeamOperationAuthenticationFromRequest(request), requestEnvelopeDigest, input: request.body });
     }));

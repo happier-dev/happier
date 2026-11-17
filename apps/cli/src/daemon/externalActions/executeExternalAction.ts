@@ -606,7 +606,9 @@ async function executeExternalActionRequest(input: Readonly<{
     if (recoveryOperand && !sameStrictJsonValue(managedAdmission, recoveryOperand)) {
       throw new TypeError('Managed recovery input mismatch');
     }
-    if (envelope.data.sessionSpawnAdmission || envelope.data.v === 2 && actionId.data === 'session.spawn_new'
+    const sessionPresetAcquisition = executionAuthorization?.success
+      ? executionAuthorization.data.binding.sessionPresetAcquisition : undefined;
+    if (envelope.data.sessionSpawnAdmission || sessionPresetAcquisition || envelope.data.v === 2 && actionId.data === 'session.spawn_new'
       && decodedInput && typeof decodedInput === 'object' && 'machineSetupPlanInput' in decodedInput
       && decodedInput.machineSetupPlanInput !== undefined) {
       const spawnTarget = executionAuthorization?.success
@@ -622,10 +624,14 @@ async function executeExternalActionRequest(input: Readonly<{
             executionTarget: { serverId: serverIdentityId, machineId: spawnTarget.machineId },
           }))
         : null;
-      if (!admittedSpawn || !sameStrictJsonValue(
-        projectApiTokenSessionSpawnAdmissionV1(admittedSpawn),
-        envelope.data.sessionSpawnAdmission,
-      )) throw new TypeError('Session admission input mismatch');
+      const defaults = (requesterContext?.invocation ?? controllerInvocation ?? input.localRootInvocation)?.sessionCreationDefaults;
+      const projectedSpawn = admittedSpawn ? projectApiTokenSessionSpawnAdmissionV1(admittedSpawn,
+        admittedSpawn.sessionPlacement?.kind === 'preset' && defaults?.managedPresetAcquisition
+          ? { managedPresetAcquisition: defaults.managedPresetAcquisition } : undefined) : undefined;
+      if (!projectedSpawn || !sameStrictJsonValue(projectedSpawn, envelope.data.sessionSpawnAdmission)
+        || !sameStrictJsonValue(projectedSpawn.managedPresetAcquisition, sessionPresetAcquisition
+          ? { selection: sessionPresetAcquisition.selection, controller: sessionPresetAcquisition.controller } : undefined))
+        throw new TypeError('Session admission input mismatch');
     }
   } catch (error) {
     refuseExternalActionPhase('opened_input_admission', input.currentMachineId, error);

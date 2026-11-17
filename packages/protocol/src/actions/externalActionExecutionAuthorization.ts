@@ -1,5 +1,5 @@
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
-import { isWorkspaceSyncRelationshipWriteActionId } from './actionIds.js';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1, isWorkspaceSyncRelationshipWriteActionId } from './actionIds.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 export { bindScmRefineSavedSessionV1, verifyScmRefineSavedSessionV1, isScmRefineInputPurposeV1,
@@ -35,6 +35,7 @@ import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, E
   projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1,
   projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1,
   projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1,
+  projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1,
   projectExternalActionDiscussionEnvelopeIdV1,
   ExternalActionExecutionAuthorizationV1Schema,
   type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1,
@@ -118,6 +119,9 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
       || boundSync.sourceWorkspaceRefId !== sync.sourceWorkspaceRefId
       || boundSync.relationshipId !== (sync.relationshipId ?? deriveWorkspaceSyncRelationshipId(binding.requestId))
       : boundSync !== undefined) return false;
+    if (binding.sessionPresetAcquisition !== undefined && input.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1
+      || !sameStrictJsonValue(binding.sessionPresetAcquisition ? { selection: binding.sessionPresetAcquisition.selection,
+        controller: binding.sessionPresetAcquisition.controller } : undefined, input.envelope.sessionSpawnAdmission?.managedPresetAcquisition)) return false;
     return binding.actionId === input.actionId && binding.machineId === input.machineId
       && binding.requestId === input.envelope.requestId
       && binding.idempotencyKey === input.envelope.idempotencyKey
@@ -129,6 +133,7 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
       && binding.discussionId === projectExternalActionDiscussionEnvelopeIdV1(input)
       && (metadataEnvironmentId === undefined || binding.environmentId === metadataEnvironmentId)
       && sameStrictJsonValue(binding.deploymentReadAdmission, projectExternalActionDeploymentReadEnvelopeAdmissionV1(input))
+      && sameStrictJsonValue(binding.projectSessionDefaultsAdmission, projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1(input))
       && sameStrictJsonValue(binding.deploymentPreparationAdmission, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1(input))
       && sameStrictJsonValue(binding.presetPreparationAdmission, projectExternalActionPresetPreparationEnvelopeAdmissionV1(input))
       && (binding.deploymentLinkAdmission === undefined

@@ -2286,7 +2286,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       execute?: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>) => {
       const position = childPositions.get(childId) ?? 0;
       childPositions.set(childId, position + 1);
-      const caller = hostInternal ? childContext : ordinaryChildContext(childContext);
+      const inheritedCaller = hostInternal ? childContext : ordinaryChildContext(childContext);
+      // A child is a new authored invocation. Only transport of the same spawn
+      // retains its captured creation context.
+      const { sessionCreationDefaults: _parentCreationDefaults, ...caller } = inheritedCaller;
       const parentRequestId = normalizeId(caller.actionRequestId);
       const derivedContext = parentRequestId ? { ...caller,
         actionRequestId: deriveActionChildRequestIdV1({ parentRequestId, parentActionId: actionId,
@@ -2443,7 +2446,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       : spec.inputSchema.safeParse(admittedInput);
     const { paths: secretInputPaths, missingPaths: missingSecretPaths } = readConfidentialActionInputAdmission(
       actionId, admittedInput, deps.listContributedActionDefinitions);
-    const parsed = !inputParse.success && isMissingActionSecretInputError(inputParse.error, admittedInput, missingSecretPaths)
+    let parsed = !inputParse.success && isMissingActionSecretInputError(inputParse.error, admittedInput, missingSecretPaths)
       ? { success: true as const, data: admittedInput } : inputParse;
     if (!parsed.success) {
       const invalid = actionInputValidationFailure(parsed.error);
@@ -2494,6 +2497,18 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ctx = { ...ctx, serverId, defaultSessionId: explicitSessionId,
           defaultSessionMachineId: sameSession ? ctx.defaultSessionMachineId : undefined,
           externalActionTarget: undefined, executionRunTargetMachineId: undefined };
+      }
+    }
+    if (actionId === 'session.spawn_new' && !existingAdmission && deps.prepareSessionSpawnNewInput) {
+      try {
+        const prepared = await deps.prepareSessionSpawnNewInput(
+          SessionSpawnNewActionInputV2Schema.parse(parsed.data), ctx);
+        parsed = { success: true as const, data: prepared.input };
+        ctx = { ...ctx, sessionCreationDefaults: prepared.defaults };
+      } catch (error) {
+        const failure = parseActionExecuteFailure(error);
+        if (failure) return failure;
+        throw error;
       }
     }
     const discussionParticipantLaunch = existingAdmission?.discussionParticipantLaunch

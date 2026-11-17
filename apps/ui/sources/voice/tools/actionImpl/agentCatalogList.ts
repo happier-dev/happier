@@ -44,7 +44,7 @@ import {
 import { isVoiceProvidersFeatureEnabledForSpawn } from './spawnSessionModelSelection';
 import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { getAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapshot';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { PersistedBackendTargetRefV2Schema, buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -365,22 +365,25 @@ function resolveBackendCatalogItemsForVoiceTool(params: Readonly<{
     .map(({ item }) => item);
 }
 
-export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string; serverId?: string; acpCatalogSnapshot?: AcpCatalogSnapshotV1; backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null }>): Promise<AgentsBackendsListOutput> {
+export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDisabled?: boolean; limit?: number; machineId?: string; serverId?: string; accountLifetime?: ServerAccountScopeLifetime; acpCatalogSnapshot?: AcpCatalogSnapshotV1; backendEnabledByTargetKey?: Readonly<Record<string, boolean>> | null }>): Promise<AgentsBackendsListOutput> {
   const includeDisabled = params.includeDisabled === true;
   const limitRaw = Number(params.limit);
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.max(1, Math.floor(limitRaw)) : null;
   const machineId = normalizeId(params.machineId);
-  const serverId = normalizeId(params.serverId ?? getActiveServerSnapshot()?.serverId) || null;
-  const settingsScope = storage.getState().settingsScope;
-  const snapshot = settingsScope && serverId && areServerProfileIdentifiersEquivalent(settingsScope.serverId, serverId)
-    ? getAcpCatalogSnapshot(settingsScope)?.catalog : null;
+  const serverId = params.accountLifetime?.scope.serverId ?? (normalizeId(params.serverId ?? getActiveServerSnapshot()?.serverId) || null);
+  const lifetime = params.accountLifetime ?? await (async () => {
+    const resolution = serverId ? await resolveServerCredentialAccountScope(serverId) : null;
+    return resolution?.kind === 'bound' ? captureServerCredentialAccountScopeLifetime(resolution) : null;
+  })();
+  const settingsScope = lifetime?.scope ?? null;
+  const snapshot = settingsScope ? getAcpCatalogSnapshot(settingsScope)?.catalog : null;
   const acpCatalogSnapshot = params.acpCatalogSnapshot ?? snapshot;
   if (!acpCatalogSnapshot || acpCatalogSnapshot.status !== 'ready') {
     throw Object.assign(new Error('acp_catalog_unavailable'), { code: 'acp_catalog_unavailable' });
   }
   const daemonMergedProjectionInputs = machineId
     ? await (async () => {
-      const inputs = await loadDaemonMergedProjectionInputs({ machineId, serverId, sections: DAEMON_AGENT_CATALOG_SECTIONS });
+      const inputs = await loadDaemonMergedProjectionInputs({ machineId, serverId, accountLifetime: lifetime, sections: DAEMON_AGENT_CATALOG_SECTIONS });
       if (!inputs) return null;
       return {
         mergedProviderProjectionById: inputs.mergedProviderProjectionById,
@@ -398,13 +401,12 @@ export async function listAgentBackendsForVoiceTool(params: Readonly<{ includeDi
     const target = PersistedBackendTargetRefV2Schema.safeParse(item.agentTarget);
     return target.success ? [target.data] : [];
   });
-  const scope = machineId && serverId ? await resolveServerCredentialAccountScope(serverId) : null;
-  const lifetime = scope?.kind === 'bound' ? captureServerCredentialAccountScopeLifetime(scope) : null;
-  // An inventory Action is demand even when Home has no mounted Agent picker.
-  // The inventory owner reuses its projection/probe caches and readiness policy.
-  if (lifetime) await refreshMachineAgents({ serverId: lifetime.scope.serverId, machineId, accountLifetime: lifetime });
+  // A concrete Machine narrows automatic selection to its ready Agents. Without
+  // one, the same owner publishes Account preference for a future guest.
+  if (machineId && lifetime) await refreshMachineAgents({ serverId: lifetime.scope.serverId, machineId, accountLifetime: lifetime });
   const machineAgents = machineId && lifetime ? readMachineAgentsForScope(lifetime, machineId).agents : [];
-  const preferred = resolvePreferredBackendTarget({ ...readLastUsedBackendSelection(settingsScope), availableBackendTargets, machineAgents });
+  const preferred = resolvePreferredBackendTarget({ ...readLastUsedBackendSelection(settingsScope), availableBackendTargets,
+    ...(machineId ? { machineAgents } : {}) });
   const defaultTargetKey = preferred ? buildBackendTargetKeyV2(preferred) : undefined;
   const scopedItems = machineId ? items.map(item => {
     const agent = findMachineAgentForBackendTargetKey(machineAgents, item.targetKey);

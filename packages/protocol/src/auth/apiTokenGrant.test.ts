@@ -11,6 +11,7 @@ import {
   resolveEffectiveApiTokenPermissionModeV1,
   type ApiTokenGrantV1,
   projectApiTokenSessionSpawnAdmissionV1,
+  ApiTokenSessionSpawnAdmissionV1Schema,
 } from './apiTokenGrant.js';
 
 const modelA = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'a' };
@@ -29,6 +30,20 @@ const spawn = {
 const grant = (patch: Partial<ApiTokenGrantV1> = {}): ApiTokenGrantV1 => ApiTokenGrantV1Schema.parse({ ...full, ...patch });
 
 describe('API token grant admission', () => {
+  it('projects only an exact preset/controller pair and excludes acquisition custody', () => {
+    const acquisition = { selection: { kind: 'preset' as const, homeId: 'home', id: 'preset', revision: 3 },
+      controller: { machineId: 'm1', installationId: 'install' }, requestId: 'acquire' };
+    const authored = { ...spawn, sessionPlacement: { kind: 'preset', homeId: 'home', presetId: 'preset' } };
+    const projected = projectApiTokenSessionSpawnAdmissionV1(authored, { managedPresetAcquisition: acquisition });
+    expect(projected.managedPresetAcquisition).toEqual({ selection: acquisition.selection, controller: acquisition.controller });
+    expect(ApiTokenSessionSpawnAdmissionV1Schema.parse(projected)).toEqual(projected);
+    expect(() => projectApiTokenSessionSpawnAdmissionV1(spawn, { managedPresetAcquisition: acquisition })).toThrow();
+    for (const patch of [{ sessionPlacement: { kind: 'preset', homeId: 'home', presetId: 'other' } },
+      { executionTarget: { serverId: 'home', machineId: 'other' } },
+      { executionTarget: { serverId: 'other', machineId: 'm1' } }]) {
+      expect(() => projectApiTokenSessionSpawnAdmissionV1({ ...authored, ...patch }, { managedPresetAcquisition: acquisition })).toThrow();
+    }
+  });
   it('admits Automatic only for one Environment deploy grant and never amplifies the saved consent', () => {
     const automatic = { ...full,
       actions: { families: [], ids: ['deployments.deploy', 'action.operations.get'] },

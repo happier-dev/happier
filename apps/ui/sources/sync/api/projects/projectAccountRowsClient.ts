@@ -16,6 +16,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { resolveProjectAccountReferenceV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import type { ProjectSessionDefaultsV1 } from '@happier-dev/protocol/projects/projectSessionDefaultsV1';
 
 type Account = Pick<LazyActionAccountContext, 'serverId' | 'accountId' | 'credentials' | 'request' | 'assertCurrent' | 'resolveAccountEncryption'>;
 type Caller = Pick<ActionExecutorContext, 'serverId' | 'runtimeAccountId' | 'externalActionCredential' | 'externalActionExecutionAuthorization'>;
@@ -68,6 +69,11 @@ export function createUiProjectAccountRowsClient(account: Account) {
   };
   return {
     read,
+    readSessionDefaults: async (project: QualifiedProjectKeyV1, signal?: AbortSignal) =>
+      (await getOwner()).readSessionDefaults(project, signal),
+    mutateSessionDefaults: async (input: Readonly<{
+      serverId: string; projectKey: string; expectedRevision: number | 'absent'; defaults: ProjectSessionDefaultsV1 | null; signal?: AbortSignal;
+    }>) => (await getOwner()).mutateSessionDefaults(input),
     waitForWorkspaceRef: async (address: WorkspaceAddressV1, signal?: AbortSignal) => {
       // Only the app retains a hint-maintained projection. Finite foreign-Home readers
       // take their census at their next Action and have no pending push to await.
@@ -114,7 +120,7 @@ export function createUiProjectAccountRowsClient(account: Account) {
     },
     mutateOrganization: async (input: Readonly<{
       serverId: string; projectKey: string; expectedRevision?: number | 'absent'; signal?: AbortSignal;
-      mutate(value: ProjectAccountOrganizationV1): ProjectAccountOrganizationV1;
+      mutate(value: ProjectAccountOrganizationV1): ProjectAccountOrganizationV1 | Promise<ProjectAccountOrganizationV1>;
     }>) => (await getOwner()).mutateOrganizationAtRevision(input),
   };
 }

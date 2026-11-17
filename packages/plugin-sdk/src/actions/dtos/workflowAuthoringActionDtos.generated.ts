@@ -1013,6 +1013,67 @@ export type WorkflowAuthoringActionInputById = {
                                 environmentId: string;
                                 service: string;
                                 database: string;
+                            } | {
+                                savedSecretId: string;
+                                accountId: string;
+                                workspace: {
+                                    serverId: string;
+                                    workspaceId: string;
+                                    machineId: string;
+                                    rootPath: string;
+                                    kind?: undefined;
+                                } | {
+                                    v: 2;
+                                    kind: 'managed';
+                                    serverId: string;
+                                    workspaceId: string;
+                                    managedId: string;
+                                    controller: {
+                                        machineId: string;
+                                        installationId: string;
+                                    };
+                                    rootPath: string;
+                                    machineId?: undefined;
+                                };
+                                installationId: string;
+                                projectKey: string;
+                                kind: 'manual';
+                            } | {
+                                source: {
+                                    kind: 'env_file';
+                                    path: string;
+                                    variable: string;
+                                } | {
+                                    kind: 'service';
+                                    serviceId: string;
+                                    variable: string;
+                                } | {
+                                    kind: 'sqlite_file';
+                                    path: string;
+                                };
+                                accountId: string;
+                                workspace: {
+                                    serverId: string;
+                                    workspaceId: string;
+                                    machineId: string;
+                                    rootPath: string;
+                                    kind?: undefined;
+                                } | {
+                                    v: 2;
+                                    kind: 'managed';
+                                    serverId: string;
+                                    workspaceId: string;
+                                    managedId: string;
+                                    controller: {
+                                        machineId: string;
+                                        installationId: string;
+                                    };
+                                    rootPath: string;
+                                    machineId?: undefined;
+                                };
+                                installationId: string;
+                                projectKey: string;
+                                kind: 'worktree';
                             };
                         } | {
                             kind: 'environment';
@@ -1116,6 +1177,116 @@ export type WorkflowAuthoringActionInputById = {
                             name: string;
                             description: null | string;
                         };
+                        subject?: undefined | {
+                            checkId: string;
+                            sourceInstanceId: string;
+                            kind: 'healthCheck';
+                            serverId: string;
+                        } | {
+                            kind: 'app';
+                            serverId: string;
+                            projectSourceId: string;
+                        } | {
+                            kind: 'approvalProfile';
+                            serverId: string;
+                            profileId: string;
+                        } | {
+                            kind: 'backup';
+                            serverId: string;
+                            environmentId: string;
+                        } | {
+                            kind: 'database';
+                            serverId: string;
+                            target: {
+                                kind: 'environment';
+                                environmentId: string;
+                                service: string;
+                                database: string;
+                            } | {
+                                savedSecretId: string;
+                                accountId: string;
+                                workspace: {
+                                    serverId: string;
+                                    workspaceId: string;
+                                    machineId: string;
+                                    rootPath: string;
+                                    kind?: undefined;
+                                } | {
+                                    v: 2;
+                                    kind: 'managed';
+                                    serverId: string;
+                                    workspaceId: string;
+                                    managedId: string;
+                                    controller: {
+                                        machineId: string;
+                                        installationId: string;
+                                    };
+                                    rootPath: string;
+                                    machineId?: undefined;
+                                };
+                                installationId: string;
+                                projectKey: string;
+                                kind: 'manual';
+                            } | {
+                                source: {
+                                    kind: 'env_file';
+                                    path: string;
+                                    variable: string;
+                                } | {
+                                    kind: 'service';
+                                    serviceId: string;
+                                    variable: string;
+                                } | {
+                                    kind: 'sqlite_file';
+                                    path: string;
+                                };
+                                accountId: string;
+                                workspace: {
+                                    serverId: string;
+                                    workspaceId: string;
+                                    machineId: string;
+                                    rootPath: string;
+                                    kind?: undefined;
+                                } | {
+                                    v: 2;
+                                    kind: 'managed';
+                                    serverId: string;
+                                    workspaceId: string;
+                                    managedId: string;
+                                    controller: {
+                                        machineId: string;
+                                        installationId: string;
+                                    };
+                                    rootPath: string;
+                                    machineId?: undefined;
+                                };
+                                installationId: string;
+                                projectKey: string;
+                                kind: 'worktree';
+                            };
+                        } | {
+                            kind: 'environment';
+                            serverId: string;
+                            environmentId: string;
+                        } | {
+                            kind: 'plugin';
+                            serverId: string;
+                            pluginId: string;
+                            subjectKindId: string;
+                            identity: unknown;
+                        } | {
+                            kind: 'session';
+                            serverId: string;
+                            sessionId: string;
+                        } | {
+                            serverId: string;
+                            machineId: string;
+                            kind: 'machine';
+                        } | {
+                            serverId: string;
+                            projectKey: string;
+                            kind: 'project';
+                        };
                     } | {
                         kind: 'pluginEvent';
                         eventRef: {
@@ -1164,6 +1335,8 @@ export type WorkflowAuthoringActionInputById = {
                             c: string;
                         };
                         enabled: boolean;
+                        subjectKind?: string | undefined;
+                        subjectKey?: string | undefined;
                     } | {
                         kind: 'schedule';
                         schedule: {
@@ -1795,6 +1968,67 @@ export type WorkflowAuthoringActionResultById = {
                                     environmentId: string;
                                     service: string;
                                     database: string;
+                                } | {
+                                    savedSecretId: string;
+                                    accountId: string;
+                                    workspace: ({
+                                        serverId: string;
+                                        workspaceId: string;
+                                        machineId: string;
+                                        rootPath: string;
+                                        kind?: undefined;
+                                    } | {
+                                        v: 2;
+                                        kind: 'managed';
+                                        serverId: string;
+                                        workspaceId: string;
+                                        managedId: string;
+                                        controller: {
+                                            machineId: string;
+                                            installationId: string;
+                                        };
+                                        rootPath: string;
+                                        machineId?: undefined;
+                                    }) & JsonValue;
+                                    installationId: string;
+                                    projectKey: string;
+                                    kind: 'manual';
+                                } | {
+                                    source: {
+                                        kind: 'env_file';
+                                        path: string;
+                                        variable: string;
+                                    } | {
+                                        kind: 'service';
+                                        serviceId: string;
+                                        variable: string;
+                                    } | {
+                                        kind: 'sqlite_file';
+                                        path: string;
+                                    };
+                                    accountId: string;
+                                    workspace: ({
+                                        serverId: string;
+                                        workspaceId: string;
+                                        machineId: string;
+                                        rootPath: string;
+                                        kind?: undefined;
+                                    } | {
+                                        v: 2;
+                                        kind: 'managed';
+                                        serverId: string;
+                                        workspaceId: string;
+                                        managedId: string;
+                                        controller: {
+                                            machineId: string;
+                                            installationId: string;
+                                        };
+                                        rootPath: string;
+                                        machineId?: undefined;
+                                    }) & JsonValue;
+                                    installationId: string;
+                                    projectKey: string;
+                                    kind: 'worktree';
                                 };
                             } | {
                                 kind: 'environment';
@@ -1898,6 +2132,116 @@ export type WorkflowAuthoringActionResultById = {
                                 name: string;
                                 description: null | string;
                             };
+                            subject?: undefined | {
+                                checkId: string;
+                                sourceInstanceId: string;
+                                kind: 'healthCheck';
+                                serverId: string;
+                            } | {
+                                kind: 'app';
+                                serverId: string;
+                                projectSourceId: string;
+                            } | {
+                                kind: 'approvalProfile';
+                                serverId: string;
+                                profileId: string;
+                            } | {
+                                kind: 'backup';
+                                serverId: string;
+                                environmentId: string;
+                            } | {
+                                kind: 'database';
+                                serverId: string;
+                                target: {
+                                    kind: 'environment';
+                                    environmentId: string;
+                                    service: string;
+                                    database: string;
+                                } | {
+                                    savedSecretId: string;
+                                    accountId: string;
+                                    workspace: ({
+                                        serverId: string;
+                                        workspaceId: string;
+                                        machineId: string;
+                                        rootPath: string;
+                                        kind?: undefined;
+                                    } | {
+                                        v: 2;
+                                        kind: 'managed';
+                                        serverId: string;
+                                        workspaceId: string;
+                                        managedId: string;
+                                        controller: {
+                                            machineId: string;
+                                            installationId: string;
+                                        };
+                                        rootPath: string;
+                                        machineId?: undefined;
+                                    }) & JsonValue;
+                                    installationId: string;
+                                    projectKey: string;
+                                    kind: 'manual';
+                                } | {
+                                    source: {
+                                        kind: 'env_file';
+                                        path: string;
+                                        variable: string;
+                                    } | {
+                                        kind: 'service';
+                                        serviceId: string;
+                                        variable: string;
+                                    } | {
+                                        kind: 'sqlite_file';
+                                        path: string;
+                                    };
+                                    accountId: string;
+                                    workspace: ({
+                                        serverId: string;
+                                        workspaceId: string;
+                                        machineId: string;
+                                        rootPath: string;
+                                        kind?: undefined;
+                                    } | {
+                                        v: 2;
+                                        kind: 'managed';
+                                        serverId: string;
+                                        workspaceId: string;
+                                        managedId: string;
+                                        controller: {
+                                            machineId: string;
+                                            installationId: string;
+                                        };
+                                        rootPath: string;
+                                        machineId?: undefined;
+                                    }) & JsonValue;
+                                    installationId: string;
+                                    projectKey: string;
+                                    kind: 'worktree';
+                                };
+                            } | {
+                                kind: 'environment';
+                                serverId: string;
+                                environmentId: string;
+                            } | {
+                                kind: 'plugin';
+                                serverId: string;
+                                pluginId: string;
+                                subjectKindId: string;
+                                identity: JsonValue;
+                            } | {
+                                kind: 'session';
+                                serverId: string;
+                                sessionId: string;
+                            } | {
+                                serverId: string;
+                                machineId: string;
+                                kind: 'machine';
+                            } | {
+                                serverId: string;
+                                projectKey: string;
+                                kind: 'project';
+                            };
                         } | {
                             kind: 'pluginEvent';
                             eventRef: {
@@ -1946,6 +2290,8 @@ export type WorkflowAuthoringActionResultById = {
                                 c: string;
                             };
                             enabled: boolean;
+                            subjectKind?: string | undefined;
+                            subjectKey?: string | undefined;
                         } | {
                             kind: 'schedule';
                             schedule: {

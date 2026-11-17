@@ -127,9 +127,9 @@ export function createActionSettingsProvider(params: Readonly<{
  * settings plus the profile reference and applies the same overlay itself.
  */
 export function createSessionActionSettingsView(provider: RuntimeActionSettingsProvider,
-  readSessionMetadata: () => Readonly<{ approvalProfileId?: unknown; machineId?: unknown; approvalProfileTeamOrGroupDerived?: unknown }> | null | undefined,
+  readSessionMetadata: () => Readonly<{ approvalProfileId?: unknown; approvalProfileTeamOrGroupDerived?: unknown }> | null | undefined,
 ): RuntimeActionSettingsProvider {
-  let last: Readonly<{ settings: ActionsSettingsV1; profileId: unknown; machineId: unknown; derived: boolean;
+  let last: Readonly<{ settings: ActionsSettingsV1; profileId: unknown; derived: boolean;
     catalog: readonly ReadableApprovalProfileV1[] | undefined; effective: ActionsSettingsV1 }> | undefined;
   return { ...provider, getActionsSettings: () => {
     const settings = provider.getActionsSettings();
@@ -137,9 +137,9 @@ export function createSessionActionSettingsView(provider: RuntimeActionSettingsP
     const catalog = provider.getApprovalProfiles?.();
     // Enablement runs once per tool per listing; rebuild only when a fact changed.
     if (last?.settings === settings && last.profileId === metadata?.approvalProfileId
-      && last.machineId === metadata?.machineId && last.catalog === catalog && last.derived === (metadata?.approvalProfileTeamOrGroupDerived === true)) return last.effective;
-    const approvalProfileId = metadata ? resolveSessionApprovalProfileReferenceV1(metadata, settings) : null;
-    last = { settings, profileId: metadata?.approvalProfileId, machineId: metadata?.machineId, derived: metadata?.approvalProfileTeamOrGroupDerived === true,
+      && last.catalog === catalog && last.derived === (metadata?.approvalProfileTeamOrGroupDerived === true)) return last.effective;
+    const approvalProfileId = metadata ? resolveSessionApprovalProfileReferenceV1(metadata) : null;
+    last = { settings, profileId: metadata?.approvalProfileId, derived: metadata?.approvalProfileTeamOrGroupDerived === true,
       catalog, effective: resolveProfiledActionsSettingsV1(settings, approvalProfileId,
         { boundProfile: approvalProfileId ? bindApprovalProfileV1(catalog ?? [], approvalProfileId) : null,
           approvalProfileTeamOrGroupDerived: metadata?.approvalProfileTeamOrGroupDerived === true }).settings };

@@ -891,6 +891,24 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   let machines: Awaited<ReturnType<typeof listCurrentAccountMachines>> | undefined;
   let managedAdmission = projectExternalActionManagedAdmissionV1(input.actionId, input.input);
   let scopedController: (NonNullable<ManagedMachineV1['controllerAccess']> & ManagedMachineV1['controller']) | undefined;
+  const sessionCreationDefaults = input.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+    ? input.invocation?.sessionCreationDefaults : undefined;
+  const sessionInput = input.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+    ? SessionSpawnNewActionInputV2Schema.safeParse(input.input) : undefined;
+  const sessionSpawnAdmission = sessionInput?.success
+    ? projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(sessionInput.data),
+      sessionInput.data.sessionPlacement?.kind === 'preset' && sessionCreationDefaults?.managedPresetAcquisition
+        ? { managedPresetAcquisition: sessionCreationDefaults.managedPresetAcquisition } : undefined)
+    : undefined;
+  const sessionPresetAcquisition = sessionSpawnAdmission?.managedPresetAcquisition;
+  if (sessionPresetAcquisition && sessionCreationDefaults?.managedPresetControllerAccess) {
+    if (sessionPresetAcquisition.selection.homeId !== input.serverIdentityId) return fail('server_target_mismatch');
+    if (input.target.kind !== 'machine' || sessionPresetAcquisition.controller.machineId !== input.target.machineId)
+      return fail('controller_retired');
+    // Preset routing supplies only this carrier's key. Home still admits the
+    // exact preset-backed Session; this does not create direct Machine access.
+    scopedController = { ...sessionPresetAcquisition.controller, ...sessionCreationDefaults.managedPresetControllerAccess };
+  }
   if (managedAdmission && managedAdmission.actionId !== 'machines.managed.power.set'
     && accountId && input.serverIdentityId && input.target.kind === 'machine' && !workflow) {
     const managed = managedAdmission.input;
@@ -1062,15 +1080,13 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   const workflowPreparation = workflowPlacement?.kind === 'bound' ? workflowPlacement.workflowPreparation : undefined;
   const envelope = (workflowPlacement?.kind === 'bound' ? workflowPlacement.retainedRoot?.envelope : undefined) ?? (binding && material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: envelopeInput, randomBytes,
     ...(workflowPreparation ? { workflowPreparation } : {}),
-    ...(actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && input.input !== null && typeof input.input === 'object'
-      && 'machineSetupPlanInput' in input.input && input.input.machineSetupPlanInput !== undefined ? {
-      sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(
-        SessionSpawnNewActionInputV2Schema.parse(input.input))),
-    } : {}),
+    ...(sessionSpawnAdmission && (sessionSpawnAdmission.machineSetupRequested || sessionPresetAcquisition)
+      ? { sessionSpawnAdmission } : {}),
   })
     : ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target: input.target, input: envelopeInput,
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-        ...(workflowPreparation ? { workflowPreparation } : {}) }));
+        ...(workflowPreparation ? { workflowPreparation } : {}),
+        ...(sessionPresetAcquisition ? { sessionSpawnAdmission } : {}) }));
   if (input.executeOnRequester) {
     const minted = await phase('mint_authorization', () => mintExternalActionExecutionAuthorization({
       actionId, envelope, machineId: input.target.machineId,
@@ -1239,7 +1255,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       } else if (foreign || input.invocation) {
         if (!installed.installationPublicKey) return fail('admission_unavailable', 'dispatch.requester_installation_key');
         if (foreign && !retainedRequester) {
-          const refusal = await confirmDisclosure({ id: machine!.id, custodian: machine!.access?.custodian });
+          const refusal = await confirmDisclosure({ id: destinationId, custodian: machine?.access?.custodian });
           if (refusal) return refusal;
         }
         authorization = sealExternalActionRequesterAccountContextV1({ authorization,
@@ -2020,7 +2036,7 @@ export async function admitExternalActionMachineNpmProfileAcquisition(input: Rea
   const projection = input.authorization.requesterHttpProjection;
   if (!projection) throw Object.assign(new Error('authentication_required'), { code: 'authentication_required' });
   const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(input.authorization.binding.actionId);
-  const body = { v: 1 as const, nativePurpose: 'machine_npm_profile_acquisition' as const,
+  const body = { v: 1 as const, binding: input.authorization.binding, nativePurpose: 'machine_npm_profile_acquisition' as const,
     ...(input.authorization.binding.admittedMachineRole ? { admittedMachineRole: input.authorization.binding.admittedMachineRole } : {}) };
   const headers = await projection.createRequestHeaders({ effectActionId: input.authorization.binding.actionId,
     method: 'POST', path, body, ...(input.signal ? { signal: input.signal } : {}) });
@@ -2605,7 +2621,7 @@ export async function verifyExternalActionExecutionAuthorizationCurrent(input: R
   const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(
     input.authorization.binding.actionId,
   );
-  const body = { v: 1 as const,
+  const body = { v: 1 as const, binding: input.authorization.binding,
     ...(input.authorization.binding.admittedMachineRole ? { admittedMachineRole: input.authorization.binding.admittedMachineRole } : {}),
     ...(input.managedFiniteWakeTarget ? { managedFiniteWakeTarget: input.managedFiniteWakeTarget } : {}),
     ...(input.retainedDiscussionSource ? { retainedDiscussionSource: input.retainedDiscussionSource } : {}) };

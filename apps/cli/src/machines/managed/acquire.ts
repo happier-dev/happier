@@ -128,13 +128,20 @@ async function withManagedPresetPolicy(input: ManagedMachineAcquisitionDriverInp
     acquisition: Extract<ManagedAcquireInputV1, { selection: { kind: 'preset' } }>,
     hydrator: ManagedPresetHydrator, delegated: boolean, accept: (policy: Omit<ReturnType<typeof resolveMachineRetentionPolicyV1>, 'category'>,
         provisioner: MachineProvisionerContributionV1, open: ManagedPresetDefinitionOpener) => Promise<ManagedMachineFullV1>, signal?: AbortSignal,
-    localPlacement?: Pick<ManagedMachineExecutionOptions, 'expectedProvisioner' | 'onLocalSessionPlacement'>) {
-    const response = await axios.post<unknown>(`${input.serverUrl.replace(/\/+$/, '')}/v1/machines/presets/get`,
-        { homeId: acquisition.selection.homeId, id: acquisition.selection.id },
-        { headers: { Authorization: `Bearer ${input.credentials.token}` }, ...(signal ? { signal } : {}) });
-    const read = ManagedMachinePresetGetResultV1Schema.parse(response.data);
-    if (read.kind === 'refused') throw new ManagedMachineControllerError(read.code);
-    const preset = read.preset;
+    localPlacement?: Pick<ManagedMachineExecutionOptions, 'expectedProvisioner' | 'onLocalSessionPlacement'>,
+    admittedRoot?: ExternalActionExecutionAuthorizationV1['binding']) {
+    const scoped = admittedRoot?.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 ? admittedRoot.sessionPresetAcquisition : undefined;
+    const snapshot = scoped?.admission;
+    if (scoped?.admission && (!isDeepStrictEqual(scoped.selection, acquisition.selection)
+        || !isDeepStrictEqual(scoped.controller, acquisition.controller))) throw new ManagedMachineControllerError('request_conflict');
+    const preset = snapshot ? { ...snapshot.preset, ...snapshot.presetContent } : await (async () => {
+        const response = await axios.post<unknown>(`${input.serverUrl.replace(/\/+$/, '')}/v1/machines/presets/get`,
+            { homeId: acquisition.selection.homeId, id: acquisition.selection.id },
+            { headers: { Authorization: `Bearer ${input.credentials.token}` }, ...(signal ? { signal } : {}) });
+        const read = ManagedMachinePresetGetResultV1Schema.parse(response.data);
+        if (read.kind === 'refused') throw new ManagedMachineControllerError(read.code);
+        return read.preset;
+    })();
     if (preset.revision !== acquisition.selection.revision) throw new ManagedMachineControllerError('request_conflict');
     return await hydrator.withPresetDefinition(preset, async (opened, open) => {
         if (!opened.launch) throw new ManagedMachineControllerError('credential_unavailable');
@@ -153,7 +160,7 @@ async function withManagedPresetPolicy(input: ManagedMachineAcquisitionDriverInp
         if (!prepared) throw new ManagedMachineControllerError('credential_unavailable');
         const { category: _category, ...policy } = resolveMachineRetentionPolicyV1({ billing: provisioner.billing,
             nativeCapabilities: provisioner.retention, presetOverride: preset,
-            ...(delegated ? {} : { machineOverride: { retention: acquisition.retention,
+            ...((snapshot?.delegated ?? delegated) ? {} : { machineOverride: { retention: acquisition.retention,
                 wakeOnAcceptedMessage: acquisition.wakeOnAcceptedMessage } }) });
         return await accept(policy, provisioner, open);
     }, signal);
@@ -529,7 +536,7 @@ export type ManagedSessionTargetRequest = Readonly<{
     sessionId: string;
     /** Authoritative Home birth association, supplied after Session commitment. */
     committedSessionId?: string;
-    /** The admitted requester's Account; only the row's custodian may place a Session on it (see below). */
+    /** The admitted requester; a resource-bound creator uses its Home-committed Session association. */
     requesterAccountId: string;
     /** The tracked Session's lifetime: it ends the authority, the channels and the target's holder custody. */
     lifetime: AbortSignal;
@@ -604,7 +611,10 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             const readCurrent = input.readPolicyCurrent;
             const initial = await readCurrent(request.managedId, preparationSignal);
             if (!initial || initial.id !== request.managedId) throw new ManagedMachineControllerError('admission_unavailable');
-            if (initial.custodianAccountId !== request.requesterAccountId) throw new ManagedMachineControllerError('managed_target_access_unavailable');
+            const admitsRequester = (row: ManagedMachineV1): boolean => row.custodianAccountId === request.requesterAccountId
+                || (row.acquisitionMode === 'resource-bound' && Boolean(request.committedSessionId)
+                    && row.enrollmentAccountId === request.requesterAccountId);
+            if (!admitsRequester(initial)) throw new ManagedMachineControllerError('managed_target_access_unavailable');
             // The authority ends with the Session, and also when the row stops admitting this requester
             // (custody handed over, row gone): every running channel is aborted then.
             const revoked = new AbortController();
@@ -614,7 +624,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             const options = { requestId: `session-target:${request.sessionId}`, signal: lifetime, context: request.operation };
             const admit = async (row: ManagedMachineV1 | null, signal = lifetime): Promise<ManagedMachineFullV1> => {
                 if (!row || row.id !== request.managedId) { revoked.abort(); throw new ManagedMachineControllerError('admission_unavailable'); }
-                if (row.custodianAccountId !== request.requesterAccountId) {
+                if (!admitsRequester(row)) {
                     revoked.abort();
                     throw new ManagedMachineControllerError('managed_target_access_unavailable');
                 }
@@ -1249,7 +1259,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         const machine = needsPresetPolicy && isManagedPresetAcquireInputV1(acquisition)
                             ? await withManagedPresetPolicy(input, acquisition, hydrator, delegated,
                                 (policy, provisioner, open) => admit(policy, { provisioner, open }), options.signal,
-                                options.acquisitionMode === 'resource-bound' ? options : undefined)
+                                options.acquisitionMode === 'resource-bound' ? options : undefined,
+                                options.context?.externalActionExecutionAuthorization?.binding)
                             : await admit();
                         if (hasAttendedEnrollmentRequirement(machine.enrollmentIdentity)) {
                             throw new ManagedMachineControllerError('enrollment_attendance_required');

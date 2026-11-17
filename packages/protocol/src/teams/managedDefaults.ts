@@ -62,6 +62,12 @@ export type ManagedDefaultDecision<T> = Readonly<{
   lock: Readonly<{ organization: string; supportUrl?: string }> | null;
   groupConflict: boolean;
 }>;
+/** Names come from the admitted selected-scope read, never inferred from ids. */
+export type ManagedDefaultSourceNamesV1 = Readonly<{
+  teamName?: string | null;
+  projectName?: string | null;
+  organization?: string | null;
+}>;
 export type ManagedAgentSandboxAvailability =
   | Readonly<{ status: 'enabled' | 'disabled' }>
   | Readonly<{ status: 'unavailable'; reason: 'not_available_in_sandbox_type' }>;
@@ -77,6 +83,11 @@ export type ResolvedManagedSessionDefaults = Readonly<{
   }>;
   model: ManagedDefaultDecision<SessionModelSelectionV1 | SessionModelSelectionV2 | null>;
   connectedServices: readonly ManagedDefaultDecision<ManagedConnectedServiceDefaultV1>[];
+}>;
+export type ResolvedInheritedManagedSessionDefaults = Readonly<{
+  [Field in keyof ResolvedManagedSessionDefaults]: Field extends 'connectedServices'
+    ? readonly (ResolvedManagedSessionDefaults['connectedServices'][number] & { names: ManagedDefaultSourceNamesV1 })[]
+    : ResolvedManagedSessionDefaults[Field] & { names: ManagedDefaultSourceNamesV1 };
 }>;
 
 export type ManagedSessionDefaultsLayerV1 = Readonly<{
@@ -96,13 +107,14 @@ export function projectManagedSessionDefaultsLayers(
   input: ManagedSessionDefaultsContext & Readonly<{
     agentTargetKey: string;
     explicitChoices?: ManagedSessionExplicitChoicesV1;
+    inheritBelowProjectScope?: 'personal-project' | 'project';
   }>,
 ): ManagedSessionDefaultsLayerProjectionV1 {
   const groups = (input.groupIds ?? []).flatMap(id => input.teamDefaults?.groups[id] ? [input.teamDefaults.groups[id]] : []);
   const layers: ManagedSessionDefaultsLayerV1[] = [
     { source: 'explicit', defaults: input.explicitChoices ?? null },
-    ...(input.personalProjectDefaults ? [{ source: 'personal-project' as const, defaults: input.personalProjectDefaults }] : []),
-    ...(input.projectDefaults ? [{ source: 'project' as const, defaults: input.projectDefaults }] : []),
+    ...(!input.inheritBelowProjectScope && input.personalProjectDefaults ? [{ source: 'personal-project' as const, defaults: input.personalProjectDefaults }] : []),
+    ...(input.inheritBelowProjectScope !== 'project' && input.projectDefaults ? [{ source: 'project' as const, defaults: input.projectDefaults }] : []),
     { source: 'member', defaults: input.memberDefaults ?? null },
     ...groups.map(defaults => ({ source: 'group' as const, defaults })),
     { source: 'team', defaults: input.teamDefaults?.team ?? null },
@@ -151,6 +163,7 @@ export function resolveManagedAgentSandbox(input: ManagedAgentSandboxContext): R
 /** One decision per field/purpose. Defaults express intent and never confer resource access. */
 export function resolveManagedSessionDefaults(input: ManagedSessionDefaultsContext & ManagedAgentSandboxContext & Readonly<{
   agentTargetKey: string; explicitChoices?: ManagedSessionExplicitChoicesV1;
+  inheritBelowProjectScope?: 'personal-project' | 'project';
 }>): ResolvedManagedSessionDefaults {
   const projection = projectManagedSessionDefaultsLayers(input);
   const groups = projection.layers.filter(layer => layer.source === 'group').flatMap(layer => layer.defaults ? [layer.defaults] : []);
@@ -192,6 +205,30 @@ export function resolveManagedSessionDefaults(input: ManagedSessionDefaultsConte
     model: decide(defaults => defaults.modelByAgentTargetKey?.[targetKey], (left, right) => sameStrictJsonValue(modelIdentity(left), modelIdentity(right))),
     connectedServices: [...purposeKeys].sort().map(key => decide(defaults =>
       defaults.connectedServicesByAgentTargetKey?.[targetKey]?.find(value => purposeKey(value) === key))),
+  };
+}
+
+/** The editor's clear result: the same resolver, with its edited project layer
+ * and higher personal layer excluded at the canonical projection. */
+export function resolveInheritedManagedSessionDefaults(input: ManagedSessionDefaultsContext & ManagedAgentSandboxContext & Readonly<{
+  scope: 'personal-project' | 'project';
+  names: ManagedDefaultSourceNamesV1;
+  agentTarget?: AgentExecutionTargetV1;
+}>): ResolvedInheritedManagedSessionDefaults {
+  const resolved = resolveManagedSessionDefaults({ ...input,
+    inheritBelowProjectScope: input.scope,
+    agentTargetKey: input.agentTarget ? buildBackendTargetKeyV2(input.agentTarget) : '',
+    ...(input.agentTarget ? { explicitChoices: { defaultAgentTarget: input.agentTarget } } : {}),
+  });
+  const names = input.names;
+  return {
+    agentTarget: { ...resolved.agentTarget, names },
+    approvalProfileId: { ...resolved.approvalProfileId, names },
+    placement: { ...resolved.placement, names },
+    permissionMode: { ...resolved.permissionMode, names },
+    agentSandbox: { ...resolved.agentSandbox, names },
+    model: { ...resolved.model, names },
+    connectedServices: resolved.connectedServices.map(decision => ({ ...decision, names })),
   };
 }
 

@@ -53,6 +53,7 @@ import {
 
 import { createMachineInventoryProbe } from './probeMachineInventory';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
+import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
 type ModelInventoryItem = Readonly<{
   id: string;
@@ -382,7 +383,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
   | 'spawnProfilesList'
   | 'spawnConnectedServicesList'
   | 'spawnMcpServersPreview'
-> & Required<Pick<ActionExecutorDeps, 'readAccountAcpCatalog' | 'agentsModelsList' | 'machinesList'>> {
+> & Required<Pick<ActionExecutorDeps, 'readAccountAcpCatalog' | 'agentsModelsList' | 'machinesList' | 'spawnConnectedServicesList'>> {
   const metadataReaders = new Map<string, () => Promise<Record<string, unknown> | null>>();
   let accountProfilePromise: Promise<AccountProfile | null> | null = null;
   if (params.readCurrentSessionMetadata) metadataReaders.set(params.sessionId, params.readCurrentSessionMetadata);
@@ -904,12 +905,15 @@ export function createCliActionInventoryDeps(params: Readonly<{
         return { ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}), supportedServiceIds: [], items: [] };
       }
       const agentId = normalizedAgentId;
-      const operationContext = params.savedSecretOperationContext;
-      const credentials = operationContext?.credentials ?? params.credentials;
-      if (!credentials) {
+      const availableCredentials = params.savedSecretOperationContext?.credentials ?? params.credentials;
+      if (!availableCredentials) {
         const { ConnectedServicesDefaultUnavailableError } = await import("@/session/services/spawnConnectedServicesDefaults");
         throw new ConnectedServicesDefaultUnavailableError('connected_account_purpose_catalog_unavailable');
       }
+      const custody = resolveRequesterSavedSecretActionCustody({ credentials: availableCredentials,
+        authorization: context?.externalActionExecutionAuthorization, operationContext: params.savedSecretOperationContext });
+      const operationContext = custody.operation;
+      const credentials = custody.credentials;
       const authorize = params.authorizeConnectedAccountRequest;
       const authorizeRequest = authorize ? (request: Readonly<{ method: string; path: string; body?: unknown }>) =>
         authorize(context, request) : undefined;
@@ -939,7 +943,9 @@ export function createCliActionInventoryDeps(params: Readonly<{
       const accountProfile = await runWithServerHttpBaseUrl(store.serverHttpBaseUrl, () => fetchAccountProfile({ token: credentials.token,
           signal: context?.signal, authorizeRequest }));
       await assertCurrent();
-      const accountSettings = includeDefaults ? await readAccountSettings() : null;
+      const accountSettings = includeDefaults
+        ? operationContext ? operationContext.readSnapshot()?.settings ?? null : await readAccountSettings()
+        : null;
       await assertCurrent();
       // Labels are optional display hints. Partial catalogs retain readable
       // neighbors; unavailable metadata must not withdraw credential inventory.

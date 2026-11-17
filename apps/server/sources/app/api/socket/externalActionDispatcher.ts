@@ -708,6 +708,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             const routing = {
                 serverIdentityId: await getServerIdentityId(), machineId,
                 ...(capturedMachineAdmission ? { admittedMachineRole: capturedMachineAdmission.role } : {}),
+                ...(capturedMachineAdmission?.sessionPresetAcquisition
+                    ? { sessionPresetAcquisition: capturedMachineAdmission.sessionPresetAcquisition } : {}),
                 actionId: request.actionId, requestId: request.envelope.requestId ?? randomUUID(),
                 ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}),
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope), target,
@@ -960,7 +962,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         let machineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
         if (capturedMachineAdmission) {
             const { managedCreationRecovery: _recovery, managedAcquireDelegation: _delegation,
-                ...publicAdmission } = capturedMachineAdmission;
+                sessionPresetAcquisition: _sessionPreset, ...publicAdmission } = capturedMachineAdmission;
             machineAdmission = publicAdmission;
         }
         const placement: ExternalActionDaemonPlacementV1 = {

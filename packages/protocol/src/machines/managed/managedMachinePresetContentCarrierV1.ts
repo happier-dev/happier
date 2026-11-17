@@ -1,4 +1,5 @@
 import tweetnacl from 'tweetnacl';
+import { SavedSecretResourceRecipientEnvelopeV1Schema } from '../../account/settings/savedSecretCatalogV1.js';
 
 import { decodeBase64, encodeBase64, readCanonicalPaddedBase64DecodedLength } from '../../crypto/base64.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -45,3 +46,24 @@ export const ManagedMachinePresetLaunchNameOverrideV1Schema = lazyZodSchema(() =
 export type ManagedMachinePresetLaunchNameOverrideV1 = Readonly<
   z.infer<typeof ManagedMachinePresetLaunchNameOverrideV1Schema>
 >;
+
+/** Persisted recipient envelopes are Account-scoped; Machine recipients are not a valid shape. */
+export const ManagedMachinePresetRecipientV1Schema = lazyZodSchema(() => z.strictObject({
+  accountId: z.string().check(z.trim(), z.minLength(1)),
+  envelope: SavedSecretResourceRecipientEnvelopeV1Schema,
+}));
+export type ManagedMachinePresetRecipientV1 = Readonly<z.infer<typeof ManagedMachinePresetRecipientV1Schema>>;
+
+export const ManagedMachinePresetRecipientsV1Schema = lazyZodSchema(() => z.array(
+  ManagedMachinePresetRecipientV1Schema,
+).check(z.refine((items) => new Set(items.map(item => item.accountId)).size === items.length,
+  { message: 'Duplicate accountId' })));
+export type ManagedMachinePresetRecipientsV1 = ReadonlyArray<ManagedMachinePresetRecipientV1>;
+
+
+/** The canonical mode-tagged snapshot retained by a managed admission. */
+export const ManagedAdmissionPresetContentV1Schema = lazyZodSchema(() => z.strictObject({
+  content: ManagedMachinePresetStoredContentCarrierV1Schema,
+  recipients: ManagedMachinePresetRecipientsV1Schema,
+}));
+export type ManagedAdmissionPresetContentV1 = z.infer<typeof ManagedAdmissionPresetContentV1Schema>;

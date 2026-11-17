@@ -13,6 +13,7 @@ export type MachinePresetsActionInputById = {
             kind: 'team';
             teamId: string;
         };
+        sharedWithTeamId?: string | undefined;
         projection?: 'revisions' | undefined;
         includeArchived?: boolean | undefined;
         cursor?: string | undefined;
@@ -37,7 +38,6 @@ export type MachinePresetsActionInputById = {
             kind: 'team';
             teamId: string;
         };
-        homeId: string;
         recipients: {
             accountId: string;
             envelope: {
@@ -45,6 +45,7 @@ export type MachinePresetsActionInputById = {
                 recipientContentPublicKeyFingerprint: string;
             };
         }[];
+        homeId: string;
         contentEncryptionMode: 'e2ee' | 'plain';
         retention?: undefined | {
             afterMs: number;
@@ -153,6 +154,7 @@ export type MachinePresetsActionResultById = {
                     recipientContentPublicKeyFingerprint: string;
                 };
             }[];
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             configurationRevision?: number | undefined;
             setupRevision?: number | undefined;
             controller?: undefined | {
@@ -217,6 +219,7 @@ export type MachinePresetsActionResultById = {
                     recipientContentPublicKeyFingerprint: string;
                 };
             }[];
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             configurationRevision?: number | undefined;
             setupRevision?: number | undefined;
             controller?: undefined | {
@@ -276,6 +279,7 @@ export type MachinePresetsActionResultById = {
                     recipientContentPublicKeyFingerprint: string;
                 };
             }[];
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             configurationRevision?: number | undefined;
             setupRevision?: number | undefined;
             controller?: undefined | {
@@ -332,6 +336,7 @@ export type MachinePresetsActionResultById = {
                     recipientContentPublicKeyFingerprint: string;
                 };
             }[];
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             configurationRevision?: number | undefined;
             setupRevision?: number | undefined;
             controller?: undefined | {
@@ -388,6 +393,7 @@ export type MachinePresetsActionResultById = {
                     recipientContentPublicKeyFingerprint: string;
                 };
             }[];
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             configurationRevision?: number | undefined;
             setupRevision?: number | undefined;
             controller?: undefined | {
@@ -444,6 +450,7 @@ export type MachinePresetsActionResultById = {
                     recipientContentPublicKeyFingerprint: string;
                 };
             }[];
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             configurationRevision?: number | undefined;
             setupRevision?: number | undefined;
             controller?: undefined | {

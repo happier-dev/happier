@@ -78,6 +78,7 @@ export type DeploymentsActionInputById = {
                     hostname: string;
                     recordId: string;
                 }[];
+                tunnelOwnership?: 'adopted' | 'created' | undefined;
                 connectors?: undefined | {
                     machineId: string;
                     installationId: string;
@@ -281,6 +282,7 @@ export type DeploymentsActionInputById = {
                     hostname: string;
                     recordId: string;
                 }[];
+                tunnelOwnership?: 'adopted' | 'created' | undefined;
                 connectors?: undefined | {
                     machineId: string;
                     installationId: string;
@@ -379,6 +381,7 @@ export type DeploymentsActionInputById = {
             template?: string | undefined;
         };
         explicit?: undefined | {
+            telemetryMachineId?: string | undefined;
             buildMachineId?: string | undefined;
             controllerMachineId?: string | undefined;
             retainPreviousDeployments?: number | undefined;
@@ -466,10 +469,17 @@ export type DeploymentsActionInputById = {
             purpose: 'standard';
             deployerMode: 'chosen' | 'managers' | 'members';
             controllerMachineId: string;
-            deployerPrincipals?: undefined | {
-                principalKind: 'account' | 'teamGroup';
-                principalId: string;
-            }[];
+            deployerPrincipals?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
             buildMachineId?: string | undefined;
             retainPreviousDeployments?: number | undefined;
         } | {
@@ -527,6 +537,8 @@ export type DeploymentsActionInputById = {
             name: string;
             phase: 'build' | 'runtime';
             grantRef?: string | undefined;
+            managedBy?: 'telemetry' | undefined;
+            valueFormat?: 'otelAuthorizationHeader' | undefined;
         }[];
         projectSourceId?: string | undefined;
         newProject?: undefined | {
@@ -838,7 +850,6 @@ export type DeploymentsActionInputById = {
                     windowName?: string | undefined;
                 };
             };
-            roleId?: string | undefined;
             modelSelection?: undefined | {
                 v: 1;
                 ref: {
@@ -913,16 +924,13 @@ export type DeploymentsActionInputById = {
                     };
                 }> | undefined;
             };
-            checkoutCreationDraft?: null | undefined | {
-                kind: 'git_worktree';
-                displayName: string;
-                baseRef: null | string;
-                branchMode?: 'existing' | 'new' | undefined;
-            };
-            transcriptStorage?: 'direct' | 'persisted' | undefined;
             permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
-            configuration?: unknown;
             approvalProfileId?: null | string | undefined;
+            configuration?: unknown;
+            roleId?: string | undefined;
+            manager?: undefined | {
+                sessionId: string;
+            };
             sessionPlacement?: undefined | {
                 kind: 'machine';
                 target: {
@@ -1114,9 +1122,6 @@ export type DeploymentsActionInputById = {
                     directory: string;
                 };
             };
-            manager?: undefined | {
-                sessionId: string;
-            };
             sourceContext?: undefined | {
                 v: 1;
                 kind: 'session_replay';
@@ -1171,6 +1176,12 @@ export type DeploymentsActionInputById = {
                     installationId: string;
                 };
             };
+            checkoutCreationDraft?: null | undefined | {
+                kind: 'git_worktree';
+                displayName: string;
+                baseRef: null | string;
+                branchMode?: 'existing' | 'new' | undefined;
+            };
             discussionParticipant?: undefined | {
                 discussionId: string;
                 participantSlotId: string;
@@ -1184,6 +1195,7 @@ export type DeploymentsActionInputById = {
             };
             agentModeId?: string | undefined;
             unlistedTools?: 'ask' | 'deny' | undefined;
+            transcriptStorage?: 'direct' | 'persisted' | undefined;
             placementOrigin?: undefined | {
                 kind: 'machine_pool';
                 poolId: string;
@@ -1341,6 +1353,116 @@ export type DeploymentsActionInputById = {
                         name: string;
                         description: null | string;
                     };
+                    subject?: undefined | {
+                        checkId: string;
+                        sourceInstanceId: string;
+                        kind: 'healthCheck';
+                        serverId: string;
+                    } | {
+                        kind: 'app';
+                        serverId: string;
+                        projectSourceId: string;
+                    } | {
+                        kind: 'approvalProfile';
+                        serverId: string;
+                        profileId: string;
+                    } | {
+                        kind: 'backup';
+                        serverId: string;
+                        environmentId: string;
+                    } | {
+                        kind: 'database';
+                        serverId: string;
+                        target: {
+                            kind: 'environment';
+                            environmentId: string;
+                            service: string;
+                            database: string;
+                        } | {
+                            savedSecretId: string;
+                            accountId: string;
+                            workspace: {
+                                serverId: string;
+                                workspaceId: string;
+                                machineId: string;
+                                rootPath: string;
+                                kind?: undefined;
+                            } | {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                                machineId?: undefined;
+                            };
+                            installationId: string;
+                            projectKey: string;
+                            kind: 'manual';
+                        } | {
+                            source: {
+                                kind: 'env_file';
+                                path: string;
+                                variable: string;
+                            } | {
+                                kind: 'service';
+                                serviceId: string;
+                                variable: string;
+                            } | {
+                                kind: 'sqlite_file';
+                                path: string;
+                            };
+                            accountId: string;
+                            workspace: {
+                                serverId: string;
+                                workspaceId: string;
+                                machineId: string;
+                                rootPath: string;
+                                kind?: undefined;
+                            } | {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                                machineId?: undefined;
+                            };
+                            installationId: string;
+                            projectKey: string;
+                            kind: 'worktree';
+                        };
+                    } | {
+                        kind: 'environment';
+                        serverId: string;
+                        environmentId: string;
+                    } | {
+                        kind: 'plugin';
+                        serverId: string;
+                        pluginId: string;
+                        subjectKindId: string;
+                        identity: unknown;
+                    } | {
+                        kind: 'session';
+                        serverId: string;
+                        sessionId: string;
+                    } | {
+                        serverId: string;
+                        machineId: string;
+                        kind: 'machine';
+                    } | {
+                        serverId: string;
+                        projectKey: string;
+                        kind: 'project';
+                    };
                 } | {
                     kind: 'pluginEvent';
                     eventRef: {
@@ -1389,6 +1511,8 @@ export type DeploymentsActionInputById = {
                         c: string;
                     };
                     enabled: boolean;
+                    subjectKind?: string | undefined;
+                    subjectKey?: string | undefined;
                 } | {
                     kind: 'schedule';
                     schedule: {
@@ -1829,13 +1953,13 @@ export type DeploymentsActionInputById = {
                     name: string;
                     description: null | string;
                 };
+                approvalProfileId?: null | string | undefined;
                 inputs?: Record<string, unknown> | undefined;
                 executionTarget?: undefined | {
                     kind: 'detached_run';
                 } | {
                     kind: 'session';
                 };
-                approvalProfileId?: null | string | undefined;
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;
@@ -2010,10 +2134,17 @@ export type DeploymentsActionInputById = {
                 teamId: string;
             };
         };
-        deployerPrincipals?: undefined | {
-            principalKind: 'account' | 'teamGroup';
-            principalId: string;
-        }[];
+        deployerPrincipals?: ({
+            kind: 'account';
+            accountId: string;
+        } | {
+            kind: 'group';
+            teamId: string;
+            groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
+        })[] | undefined;
         buildMachineId?: string | undefined;
         managedRetention?: 'keep' | 'until-delete' | undefined;
         preview?: undefined | {
@@ -2188,7 +2319,7 @@ export type DeploymentsActionInputById = {
                     kind: 'remap';
                     source: {
                         kind: 'deploymentFact';
-                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                     } | {
                         kind: 'deploymentFact';
                         fact: 'domainUrl';
@@ -2291,7 +2422,7 @@ export type DeploymentsActionInputById = {
             } | {
                 source: {
                     kind: 'deploymentFact';
-                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                 } | {
                     kind: 'deploymentFact';
                     fact: 'domainUrl';
@@ -2314,6 +2445,8 @@ export type DeploymentsActionInputById = {
                 name: string;
                 phase: 'build' | 'runtime';
                 grantRef?: string | undefined;
+                managedBy?: 'telemetry' | undefined;
+                valueFormat?: 'otelAuthorizationHeader' | undefined;
             } | {
                 source: {
                     ref: string;
@@ -2371,8 +2504,8 @@ export type DeploymentsActionInputById = {
         };
         copyIntentCommitment?: string | undefined;
     } | {
-        purpose: 'preview' | 'standard';
         serverId: string;
+        purpose: 'preview' | 'standard';
         requestKey: string;
         protection: 'nonProduction' | 'production';
         deployerMode: 'chosen' | 'managers' | 'members';
@@ -2388,10 +2521,17 @@ export type DeploymentsActionInputById = {
                 teamId: string;
             };
         };
-        deployerPrincipals?: undefined | {
-            principalKind: 'account' | 'teamGroup';
-            principalId: string;
-        }[];
+        deployerPrincipals?: ({
+            kind: 'account';
+            accountId: string;
+        } | {
+            kind: 'group';
+            teamId: string;
+            groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
+        })[] | undefined;
         managedRetention?: 'keep' | 'until-delete' | undefined;
         previewCompanionOfEnvironmentId?: string | undefined;
         name?: string | undefined;
@@ -2631,7 +2771,7 @@ export type DeploymentsActionInputById = {
                     kind: 'remap';
                     source: {
                         kind: 'deploymentFact';
-                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                     } | {
                         kind: 'deploymentFact';
                         fact: 'domainUrl';
@@ -2739,6 +2879,8 @@ export type DeploymentsActionInputById = {
             name: string;
             phase: 'build' | 'runtime';
             grantRef?: string | undefined;
+            managedBy?: 'telemetry' | undefined;
+            valueFormat?: 'otelAuthorizationHeader' | undefined;
         }[];
         generatedSecretAudience?: undefined | {
             groupGrants?: string[] | undefined;
@@ -2766,10 +2908,30 @@ export type DeploymentsActionInputById = {
         patch?: undefined | {
             protection?: 'nonProduction' | 'production' | undefined;
             deployerMode?: 'chosen' | 'managers' | 'members' | undefined;
-            deployerPrincipals?: undefined | {
-                principalKind: 'account' | 'teamGroup';
-                principalId: string;
-            }[];
+            deployerPrincipals?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
+            dataEditorMode?: 'chosen' | 'managers' | 'members' | 'off' | undefined;
+            dataEditors?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
+            dataAgentAccess?: 'none' | 'read' | undefined;
             ingress?: null | undefined | {
                 kind: 'cloudflareTunnel';
             } | {
@@ -2828,7 +2990,7 @@ export type DeploymentsActionInputById = {
                 } | {
                     source: {
                         kind: 'deploymentFact';
-                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                     } | {
                         kind: 'deploymentFact';
                         fact: 'domainUrl';
@@ -2854,6 +3016,8 @@ export type DeploymentsActionInputById = {
                     name: string;
                     phase: 'build' | 'runtime';
                     grantRef?: string | undefined;
+                    managedBy?: 'telemetry' | undefined;
+                    valueFormat?: 'otelAuthorizationHeader' | undefined;
                 } | {
                     source: {
                         kind: 'secret';
@@ -2948,7 +3112,7 @@ export type DeploymentsActionInputById = {
                 bindingBlueprints: {
                     source: {
                         kind: 'deploymentFact';
-                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                     } | {
                         kind: 'deploymentFact';
                         fact: 'domainUrl';
@@ -2971,6 +3135,8 @@ export type DeploymentsActionInputById = {
                     name: string;
                     phase: 'build' | 'runtime';
                     grantRef?: string | undefined;
+                    managedBy?: 'telemetry' | undefined;
+                    valueFormat?: 'otelAuthorizationHeader' | undefined;
                 }[];
                 data: ({
                     kind: 'managed';
@@ -3028,8 +3194,9 @@ export type DeploymentsActionInputById = {
                     };
                     destinationBackup?: undefined | {
                         configuration: {
-                            config: unknown;
                             occurrenceId: string;
+                            config: unknown;
+                            configRevision: number;
                             retention: {
                                 kind: 'keep';
                                 last?: number | undefined;
@@ -3056,7 +3223,6 @@ export type DeploymentsActionInputById = {
                                 configKey: 'destination';
                                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                             }[];
-                            configRevision: number;
                             destinationRef: {
                                 pluginId: string;
                                 localId: string;
@@ -3084,6 +3250,7 @@ export type DeploymentsActionInputById = {
         mode?: 'preview' | undefined;
         defaultsFor?: 'alerts' | 'backupSchedule' | 'backups' | 'previews' | undefined;
         creationDefaults?: undefined | {
+            telemetryMachineId?: string | undefined;
             buildMachineId?: string | undefined;
             controllerMachineId?: string | undefined;
             retainPreviousDeployments?: number | undefined;
@@ -3121,6 +3288,16 @@ export type DeploymentsActionInputById = {
                 destination?: unknown;
             }[];
         };
+    };
+    readonly "deployments.environments.telemetry.set": {
+        serverId: string;
+        environmentId: string;
+        expectedRevision: number;
+        collector?: null | undefined | {
+            machineId: string;
+        };
+        rotate?: true | undefined;
+        confirmDelete?: true | undefined;
     };
     readonly "deployments.environments.controller.set": {
         controllerMachineId: string;
@@ -3544,10 +3721,10 @@ export type DeploymentsActionInputById = {
         title?: string | undefined;
     };
     readonly "deployments.targets.unlink": {
-        expectedRevision: number;
         serverId: string;
-        requestKey: string;
         environmentId: string;
+        expectedRevision: number;
+        requestKey: string;
         targetLinkId: string;
         expectedTargetLinkRevision: number;
         detachKeepRunning?: boolean | undefined;
@@ -3847,8 +4024,9 @@ export type DeploymentsActionInputById = {
     readonly "deployments.backups.configure": {
         intent: 'initializeAndSave';
         configuration: {
-            config: unknown;
             occurrenceId: string;
+            config: unknown;
+            configRevision: number;
             sources: ({
                 kind: 'dump';
                 sourceId: string;
@@ -3866,7 +4044,6 @@ export type DeploymentsActionInputById = {
                 configKey: 'destination';
                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
             }[];
-            configRevision: number;
             destinationRef: {
                 pluginId: string;
                 localId: string;
@@ -3966,8 +4143,9 @@ export type DeploymentsActionInputById = {
     } | {
         intent: 'save';
         configuration: {
-            config: unknown;
             occurrenceId: string;
+            config: unknown;
+            configRevision: number;
             sources: ({
                 kind: 'dump';
                 sourceId: string;
@@ -3985,7 +4163,6 @@ export type DeploymentsActionInputById = {
                 configKey: 'destination';
                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
             }[];
-            configRevision: number;
             destinationRef: {
                 pluginId: string;
                 localId: string;
@@ -4071,8 +4248,9 @@ export type DeploymentsActionInputById = {
     } | {
         intent: 'test';
         configuration: {
-            config: unknown;
             occurrenceId: string;
+            config: unknown;
+            configRevision: number;
             sources: ({
                 kind: 'dump';
                 sourceId: string;
@@ -4090,7 +4268,6 @@ export type DeploymentsActionInputById = {
                 configKey: 'destination';
                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
             }[];
-            configRevision: number;
             destinationRef: {
                 pluginId: string;
                 localId: string;
@@ -4279,56 +4456,6 @@ export type DeploymentsActionInputById = {
         expectedTargetLinkRevision: number;
     };
     readonly "deployments.teardown": {
-        expectedRevision: number;
-        serverId: string;
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        requestKey: string;
-        environmentId: string;
-        targetLinkId: string;
-        expectedTargetLinkRevision: number;
-        dataCreation: {
-            runId: string;
-            invocationId: string;
-        };
-        volumes?: ({
-            name: string;
-            disposition: 'delete';
-            confirmation: string;
-        } | {
-            name: string;
-            disposition: 'keep';
-        })[] | undefined;
-        machines?: string[] | undefined;
-        removeEnvironment?: true | undefined;
-    } | {
-        expectedRevision: number;
-        serverId: string;
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        requestKey: string;
-        environmentId: string;
-        targetLinkId: string;
-        expectedTargetLinkRevision: number;
-        volumes?: ({
-            name: string;
-            disposition: 'delete';
-            confirmation: string;
-        } | {
-            name: string;
-            disposition: 'keep';
-        })[] | undefined;
-        machines?: string[] | undefined;
-        removeEnvironment?: true | undefined;
-    } | {
-        expectedRevision: number;
-        serverId: string;
-        requestKey: string;
-        environmentId: string;
-        targetLinkId: string;
-        expectedTargetLinkRevision: number;
-        detachKeepRunning: true;
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        teardownDeploymentId?: string | undefined;
-    } | {
         reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
         contentArtifactId: string;
         contentHeaderVersion: number;
@@ -4353,10 +4480,10 @@ export type DeploymentsActionInputById = {
         reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
         nothingDeployed: true;
         removeEnvironment: true;
-        expectedRevision: number;
         serverId: string;
-        requestKey: string;
         environmentId: string;
+        expectedRevision: number;
+        requestKey: string;
         targetLinkId: string;
         expectedTargetLinkRevision: number;
         volumes?: ({
@@ -4367,6 +4494,56 @@ export type DeploymentsActionInputById = {
             name: string;
             disposition: 'keep';
         })[] | undefined;
+    } | {
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        serverId: string;
+        environmentId: string;
+        expectedRevision: number;
+        requestKey: string;
+        targetLinkId: string;
+        expectedTargetLinkRevision: number;
+        dataCreation: {
+            runId: string;
+            invocationId: string;
+        };
+        machines?: string[] | undefined;
+        volumes?: ({
+            name: string;
+            disposition: 'delete';
+            confirmation: string;
+        } | {
+            name: string;
+            disposition: 'keep';
+        })[] | undefined;
+        removeEnvironment?: true | undefined;
+    } | {
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        serverId: string;
+        environmentId: string;
+        expectedRevision: number;
+        requestKey: string;
+        targetLinkId: string;
+        expectedTargetLinkRevision: number;
+        machines?: string[] | undefined;
+        volumes?: ({
+            name: string;
+            disposition: 'delete';
+            confirmation: string;
+        } | {
+            name: string;
+            disposition: 'keep';
+        })[] | undefined;
+        removeEnvironment?: true | undefined;
+    } | {
+        serverId: string;
+        environmentId: string;
+        expectedRevision: number;
+        requestKey: string;
+        targetLinkId: string;
+        expectedTargetLinkRevision: number;
+        detachKeepRunning: true;
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        teardownDeploymentId?: string | undefined;
     } | {
         serverId: string;
         environmentId: string;
@@ -4391,8 +4568,8 @@ export type DeploymentsActionInputById = {
         serverId: string;
         includeRetainedTargetLinkCleanup?: true | undefined;
         backupPolicy?: undefined | {
-            config: unknown;
             occurrenceId: string;
+            config: unknown;
             retention: {
                 kind: 'keep';
                 last?: number | undefined;
@@ -4471,6 +4648,7 @@ export type DeploymentsActionInputById = {
         serverId: string;
         environmentId: string;
         expectedRevision: number;
+        telemetryMachineId?: null | string | undefined;
     } | {
         set: ({
             access: 'pull' | 'pushPull';
@@ -4488,7 +4666,7 @@ export type DeploymentsActionInputById = {
         } | {
             source: {
                 kind: 'deploymentFact';
-                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
             } | {
                 kind: 'deploymentFact';
                 fact: 'domainUrl';
@@ -4514,6 +4692,8 @@ export type DeploymentsActionInputById = {
             name: string;
             phase: 'build' | 'runtime';
             grantRef?: string | undefined;
+            managedBy?: 'telemetry' | undefined;
+            valueFormat?: 'otelAuthorizationHeader' | undefined;
         } | {
             source: {
                 kind: 'secret';
@@ -4591,6 +4771,7 @@ export type DeploymentsActionInputById = {
         serverId: string;
         environmentId: string;
         expectedRevision: number;
+        telemetryMachineId?: null | string | undefined;
         providerVariables?: undefined | {
             useOurs: string[];
             keepTheirs: string[];
@@ -4714,6 +4895,23 @@ export type DeploymentsActionResultById = {
                         text: string;
                     }[];
                 };
+                cause?: undefined | {
+                    kind: 'certificate' | 'dns' | 'heartbeat' | 'http' | 'tcp';
+                    vantage: 'outside' | 'sameMachine';
+                    observerMachineId: string;
+                    reason?: string | undefined;
+                    httpStatus?: number | undefined;
+                    expectStatus?: number | undefined;
+                    providerCode?: number | undefined;
+                    keywordMatched?: boolean | undefined;
+                    recordType?: string | undefined;
+                    fingerprint256?: string | undefined;
+                    notBefore?: number | undefined;
+                    notAfter?: number | undefined;
+                    disclosure?: string | undefined;
+                    requiredFact?: string | undefined;
+                    remedy?: string | undefined;
+                };
             };
             routedReplicas?: undefined | {
                 source: 'recordedTopology';
@@ -4756,6 +4954,14 @@ export type DeploymentsActionResultById = {
         ok: true;
         environmentId: string;
         revision: number;
+        tunnel?: undefined | {
+            kind: 'removed';
+            tunnelId?: string | undefined;
+        } | {
+            kind: 'retained';
+            reason: 'adopted' | 'foreign_routes' | 'ownership_unknown' | 'shared';
+            tunnelId?: string | undefined;
+        };
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -4777,6 +4983,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -4796,7 +5012,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -4910,6 +5126,23 @@ export type DeploymentsActionResultById = {
                         text: string;
                     }[];
                 };
+                cause?: undefined | {
+                    kind: 'certificate' | 'dns' | 'heartbeat' | 'http' | 'tcp';
+                    vantage: 'outside' | 'sameMachine';
+                    observerMachineId: string;
+                    reason?: string | undefined;
+                    httpStatus?: number | undefined;
+                    expectStatus?: number | undefined;
+                    providerCode?: number | undefined;
+                    keywordMatched?: boolean | undefined;
+                    recordType?: string | undefined;
+                    fingerprint256?: string | undefined;
+                    notBefore?: number | undefined;
+                    notAfter?: number | undefined;
+                    disclosure?: string | undefined;
+                    requiredFact?: string | undefined;
+                    remedy?: string | undefined;
+                };
             };
             routedReplicas?: undefined | {
                 source: 'recordedTopology';
@@ -4952,6 +5185,14 @@ export type DeploymentsActionResultById = {
         ok: true;
         environmentId: string;
         revision: number;
+        tunnel?: undefined | {
+            kind: 'removed';
+            tunnelId?: string | undefined;
+        } | {
+            kind: 'retained';
+            reason: 'adopted' | 'foreign_routes' | 'ownership_unknown' | 'shared';
+            tunnelId?: string | undefined;
+        };
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -4973,6 +5214,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -4992,7 +5243,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -5136,6 +5387,23 @@ export type DeploymentsActionResultById = {
                         text: string;
                     }[];
                 };
+                cause?: undefined | {
+                    kind: 'certificate' | 'dns' | 'heartbeat' | 'http' | 'tcp';
+                    vantage: 'outside' | 'sameMachine';
+                    observerMachineId: string;
+                    reason?: string | undefined;
+                    httpStatus?: number | undefined;
+                    expectStatus?: number | undefined;
+                    providerCode?: number | undefined;
+                    keywordMatched?: boolean | undefined;
+                    recordType?: string | undefined;
+                    fingerprint256?: string | undefined;
+                    notBefore?: number | undefined;
+                    notAfter?: number | undefined;
+                    disclosure?: string | undefined;
+                    requiredFact?: string | undefined;
+                    remedy?: string | undefined;
+                };
             };
             routedReplicas?: undefined | {
                 source: 'recordedTopology';
@@ -5178,6 +5446,14 @@ export type DeploymentsActionResultById = {
         ok: true;
         environmentId: string;
         revision: number;
+        tunnel?: undefined | {
+            kind: 'removed';
+            tunnelId?: string | undefined;
+        } | {
+            kind: 'retained';
+            reason: 'adopted' | 'foreign_routes' | 'ownership_unknown' | 'shared';
+            tunnelId?: string | undefined;
+        };
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -5199,6 +5475,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -5218,7 +5504,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -5266,6 +5552,23 @@ export type DeploymentsActionResultById = {
                     };
                     text: string;
                 }[];
+            };
+            cause?: undefined | {
+                kind: 'certificate' | 'dns' | 'heartbeat' | 'http' | 'tcp';
+                vantage: 'outside' | 'sameMachine';
+                observerMachineId: string;
+                reason?: string | undefined;
+                httpStatus?: number | undefined;
+                expectStatus?: number | undefined;
+                providerCode?: number | undefined;
+                keywordMatched?: boolean | undefined;
+                recordType?: string | undefined;
+                fingerprint256?: string | undefined;
+                notBefore?: number | undefined;
+                notAfter?: number | undefined;
+                disclosure?: string | undefined;
+                requiredFact?: string | undefined;
+                remedy?: string | undefined;
             };
         };
     };
@@ -5353,6 +5656,23 @@ export type DeploymentsActionResultById = {
                         text: string;
                     }[];
                 };
+                cause?: undefined | {
+                    kind: 'certificate' | 'dns' | 'heartbeat' | 'http' | 'tcp';
+                    vantage: 'outside' | 'sameMachine';
+                    observerMachineId: string;
+                    reason?: string | undefined;
+                    httpStatus?: number | undefined;
+                    expectStatus?: number | undefined;
+                    providerCode?: number | undefined;
+                    keywordMatched?: boolean | undefined;
+                    recordType?: string | undefined;
+                    fingerprint256?: string | undefined;
+                    notBefore?: number | undefined;
+                    notAfter?: number | undefined;
+                    disclosure?: string | undefined;
+                    requiredFact?: string | undefined;
+                    remedy?: string | undefined;
+                };
             };
             routedReplicas?: undefined | {
                 source: 'recordedTopology';
@@ -5395,6 +5715,14 @@ export type DeploymentsActionResultById = {
         ok: true;
         environmentId: string;
         revision: number;
+        tunnel?: undefined | {
+            kind: 'removed';
+            tunnelId?: string | undefined;
+        } | {
+            kind: 'retained';
+            reason: 'adopted' | 'foreign_routes' | 'ownership_unknown' | 'shared';
+            tunnelId?: string | undefined;
+        };
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -5416,6 +5744,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -5435,7 +5773,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -5549,6 +5887,23 @@ export type DeploymentsActionResultById = {
                         text: string;
                     }[];
                 };
+                cause?: undefined | {
+                    kind: 'certificate' | 'dns' | 'heartbeat' | 'http' | 'tcp';
+                    vantage: 'outside' | 'sameMachine';
+                    observerMachineId: string;
+                    reason?: string | undefined;
+                    httpStatus?: number | undefined;
+                    expectStatus?: number | undefined;
+                    providerCode?: number | undefined;
+                    keywordMatched?: boolean | undefined;
+                    recordType?: string | undefined;
+                    fingerprint256?: string | undefined;
+                    notBefore?: number | undefined;
+                    notAfter?: number | undefined;
+                    disclosure?: string | undefined;
+                    requiredFact?: string | undefined;
+                    remedy?: string | undefined;
+                };
             };
             routedReplicas?: undefined | {
                 source: 'recordedTopology';
@@ -5613,6 +5968,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -5632,7 +5997,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -5683,6 +6048,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -5702,7 +6077,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -5817,6 +6192,23 @@ export type DeploymentsActionResultById = {
                             text: string;
                         }[];
                     };
+                    cause?: undefined | {
+                        kind: 'certificate' | 'dns' | 'heartbeat' | 'http' | 'tcp';
+                        vantage: 'outside' | 'sameMachine';
+                        observerMachineId: string;
+                        reason?: string | undefined;
+                        httpStatus?: number | undefined;
+                        expectStatus?: number | undefined;
+                        providerCode?: number | undefined;
+                        keywordMatched?: boolean | undefined;
+                        recordType?: string | undefined;
+                        fingerprint256?: string | undefined;
+                        notBefore?: number | undefined;
+                        notAfter?: number | undefined;
+                        disclosure?: string | undefined;
+                        requiredFact?: string | undefined;
+                        remedy?: string | undefined;
+                    };
                 };
                 routedReplicas?: undefined | {
                     source: 'recordedTopology';
@@ -5887,12 +6279,33 @@ export type DeploymentsActionResultById = {
                 protection: 'nonProduction' | 'production';
                 purpose: 'preview' | 'standard';
                 deployerMode: 'chosen' | 'managers' | 'members';
+                dataEditorMode: 'chosen' | 'managers' | 'members' | 'off';
+                dataAgentAccess: 'none' | 'read';
                 controllerMachineId: string;
                 deletedAtMs?: number | undefined;
-                deployerPrincipals?: undefined | {
-                    principalKind: 'account' | 'teamGroup';
-                    principalId: string;
-                }[];
+                deployerPrincipals?: ({
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                })[] | undefined;
+                dataEditors?: ({
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                })[] | undefined;
+                telemetryMachineId?: null | string | undefined;
                 buildMachineId?: string | undefined;
                 ingress?: undefined | {
                     kind: 'cloudflareTunnel';
@@ -5926,6 +6339,7 @@ export type DeploymentsActionResultById = {
             kind?: 'other' | 'plugin_ui' | 'prompt' | 'skill' | 'widget_area_layout' | 'widget_definition' | 'widget_layout_fragment' | 'work_board' | null | undefined;
             kindHint?: null | string | undefined;
             sharedTeamIds?: string[] | undefined;
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             provenance?: null | string | undefined;
             provenanceDataEncryptionKey?: null | string | undefined;
         }[];
@@ -5957,6 +6371,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -5976,7 +6400,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -6039,12 +6463,33 @@ export type DeploymentsActionResultById = {
                 protection: 'nonProduction' | 'production';
                 purpose: 'preview' | 'standard';
                 deployerMode: 'chosen' | 'managers' | 'members';
+                dataEditorMode: 'chosen' | 'managers' | 'members' | 'off';
+                dataAgentAccess: 'none' | 'read';
                 controllerMachineId: string;
                 deletedAtMs?: number | undefined;
-                deployerPrincipals?: undefined | {
-                    principalKind: 'account' | 'teamGroup';
-                    principalId: string;
-                }[];
+                deployerPrincipals?: ({
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                })[] | undefined;
+                dataEditors?: ({
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                })[] | undefined;
+                telemetryMachineId?: null | string | undefined;
                 buildMachineId?: string | undefined;
                 ingress?: undefined | {
                     kind: 'cloudflareTunnel';
@@ -6078,6 +6523,7 @@ export type DeploymentsActionResultById = {
             kind?: 'other' | 'plugin_ui' | 'prompt' | 'skill' | 'widget_area_layout' | 'widget_definition' | 'widget_layout_fragment' | 'work_board' | null | undefined;
             kindHint?: null | string | undefined;
             sharedTeamIds?: string[] | undefined;
+            sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
             provenance?: null | string | undefined;
             provenanceDataEncryptionKey?: null | string | undefined;
         }[];
@@ -6324,6 +6770,7 @@ export type DeploymentsActionResultById = {
         creationDefaults: {
             values: {
                 retainPreviousDeployments: number;
+                telemetryMachineId?: string | undefined;
                 buildMachineId?: string | undefined;
                 controllerMachineId?: string | undefined;
                 previewMachineId?: string | undefined;
@@ -6361,6 +6808,7 @@ export type DeploymentsActionResultById = {
                 }[];
             };
             sources: {
+                telemetryMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                 buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                 controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                 retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
@@ -6722,7 +7170,7 @@ export type DeploymentsActionResultById = {
                 } | {
                     source: {
                         kind: 'deploymentFact';
-                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                     } | {
                         kind: 'deploymentFact';
                         fact: 'domainUrl';
@@ -6748,6 +7196,8 @@ export type DeploymentsActionResultById = {
                     name: string;
                     phase: 'build' | 'runtime';
                     grantRef?: string | undefined;
+                    managedBy?: 'telemetry' | undefined;
+                    valueFormat?: 'otelAuthorizationHeader' | undefined;
                 } | {
                     source: {
                         kind: 'secret';
@@ -6825,6 +7275,7 @@ export type DeploymentsActionResultById = {
                 serverId: string;
                 environmentId: string;
                 expectedRevision: number;
+                telemetryMachineId?: null | string | undefined;
                 providerVariables?: undefined | {
                     useOurs: string[];
                     keepTheirs: string[];
@@ -6854,10 +7305,17 @@ export type DeploymentsActionResultById = {
                         teamId: string;
                     };
                 };
-                deployerPrincipals?: undefined | {
-                    principalKind: 'account' | 'teamGroup';
-                    principalId: string;
-                }[];
+                deployerPrincipals?: ({
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                })[] | undefined;
                 buildMachineId?: string | undefined;
                 managedRetention?: 'keep' | 'until-delete' | undefined;
                 preview?: undefined | {
@@ -7032,7 +7490,7 @@ export type DeploymentsActionResultById = {
                             kind: 'remap';
                             source: {
                                 kind: 'deploymentFact';
-                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                             } | {
                                 kind: 'deploymentFact';
                                 fact: 'domainUrl';
@@ -7135,7 +7593,7 @@ export type DeploymentsActionResultById = {
                     } | {
                         source: {
                             kind: 'deploymentFact';
-                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                         } | {
                             kind: 'deploymentFact';
                             fact: 'domainUrl';
@@ -7158,6 +7616,8 @@ export type DeploymentsActionResultById = {
                         name: string;
                         phase: 'build' | 'runtime';
                         grantRef?: string | undefined;
+                        managedBy?: 'telemetry' | undefined;
+                        valueFormat?: 'otelAuthorizationHeader' | undefined;
                     } | {
                         source: {
                             ref: string;
@@ -7411,7 +7871,7 @@ export type DeploymentsActionResultById = {
             bindings: {
                 source: {
                     kind: 'deploymentFact';
-                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                    fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                 } | {
                     kind: 'deploymentFact';
                     fact: 'domainUrl';
@@ -7434,6 +7894,8 @@ export type DeploymentsActionResultById = {
                 name: string;
                 phase: 'build' | 'runtime';
                 grantRef?: string | undefined;
+                managedBy?: 'telemetry' | undefined;
+                valueFormat?: 'otelAuthorizationHeader' | undefined;
             }[];
             generatedSecrets: {
                 name: string;
@@ -7529,6 +7991,7 @@ export type DeploymentsActionResultById = {
             creationDefaults?: undefined | {
                 values: {
                     retainPreviousDeployments: number;
+                    telemetryMachineId?: string | undefined;
                     buildMachineId?: string | undefined;
                     controllerMachineId?: string | undefined;
                     previewMachineId?: string | undefined;
@@ -7566,6 +8029,7 @@ export type DeploymentsActionResultById = {
                     }[];
                 };
                 sources: {
+                    telemetryMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
@@ -8253,6 +8717,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         native: null | {
             phase: 'running' | 'stopped' | 'unknown';
@@ -8282,7 +8756,7 @@ export type DeploymentsActionResultById = {
         machineId: string;
         installationId: string;
         ok: true;
-        unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
+        unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -8302,7 +8776,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -8353,6 +8827,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -8372,7 +8856,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -8509,6 +8993,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -8528,7 +9022,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -8600,6 +9094,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         kind: 'build';
         logs: {
@@ -8620,7 +9124,7 @@ export type DeploymentsActionResultById = {
             sourceRevision: string;
         } | {
             kind: 'unavailable';
-            reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+            reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
             recipeRemedy?: undefined | {
                 pluginId: string;
                 recipeId: string;
@@ -8653,7 +9157,7 @@ export type DeploymentsActionResultById = {
             sourceRevision: string;
         } | {
             kind: 'unavailable';
-            reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+            reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
             recipeRemedy?: undefined | {
                 pluginId: string;
                 recipeId: string;
@@ -8693,7 +9197,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -8744,6 +9248,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -8769,7 +9283,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -8830,6 +9344,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         kind: 'preview';
         input: {
@@ -8854,10 +9378,17 @@ export type DeploymentsActionResultById = {
                     teamId: string;
                 };
             };
-            deployerPrincipals?: undefined | {
-                principalKind: 'account' | 'teamGroup';
-                principalId: string;
-            }[];
+            deployerPrincipals?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
             buildMachineId?: string | undefined;
             managedRetention?: 'keep' | 'until-delete' | undefined;
             preview?: undefined | {
@@ -9032,7 +9563,7 @@ export type DeploymentsActionResultById = {
                         kind: 'remap';
                         source: {
                             kind: 'deploymentFact';
-                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                         } | {
                             kind: 'deploymentFact';
                             fact: 'domainUrl';
@@ -9135,7 +9666,7 @@ export type DeploymentsActionResultById = {
                 } | {
                     source: {
                         kind: 'deploymentFact';
-                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                     } | {
                         kind: 'deploymentFact';
                         fact: 'domainUrl';
@@ -9158,6 +9689,8 @@ export type DeploymentsActionResultById = {
                     name: string;
                     phase: 'build' | 'runtime';
                     grantRef?: string | undefined;
+                    managedBy?: 'telemetry' | undefined;
+                    valueFormat?: 'otelAuthorizationHeader' | undefined;
                 } | {
                     source: {
                         ref: string;
@@ -9215,8 +9748,8 @@ export type DeploymentsActionResultById = {
             };
             copyIntentCommitment?: string | undefined;
         } | {
-            purpose: 'preview' | 'standard';
             serverId: string;
+            purpose: 'preview' | 'standard';
             requestKey: string;
             protection: 'nonProduction' | 'production';
             deployerMode: 'chosen' | 'managers' | 'members';
@@ -9233,10 +9766,17 @@ export type DeploymentsActionResultById = {
                     teamId: string;
                 };
             };
-            deployerPrincipals?: undefined | {
-                principalKind: 'account' | 'teamGroup';
-                principalId: string;
-            }[];
+            deployerPrincipals?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
             managedRetention?: 'keep' | 'until-delete' | undefined;
             previewCompanionOfEnvironmentId?: string | undefined;
             preview?: undefined | {
@@ -9475,7 +10015,7 @@ export type DeploymentsActionResultById = {
                         kind: 'remap';
                         source: {
                             kind: 'deploymentFact';
-                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                         } | {
                             kind: 'deploymentFact';
                             fact: 'domainUrl';
@@ -9583,6 +10123,8 @@ export type DeploymentsActionResultById = {
                 name: string;
                 phase: 'build' | 'runtime';
                 grantRef?: string | undefined;
+                managedBy?: 'telemetry' | undefined;
+                valueFormat?: 'otelAuthorizationHeader' | undefined;
             }[];
             generatedSecretAudience?: undefined | {
                 groupGrants?: string[] | undefined;
@@ -9604,6 +10146,7 @@ export type DeploymentsActionResultById = {
             creationDefaults: {
                 values: {
                     retainPreviousDeployments: number;
+                    telemetryMachineId?: string | undefined;
                     buildMachineId?: string | undefined;
                     controllerMachineId?: string | undefined;
                     previewMachineId?: string | undefined;
@@ -9641,6 +10184,7 @@ export type DeploymentsActionResultById = {
                     }[];
                 };
                 sources: {
+                    telemetryMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
@@ -9666,7 +10210,7 @@ export type DeploymentsActionResultById = {
                 bindings: {
                     source: {
                         kind: 'deploymentFact';
-                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
                     } | {
                         kind: 'deploymentFact';
                         fact: 'domainUrl';
@@ -9689,6 +10233,8 @@ export type DeploymentsActionResultById = {
                     name: string;
                     phase: 'build' | 'runtime';
                     grantRef?: string | undefined;
+                    managedBy?: 'telemetry' | undefined;
+                    valueFormat?: 'otelAuthorizationHeader' | undefined;
                 }[];
                 generatedSecrets: {
                     name: string;
@@ -9784,6 +10330,7 @@ export type DeploymentsActionResultById = {
                 creationDefaults?: undefined | {
                     values: {
                         retainPreviousDeployments: number;
+                        telemetryMachineId?: string | undefined;
                         buildMachineId?: string | undefined;
                         controllerMachineId?: string | undefined;
                         previewMachineId?: string | undefined;
@@ -9821,6 +10368,7 @@ export type DeploymentsActionResultById = {
                         }[];
                     };
                     sources: {
+                        telemetryMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                         buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                         controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                         retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
@@ -9909,7 +10457,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -9954,7 +10502,7 @@ export type DeploymentsActionResultById = {
         previewNativeBindings?: undefined | {
             source: {
                 kind: 'deploymentFact';
-                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
             } | {
                 kind: 'deploymentFact';
                 fact: 'domainUrl';
@@ -9977,6 +10525,8 @@ export type DeploymentsActionResultById = {
             name: string;
             phase: 'build' | 'runtime';
             grantRef?: string | undefined;
+            managedBy?: 'telemetry' | undefined;
+            valueFormat?: 'otelAuthorizationHeader' | undefined;
         }[];
         previewNativeData?: undefined | {
             service: string;
@@ -10004,6 +10554,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -10023,7 +10583,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -10065,6 +10625,7 @@ export type DeploymentsActionResultById = {
         creationDefaults?: undefined | {
             values: {
                 retainPreviousDeployments: number;
+                telemetryMachineId?: string | undefined;
                 buildMachineId?: string | undefined;
                 controllerMachineId?: string | undefined;
                 previewMachineId?: string | undefined;
@@ -10102,6 +10663,7 @@ export type DeploymentsActionResultById = {
                 }[];
             };
             sources: {
+                telemetryMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                 buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                 controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                 retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
@@ -10144,6 +10706,91 @@ export type DeploymentsActionResultById = {
             failureCause?: ActionFailureCauseV1 | undefined;
         };
     };
+    readonly "deployments.environments.telemetry.set": {
+        error: 'quota_exceeded';
+        budget: 'account' | 'document';
+        limitBytes: number;
+        usedBytes: number;
+        ok: false;
+    } | {
+        errorCode: 'unsupported_action';
+        error: 'unsupported_action';
+        effectAttempted: false;
+        details: {
+            reason: string;
+            remedy: string;
+            requiredFact?: string | undefined;
+        };
+        failureCause: ActionFailureCauseV1;
+        ok: false;
+        requestId?: string | undefined;
+        goalControlFailure?: undefined | {
+            phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+        };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
+    } | {
+        ok: false;
+        error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
+    } | {
+        ok: false;
+        error: 'deployment_in_progress';
+        deploymentId: string;
+        href: string;
+    } | {
+        ok: false;
+        error: 'deployment_invalid';
+        diagnostic?: undefined | {
+            step: 'target_link.associate' | 'target_link.environment_read' | 'target_link.provider_links_read';
+            field: string;
+            rule: 'constraint' | 'invalid_type' | 'invalid_value' | 'path_mismatch' | 'unrecognized_keys';
+        };
+    } | {
+        ok: false;
+        error: 'machine_unavailable';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
+        machineIds: string[];
+        nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
+        diagnostic?: undefined | {
+            reason: 'machine_installation_missing';
+            requiredFact: 'machine_installation';
+            remedy: 'register_machine';
+        } | {
+            reason: 'machine_offline';
+            requiredFact: 'machine_online';
+            remedy: 'reconnect_machine';
+        } | {
+            reason: 'machine_replaced';
+            requiredFact: 'current_machine';
+            remedy: 'select_current_machine';
+        } | {
+            reason: 'machine_revoked';
+            requiredFact: 'machine_registration';
+            remedy: 'register_machine';
+        } | {
+            reason: 'machine_setup_requires_manage';
+            requiredFact: 'machine_manage_role';
+            remedy: 'request_machine_manage_access';
+        } | {
+            reason: 'source_machine_access_missing';
+            requiredFact: 'source_machine_use';
+            remedy: 'share_machine_with_source_owner';
+        };
+        effectAttempted?: false | undefined;
+    } | {
+        ok: true;
+        environmentId: string;
+        revision: number;
+        state: 'redeploy_required';
+    };
     readonly "deployments.environments.controller.set": {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -10165,6 +10812,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -10184,7 +10841,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -10229,7 +10886,7 @@ export type DeploymentsActionResultById = {
         previewNativeBindings?: undefined | {
             source: {
                 kind: 'deploymentFact';
-                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl' | 'telemetryEndpoint';
             } | {
                 kind: 'deploymentFact';
                 fact: 'domainUrl';
@@ -10252,6 +10909,8 @@ export type DeploymentsActionResultById = {
             name: string;
             phase: 'build' | 'runtime';
             grantRef?: string | undefined;
+            managedBy?: 'telemetry' | undefined;
+            valueFormat?: 'otelAuthorizationHeader' | undefined;
         }[];
         previewNativeData?: undefined | {
             service: string;
@@ -10279,6 +10938,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -10491,11 +11160,21 @@ export type DeploymentsActionResultById = {
             goalControlFailure?: undefined | {
                 phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
             };
+            automationNotices?: ({
+                code: 'action_automation_skipped';
+                reason: string;
+                automationId: string;
+                triggerId: string;
+                workflowId: string;
+            } | {
+                code: 'action_automations_not_checked';
+                reason: string;
+            })[] | undefined;
         };
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -10667,6 +11346,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -10686,7 +11375,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -10749,6 +11438,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -10768,7 +11467,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -10838,6 +11537,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         kind: 'pending';
         actionOperationId: string;
@@ -10868,7 +11577,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -10938,6 +11647,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         kind: 'pending';
         actionOperationId: string;
@@ -10968,7 +11687,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -11018,7 +11737,7 @@ export type DeploymentsActionResultById = {
         };
     } | {
         kind: 'unsupported';
-        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
     };
     readonly "deployments.backups.restore": {
         kind: 'outcome_unknown';
@@ -11077,6 +11796,20 @@ export type DeploymentsActionResultById = {
                 };
             };
         };
+        steps?: undefined | {
+            id: 'health' | 'restore' | 'safety' | 'start' | 'stop';
+            status: 'completed' | 'failed' | 'running' | 'skipped';
+        }[];
+    } | {
+        kind: 'restored';
+        verified: false;
+        nextAction: 'installAmcheckAndRunIntegrityCheck';
+        integrity: {
+            kind: 'unavailable';
+            reason: 'amcheck_extension_missing';
+            nextAction: 'installAmcheckAndRunIntegrityCheck';
+        };
+        evidence: JsonValue;
         steps?: undefined | {
             id: 'health' | 'restore' | 'safety' | 'start' | 'stop';
             status: 'completed' | 'failed' | 'running' | 'skipped';
@@ -11184,6 +11917,7 @@ export type DeploymentsActionResultById = {
             creationDefaults?: undefined | {
                 values: {
                     retainPreviousDeployments: number;
+                    telemetryMachineId?: string | undefined;
                     buildMachineId?: string | undefined;
                     controllerMachineId?: string | undefined;
                     previewMachineId?: string | undefined;
@@ -11221,6 +11955,7 @@ export type DeploymentsActionResultById = {
                     }[];
                 };
                 sources: {
+                    telemetryMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
@@ -11318,6 +12053,7 @@ export type DeploymentsActionResultById = {
             creationDefaults?: undefined | {
                 values: {
                     retainPreviousDeployments: number;
+                    telemetryMachineId?: string | undefined;
                     buildMachineId?: string | undefined;
                     controllerMachineId?: string | undefined;
                     previewMachineId?: string | undefined;
@@ -11355,6 +12091,7 @@ export type DeploymentsActionResultById = {
                     }[];
                 };
                 sources: {
+                    telemetryMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
@@ -11390,6 +12127,7 @@ export type DeploymentsActionResultById = {
             creationDefaults?: undefined | {
                 values: {
                     retainPreviousDeployments: number;
+                    telemetryMachineId?: string | undefined;
                     buildMachineId?: string | undefined;
                     controllerMachineId?: string | undefined;
                     previewMachineId?: string | undefined;
@@ -11427,6 +12165,7 @@ export type DeploymentsActionResultById = {
                     }[];
                 };
                 sources: {
+                    telemetryMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
@@ -11480,6 +12219,7 @@ export type DeploymentsActionResultById = {
             creationDefaults?: undefined | {
                 values: {
                     retainPreviousDeployments: number;
+                    telemetryMachineId?: string | undefined;
                     buildMachineId?: string | undefined;
                     controllerMachineId?: string | undefined;
                     previewMachineId?: string | undefined;
@@ -11517,6 +12257,7 @@ export type DeploymentsActionResultById = {
                     }[];
                 };
                 sources: {
+                    telemetryMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
@@ -11606,6 +12347,7 @@ export type DeploymentsActionResultById = {
             creationDefaults?: undefined | {
                 values: {
                     retainPreviousDeployments: number;
+                    telemetryMachineId?: string | undefined;
                     buildMachineId?: string | undefined;
                     controllerMachineId?: string | undefined;
                     previewMachineId?: string | undefined;
@@ -11643,6 +12385,7 @@ export type DeploymentsActionResultById = {
                     }[];
                 };
                 sources: {
+                    telemetryMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     buildMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     controllerMachineId?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
                     retainPreviousDeployments?: 'account' | 'builtin' | 'explicit' | 'project' | undefined;
@@ -12064,6 +12807,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         kind: 'pending';
         actionOperationId: string;
@@ -12094,7 +12847,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -12164,6 +12917,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         kind: 'pending';
         actionOperationId: string;
@@ -12194,7 +12957,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -12264,6 +13027,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         kind: 'pending';
         actionOperationId: string;
@@ -12300,7 +13073,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -12365,6 +13138,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -12384,7 +13167,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -12446,12 +13229,33 @@ export type DeploymentsActionResultById = {
             protection: 'nonProduction' | 'production';
             purpose: 'preview' | 'standard';
             deployerMode: 'chosen' | 'managers' | 'members';
+            dataEditorMode: 'chosen' | 'managers' | 'members' | 'off';
+            dataAgentAccess: 'none' | 'read';
             controllerMachineId: string;
             deletedAtMs?: number | undefined;
-            deployerPrincipals?: undefined | {
-                principalKind: 'account' | 'teamGroup';
-                principalId: string;
-            }[];
+            deployerPrincipals?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
+            dataEditors?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
+            telemetryMachineId?: null | string | undefined;
             buildMachineId?: string | undefined;
             ingress?: undefined | {
                 kind: 'cloudflareTunnel';
@@ -12514,8 +13318,8 @@ export type DeploymentsActionResultById = {
             deploymentId: string;
         };
         backupPolicy?: undefined | {
-            config: Record<string, JsonValue>;
             occurrenceId: string;
+            config: Record<string, JsonValue>;
             retention: {
                 kind: 'keep';
                 last?: number | undefined;
@@ -12659,6 +13463,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -12678,7 +13492,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -12751,8 +13565,8 @@ export type DeploymentsActionResultById = {
         investigation?: undefined | {
             source?: undefined | {
                 kind: 'repository';
-                sourceRevision: number;
                 projectSourceId: string;
+                sourceRevision: number;
                 sha: string;
                 builtSha?: string | undefined;
             } | {
@@ -12841,6 +13655,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         kind: 'pending';
         actionOperationId: string;
@@ -12871,7 +13695,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -12922,6 +13746,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -12941,7 +13775,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -13003,12 +13837,33 @@ export type DeploymentsActionResultById = {
             protection: 'nonProduction' | 'production';
             purpose: 'preview' | 'standard';
             deployerMode: 'chosen' | 'managers' | 'members';
+            dataEditorMode: 'chosen' | 'managers' | 'members' | 'off';
+            dataAgentAccess: 'none' | 'read';
             controllerMachineId: string;
             deletedAtMs?: number | undefined;
-            deployerPrincipals?: undefined | {
-                principalKind: 'account' | 'teamGroup';
-                principalId: string;
-            }[];
+            deployerPrincipals?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
+            dataEditors?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
+            telemetryMachineId?: null | string | undefined;
             buildMachineId?: string | undefined;
             ingress?: undefined | {
                 kind: 'cloudflareTunnel';
@@ -13187,6 +14042,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -13206,7 +14071,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -13283,6 +14148,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -13302,7 +14177,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {
@@ -13364,12 +14239,33 @@ export type DeploymentsActionResultById = {
             protection: 'nonProduction' | 'production';
             purpose: 'preview' | 'standard';
             deployerMode: 'chosen' | 'managers' | 'members';
+            dataEditorMode: 'chosen' | 'managers' | 'members' | 'off';
+            dataAgentAccess: 'none' | 'read';
             controllerMachineId: string;
             deletedAtMs?: number | undefined;
-            deployerPrincipals?: undefined | {
-                principalKind: 'account' | 'teamGroup';
-                principalId: string;
-            }[];
+            deployerPrincipals?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
+            dataEditors?: ({
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            })[] | undefined;
+            telemetryMachineId?: null | string | undefined;
             buildMachineId?: string | undefined;
             ingress?: undefined | {
                 kind: 'cloudflareTunnel';
@@ -13544,6 +14440,23 @@ export type DeploymentsActionResultById = {
                         text: string;
                     }[];
                 };
+                cause?: undefined | {
+                    kind: 'certificate' | 'dns' | 'heartbeat' | 'http' | 'tcp';
+                    vantage: 'outside' | 'sameMachine';
+                    observerMachineId: string;
+                    reason?: string | undefined;
+                    httpStatus?: number | undefined;
+                    expectStatus?: number | undefined;
+                    providerCode?: number | undefined;
+                    keywordMatched?: boolean | undefined;
+                    recordType?: string | undefined;
+                    fingerprint256?: string | undefined;
+                    notBefore?: number | undefined;
+                    notAfter?: number | undefined;
+                    disclosure?: string | undefined;
+                    requiredFact?: string | undefined;
+                    remedy?: string | undefined;
+                };
             };
             routedReplicas?: undefined | {
                 source: 'recordedTopology';
@@ -13644,6 +14557,16 @@ export type DeploymentsActionResultById = {
         goalControlFailure?: undefined | {
             phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
         };
+        automationNotices?: ({
+            code: 'action_automation_skipped';
+            reason: string;
+            automationId: string;
+            triggerId: string;
+            workflowId: string;
+        } | {
+            code: 'action_automations_not_checked';
+            reason: string;
+        })[] | undefined;
     } | {
         ok: false;
         error: 'client_required' | 'deployment_access_denied' | 'deployment_conflict' | 'deployment_content_unavailable' | 'deployment_teardown_required' | 'deployment_unavailable' | 'unsupported_action';
@@ -13663,7 +14586,7 @@ export type DeploymentsActionResultById = {
     } | {
         ok: false;
         error: 'machine_unavailable';
-        role: 'build' | 'controller' | 'target';
+        role: 'build' | 'controller' | 'target' | 'telemetry';
         machineIds: string[];
         nextActions: ('chooseAnother' | 'removeFromEnvironment' | 'start')[];
         diagnostic?: undefined | {

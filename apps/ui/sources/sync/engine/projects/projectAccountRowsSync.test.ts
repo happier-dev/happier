@@ -52,6 +52,74 @@ function harness(mode: 'plain' | 'e2ee' = 'plain') {
 }
 
 describe('Project Account row sync owner', () => {
+    it.each(['plain', 'e2ee'] as const)('reads and edits only demanded project defaults with revisioned clear and no census in %s', async mode => {
+        const h = harness(mode);
+        const project = { serverId: 'home', projectKey: 'anchor' };
+        const defaults = { placement: { kind: 'preset' as const, homeId: 'home', presetId: 'chosen-preset' } };
+        expect(await h.owner.readSessionDefaults(project)).toBeNull();
+        const readsBeforeWrite = h.exactReads.length;
+        expect(await h.owner.mutateSessionDefaults({ ...project, expectedRevision: 'absent', defaults }))
+            .toEqual({ status: 'updated', revision: 0, value: defaults });
+        expect(h.exactReads).toHaveLength(readsBeforeWrite);
+        expect(await h.owner.readSessionDefaults(project)).toEqual({ revision: 0, defaults });
+        expect(await h.owner.readSessionDefaults({ ...project, projectKey: 'other' })).toBeNull();
+        const physicalKey = buildProjectAccountRowPhysicalKeyV1({ kind: 'project-session-defaults', ...project });
+        expect(h.rows.get(physicalKey)?.content?.t).toBe(mode === 'plain' ? 'plain' : 'encrypted');
+        expect(await h.owner.mutateSessionDefaults({ ...project, expectedRevision: 'absent', defaults: null }))
+            .toEqual({ status: 'conflict', revision: 0 });
+        expect(h.requests).toHaveLength(2);
+        expect(await h.owner.mutateSessionDefaults({ ...project, expectedRevision: 0, defaults: null }))
+            .toEqual({ status: 'updated', revision: 1, value: null });
+        expect(await h.owner.readSessionDefaults(project)).toEqual({ revision: 1, defaults: null });
+        expect(h.rows.get(physicalKey)?.content).toBeNull();
+        expect(h.requests).toHaveLength(3);
+        expect(h.listReads()).toBe(0);
+        expect(h.projection()).toBeNull();
+        const before = h.exactReads.length;
+        expect(await h.owner.refreshKeys([physicalKey, physicalKey])).toEqual(new Set([physicalKey]));
+        expect(h.exactReads).toHaveLength(before);
+        expect(h.projection()).toBeNull();
+        await expect(h.owner.readSessionDefaults({ ...project, serverId: 'foreign' }))
+            .rejects.toMatchObject({ code: 'project_account_scope_mismatch' });
+        h.retire();
+        await expect(h.owner.readSessionDefaults(project)).rejects.toMatchObject({ code: 'project_account_scope_retired' });
+        expect(h.exactReads).toHaveLength(before);
+    });
+    it('rejects an invalid defaults acknowledgement and preserves a validated captured receipt after retirement', async () => {
+        const h = harness();
+        const input = { serverId: 'home', projectKey: 'anchor', expectedRevision: 'absent' as const, defaults: {} };
+        const mutate = h.transport.mutate;
+        h.transport.mutate = async request => {
+            const result = await mutate(request);
+            return result.status === 'updated' ? { ...result, rows: result.rows.map(row => ({ ...row, revision: row.revision + 1 })) } : result;
+        };
+        await expect(h.owner.mutateSessionDefaults(input)).rejects.toMatchObject({ code: 'project_account_row_acknowledgement_invalid' });
+        expect(h.projection()).toBeNull();
+        h.transport.mutate = async request => {
+            const result = await mutate(request);
+            h.retire();
+            return result;
+        };
+        expect(await h.owner.mutateSessionDefaults({ ...input, expectedRevision: 0, defaults: null }))
+            .toEqual({ status: 'updated', revision: 1, value: null });
+        expect(h.projection()).toBeNull();
+        expect(h.listReads()).toBe(0);
+        expect(h.exactReads).toHaveLength(0);
+    });
+    it.each(['plain', 'e2ee'] as const)('awaits protected detail preparation before organization CAS in %s', async mode => {
+        const h = harness(mode);
+        const result = await h.owner.mutateOrganizationAtRevision({ serverId: 'home', projectKey: 'anchor', expectedRevision: 'absent',
+            async mutate(value) {
+                await Promise.resolve();
+                return { ...value, setupContent: { artifactId: 'prepared-detail', headerVersion: 1, bodyVersion: 1 } };
+            } });
+        expect(result).toMatchObject({ status: 'updated', value: {
+            setupContent: { artifactId: 'prepared-detail', headerVersion: 1, bodyVersion: 1 },
+        } });
+        expect(h.requests).toHaveLength(1);
+        if (result.status !== 'updated') throw new Error('Expected an acknowledged organization edit');
+        expect(h.projection()?.organizations[0]?.value).toEqual(result.value);
+    });
     it.each(['plain', 'e2ee'] as const)('records exact checkout observations through %s CAS without re-dating retained facts', async mode => {
         const h = harness(mode);
         const key = { kind: 'workspace-ref' as const, serverId: 'home', id: 'ref' };

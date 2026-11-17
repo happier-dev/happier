@@ -1,3 +1,5 @@
+import type { ExternalActionSessionPresetAcquisitionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { isStoredOpaquePresetMachine, projectManagedMachineFull, projectManagedMachineOpaque } from './managedMachineProjection';
 import { ManagedAdmissionInputV1Schema, ManagedAdmissionPresetContentV1Schema, resolveManagedAcquireReviewV1, isManagedPresetAcquireInputV1, type ManagedAdmissionInputV1, type ManagedAdmissionOutputV1, type ManagedAdmissionPresetContentV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineFullV1Schema, type ManagedMachineV1, type ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -55,6 +57,8 @@ export async function admitManagedAcquire(params: Readonly<{
     requesterAccountId: string;
     /** Verified Home binding; fresh delegated admission cannot inherit Session-source authority. */
     managedAcquireDelegation?: true;
+    /** Exact scope consumed from a verified reviewed Session child, never request input. */
+    sessionPresetAcquisition?: ExternalActionSessionPresetAcquisitionV1;
     authentication?: TeamOperationAuthenticationContext;
     requestEnvelopeDigest: string;
     /** Original transport, derived by the route from its verified Workflow root. */
@@ -65,8 +69,11 @@ export async function admitManagedAcquire(params: Readonly<{
     try {
         const request = ManagedAdmissionInputV1Schema.parse(params.input);
         const review = resolveManagedAcquireReviewV1(request.input);
+        const admittedSessionPreset = request.acquisitionMode === 'resource-bound' && params.sessionPresetAcquisition !== undefined
+            && sameManagedInput({ selection: params.sessionPresetAcquisition.selection, controller: params.sessionPresetAcquisition.controller },
+                { selection: request.input.selection, controller: review.controller });
         if (request.acquisitionMode && (!isManagedPresetAcquireInputV1(request.input) || !review.controller
-            || params.custodianAccountId !== params.requesterAccountId)) {
+            || params.custodianAccountId !== params.requesterAccountId && !admittedSessionPreset)) {
             throw new ManagedMachineError('invalid_request');
         }
         if (!review.controller && params.custodianAccountId !== params.requesterAccountId) throw new ManagedMachineError('permission_denied');
@@ -125,12 +132,20 @@ export async function admitManagedAcquire(params: Readonly<{
             // requester descriptor. Retained admissions return above unchanged.
             const guestCli = request.acquisitionMode === 'resource-bound' ? undefined : readServerGuestCliIdentity();
             if (isManagedPresetAcquireInputV1(request.input)) {
-                const selected = await resolveMachinePresetForAcquireInTx(tx, { accountId: params.requesterAccountId, authentication: params.authentication,
+                const snapshot = admittedSessionPreset ? params.sessionPresetAcquisition?.admission : undefined;
+                const selected = snapshot ? { kind: 'ready' as const,
+                    preset: ManagedMachinePresetV1Schema.parse({ ...snapshot.preset, ...snapshot.presetContent }),
+                    presetContent: snapshot.presetContent, custodianAccountId: params.custodianAccountId,
+                    delegated: snapshot.delegated,
+                } : await resolveMachinePresetForAcquireInTx(tx, { accountId: params.requesterAccountId, authentication: params.authentication,
                     ...request.input.selection, boundController: review.controller,
                     ...(request.reuseIdle ? { checkCapacity: false } : {}) });
                 if (selected.kind === "conflict") throw new ManagedMachineError("request_conflict");
                 if (selected.kind === "refused") throw new ManagedMachineError(selected.code);
-                if (selected.delegated && params.managedAcquireDelegation !== true) throw new ManagedMachineError('permission_denied');
+                if (selected.delegated && params.managedAcquireDelegation !== true && !admittedSessionPreset) throw new ManagedMachineError('permission_denied');
+                if (snapshot && !request.reuseIdle && !await hasMachinePresetAcquireCapacityInTx(tx, {
+                    homeId: review.homeId, id: selected.preset.id, maximum: selected.preset.simultaneousLimit?.maximum ?? null,
+                })) throw new ManagedMachineError('preset_limit_reached');
                 const controller = selected.preset.controller ?? (request.acquisitionMode ? review.controller : undefined);
                 if (!sameManagedInput(controller, review.controller)) throw new ManagedMachineError("controller_retired");
                 if (request.acquisitionMode && selected.custodianAccountId !== params.custodianAccountId) throw new ManagedMachineError('permission_denied');

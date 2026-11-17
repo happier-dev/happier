@@ -2107,6 +2107,12 @@ export type ActionExecutorDeps = Readonly<{
    * directory. A returned approval is retained by the existing Action
    * approval artifact and must be replayed back through this same owner.
    */
+  /** Resolves authoring omissions before concrete host and Agent admission. */
+  prepareSessionSpawnNewInput?: (input: import('../../sessions/creation/sessionSpawnNewInputV2.js').SessionSpawnNewActionAuthoringInputV2,
+    context: ActionExecutorContext) => Promise<Readonly<{
+      input: import('../../sessions/creation/sessionSpawnNewInputV2.js').SessionSpawnNewActionInputV2;
+      defaults: NonNullable<ActionExecutorContext['sessionCreationDefaults']>;
+    }>>;
   sessionSpawnNewDirectoryApprovalPreflight?: (args: Readonly<{
     input: SessionSpawnNewInputV2;
     context?: ActionExecutorContext;
@@ -2273,6 +2279,7 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
     executeCanonicalAction: (actionId: ActionId, input: unknown) => Promise<ActionExecuteResult>;
   }>) => Promise<import('../../projects/projectSetupSetV1.js').ProjectSetupSetOutputV1>;
+  projectsSessionDefaultsGet?: (args: import('../../projects/loadManagedSessionDefaultsContextV1.js').ProjectSessionDefaultsGetInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/loadManagedSessionDefaultsContextV1.js').ProjectSessionDefaultsGetOutputV1 | ActionExecuteFailure>;
   projectsWorkspaceUpdate?: (args: import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceUpdateInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceUpdateOutputV1>;
   projectsServicesPin?: (args: import('../../projects/projectServicesActionsV1.js').ProjectServicesPinInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectServicesActionsV1.js').ProjectServicesPinOutputV1>;
   projectsWorkspaceForget?: (args: import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceForgetInputV1, context?: ActionExecutorContext) => Promise<import('../../projects/projectWorkspaceActionsV1.js').ProjectWorkspaceForgetOutputV1>;

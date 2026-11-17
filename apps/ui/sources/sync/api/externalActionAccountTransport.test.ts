@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { buildManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
 import { bindCallerInput } from '@happier-dev/protocol/actions/executor/callerInput';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createHash } from 'node:crypto';
@@ -13,6 +14,7 @@ import nacl from 'tweetnacl';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
@@ -73,6 +75,39 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
+    it('transports ordinary UI Session defaults without a review or confirmation marker', async () => {
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const input = projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
+            creationKey: 'ordinary-ui-capture', executionTarget: { serverId: binding.serverIdentityId, machineId: 'machine-1' },
+            directory: { kind: 'path', path: '/project' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        }));
+        const sessionCreationDefaults = { context: buildManagedSessionDefaultsContext({
+            personalDefaultsRow: { defaultAgentTarget: input.agentTarget },
+        }), authoredChoices: { executionTarget: input.executionTarget, agentTarget: input.agentTarget } };
+        let receivedCapture: unknown;
+        homes.answer(serverId, 'GET /v1/machines/machine-1/access', { body: {
+            machineId: 'machine-1', custodian: { accountId: 'owner', displayName: 'Owner' },
+            access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+            canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [],
+        } });
+        await answerExternalActionAccountForHome(homes, serverId, { machineId: 'machine-1',
+            tokenEpoch: 0, actionId: 'session.spawn_new', execute: (_received, context) => {
+                receivedCapture = context.invocation.sessionCreationDefaults;
+                return projectSessionSpawnNewActionResultV1({ type: 'success', disposition: 'created', sessionId: 'created-session',
+                    executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] },
+                    initialInput: { status: 'notRequested' } });
+            }, failure: value => {
+                const parsed = ActionExecuteFailureSchema.safeParse(value);
+                return parsed.success ? parsed.data : null;
+            },
+        });
+        const result = await createDefaultActionExecutor().execute('session.spawn_new', input, {
+            surface: 'ui', authority: 'present_user', sessionCreationDefaults,
+        });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { sessionId: 'created-session' } });
+        expect(receivedCapture).toEqual(sessionCreationDefaults);
+    });
     it.each(['voice', 'api'] as const)('admits the R135 spawn through its sealed %s caller schema', async surface => {
         account?.dispose();
         // R135's payload after the existing catalog binder selected Codex.
@@ -190,7 +225,7 @@ describe('captured Account Action response decoding', () => {
         })).toEqual({ supported: true, result: { ok: true, result: { installed: true } } });
         expect(homes.requestsFor('/v1/actions/action.invoke')).toHaveLength(1);
     });
-    it.each(['shared', 'owned-spawn', 'delegated-accepted', 'delegated-declined', 'delegated-automation'] as const)('dispatches Home-admitted finite custody without controller inventory (%s)', async recipient => {
+    it.each(['preset', 'shared', 'owned-spawn', 'delegated-accepted', 'delegated-declined', 'delegated-automation'] as const)('dispatches Home-admitted finite custody without controller inventory (%s)', async recipient => {
         if (!account) throw new Error('Expected captured Account');
         const guestKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
         const controllerKeys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(29));
@@ -202,12 +237,12 @@ describe('captured Account Action response decoding', () => {
         let controllerReads = 0;
         homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
             body: await createMachineReadBatchResponseFixture(body, id => {
-                if (id === row.id) return row;
+                if (id === row.id && recipient !== 'preset') return row;
                 controllerReads++;
                 return null; // Can use on the guest grants no access to its controller.
             }).json(),
         }) });
-        const spawn = recipient === 'shared' || recipient === 'owned-spawn';
+        const spawn = recipient === 'shared' || recipient === 'owned-spawn' || recipient === 'preset';
         const actionId = spawn ? 'session.spawn_new' : 'projects.script.run';
         const actionPath = `/v1/actions/${actionId}`;
         homes.answer(serverId, `${actionPath}/execution-authorization`, { select: body => {
@@ -218,6 +253,8 @@ describe('captured Account Action response decoding', () => {
                 target: request.envelope.target,
                 machineId: row.id, installationId: row.installationId,
                 custodianAccountId: row.access.custodian.accountId, accountEncryptionMode: 'plain',
+                ...(request.envelope.sessionSpawnAdmission?.managedPresetAcquisition
+                    ? { sessionPresetAcquisition: request.envelope.sessionSpawnAdmission.managedPresetAcquisition } : {}),
                 machineRuntimeDemand: 'required',
                 ...(sync ? { workspaceSyncAdmission: { relationshipId: sync.relationshipId ?? deriveWorkspaceSyncRelationshipId(binding.requestId),
                     sourceWorkspaceRefId: sync.sourceWorkspaceRefId,
@@ -250,14 +287,21 @@ describe('captured Account Action response decoding', () => {
                 execution: { ok: true, result: { type: 'success', sessionId: 'created-session' } } } };
         } });
         const result = await executeOriginalAccountMachineAction({ account, actionId, requestId: binding.requestId,
+            ...(recipient === 'preset' ? { invocation: { caller: { kind: 'host' as const }, surface: 'ui' as const, authority: 'present_user' as const,
+                sessionCreationDefaults: { context: buildManagedSessionDefaultsContext({}), authoredChoices: {},
+                    managedPresetAcquisition: { selection: { kind: 'preset' as const, homeId: binding.serverIdentityId, id: 'selected-preset', revision: 1 },
+                        controller: { machineId: row.id, installationId: row.installationId } },
+                    managedPresetControllerAccess: { installationPublicKey: encodeBase64(guestKeys.publicKey, 'base64url'), custodian: { accountId: row.access.custodian.accountId } },
+                } } } : {}),
             authority: recipient === 'delegated-automation' ? 'account_automation' : 'present_user',
             machineId: row.id, input: !spawn ? { workspace: { serverId, workspaceId: 'workspace', machineId: row.id, rootPath: '/tmp' },
                 selection: { kind: 'named', name: 'test' } } : projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
                 creationKey: 'shared-guest-spawn', executionTarget: { serverId, machineId: row.id },
+                ...(recipient === 'preset' ? { sessionPlacement: { kind: 'preset', homeId: binding.serverIdentityId, presetId: 'selected-preset' } } : {}),
                 directory: { kind: 'path', path: '/tmp' }, permissionMode: 'default',
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             })) });
-        expect(homes.requestsFor(`${actionPath}/execution-authorization`)).toHaveLength(1);
+        expect(homes.requestsFor(`${actionPath}/execution-authorization`), JSON.stringify(result)).toHaveLength(1);
         expect(controllerReads).toBe(0);
         expect(disclosureConsent, JSON.stringify(result)).toHaveBeenCalledTimes(recipient === 'shared' || recipient === 'delegated-automation' ? 0 : 1);
         if (recipient === 'delegated-declined' || recipient === 'delegated-automation') {

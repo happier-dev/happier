@@ -9544,13 +9544,18 @@ reference privately in its runtime owner. Agent permission modes continue to
 govern Agent tools separately from Action approval.
 
 `actionsSettingsV1.machineApprovalProfiles` maps a Machine id to the person's
-profile for their own Sessions on that Machine (an Account preference, so a
-Team Machine needs no cross-Account lookup). `resolveSessionApprovalProfileReferenceV1`
-is the one reference rule, read at each Action admission by the UI and CLI
-caller-Session readers: the Session's own profile id, else the Machine default
-for the Session's `machineId`, else Account settings. A Session whose reference
-is `null` or absent has no own choice, so a Machine default reaches running
-Sessions at their next Action. Profile rows and Machine defaults are written by
+profile for new Sessions on that Machine. In unreleased 0.3 source, the creation
+context builder fills an absent member approval choice from this map; the shared
+defaults resolver applies the [one field order](teams.md#managed-session-defaults)
+and birth stores its result. Later Action admissions read only that stored id;
+`null` or absence uses Account settings. Changing the map therefore affects new
+Sessions. An inherited Project, Team or Group choice also stores
+`approvalProfileTeamOrGroupDerived: true`, which the existing profile applier
+consumes in tighten-only mode. An explicit choice, including accepting the same
+id, clears the bit and permits full application. These development source
+changes still require the composed creation/runtime validation.
+
+Profile rows and Machine defaults are written by
 `actions.policy.set` `profileChange` (`upsert`, `delete`, `machine_default`);
 deleting a profile also clears the Machine defaults that named it.
 

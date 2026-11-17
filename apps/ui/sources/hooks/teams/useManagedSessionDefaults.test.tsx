@@ -1,8 +1,11 @@
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
+import type { ProjectSourcesReadOutputV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 
-import { createDeferred, createRenderCommitCounter, renderHook, standardCleanup, useRenderCommitCounter } from '@/dev/testkit';
+import { createDeferred, createRenderCommitCounter, renderHook, standardCleanup, teamPolicyFixture, teamSummaryFixture, useRenderCommitCounter } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
 import { parseToken } from '@/utils/auth/parseToken';
@@ -26,7 +29,102 @@ beforeEach(async () => {
 });
 afterEach(() => standardCleanup());
 
+describe('managed Session Team context', () => {
+    it.each([
+        { name: 'explicit Team takes precedence', primaryTeamId: 'team-primary', sharedTeamIds: ['team-shared'], expected: 'team-primary' },
+        { name: 'sole shared Team', primaryTeamId: null, sharedTeamIds: ['team-shared'], expected: 'team-shared' },
+        { name: 'Team and Group from the same Team', primaryTeamId: null, sharedTeamIds: ['team-shared', 'team-shared'], expected: 'team-shared' },
+        { name: 'ambiguous shared Teams use personal context', primaryTeamId: null, sharedTeamIds: ['team-a', 'team-b'], expected: null },
+        { name: 'personal sharing uses personal context', primaryTeamId: null, sharedTeamIds: [], expected: null },
+    ])('preserves $name', async ({ primaryTeamId, sharedTeamIds, expected }) => {
+        const serverId = await homes.addHome({ name: 'Context Home', serverUrl: 'https://team-context.example', accountId: 'nora' });
+        const access: SessionInitialAccessDraftV1 = { grants: [
+            { subject: { kind: 'account', accountId: 'colleague' }, accessLevel: 'view', canApprovePermissions: false },
+            ...sharedTeamIds.map((teamId, index) => ({ subject: index === 0
+                ? { kind: 'team' as const, teamId } : { kind: 'group' as const, teamId, groupId: `group-${index}` },
+                accessLevel: 'view' as const, canApprovePermissions: false })),
+        ] };
+        homes.answer(serverId, path, { body: { homeDefaults: { permissionModeByAgentTargetKey: { [agentTargetKey]: 'read-only' } } } });
+        homes.answer(serverId, '/v1/teams/get', { select: input => {
+            expect(input).toEqual({ v: 1, teamId: expected });
+            return { body: teamSummaryFixture({ id: expected ?? 'unused', policy: teamPolicyFixture({
+                managedDefaults: { team: { permissionModeByAgentTargetKey: { [agentTargetKey]: 'yolo' } }, groups: {} },
+            }) }) };
+        } });
+        const hook = await renderHook(() => useManagedSessionDefaults({ serverId, teamId: primaryTeamId, agentTargetKey, access }));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().read).toMatchObject({ status: 'ready', defaults: {
+                permissionMode: { value: expected ? 'yolo' : 'read-only', source: expected ? 'team' : 'home' },
+            } }));
+            expect(hook.getCurrent().read.context.primaryTeamId).toBe(expected);
+            expect(homes.requestsFor('/v1/teams/get')).toHaveLength(expected ? 1 : 0);
+            expect(homes.requestsFor(path)).toHaveLength(expected ? 0 : 1);
+        } finally { await hook.unmount(); }
+    });
+});
+
 describe('personal managed Session defaults', () => {
+    it('retains equal Project refresh identities while publishing permission, context and defaults changes', async () => {
+        const serverId = await homes.addHome({ name: 'Project Home', serverUrl: 'https://project-defaults.example', accountId: 'nora' });
+        const sourcePath = 'GET /v1/projects/sources/source-app';
+        let mode: 'read-only' | 'yolo' = 'read-only';
+        let homeMode: 'read-only' | 'safe-yolo' = 'read-only';
+        let canManageSessionDefaults = true;
+        const sourceResponse = (): { body: ProjectSourcesReadOutputV1 } => ({ body: {
+            ok: true, canManage: true, canManageSessionDefaults,
+            source: { id: 'source-app', revision: 1, name: 'App', owner: { kind: 'account', accountId: 'nora' },
+                audience: [], createdByAccountId: 'nora' },
+            sessionDefaults: { revision: 1, defaults: { permissionModeByAgentTargetKey: { [agentTargetKey]: mode } } },
+        } });
+        let pending: ReturnType<typeof createDeferred<{ body: ProjectSourcesReadOutputV1 }>> | null = null;
+        homes.answer(serverId, sourcePath, { select: () => pending?.promise ?? sourceResponse() });
+        homes.answer(serverId, path, { select: () => ({ body: {
+            homeDefaults: { permissionModeByAgentTargetKey: { [agentTargetKey]: homeMode } },
+        } }) });
+        const projectContext = { sourceRef: { serverId, sourceId: 'source-app' } };
+        const hook = await renderHook(() => {
+            const managed = useManagedSessionDefaults({ serverId, teamId: null, agentTargetKey, projectContext });
+            const downstream = React.useMemo(() => ({ read: managed.read }), [managed.read]);
+            return { ...managed, downstream };
+        });
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().projectRead.status).toBe('ready'));
+            const first = hook.getCurrent();
+            expect(first.read).toMatchObject({ status: 'ready', defaults: { permissionMode: { value: 'read-only', source: 'project' } } });
+            pending = createDeferred();
+            await act(async () => publishHomeAccountChange(serverId, [HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1]));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().projectRead.status).toBe('refreshing'));
+            expect(hook.getCurrent().projectRead.data).toBe(first.projectRead.data);
+            await act(async () => { pending?.resolve(sourceResponse()); });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().projectRead.status).toBe('ready'));
+            expect(hook.getCurrent().projectRead.data).toBe(first.projectRead.data);
+            expect(hook.getCurrent().projectRead.data?.context).toBe(first.projectRead.data?.context);
+            expect(hook.getCurrent().read).toBe(first.read);
+            expect(hook.getCurrent().downstream).toBe(first.downstream);
+            pending = null;
+
+            canManageSessionDefaults = false;
+            await act(async () => { await hook.getCurrent().projectRead.refresh(); });
+            const permissionChanged = hook.getCurrent();
+            expect(permissionChanged.projectRead.data).not.toBe(first.projectRead.data);
+            expect(permissionChanged.projectRead.data?.canManageSource).toBe(false);
+            expect(permissionChanged.projectRead.data?.context).toBe(first.projectRead.data?.context);
+
+            homeMode = 'safe-yolo';
+            await act(async () => { await hook.getCurrent().projectRead.refresh(); });
+            const contextChanged = hook.getCurrent();
+            expect(contextChanged.projectRead.data?.context).not.toBe(permissionChanged.projectRead.data?.context);
+            expect(contextChanged.read.context.homeDefaults?.permissionModeByAgentTargetKey?.[agentTargetKey]).toBe('safe-yolo');
+            expect(contextChanged.read).toMatchObject({ defaults: { permissionMode: { value: 'read-only', source: 'project' } } });
+            expect(contextChanged.downstream).not.toBe(permissionChanged.downstream);
+
+            mode = 'yolo';
+            await act(async () => { await hook.getCurrent().projectRead.refresh(); });
+            expect(hook.getCurrent().read).toMatchObject({ defaults: { permissionMode: { value: 'yolo', source: 'project' } } });
+            expect(hook.getCurrent().downstream).not.toBe(contextChanged.downstream);
+        } finally { pending?.resolve(sourceResponse()); await hook.unmount(); }
+    });
+
     it('keeps creation ineligible until the first exact Home defaults read settles', async () => {
         const serverId = await homes.addHome({ name: 'Cold Home', serverUrl: 'https://cold-defaults.example', accountId: 'nora' });
         const response = createDeferred<{ body: { homeDefaults: null } }>();

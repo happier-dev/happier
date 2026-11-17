@@ -32,7 +32,7 @@ describe('Project row authoring metadata negotiation', () => {
         } });
         expect(await transport.list()).toMatchObject({ status: 'listed', rows: [] });
         expect(await transport.list()).toMatchObject({ status: 'listed', rows: [] });
-        // It asks for every row kind (pinned services are listed only by asking); an older server lists its default census.
+        // Navigation excludes demanded defaults (Plan F U2); an older server lists its default census.
         expect(bodies).toEqual([{ kinds: ['workspace-ref', 'relationship-graph', 'project-organization', 'services-organization'],
             includeAuthoringSession: true }, {}, {}]);
     });

@@ -18,6 +18,7 @@ import type { ProjectAccountRowsSnapshot, ProjectAccountRowsMaterialization } fr
 import { NO_PINNED_ENVIRONMENTS } from '@/sync/domains/workspaces/projectAccountRows';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { ProjectSessionDefaultsV1Schema, type ProjectSessionDefaultsV1 } from '@happier-dev/protocol/projects/projectSessionDefaultsV1';
 
 export type ProjectAccountRowsTransport = Readonly<{
     read(key: ProjectAccountRowKeyV1, options?: Readonly<{ signal?: AbortSignal }>): Promise<ProjectAccountRowReadResponseV1>;
@@ -26,6 +27,9 @@ export type ProjectAccountRowsTransport = Readonly<{
 }>;
 type OpenedRow = Readonly<{ row: ProjectAccountRowV1; payload: ProjectAccountRowPayloadV1 | null }>;
 function failure(code: string): Error & { code: string } { return Object.assign(new Error(code), { code }); }
+function isOrganizationPayload(payload: ProjectAccountRowPayloadV1): payload is Extract<ProjectAccountRowPayloadV1, { key: { kind: 'project-organization' } }> {
+    return payload.key.kind === 'project-organization';
+}
 
 /** One Account/Home-owned materialization of the reserved physical rows. */
 export function createProjectAccountRowsSync(options: Readonly<{
@@ -72,7 +76,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
                 const recent = readRecency?.(payload.value);
                 workspaceRefs.push(recent === undefined ? payload.value : { ...payload.value, lastOpenedAtMs: recent });
             } else if (payload.key.kind === 'relationship-graph' && 'relationships' in payload.value) relationships.push(...payload.value.relationships);
-            else if (payload.key.kind === 'project-organization' && !('id' in payload.value) && !('relationships' in payload.value) && !('pinnedEnvironmentIds' in payload.value)) {
+            else if (isOrganizationPayload(payload)) {
                 organizations.push({ key: payload.key, revision: row.revision, value: payload.value });
             } else if (payload.key.kind === 'services-organization' && 'pinnedEnvironmentIds' in payload.value) {
                 // The opened payload is reused while its content is unchanged, so the pins keep their identity.
@@ -170,6 +174,8 @@ export function createProjectAccountRowsSync(options: Readonly<{
             try {
                 const key = parseProjectAccountRowPhysicalKeyV1(physicalKey);
                 if (!key) throw failure('project_account_row_invalid');
+                // Demanded defaults readers consume the same hint independently; the census never opens their bodies.
+                if (key.kind === 'project-session-defaults') return { physicalKey, demandOnly: true as const };
                 const result = await options.transport.read(key, { signal });
                 if (result.status === 'present') return { physicalKey, row: result.row };
                 if (result.status === 'deleted') return { physicalKey, row: { key, revision: result.revision, content: null } };
@@ -191,13 +197,14 @@ export function createProjectAccountRowsSync(options: Readonly<{
                 options.onRefreshFailure?.(result.reason);
             } else {
                 completed.add(result.value.physicalKey);
+                if ('demandOnly' in result.value) continue;
                 if (result.value.row) rows.push(result.value.row);
                 else absentPhysicalKeys.push(result.value.physicalKey);
             }
         }
         // An auth/mode failure can retire the owner through its existing failure callback.
         assertCurrent();
-        if (completed.size === 0) return completed;
+        if (rows.length === 0 && absentPhysicalKeys.length === 0) return completed;
         try {
             observe(rows, 'projection', { absentPhysicalKeys, refreshSucceeded: !failed });
         } catch (error: unknown) {
@@ -229,10 +236,41 @@ export function createProjectAccountRowsSync(options: Readonly<{
         observe(result.rows);
         return 'updated';
     }
+    /** Selected defaults remain exact reads, outside the Account's opened census and projection. */
+    async function readSessionDefaults(project: Readonly<{ serverId: string; projectKey: string }>, signal?: AbortSignal) {
+        if (!areServerProfileIdentifiersEquivalent(project.serverId, options.scope.serverId)) throw failure('project_account_scope_mismatch');
+        assertCurrent(); signal?.throwIfAborted();
+        const key = { kind: 'project-session-defaults' as const, ...project };
+        const result = await options.transport.read(key, { signal });
+        assertCurrent(); signal?.throwIfAborted();
+        if (result.status === 'absent') return null;
+        if (result.status === 'deleted') return { revision: result.revision, defaults: null };
+        if (result.status !== 'present') throw failure(`project_account_rows_${result.status}`);
+        if (result.row.content === null) return { revision: result.row.revision, defaults: null };
+        const payload = options.cipher.open(key, result.row.content);
+        return { revision: result.row.revision, defaults: ProjectSessionDefaultsV1Schema.parse(payload.value) };
+    }
+    /** The caller's selected revision owns CAS; no census or pre-write read re-decides that intent. */
+    async function mutateSessionDefaults(input: Readonly<{
+        serverId: string; projectKey: string; expectedRevision: number | 'absent'; defaults: ProjectSessionDefaultsV1 | null; signal?: AbortSignal;
+    }>) {
+        if (!areServerProfileIdentifiersEquivalent(input.serverId, options.scope.serverId)) throw failure('project_account_scope_mismatch');
+        assertCurrent(); input.signal?.throwIfAborted();
+        const key = { kind: 'project-session-defaults' as const, serverId: input.serverId, projectKey: input.projectKey };
+        const value = input.defaults === null ? null : ProjectSessionDefaultsV1Schema.parse(input.defaults);
+        const request = { mutations: [{ key, expectedRevision: input.expectedRevision,
+            content: value === null ? null : options.cipher.seal({ key, value }) }], expectedRefs: [], topologyChange: false } satisfies ProjectAccountRowMutationRequestV1;
+        const result = await options.transport.mutate(request, { signal: input.signal });
+        if (result.status === 'conflict') return { status: 'conflict' as const, revision: result.revision };
+        if (result.status !== 'updated') throw failure(`project_account_rows_${result.status}`);
+        assertAcknowledgement(request, result);
+        // The verified ACK is the captured write's receipt even if navigation retired this owner.
+        return { status: 'updated' as const, revision: result.rows[0]!.revision, value };
+    }
     /** Functional intents use the fresh row; explicit caller revisions never retry a stale decision. */
     async function mutateOrganizationAtRevision(input: Readonly<{
         serverId: string; projectKey: string; expectedRevision?: number | 'absent'; signal?: AbortSignal;
-        mutate(value: ProjectAccountOrganizationV1): ProjectAccountOrganizationV1;
+        mutate(value: ProjectAccountOrganizationV1): ProjectAccountOrganizationV1 | Promise<ProjectAccountOrganizationV1>;
     }>) {
         if (input.serverId !== options.scope.serverId) throw failure('project_account_scope_mismatch');
         await refresh(input.signal);
@@ -241,8 +279,8 @@ export function createProjectAccountRowsSync(options: Readonly<{
         const observed = previous?.row.revision ?? 'absent';
         if (input.expectedRevision !== undefined && observed !== input.expectedRevision) return { status: 'conflict' as const, revision: observed === 'absent' ? -1 : observed };
         const payload = previous?.payload;
-        const before = payload && !('id' in payload.value) && !('relationships' in payload.value) && !('pinnedEnvironmentIds' in payload.value) ? payload.value : {};
-        const value = ProjectAccountOrganizationV1Schema.parse(input.mutate(before));
+        const before = payload && isOrganizationPayload(payload) ? payload.value : {};
+        const value = ProjectAccountOrganizationV1Schema.parse(await input.mutate(before));
         assertCurrent(); input.signal?.throwIfAborted();
         if (previous?.payload && areAccountSettingsJsonValuesEqual(before, value)) {
             return { status: 'updated' as const, revision: previous.row.revision, value: before };
@@ -280,7 +318,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
             const nextRef = grouping ? { ...labeled, projectKey: grouping.projectKey } : labeled;
             const organizationKey = { kind: 'project-organization' as const, ...projectWorkspaceRefV1(nextRef) };
             const previous = rowFor(organizationKey)?.payload;
-            const organization = previous && !('id' in previous.value) && !('relationships' in previous.value) && !('pinnedEnvironmentIds' in previous.value) ? previous.value : {};
+            const organization = previous && isOrganizationPayload(previous) ? previous.value : {};
             const nextOrganization = input.pinned === undefined ? organization : { ...organization, pinned: input.pinned };
             const request: ProjectAccountRowMutationRequestV1 = { mutations: [], expectedRefs: [], topologyChange: false };
             if (nextRef.label !== ref.label || nextRef.projectKey !== ref.projectKey) {
@@ -408,7 +446,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
             return intent.kind === 'upsert' ? { ok: true, workspaceRefId: ref.id } : { ok: true };
         }
     }
-    return { read, refresh, refreshKeys, waitForWorkspaceRef, mutateRef, mutateWorkspaceMetadata,
+    return { read, refresh, refreshKeys, readSessionDefaults, mutateSessionDefaults, waitForWorkspaceRef, mutateRef, mutateWorkspaceMetadata,
         recordWorkspaceSource: (address: WorkspaceAddressV1, source: NonNullable<WorkspaceRefV1['source']>, signal?: AbortSignal) =>
             recordWorkspaceFacts(address, { source }, signal),
         recordWorkspaceRepositoryIdentity: (address: WorkspaceAddressV1, repositoryIdentity: NonNullable<WorkspaceRefV1['repositoryIdentity']>, signal?: AbortSignal) =>

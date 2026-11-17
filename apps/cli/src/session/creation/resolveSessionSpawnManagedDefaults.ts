@@ -11,7 +11,7 @@ import { getOrganizationPolicySessionDefaults } from '@happier-dev/protocol/orga
 import { readAccountSettingValueForBackendTarget } from '@happier-dev/protocol/account/settings/accountSettings';
 import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings } from '@happier-dev/protocol/account/settings/connected-services';
 import { readAgentDefaultModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
-import { projectSessionModelSelectionV2ToV1, sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
+import { sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -20,14 +20,16 @@ import type { ConnectedAccountCatalogSnapshotV1 } from '@happier-dev/protocol/co
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { resolveManagedSessionDefaults, type ManagedConnectedServiceDefaultV1, type ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams/managedDefaults';
+import { buildManagedSessionDefaultsContext, resolveManagedSessionDefaults, type ManagedSessionDefaultsContext, type ManagedConnectedServiceDefaultV1, type ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams/managedDefaults';
+import { loadManagedSessionDefaultsContextV1, type ManagedSessionDefaultsContextLoaderV1 } from '@happier-dev/protocol/projects/loadManagedSessionDefaultsContextV1';
+import { tryNormalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { SessionPlacementSelectionV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import type { ConnectedServiceBindingsV2, SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol';
 import { materializeSessionSpawnConnectedServicesDefaults, mergeSessionTeamCredentialBindingIntents, readAgentPurposeDefaults, type ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
 
 type SpawnDefaultSelections = Pick<SessionSpawnNewInputV2,
-  'executionTarget' | 'agentTarget' | 'primaryTeamId' | 'initialAccess' | 'permissionMode' | 'modelSelection' | 'configuration' | 'teamCredentialBindings' | 'identity' | 'attestedContext' | 'isolationOverride' | 'sourceContext'>
+  'executionTarget' | 'agentTarget' | 'projectContext' | 'approvalProfileId' | 'primaryTeamId' | 'initialAccess' | 'permissionMode' | 'modelSelection' | 'configuration' | 'teamCredentialBindings' | 'identity' | 'attestedContext' | 'isolationOverride' | 'sourceContext' | 'sessionPlacement'>
   & Readonly<{ connectedServices?: SessionSpawnNewInputV2['connectedServices'] | null }>;
 
 export type SessionSpawnIsolationDecision = Readonly<{
@@ -48,7 +50,8 @@ function resolveSessionSpawnIsolation(input: SpawnDefaultSelections, openedMetad
   try { policy = readMachineIsolationPolicyV1(openedMetadata ?? {}); }
   catch { return isolationUnavailable('machine_isolation_policy_unreadable'); }
   if (input.sourceContext || input.configuration?.providerSessionResume) return null;
-  const selectedSandbox = admittedWorkflowPlacement?.kind === 'machine' ? admittedWorkflowPlacement.configuredSandbox : undefined;
+  const selectedPlacement = admittedWorkflowPlacement ?? input.sessionPlacement;
+  const selectedSandbox = selectedPlacement?.kind === 'machine' ? selectedPlacement.configuredSandbox : undefined;
   if (!policy) return selectedSandbox ? isolationUnavailable('machine_isolation_sandbox_unavailable') : null;
   const binding = context?.externalActionExecutionAuthorization?.binding;
   const caller = readInitiatingActionCallerV1(context?.actionCaller);
@@ -105,8 +108,12 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
   accountSettings: unknown;
   purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
   organizationPolicy: OrganizationPolicyLoadResult;
+  capturedContext?: ManagedSessionDefaultsContext;
+  authoredChoices?: NonNullable<ActionExecutorContext['sessionCreationDefaults']>['authoredChoices'];
   readTeam: (teamId: string) => Promise<unknown>;
   readHome: () => Promise<unknown>;
+  readPersonalDefaults?: ManagedSessionDefaultsContextLoaderV1['readPersonalDefaults'];
+  readSource?: ManagedSessionDefaultsContextLoaderV1['readSource'];
   resolveTeamCredentialResourceCatalog?: ResolveSpawnConnectedServicesTeamResourceCatalog;
   signal?: AbortSignal;
 }>) {
@@ -148,34 +155,55 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
     }
   }
   const sharedTeamIds = new Set(input.initialAccess?.grants.flatMap(({ subject }) => subject.kind === 'account' ? [] : [subject.teamId]));
-  const defaultsTeamId = input.primaryTeamId ?? (sharedTeamIds.size === 1 ? sharedTeamIds.values().next().value : undefined);
-  const team = defaultsTeamId
-    ? TeamSummaryV1Schema.parse(readGovernanceResult(await params.readTeam(defaultsTeamId))) : null;
-  const homeDefaults = team ? team.policy.homeDefaults ?? null
-    : HomeSessionDefaultsProjectionV1Schema.parse(readGovernanceResult(await params.readHome())).homeDefaults;
   const policy = getOrganizationPolicySessionDefaults(params.organizationPolicy);
   const memberDefaults: ManagedSessionDefaultsV1 = {
     ...(memberPermission ? { permissionModeByAgentTargetKey: { [targetKey]: memberPermission } } : {}),
     ...(memberModel ? { modelByAgentTargetKey: { [targetKey]: memberModel } } : {}),
     connectedServicesByAgentTargetKey: { [targetKey]: memberPurposes },
   };
+  const capturedContext = params.capturedContext ?? (input.sourceContext || input.configuration?.providerSessionResume
+    ? buildManagedSessionDefaultsContext({}) : (await loadManagedSessionDefaultsContextV1({ ...input.projectContext,
+    primaryTeamId: input.primaryTeamId, sharedTeamIds: [...sharedTeamIds], memberDefaults, policyDefaults: policy,
+    creationMachineApprovalProfileId: tryNormalizeActionsSettingsV1(settings.actionsSettingsV1)
+      ?.machineApprovalProfiles?.[input.executionTarget.machineId],
+  }, {
+    readPersonalDefaults: project => params.readPersonalDefaults!(project),
+    readSource: source => params.readSource!(source),
+    readTeam: async teamId => {
+      const raw = await params.readTeam(teamId);
+      const failure = ActionExecuteFailureSchema.safeParse(raw);
+      return failure.success ? failure.data : TeamSummaryV1Schema.parse(raw);
+    },
+    readHome: async () => HomeSessionDefaultsProjectionV1Schema.parse(readGovernanceResult(await params.readHome())),
+  })).context);
+  const completedContext = buildManagedSessionDefaultsContext({ context: capturedContext, memberDefaults, policy,
+    creationMachineApprovalProfileId: tryNormalizeActionsSettingsV1(settings.actionsSettingsV1)
+      ?.machineApprovalProfiles?.[input.executionTarget.machineId] });
   const explicitPermission = input.permissionMode ?? input.configuration?.permissionIntent.value ?? undefined;
   const explicitModelBinding = input.teamCredentialBindings?.find(intent => intent.slot.kind === 'provider_model');
   const explicitAutomatic = input.configuration?.model.value === null && input.configuration.model.selectionSource !== 'inherited';
   const explicitModel = input.modelSelection ?? (input.configuration?.model.value ? { v: 1 as const,
     updatedAt: input.configuration.model.updatedAtMs, ref: { agentTargetKey: targetKey, providerConnectionId: null,
       modelId: input.configuration.model.value } } : explicitAutomatic || explicitModelBinding ? null : undefined);
+  const authoredPlacement = params.authoredChoices?.sessionPlacement
+    ?? (params.authoredChoices ? undefined : input.sessionPlacement);
+  const explicitPlacement = authoredPlacement && authoredPlacement.kind !== 'managed' ? authoredPlacement
+    : !params.authoredChoices || params.authoredChoices.executionTarget
+      ? { kind: 'machine' as const, target: params.authoredChoices?.executionTarget ?? input.executionTarget }
+      : undefined;
   const resolved = resolveManagedSessionDefaults({
+    ...completedContext,
     machineIsolation: params.machineIsolation,
     machineIsolationPolicy: params.machineIsolationPolicy,
     sandboxTypeSupportsNativeSandbox: params.sandboxTypeSupportsNativeSandbox,
     nativeSandboxAvailable: params.nativeSandboxAvailable,
     explicitAgentSandbox: input.configuration?.nativeSandbox,
     retainedNativeProfile: input.configuration?.providerSessionResume !== undefined,
-    agentTargetKey: targetKey, memberDefaults, teamDefaults: team?.policy.managedDefaults ?? null,
-    groupIds: team?.managedDefaultsGroupIds ?? [], homeDefaults, policyDefaults: policy,
+    agentTargetKey: targetKey,
     explicitChoices: {
-      placement: { kind: 'machine', target: input.executionTarget },
+      defaultAgentTarget: params.authoredChoices ? params.authoredChoices.agentTarget : input.agentTarget,
+      ...(input.approvalProfileId === undefined ? {} : { approvalProfileId: input.approvalProfileId }),
+      ...(explicitPlacement ? { placement: explicitPlacement } : {}),
       ...(explicitPermission ? { permissionModeByAgentTargetKey: { [targetKey]: explicitPermission } } : {}),
       ...(explicitModel !== undefined ? { modelByAgentTargetKey: { [targetKey]: explicitModel } } : {}),
       connectedServicesByAgentTargetKey: { [targetKey]: explicitPurposes },
@@ -218,10 +246,14 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
   return {
     resolveIsolation: () => resolveSessionSpawnIsolation(input, params.openedMachineMetadata, params.startContext, params.admittedWorkflowPlacement),
     placement: resolved.placement,
+    primaryTeamId: capturedContext.primaryTeamId,
+    approvalProfileId: resolved.approvalProfileId.value ?? null,
+    approvalProfileTeamOrGroupDerived: resolved.approvalProfileId.teamOrGroupDerived,
     nativeSandbox: resolved.agentSandbox.value,
     agentSandbox: resolved.agentSandbox,
     permissionMode: resolved.permissionMode.value,
-    modelSelection: selectedModel ? selectedModel.v === 1 ? selectedModel : projectSessionModelSelectionV2ToV1(selectedModel) ?? undefined : input.modelSelection,
+    resolvedModelSelection: selectedModel,
+    modelSelection: selectedModel ?? input.modelSelection,
     connectedServices: { v: 2 as const, bindingsByServiceId },
     ...(teamCredentialBindings ? { teamCredentialBindings } : {}),
     ...(payload ? { connectedServicesUpdatedAt: payload.connectedServicesUpdatedAt } : {}),

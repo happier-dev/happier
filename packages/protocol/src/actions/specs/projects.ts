@@ -12,6 +12,8 @@ import { z } from '../../zodRuntimePolicy.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 import { actionInputServerId } from './definition.js';
+import { PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 } from '../actionIds.js';
+import { ProjectSessionDefaultsGetInputV1Schema, ProjectSessionDefaultsGetOutputV1Schema } from '../../projects/loadManagedSessionDefaultsContextV1.js';
 
 
 export const PathsListRecentInputSchema = lazyZodSchema(() => z.looseObject({
@@ -55,6 +57,25 @@ function createProjectContextActionSpecs() {
       { path: 'workspace', title: 'Accepted checkout', widget: 'json', required: true },
       { path: 'expectedRevision', title: 'Reviewed organization revision', widget: 'json', required: true },
       { path: 'intent', title: 'Shared selection or personal edit', widget: 'json', required: true },
+    ] },
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, approval: { result: 'required' },
+    title: 'Read Project Session defaults',
+    description: 'Read the selected Project private defaults, its admitted linked Source defaults and the effective Team or Home context.',
+    sideEffectClass: 'read', safety: 'safe', executionPlacement: 'account', placements: [],
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'projects_session_defaults_get' },
+    cli: { commands: [{ path: ['projects', 'session-defaults', 'get'], visibility: 'canonical' }] },
+    inputSchema: lazyZodSchema(() => ProjectSessionDefaultsGetInputV1Schema),
+    invocationServerIdForInput: actionInputServerId(lazyZodSchema(() => ProjectSessionDefaultsGetInputV1Schema),
+      input => input.projectRef?.serverId ?? input.sourceRef!.serverId),
+    outputSchema: lazyZodSchema(() => ProjectSessionDefaultsGetOutputV1Schema),
+    inputHints: { fields: [
+      { path: 'projectRef', title: 'Selected Project', widget: 'json' },
+      { path: 'sourceRef', title: 'Linked Source', widget: 'json' },
+      { path: 'primaryTeamId', title: 'Primary Team', widget: 'text' },
+      { path: 'sharedTeamIds', title: 'Shared Teams', widget: 'json' },
     ] },
   } satisfies PreNormalizedActionSpec,
   {

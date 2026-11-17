@@ -251,6 +251,62 @@ describe('executeExternalAction', () => {
       expect(spawnEffect).not.toHaveBeenCalled();
     });
 
+  it.each([['plain', true], ['e2ee', true], ['plain', false], ['e2ee', false]] as const)(
+    'keeps %s native Session admission bound to the preset operand (%s)', async (mode, presetBacked) => {
+    const spawnPrincipal = { ...principal, credentialId: '00000000-0000-4000-8000-000000000082' };
+    const target = { kind: 'machine' as const, machineId: 'hidden-controller' };
+    const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(82) };
+    const binding = { serverIdentityId: 'srv_home', accountId: principal.accountId, credentialId: spawnPrincipal.credentialId,
+      actionId: 'session.spawn_new', requestId: `preset-scope-${mode}`, target };
+    const acquisition = { selection: { kind: 'preset' as const, homeId: binding.serverIdentityId, id: 'shared-preset', revision: 3 },
+      controller: { machineId: target.machineId, installationId: 'installation' } };
+    const spawn = { executionTarget: { serverId: binding.serverIdentityId, machineId: target.machineId },
+      agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      directory: { kind: 'managed' as const },
+      ...(presetBacked ? { sessionPlacement: { kind: 'preset' as const, homeId: binding.serverIdentityId, presetId: 'shared-preset' } } : {}) };
+    const admission = presetBacked ? projectApiTokenSessionSpawnAdmissionV1(spawn, { managedPresetAcquisition: acquisition }) : undefined;
+    const envelope = { ...(mode === 'plain' ? { v: 1 as const, requestId: binding.requestId, target, input: spawn }
+      : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+        binding, material, input: spawn, randomBytes: tweetnacl.randomBytes })),
+      ...(admission ? { sessionSpawnAdmission: admission } : {}) };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'preset-scoped-root', binding: {
+      ...binding, principalId: principal.principalId, custodianAccountId: 'custodian', installationId: 'installation',
+      machineId: target.machineId, grant: principal.grant, admittedMachineRole: 'manage', accountEncryptionMode: mode,
+      sessionPresetAcquisition: acquisition,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } });
+    const spawnEffect = vi.fn(async () => ({ type: 'success' as const, disposition: 'created' as const,
+      sessionId: 'preset-created-session', executionTarget: spawn.executionTarget,
+      organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' as const } }));
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, scopedApprovalPreferences: [{ actionId: binding.actionId,
+      scope: target, approvalRequiredSurfaces: [], approvalWaivedSurfaces: ['api'] }] });
+    const realExecutor = createActionExecutor({ ...createUnavailableHostActionDeps(), sessionSpawnNew: spawnEffect });
+    const result = await executeExternalAction({ actionId: binding.actionId, envelope, principal: spawnPrincipal,
+      currentMachineId: target.machineId, currentInstallationId: 'installation', currentServerId: 'home-profile',
+      executionAuthorization: authorization,
+      externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).secretKey,
+      // Home signature verification and the installed OS launch are the boundaries.
+      verifyExecutionAuthorization: async () => true,
+      resolveEncryption: async () => ({ serverIdentityId: binding.serverIdentityId, material }),
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'fixture', encryption: null } }),
+      localRootInvocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'account_automation',
+        sessionCreationDefaults: { context: { memberDefaults: {} }, authoredChoices: {}, managedPresetAcquisition: acquisition } },
+      executor: { execute: (id, value, context) => realExecutor.execute(id, value, { ...context, actionsSettings: settings }) },
+    });
+    if (presetBacked) {
+      expect(result, JSON.stringify(result)).toMatchObject({ kind: 'response' });
+      const execution = result.kind !== 'response' ? null : envelope.v === 2
+        ? openExternalActionResponseV2({ envelope: result.response, binding, material, request: envelope })
+        : result.response.v === 1 ? result.response.execution : null;
+      expect(execution).toMatchObject({ ok: true,
+        result: { type: 'success', disposition: 'created', sessionId: 'preset-created-session', executionTarget: spawn.executionTarget } });
+      expect(spawnEffect).toHaveBeenCalledOnce();
+      return;
+    }
+    expect(result).toMatchObject({ kind: 'invalid_request', errorCode: mode === 'plain' ? 'invalid_envelope' : 'invalid_encrypted_envelope' });
+    expect(spawnEffect).not.toHaveBeenCalled();
+  });
+
   it.each(['plain', 'e2ee'] as const)('admits exact %s Domain envelopes without requiring deploy candidate publication', async mode => {
     const target = { kind: 'machine' as const, machineId: 'domain-controller' };
     const accountPrincipal = { accountId: principal.accountId,

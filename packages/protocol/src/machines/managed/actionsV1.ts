@@ -1,3 +1,5 @@
+import { ManagedAdmissionPresetContentV1Schema, type ManagedAdmissionPresetContentV1 } from './managedMachinePresetContentCarrierV1.js';
+export { ManagedAdmissionPresetContentV1Schema, type ManagedAdmissionPresetContentV1 } from './managedMachinePresetContentCarrierV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { GuestCliIdentityV1Schema } from '../../features/payload/capabilities/guestCliIdentityV1.js';
 import { MachinesAgentsInstallInputSchema } from '../../daemon/agentInstallJobs.js';
@@ -646,11 +648,6 @@ export const ManagedAdmissionInputV1Schema = lazyZodSchema(() => z.strictObject(
  * private launch/setup snapshot is opened by the installed custodian daemon
  * with its Account key before native reconciliation.
  */
-export const ManagedAdmissionPresetContentV1Schema = lazyZodSchema(() => z.strictObject({
-  content: ManagedMachinePresetStoredContentCarrierV1Schema,
-  recipients: ManagedMachinePresetRecipientsV1Schema,
-}));
-export type ManagedAdmissionPresetContentV1 = z.infer<typeof ManagedAdmissionPresetContentV1Schema>;
 /** @deprecated Use the canonical opaque managed-machine projection. */
 export const ManagedAdmissionStructuralMachineV1Schema = lazyZodSchema(() => ManagedOpaquePresetMachineV1Schema);
 export type ManagedAdmissionStructuralMachineV1 = z.infer<typeof ManagedAdmissionStructuralMachineV1Schema>;

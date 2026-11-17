@@ -54,7 +54,8 @@ import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions
 import { PROJECT_PREPARE_ACTION_ID_V1, PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1, isProjectSetupSetChildActionIdV1, readProjectSetupSetChildRpcEffectV1, isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ProjectSetupSetInputV1Schema, isProjectSetupSetChildInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
 import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
-import { isProjectAccountRowActionIdV1, isSessionListActionId, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { isProjectAccountRowActionIdV1, isSessionListActionId, isWorkspaceSyncRelationshipWriteActionId, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { resolveManagedSessionDefaultsTeamId } from '@happier-dev/protocol/teams/managedDefaults';
 import { readWorkspaceSyncSourceAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, DeploymentRollbackAdmissionInputV1Schema,
     DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentPromoteInputV1Schema,
@@ -224,7 +225,7 @@ import { readDeploymentChildAdmissionInTx, readDeploymentChildMachineReadInTx, i
     type DeploymentChildAdmission, type DeploymentChildMachineRead } from '@/app/deployments/deploymentChildAuthorization';
 import { projectAcceptedDeploymentDomainSecretLaunchAdmission } from '@/app/deployments/deploymentDomainService';
 import { readDeploymentChildHttpPurposeInTx, readDeploymentChildPeerGrantTarget } from './deploymentChildHttpPurpose';
-import { isExternalActionManagedResourceAction, readExternalActionManagedAcquireResourceInTx, resolveManagedActionMachineAdmissionInTx } from './externalActionManagedAdmission';
+import { isExternalActionManagedResourceAction, readExternalActionManagedAcquireResourceInTx, resolveManagedActionMachineAdmissionInTx, resolveSessionPresetActionMachineAdmissionInTx } from './externalActionManagedAdmission';
 import { resolveManagedNativeCredentialActionMachineAdmissionInTx, type ExternalActionManagedAdmissionContext } from './externalActionManagedNativeAdmission';
 import { hasAdmittedExternalActionHandoffScope, readAdmittedExternalActionHandoffMachineInTx, readAdmittedExternalActionMachineInTx } from './externalActionHandoffAdmission';
 import { readExternalActionDeploymentDomainPurpose, type DomainHttpPurpose } from './externalActionDeploymentDomainPurpose';
@@ -319,14 +320,21 @@ export function readExternalActionSessionSpawnAdmission(
 ): ApiTokenSessionSpawnAdmissionV1 | undefined {
     if (envelope.v !== 1) return envelope.sessionSpawnAdmission;
     const internal = SessionSpawnNewActionInputV2Schema.safeParse(envelope.input);
-    if (internal.success) return projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(internal.data));
-    // Only API input binding needs the server identity; without it the input is as unbindable as a malformed one.
-    const serverId = context.serverId;
-    if (serverId === null) throw new Error('Server identity is unavailable for Session spawn input binding');
-    const canonical = SessionSpawnNewActionInputV2Schema.parse(
-        bindApiSessionSpawnNewInput(envelope.input, { actionId: SESSION_SPAWN_NEW_ACTION_ID_V1,
-            surface: 'api', caller: { kind: 'host' }, serverId, externalActionTarget: context.target }));
-    return projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(canonical));
+    // Only public API input binding needs the server identity.
+    const canonical = internal.success ? internal.data : (() => {
+        if (context.serverId === null) throw new Error('Server identity is unavailable for Session spawn input binding');
+        return SessionSpawnNewActionInputV2Schema.parse(bindApiSessionSpawnNewInput(envelope.input, {
+            actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, surface: 'api', caller: { kind: 'host' },
+            serverId: context.serverId, externalActionTarget: context.target,
+        }));
+    })();
+    const projected = projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(canonical), {
+        managedPresetAcquisition: envelope.sessionSpawnAdmission?.managedPresetAcquisition,
+    });
+    if (envelope.sessionSpawnAdmission !== undefined && !sameManagedInput(projected, envelope.sessionSpawnAdmission)) {
+        throw new Error('Session admission does not match its authored input');
+    }
+    return projected;
 }
 
 /** Native effects consume their existing admission; new work uses C41 policy. */
@@ -365,6 +373,17 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(reader:
         const admitted = input.managedCreationAdmission ? readSelectedManagedCreationChildAdmission(input.managedCreationAdmission, native)
             : (await readAdmittedManagedCreationChildInTx(reader, native))?.machineAdmission;
         return admitted ?? { kind: 'denied', code: 'machine_unavailable' };
+    }
+    if (native?.sessionPresetAcquisition && native.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+        && input.actionId === native.actionId && input.actorAccountId === native.accountId && input.machineId === native.machineId
+        && native.target.kind === 'machine' && native.target.machineId === native.machineId
+        && native.sessionPresetAcquisition.selection.homeId === native.serverIdentityId
+        && native.sessionPresetAcquisition.controller.machineId === native.machineId
+        && native.sessionPresetAcquisition.controller.installationId === native.installationId) {
+        // The root already admitted this preset carrier; grants are checked at the next root.
+        const admitted = await readAdmittedExternalActionMachineInTx(reader, native, native.machineId, native.installationId);
+        return admitted ? { ...admitted, role: native.admittedMachineRole ?? admitted.role,
+            sessionPresetAcquisition: native.sessionPresetAcquisition } : { kind: 'denied', code: 'machine_unavailable' };
     }
     if (native && (isManagedControlAdmissionActionIdV1(native.actionId)
         || isExternalActionManagedResourceAction(native.actionId) && native.actionId !== 'machines.managed.credentials.install')
@@ -410,6 +429,14 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(reader:
         ...(input.actionId === 'approval.request.decide'
             ? { rpcMethod: RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED }
             : accountPlaced ? {} : { actionId: input.actionId }) });
+    if (sessionSpawnAdmission?.managedPresetAcquisition) {
+        if (sessionSpawnAdmission.executionTarget.serverId !== sessionSpawnAdmission.managedPresetAcquisition.selection.homeId
+            || sessionSpawnAdmission.executionTarget.machineId !== input.machineId) return { kind: 'denied', code: 'access_denied' };
+        return resolveSessionPresetActionMachineAdmissionInTx(reader, { ...input,
+            acquisition: sessionSpawnAdmission.managedPresetAcquisition,
+            ...(ordinary.kind === 'admitted' ? { ordinaryAdmission: ordinary } : {}),
+        });
+    }
     if (ordinary.kind === 'admitted' && ordinary.custodianAccountId !== input.actorAccountId
         && (input.actionId === 'machines.managed.acquire' || input.actionId === 'machines.managed.cancel' || input.actionId === 'machines.managed.delete')) {
         return resolveManagedActionMachineAdmissionInTx(reader, { ...input, ordinaryAdmission: ordinary });
@@ -1334,11 +1361,15 @@ async function isReviewedManagedAcquirePurpose(binding: ExternalActionExecutionA
     if (!parsed.success) return false;
     const { input, originalActionEnvelope: root } = parsed.data;
     if (input.selection.kind !== 'preset' || input.selection.homeId !== binding.serverIdentityId
-        || input.controller?.machineId !== binding.machineId || input.controller.installationId !== binding.installationId
+        || !input.controller || input.controller.machineId !== binding.machineId || input.controller.installationId !== binding.installationId
         || root === undefined
         || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: binding.actionId, machineId: binding.machineId, envelope: root })
         || proof.reviewedChild.inputDigest !== computeActionInputApprovalDigestV1(MANAGED_ACQUIRE_ACTION_ID_V1, input)) return false;
-    if (session) return parsed.data.acquisitionMode === 'resource-bound' && parsed.data.continuationPresent === false;
+    if (session) return parsed.data.acquisitionMode === 'resource-bound' && parsed.data.continuationPresent === false
+        && (binding.sessionPresetAcquisition === undefined || sameManagedInput({ selection: binding.sessionPresetAcquisition.selection,
+            controller: binding.sessionPresetAcquisition.controller }, {
+            selection: input.selection, controller: input.controller,
+        }));
     const placement = binding.target.kind === 'machine' ? binding.target.project?.sessionPlacement : undefined;
     if (parsed.data.acquisitionMode !== undefined || !parsed.data.continuationPresent
         || placement?.kind !== 'preset' || placement.homeId !== input.selection.homeId || placement.presetId !== input.selection.id
@@ -1413,6 +1444,9 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         deploymentRead: isDeploymentReadPreparation(binding, effectActionId),
         projectPrepareReview: binding.actionId === PROJECT_PREPARE_ACTION_ID_V1
             && effectActionId === ACTION_OPERATION_GET_ACTION_ID_V1,
+        projectSessionDefaults: binding.actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1
+            && binding.projectSessionDefaultsAdmission !== undefined
+            && (effectActionId === PROJECT_SOURCE_READ_ACTION_ID_V1 || effectActionId === 'teams.get' || effectActionId === 'home.governance.get'),
         registryRead: isRegistryAppUpdateReadEffect(binding, effectActionId),
         sectionArchive: isSessionSectionArchiveEffectV1(binding.actionId, effectActionId),
         stopChild: isSessionStopChildEffectV1(binding.actionId, effectActionId),
@@ -1434,7 +1468,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
             && (isContributedActionRoot(binding.actionId)
                 || !('authentication' in binding) && binding.actionId === 'approval.request.create'
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
-    const usesRootCredential = sibling.docDecision || templateDeployEffect || sibling.deploymentRead || movePreparationEffect
+    const usesRootCredential = sibling.docDecision || templateDeployEffect || sibling.deploymentRead || sibling.projectSessionDefaults || movePreparationEffect
         || reviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory || reviewedManagedAcquirePurpose
         || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
@@ -1589,7 +1623,10 @@ async function verifyCommon(
         || effectActionId.data !== binding.actionId)) return refuse('verification_purpose');
     if (proof.method.toUpperCase() === 'POST'
         && proof.path === bindExternalActionExecutionAuthorizationVerifyHttpPathV1(binding.actionId)
-        && (!currentnessBody.success || currentnessBody.data.admittedMachineRole !== binding.admittedMachineRole)) {
+        && (!currentnessBody.success || currentnessBody.data.admittedMachineRole !== binding.admittedMachineRole
+            || (currentnessBody.data.binding !== undefined
+                ? !matchesExternalActionAuthorizationBinding(binding, currentnessBody.data.binding)
+                : binding.sessionPresetAcquisition?.admission !== undefined))) {
         return refuse('verification_purpose');
     }
     const retainedDiscussionSource = currentnessBody.success ? currentnessBody.data.retainedDiscussionSource : undefined;
@@ -2395,6 +2432,9 @@ function isProjectAccountMetadataHttpPurpose(verified: VerifiedExternalActionExe
     proof: ExternalActionExecutionRequestProof): boolean {
     if (verified.effectActionId !== verified.binding.actionId) return false;
     const actionId = verified.binding.actionId;
+    // This read has exact signed selectors; its purpose owner below must bind
+    // those operands before the Account row-family transport can admit it.
+    if (actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1) return false;
     const url = new URL(proof.path, 'http://home.invalid');
     const method = proof.method.toUpperCase();
     if (MACHINE_TERMINAL_ACTION_IDS.some(id => id === actionId)) {
@@ -2968,6 +3008,43 @@ export function isDeploymentNativeHttpPurpose(verified: Pick<VerifiedExternalAct
 }
 
 /** A signed Account root spends its declared operation and required preparation reads. */
+async function isProjectSessionDefaultsHttpPurpose(verified: VerifiedSignedChildRequest,
+    proof: ExternalActionExecutionRequestProof): Promise<boolean> {
+    const selection = verified.binding.projectSessionDefaultsAdmission;
+    if (!selection) return false;
+    const effect = verified.effectActionId;
+    if (effect === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1) {
+        const read = proof.method.toUpperCase() === 'POST' && proof.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`
+            ? ProjectAccountRowReadRequestV1Schema.safeParse(proof.body) : null;
+        return Boolean(selection.projectRef && read?.success && sameManagedInput(read.data, {
+            key: { kind: 'project-session-defaults', ...selection.projectRef },
+        }) && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, read.data)));
+    }
+    if (effect === PROJECT_SOURCE_READ_ACTION_ID_V1) {
+        const source = readDeploymentSourceReadOperands(verified.binding.serverIdentityId, proof);
+        return Boolean(selection.sourceRef && source && sameManagedInput(source, selection.sourceRef));
+    }
+    if (effect === 'home.governance.get') {
+        return isAccountActionHttpOperation(effect, proof)
+            && sameManagedInput(proof.routeInput ?? proof.body, { projection: 'session_defaults' });
+    }
+    if (effect !== 'teams.get' || !isAccountActionHttpOperation(effect, proof)) return false;
+    const teamRead = getActionSpec(effect).inputSchema.safeParse(proof.routeInput ?? proof.body);
+    if (!teamRead.success) return false;
+    // Source custody supplies only the linked owner's identity. The Source and
+    // Team routes retain their existing requester admission; no policy is read here.
+    const { readProjectSourceOwnerInTx } = await import('@/app/projects/sources/projectSourceService');
+    const owner = selection.sourceRef && !selection.primaryTeamId
+        ? await readProjectSourceOwnerInTx(db, selection.sourceRef.sourceId) : null;
+    const teamId = resolveManagedSessionDefaultsTeamId({ primaryTeamId: selection.primaryTeamId,
+        sharedTeamIds: selection.sharedTeamIds,
+        ...(owner && selection.sourceRef ? { projectSourceDefaults: {
+            sourceId: selection.sourceRef.sourceId, owner, defaults: null,
+        } } : {}),
+    });
+    return teamId !== null && teamRead.data.teamId === teamId;
+}
+
 async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof, snapshotBatch: SessionReadBatchRequestV1 | null): Promise<boolean | null> {
     const root = verified.binding.actionId;
@@ -2990,6 +3067,7 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
         }
         return false;
     }
+    if (root === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1) return isProjectSessionDefaultsHttpPurpose(verified, proof);
     if (isMachinePresetFiniteOperationActionIdV1(root)) {
         const admission = verified.binding.presetPreparationAdmission;
         if (!admission || verified.effectActionId !== root) return false;
@@ -4179,43 +4257,7 @@ export async function verifyExternalActionDomainExecutionRequest(
 
 function matchesExternalActionAuthorizationBinding(binding: ExternalActionExecutionAuthorizationBindingV1,
     supplied: ExternalActionExecutionAuthorizationBindingV1): boolean {
-    return !(
-        binding.serverIdentityId !== supplied.serverIdentityId
-        || binding.accountId !== supplied.accountId
-        || binding.custodianAccountId !== supplied.custodianAccountId
-        || binding.installationId !== supplied.installationId
-        || ('authentication' in binding
-            ? !('authentication' in supplied) || JSON.stringify(binding.authentication) !== JSON.stringify(supplied.authentication)
-            : !('credentialId' in supplied) || binding.principalId !== supplied.principalId || binding.credentialId !== supplied.credentialId)
-        || binding.machineId !== supplied.machineId
-        || binding.actionId !== supplied.actionId
-        || binding.requestId !== supplied.requestId
-        || binding.requestEnvelopeDigest !== supplied.requestEnvelopeDigest
-        || binding.automationId !== supplied.automationId
-        || binding.discussionId !== supplied.discussionId
-        || binding.idempotencyKey !== supplied.idempotencyKey
-        || binding.accountEncryptionMode !== supplied.accountEncryptionMode
-        || binding.admittedMachineRole !== supplied.admittedMachineRole
-        || !sameManagedInput(binding.managedContinuation, supplied.managedContinuation)
-        || !sameManagedInput(binding.managedAdmission, supplied.managedAdmission)
-        || !sameManagedInput(binding.managedAccountExecutor, supplied.managedAccountExecutor)
-        || !sameManagedInput(binding.nativeCredentialSpawnChild, supplied.nativeCredentialSpawnChild)
-        || !sameManagedInput(binding.handoffAdmission, supplied.handoffAdmission)
-        || !sameManagedInput(binding.handoffContinuation, supplied.handoffContinuation)
-        || !sameManagedInput(binding.handoffPreflight, supplied.handoffPreflight)
-        || !sameManagedInput(binding.workspaceSyncAdmission, supplied.workspaceSyncAdmission)
-        || !sameManagedInput(binding.sessionActionOrigin, supplied.sessionActionOrigin)
-        || !sameManagedInput(binding.sessionActionSource, supplied.sessionActionSource)
-        || !sameManagedInput(binding.workflowActionOrigin, supplied.workflowActionOrigin)
-        || !sameManagedInput(binding.approvalDecisionAdmission, supplied.approvalDecisionAdmission)
-        || !sameManagedInput(binding.deploymentPreparationAdmission, supplied.deploymentPreparationAdmission)
-        || !sameManagedInput(binding.presetPreparationAdmission, supplied.presetPreparationAdmission)
-        || !sameManagedInput(binding.deploymentCandidatePublication, supplied.deploymentCandidatePublication)
-        || !sameManagedInput(binding.deploymentLinkAdmission, supplied.deploymentLinkAdmission)
-        || !sameManagedInput(binding.registryAppUpdateAdmission, supplied.registryAppUpdateAdmission)
-        || ('grant' in binding && (!('grant' in supplied) || !sameManagedInput(binding.grant, supplied.grant)))
-        || encodeExternalActionResolvedTargetV1(binding.target) !== encodeExternalActionResolvedTargetV1(supplied.target)
-    );
+    return sameManagedInput(binding, supplied);
 }
 
 /** The installed writer proves transport; only this issuer/currentness owner proves the retained handoff root. */

@@ -9,6 +9,7 @@ import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/pr
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { buildManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
 import { createExistingSessionDirectoryPreflightResult } from '@/dev/testkit/fixtures/sessionFixtures';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getStorage } from '@/sync/domains/state/storage';
@@ -99,6 +100,7 @@ describe('Session spawn first-dispatch placement origin', () => {
             if (pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (pathname === '/v1/home/governance/get') return Response.json({ homeDefaults: null });
             if (pathname === '/v1/machines/machine-a/access') return Response.json(MachineAccessGrantsListResponseV1Schema.parse({
                 machineId: 'machine-a', custodian: { accountId: 'alice', displayName: 'Alice' },
                 access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
@@ -160,6 +162,29 @@ describe('Session spawn first-dispatch placement origin', () => {
         else expect(outgoing[0]?.params).not.toHaveProperty('placementOrigin');
     });
 
+    it.each(['execute', 'prepare'] as const)('prepares omitted Agent and Machine through the real %s entry before daemon dispatch', async entry => {
+        await fetchAndApplyMachines({ credentials: { token }, encryption: null, machineDataKeys: new Map(),
+            request: async () => Response.json([{ ...createPlainMachineRowFixture({ id: 'machine-a', accountId: 'alice' }),
+                operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 }]),
+            applyMachines: (machines, replace) => getStorage().getState().applyMachines(machines, replace, { sourceServerId: serverId }), replace: true });
+        const agentTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
+        const context = { surface: 'ui' as const, serverId, sessionCreationDefaults: {
+            context: buildManagedSessionDefaultsContext({ personalDefaultsRow: {
+                defaultAgentTarget: agentTarget, placement: { kind: 'machine', target: { serverId, machineId: 'machine-a' } },
+            } }), authoredChoices: {},
+        } };
+        const input = { creationKey: 'omitted-choices', directory: { kind: 'path' as const, path: '/workspace' } };
+        const executor = createDefaultActionExecutor();
+        const prepared = entry === 'prepare' ? await executor.prepare('session.spawn_new', input, context) : null;
+        if (prepared && prepared.kind !== 'ready') throw new Error(`Expected prepared invocation: ${JSON.stringify(prepared)}`);
+        const result = prepared?.kind === 'ready' ? await prepared.invocation.run()
+            : await executor.execute('session.spawn_new', input, context);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'success' } });
+        expect(outgoing).toHaveLength(1);
+        expect(outgoing[0]?.method).toBe(`machine-a:${RPC_METHODS.SESSION_SPAWN_NEW}`);
+        expect(outgoing[0]?.params).toMatchObject({ agentTarget, executionTarget: { serverId, machineId: 'machine-a' } });
+    });
+
     it('dispatches the admitted section placement as the canonical folder placement', async () => {
         await fetchAndApplyMachines({
             credentials: { token }, encryption: null, machineDataKeys: new Map(),
@@ -196,8 +221,10 @@ describe('Session spawn first-dispatch placement origin', () => {
         }, { surface: 'ui', serverId });
 
         expect(result).toEqual({
-            ok: true,
-            result: {
+            ok: false,
+            errorCode: 'update_required',
+            error: 'update_required',
+            details: {
                 type: 'error',
                 code: 'update_required',
                 retryable: false,

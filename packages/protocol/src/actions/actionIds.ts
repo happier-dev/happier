@@ -12,6 +12,7 @@ import { RPC_METHODS } from '../rpc/methods.js';
 export { isProjectCheckoutRemovalActionIdV1 } from './projectActionIdsV1.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
+export const PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 = 'projects.sessionDefaults.get' as const;
 export const SESSION_PERMISSION_MODE_SET_ACTION_ID_V1 = 'session.permission_mode.set' as const;
 export const EXTERNAL_SESSION_CANDIDATE_DELETE_ACTION_ID_V1 = 'sessions.external.candidate.delete' as const;
 export const SCM_REMOTE_PUSH_ACTION_ID_V1 = 'scm.remote.push' as const;
@@ -87,7 +88,7 @@ export function isWorkspaceSyncRelationshipControlActionId(actionId: string): ac
  * consumer that binds such an Action to the Project row transport (the server's external-execution admission).
  */
 export const PROJECT_ACCOUNT_ROW_ACTION_IDS_V1 = ['projects.list', 'projects.workspace.update', 'projects.workspace.forget',
-    'projects.context.update', 'projects.organization.update', PROJECT_SETUP_SET_ACTION_ID_V1, 'projects.visibility.set', 'projects.services.pin'] as const;
+    'projects.context.update', 'projects.organization.update', PROJECT_SETUP_SET_ACTION_ID_V1, 'projects.visibility.set', 'projects.services.pin', PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1] as const;
 export function isProjectAccountRowActionIdV1(actionId: string): actionId is (typeof PROJECT_ACCOUNT_ROW_ACTION_IDS_V1)[number] {
     return (PROJECT_ACCOUNT_ROW_ACTION_IDS_V1 as readonly string[]).includes(actionId);
 }
@@ -443,6 +444,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'projects.context.update',
     'projects.organization.update',
     PROJECT_SETUP_SET_ACTION_ID_V1,
+    PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1,
     'projects.visibility.set',
     'projects.workspace.update',
     'projects.workspace.forget',

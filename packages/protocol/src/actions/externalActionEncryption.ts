@@ -39,6 +39,7 @@ import {
   projectExternalActionDeploymentLinkEnvironmentIdV1,
   projectExternalActionDeploymentMetadataEnvironmentIdV1,
   projectExternalActionDeploymentMetadataReceiptIdV1,
+  projectExternalActionProjectSessionDefaultsAdmissionV1,
   type ExternalActionRequestEnvelopeV2, type ExternalActionResponseEnvelopeV2, type ExternalActionTargetV1,
   type ExternalActionExecutionAuthorizationBindingV1,
   type PreparedExternalActionResponseEnvelope,
@@ -186,6 +187,7 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
     envelope: { v: 1, requestId: payload.requestId, target: payload.target, input: payload.input } });
   const deploymentNativeAdmission = projectDeploymentNativeAdmissionV1(payload.actionId, payload.input);
   const registryAppUpdateAdmission = projectRegistryAppUpdateAdmissionV1(payload.actionId, payload.input);
+  const projectSessionDefaultsAdmission = projectExternalActionProjectSessionDefaultsAdmissionV1(payload.actionId, payload.input);
   const discussionId = projectExternalActionDiscussionIdV1(payload.actionId, payload.input);
   const machineRuntimeDemand = params.projectMachineRuntimeDemand(payload.actionId, payload.input, payload.target);
   const browserSessionId = projectExternalActionBrowserSessionIdV1(payload.actionId, payload.input);
@@ -207,6 +209,7 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
     ...(presetPreparationAdmission ? { presetPreparationAdmission } : {}),
     ...(deploymentNativeAdmission ? { deploymentNativeAdmission } : {}),
     ...(registryAppUpdateAdmission ? { registryAppUpdateAdmission } : {}),
+    ...(projectSessionDefaultsAdmission ? { projectSessionDefaultsAdmission } : {}),
     ...(payload.actionId === 'approval.request.decide'
       ? { approvalDecisionAdmission: projectExternalActionApprovalDecisionAdmissionV1(payload.input) } : {}),
     ...(payload.actionId === 'session.pending.resetStart.set'
@@ -227,7 +230,7 @@ export function openExternalActionRequestV2(params: Readonly<{
   onFailure?: (failure: Readonly<{
     phase: 'envelope_parse' | 'envelope_binding' | 'ciphertext_open' | 'plaintext_parse'
       | 'plaintext_binding' | 'browser_session_admission' | 'machine_runtime_demand' | 'reset_admission' | 'approval_decision_admission' | 'deployment_read_admission' | 'deployment_link_admission' | 'deployment_metadata_admission' | 'deployment_preparation_admission'
-      | 'deployment_native_admission' | 'registry_app_update_admission' | 'managed_admission' | 'discussion_admission' | 'plaintext_limit';
+      | 'deployment_native_admission' | 'registry_app_update_admission' | 'project_session_defaults_admission' | 'managed_admission' | 'discussion_admission' | 'plaintext_limit';
     error?: unknown;
   }>) => void;
 }>): Readonly<{ input: z.infer<typeof StrictJsonValueSchema>;
@@ -307,6 +310,9 @@ export function openExternalActionRequestV2(params: Readonly<{
     phase = 'registry_app_update_admission';
     if (!sameStrictJsonValue(projectRegistryAppUpdateAdmissionV1(decoded.data.actionId, decoded.data.input),
       envelope.registryAppUpdateAdmission)) return refused();
+    phase = 'project_session_defaults_admission';
+    if (!sameStrictJsonValue(projectExternalActionProjectSessionDefaultsAdmissionV1(decoded.data.actionId, decoded.data.input),
+      envelope.projectSessionDefaultsAdmission)) return refused();
     phase = 'plaintext_limit';
     const operands = { ...(decoded.data.workflowPreparation ? { workflowPreparation: decoded.data.workflowPreparation } : {}),
       ...(decoded.data.resourceContinuation ? { resourceContinuation: decoded.data.resourceContinuation } : {}),

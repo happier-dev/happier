@@ -9,6 +9,7 @@ import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/man
 import { SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ApiTokenSessionPresetAcquisitionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { MachineAdmission } from '@happier-dev/protocol/machines/machineAccessV1';
 import { resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import { resolveMachinePresetForAcquireInTx } from '@/app/machines/managed/machinePresetService';
@@ -130,7 +131,40 @@ export async function hasAdmittedManagedCreationRootInTx(reader: Tx,
 export type ManagedActionMachineAdmissionFacts = Readonly<{
     managedCreationRecovery?: true;
     managedAcquireDelegation?: true;
+    sessionPresetAcquisition?: ExternalActionExecutionAuthorizationBindingV1['sessionPresetAcquisition'];
 }>;
+
+/** The existing preset owner admits its Session carrier once, including hidden delegated controllers. */
+export async function resolveSessionPresetActionMachineAdmissionInTx(reader: Tx,
+    input: ExternalActionManagedAdmissionContext & Readonly<{
+        actorAccountId: string; machineId: string; requireOnline?: boolean;
+        acquisition: ApiTokenSessionPresetAcquisitionV1;
+        ordinaryAdmission?: Extract<MachineAdmission, { kind: 'admitted' }>;
+    }>): Promise<MachineAdmission & ManagedActionMachineAdmissionFacts> {
+    const denied = { kind: 'denied', code: 'access_denied' } as const;
+    try {
+        const { selection, controller } = input.acquisition;
+        if (controller.machineId !== input.machineId) return denied;
+        const selected = await resolveMachinePresetForAcquireInTx(reader, {
+            accountId: input.actorAccountId, authentication: input.authentication, ...selection,
+            checkCapacity: false, boundController: controller,
+        });
+        if (selected.kind !== 'ready' || !selected.delegated && !input.ordinaryAdmission
+            || selected.preset.controller !== undefined && !sameManagedInput(selected.preset.controller, controller)) return denied;
+        // Custody owns Machine readiness and installation identity; no controller grant is added.
+        const admitted = await resolveMachineAdmissionInTx(reader, { actorAccountId: selected.custodianAccountId,
+            machineId: input.machineId, actionId: MANAGED_ACQUIRE_ACTION_ID_V1, requiredRole: 'manage',
+            ...(input.requireOnline === undefined ? {} : { requireOnline: input.requireOnline }) });
+        if (admitted.kind !== 'admitted') return admitted;
+        const { content, recipients, ...preset } = selected.preset;
+        return admitted.installationId === controller.installationId
+            ? { ...admitted, actorAccountId: input.actorAccountId, sessionPresetAcquisition: { ...input.acquisition,
+                admission: { preset, presetContent: { content, recipients }, delegated: selected.delegated } } } : denied;
+    } catch (error) {
+        if (error instanceof ManagedMachineError) return denied;
+        throw error;
+    }
+}
 
 /** Home reads the same closed control projection for plain and encrypted roots. */
 export function readExternalActionManagedControlAdmission(actionId: string, envelope: ExternalActionRequestEnvelope) {

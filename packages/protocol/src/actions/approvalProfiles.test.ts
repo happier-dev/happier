@@ -113,42 +113,14 @@ describe('approval profile overlay', () => {
     });
   });
 
-  it('resolves Session explicit > Machine default > Account settings', () => {
-    const settings = normalizeActionsSettingsV1({
-      ...account,
-      machineApprovalProfiles: { 'machine-a': 'careful' },
-    });
-    expect(
-      resolveSessionApprovalProfileReferenceV1(
-        { approvalProfileId: 'other', machineId: 'machine-a' },
-        settings,
-      ),
-    ).toBe('other');
-    expect(
-      resolveSessionApprovalProfileReferenceV1(
-        { approvalProfileId: null, machineId: 'machine-a' },
-        settings,
-      ),
-    ).toBe('careful');
-    expect(
-      resolveSessionApprovalProfileReferenceV1(
-        { machineId: 'machine-a' },
-        settings,
-      ),
-    ).toBe('careful');
-    expect(
-      resolveSessionApprovalProfileReferenceV1(
-        { machineId: 'machine-b' },
-        settings,
-      ),
-    ).toBeNull();
-    expect(resolveSessionApprovalProfileReferenceV1({}, settings)).toBeNull();
-    expect(
-      resolveSessionApprovalProfileReferenceV1(
-        { machineId: 'machine-a' },
-        null,
-      ),
-    ).toBeNull();
+  it('uses only the stored Session choice, including an explicit null or a missing choice', () => {
+    const stored = { approvalProfileId: 'other', machineId: 'machine-a' };
+    const cleared = { approvalProfileId: null, machineId: 'machine-a' };
+    const missing = { approvalProfileId: undefined, machineId: 'machine-a' };
+    expect(resolveSessionApprovalProfileReferenceV1(stored)).toBe('other');
+    expect(resolveSessionApprovalProfileReferenceV1(cleared)).toBeNull();
+    expect(resolveSessionApprovalProfileReferenceV1(missing)).toBeNull();
+    expect(resolveSessionApprovalProfileReferenceV1({})).toBeNull();
   });
 
   it('round-trips the per-Account Machine defaults and drops malformed rows', () => {

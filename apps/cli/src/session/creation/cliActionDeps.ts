@@ -2,6 +2,7 @@ import { isActionExecuteFailure, projectActionFailureCauseV1, type ActionExecute
 import { readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 import { sameStrictJsonValue, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isManagedPresetAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -71,14 +72,16 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { refreshConnectedAccountCatalogForAdmission } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
 import { agentSupportsSpawnConnectedServicesDefaults, ConnectedServicesDefaultUnavailableError } from '@/session/services/spawnConnectedServicesDefaults';
+import { createCliManagedSessionDefaultsContextLoader } from './cliManagedSessionDefaultsContext';
+import { createPrepareSessionSpawnInput } from './prepareSessionSpawnInput';
 
 
-type SpawnActionDeps = Pick<ActionExecutorDeps, 'sessionSpawnNewDirectoryApprovalPreflight'>
+type SpawnActionDeps = Pick<ActionExecutorDeps, 'sessionSpawnNewDirectoryApprovalPreflight' | 'prepareSessionSpawnNewInput'>
   & Required<Pick<ActionExecutorDeps, 'sessionSpawnNew'>>;
 
 export function createCliSpawnActionDeps(
   params: CliActionDepsParams,
-  { callMachineAction, isSameActionHomeId, machineReferenceServerUrl, normalizeStringValue, prepareAccountRoleOverrides, prepareSourceKeyAfterCommit, projectHomeId, readAccountRoleOverrides, readRecord, readRoleSources, resolveServerRequestHeaders, roleSettingsProvider, workflowTriggers }: Readonly<{
+  { callMachineAction, isSameActionHomeId, machineReferenceServerUrl, normalizeStringValue, prepareAccountRoleOverrides, prepareSourceKeyAfterCommit, projectHomeId, readAccountRoleOverrides, readRecord, readRoleSources, resolveServerRequestHeaders, roleSettingsProvider, spawnConnectedServicesList, workflowTriggers }: Readonly<{
     callMachineAction: CliMachineActionCall;
     isSameActionHomeId: (serverId: string) => boolean;
     machineReferenceServerUrl: string;
@@ -97,6 +100,7 @@ export function createCliSpawnActionDeps(
     readRoleSources: RoleSourceReader;
     resolveServerRequestHeaders: (context: ActionExecutorContext | undefined, effectActionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
     roleSettingsProvider: RuntimeActionSettingsProvider;
+    spawnConnectedServicesList: NonNullable<ActionExecutorDeps['spawnConnectedServicesList']>;
     workflowTriggers: ReturnType<typeof createCliWorkflowTriggerActions> | null;
   }>,
 ): SpawnActionDeps {
@@ -278,6 +282,9 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
     return readSessionCreationTargetPreparationResultV1(rawPreparedTarget);
   };
   return {
+    prepareSessionSpawnNewInput: createPrepareSessionSpawnInput(params, {
+      serverId: projectHomeId, serverHttpBaseUrl: machineReferenceServerUrl,
+    }, { spawnConnectedServicesList }),
     sessionSpawnNewDirectoryApprovalPreflight: async ({ input, context, signal }) => {
       if (!params.credentials) {
         return {
@@ -363,6 +370,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       primaryTeamId,
       teamCredentialBindings,
       organizationPlacement,
+      projectContext,
       placementOrigin,
       managedTargetPlacement: authoredManagedTargetPlacement,
       isolationOverride,
@@ -705,7 +713,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       const defaultsSettings = operation.readSnapshot()?.settings ?? defaultsContext.settings;
       const homeActions = createAccountServerActionDeps({ token: defaultsCredentials.token, credentials: defaultsCredentials,
         serverId: executionTarget.serverId, serverHttpBaseUrl: machineReferenceServerUrl });
-      const homeReadContext = { surface: 'cli' as const, serverId: executionTarget.serverId };
+      const contextLoader = createCliManagedSessionDefaultsContextLoader({ credentials: defaultsCredentials,
+        serverId: executionTarget.serverId, serverHttpBaseUrl: machineReferenceServerUrl, ...(signal ? { signal } : {}) });
       const { createSpawnConnectedServicesTeamResourceCatalogResolver } = await import('@/session/services/spawnConnectedServicesDefaults');
       let openedMachineMetadata: unknown;
       if (!sourceContext && !configurationSnapshot?.providerSessionResume) {
@@ -734,21 +743,21 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         }
       }
       const machineIsolation = readMachineIsolationV1(openedMachineMetadata);
-      const defaults = await resolveSessionSpawnManagedDefaults({ executionTarget, agentTarget, primaryTeamId, initialAccess, teamCredentialBindings,
+      const defaults = await resolveSessionSpawnManagedDefaults({ executionTarget, agentTarget, projectContext,
+        approvalProfileId, primaryTeamId, initialAccess, teamCredentialBindings,
         permissionMode: requestedPermissionMode, modelSelection: requestedModelSelection,
         configuration: configurationSnapshot,
         connectedServices: birthContext?.connectedServices === null ? null : requestedConnectedServices,
         identity, attestedContext, isolationOverride, sourceContext }, {
         agentId: resolvedAgentTarget.agentId, accountSettings: defaultsSettings,
         openedMachineMetadata, startContext: context,
+        ...(context?.sessionCreationDefaults ? { capturedContext: context.sessionCreationDefaults.context,
+          authoredChoices: context.sessionCreationDefaults.authoredChoices } : {}),
         ...(birthContext?.sessionPlacement ? { admittedWorkflowPlacement: birthContext.sessionPlacement } : {}),
         nativeSandboxAvailable: resolvedAgentTarget.nativeSandboxAvailable, machineIsolation,
         ...(purposeCatalog ? { purposeCatalog } : {}),
         organizationPolicy: configuration.organizationPolicy,
-        readTeam: teamId => homeActions.homeDomainAction!({ actionId: 'teams.get', input: { v: 1, teamId }, context: homeReadContext,
-          ...(signal ? { signal } : {}) }),
-        readHome: () => homeActions.homeDomainAction!({ actionId: 'home.governance.get', input: { projection: 'session_defaults' }, context: homeReadContext,
-          ...(signal ? { signal } : {}) }),
+        ...contextLoader,
         resolveTeamCredentialResourceCatalog: createSpawnConnectedServicesTeamResourceCatalogResolver({
           homeDomainAction: homeActions.homeDomainAction!, serverId: executionTarget.serverId,
           accountId: readAccountIdFromToken(defaultsCredentials.token) ?? '',
@@ -756,11 +765,16 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         ...(signal ? { signal } : {}),
       });
       // The receiving daemon was admitted once; organization placement can refuse it.
-      if (defaults.placement.lock && (defaults.placement.value?.kind !== 'machine'
-        || !sameStrictJsonValue(defaults.placement.value.target, executionTarget))) {
+      if (defaults.placement.lock && (defaults.placement.value?.kind === 'machine'
+        ? !sameStrictJsonValue(defaults.placement.value.target, executionTarget)
+        : !context?.sessionCreationDefaults?.managedPresetAcquisition)) {
         return { type: 'error', code: 'permission_denied', retryable: false };
       }
       const { permissionMode, modelSelection, connectedServices } = defaults;
+      const retainsConfiguration = sourceContext !== undefined || configurationSnapshot?.providerSessionResume !== undefined;
+      const selectedApprovalProfileId = retainsConfiguration ? approvalProfileId : defaults.approvalProfileId;
+      const selectedApprovalProfileTeamOrGroupDerived = retainsConfiguration ? undefined : defaults.approvalProfileTeamOrGroupDerived;
+      const selectedPrimaryTeamId = primaryTeamId ?? defaults.primaryTeamId;
       const configurationWithNativeSandbox = (nativeSandbox: typeof defaults.nativeSandbox) =>
         withSessionNativeSandbox(configurationSnapshot, nativeSandbox);
       configurationSnapshot = configurationWithNativeSandbox(defaults.nativeSandbox);
@@ -900,7 +914,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
               initialTriggers: preparedDrafts,
               caller: {
                 ...context,
-                approvalProfileId: resolveInheritedApprovalProfileIdV1(approvalProfileId, context?.approvalProfileId),
+                approvalProfileId: resolveInheritedApprovalProfileIdV1(selectedApprovalProfileId, context?.approvalProfileId),
                 ...(actionCaller ? { actionCaller } : {}),
                 ...(callerSurface ? { surface: callerSurface } : {}),
                 ...(signal ? { signal } : {}),
@@ -936,7 +950,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           profileId: profileId ?? null,
           ...(identity !== undefined ? { identity } : {}),
           ...(memoryEnabled !== undefined ? { memoryEnabled } : {}),
-          ...(approvalProfileId !== undefined ? { approvalProfileId } : {}),
+          ...(selectedApprovalProfileId !== undefined ? { approvalProfileId: selectedApprovalProfileId,
+            approvalProfileTeamOrGroupDerived: selectedApprovalProfileTeamOrGroupDerived ?? false } : {}),
           ...(promptStack !== undefined ? { promptStack } : {}),
           ...(managedCreation ? { managedCreation } : {}),
           ...(discussionParticipant ? { discussionParticipant } : {}),
@@ -979,7 +994,18 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           return agentSandbox.value;
         };
         let acquired: Awaited<ReturnType<NonNullable<typeof params.acquireSessionIsolationSandbox>>> | undefined;
-        if (sandboxChoice) {
+        const presetAcquisition = context?.sessionCreationDefaults?.managedPresetAcquisition;
+        if (presetAcquisition) {
+          if (!isManagedPresetAcquireInputV1(presetAcquisition) || !context || !params.acquireSessionIsolationSandbox
+            || !input.admittedInput || !input.executeSessionIsolationAcquire) {
+            throw Object.assign(new Error('Selected preset acquisition is unavailable'), { code: 'target_unavailable' });
+          }
+          acquired = await params.acquireSessionIsolationSandbox({ acquisition: presetAcquisition,
+            executeSessionIsolationAcquire: input.executeSessionIsolationAcquire,
+            parent: { actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, input: input.admittedInput },
+            resolveNativeSandbox, context, ...(signal ? { signal } : {}),
+          });
+        } else if (sandboxChoice) {
           if (authoredManagedCreation) {
             throw Object.assign(new Error('Authored managed placement conflicts with Machine sandbox policy'),
               { code: 'target_unavailable' });
@@ -999,9 +1025,11 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         const nativeSandbox = acquired ? acquired.nativeSandbox : resolveNativeSandbox();
         return {
           sessionCreationCorrespondence: { ...correspondence, recipe: { ...correspondence.recipe,
-            ...(acquired ? { managedCreation: acquired.managedCreation, managedCreationOrigin: 'machine_policy' as const } : {}),
+            ...(acquired ? { managedCreation: acquired.managedCreation,
+              managedCreationOrigin: presetAcquisition ? 'session_defaults' as const : 'machine_policy' as const } : {}),
             ...(nativeSandbox !== undefined && requestedConfigurationSnapshot?.nativeSandbox === undefined
-              && (acquired || machineIsolation) ? { nativeSandboxOrigin: 'machine_policy' as const } : {}),
+              && (acquired || machineIsolation) ? {
+                nativeSandboxOrigin: presetAcquisition ? 'session_defaults' as const : 'machine_policy' as const } : {}),
             configuration: configurationWithNativeSandbox(nativeSandbox) ?? null,
           } },
           ...(acquired ? { managedTargetPlacement: {
@@ -1116,7 +1144,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           } } : {}),
           ...(initialSessionRolesV1 !== undefined ? { initialSessionRolesV1 } : {}),
           ...(manager !== undefined ? { manager } : {}),
-          ...(primaryTeamId !== undefined ? { primaryTeamId } : {}),
+          ...(selectedPrimaryTeamId !== undefined ? { primaryTeamId: selectedPrimaryTeamId } : {}),
           ...(resolvedTeamCredentialBindings !== undefined
             ? { teamCredentialBindings: resolvedTeamCredentialBindings }
             : {}),
@@ -1173,7 +1201,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             ? { resume: configurationSnapshot.providerSessionResume.providerSessionId }
             : {}),
           ...(title ? { initialTitle: title } : {}),
-          ...(approvalProfileId !== undefined ? { approvalProfileId } : {}),
+          ...(selectedApprovalProfileId !== undefined ? { approvalProfileId: selectedApprovalProfileId,
+            approvalProfileTeamOrGroupDerived: selectedApprovalProfileTeamOrGroupDerived ?? false } : {}),
           ...(identity !== undefined ? { identity } : {}),
           ...(memoryEnabled !== undefined ? { memoryEnabled } : {}),
           ...(promptStack !== undefined ? { promptStack } : {}),

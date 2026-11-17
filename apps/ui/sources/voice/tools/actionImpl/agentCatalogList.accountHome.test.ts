@@ -20,6 +20,11 @@ import {
 } from '@/dev/testkit/harness/providerSettingsHarness';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import { resetDynamicModelProbeCacheForTests, writeDynamicModelProbeCacheSuccess } from '@/sync/domains/models/dynamicModelProbeCache';
+import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { rememberLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
+import { refreshAcpCatalog } from '@/sync/engine/settings/acpCatalogEngine';
 
 // Static catalog imports reach the Socket owner before the runtime installer.
 vi.mock('socket.io-client', async importOriginal =>
@@ -29,7 +34,7 @@ const account = createProviderSettingsAccountHarness();
 const { refreshProviderCatalog } = await import('@/sync/engine/settings/providerCatalogEngine');
 const daemon = createProviderSettingsHarness();
 installProviderSettingsRpcBoundary(daemon);
-const { listAgentModelsForVoiceTool } = await import('./agentCatalogList');
+const { listAgentBackendsForVoiceTool, listAgentModelsForVoiceTool } = await import('./agentCatalogList');
 const targetKey = 'agent:happier.agent.claude/claude';
 const machineId = 'voice-model-machine';
 
@@ -69,6 +74,48 @@ async function restoreVoiceModelHome(teamsEnabled = false, providersEnabled = tr
 }
 
 describe('Voice Agent model catalog at its admitted Account Home', () => {
+    it('reads native Agent preference from the captured background Home instead of global active scope', async () => {
+        const active = await account.restore({ accountId: 'active-native-account', settings: {}, machines: [],
+            catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 });
+        const activeTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+        const backgroundTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+        rememberLastUsedBackendSelection(active, { lastUsedBackendTarget: activeTarget, lastUsedAgent: 'claude' });
+        const backgroundId = await account.addHome({ name: 'Background native Account', serverUrl: 'https://background-native.test',
+            accountId: 'background-native-account', currentAccount: true, active: false });
+        account.home.answer(backgroundId, ACP_CATALOG_ROWS_ROUTE_V1, { body: {
+            status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, definitions: [] } },
+        } });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const { readAcpCatalogInContext } = await import('@/sync/api/account/apiAcpCatalog');
+        const captured = await captureLazyActionAccountContext(backgroundId);
+        try {
+            rememberLastUsedBackendSelection(captured.accountLifetime.scope, { lastUsedBackendTarget: backgroundTarget, lastUsedAgent: 'codex' });
+            const { catalog } = await readAcpCatalogInContext(captured);
+            const input = { serverId: backgroundId, accountLifetime: captured.accountLifetime, acpCatalogSnapshot: catalog };
+            const result = await listAgentBackendsForVoiceTool(input);
+            expect(result.items.find(item => item.targetKey === result.defaultTargetKey)?.agentTarget).toEqual(backgroundTarget);
+        } finally { captured.dispose(); }
+    });
+    it.each([false, true])('retains native Agent preference without querying a controller (configured=%s)', async configured => {
+        const scope = await account.restore({ accountId: 'native-preference-account', settings: {}, machines: [],
+            catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 });
+        const target = configured ? { kind: 'agent' as const,
+            identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' }, definitionId: 'native-configured' }
+            : { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
+        const definition = AcpBackendDefinitionV1Schema.parse({ id: 'native-configured', name: 'native-configured', title: 'Configured Agent',
+            launch: { kind: 'command', command: 'agent', args: [] }, createdAt: 1, updatedAt: 1 });
+        account.home.answer(scope.serverId, ACP_CATALOG_ROWS_ROUTE_V1, { body: {
+            status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, definitions: [definition] } },
+        } });
+        await refreshAcpCatalog(scope);
+        rememberLastUsedBackendSelection(scope, { lastUsedBackendTarget: target, lastUsedAgent: 'codex' });
+        const before = daemon.state.requests.length;
+        const result = await listAgentBackendsForVoiceTool({ serverId: scope.serverId });
+        expect(result.defaultTargetKey).toBe(buildBackendTargetKeyV2(target));
+        expect(result.items.find(item => item.targetKey === result.defaultTargetKey)?.agentTarget).toEqual(target);
+        expect(result).not.toHaveProperty('executionTarget');
+        expect(daemon.state.requests.slice(before)).toEqual([]);
+    });
     it.each([true, false])('discovers and preserves the exact Team model selection with personal Providers enabled=%s', async providersEnabled => {
         const scope = await restoreVoiceModelHome(true, providersEnabled);
         const demand = resolveAccountAgentTeamCredentialDemand(targetKey, { kind: 'account' });
@@ -82,7 +129,7 @@ describe('Voice Agent model catalog at its admitted Account Home', () => {
                     [declaration.contributionKey, { id: declaration.contributionKey, pluginId: parseProviderContributionIdentityV1(declaration.contributionKey)!.identity.pluginId,
                         provenance: declaration.provenance, sourceKind: 'path', definition: declaration.definition }])) } },
             }) });
-        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource', teamId: 'team', displayName: 'Shared models',
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'resource', teamId: 'team', displayName: { content: { t: 'plain', v: 'Shared models' }, recipientEnvelope: null, legacyPlaintext: true },
             resourceRevision: 3, readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', connectedServiceSelections: [],
             sourcePresentation: { kind: 'provider', provider: { identity: application.implementationIdentity, definitionRevision: 1 } },

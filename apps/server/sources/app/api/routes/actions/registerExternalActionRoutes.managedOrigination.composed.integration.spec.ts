@@ -1,3 +1,6 @@
+import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { createManagedMachinePresetAcquireOverrideV1, projectManagedMachinePresetForRecipientV1,
@@ -40,7 +43,8 @@ import { auth } from '@/app/auth/auth';
 import { verifyCurrentExternalActionPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
 import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
 import { resolveMachineAccess } from '@/app/machines/machineAccess';
-import { archiveMachinePreset, createMachinePreset, restoreMachinePreset } from '@/app/machines/managed/machinePresetService';
+import { archiveMachinePreset, createMachinePreset, readMachinePresetRecipientCensus, restoreMachinePreset, updateMachinePreset } from '@/app/machines/managed/machinePresetService';
+import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { db, initDbPostgres } from '@/storage/db';
 import { createDbMaintenanceClient } from '@/storage/prisma';
 import { readDatabaseTransactionConfigFromEnv } from '@/config/databaseTransactions';
@@ -875,6 +879,167 @@ describe('composed CLI managed Action origination', () => {
             restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close();
             if (policy === 'qb56') console.info('qb58-replay-phases', JSON.stringify(phases));
         }
+    });
+
+    it.each([{ mode: 'plain', mutation: 'none', presetMode: 'plain' }, { mode: 'e2ee', mutation: 'none', presetMode: 'plain' },
+        { mode: 'plain', mutation: 'archive', presetMode: 'plain' }, { mode: 'e2ee', mutation: 'archive', presetMode: 'plain' },
+        { mode: 'plain', mutation: 'edit', presetMode: 'plain' }, { mode: 'e2ee', mutation: 'edit', presetMode: 'plain' },
+        { mode: 'e2ee', mutation: 'archive', presetMode: 'e2ee' }] as const)(
+      'admits a $mode Session through its exact shared preset without controller Use after $mutation ($presetMode preset)', async ({ mode, mutation, presetMode }) => {
+        const selected = await fixture(true, presetMode);
+        const requester = await fixture(true, mode);
+        const team = await db.team.create({ data: { name: 'Session compute' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: selected.account.id, role: 'owner' },
+            { teamId: team.id, accountId: requester.account.id, role: 'member' },
+        ] });
+        const presetId = crypto.randomUUID();
+        const census = presetMode === 'e2ee' ? await readMachinePresetRecipientCensus({ accountId: selected.account.id,
+            authentication: { authenticationAuthority: 'present_user' }, input: { homeId,
+                owner: { kind: 'team', teamId: team.id }, controller: selected.controller } }) : null;
+        if (presetMode === 'e2ee' && census?.kind !== 'ready') throw new Error('Expected canonical encrypted recipient census');
+        const authoredContent = { v: 1 as const, name: 'Session guest', launch: selected.input.selection.launch };
+        const content = presetMode === 'plain'
+            ? sealManagedMachinePresetContentV1({ presetId, mode: 'plain', content: authoredContent })
+            : sealManagedMachinePresetContentV1({ presetId, mode: 'e2ee', content: authoredContent,
+                recipientCensus: census!.kind === 'ready' ? census!.recipients : [], randomBytes: tweetnacl.randomBytes });
+        expect(await createMachinePreset({ accountId: selected.account.id,
+            authentication: { authenticationAuthority: 'present_user' }, input: {
+                id: presetId, homeId, contentEncryptionMode: presetMode, ...content, owner: { kind: 'team', teamId: team.id },
+                controller: selected.controller, teamAcquireDelegated: true,
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            } })).toMatchObject({ kind: 'saved' });
+        expect(await resolveMachineAccess({ actorAccountId: requester.account.id, machineId: selected.controller.machineId })).toBeNull();
+        const acquisition = { selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller: selected.controller } as const;
+        const agentTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
+        const spawn = { agentTarget, executionTarget: { serverId: homeId, machineId: selected.controller.machineId },
+            directory: { kind: 'managed' }, sessionPlacement: { kind: 'preset', homeId, presetId } } as const;
+        const actionId = SESSION_SPAWN_NEW_ACTION_ID_V1;
+        const instance = await app(async () => { throw new Error('Only Home root admission is exercised'); }, () => {}, []);
+        const issue = async (input: unknown, admission: ReturnType<typeof projectApiTokenSessionSpawnAdmissionV1>) => {
+            const target = { kind: 'machine' as const, machineId: admission.executionTarget.machineId };
+            const binding = { serverIdentityId: homeId, accountId: requester.account.id,
+                authentication: { kind: 'account' as const, tokenEpoch: requester.account.tokenEpoch },
+                actionId, requestId: crypto.randomUUID(), target };
+            const material = { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) };
+            const envelope = { ...(mode === 'plain' ? { v: 1 as const, requestId: binding.requestId, target, input }
+                : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                    binding, material, input, randomBytes: tweetnacl.randomBytes })), sessionSpawnAdmission: admission };
+            const response = await instance.inject({ method: 'POST', url: `/v1/actions/${actionId}/execution-authorization`,
+                headers: { authorization: `Bearer ${requester.token}` }, payload: { v: 1, machineId: target.machineId, envelope } });
+            return { response, envelope };
+        };
+        try {
+            // Ordinary owner admission remains a working control under each Account mode.
+            const ordinary = { agentTarget, executionTarget: { serverId: homeId, machineId: requester.controller.machineId }, directory: { kind: 'managed' } } as const;
+            const control = await issue(ordinary, projectApiTokenSessionSpawnAdmissionV1(ordinary));
+            expect(control.response.statusCode).toBe(200);
+            const projection = projectApiTokenSessionSpawnAdmissionV1(spawn, { managedPresetAcquisition: acquisition });
+            const issued = await issue(spawn, projection);
+            expect(issued.response.statusCode).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.response.json());
+            expect(authorization.binding).toMatchObject({ accountId: requester.account.id, custodianAccountId: selected.account.id,
+                machineId: selected.controller.machineId, installationId: selected.controller.installationId,
+                sessionPresetAcquisition: acquisition });
+            if (mutation !== 'none') expect(authorization.binding.sessionPresetAcquisition?.admission?.presetContent).toEqual(content);
+            if (mutation !== 'none') {
+                const verifyBinding = async (binding?: typeof authorization.binding) => {
+                    const body = { v: 1 as const, ...(binding ? { binding } : {}),
+                        ...(authorization.binding.admittedMachineRole ? { admittedMachineRole: authorization.binding.admittedMachineRole } : {}) };
+                    const path = `/v1/actions/${actionId}/execution-authorization/verify`;
+                    return instance.inject({ method: 'POST', url: path, payload: body,
+                        headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId,
+                            target: authorization.binding.target, installationId: selected.controller.installationId,
+                            privateKey: selected.keys.secretKey, method: 'POST', path, body }) });
+                };
+                const verifiedSnapshot = await verifyBinding(authorization.binding);
+                expect(verifiedSnapshot.statusCode).toBe(200);
+                const omittedSnapshot = await verifyBinding();
+                expect(omittedSnapshot.statusCode).toBe(401);
+                for (const changed of [
+                    { ...authorization.binding.sessionPresetAcquisition!.admission!, delegated: false },
+                    { ...authorization.binding.sessionPresetAcquisition!.admission!, preset: {
+                        ...authorization.binding.sessionPresetAcquisition!.admission!.preset, wakeOnAcceptedMessage: true } },
+                    { ...authorization.binding.sessionPresetAcquisition!.admission!, presetContent: {
+                        ...authorization.binding.sessionPresetAcquisition!.admission!.presetContent,
+                        content: content.content.t === 'plain' ? { t: 'plain' as const, v: { substituted: true } }
+                            : { t: 'encrypted' as const, c: Buffer.alloc(64, 19).toString('base64') } } },
+                    ...(presetMode === 'e2ee' ? [{ ...authorization.binding.sessionPresetAcquisition!.admission!, presetContent: {
+                        ...authorization.binding.sessionPresetAcquisition!.admission!.presetContent, recipients: [] } }] : []),
+                ]) {
+                    const tampered = await verifyBinding({ ...authorization.binding, sessionPresetAcquisition: {
+                        ...authorization.binding.sessionPresetAcquisition!, admission: changed } });
+                    expect(tampered.statusCode).toBe(401);
+                    expect(tampered.json()).toMatchObject({ error: 'invalid_token' });
+                }
+            }
+            await expect(auth.mintExternalActionExecutionAuthorization(authorization.binding, { input: spawn }))
+                .rejects.toMatchObject({ code: 'credential_scope_denied' });
+            const presetContentOverride = presetMode === 'plain' ? createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'plain',
+                projection: projectManagedMachinePresetForRecipientV1({ ...content, recipientAccountId: selected.account.id }),
+                enrollmentIdentity: selected.input.enrollmentIdentity }) : undefined;
+            const childInput = ManagedAcquireInputV1Schema.parse({ ...acquisition, ...(presetContentOverride ? { presetContentOverride } : {}),
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+            const unboundAdmission = { custodianAccountId: selected.account.id, requesterAccountId: requester.account.id,
+                requestEnvelopeDigest: authorization.binding.requestEnvelopeDigest,
+                input: { requestId: authorization.binding.requestId, input: childInput, acquisitionMode: 'resource-bound' as const,
+                    continuationPresent: false, originalActionEnvelope: issued.envelope } };
+            await expect(admitManagedAcquire(unboundAdmission)).rejects.toMatchObject({ code: 'invalid_request' });
+            await expect(admitManagedAcquire({ ...unboundAdmission, sessionPresetAcquisition: {
+                ...acquisition, selection: { ...acquisition.selection, revision: 1 },
+            } })).rejects.toMatchObject({ code: 'invalid_request' });
+            const child = async (input: typeof childInput) => {
+                const body = { requestId: authorization.binding.requestId, input, acquisitionMode: 'resource-bound',
+                    continuationPresent: false, originalActionEnvelope: issued.envelope };
+                const path = '/v1/machines/managed/controller/admit';
+                return instance.inject({ method: 'POST', url: path, payload: body,
+                    headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: 'machines.managed.acquire',
+                        target: authorization.binding.target, installationId: selected.controller.installationId,
+                        privateKey: selected.keys.secretKey, method: 'POST', path, body,
+                        reviewedChild: { actionId: 'machines.managed.acquire', role: 'acquire-session-sandbox',
+                            inputDigest: computeActionInputApprovalDigestV1('machines.managed.acquire', input) } }) });
+            };
+            const substitutedChild = await child(ManagedAcquireInputV1Schema.parse({ ...childInput,
+                selection: { ...acquisition.selection, revision: 1 } }));
+            expect(substitutedChild.statusCode).toBe(401);
+            expect(substitutedChild.json()).toMatchObject({ error: 'invalid_token' });
+            // The admitted Session retains its exact snapshot through its first allocation.
+            const change = { accountId: selected.account.id, authentication: { authenticationAuthority: 'present_user' as const },
+                input: { homeId, id: presetId, expectedRevision: 0 } };
+            if (mutation !== 'none') expect(mutation === 'archive' ? await archiveMachinePreset(change) : await updateMachinePreset({ ...change,
+                input: { ...change.input, patch: { wakeOnAcceptedMessage: true } } })).toMatchObject({ kind: 'saved' });
+            const admittedChild = await child(childInput);
+            expect(admittedChild.statusCode).toBe(200);
+            expect(admittedChild.json()).toMatchObject({ replayed: false, machine: { enrollmentAccountId: requester.account.id,
+                custodianAccountId: selected.account.id, preset: { id: presetId, revision: 0 }, wakeOnAcceptedMessage: false } });
+            const absent = await issue(spawn, projectApiTokenSessionSpawnAdmissionV1(spawn));
+            expect(absent.response.statusCode).toBe(409);
+            for (const altered of [
+                { ...acquisition, selection: { ...acquisition.selection, id: crypto.randomUUID() } },
+                { ...acquisition, selection: { ...acquisition.selection, revision: acquisition.selection.revision + 2 } },
+                { ...acquisition, controller: { ...selected.controller, machineId: crypto.randomUUID() } },
+                { ...acquisition, controller: { ...selected.controller, installationId: crypto.randomUUID() } },
+            ]) {
+                const refused = await issue(spawn, { ...projection, managedPresetAcquisition: altered });
+                expect(refused.response.statusCode).toBe(409);
+            }
+            const direct = { agentTarget, executionTarget: spawn.executionTarget, directory: spawn.directory };
+            const directProjection = projectApiTokenSessionSpawnAdmissionV1(direct);
+            expect((await issue(direct, directProjection)).response.statusCode).toBe(409);
+            if (mode === 'plain') {
+                const staleCapture = await issue(direct, projection);
+                expect(staleCapture.response.statusCode).toBe(409);
+                const changedInput = await issue({ ...spawn, sessionPlacement: { ...spawn.sessionPlacement, presetId: crypto.randomUUID() } }, projection);
+                expect(changedInput.response.statusCode).toBe(409);
+            }
+            // Withdrawal applies at the next root; the accepted carrier consumes its signed tuple.
+            expect(await resolveExternalActionExecutionMachineAdmissionInTx(db, {
+                actorAccountId: requester.account.id, machineId: selected.controller.machineId, actionId,
+                executionBinding: authorization.binding, envelope: issued.envelope,
+            })).toMatchObject({ kind: 'admitted', installationId: selected.controller.installationId });
+            const withdrawn = await issue(spawn, projection);
+            expect(withdrawn.response.statusCode).toBe(mutation === 'none' ? 200 : 409);
+        } finally { await instance.close(); }
     });
 
     it('preserves foreign controller Manage for one-off acquire admission', async () => {

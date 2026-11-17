@@ -56,6 +56,119 @@ export type AutomationEventsActionInputById = {
         occurredAt: number;
         observationReceivedAt: number;
         payload: JsonValue;
+        subjectContexts?: undefined | {
+            role: 'context' | 'operand';
+            subject: {
+                checkId: string;
+                sourceInstanceId: string;
+                kind: 'healthCheck';
+                serverId: string;
+            } | {
+                kind: 'app';
+                serverId: string;
+                projectSourceId: string;
+            } | {
+                kind: 'approvalProfile';
+                serverId: string;
+                profileId: string;
+            } | {
+                kind: 'backup';
+                serverId: string;
+                environmentId: string;
+            } | {
+                kind: 'database';
+                serverId: string;
+                target: {
+                    kind: 'environment';
+                    environmentId: string;
+                    service: string;
+                    database: string;
+                } | {
+                    savedSecretId: string;
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'manual';
+                } | {
+                    source: {
+                        kind: 'env_file';
+                        path: string;
+                        variable: string;
+                    } | {
+                        kind: 'service';
+                        serviceId: string;
+                        variable: string;
+                    } | {
+                        kind: 'sqlite_file';
+                        path: string;
+                    };
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'worktree';
+                };
+            } | {
+                kind: 'environment';
+                serverId: string;
+                environmentId: string;
+            } | {
+                kind: 'plugin';
+                serverId: string;
+                pluginId: string;
+                subjectKindId: string;
+                identity: unknown;
+            } | {
+                kind: 'session';
+                serverId: string;
+                sessionId: string;
+            } | {
+                serverId: string;
+                machineId: string;
+                kind: 'machine';
+            } | {
+                serverId: string;
+                projectKey: string;
+                kind: 'project';
+            };
+        }[];
     };
     readonly "automation.event.source.status.report": {
         kind: 'catalogReconciliation';
@@ -148,6 +261,116 @@ export type AutomationEventsActionResultById = {
                 })[];
             };
             maximumObservationAgeMs: null | number;
+            subject?: undefined | {
+                checkId: string;
+                sourceInstanceId: string;
+                kind: 'healthCheck';
+                serverId: string;
+            } | {
+                kind: 'app';
+                serverId: string;
+                projectSourceId: string;
+            } | {
+                kind: 'approvalProfile';
+                serverId: string;
+                profileId: string;
+            } | {
+                kind: 'backup';
+                serverId: string;
+                environmentId: string;
+            } | {
+                kind: 'database';
+                serverId: string;
+                target: {
+                    kind: 'environment';
+                    environmentId: string;
+                    service: string;
+                    database: string;
+                } | {
+                    savedSecretId: string;
+                    accountId: string;
+                    workspace: ({
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    }) & JsonValue;
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'manual';
+                } | {
+                    source: {
+                        kind: 'env_file';
+                        path: string;
+                        variable: string;
+                    } | {
+                        kind: 'service';
+                        serviceId: string;
+                        variable: string;
+                    } | {
+                        kind: 'sqlite_file';
+                        path: string;
+                    };
+                    accountId: string;
+                    workspace: ({
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    }) & JsonValue;
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'worktree';
+                };
+            } | {
+                kind: 'environment';
+                serverId: string;
+                environmentId: string;
+            } | {
+                kind: 'plugin';
+                serverId: string;
+                pluginId: string;
+                subjectKindId: string;
+                identity: JsonValue;
+            } | {
+                kind: 'session';
+                serverId: string;
+                sessionId: string;
+            } | {
+                serverId: string;
+                machineId: string;
+                kind: 'machine';
+            } | {
+                serverId: string;
+                projectKey: string;
+                kind: 'project';
+            };
             observationOnly?: undefined | {
                 kind: 'observationOnly';
             };
@@ -194,5 +417,7 @@ export type AutomationEventsActionResultById = {
             checkpointSafe: true;
         })[];
     };
-    readonly "automation.event.source.status.report": Record<string, never>;
+    readonly "automation.event.source.status.report": {
+        [x: string]: never;
+    };
 };

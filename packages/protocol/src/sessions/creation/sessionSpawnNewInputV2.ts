@@ -1,7 +1,7 @@
 import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
-import { SessionSpawnNewSelectionV2BaseSchema } from './sessionSpawnNewSelectionV2.js';
+import { SessionSpawnEnvironmentVariablesV2Schema, SessionSpawnNewSelectionV2BaseSchema } from './sessionSpawnNewSelectionV2.js';
 import {
   AgentSessionStartupInstructionsV1Schema,
 } from '../../runtime/agentSessionStartupInstructionsV1.js';
@@ -30,6 +30,7 @@ import { MachineSetupPlanInputV1Schema } from '../../machines/managed/actionsV1.
 import { AgentInstallJobConsentSchema } from '../../daemon/agentInstallJobs.js';
 import { SessionPlacementSelectionV1Schema } from './sessionPlacementSelectionV1.js';
 import type { SessionExecutionTargetV1 } from './sessionExecutionTargetV1.js';
+import { ConnectedServicesLaunchAuthIntentV1Schema } from '../../connect/connectedServicesLaunchAuthIntentV1.js';
 export { SessionAttestedContextV1Schema, type SessionAttestedContextV1 } from './sessionAttestedContextV1.js';
 
 /**
@@ -117,9 +118,8 @@ export const SessionSpawnNewInputV2BaseSchema = lazyZodSchema(() => z.strictObje
    * Raw launch environment forwarded verbatim to the spawned process. Only the
    * CLI's direct-to-daemon path may carry it: the browser-safe server-start
    * draft below omits it so values never enter server-visible creation state.
-   * Bounds match the handoff resume plan's environment contract.
    */
-  environmentVariables: z.optional(z.record(z.string().check(z.minLength(1), z.maxLength(128)), z.string().check(z.maxLength(16 * 1024)))),
+  environmentVariables: z.optional(SessionSpawnEnvironmentVariablesV2Schema),
 }));
 
 function refineDiscussionParticipantSpawn(input: {
@@ -155,26 +155,63 @@ export const SessionSpawnNewInputV2Schema = lazyZodSchema(() => SessionSpawnNewI
 
 export type SessionSpawnNewInputV2 = z.infer<typeof SessionSpawnNewInputV2Schema>;
 
+/** The destination is admitted; its ordinary creation owner still selects an omitted Agent. */
+export const SessionSpawnNewTargetedAuthoringInputV2Schema = lazyZodSchema(() => z.partial(SessionSpawnNewInputV2BaseSchema, {
+  agentTarget: true,
+}).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn), z.superRefine(refineSessionPlacementSpawn)));
+export type SessionSpawnNewTargetedAuthoringInputV2 = z.infer<typeof SessionSpawnNewTargetedAuthoringInputV2Schema>;
+
 /** Action admission translates product vocabulary once into the existing creation graph. */
 export const SessionSpawnNewActionInputV2BaseSchema = lazyZodSchema(() => z.strictObject({
   ...SessionSpawnNewInputV2BaseSchema.shape,
+  executionTarget: z.optional(SessionSpawnNewInputV2BaseSchema.shape.executionTarget),
+  agentTarget: z.optional(SessionSpawnNewInputV2BaseSchema.shape.agentTarget),
+  /** Flat model authoring waits for the selected Project's Agent choice. */
+  modelSelectionInput: z.optional(z.strictObject({
+    modelId: z.string().check(z.trim(), z.minLength(1)),
+    providerConnectionId: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
+    updatedAt: z.number().check(z.int(), z.nonnegative()),
+  })),
+  connectedServicesAuthIntent: z.optional(ConnectedServicesLaunchAuthIntentV1Schema),
   organizationPlacement: z.optional(SessionSectionPlacementV1Schema),
 }));
 export const SessionSpawnNewActionInputV2Schema = lazyZodSchema(() => SessionSpawnNewActionInputV2BaseSchema.check(
   z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn), z.superRefine(refineSessionPlacementSpawn),
 ));
-export type SessionSpawnNewActionInputV2 = z.infer<typeof SessionSpawnNewActionInputV2Schema>;
+export type SessionSpawnNewActionAuthoringInputV2 = z.infer<typeof SessionSpawnNewActionInputV2Schema>;
+export type SessionSpawnNewActionInputV2 = Omit<SessionSpawnNewInputV2, 'organizationPlacement'> & {
+  organizationPlacement?: z.infer<typeof SessionSectionPlacementV1Schema>;
+};
 
-/** Voice's host binds the catalog default before ordinary creation admission. */
+/** Voice preserves authoring omissions for the canonical creation preparation owner. */
 export const SessionSpawnNewActionVoiceInputV2Schema = lazyZodSchema(() => z.partial(SessionSpawnNewActionInputV2BaseSchema, {
   agentTarget: true,
 }).check(z.superRefine(refineSessionDirectoryIntentCheckoutV1), z.superRefine(refineDiscussionParticipantSpawn), z.superRefine(refineSessionPlacementSpawn)));
 
-export function admitSessionSpawnNewActionInputV2(input: SessionSpawnNewActionInputV2): SessionSpawnNewInputV2 {
-  const { organizationPlacement, ...selection } = input;
+function projectSessionSpawnNewActionSelectionV2(input: SessionSpawnNewActionAuthoringInputV2) {
+  const { organizationPlacement, modelSelectionInput: _modelSelectionInput,
+    connectedServicesAuthIntent: _connectedServicesAuthIntent, ...selection } = input;
   return { ...selection, ...(organizationPlacement ? { organizationPlacement: {
     folderId: organizationPlacement.sectionId, tagIds: organizationPlacement.tagIds,
   } } : {}) };
+}
+
+export function admitSessionSpawnNewActionInputV2(input: SessionSpawnNewActionAuthoringInputV2): SessionSpawnNewInputV2 {
+  return SessionSpawnNewInputV2Schema.parse(projectSessionSpawnNewActionSelectionV2(input));
+}
+
+/** Preserve authoring omissions while opening the exact public request, before effective creation admission. */
+export function admitSessionSpawnNewTargetedAuthoringInputV2(input: SessionSpawnNewActionAuthoringInputV2): SessionSpawnNewTargetedAuthoringInputV2 {
+  return SessionSpawnNewTargetedAuthoringInputV2Schema.parse(projectSessionSpawnNewActionSelectionV2(input));
+}
+
+export function projectSessionSpawnNewActionAuthoringInputV2(input: Omit<SessionSpawnNewInputV2, 'agentTarget' | 'executionTarget'> & {
+  agentTarget?: SessionSpawnNewInputV2['agentTarget']; executionTarget?: SessionSpawnNewInputV2['executionTarget'];
+}): SessionSpawnNewActionAuthoringInputV2 {
+  const { organizationPlacement, ...selection } = input;
+  return SessionSpawnNewActionInputV2Schema.parse({ ...selection, ...(organizationPlacement ? { organizationPlacement: {
+    sectionId: organizationPlacement.folderId, tagIds: organizationPlacement.tagIds,
+  } } : {}) });
 }
 
 export function projectSessionSpawnNewActionInputV2(input: SessionSpawnNewInputV2): SessionSpawnNewActionInputV2 {

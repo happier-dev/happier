@@ -8,7 +8,8 @@ export type DiscoveryActionInputById = {
     readonly "action.spec.search": {
         [x: string]: unknown;
         query?: string | undefined;
-        limit?: number | undefined;
+        limit?: null | number | undefined;
+        purpose?: 'automation' | 'workflow_step' | undefined;
     };
     readonly "action.spec.get": {
         [x: string]: unknown;
@@ -326,16 +327,27 @@ export type DiscoveryActionResultById = {
             approval?: undefined | {
                 result: 'none' | 'optional' | 'required';
                 profile?: undefined | {
-                    status: 'available';
+                    status: 'available' | 'missing';
                     requestedId: string;
-                    effectiveId: string;
-                } | {
-                    status: 'missing';
-                    requestedId: string;
-                    effectiveId: 'builtin:read-propose';
                 };
                 flow?: 'blocking' | 'deferred' | undefined;
             };
+            approvalScope?: 'environment' | 'healthCheck' | 'machine' | undefined | {
+                kind: 'plugin';
+                subjectKindId: string;
+                identityField: string;
+            };
+            subjectKindDefinition?: Readonly<{
+                id: string;
+                label: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, number | string> | undefined;
+                };
+                icon?: string | undefined;
+                identitySchema: PluginJsonSchemaV2;
+                listAction: string;
+            }> | undefined;
             requiredAuthority?: 'account_automation' | 'present_user' | undefined;
             executionPlacement?: 'account' | 'client' | 'machine' | 'session' | undefined;
             toolExposure?: undefined | {
@@ -358,6 +370,11 @@ export type DiscoveryActionResultById = {
             };
             outputSchema?: Record<string, unknown> | undefined;
             sideEffectClass?: 'danger' | 'external' | 'none' | 'read' | 'write' | undefined;
+            automation?: undefined | {
+                before: boolean;
+                after: boolean;
+                workflowStep: boolean;
+            };
             operation?: undefined | {
                 version: 1;
                 visibility: 'activity';
@@ -493,16 +510,27 @@ export type DiscoveryActionResultById = {
             approval?: undefined | {
                 result: 'none' | 'optional' | 'required';
                 profile?: undefined | {
-                    status: 'available';
+                    status: 'available' | 'missing';
                     requestedId: string;
-                    effectiveId: string;
-                } | {
-                    status: 'missing';
-                    requestedId: string;
-                    effectiveId: 'builtin:read-propose';
                 };
                 flow?: 'blocking' | 'deferred' | undefined;
             };
+            approvalScope?: 'environment' | 'healthCheck' | 'machine' | undefined | {
+                kind: 'plugin';
+                subjectKindId: string;
+                identityField: string;
+            };
+            subjectKindDefinition?: Readonly<{
+                id: string;
+                label: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, number | string> | undefined;
+                };
+                icon?: string | undefined;
+                identitySchema: PluginJsonSchemaV2;
+                listAction: string;
+            }> | undefined;
             requiredAuthority?: 'account_automation' | 'present_user' | undefined;
             executionPlacement?: 'account' | 'client' | 'machine' | 'session' | undefined;
             toolExposure?: undefined | {
@@ -525,6 +553,11 @@ export type DiscoveryActionResultById = {
             };
             outputSchema?: Record<string, unknown> | undefined;
             sideEffectClass?: 'danger' | 'external' | 'none' | 'read' | 'write' | undefined;
+            automation?: undefined | {
+                before: boolean;
+                after: boolean;
+                workflowStep: boolean;
+            };
             operation?: undefined | {
                 version: 1;
                 visibility: 'activity';
@@ -4761,7 +4794,7 @@ export type DiscoveryActionResultById = {
                     sourceOwnerDisplayName: null | string;
                     id: string;
                     teamId: string;
-                    displayName: {
+                    displayName: null | {
                         content: {
                             t: 'encrypted';
                             c: string;
@@ -5042,6 +5075,7 @@ export type DiscoveryActionResultById = {
                             definitionRevision: 1;
                         };
                     };
+                    sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
                     deliveryPolicy?: undefined | {
                         preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
                     };
@@ -5159,5 +5193,7 @@ export type DiscoveryActionResultById = {
             };
         };
     };
-    readonly "action.invoke": JsonValue;
+    readonly "action.invoke": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
 };

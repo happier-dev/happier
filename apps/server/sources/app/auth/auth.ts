@@ -53,6 +53,7 @@ import type { AccountApiTokenDeploymentInputV1 } from '@happier-dev/protocol/aut
 import { resolveApiTokenDeploymentGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { projectExternalActionProjectSessionDefaultsAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readExternalActionBindingAuthority } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { hasAdmittedExternalActionHandoffScope, readAdmittedExternalActionHandoffMachineInTx } from './externalActionHandoffAdmission';
 import { projectWorkspaceSyncAdmissionInputV1, type WorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -754,6 +755,14 @@ class AuthModule {
         // This is a Home decision, never an invocation author's approval bypass.
         if (input.managedAcquireDelegation !== undefined) throw new ApiTokenOperationError('credential_scope_denied');
         const managedAcquireDelegation = context.managedMachineAdmission?.managedAcquireDelegation;
+        const sessionPresetAcquisition = context.managedMachineAdmission?.sessionPresetAcquisition;
+        if (!sameStrictJsonValue(input.sessionPresetAcquisition, sessionPresetAcquisition)
+            || sessionPresetAcquisition && (input.actionId !== 'session.spawn_new'
+                || sessionPresetAcquisition.selection.homeId !== input.serverIdentityId
+                || sessionPresetAcquisition.controller.machineId !== input.machineId
+                || sessionPresetAcquisition.controller.installationId !== machine.installationId)) {
+            throw new ApiTokenOperationError('credential_scope_denied');
+        }
         let managedAccountExecutor: ExternalActionExecutionAuthorizationBindingV1['managedAccountExecutor'];
         if (input.actionId === 'machines.managed.power.set' || input.actionId === 'machines.managed.delete') {
             const { ExternalActionManagedControlAdmissionV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
@@ -783,9 +792,16 @@ class AuthModule {
         // A caller cannot grant itself child dispatch, even on an otherwise valid root.
         if (input.deploymentChildRoot !== undefined) throw new ApiTokenOperationError('credential_scope_denied');
         const deploymentChildRoot = isDeploymentChildRootActionIdV1(input.actionId, input.deploymentPreparationAdmission);
+        const projectSessionDefaultsAdmission = context.input === undefined ? input.projectSessionDefaultsAdmission
+            : projectExternalActionProjectSessionDefaultsAdmissionV1(input.actionId, context.input);
+        if (input.projectSessionDefaultsAdmission !== undefined
+            && !sameStrictJsonValue(input.projectSessionDefaultsAdmission, projectSessionDefaultsAdmission)) {
+            throw new ApiTokenOperationError('credential_scope_denied');
+        }
         const parsedBinding = ExternalActionExecutionAuthorizationBindingV1Schema.safeParse({
             ...input, custodianAccountId: machine.accountId, installationId: machine.installationId,
             ...(presetPreparationAdmission ? { presetPreparationAdmission } : {}),
+            ...(projectSessionDefaultsAdmission ? { projectSessionDefaultsAdmission } : {}),
             ...(deploymentChildRoot ? { deploymentChildRoot: true } : {}),
             ...(managedAdmission ? { managedAdmission } : {}),
             ...(managedAcquireDelegation ? { managedAcquireDelegation } : {}),

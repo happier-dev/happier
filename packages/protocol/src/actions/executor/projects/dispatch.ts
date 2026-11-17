@@ -15,7 +15,7 @@ import { isRpcError, readRpcErrorCode, RPC_ERROR_CODES } from '../../../rpc/erro
 import { isPluginError } from '../../../plugins/errors.js';
 import { type ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema } from '../../../projects/projectOrganizationV1.js';
 import type { ProjectSourcesCreateInputV1Schema, ProjectSourcesUpdateInputV1Schema } from '../../../projects/sources/projectSourceV1.js';
-import { type ActionId } from '../../actionIds.js';
+import { PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
 import type { ActionExecuteResult, ActionExecutorContext, AdmittedClientActionContext } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecutorDeps } from '../types.js';
@@ -80,6 +80,11 @@ export async function dispatchProjectsDispatch1(inv: Pick<CoreInvocation, 'actio
 
 export async function dispatchProjectsDispatch2(inv: Pick<CoreInvocation, 'actionId' | 'deps' | 'data' | 'ctx'>): Promise<ActionExecuteResult | null> {
   const { actionId, deps, data, ctx } = inv;
+
+        if (actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1) {
+          if (!deps.projectsSessionDefaultsGet) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+          return completeActionResult(await deps.projectsSessionDefaultsGet(data as AdmittedActionInputById[typeof PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1], ctx));
+        }
 
         if (actionId === 'paths.list_recent') {
           if (!deps.pathsListRecent) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };

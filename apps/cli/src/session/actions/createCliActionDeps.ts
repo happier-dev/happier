@@ -60,6 +60,7 @@ import { createCliExecutionRunActionDeps } from './cliActionDeps/executionRuns';
 import { createCliConnectionsActionDeps } from './cliActionDeps/connections';
 import { createCliMachineResourceActionDeps } from './cliActionDeps/machineResources';
 import { createCliProjectActionDeps } from './cliActionDeps/projects';
+import { createCliProjectSessionDefaultsActionDeps } from './cliActionDeps/projectSessionDefaults';
 import { createCliPermissionActionDeps } from '@/session/services/cliPermissionActionDeps';
 import { createCliProjectAdmission } from './cliActionDeps/projectAdmission';
 import { createCliMachineActionDeps } from './cliActionDeps/machine';
@@ -883,7 +884,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     if (!family.workflowTriggers) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
     return family.workflowTriggers.list(input, context);
   });
-  const spawnActionDeps = createCliSpawnActionDeps(params, { callMachineAction, isSameActionHomeId, machineReferenceServerUrl, normalizeStringValue, prepareAccountRoleOverrides, prepareSourceKeyAfterCommit, projectHomeId, readAccountRoleOverrides, readRecord, readRoleSources, resolveServerRequestHeaders, roleSettingsProvider, workflowTriggers });
+  const spawnActionDeps = createCliSpawnActionDeps(params, { callMachineAction, isSameActionHomeId, machineReferenceServerUrl, normalizeStringValue, prepareAccountRoleOverrides, prepareSourceKeyAfterCommit, projectHomeId, readAccountRoleOverrides, readRecord, readRoleSources, resolveServerRequestHeaders, roleSettingsProvider, spawnConnectedServicesList: inventoryDeps.spawnConnectedServicesList, workflowTriggers });
   const machineInventoryDeps = createCliMachineInventoryActionDeps(params, { callMachineAction, inventoryDeps });
   const artifactsDeps = createCliArtifactsActionDeps(params, { artifactCallerContext, callMachineAction, homeAccountId, readRawRoleSettings, mutateRawAccountSettings, requireLocalPromptActionMachine, resolveServerRequestHeaders, resolveWorkspacePublishCaller, roleAccountLifetimeToken, roleAccountScopeKey, roleArtifactStore,
     readWidgetTitles: (...args) => widgetDeps.readWidgetTitles(...args), widgetAccountScope: () => widgetDeps.widgetAccountScope?.() ?? null,
@@ -1080,7 +1081,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         return null;
       });
       if (!caller?.metadata) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
-      const approvalProfileId = resolveSessionApprovalProfileReferenceV1(caller.metadata, context.actionsSettings);
+      const approvalProfileId = resolveSessionApprovalProfileReferenceV1(caller.metadata);
       return { approvalProfileId, approvalProfileTeamOrGroupDerived: caller.metadata.approvalProfileTeamOrGroupDerived === true };
     },
     readApprovalProfile: async (id, context) => {
@@ -1556,6 +1557,8 @@ export function createCliActionDeps(params: CliActionDepsParams,
       resolveAuthorizationHeaders: (actionId, context, request) => resolveServerRequestHeaders(context, actionId, request),
     }) : {}),
     projectsSetupSet: projectDeps.projectsSetupSet,
+    ...createCliProjectSessionDefaultsActionDeps({ projectAccountAdmission, projectHomeAdmission, projectRowsAuthority, withProjectHome, resolveProjectHomeIdentity },
+      () => readEffectiveDeps?.() ?? actionDeps),
     projectsOrganizationUpdate: projectDeps.projectsOrganizationUpdate,
     projectsVisibilitySet: projectDeps.projectsVisibilitySet,
     projectsList: projectDeps.projectsList,

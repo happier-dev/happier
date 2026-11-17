@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue, PluginJsonValueV2 } from '../../identity.js';
-import type { ActionFailureCauseV1, ExtensionSelectionV1, QualifiedAudienceSelection, SessionTargetV1, SessionUsageLimitCheckNowRequestV1Input, SessionUsageLimitConsumeResetCreditRequestV1Input, UpdatedSelectionV1, VoiceProviderSettingsJsonValueV1 } from './pluginActionDtoSupport.generated.js';
+import type { ActionFailureCauseV1, ExtensionSelectionV1, QualifiedAudienceSelection, SessionTargetV1, UpdatedSelectionV1, VoiceProviderSettingsJsonValueV1 } from './pluginActionDtoSupport.generated.js';
 
 export type SessionControlActionInputById = {
     readonly "session.pending.edit": {
@@ -930,7 +930,6 @@ export type SessionControlActionInputById = {
             };
             expectedVersion: number;
             ruleDefinition: {
-                v: 1;
                 filter: Readonly<{
                     show: 'both' | 'runs' | 'sessions';
                     startedBy: readonly ('agents' | 'triggers' | 'you')[];
@@ -1000,6 +999,7 @@ export type SessionControlActionInputById = {
                     }>[];
                     source: 'all' | 'direct' | 'persisted';
                 }>;
+                v: 1;
                 enabled: boolean;
             };
         }[];
@@ -1226,6 +1226,7 @@ export type SessionControlActionInputById = {
         runId: string;
     } | {
         sessionId: string;
+        skipCleanup?: boolean | undefined;
     };
     readonly "session.section.set": {
         sessionId: string;
@@ -1389,8 +1390,24 @@ export type SessionControlActionInputById = {
         armedAtMs?: number | undefined;
         runtimeAuthRecoveryAttemptId?: string | undefined;
     };
-    readonly "session.usageLimit.checkNow": SessionUsageLimitCheckNowRequestV1Input<true>;
-    readonly "session.usageLimit.consumeResetCredit": SessionUsageLimitConsumeResetCreditRequestV1Input<true>;
+    readonly "session.usageLimit.checkNow": {
+        [x: string]: unknown;
+        sessionId: string;
+        agentId?: string | undefined;
+        operation?: 'check_now' | 'switch_account_now' | undefined;
+        resumePromptMode?: 'custom' | 'off' | 'standard' | undefined;
+    } & Readonly<{
+        provider?: string | undefined;
+    }>;
+    readonly "session.usageLimit.consumeResetCredit": {
+        [x: string]: unknown;
+        sessionId: string;
+        agentId?: string | undefined;
+        issueFingerprint?: string | undefined;
+        resumePromptMode?: 'custom' | 'off' | 'standard' | undefined;
+    } & Readonly<{
+        provider?: string | undefined;
+    }>;
     readonly "session.pending.sendNow": {
         sessionId: string;
         localId: string;
@@ -1417,8 +1434,8 @@ export type SessionControlActionInputById = {
         resumeWhenAvailable?: boolean | undefined;
     };
     readonly "session.pending.markHandled": {
-        localId: string;
         sessionId: string;
+        localId: string;
         serverId?: string | undefined;
     };
     readonly "session.pending.dismiss": {
@@ -1440,8 +1457,8 @@ export type SessionControlActionInputById = {
         targetExecutionRunId?: string | undefined;
     };
     readonly "session.pending.resetStart.set": {
-        localId: string;
         sessionId: string;
+        localId: string;
         reset: {
             source: {
                 ref: {
@@ -1493,8 +1510,8 @@ export type SessionControlActionInputById = {
         };
     };
     readonly "session.pending.resetStart.cancel": {
-        localId: string;
         sessionId: string;
+        localId: string;
         serverId?: string | undefined;
     };
 };
@@ -2139,7 +2156,9 @@ export type SessionControlActionResultById = {
         };
         diagnostic?: string | undefined;
     };
-    readonly "session.history.get": JsonValue;
+    readonly "session.history.get": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
     readonly "session.wait.idle": {
         ok: false;
         code: 'encryption_material_unavailable' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_not_found' | 'timeout' | 'unsupported';
@@ -2150,9 +2169,15 @@ export type SessionControlActionResultById = {
         idle: true;
         observedAt: number;
     };
-    readonly "session.config_option.set": JsonValue;
-    readonly "session.connected_services_auth.set": JsonValue;
-    readonly "session.approval_profile.set": JsonValue;
+    readonly "session.config_option.set": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.connected_services_auth.set": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.approval_profile.set": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
     readonly "session.coordinator.enable": {
         sessionId: string;
         status: 'configured' | 'partial';
@@ -2192,14 +2217,30 @@ export type SessionControlActionResultById = {
         reason: null | string;
         version: number;
     };
-    readonly "session.title.set": JsonValue;
-    readonly "session.bot.set": JsonValue;
-    readonly "session.bot.face.set": JsonValue;
-    readonly "session.memory.set": JsonValue;
-    readonly "session.voice.preference.set": JsonValue;
-    readonly "session.context.update": JsonValue;
-    readonly "session.instructions.set": JsonValue;
-    readonly "session.permission_mode.set": JsonValue;
+    readonly "session.title.set": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.bot.set": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.bot.face.set": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.memory.set": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.voice.preference.set": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.context.update": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.instructions.set": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.permission_mode.set": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
     readonly "session.model.set": {
         modelId: string;
         selection: {
@@ -2450,7 +2491,9 @@ export type SessionControlActionResultById = {
         tagIds: string[];
         smartMatchMayRemain: boolean;
     };
-    readonly "session.unarchive": JsonValue;
+    readonly "session.unarchive": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
     readonly "session.status.get": {
         [x: string]: unknown;
         session: {
@@ -3136,6 +3179,16 @@ export type SessionControlActionResultById = {
                 goalControlFailure?: undefined | {
                     phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
                 };
+                automationNotices?: ({
+                    code: 'action_automation_skipped';
+                    reason: string;
+                    automationId: string;
+                    triggerId: string;
+                    workflowId: string;
+                } | {
+                    code: 'action_automations_not_checked';
+                    reason: string;
+                })[] | undefined;
             } | {
                 ok: true;
                 result: {
@@ -3817,10 +3870,18 @@ export type SessionControlActionResultById = {
         code: string;
         candidates?: string[] | undefined;
     };
-    readonly "session.work_state.get": JsonValue;
-    readonly "session.goal.get": JsonValue;
-    readonly "session.goal.set": JsonValue;
-    readonly "session.goal.clear": JsonValue;
+    readonly "session.work_state.get": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.goal.get": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.goal.set": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.goal.clear": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
     readonly "session.model.unarm": {
         ok: false;
         status: 'apply_failed' | 'publication_failed_rolled_back' | 'restart_required' | 'superseded' | 'unsupported';
@@ -4111,7 +4172,9 @@ export type SessionControlActionResultById = {
     readonly "session.compact": {
         status: 'admitted' | 'already_pending' | 'unsupported';
     };
-    readonly "session.turn.cancel": JsonValue;
+    readonly "session.turn.cancel": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
     readonly "session.runtime.refresh": {
         ok: boolean;
         status: 'already_current' | 'busy' | 'dry_run_restartable' | 'ineligible' | 'missing_resume_snapshot' | 'missing_spawn_options' | 'not_daemon_started' | 'not_found' | 'not_tracked' | 'partial_failure' | 'restart_admission_unsupported' | 'restarted' | 'runner_identity_changed' | 'runner_not_active' | 'spawn_failed' | 'stop_failed' | 'unsupported_daemon' | 'version_unknown';
@@ -4131,7 +4194,9 @@ export type SessionControlActionResultById = {
         reasonCode?: 'approval_pending' | 'current_entrypoint_unknown' | 'missing_credentials' | 'missing_resume_identity' | 'missing_spawn_options' | 'no_tracked_process' | 'non_destructive_refresh_unsupported' | 'not_active' | 'not_daemon_started' | 'not_remote_started' | 'restart_admission_unsupported' | 'restart_already_running' | 'runner_entrypoint_unknown' | 'runner_generation_unattested' | 'terminal_detached' | 'terminal_host_attached' | 'turn_in_progress' | 'unsupported_backend' | 'unsupported_daemon_version' | 'windows_hosted_runner' | null | undefined;
         diagnostics?: Record<string, unknown> | undefined;
     };
-    readonly "session.stop": JsonValue;
+    readonly "session.stop": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
     readonly "session.terminalComposer.clear": {
         [x: string]: unknown;
         ok: false;
@@ -4160,10 +4225,18 @@ export type SessionControlActionResultById = {
         sessionId: string;
         localId: string;
     };
-    readonly "session.usageLimit.waitResume.enable": JsonValue;
-    readonly "session.usageLimit.waitResume.cancel": JsonValue;
-    readonly "session.usageLimit.checkNow": JsonValue;
-    readonly "session.usageLimit.consumeResetCredit": JsonValue;
+    readonly "session.usageLimit.waitResume.enable": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.usageLimit.waitResume.cancel": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.usageLimit.checkNow": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.usageLimit.consumeResetCredit": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
     readonly "session.pending.sendNow": {
         type: 'committed';
         persistence: 'provider_direct' | 'transcript_committed';

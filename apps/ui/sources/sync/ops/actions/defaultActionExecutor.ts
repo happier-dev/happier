@@ -93,6 +93,7 @@ import {
   type SessionUsageLimitRecoveryOperationResult,
 } from '@/sync/ops/sessionUsageLimitRecovery';
 import { createActionExecutor, readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { completeSpawnActionResult } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { projectSessionReferenceFailure, resolveServerIdForSession } from '@happier-dev/protocol/actions/executor/sessionScope';
 import { readActionFailureEnvelope, readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { createUiTargetActionApprovalReplay } from './targetActionApprovalReplay';
@@ -105,12 +106,12 @@ import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/ac
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { CURRENT_SESSION_PRESENTATION_APPLY_RPC_METHOD, type CurrentSessionPresentationActionResultV1 } from '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1';
-import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, createActionExecuteFailureError, parseActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createUiProviderActionExecuteV1 } from './providerActionDeps';
 import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
-import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2, projectSessionSpawnNewActionInputV2, type SessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { materializeSessionCreationActionInput } from '@happier-dev/protocol/actions/executor/sessionSpawn';
-import { SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1, projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { createUiSessionCapabilityActionDeps } from './sessionCapabilityActionDeps';
 import { createUiMachineRecipesRead } from './machineRecipeActionDeps';
 import { setSessionCapabilityV1 } from '@happier-dev/protocol/actions/executor/sessionCapabilities';
@@ -167,7 +168,7 @@ import { PluginWebhookActionHttpPathsV1, type PluginWebhookPresentUserActionIdV1
 import { projectPluginFailureText } from '@happier-dev/protocol/plugins/failureProjection';
 import { SessionModelTransitionRequestV1Schema, SessionModelTransitionResultV1Schema, type SessionModelTransitionRequestV1, type SessionModelTransitionResultV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { ActionExecuteFailureSchema, ActionExecuteResultSchema, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, ActionExecuteResultSchema, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PendingResetStartWaitingReasonV1Schema } from '@happier-dev/protocol/sessions/pending/pendingResetStartReadinessV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { AutomationV3Settings } from '@happier-dev/protocol/automations/automationApiV3';
@@ -313,7 +314,7 @@ import { executeApiTokenAction, type ApiTokenActionTransport } from './apiTokenA
 import { createMachinePoolActionClient, MachinePoolActionError } from '@/sync/api/machines/machinePoolActions';
 import { createMachinePresetActionClient, MachinePresetActionError } from '@/sync/api/machines/managedMachinePresets';
 import { createManagedMachineActionClient, ManagedMachineActionError } from '@/sync/api/machines/managedMachineActions';
-import { executeManagedMachineNativeAction, isManagedMachineRetainedControlAction } from '@/sync/api/machines/managedMachineOrigination';
+import { executeManagedMachineNativeAction, isManagedMachineRetainedControlAction, prepareUiManagedPresetAcquire } from '@/sync/api/machines/managedMachineOrigination';
 import { executeUiManagedProvisionerList, prepareUiManagedProvisionerAdmission } from './managedProvisionerAction';
 import { prepareUiManagedMachineWake } from './managedMachineWakePreparation';
 import { executeUiMachinePresetArchive } from './machinePresetArchive';
@@ -428,6 +429,12 @@ import { projectProjectListV1 } from '@happier-dev/protocol/workspaces';
 import { listProjectsForActions } from './listProjects';
 import { createUiProjectPagesList } from './projectPagesAction';
 import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
+import { createUiProjectSessionDefaultsActionDeps, createUiManagedSessionDefaultsContextLoader } from '@/sync/api/projects/projectSessionDefaultsActions';
+import { createUiPrepareSessionSpawnNewInput } from './prepareSessionSpawnNewInput';
+import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
+import { VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE } from '@/voice/agent/projectVoiceConfiguredAgentTarget';
+import { resolveConnectedServicesLaunchAuthWithInventory } from '@happier-dev/protocol/connect/resolveConnectedServicesLaunchAuthV1';
+import { resolveSpawnConnectedServicesSelectionInContext, listSpawnConnectedServicesInContext } from './agentInventoryActionDeps';
 import { createProjectSourceTeamMoveDeps } from '@/sync/api/projects/projectSourceTeamMove';
 import { createUiDeploymentActionDeps, createUiDeploymentWorkspaceMachineReader, isDeploymentActionFailure, recoverUiDeploymentActionResult } from '@/sync/api/deployments/deploymentActions';
 import { DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, isDeploymentPromoteActionIdV1, isDeploymentAccountMachineTransportActionIdV1, isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -986,19 +993,21 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       && 'actionId' in input && typeof input.actionId === 'string' ? input.actionId : actionId;
   // Public selections are forwarded unchanged to the sole receiving admission owner.
   // Prepared private birth continuations keep their existing host-owned path.
-  const forwardSessionSpawnNew = async (input: ReturnType<typeof SessionSpawnNewActionInputV2Schema.parse>, context: ActionExecutorContext) => {
+  const forwardSessionSpawnNew = async (input: SessionSpawnNewActionInputV2, context: ActionExecutorContext) => {
     const { actionCaller: _actionCaller, actionRequestId, signal } = context;
     const { placementOrigin, ...exactInput } = admitSessionSpawnNewActionInputV2(input);
+    const scopedController = input.sessionPlacement?.kind === 'preset' && context.sessionCreationDefaults?.managedPresetAcquisition?.controller
+      && context.sessionCreationDefaults.managedPresetControllerAccess;
     const serverId = resolveServerProfileScopeIdForIdentifier(input.executionTarget.serverId);
     const machine = storage.getState().machineListByServerId[serverId]
       ?.find((candidate) => candidate.id === input.executionTarget.machineId);
-    if (input.authoringOrigin && !supportsMachineOperationProtocolCapabilityV1(
+    if (!scopedController && input.authoringOrigin && !supportsMachineOperationProtocolCapabilityV1(
       machine?.operationProtocolCapabilities, 'sessionSpawnAuthoringOrigin',
     )) return { type: 'error' as const, code: 'update_required' as const, retryable: false as const,
       details: { kind: 'update_required' as const, operation: 'session.spawn_new' as const,
         component: 'daemon' as const, reason: 'session_spawn_authoring_origin_update_required' as const } };
     if (
-      input.secretReferenceOverlay
+      !scopedController && input.secretReferenceOverlay
       && !supportsMachineSessionSpawnProtocolVersionV1(
         machine?.operationProtocolCapabilities,
         2,
@@ -1016,25 +1025,25 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         },
       };
     }
-    const supportsOrigin = !machine?.revokedAt && !machine?.replacedByMachineId
-      && supportsMachineOperationProtocolCapabilityV1(machine?.operationProtocolCapabilities, 'sessionSpawnPlacementOrigin');
+    const supportsOrigin = Boolean(scopedController) || (!machine?.revokedAt && !machine?.replacedByMachineId
+      && supportsMachineOperationProtocolCapabilityV1(machine?.operationProtocolCapabilities, 'sessionSpawnPlacementOrigin'));
     if (machine?.isShared && !accountContext) return { type: 'error' as const, code: 'permission_denied' as const, retryable: false as const };
     if (accountContext) {
       accountContext.assertCurrent();
       if (accountContext.serverId !== serverId) return { type: 'error' as const, code: 'permission_denied' as const, retryable: false as const };
-      if (!machineAccessAction) return { type: 'error' as const, code: 'target_unavailable' as const, retryable: true as const };
-      const disposition = await readRequesterSessionSpawnDisposition({ accountId: accountContext.accountId,
+      if (!scopedController && !machineAccessAction) return { type: 'error' as const, code: 'target_unavailable' as const, retryable: true as const };
+      const disposition = scopedController ? null : await readRequesterSessionSpawnDisposition({ accountId: accountContext.accountId,
         machineId: input.executionTarget.machineId, isShared: machine?.isShared,
-        readAccess: () => machineAccessAction({ actionId: 'machines.access.grants.list',
+        readAccess: () => machineAccessAction!({ actionId: 'machines.access.grants.list',
           input: { serverId, machineId: input.executionTarget.machineId }, context: context ?? {}, ...(signal ? { signal } : {}) }) });
       accountContext.assertCurrent();
-      if (disposition.kind === 'refused') return disposition.result;
+      if (disposition?.kind === 'refused') return disposition.result;
       const managedContinuation = context?.invocationServices?.managedContinuation;
       // Home admission owns runtime demand even for an owned guest absent from
       // the warm inventory. It prepares managed wake before dispatching spawn.
-      if (accountContext.serverIdentityId || disposition.kind === 'requester' || managedContinuation || context.surface === 'plugin' || context.surface === 'voice'
+      if (accountContext.serverIdentityId || disposition?.kind === 'requester' || managedContinuation || context.surface === 'plugin' || context.surface === 'voice'
         || context.presentUserConfirmation || readHostReviewedParentV1(context)) {
-        const needsInvocation = context.surface !== 'plugin'
+        const needsInvocation = Boolean(context.sessionCreationDefaults) || context.surface !== 'plugin'
           && (context.surface !== 'ui' || readHostReviewedParentV1(context)
             || context.presentUserConfirmation?.inputDigest || (context.presentUserApproval && isSessionSpawnNewActionIdV1(context.presentUserApproval.actionId)));
         const invocation = needsInvocation ? projectExternalActionRequesterInvocationV1({ actionId: 'session.spawn_new',
@@ -1063,6 +1072,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           });
           return execution;
         }
+        const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
+        if (approval.success) return approval.data;
         const result = readSessionSpawnNewActionResultV1(SessionSpawnNewActionResultV1Schema.parse(execution.result));
         if (result.type === 'error') await refreshMachineAgentsAfterLaunchRefusal({
           accountLifetime: accountContext.accountLifetime, machineId: input.executionTarget.machineId,
@@ -1201,8 +1212,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const input = SessionSpawnNewActionInputV2Schema.safeParse(args.input);
       if (!input.success) return { ok: false as const, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       if (!input.data.machineSetupPlanInput) {
-        const result = await forwardSessionSpawnNew(input.data, context);
-        return 'ok' in result ? result : projectSessionSpawnNewActionResultV1(result);
+        const result = completeSpawnActionResult(await forwardSessionSpawnNew(projectSessionSpawnNewActionInputV2(admitSessionSpawnNewActionInputV2(input.data)), context));
+        return result.ok ? result.result : result;
       }
     }
     const confirmation = context.presentUserConfirmation?.inputDigest === undefined ? undefined : context.presentUserConfirmation;
@@ -1214,7 +1225,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     // Credential-free codecs still need caller provenance: an unstamped
     // managed request is automation at the receiver, even after a UI press.
     const needsInvocation = machineOwnedAction && context.surface !== 'plugin'
-      && (relationshipWrite || context.surface !== 'ui' || confirmation || reviewedParent
+      && (Boolean(context.sessionCreationDefaults) || relationshipWrite || context.surface !== 'ui' || confirmation || reviewedParent
         || originalSpec.success && getActionSpec(originalSpec.data).originalExecution?.requesterCredentials === 'none'
         || context.presentUserApproval?.actionId === args.actionId
         || doesExternalActionConsumeRequesterAccountContentV1({ actionId: args.actionId, input: args.input,
@@ -1512,7 +1523,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         } catch (error) { return normalizeWorkflowActionThrownError(error, undefined, true); }
       }
       const parsed = SessionSpawnNewActionInputV2Schema.safeParse(input);
-      if (!parsed.success || !areServerProfileIdentifiersEquivalent(parsed.data.executionTarget.serverId, accountContext.serverId)) return defaultPreview;
+      if (!parsed.success || !parsed.data.executionTarget || !parsed.data.agentTarget
+        || !areServerProfileIdentifiersEquivalent(parsed.data.executionTarget.serverId, accountContext.serverId)) return defaultPreview;
       const machineId = parsed.data.executionTarget.machineId;
       const machine = resolveServerScopedMachine(storage.getState(), accountContext.serverId, machineId);
       const disposition = await readRequesterSessionSpawnDisposition({ accountId: accountContext.accountId, machineId,
@@ -2335,7 +2347,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         .then(read => read.session, error => { if (error instanceof SessionSnapshotReadError) return null; throw error; });
       const metadata = session ? readSessionOwnerMetadataView(session) : null;
       if (!metadata) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
-      const approvalProfileId = resolveSessionApprovalProfileReferenceV1(metadata, context.actionsSettings);
+      const approvalProfileId = resolveSessionApprovalProfileReferenceV1(metadata);
       return { approvalProfileId, approvalProfileTeamOrGroupDerived: metadata.approvalProfileTeamOrGroupDerived === true };
     },
     // Host facts for the shared approval router: the person's settings (with the Source Control
@@ -3355,6 +3367,41 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       });
     },
 
+    ...(accountContext && homeDomainAction ? { prepareSessionSpawnNewInput: createUiPrepareSessionSpawnNewInput({
+      createLoader: context => createUiManagedSessionDefaultsContextLoader(accountContext, homeDomainAction, context),
+      readSettings: async () => readAccountSettingsSnapshot(),
+      resolveDefaultAgentTarget: async executionTarget => {
+        const inventory = await deps.agentsBackendsList!(executionTarget ? { machineId: executionTarget.machineId } : {});
+        const selected = inventory.items.find(item => item.targetKey === inventory.defaultTargetKey)?.agentTarget;
+        if (!selected) throw createActionExecuteFailureError({ ok: false,
+          errorCode: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE, error: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE,
+          details: { reason: VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE, recoveryAction: 'open_settings' }, effectAttempted: false });
+        return selected;
+      },
+      bindPreset: async (placement, context) => {
+        const bound = await prepareUiManagedPresetAcquire({ account: accountContext,
+          selection: { kind: 'preset', homeId: placement.homeId, id: placement.presetId },
+          requestId: context.actionRequestId ?? randomUUID(), signal: context.signal,
+          resolvePool: async input => {
+            const result = await executor.execute('machines.pools.resolve', input, context);
+            if (!result.ok) throw createActionExecuteFailureError(result);
+            return result.result;
+          },
+        });
+        if (bound.kind === 'refused') throw createActionExecuteFailureError({ ok: false, errorCode: bound.code, error: bound.code, effectAttempted: false });
+        return { input: bound.input, ...(bound.controllerAccess ? { controllerAccess: bound.controllerAccess } : {}) };
+      },
+      resolveConnectedServices: async (intent, target, executionTarget, context) => {
+        if (intent.kind === 'default') return undefined;
+        const args = { agentId: resolveBundledAgentIdFromContributionIdentity(target.identity) ?? undefined,
+          backendTargetKey: buildBackendTargetKeyV2(target), machineId: executionTarget.machineId,
+          serverId: accountContext.serverId, signal: context.signal };
+        const selection = await resolveSpawnConnectedServicesSelectionInContext(accountContext, args);
+        if (!selection) throw createActionExecuteFailureError({ ok: false, errorCode: 'unknown_agent', error: 'unknown_agent', effectAttempted: false });
+        return await resolveConnectedServicesLaunchAuthWithInventory({ intent, supportedServiceIds: selection.supportedServiceIds,
+          listInventory: () => listSpawnConnectedServicesInContext(accountContext, args, selection) }) ?? undefined;
+      },
+    }) } : {}),
     sessionSpawnNewDirectoryApprovalPreflight: createUiSessionSpawnNewDirectoryApprovalPreflight(accountContext ?? null),
     sessionSpawnNew: async (args, continuation) => {
       const {
@@ -3552,12 +3599,13 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     },
     projectsOrganizationUpdate: async (input, context) => {
       if (!accountContext || !canUsePrivateProjectAccountAction(accountContext, context)) return { ok: false, errorCode: 'project_organization_access_denied' };
+      const rows = createUiProjectAccountRowsClient(accountContext);
       return updateProjectOrganizationV1({
         normalizeServerId: resolveServerProfileScopeIdForIdentifier,
         accountScope: () => {
           try { accountContext.assertCurrent(); return { serverId: accountContext.serverId, accountId: accountContext.accountId }; }
           catch { return null; }
-        }, mutateOrganization: createUiProjectAccountRowsClient(accountContext).mutateOrganization,
+        }, mutateOrganization: rows.mutateOrganization, mutateSessionDefaults: rows.mutateSessionDefaults,
       }, input, context);
     },
     projectsVisibilitySet: async (input, context) => {
@@ -3606,6 +3654,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       }
     },
     ...(accountContext ? createProjectSourceActionDeps(accountContext) : {}),
+    ...(accountContext && homeDomainAction
+      ? createUiProjectSessionDefaultsActionDeps(accountContext, homeDomainAction) : {}),
     ...(projectSourceTeamMove ? { projectSourcesMoveToTeam: projectSourceTeamMove.projectSourcesMoveToTeam } : {}),
     ...deploymentActionDeps,
     promptInvocationsList: async (args) => {
@@ -3907,7 +3957,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const { catalog } = await readAcpCatalogInContext(accountContext);
       accountContext.assertCurrent();
       return listAgentBackendsForVoiceTool({ includeDisabled, limit, machineId, serverId: accountContext.serverId,
-        acpCatalogSnapshot: catalog, backendEnabledByTargetKey: preferences.backendEnabledByTargetKey ?? null });
+        accountLifetime: accountContext.accountLifetime, acpCatalogSnapshot: catalog,
+        backendEnabledByTargetKey: preferences.backendEnabledByTargetKey ?? null });
     },
     workspaceFilesReplacePreview: async ({ machineId, ...request }, context) => {
       try {
@@ -5242,9 +5293,24 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       if ('errorCode' in home) return home;
       input = home.input;
     }
-    return executeMachineActionAtDaemon(actionId, input, context, (actionInput, reviewDigest) => reviewDigest
-      ? executeMachineOwnedAction({ actionId, input: actionInput, context: freshRequest(context), confirmInFlow: true, reviewDigest })
-      : executeMachineOwnedAction({ actionId, input: actionInput, context, confirmInFlow }), deps.presentUserActionConfirmation);
+    return executeMachineActionAtDaemon(actionId, input, context, async (actionInput, reviewDigest) => {
+      // The relay's boundary has admitted the caller and parsed authoring input.
+      // Settle omissions once; a carried review reuses these same captured facts.
+      if (!reviewDigest && isSessionSpawnNewActionIdV1(actionId) && deps.prepareSessionSpawnNewInput) {
+        try {
+          const prepared = await deps.prepareSessionSpawnNewInput(SessionSpawnNewActionInputV2Schema.parse(actionInput), context);
+          actionInput = prepared.input;
+          context = { ...context, sessionCreationDefaults: prepared.defaults };
+        } catch (error) {
+          const failure = parseActionExecuteFailure(error);
+          if (failure) return failure;
+          throw error;
+        }
+      }
+      return reviewDigest
+        ? executeMachineOwnedAction({ actionId, input: actionInput, context: freshRequest(context), confirmInFlow: true, reviewDigest })
+        : executeMachineOwnedAction({ actionId, input: actionInput, context, confirmInFlow });
+    }, deps.presentUserActionConfirmation);
   };
 
   // Bind review and transport to the same portable Home before terminal approval is prepared.

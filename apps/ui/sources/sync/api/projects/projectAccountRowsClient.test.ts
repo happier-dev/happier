@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createStore } from 'zustand/vanilla';
-import { ProjectAccountRowMutationRequestV1Schema, buildProjectAccountRowPhysicalKeyV1, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { ProjectAccountRowMutationRequestV1Schema, ProjectAccountRowReadRequestV1Schema, buildProjectAccountRowPhysicalKeyV1, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { setProjectVisibilityV1 } from '@happier-dev/protocol/projects/projectVisibilityV1';
 import { createProjectAccountRowsDomain, type ProjectAccountRowsDomain } from '@/sync/store/domains/projectAccountRows';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
@@ -71,6 +71,51 @@ describe('Project rows Actions for the app Account', () => {
 });
 
 describe('Project visibility through the real UI row transport and store', () => {
+  it('opens and commits selected defaults through the captured Account without publishing them to the census', async () => {
+    const scope = { serverId: 'home-defaults', accountId: 'account-defaults' };
+    store.getState().clearProjectAccountRowsScope();
+    store.getState().activateProjectAccountRowsScope(scope);
+    const censusBefore = store.getState().projectAccountRows;
+    const key = { kind: 'project-session-defaults' as const, serverId: scope.serverId, projectKey: 'selected' };
+    let row: ProjectAccountRowV1 | undefined;
+    const operations: string[] = [];
+    const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: length => new Uint8Array(length) });
+    const signal = new AbortController().signal;
+    let current = true;
+    const client = createUiProjectAccountRowsClient({ ...scope, credentials: { token: 'plain-token' },
+      assertCurrent: () => { if (!current) throw new Error('retired'); },
+      resolveAccountEncryption: async () => ({ accountMode: 'plain' as const, encryption: null }),
+      request: async (path, init) => {
+        expect(init?.signal).toBe(signal);
+        operations.push(path);
+        const body: unknown = JSON.parse(String(init?.body));
+        if (path.endsWith('/read')) {
+          expect(ProjectAccountRowReadRequestV1Schema.parse(body).key).toEqual(key);
+          return Response.json(row ? { status: 'present', row } : { status: 'absent' });
+        }
+        expect(path).toBe('/v1/account/project-rows/mutate');
+        const request = ProjectAccountRowMutationRequestV1Schema.parse(body);
+        const mutation = request.mutations[0]!;
+        expect(request).toMatchObject({ expectedRefs: [], topologyChange: false });
+        expect(mutation.key).toEqual(key);
+        row = { key, revision: (row?.revision ?? -1) + 1, content: mutation.content };
+        return Response.json({ status: 'updated', rows: [row], cursor: row.revision });
+      },
+    });
+    const project = { serverId: key.serverId, projectKey: key.projectKey };
+    expect(await client.readSessionDefaults(project, signal)).toBeNull();
+    expect(await client.mutateSessionDefaults({ ...project, expectedRevision: 'absent', defaults: {}, signal }))
+      .toEqual({ status: 'updated', revision: 0, value: {} });
+    expect(await client.readSessionDefaults(project, signal)).toEqual({ revision: 0, defaults: {} });
+    expect(row?.content && cipher.open(key, row.content)).toEqual({ key, value: {} });
+    expect(operations.filter(path => path.endsWith('/mutate'))).toHaveLength(1);
+    expect(operations.some(path => path.endsWith('/list'))).toBe(false);
+    expect(store.getState().projectAccountRows).toBe(censusBefore);
+    current = false;
+    const issued = operations.length;
+    await expect(client.readSessionDefaults(project, signal)).rejects.toThrow();
+    expect(operations).toHaveLength(issued);
+  });
   it('reports indeterminate mutation settlement when cancellation follows HTTP issuance', async () => {
     const scope = { serverId: 'home-a', accountId: 'account-a' };
     const abort = new AbortController();

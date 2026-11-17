@@ -1838,6 +1838,74 @@ describe('opaque managed preset admission', () => {
         expect(JSON.stringify(admitted)).not.toContain('Private qualified launch');
         expect(native.effects()).toBe(0);
     });
+    it.each(['plain', 'e2ee'] as const)('uses the admitted %s Session preset snapshot after the mutable preset is archived', async mode => {
+        const homeId = 'admitted-session-preset-home';
+        const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+            name: 'Admitted launch', choices: {} };
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId, machineId: 'admitted-session-preset-guest',
+            launch, allocation: 'unsubmitted', custodianAccountId: 'owner' });
+        const native = nativeFixture({ credentialPurposes: [] });
+        const runtimeRegistry = { ...native.runtimeRegistry, contributes: { ...native.runtimeRegistry.contributes,
+            machineProvisioners: native.runtimeRegistry.contributes.machineProvisioners?.map(entry => ({ ...entry,
+                definition: { ...entry.definition, sessionPlacement: { kind: 'controller-local' as const, supportsAgentNativeSandbox: true } } })) } };
+        const acquisition = { ...(mode === 'e2ee' ? carrier.acquisition : { selection: carrier.acquisition.selection, controller }),
+            retention: { kind: 'unused' as const, afterMs: 17, effect: 'delete' as const }, wakeOnAcceptedMessage: true };
+        const presetContent = mode === 'e2ee' ? carrier.admission.presetContent : {
+            content: { t: 'plain', v: { v: 1, name: launch.name, launch } }, recipients: [],
+        };
+        const preset = { id: acquisition.selection.id, homeId, revision: acquisition.selection.revision,
+            owner: { kind: 'team', teamId: 'admitted-session-preset-team' }, controller, contentEncryptionMode: mode,
+            configurationRevision: 4, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            simultaneousLimit: { maximum: 3 }, ...presetContent };
+        const { content: _content, recipients: _recipients, ...presetStructure } = preset;
+        const requestId = 'admitted-session-preset-request';
+        const originalActionEnvelope = { v: 1 as const, requestId, target: { kind: 'machine' as const, machineId: controller.machineId },
+            input: { executionTarget: { serverId: homeId, machineId: controller.machineId }, directory: { kind: 'managed' },
+                sessionPlacement: { kind: 'preset', homeId, presetId: acquisition.selection.id } } };
+        const wire = originAuthorization(homeId, requestId);
+        const { sessionActionOrigin: _origin, sessionActionSource: _source, ...binding } = wire.binding;
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...wire, binding: { ...binding,
+            actionId: 'session.spawn_new', accountId: 'team-member', custodianAccountId: 'owner', accountEncryptionMode: mode,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope),
+            sessionPresetAcquisition: { selection: acquisition.selection, controller, admission: {
+                preset: presetStructure, presetContent, delegated: true } } } });
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode, version: 1, settingsVersion: 1,
+            signingKeyFingerprint: null, contentKeyFingerprint: mode === 'e2ee'
+                ? computeAccountEncryptionMigrateKeyFingerprintV1(carrier.custodianPublicKey) : null, updatedAt: 1 } });
+        let mutablePresetReads = 0;
+        const admitted: unknown[] = [];
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            if (String(url).endsWith('/presets/get')) {
+                mutablePresetReads++;
+                return { status: 200, data: { kind: 'refused', code: 'preset_archived' } };
+            }
+            if (String(url).endsWith('/admit')) {
+                admitted.push(body);
+                throw Object.assign(new Error('Stop at the allocation boundary'), { isAxiosError: true,
+                    response: { status: 409, data: { error: 'request_conflict' } } });
+            }
+            throw new Error(`Unexpected Home POST ${String(url)}`);
+        });
+        const signing = tweetnacl.sign.keyPair();
+        const driver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: carrier.token,
+            serverUrl: 'https://home.example', homeId, controller, runtimeRegistry, externalActionMachineRequestPrivateKey: signing.secretKey,
+            credentials: mode === 'e2ee' ? { token: carrier.token, encryption: { type: 'dataKey',
+                machineKey: carrier.custodianKey, publicKey: carrier.custodianPublicKey } } : { token: carrier.token, encryption: null } });
+        await expect(driver.execute('machines.managed.acquire', acquisition, { requestId, acquisitionMode: 'resource-bound',
+            context: { surface: 'cli', originalActionEnvelope, externalActionExecutionAuthorization: authorization,
+                externalActionTarget: authorization.binding.target, operationAcceptance: { operationId: 'admitted-session-preset-operation', accept() {} } },
+        })).rejects.toMatchObject({ code: 'request_conflict' });
+        await expect(driver.execute('machines.managed.acquire', { ...acquisition,
+            selection: { ...acquisition.selection, revision: acquisition.selection.revision + 1 } }, {
+            requestId, acquisitionMode: 'resource-bound', context: { surface: 'cli', originalActionEnvelope,
+                externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target,
+                operationAcceptance: { operationId: 'substituted-session-preset-operation', accept() {} } },
+        })).rejects.toMatchObject({ code: 'request_conflict' });
+        expect(mutablePresetReads).toBe(0);
+        expect(admitted).toEqual([{ input: acquisition, requestId, continuationPresent: false, acquisitionMode: 'resource-bound',
+            presetPolicy: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }, originalActionEnvelope }]);
+        expect(native.effects()).toBe(0);
+    });
     it('hydrates the Home-retained replay snapshot while qualifying omitted policy once', async () => {
         const homeId = 'native-replay-home';
         const carrier = createTeamMemberE2eePresetCarrier({ homeId, machineId: 'native-replay-machine',

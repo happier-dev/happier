@@ -156,17 +156,20 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
         ...(params.resourceContinuation ? { resourceContinuation: params.resourceContinuation } : {}),
         ...(params.machineServiceLogsGeneration ? { machineServiceLogsGeneration: params.machineServiceLogsGeneration } : {}),
     };
+    const spawnInput = binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && binding.target.kind === 'machine'
+        ? admitSessionSpawnNewActionInputV2(SessionSpawnNewActionInputV2Schema.parse({
+            ...(input !== null && typeof input === 'object' && !Array.isArray(input) ? input : {}),
+            executionTarget: { serverId: binding.serverIdentityId, machineId: binding.target.machineId } })) : null;
+    const presetAcquisition = spawnInput?.sessionPlacement?.kind === 'preset'
+        ? params.invocation?.sessionCreationDefaults?.managedPresetAcquisition : undefined;
+    const sessionSpawnAdmission = spawnInput && (spawnInput.machineSetupPlanInput !== undefined || presetAcquisition)
+        ? projectApiTokenSessionSpawnAdmissionV1(spawnInput, { managedPresetAcquisition: presetAcquisition }) : undefined;
     const sealed = material
         ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, randomBytes: getRandomBytes, input, ...logsOperands,
-            ...(binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && binding.target.kind === 'machine'
-                && input !== null && typeof input === 'object' && 'machineSetupPlanInput' in input
-                && input.machineSetupPlanInput !== undefined ? {
-                sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(
-                    SessionSpawnNewActionInputV2Schema.parse({ ...input,
-                        executionTarget: { serverId: binding.serverIdentityId, machineId: binding.target.machineId } }))),
-            } : {}),
+            ...(sessionSpawnAdmission ? { sessionSpawnAdmission } : {}),
             ...(params.pluginInvocation ? { pluginInvocation: params.pluginInvocation } : {}) })
         : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId, target: binding.target, input, ...logsOperands,
+            ...(sessionSpawnAdmission ? { sessionSpawnAdmission } : {}),
             ...(params.pluginInvocation ? { pluginInvocation: params.pluginInvocation } : {}) });
     const envelope = params.handoffAdmission ? { ...sealed, handoffAdmission: params.handoffAdmission } : sealed;
     let request: unknown = envelope;
@@ -362,12 +365,27 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     // This incumbent own-Machine transport carries no private requester box.
     // Runtime demand, finite placement and requester invocations still prove
     // their exact Home identity freshly before selecting private custody.
-    const currentOwnRow = !finite && !runtimeDemand && !params.invocation && !retainedResource ? readCurrentOwnActionMachine(account, params.machineId) : null;
-    const row = currentOwnRow ?? await readOriginalAccountActionMachine(account, params.machineId, params.signal);
-    if (!row || row.kind !== 'persistent' || row.revokedAt !== null || row.replacedByMachineId !== null
-        || !row.access || row.access.accessState !== 'ready') return failure('admission_unavailable');
-    const foreignCustody = row.access.custodian.accountId !== account.accountId;
-    const needsCustody = foreignCustody || finite || runtimeDemand && Boolean(row.managedMachineRef)
+    const sessionInput = params.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 ? projectSessionSpawnNewApiRequest(params.input).input : null;
+    const preset = sessionInput?.sessionPlacement?.kind === 'preset' ? params.invocation?.sessionCreationDefaults : undefined;
+    const controller = preset?.managedPresetAcquisition?.controller;
+    const controllerAccess = preset?.managedPresetControllerAccess;
+    const scopedController = controller && controllerAccess ? { controller, access: controllerAccess } : null;
+    if (scopedController && scopedController.controller.machineId !== params.machineId) return failure('target_not_local');
+    const currentOwnRow = !scopedController && !finite && !runtimeDemand && !params.invocation && !retainedResource
+        ? readCurrentOwnActionMachine(account, params.machineId) : null;
+    const row = scopedController ? null : currentOwnRow ?? await readOriginalAccountActionMachine(account, params.machineId, params.signal);
+    const custody = scopedController ? {
+        installationId: scopedController.controller.installationId,
+        installationPublicKey: decodeBase64(scopedController.access.installationPublicKey, 'base64url'),
+        custodian: scopedController.access.custodian, resourceMode: undefined, managed: true,
+    } : row?.kind === 'persistent' && row.revokedAt === null && row.replacedByMachineId === null
+        && row.access?.accessState === 'ready' ? {
+            installationId: row.installationId, installationPublicKey: row.installationPublicKey,
+            custodian: row.access.custodian, resourceMode: row.access.resourceMode, managed: Boolean(row.managedMachineRef),
+        } : null;
+    if (!custody) return failure('admission_unavailable');
+    const foreignCustody = custody.custodian.accountId !== account.accountId;
+    const needsCustody = foreignCustody || finite || runtimeDemand && custody.managed
         || params.invocation !== undefined || retainedResource;
     // Ordinary own targets retain their incumbent transport. Managed runtime
     // demand and finite placement need Home custody even for an own guest.
@@ -375,12 +393,13 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     const authentication = readOriginalAccountActionAuthentication(account.credentials.token);
     if (!authentication || !account.serverIdentityId) return failure('admission_unavailable');
     const { accountMode, encryption } = await account.resolveAccountEncryption();
-    if (!foreignCustody && row.access.resourceMode !== accountMode) return failure('admission_unavailable');
-    if (needsCustody && !row.installationId) return failure('content_unavailable');
-    if ((foreignCustody || params.invocation) && !row.installationPublicKey) return failure('content_unavailable');
+    if (!scopedController && !foreignCustody && custody.resourceMode !== accountMode) return failure('admission_unavailable');
+    if (needsCustody && !custody.installationId) return failure('content_unavailable');
+    if ((foreignCustody || params.invocation) && !custody.installationPublicKey) return failure('content_unavailable');
     if (accountMode === 'e2ee' && !encryption) return failure('content_unavailable');
-    const input = params.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
-        ? projectSessionSpawnNewApiRequest(params.input).input : params.input;
+    const input = sessionInput
+        ? { ...sessionInput,
+            executionTarget: { serverId: account.serverIdentityId, machineId: params.machineId } } : params.input;
     return await executeOriginalAccountActionTransport({ account, input, authority: params.authority,
         ...(params.onTransportIssued ? { onTransportIssued: params.onTransportIssued } : {}),
         ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
@@ -398,9 +417,9 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
         binding: { serverIdentityId: account.serverIdentityId, accountId: account.accountId, authentication,
             actionId: params.actionId, requestId: params.requestId, target: params.machineTarget ?? { kind: 'machine', machineId: params.machineId } },
         ...(accountMode === 'e2ee' && encryption ? { material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() } } : {}),
-        ...((foreignCustody || finite || params.invocation || retainedResource) && row.installationId ? { machineCustody: {
-            accountMode, installationId: row.installationId, ...(row.installationPublicKey ? { installationPublicKey: row.installationPublicKey } : {}),
-            custodian: row.access.custodian,
+        ...(needsCustody && custody.installationId ? { machineCustody: {
+            accountMode, installationId: custody.installationId, ...(custody.installationPublicKey ? { installationPublicKey: custody.installationPublicKey } : {}),
+            custodian: custody.custodian,
         } } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
     });

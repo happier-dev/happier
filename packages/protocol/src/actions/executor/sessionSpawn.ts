@@ -117,7 +117,12 @@ export function buildSessionSpawnNewArgs(
   if (!sessionCreationTag) return null;
   const args: Record<string, unknown> = {
     ...data,
-    approvalProfileId: resolveInheritedApprovalProfileIdV1(data.approvalProfileId, ctx.approvalProfileId),
+    // Preserve a new root's omission for creation defaults. An attached Session
+    // retains its stored choice; authored null remains an explicit opt-out.
+    approvalProfileId: !normalizeId(ctx.defaultSessionId) && data.approvalProfileId === undefined
+        && ctx.approvalProfileId == null
+      ? undefined
+      : resolveInheritedApprovalProfileIdV1(data.approvalProfileId, ctx.approvalProfileId),
     ...(!discussionParticipant && isAgentCaller(ctx) && data.manager === undefined && ctx.defaultSessionId
       ? { manager: { sessionId: normalizeId(ctx.defaultSessionId) } } : {}),
     creationKey,

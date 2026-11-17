@@ -1,0 +1,136 @@
+import { DEFAULT_AGENT_ID } from '@happier-dev/agents';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { loadManagedSessionDefaultsContextV1 } from '@happier-dev/protocol/projects/loadManagedSessionDefaultsContextV1';
+import { getOrganizationPolicySessionDefaults } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildManagedSessionDefaultsContext, resolveManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
+import { listAgentExecutionTargetsV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { resolveSessionModelSelectionInputRefV1 } from '@happier-dev/protocol/providers/model-selection';
+import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2,
+  projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
+import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
+import { resolveConnectedServicesLaunchAuthWithInventory } from '@happier-dev/protocol/connect/resolveConnectedServicesLaunchAuthV1';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { configuration } from '@/configuration';
+import { readSettings } from '@/persistence';
+import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
+import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import type { CliActionDepsParams } from '@/session/actions/cliActionDeps/types';
+import { createCliManagedSessionDefaultsContextLoader } from './cliManagedSessionDefaultsContext';
+import { resolveSessionCreationAgentTarget } from './resolveSessionCreationAgentTarget';
+import { prepareOriginalAccountManagedPresetAcquire } from '@/api/managedPresetOrigination';
+import type { ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ManagedControllerAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+
+function unavailable(reason: string): never {
+  throw createActionExecuteFailureError({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+    details: { reason }, effectAttempted: false });
+}
+
+/** Authoring omissions settle here before any Machine or Agent is admitted. */
+export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home: Readonly<{
+  serverId: string; serverHttpBaseUrl: string;
+}>, inventory: Readonly<{
+  spawnConnectedServicesList: NonNullable<ActionExecutorDeps['spawnConnectedServicesList']>;
+}>): NonNullable<ActionExecutorDeps['prepareSessionSpawnNewInput']> {
+  return async (rawInput, context) => {
+    const input = SessionSpawnNewActionInputV2Schema.parse(rawInput);
+    if (context.sessionCreationDefaults) {
+      return { input: projectSessionSpawnNewActionInputV2(admitSessionSpawnNewActionInputV2(input)),
+        defaults: context.sessionCreationDefaults };
+    }
+    if (!params.credentials) return unavailable('requester_account_unavailable');
+    const custody = resolveRequesterSavedSecretActionCustody({ credentials: params.credentials,
+      authorization: context.externalActionExecutionAuthorization, operationContext: params.savedSecretOperationContext });
+    const requesterServerHttpBaseUrl = custody.operation?.serverHttpBaseUrl ?? home.serverHttpBaseUrl;
+    const loader = createCliManagedSessionDefaultsContextLoader({ credentials: custody.credentials,
+      serverId: home.serverId, serverHttpBaseUrl: requesterServerHttpBaseUrl,
+      ...(context.signal ? { signal: context.signal } : {}) });
+    const retained = input.sourceContext !== undefined || input.configuration?.providerSessionResume !== undefined;
+    const captured = retained ? { context: buildManagedSessionDefaultsContext({}) }
+      : await loadManagedSessionDefaultsContextV1({ ...input.projectContext,
+      primaryTeamId: input.primaryTeamId,
+      sharedTeamIds: [...new Set(input.initialAccess?.grants.flatMap(({ subject }) =>
+        subject.kind === 'account' ? [] : [subject.teamId]))],
+      policyDefaults: getOrganizationPolicySessionDefaults(configuration.organizationPolicy),
+    }, loader);
+    const catalog = readAgentCatalogSnapshot();
+    const defaultAgent = catalog.agentDefinitionsById.get(DEFAULT_AGENT_ID);
+    const nativeAgent = defaultAgent?.identity ? listAgentExecutionTargetsV1(defaultAgent.identity)[0] : undefined;
+    const agentFallback = input.agentTarget ?? nativeAgent;
+    if (!agentFallback) return unavailable('agent_contribution_unavailable');
+    const authoredPlacement = input.sessionPlacement && input.sessionPlacement.kind !== 'managed'
+      ? input.sessionPlacement : input.executionTarget
+        ? { kind: 'machine' as const, target: input.executionTarget } : undefined;
+    const selected = resolveManagedSessionDefaults({ ...captured.context,
+      agentTargetKey: buildBackendTargetKeyV2(agentFallback),
+      explicitChoices: {
+        ...(input.agentTarget ? { defaultAgentTarget: input.agentTarget } : {}),
+        ...(authoredPlacement ? { placement: authoredPlacement } : {}),
+      },
+    });
+    const agentTarget = selected.agentTarget.value ?? agentFallback;
+    const resolvedAgent = resolveSessionCreationAgentTarget(agentTarget, catalog);
+    if (!resolvedAgent) return unavailable('agent_contribution_unavailable');
+    const { modelSelectionInput, connectedServicesAuthIntent, ...authoredInput } = input;
+    const modelSelectionRef = modelSelectionInput ? resolveSessionModelSelectionInputRefV1({
+      agentTargetKey: buildBackendTargetKeyV2(agentTarget),
+      providerConnectionId: modelSelectionInput.providerConnectionId ?? null,
+      modelId: modelSelectionInput.modelId,
+    }) : undefined;
+    const sessionConfiguration = modelSelectionInput && modelSelectionRef === null ? {
+      ...input.configuration,
+      mode: input.configuration?.mode ?? { value: null, updatedAtMs: modelSelectionInput.updatedAt },
+      permissionIntent: input.configuration?.permissionIntent ?? { value: null, updatedAtMs: modelSelectionInput.updatedAt },
+      options: input.configuration?.options ?? {},
+      model: { value: null, updatedAtMs: modelSelectionInput.updatedAt, selectionSource: 'explicit' as const },
+    } : input.configuration;
+    const connectedServices = connectedServicesAuthIntent
+      ? await resolveConnectedServicesLaunchAuthWithInventory({
+        intent: connectedServicesAuthIntent,
+        supportedServiceIds: resolveCatalogAgentConnectedAccountServiceIds(resolvedAgent.agentId),
+        listInventory: () => inventory.spawnConnectedServicesList({ agentId: resolvedAgent.agentId,
+          includeUnavailable: false, includeDefaults: false }, context),
+      }) : undefined;
+    let executionTarget = input.executionTarget;
+    let managedPresetAcquisition: ManagedAcquireInputV1 | undefined;
+    let managedPresetControllerAccess: ManagedControllerAccessV1 | undefined;
+    if (selected.placement.value?.kind === 'machine') executionTarget = selected.placement.value.target;
+    else if (selected.placement.value?.kind === 'preset') {
+      const placement = selected.placement.value;
+      const bound = await prepareOriginalAccountManagedPresetAcquire({ input: { selection: {
+        kind: 'preset', homeId: placement.homeId, id: placement.presetId } },
+        requestId: context.actionRequestId ?? input.creationKey ?? '', credentials: custody.credentials,
+        serverHttpBaseUrl: requesterServerHttpBaseUrl, ...(context.signal ? { signal: context.signal } : {}) });
+      if (!bound || bound.kind === 'refused') return unavailable(bound?.code ?? 'controller_unavailable');
+      if (!bound.input.controller) return unavailable('controller_unavailable');
+      managedPresetAcquisition = bound.input;
+      managedPresetControllerAccess = bound.controllerAccess;
+      executionTarget = { serverId: placement.homeId, machineId: bound.input.controller.machineId };
+    }
+    if (!executionTarget) {
+      const settings = await readSettings();
+      const machineId = params.explicitMachineId ?? params.sessionSpawnDirectTargetTransport?.machineId
+        ?? resolveMachineIdForServerFromSettings(settings, params.serverId ?? configuration.activeServerId,
+          readAccountIdFromToken(custody.credentials.token)) ?? settings.machineId;
+      if (!machineId) return unavailable('machine_target_unavailable');
+      executionTarget = { serverId: home.serverId, machineId };
+    }
+    const exactInput = admitSessionSpawnNewActionInputV2({ ...authoredInput, executionTarget, agentTarget,
+      ...(selected.placement.source === 'explicit' && input.sessionPlacement
+        ? { sessionPlacement: input.sessionPlacement }
+        : selected.placement.value ? { sessionPlacement: selected.placement.value } : {}),
+      ...(modelSelectionInput && modelSelectionRef ? { modelSelection: { v: 1, ref: modelSelectionRef, updatedAt: modelSelectionInput.updatedAt } } : {}),
+      ...(sessionConfiguration ? { configuration: sessionConfiguration } : {}),
+      ...(connectedServices ? { connectedServices } : {}),
+    });
+    return { input: projectSessionSpawnNewActionInputV2(exactInput), defaults: { context: captured.context,
+      ...(managedPresetAcquisition ? { managedPresetAcquisition } : {}),
+      ...(managedPresetControllerAccess ? { managedPresetControllerAccess } : {}),
+      authoredChoices: { ...(input.executionTarget ? { executionTarget: input.executionTarget } : {}),
+        ...(input.sessionPlacement ? { sessionPlacement: input.sessionPlacement } : {}),
+        ...(input.agentTarget ? { agentTarget: input.agentTarget } : {}) } } };
+  };
+}

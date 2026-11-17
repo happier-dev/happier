@@ -281,6 +281,39 @@ export type SpawnConnectedServicesListArgs = Readonly<{
     signal?: AbortSignal;
 }>;
 
+/** Project one selected Machine declaration without reading Connected Account inventory. */
+export async function resolveSpawnConnectedServicesSelectionInContext(account: import('./actionAccountContext').LazyActionAccountContext,
+    args: SpawnConnectedServicesListArgs) {
+    let agentId = normalizeId(args.agentId);
+    const parsedKey = BackendTargetKeyV2InputSchema.safeParse(args.backendTargetKey);
+    const target = parsedKey.success ? parseBackendTargetKeyV2(parsedKey.data) : null;
+    let projectedAgent: PluginProjectionV2['agentsById'][string] | undefined;
+    const machineId = normalizeId(args.machineId);
+    if (machineId) {
+        const projection = (await loadDaemonMergedProjectionInputs({
+            machineId,
+            serverId: account.serverId,
+            accountLifetime: account.accountLifetime,
+            signal: args.signal,
+            sections: DAEMON_AGENT_CATALOG_SECTIONS,
+        }))?.pluginProjectionV2;
+        if (projection) {
+            projectedAgent = agentId ? projection.agentsById[agentId]
+                : target?.kind === 'agent' ? findProjectedAgentByIdentity(projection, target.identity) : undefined;
+            agentId = projectedAgent?.id ?? agentId;
+        }
+    }
+    if (!agentId) return null;
+    const bundled = getBundledAgentDeclaration(agentId);
+    const projectedConnectedAccounts = projectedAgent?.connectedAccounts
+        ?? (bundled?.connectedAccounts ?? []).map(purpose => ({ ...purpose,
+            service: qualifyPluginContributionReferenceV1(purpose.service, bundled!.identity.pluginId),
+        }));
+    const supportedServiceIds = resolveProjectedConnectedAccountServiceKeys(projectedConnectedAccounts);
+
+    return { agentId, projectedConnectedAccounts, supportedServiceIds };
+}
+
 /**
  * `sessions.spawn.connected_services.list`: the Account's Connected Accounts,
  * qualified through the one V4 → session-options projection every Session
@@ -303,78 +336,63 @@ export async function listSpawnConnectedServicesForActions(args: SpawnConnectedS
     const { captureLazyActionAccountContext } = await import('./actionAccountContext');
     const account = await captureLazyActionAccountContext(serverId, args.signal);
     try {
-        let projectedAgent: PluginProjectionV2['agentsById'][string] | undefined;
-        const machineId = normalizeId(args.machineId);
-        if (machineId) {
-            const projection = (await loadDaemonMergedProjectionInputs({
-                machineId,
-                serverId: account.serverId,
-                accountLifetime: account.accountLifetime,
-                signal: args.signal,
-                sections: DAEMON_AGENT_CATALOG_SECTIONS,
-            }))?.pluginProjectionV2;
-            if (projection) {
-                projectedAgent = agentId ? projection.agentsById[agentId]
-                    : target?.kind === 'agent' ? findProjectedAgentByIdentity(projection, target.identity) : undefined;
-                agentId = projectedAgent?.id ?? agentId;
-            }
-        }
-        if (!agentId) return { ok: false, errorCode: 'unknown_agent', errorMessage: 'unknown_agent' };
-        const bundled = getBundledAgentDeclaration(agentId);
-        const projectedConnectedAccounts = projectedAgent?.connectedAccounts
-            ?? (bundled?.connectedAccounts ?? []).map(purpose => ({ ...purpose,
-                service: qualifyPluginContributionReferenceV1(purpose.service, bundled!.identity.pluginId),
-            }));
-        const supportedServiceIds = resolveProjectedConnectedAccountServiceKeys(projectedConnectedAccounts);
-
-        if (supportedServiceIds.length === 0) {
-            return { agentId, supportedServiceIds: [], items: [] };
-        }
-
-        const { readConnectedMetadataCatalogInContext, readConnectedMetadataProfileInContext } = await import('@/sync/api/account/apiConnectedMetadataCatalog');
-        const profile = await readConnectedMetadataProfileInContext(account);
-        let catalog = await readConnectedMetadataCatalogInContext(account, undefined, undefined, false);
-        if ((catalog.presentation.status === 'unavailable' && catalog.presentation.reason === 'authority-not-confirmed')
-            || (catalog.acknowledgements.status === 'unavailable' && catalog.acknowledgements.reason === 'authority-not-confirmed')) {
-            catalog = await readConnectedMetadataCatalogInContext(account);
-        }
-        account.assertCurrent();
-        const connectedAccounts = profile.connectedAccountsV4;
-        const connectedGroups = profile.connectedAccountGroupsV4;
-        const labelsByKey = catalog.presentation.status === 'ready' || catalog.presentation.status === 'partial'
-            ? projectConnectedPresentationLabelsV1(catalog.presentation) : {};
-        const profileOptionsByServiceId = applyProjectedCredentialKindRestrictions({
-            optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
-                accounts: connectedAccounts,
-                supportedServiceIds,
-                labelsByKey,
-            }),
-            connectedAccounts: projectedConnectedAccounts,
-        });
-        const groupOptionsByServiceId = buildQualifiedConnectedAccountGroupOptionsByServiceId({
-            groups: connectedGroups,
-            supportedServiceIds,
-            labelsByKey,
-        });
-
-        const includeUnavailable = args.includeUnavailable === true;
-        const items = Object.entries(profileOptionsByServiceId).flatMap(([serviceId, options]) => (
-            options
-                .filter((option) => includeUnavailable || option.status === 'connected')
-                .map((option) => ({
-                    value: `${serviceId}:profile:${option.profileId}`,
-                    label: option.label ?? option.providerEmail ?? `${serviceId}:${option.profileId}`,
-                }))
-        ));
-
-        return {
-            agentId,
-            supportedServiceIds,
-            profileOptionsByServiceId,
-            groupOptionsByServiceId,
-            items,
-        };
+        return await listSpawnConnectedServicesInContext(account, args);
     } finally {
         account.dispose();
     }
+}
+
+export async function listSpawnConnectedServicesInContext(account: import('./actionAccountContext').LazyActionAccountContext,
+    args: SpawnConnectedServicesListArgs,
+    selected?: Awaited<ReturnType<typeof resolveSpawnConnectedServicesSelectionInContext>>): Promise<unknown> {
+    const selection = selected ?? await resolveSpawnConnectedServicesSelectionInContext(account, args);
+    if (!selection) return { ok: false, errorCode: 'unknown_agent', errorMessage: 'unknown_agent' };
+    const { agentId, projectedConnectedAccounts, supportedServiceIds } = selection;
+    if (supportedServiceIds.length === 0) {
+        return { agentId, supportedServiceIds: [], items: [] };
+    }
+
+    const { readConnectedMetadataCatalogInContext, readConnectedMetadataProfileInContext } = await import('@/sync/api/account/apiConnectedMetadataCatalog');
+    const profile = await readConnectedMetadataProfileInContext(account);
+    let catalog = await readConnectedMetadataCatalogInContext(account, undefined, undefined, false);
+    if ((catalog.presentation.status === 'unavailable' && catalog.presentation.reason === 'authority-not-confirmed')
+        || (catalog.acknowledgements.status === 'unavailable' && catalog.acknowledgements.reason === 'authority-not-confirmed')) {
+        catalog = await readConnectedMetadataCatalogInContext(account);
+    }
+    account.assertCurrent();
+    const connectedAccounts = profile.connectedAccountsV4;
+    const connectedGroups = profile.connectedAccountGroupsV4;
+    const labelsByKey = catalog.presentation.status === 'ready' || catalog.presentation.status === 'partial'
+        ? projectConnectedPresentationLabelsV1(catalog.presentation) : {};
+    const profileOptionsByServiceId = applyProjectedCredentialKindRestrictions({
+        optionsByServiceId: buildQualifiedConnectedAccountProfileOptionsByServiceId({
+            accounts: connectedAccounts,
+            supportedServiceIds,
+            labelsByKey,
+        }),
+        connectedAccounts: projectedConnectedAccounts,
+    });
+    const groupOptionsByServiceId = buildQualifiedConnectedAccountGroupOptionsByServiceId({
+        groups: connectedGroups,
+        supportedServiceIds,
+        labelsByKey,
+    });
+
+    const includeUnavailable = args.includeUnavailable === true;
+    const items = Object.entries(profileOptionsByServiceId).flatMap(([serviceId, options]) => (
+        options
+            .filter((option) => includeUnavailable || option.status === 'connected')
+            .map((option) => ({
+                value: `${serviceId}:profile:${option.profileId}`,
+                label: option.label ?? option.providerEmail ?? `${serviceId}:${option.profileId}`,
+            }))
+    ));
+
+    return {
+        agentId,
+        supportedServiceIds,
+        profileOptionsByServiceId,
+        groupOptionsByServiceId,
+        items,
+    };
 }

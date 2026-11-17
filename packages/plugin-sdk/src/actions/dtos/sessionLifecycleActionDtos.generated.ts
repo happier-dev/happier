@@ -426,23 +426,38 @@ export type SessionLifecycleActionInputById = {
         handoffId: string;
     };
     readonly "session.spawn_new": {
-        executionTarget: {
-            serverId: string;
-            machineId: string;
-        };
         directory: {
             kind: 'managed';
         } | {
             kind: 'path';
             path: string;
         };
-        agentTarget: {
+        executionTarget?: undefined | {
+            serverId: string;
+            machineId: string;
+        };
+        agentTarget?: undefined | {
             kind: 'agent';
             identity: {
                 pluginId: string;
                 localId: string;
             };
             definitionId?: string | undefined;
+        };
+        modelSelectionInput?: undefined | {
+            modelId: string;
+            updatedAt: number;
+            providerConnectionId?: null | string | undefined;
+        };
+        connectedServicesAuthIntent?: undefined | {
+            kind: 'connected';
+            serviceId: null | string;
+            selection: 'group' | 'profile' | null;
+            id: string;
+        } | {
+            kind: 'default';
+        } | {
+            kind: 'native';
         };
         organizationPlacement?: undefined | {
             sectionId: null | string;
@@ -1744,6 +1759,116 @@ export type SessionLifecycleActionInputById = {
                     name: string;
                     description: null | string;
                 };
+                subject?: undefined | {
+                    checkId: string;
+                    sourceInstanceId: string;
+                    kind: 'healthCheck';
+                    serverId: string;
+                } | {
+                    kind: 'app';
+                    serverId: string;
+                    projectSourceId: string;
+                } | {
+                    kind: 'approvalProfile';
+                    serverId: string;
+                    profileId: string;
+                } | {
+                    kind: 'backup';
+                    serverId: string;
+                    environmentId: string;
+                } | {
+                    kind: 'database';
+                    serverId: string;
+                    target: {
+                        kind: 'environment';
+                        environmentId: string;
+                        service: string;
+                        database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: {
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        };
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: {
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        };
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
+                    };
+                } | {
+                    kind: 'environment';
+                    serverId: string;
+                    environmentId: string;
+                } | {
+                    kind: 'plugin';
+                    serverId: string;
+                    pluginId: string;
+                    subjectKindId: string;
+                    identity: unknown;
+                } | {
+                    kind: 'session';
+                    serverId: string;
+                    sessionId: string;
+                } | {
+                    serverId: string;
+                    machineId: string;
+                    kind: 'machine';
+                } | {
+                    serverId: string;
+                    projectKey: string;
+                    kind: 'project';
+                };
             } | {
                 kind: 'pluginEvent';
                 eventRef: {
@@ -1792,6 +1917,8 @@ export type SessionLifecycleActionInputById = {
                     c: string;
                 };
                 enabled: boolean;
+                subjectKind?: string | undefined;
+                subjectKey?: string | undefined;
             } | {
                 kind: 'schedule';
                 schedule: {
@@ -2232,13 +2359,13 @@ export type SessionLifecycleActionInputById = {
                 name: string;
                 description: null | string;
             };
+            approvalProfileId?: null | string | undefined;
             inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
-            approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
                 roleId: string;
@@ -2810,10 +2937,18 @@ export type SessionLifecycleActionResultById = {
         };
         excludedPaths?: readonly string[] | undefined;
     };
-    readonly "session.open": JsonValue;
-    readonly "session.fork": JsonValue;
-    readonly "session.continue_with_replay": JsonValue;
-    readonly "session.rollback": JsonValue;
+    readonly "session.open": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.fork": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.continue_with_replay": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "session.rollback": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
     readonly "session.checkpoint_code_rollback": {
         status: 'aborted' | 'applied' | 'conflict' | 'conversation_only' | 'unavailable';
         changedPaths: readonly string[];
@@ -3539,7 +3674,9 @@ export type SessionLifecycleActionResultById = {
             };
         };
     };
-    readonly "session.handoff.status.get": JsonValue;
+    readonly "session.handoff.status.get": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
     readonly "session.spawn_new": {
         organizationPlacement: {
             sectionId: null | string;
@@ -3752,7 +3889,7 @@ export type SessionLifecycleActionResultById = {
                 catalogStatus?: 'loading' | 'partial' | 'unavailable' | undefined;
             };
             uxDiagnostic?: undefined | {
-                code: 'connected_service_credential_mode_unsupported' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_credential_scope_missing' | 'connected_service_materialization_identity_missing' | 'connected_service_native_auth_materialization_failed' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                code: 'connected_service_credential_mode_unsupported' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_credential_scope_missing' | 'connected_service_materialization_identity_missing' | 'connected_service_native_auth_materialization_failed' | 'continuity_unsupported' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
                 failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
                 source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
                 retryable: boolean;
@@ -4069,6 +4206,10 @@ export type SessionLifecycleActionResultById = {
             reason: 'agent_isolation_unavailable' | 'requester_authority_unavailable';
         };
     };
-    readonly "workspace.sync.conflicts.list": JsonValue;
-    readonly "workspace.sync.conflict.inspect": JsonValue;
+    readonly "workspace.sync.conflicts.list": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
+    readonly "workspace.sync.conflict.inspect": boolean | null | number | readonly JsonValue[] | string | {
+        readonly [key: string]: JsonValue;
+    };
 };

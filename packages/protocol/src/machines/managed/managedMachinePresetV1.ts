@@ -1,12 +1,12 @@
+import { ManagedMachinePresetOwnerV1Schema, ManagedMachinePresetLimitV1Schema, createManagedMachinePresetV1BaseShape, createManagedMachinePresetV1BaseSchema } from './managedMachinePresetStructureV1.js';
+export { ManagedMachinePresetOwnerV1Schema, ManagedMachinePresetLimitV1Schema, createManagedMachinePresetV1BaseShape, createManagedMachinePresetV1BaseSchema, ManagedMachinePresetV1BaseSchema } from './managedMachinePresetStructureV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { ManagedMachinePresetRevisionInputV1Schema } from './managedMachinePresetRevisionV1.js';
 export { ManagedMachinePresetRevisionInputV1Schema } from './managedMachinePresetRevisionV1.js';
 import * as mini from '../../zodRuntimePolicy.js';
 
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { ResourceTeamShareScopeV1Schema } from '../../teams/resourceGrantAccessV1.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { AccountPrincipalRefV1Schema, TeamPrincipalRefV1Schema } from '../../teams/principal.js';
 import { PluginJsonValueV2Schema } from '../../plugins/contributions/jsonSchema.js';
 import { ManagedRefusalCodeV1Schema } from './providerFactsV1.js';
 import { ManagedControllerV1Schema, ManagedControllerAccessV1Schema, ReusableRetentionV1Schema } from './managedMachineV1.js';
@@ -29,10 +29,6 @@ const revision = () => z.number().check(z.int(), z.nonnegative());
 /** Existing Account-change routing for saved preset content, including newly created records. */
 export const MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'machine-presets' as const;
 
-export const ManagedMachinePresetOwnerV1Schema = lazyZodSchema(() => z.union([
-  AccountPrincipalRefV1Schema, TeamPrincipalRefV1Schema,
-]));
-export const ManagedMachinePresetLimitV1Schema = lazyZodSchema(() => z.strictObject({ maximum: z.number().check(z.int(), z.positive()) }));
 /** Server computes the current Team audience/readiness; an existing preset binds mode to its stored author. */
 export const ManagedMachinePresetRecipientCensusInputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({
@@ -185,36 +181,6 @@ export const AccountEncryptionMigrateManagedMachinePresetsDirectiveV1Schema = la
 export type AccountEncryptionMigrateManagedMachinePresetsDirectiveV1 = Readonly<
   z.infer<typeof AccountEncryptionMigrateManagedMachinePresetsDirectiveV1Schema>
 >;
-/** Structural fields only; semantic creation/delegation checks belong to the refined schema below. */
-export function createManagedMachinePresetV1BaseShape<Choices extends z.core.$ZodType>(_choices: Choices) {
-  return {
-    id: id(), homeId: id(), revision: revision(),
-    sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
-    /** Client-maintained launch/setup change counter; absent legacy rows mean zero. */
-    configurationRevision: z.optional(revision()),
-    /** Author-owned setup-only counter; metadata and launch edits leave it unchanged. */
-    setupRevision: z.optional(revision()),
-    owner: ManagedMachinePresetOwnerV1Schema,
-    /** Persisted owner mode: readers must never substitute the viewer's Account mode. */
-    contentEncryptionMode: AccountEncryptionModeSchema,
-    content: ManagedMachinePresetStoredContentCarrierV1Schema,
-    recipients: ManagedMachinePresetRecipientsV1Schema,
-    controller: z.optional(ManagedControllerV1Schema),
-    controllerPoolId: z.optional(MachinePoolIdV1Schema),
-    retention: mini.optional(ReusableRetentionV1Schema),
-    wakeOnAcceptedMessage: z.optional(z.boolean()),
-    /** Explicit opt-in; visibility alone never grants Team acquire authority. */
-    teamAcquireDelegated: z.optional(z.boolean()),
-    simultaneousLimit: z.optional(ManagedMachinePresetLimitV1Schema),
-    archivedAt: z.optional(z.number().check(z.nonnegative())),
-  };
-}
-
-/** Unrefined structural schema for owner-local persistence/projection code. */
-export function createManagedMachinePresetV1BaseSchema<Choices extends z.core.$ZodType>(choices: Choices) {
-  return z.strictObject(createManagedMachinePresetV1BaseShape(choices));
-}
-
 /** Preset persistence is opaque: refine only its mode tag and public structural relationships. */
 function hasValidPresetParts(preset: { controller?: unknown; controllerPoolId?: unknown;
   content?: unknown; contentEncryptionMode?: unknown; teamAcquireDelegated?: boolean }): boolean {
@@ -245,8 +211,6 @@ function createManagedMachinePresetV1ReadSchema<Choices extends z.core.$ZodType>
 }
 
 /** Transport validates the envelope; save/use additionally validate the selected contribution. */
-export const ManagedMachinePresetV1BaseSchema = lazyZodSchema(() =>
-  createManagedMachinePresetV1BaseSchema(PluginJsonValueV2Schema));
 export const ManagedMachinePresetV1Schema = lazyZodSchema(() => createManagedMachinePresetV1Schema(PluginJsonValueV2Schema));
 export const ManagedMachinePresetV1ReadSchema = lazyZodSchema(() =>
   createManagedMachinePresetV1ReadSchema(PluginJsonValueV2Schema));

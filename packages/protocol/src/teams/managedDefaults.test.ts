@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { qualifiedPurposeKey } from '../connect/connectedAccountPurposeBindings.js';
 import { readMachineIsolationV1 } from '../machines/machineIsolationV1.js';
-import { ManagedDefaultsV1Schema, projectManagedSessionDefaultsLayers, readManagedDefaultsV1, resolveManagedSessionDefaults } from './managedDefaults.js';
+import { ManagedDefaultsV1Schema, projectManagedSessionDefaultsLayers, readManagedDefaultsV1, resolveInheritedManagedSessionDefaults, resolveManagedSessionDefaults } from './managedDefaults.js';
 import * as managedDefaults from './managedDefaults.js';
 import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 
@@ -121,6 +121,38 @@ describe('managed Session defaults', () => {
     expect(resolveManagedSessionDefaults({ ...input,
       policyDefaults: { values: mode('safe-yolo'), locked: true, organization: 'Policy owner' },
     }).permissionMode).toMatchObject({ value: 'safe-yolo', source: 'policy', lock: { organization: 'Policy owner' } });
+  });
+
+  it('excludes edited project layers for inheritance without changing canonical locks or explicit Automatic', () => {
+    const input = { agentTargetKey: key, personalProjectDefaults: mode('read-only'),
+      projectDefaults: mode('safe-yolo'), memberDefaults: mode('yolo'),
+      inheritBelowProjectScope: 'personal-project' as const };
+    expect(resolveManagedSessionDefaults(input).permissionMode).toMatchObject({ value: 'safe-yolo', source: 'project' });
+    expect(resolveManagedSessionDefaults({ ...input, inheritBelowProjectScope: 'project' as const }).permissionMode)
+      .toMatchObject({ value: 'yolo', source: 'member' });
+    expect(resolveManagedSessionDefaults({ ...input, explicitChoices: { modelByAgentTargetKey: { [key]: null } } }).model)
+      .toMatchObject({ value: null, source: 'explicit' });
+    expect(resolveManagedSessionDefaults({ ...input, policyDefaults: { locked: true, organization: 'Acme', values: mode('read-only') } }).permissionMode)
+      .toMatchObject({ value: 'read-only', source: 'policy', lock: { organization: 'Acme' } });
+  });
+
+  it('returns named inherited decisions for the exact Agent row despite another inherited project Agent', () => {
+    const rowAgent = { kind: 'agent' as const, identity: { pluginId: 'example.agent', localId: 'example' } };
+    const otherAgent = { kind: 'agent' as const, identity: { pluginId: 'example.agent', localId: 'other' } };
+    const names = { teamName: 'Acme', projectName: 'acme/web' };
+    const projectDefaults = { ...mode('safe-yolo'), defaultAgentTarget: otherAgent };
+    const inherited = resolveInheritedManagedSessionDefaults({ scope: 'personal-project', names,
+      agentTarget: rowAgent, personalProjectDefaults: mode('read-only'), projectDefaults });
+    expect(inherited.permissionMode).toMatchObject({ value: 'safe-yolo', source: 'project', names });
+    expect(inherited.permissionMode.names).toBe(names);
+    expect(resolveInheritedManagedSessionDefaults({ scope: 'personal-project', names, projectDefaults }).agentTarget)
+      .toMatchObject({ value: otherAgent, source: 'project', names });
+    expect(resolveInheritedManagedSessionDefaults({ scope: 'project', names, projectDefaults,
+      personalProjectDefaults: { defaultAgentTarget: rowAgent } }).agentTarget)
+      .toMatchObject({ value: undefined, source: 'none', names });
+    expect(resolveInheritedManagedSessionDefaults({ scope: 'project', names,
+      machineIsolation: isolatedMachine, nativeSandboxAvailable: true }).agentSandbox)
+      .toMatchObject({ value: 'off', source: 'machine', availability: { status: 'disabled' }, names });
   });
 
   it('defaults an isolated Machine native sandbox off without changing approval intent', () => {

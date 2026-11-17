@@ -29,6 +29,7 @@ import { projectExternalActionPendingResetStartEnvelopeAdmissionV1, projectExter
     projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1,
     projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1, projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1,
     projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1,
+    projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1,
     projectExternalActionDiscussionEnvelopeIdV1, isExternalActionWorkflowActionIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 import {
@@ -723,6 +724,7 @@ export function registerExternalActionRoutes(
             let deploymentPreparationAdmission: ExternalActionExecutionAuthorizationBindingV1['deploymentPreparationAdmission'];
             let presetPreparationAdmission: ExternalActionExecutionAuthorizationBindingV1['presetPreparationAdmission'];
             let registryAppUpdateAdmission: ExternalActionExecutionAuthorizationBindingV1['registryAppUpdateAdmission'];
+            let projectSessionDefaultsAdmission: ExternalActionExecutionAuthorizationBindingV1['projectSessionDefaultsAdmission'];
             let discussionId: ExternalActionExecutionAuthorizationBindingV1['discussionId'];
             let managedAdmission: ExternalActionExecutionAuthorizationBindingV1['managedAdmission'];
             let deploymentNativeAdmission: ReturnType<typeof projectExternalActionDeploymentNativeEnvelopeAdmissionV1>;
@@ -744,6 +746,8 @@ export function registerExternalActionRoutes(
                 deploymentPreparationAdmission = projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({
                     actionId: actionId.data, envelope: body.data.envelope });
                 registryAppUpdateAdmission = projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1({
+                    actionId: actionId.data, envelope: body.data.envelope });
+                projectSessionDefaultsAdmission = projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1({
                     actionId: actionId.data, envelope: body.data.envelope });
                 discussionId = projectExternalActionDiscussionEnvelopeIdV1({
                     actionId: actionId.data, envelope: body.data.envelope });
@@ -835,6 +839,7 @@ export function registerExternalActionRoutes(
                     ...provenance,
                     machineId: receivingMachineId,
                     ...('role' in admission ? { admittedMachineRole: admission.role } : {}),
+                    ...(admission.sessionPresetAcquisition ? { sessionPresetAcquisition: admission.sessionPresetAcquisition } : {}),
                     actionId: actionId.data,
                     ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}),
                     requestId: body.data.envelope.requestId ?? randomUUID(),
@@ -848,6 +853,7 @@ export function registerExternalActionRoutes(
                     ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
                     ...(presetPreparationAdmission ? { presetPreparationAdmission } : {}),
                     ...(registryAppUpdateAdmission ? { registryAppUpdateAdmission } : {}),
+                    ...(projectSessionDefaultsAdmission ? { projectSessionDefaultsAdmission } : {}),
                     ...(managedAdmission ? { managedAdmission } : {}),
                     ...(nativeCredentialSpawnChild ? { nativeCredentialSpawnChild } : {}),
                     ...(handoffAdmission ? { handoffAdmission } : {}),

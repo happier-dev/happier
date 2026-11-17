@@ -5,6 +5,15 @@ import type { JsonValue, PluginJsonValueV2 } from '../../identity.js';
 import type { ActionFailureCauseV1, PluginActionWorkflowBlockV1, PluginJsonSchemaV2, WorkflowSelectionEdit } from './pluginActionDtoSupport.generated.js';
 
 export type WorkflowsActionInputById = {
+    readonly "workflow.subjects.list": {
+        kind: 'healthCheck';
+        sources?: undefined | {
+            automationId: string;
+            triggerId: string;
+        }[];
+        limit?: unknown;
+        cursor?: string | undefined;
+    };
     readonly "workflow.validate": {
         definition: WorkflowsActionDefinition4;
         inputs?: Record<string, unknown> | undefined;
@@ -576,10 +585,29 @@ export type WorkflowsActionInputById = {
             };
         };
         intendedTriggers?: ({
+            kind: 'action';
+            phase: 'after' | 'before';
+            actionIds: string[];
+            mode?: 'notify' | 'wait' | undefined;
+            subjectKind?: string | undefined;
+            onFailure?: 'ask' | 'refuse' | undefined;
+            subjectKey?: string | undefined;
+            automationId?: string | undefined;
+            triggerId?: string | undefined;
+            enabled?: boolean | undefined;
+            setUpBy?: undefined | {
+                accountId: string;
+                displayName: null | string;
+            };
+        } | {
             kind: 'ciFailed';
             automationId?: string | undefined;
             triggerId?: string | undefined;
             enabled?: boolean | undefined;
+            setUpBy?: undefined | {
+                accountId: string;
+                displayName: null | string;
+            };
         } | {
             kind: 'pluginEvent';
             eventRef: {
@@ -589,6 +617,10 @@ export type WorkflowsActionInputById = {
             automationId?: string | undefined;
             triggerId?: string | undefined;
             enabled?: boolean | undefined;
+            setUpBy?: undefined | {
+                accountId: string;
+                displayName: null | string;
+            };
         } | {
             kind: 'pluginEvent';
             eventRef: {
@@ -635,12 +667,20 @@ export type WorkflowsActionInputById = {
             automationId?: string | undefined;
             triggerId?: string | undefined;
             enabled?: boolean | undefined;
+            setUpBy?: undefined | {
+                accountId: string;
+                displayName: null | string;
+            };
         } | {
             kind: 'runLifecycle';
             condition: 'needs_attention' | 'terminal';
             automationId?: string | undefined;
             triggerId?: string | undefined;
             enabled?: boolean | undefined;
+            setUpBy?: undefined | {
+                accountId: string;
+                displayName: null | string;
+            };
         } | {
             kind: 'schedule';
             schedule: {
@@ -662,12 +702,20 @@ export type WorkflowsActionInputById = {
             automationId?: string | undefined;
             triggerId?: string | undefined;
             enabled?: boolean | undefined;
+            setUpBy?: undefined | {
+                accountId: string;
+                displayName: null | string;
+            };
         } | {
             kind: 'sessionLifecycle';
             events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
             automationId?: string | undefined;
             triggerId?: string | undefined;
             enabled?: boolean | undefined;
+            setUpBy?: undefined | {
+                accountId: string;
+                displayName: null | string;
+            };
         })[] | undefined;
     };
     readonly "workflow.definition.update": {
@@ -716,10 +764,29 @@ export type WorkflowsActionInputById = {
             };
         };
         intendedTriggers?: ({
+            kind: 'action';
+            phase: 'after' | 'before';
+            actionIds: string[];
+            mode?: 'notify' | 'wait' | undefined;
+            subjectKind?: string | undefined;
+            onFailure?: 'ask' | 'refuse' | undefined;
+            subjectKey?: string | undefined;
+            automationId?: string | undefined;
+            triggerId?: string | undefined;
+            enabled?: boolean | undefined;
+            setUpBy?: undefined | {
+                accountId: string;
+                displayName: null | string;
+            };
+        } | {
             kind: 'ciFailed';
             automationId?: string | undefined;
             triggerId?: string | undefined;
             enabled?: boolean | undefined;
+            setUpBy?: undefined | {
+                accountId: string;
+                displayName: null | string;
+            };
         } | {
             kind: 'pluginEvent';
             eventRef: {
@@ -729,6 +796,10 @@ export type WorkflowsActionInputById = {
             automationId?: string | undefined;
             triggerId?: string | undefined;
             enabled?: boolean | undefined;
+            setUpBy?: undefined | {
+                accountId: string;
+                displayName: null | string;
+            };
         } | {
             kind: 'pluginEvent';
             eventRef: {
@@ -775,12 +846,20 @@ export type WorkflowsActionInputById = {
             automationId?: string | undefined;
             triggerId?: string | undefined;
             enabled?: boolean | undefined;
+            setUpBy?: undefined | {
+                accountId: string;
+                displayName: null | string;
+            };
         } | {
             kind: 'runLifecycle';
             condition: 'needs_attention' | 'terminal';
             automationId?: string | undefined;
             triggerId?: string | undefined;
             enabled?: boolean | undefined;
+            setUpBy?: undefined | {
+                accountId: string;
+                displayName: null | string;
+            };
         } | {
             kind: 'schedule';
             schedule: {
@@ -802,12 +881,20 @@ export type WorkflowsActionInputById = {
             automationId?: string | undefined;
             triggerId?: string | undefined;
             enabled?: boolean | undefined;
+            setUpBy?: undefined | {
+                accountId: string;
+                displayName: null | string;
+            };
         } | {
             kind: 'sessionLifecycle';
             events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
             automationId?: string | undefined;
             triggerId?: string | undefined;
             enabled?: boolean | undefined;
+            setUpBy?: undefined | {
+                accountId: string;
+                displayName: null | string;
+            };
         })[] | undefined;
     };
     readonly "workflow.definition.edit": {
@@ -967,6 +1054,7 @@ export type WorkflowsActionInputById = {
                 folderId: null | string;
                 tagIds: string[];
             };
+            memoryEnabled?: boolean | undefined;
             secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
@@ -974,7 +1062,6 @@ export type WorkflowsActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
-            memoryEnabled?: boolean | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -1263,6 +1350,7 @@ export type WorkflowsActionInputById = {
                 folderId: null | string;
                 tagIds: string[];
             };
+            memoryEnabled?: boolean | undefined;
             secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
@@ -1270,7 +1358,6 @@ export type WorkflowsActionInputById = {
                     revision?: number | undefined;
                 }>;
             };
-            memoryEnabled?: boolean | undefined;
             teamCredentialBindings?: ({
                 v: 1;
                 slot: {
@@ -1827,11 +1914,11 @@ export type WorkflowsActionInputById = {
         deploymentBackup: {
             serverId: string;
             machineId: string;
+            environmentId: string;
+            configRevision: number;
+            deploymentId: string;
             installationId: string;
             targetLinkId: string;
-            environmentId: string;
-            deploymentId: string;
-            configRevision: number;
         };
     } | {
         deploymentBackupEnvironment: {
@@ -1849,6 +1936,229 @@ export type WorkflowsActionInputById = {
         };
     } | {
         scope: 'account_all' | 'account_inline' | 'account_source_unavailable';
+    } | {
+        subject: {
+            checkId: string;
+            sourceInstanceId: string;
+            kind: 'healthCheck';
+            serverId: string;
+        } | {
+            kind: 'app';
+            serverId: string;
+            projectSourceId: string;
+        } | {
+            kind: 'approvalProfile';
+            serverId: string;
+            profileId: string;
+        } | {
+            kind: 'backup';
+            serverId: string;
+            environmentId: string;
+        } | {
+            kind: 'database';
+            serverId: string;
+            target: {
+                kind: 'environment';
+                environmentId: string;
+                service: string;
+                database: string;
+            } | {
+                savedSecretId: string;
+                accountId: string;
+                workspace: {
+                    serverId: string;
+                    workspaceId: string;
+                    machineId: string;
+                    rootPath: string;
+                    kind?: undefined;
+                } | {
+                    v: 2;
+                    kind: 'managed';
+                    serverId: string;
+                    workspaceId: string;
+                    managedId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    rootPath: string;
+                    machineId?: undefined;
+                };
+                installationId: string;
+                projectKey: string;
+                kind: 'manual';
+            } | {
+                source: {
+                    kind: 'env_file';
+                    path: string;
+                    variable: string;
+                } | {
+                    kind: 'service';
+                    serviceId: string;
+                    variable: string;
+                } | {
+                    kind: 'sqlite_file';
+                    path: string;
+                };
+                accountId: string;
+                workspace: {
+                    serverId: string;
+                    workspaceId: string;
+                    machineId: string;
+                    rootPath: string;
+                    kind?: undefined;
+                } | {
+                    v: 2;
+                    kind: 'managed';
+                    serverId: string;
+                    workspaceId: string;
+                    managedId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    rootPath: string;
+                    machineId?: undefined;
+                };
+                installationId: string;
+                projectKey: string;
+                kind: 'worktree';
+            };
+        } | {
+            kind: 'environment';
+            serverId: string;
+            environmentId: string;
+        } | {
+            kind: 'plugin';
+            serverId: string;
+            pluginId: string;
+            subjectKindId: string;
+            identity: unknown;
+        } | {
+            kind: 'session';
+            serverId: string;
+            sessionId: string;
+        } | {
+            serverId: string;
+            machineId: string;
+            kind: 'machine';
+        } | {
+            serverId: string;
+            projectKey: string;
+            kind: 'project';
+        };
+        contextSubjects?: ({
+            checkId: string;
+            sourceInstanceId: string;
+            kind: 'healthCheck';
+            serverId: string;
+        } | {
+            kind: 'app';
+            serverId: string;
+            projectSourceId: string;
+        } | {
+            kind: 'approvalProfile';
+            serverId: string;
+            profileId: string;
+        } | {
+            kind: 'backup';
+            serverId: string;
+            environmentId: string;
+        } | {
+            kind: 'database';
+            serverId: string;
+            target: {
+                kind: 'environment';
+                environmentId: string;
+                service: string;
+                database: string;
+            } | {
+                savedSecretId: string;
+                accountId: string;
+                workspace: {
+                    serverId: string;
+                    workspaceId: string;
+                    machineId: string;
+                    rootPath: string;
+                    kind?: undefined;
+                } | {
+                    v: 2;
+                    kind: 'managed';
+                    serverId: string;
+                    workspaceId: string;
+                    managedId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    rootPath: string;
+                    machineId?: undefined;
+                };
+                installationId: string;
+                projectKey: string;
+                kind: 'manual';
+            } | {
+                source: {
+                    kind: 'env_file';
+                    path: string;
+                    variable: string;
+                } | {
+                    kind: 'service';
+                    serviceId: string;
+                    variable: string;
+                } | {
+                    kind: 'sqlite_file';
+                    path: string;
+                };
+                accountId: string;
+                workspace: {
+                    serverId: string;
+                    workspaceId: string;
+                    machineId: string;
+                    rootPath: string;
+                    kind?: undefined;
+                } | {
+                    v: 2;
+                    kind: 'managed';
+                    serverId: string;
+                    workspaceId: string;
+                    managedId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    rootPath: string;
+                    machineId?: undefined;
+                };
+                installationId: string;
+                projectKey: string;
+                kind: 'worktree';
+            };
+        } | {
+            kind: 'environment';
+            serverId: string;
+            environmentId: string;
+        } | {
+            kind: 'plugin';
+            serverId: string;
+            pluginId: string;
+            subjectKindId: string;
+            identity: unknown;
+        } | {
+            kind: 'session';
+            serverId: string;
+            sessionId: string;
+        } | {
+            serverId: string;
+            machineId: string;
+            kind: 'machine';
+        } | {
+            serverId: string;
+            projectKey: string;
+            kind: 'project';
+        })[] | undefined;
+        limit?: unknown;
+        cursor?: string | undefined;
     } | {
         workflow: string;
     };
@@ -1900,6 +2210,67 @@ export type WorkflowsActionInputById = {
                     environmentId: string;
                     service: string;
                     database: string;
+                } | {
+                    savedSecretId: string;
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'manual';
+                } | {
+                    source: {
+                        kind: 'env_file';
+                        path: string;
+                        variable: string;
+                    } | {
+                        kind: 'service';
+                        serviceId: string;
+                        variable: string;
+                    } | {
+                        kind: 'sqlite_file';
+                        path: string;
+                    };
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'worktree';
                 };
             } | {
                 kind: 'environment';
@@ -2003,6 +2374,116 @@ export type WorkflowsActionInputById = {
                 name: string;
                 description: null | string;
             };
+            subject?: undefined | {
+                checkId: string;
+                sourceInstanceId: string;
+                kind: 'healthCheck';
+                serverId: string;
+            } | {
+                kind: 'app';
+                serverId: string;
+                projectSourceId: string;
+            } | {
+                kind: 'approvalProfile';
+                serverId: string;
+                profileId: string;
+            } | {
+                kind: 'backup';
+                serverId: string;
+                environmentId: string;
+            } | {
+                kind: 'database';
+                serverId: string;
+                target: {
+                    kind: 'environment';
+                    environmentId: string;
+                    service: string;
+                    database: string;
+                } | {
+                    savedSecretId: string;
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'manual';
+                } | {
+                    source: {
+                        kind: 'env_file';
+                        path: string;
+                        variable: string;
+                    } | {
+                        kind: 'service';
+                        serviceId: string;
+                        variable: string;
+                    } | {
+                        kind: 'sqlite_file';
+                        path: string;
+                    };
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'worktree';
+                };
+            } | {
+                kind: 'environment';
+                serverId: string;
+                environmentId: string;
+            } | {
+                kind: 'plugin';
+                serverId: string;
+                pluginId: string;
+                subjectKindId: string;
+                identity: unknown;
+            } | {
+                kind: 'session';
+                serverId: string;
+                sessionId: string;
+            } | {
+                serverId: string;
+                machineId: string;
+                kind: 'machine';
+            } | {
+                serverId: string;
+                projectKey: string;
+                kind: 'project';
+            };
         } | {
             kind: 'pluginEvent';
             eventRef: {
@@ -2051,6 +2532,8 @@ export type WorkflowsActionInputById = {
                 c: string;
             };
             enabled: boolean;
+            subjectKind?: string | undefined;
+            subjectKey?: string | undefined;
         } | {
             kind: 'schedule';
             schedule: {
@@ -2171,6 +2654,67 @@ export type WorkflowsActionInputById = {
                     environmentId: string;
                     service: string;
                     database: string;
+                } | {
+                    savedSecretId: string;
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'manual';
+                } | {
+                    source: {
+                        kind: 'env_file';
+                        path: string;
+                        variable: string;
+                    } | {
+                        kind: 'service';
+                        serviceId: string;
+                        variable: string;
+                    } | {
+                        kind: 'sqlite_file';
+                        path: string;
+                    };
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'worktree';
                 };
             } | {
                 kind: 'environment';
@@ -2274,6 +2818,116 @@ export type WorkflowsActionInputById = {
                 name: string;
                 description: null | string;
             };
+            subject?: undefined | {
+                checkId: string;
+                sourceInstanceId: string;
+                kind: 'healthCheck';
+                serverId: string;
+            } | {
+                kind: 'app';
+                serverId: string;
+                projectSourceId: string;
+            } | {
+                kind: 'approvalProfile';
+                serverId: string;
+                profileId: string;
+            } | {
+                kind: 'backup';
+                serverId: string;
+                environmentId: string;
+            } | {
+                kind: 'database';
+                serverId: string;
+                target: {
+                    kind: 'environment';
+                    environmentId: string;
+                    service: string;
+                    database: string;
+                } | {
+                    savedSecretId: string;
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'manual';
+                } | {
+                    source: {
+                        kind: 'env_file';
+                        path: string;
+                        variable: string;
+                    } | {
+                        kind: 'service';
+                        serviceId: string;
+                        variable: string;
+                    } | {
+                        kind: 'sqlite_file';
+                        path: string;
+                    };
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'worktree';
+                };
+            } | {
+                kind: 'environment';
+                serverId: string;
+                environmentId: string;
+            } | {
+                kind: 'plugin';
+                serverId: string;
+                pluginId: string;
+                subjectKindId: string;
+                identity: unknown;
+            } | {
+                kind: 'session';
+                serverId: string;
+                sessionId: string;
+            } | {
+                serverId: string;
+                machineId: string;
+                kind: 'machine';
+            } | {
+                serverId: string;
+                projectKey: string;
+                kind: 'project';
+            };
         } | {
             kind: 'pluginEvent';
             eventRef: {
@@ -2322,6 +2976,8 @@ export type WorkflowsActionInputById = {
                 c: string;
             };
             enabled: boolean;
+            subjectKind?: string | undefined;
+            subjectKey?: string | undefined;
         } | {
             kind: 'schedule';
             schedule: {
@@ -2603,13 +3259,13 @@ export type WorkflowsActionInputById = {
             name: string;
             description: null | string;
         };
+        approvalProfileId?: null | string | undefined;
         inputs?: Record<string, unknown> | undefined;
         executionTarget?: undefined | {
             kind: 'detached_run';
         } | {
             kind: 'session';
         };
-        approvalProfileId?: null | string | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
             roleId: string;
@@ -2692,6 +3348,67 @@ export type WorkflowsActionInputById = {
                         environmentId: string;
                         service: string;
                         database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: {
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        };
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: {
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        };
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
                     };
                 } | {
                     kind: 'environment';
@@ -2792,6 +3509,116 @@ export type WorkflowsActionInputById = {
                     name: string;
                     description: null | string;
                 };
+                subject?: undefined | {
+                    checkId: string;
+                    sourceInstanceId: string;
+                    kind: 'healthCheck';
+                    serverId: string;
+                } | {
+                    kind: 'app';
+                    serverId: string;
+                    projectSourceId: string;
+                } | {
+                    kind: 'approvalProfile';
+                    serverId: string;
+                    profileId: string;
+                } | {
+                    kind: 'backup';
+                    serverId: string;
+                    environmentId: string;
+                } | {
+                    kind: 'database';
+                    serverId: string;
+                    target: {
+                        kind: 'environment';
+                        environmentId: string;
+                        service: string;
+                        database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: {
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        };
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: {
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        };
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
+                    };
+                } | {
+                    kind: 'environment';
+                    serverId: string;
+                    environmentId: string;
+                } | {
+                    kind: 'plugin';
+                    serverId: string;
+                    pluginId: string;
+                    subjectKindId: string;
+                    identity: unknown;
+                } | {
+                    kind: 'session';
+                    serverId: string;
+                    sessionId: string;
+                } | {
+                    serverId: string;
+                    machineId: string;
+                    kind: 'machine';
+                } | {
+                    serverId: string;
+                    projectKey: string;
+                    kind: 'project';
+                };
             } | {
                 kind: 'pluginEvent';
                 eventRef: {
@@ -2839,6 +3666,8 @@ export type WorkflowsActionInputById = {
                     t: 'encrypted';
                     c: string;
                 };
+                subjectKind?: string | undefined;
+                subjectKey?: string | undefined;
             } | {
                 kind: 'schedule';
                 schedule: {
@@ -2920,13 +3749,13 @@ export type WorkflowsActionInputById = {
                 name: string;
                 description: null | string;
             };
+            approvalProfileId?: null | string | undefined;
             inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
-            approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
                 roleId: string;
@@ -3201,6 +4030,67 @@ export type WorkflowsActionInputById = {
                     environmentId: string;
                     service: string;
                     database: string;
+                } | {
+                    savedSecretId: string;
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'manual';
+                } | {
+                    source: {
+                        kind: 'env_file';
+                        path: string;
+                        variable: string;
+                    } | {
+                        kind: 'service';
+                        serviceId: string;
+                        variable: string;
+                    } | {
+                        kind: 'sqlite_file';
+                        path: string;
+                    };
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'worktree';
                 };
             } | {
                 kind: 'environment';
@@ -3311,6 +4201,116 @@ export type WorkflowsActionInputById = {
                 name: string;
                 description: null | string;
             };
+            subject?: undefined | {
+                checkId: string;
+                sourceInstanceId: string;
+                kind: 'healthCheck';
+                serverId: string;
+            } | {
+                kind: 'app';
+                serverId: string;
+                projectSourceId: string;
+            } | {
+                kind: 'approvalProfile';
+                serverId: string;
+                profileId: string;
+            } | {
+                kind: 'backup';
+                serverId: string;
+                environmentId: string;
+            } | {
+                kind: 'database';
+                serverId: string;
+                target: {
+                    kind: 'environment';
+                    environmentId: string;
+                    service: string;
+                    database: string;
+                } | {
+                    savedSecretId: string;
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'manual';
+                } | {
+                    source: {
+                        kind: 'env_file';
+                        path: string;
+                        variable: string;
+                    } | {
+                        kind: 'service';
+                        serviceId: string;
+                        variable: string;
+                    } | {
+                        kind: 'sqlite_file';
+                        path: string;
+                    };
+                    accountId: string;
+                    workspace: {
+                        serverId: string;
+                        workspaceId: string;
+                        machineId: string;
+                        rootPath: string;
+                        kind?: undefined;
+                    } | {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                        machineId?: undefined;
+                    };
+                    installationId: string;
+                    projectKey: string;
+                    kind: 'worktree';
+                };
+            } | {
+                kind: 'environment';
+                serverId: string;
+                environmentId: string;
+            } | {
+                kind: 'plugin';
+                serverId: string;
+                pluginId: string;
+                subjectKindId: string;
+                identity: unknown;
+            } | {
+                kind: 'session';
+                serverId: string;
+                sessionId: string;
+            } | {
+                serverId: string;
+                machineId: string;
+                kind: 'machine';
+            } | {
+                serverId: string;
+                projectKey: string;
+                kind: 'project';
+            };
         } | {
             kind: 'pluginEvent';
             eventRef: {
@@ -3359,6 +4359,8 @@ export type WorkflowsActionInputById = {
                 c: string;
             };
             enabled: boolean;
+            subjectKind?: string | undefined;
+            subjectKey?: string | undefined;
         } | {
             kind: 'schedule';
             schedule: {
@@ -3447,13 +4449,13 @@ export type WorkflowsActionInputById = {
             name: string;
             description: null | string;
         };
+        approvalProfileId?: null | string | undefined;
         inputs?: Record<string, unknown> | undefined;
         executionTarget?: undefined | {
             kind: 'detached_run';
         } | {
             kind: 'session';
         };
-        approvalProfileId?: null | string | undefined;
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
             roleId: string;
@@ -3923,6 +4925,67 @@ export type WorkflowsActionInputById = {
                         environmentId: string;
                         service: string;
                         database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: {
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        };
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: {
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        };
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
                     };
                 } | {
                     kind: 'environment';
@@ -4029,6 +5092,116 @@ export type WorkflowsActionInputById = {
                     name: string;
                     description: null | string;
                 };
+                subject?: undefined | {
+                    checkId: string;
+                    sourceInstanceId: string;
+                    kind: 'healthCheck';
+                    serverId: string;
+                } | {
+                    kind: 'app';
+                    serverId: string;
+                    projectSourceId: string;
+                } | {
+                    kind: 'approvalProfile';
+                    serverId: string;
+                    profileId: string;
+                } | {
+                    kind: 'backup';
+                    serverId: string;
+                    environmentId: string;
+                } | {
+                    kind: 'database';
+                    serverId: string;
+                    target: {
+                        kind: 'environment';
+                        environmentId: string;
+                        service: string;
+                        database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: {
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        };
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: {
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        };
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
+                    };
+                } | {
+                    kind: 'environment';
+                    serverId: string;
+                    environmentId: string;
+                } | {
+                    kind: 'plugin';
+                    serverId: string;
+                    pluginId: string;
+                    subjectKindId: string;
+                    identity: unknown;
+                } | {
+                    kind: 'session';
+                    serverId: string;
+                    sessionId: string;
+                } | {
+                    serverId: string;
+                    machineId: string;
+                    kind: 'machine';
+                } | {
+                    serverId: string;
+                    projectKey: string;
+                    kind: 'project';
+                };
             } | {
                 kind: 'pluginEvent';
                 eventRef: {
@@ -4076,6 +5249,8 @@ export type WorkflowsActionInputById = {
                     t: 'encrypted';
                     c: string;
                 };
+                subjectKind?: string | undefined;
+                subjectKey?: string | undefined;
             } | {
                 kind: 'schedule';
                 schedule: {
@@ -4152,13 +5327,13 @@ export type WorkflowsActionInputById = {
                 name: string;
                 description: null | string;
             };
+            approvalProfileId?: null | string | undefined;
             inputs?: Record<string, unknown> | undefined;
             executionTarget?: undefined | {
                 kind: 'detached_run';
             } | {
                 kind: 'session';
             };
-            approvalProfileId?: null | string | undefined;
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
                 roleId: string;
@@ -4347,6 +5522,7 @@ type WorkflowsActionDefinition1 = Readonly<{
             folderId: null | string;
             tagIds: string[];
         };
+        memoryEnabled?: boolean | undefined;
         secretReferenceOverlay?: undefined | {
             v: 1;
             bindings: Record<string, {
@@ -4354,7 +5530,6 @@ type WorkflowsActionDefinition1 = Readonly<{
                 revision?: number | undefined;
             }>;
         };
-        memoryEnabled?: boolean | undefined;
         teamCredentialBindings?: ({
             v: 1;
             slot: {
@@ -4577,6 +5752,22 @@ type WorkflowsActionDefinition1 = Readonly<{
     };
 }>;
 export type WorkflowsActionResultById = {
+    readonly "workflow.subjects.list": {
+        subjects: {
+            subject: {
+                checkId: string;
+                sourceInstanceId: string;
+                kind: 'healthCheck';
+                serverId: string;
+            };
+            source: {
+                automationId: string;
+                triggerId: string;
+            };
+            label: string;
+        }[];
+        nextCursor: null | string;
+    };
     readonly "workflow.validate": {
         valid: boolean;
         issues: {
@@ -4733,6 +5924,7 @@ export type WorkflowsActionResultById = {
                     folderId: null | string;
                     tagIds: string[];
                 };
+                memoryEnabled?: boolean | undefined;
                 secretReferenceOverlay?: undefined | {
                     v: 1;
                     bindings: Record<string, {
@@ -4740,7 +5932,6 @@ export type WorkflowsActionResultById = {
                         revision?: number | undefined;
                     }>;
                 };
-                memoryEnabled?: boolean | undefined;
                 teamCredentialBindings?: ({
                     v: 1;
                     slot: {
@@ -5050,6 +6241,22 @@ export type WorkflowsActionResultById = {
                 } | {
                     kind: 'manual';
                     invokedAt: number;
+                } | {
+                    kind: 'trigger';
+                    triggerId: string;
+                    triggerRevision: number;
+                    triggerKind: 'action';
+                    occurrenceKey: string;
+                    occurredAt: number;
+                    evidence: {
+                        actionId: string;
+                        requestId: string;
+                        phase: 'after' | 'before';
+                        status?: 'failed' | 'succeeded' | undefined;
+                        errorCode?: string | undefined;
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
+                    };
                 } | {
                     kind: 'trigger';
                     triggerId: string;
@@ -5475,6 +6682,22 @@ export type WorkflowsActionResultById = {
                     kind: 'trigger';
                     triggerId: string;
                     triggerRevision: number;
+                    triggerKind: 'action';
+                    occurrenceKey: string;
+                    occurredAt: number;
+                    evidence: {
+                        actionId: string;
+                        requestId: string;
+                        phase: 'after' | 'before';
+                        status?: 'failed' | 'succeeded' | undefined;
+                        errorCode?: string | undefined;
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
+                    };
+                } | {
+                    kind: 'trigger';
+                    triggerId: string;
+                    triggerRevision: number;
                     triggerKind: 'pluginEvent';
                     occurrenceKey: string;
                     occurredAt: number;
@@ -5874,14 +7097,14 @@ export type WorkflowsActionResultById = {
         automationSummaries: {
             automationId: string;
             lastRun: null | {
+                startedAt: string;
                 id: string;
+                createdAt: string;
                 state: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'interrupted' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'queued' | 'running' | 'skipped' | 'succeeded' | 'waiting_for_review';
-                workflowCustodyState: 'pending' | 'settled' | null;
                 attentionRequired: boolean;
                 failureUnseen: boolean;
                 invocationAttentionRequired: boolean;
-                createdAt: string;
-                startedAt: string;
+                workflowCustodyState: 'pending' | 'settled' | null;
             };
         }[];
         remainingAutomationIds: string[];
@@ -5999,6 +7222,22 @@ export type WorkflowsActionResultById = {
                 } | {
                     kind: 'manual';
                     invokedAt: number;
+                } | {
+                    kind: 'trigger';
+                    triggerId: string;
+                    triggerRevision: number;
+                    triggerKind: 'action';
+                    occurrenceKey: string;
+                    occurredAt: number;
+                    evidence: {
+                        actionId: string;
+                        requestId: string;
+                        phase: 'after' | 'before';
+                        status?: 'failed' | 'succeeded' | undefined;
+                        errorCode?: string | undefined;
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
+                    };
                 } | {
                     kind: 'trigger';
                     triggerId: string;
@@ -10099,6 +11338,22 @@ export type WorkflowsActionResultById = {
                     kind: 'trigger';
                     triggerId: string;
                     triggerRevision: number;
+                    triggerKind: 'action';
+                    occurrenceKey: string;
+                    occurredAt: number;
+                    evidence: {
+                        actionId: string;
+                        requestId: string;
+                        phase: 'after' | 'before';
+                        status?: 'failed' | 'succeeded' | undefined;
+                        errorCode?: string | undefined;
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
+                    };
+                } | {
+                    kind: 'trigger';
+                    triggerId: string;
+                    triggerRevision: number;
                     triggerKind: 'pluginEvent';
                     occurrenceKey: string;
                     occurredAt: number;
@@ -10521,6 +11776,22 @@ export type WorkflowsActionResultById = {
                     kind: 'trigger';
                     triggerId: string;
                     triggerRevision: number;
+                    triggerKind: 'action';
+                    occurrenceKey: string;
+                    occurredAt: number;
+                    evidence: {
+                        actionId: string;
+                        requestId: string;
+                        phase: 'after' | 'before';
+                        status?: 'failed' | 'succeeded' | undefined;
+                        errorCode?: string | undefined;
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
+                    };
+                } | {
+                    kind: 'trigger';
+                    triggerId: string;
+                    triggerRevision: number;
                     triggerKind: 'pluginEvent';
                     occurrenceKey: string;
                     occurredAt: number;
@@ -10938,6 +12209,22 @@ export type WorkflowsActionResultById = {
                 } | {
                     kind: 'manual';
                     invokedAt: number;
+                } | {
+                    kind: 'trigger';
+                    triggerId: string;
+                    triggerRevision: number;
+                    triggerKind: 'action';
+                    occurrenceKey: string;
+                    occurredAt: number;
+                    evidence: {
+                        actionId: string;
+                        requestId: string;
+                        phase: 'after' | 'before';
+                        status?: 'failed' | 'succeeded' | undefined;
+                        errorCode?: string | undefined;
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
+                    };
                 } | {
                     kind: 'trigger';
                     triggerId: string;
@@ -11364,6 +12651,22 @@ export type WorkflowsActionResultById = {
                     kind: 'trigger';
                     triggerId: string;
                     triggerRevision: number;
+                    triggerKind: 'action';
+                    occurrenceKey: string;
+                    occurredAt: number;
+                    evidence: {
+                        actionId: string;
+                        requestId: string;
+                        phase: 'after' | 'before';
+                        status?: 'failed' | 'succeeded' | undefined;
+                        errorCode?: string | undefined;
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
+                    };
+                } | {
+                    kind: 'trigger';
+                    triggerId: string;
+                    triggerRevision: number;
                     triggerKind: 'pluginEvent';
                     occurrenceKey: string;
                     occurredAt: number;
@@ -11782,6 +13085,22 @@ export type WorkflowsActionResultById = {
                 } | {
                     kind: 'manual';
                     invokedAt: number;
+                } | {
+                    kind: 'trigger';
+                    triggerId: string;
+                    triggerRevision: number;
+                    triggerKind: 'action';
+                    occurrenceKey: string;
+                    occurredAt: number;
+                    evidence: {
+                        actionId: string;
+                        requestId: string;
+                        phase: 'after' | 'before';
+                        status?: 'failed' | 'succeeded' | undefined;
+                        errorCode?: string | undefined;
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
+                    };
                 } | {
                     kind: 'trigger';
                     triggerId: string;
@@ -12212,6 +13531,22 @@ export type WorkflowsActionResultById = {
                     kind: 'trigger';
                     triggerId: string;
                     triggerRevision: number;
+                    triggerKind: 'action';
+                    occurrenceKey: string;
+                    occurredAt: number;
+                    evidence: {
+                        actionId: string;
+                        requestId: string;
+                        phase: 'after' | 'before';
+                        status?: 'failed' | 'succeeded' | undefined;
+                        errorCode?: string | undefined;
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
+                    };
+                } | {
+                    kind: 'trigger';
+                    triggerId: string;
+                    triggerRevision: number;
                     triggerKind: 'pluginEvent';
                     occurrenceKey: string;
                     occurredAt: number;
@@ -12633,6 +13968,22 @@ export type WorkflowsActionResultById = {
                     kind: 'trigger';
                     triggerId: string;
                     triggerRevision: number;
+                    triggerKind: 'action';
+                    occurrenceKey: string;
+                    occurredAt: number;
+                    evidence: {
+                        actionId: string;
+                        requestId: string;
+                        phase: 'after' | 'before';
+                        status?: 'failed' | 'succeeded' | undefined;
+                        errorCode?: string | undefined;
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
+                    };
+                } | {
+                    kind: 'trigger';
+                    triggerId: string;
+                    triggerRevision: number;
                     triggerKind: 'pluginEvent';
                     occurrenceKey: string;
                     occurredAt: number;
@@ -13050,6 +14401,22 @@ export type WorkflowsActionResultById = {
                 } | {
                     kind: 'manual';
                     invokedAt: number;
+                } | {
+                    kind: 'trigger';
+                    triggerId: string;
+                    triggerRevision: number;
+                    triggerKind: 'action';
+                    occurrenceKey: string;
+                    occurredAt: number;
+                    evidence: {
+                        actionId: string;
+                        requestId: string;
+                        phase: 'after' | 'before';
+                        status?: 'failed' | 'succeeded' | undefined;
+                        errorCode?: string | undefined;
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
+                    };
                 } | {
                     kind: 'trigger';
                     triggerId: string;
@@ -14808,6 +16175,22 @@ export type WorkflowsActionResultById = {
                     kind: 'trigger';
                     triggerId: string;
                     triggerRevision: number;
+                    triggerKind: 'action';
+                    occurrenceKey: string;
+                    occurredAt: number;
+                    evidence: {
+                        actionId: string;
+                        requestId: string;
+                        phase: 'after' | 'before';
+                        status?: 'failed' | 'succeeded' | undefined;
+                        errorCode?: string | undefined;
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
+                    };
+                } | {
+                    kind: 'trigger';
+                    triggerId: string;
+                    triggerRevision: number;
                     triggerKind: 'pluginEvent';
                     occurrenceKey: string;
                     occurredAt: number;
@@ -15909,6 +17292,22 @@ export type WorkflowsActionResultById = {
                     kind: 'trigger';
                     triggerId: string;
                     triggerRevision: number;
+                    triggerKind: 'action';
+                    occurrenceKey: string;
+                    occurredAt: number;
+                    evidence: {
+                        actionId: string;
+                        requestId: string;
+                        phase: 'after' | 'before';
+                        status?: 'failed' | 'succeeded' | undefined;
+                        errorCode?: string | undefined;
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
+                    };
+                } | {
+                    kind: 'trigger';
+                    triggerId: string;
+                    triggerRevision: number;
                     triggerKind: 'pluginEvent';
                     occurrenceKey: string;
                     occurredAt: number;
@@ -16298,10 +17697,29 @@ export type WorkflowsActionResultById = {
                 };
             };
             triggers: ({
+                kind: 'action';
+                phase: 'after' | 'before';
+                actionIds: string[];
+                mode?: 'notify' | 'wait' | undefined;
+                subjectKind?: string | undefined;
+                onFailure?: 'ask' | 'refuse' | undefined;
+                subjectKey?: string | undefined;
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            } | {
                 kind: 'ciFailed';
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
                 enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
             } | {
                 kind: 'pluginEvent';
                 eventRef: {
@@ -16311,17 +17729,29 @@ export type WorkflowsActionResultById = {
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
                 enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
             } | {
                 kind: 'prComment';
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
                 enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
             } | {
                 kind: 'runLifecycle';
                 condition: 'needs_attention' | 'terminal';
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
                 enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
             } | {
                 kind: 'schedule';
                 schedule: {
@@ -16343,12 +17773,20 @@ export type WorkflowsActionResultById = {
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
                 enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
             } | {
                 kind: 'sessionLifecycle';
                 events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
                 enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
             })[];
             nextRunAt: null | number;
             contentStatus: 'available';
@@ -16384,10 +17822,29 @@ export type WorkflowsActionResultById = {
             kind: 'workflow-definition.v1';
             definitionId: string;
             triggers: ({
+                kind: 'action';
+                phase: 'after' | 'before';
+                actionIds: string[];
+                mode?: 'notify' | 'wait' | undefined;
+                subjectKind?: string | undefined;
+                onFailure?: 'ask' | 'refuse' | undefined;
+                subjectKey?: string | undefined;
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            } | {
                 kind: 'ciFailed';
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
                 enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
             } | {
                 kind: 'pluginEvent';
                 eventRef: {
@@ -16397,17 +17854,29 @@ export type WorkflowsActionResultById = {
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
                 enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
             } | {
                 kind: 'prComment';
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
                 enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
             } | {
                 kind: 'runLifecycle';
                 condition: 'needs_attention' | 'terminal';
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
                 enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
             } | {
                 kind: 'schedule';
                 schedule: {
@@ -16429,12 +17898,20 @@ export type WorkflowsActionResultById = {
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
                 enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
             } | {
                 kind: 'sessionLifecycle';
                 events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
                 enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
             })[];
             nextRunAt: null | number;
             contentStatus: 'unavailable';
@@ -16918,6 +18395,7 @@ export type WorkflowsActionResultById = {
                     folderId: null | string;
                     tagIds: string[];
                 };
+                memoryEnabled?: boolean | undefined;
                 secretReferenceOverlay?: undefined | {
                     v: 1;
                     bindings: Record<string, {
@@ -16925,7 +18403,6 @@ export type WorkflowsActionResultById = {
                         revision?: number | undefined;
                     }>;
                 };
-                memoryEnabled?: boolean | undefined;
                 teamCredentialBindings?: ({
                     v: 1;
                     slot: {
@@ -17364,6 +18841,7 @@ export type WorkflowsActionResultById = {
                     folderId: null | string;
                     tagIds: string[];
                 };
+                memoryEnabled?: boolean | undefined;
                 secretReferenceOverlay?: undefined | {
                     v: 1;
                     bindings: Record<string, {
@@ -17371,7 +18849,6 @@ export type WorkflowsActionResultById = {
                         revision?: number | undefined;
                     }>;
                 };
-                memoryEnabled?: boolean | undefined;
                 teamCredentialBindings?: ({
                     v: 1;
                     slot: {
@@ -18136,6 +19613,67 @@ export type WorkflowsActionResultById = {
                         environmentId: string;
                         service: string;
                         database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
                     };
                 } | {
                     kind: 'environment';
@@ -19089,6 +20627,188 @@ export type WorkflowsActionResultById = {
             triggerId: string;
             definition: WorkflowsActionDefinition3;
         };
+        attached?: undefined | {
+            automationId: string;
+            triggerId: string;
+            workflowDefinitionId: null | string;
+            relation: 'context' | 'direct';
+            enabled: boolean;
+            revision: number;
+            summary: {
+                kind: 'action';
+                phase: 'after' | 'before';
+                actionIds: string[];
+                mode?: 'notify' | 'wait' | undefined;
+                subjectKind?: string | undefined;
+                onFailure?: 'ask' | 'refuse' | undefined;
+                subjectKey?: string | undefined;
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            } | {
+                kind: 'ciFailed';
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            } | {
+                kind: 'pluginEvent';
+                eventRef: {
+                    pluginId: string;
+                    localId: string;
+                };
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            } | {
+                kind: 'prComment';
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            } | {
+                kind: 'runLifecycle';
+                condition: 'needs_attention' | 'terminal';
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            } | {
+                kind: 'schedule';
+                schedule: {
+                    kind: 'cron';
+                    scheduleExpr: string;
+                    everyMs: null;
+                    timezone: null | string;
+                } | {
+                    kind: 'interval';
+                    scheduleExpr: null;
+                    everyMs: number;
+                    timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
+                };
+                nextRunAt?: null | number | undefined;
+                remainingOccurrences?: null | number | undefined;
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            } | {
+                kind: 'sessionLifecycle';
+                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            };
+            setUpBy: {
+                accountId: string;
+                displayName: null | string;
+            };
+            workflowAccess?: undefined | {
+                ownerAccountId: string;
+                access: 'admin' | 'edit' | 'owner' | 'view';
+            };
+            sourceStatus?: null | undefined | {
+                automationId: string;
+                triggerId: string;
+                triggerRevision: number;
+                eventRef: {
+                    pluginId: string;
+                    localId: string;
+                };
+                sourceSelectorId: string;
+                reporterMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+                reporterSourceCustody: {
+                    kind: 'account_release';
+                    pluginId: string;
+                    version: string;
+                    archiveDigestSha256: string;
+                } | {
+                    kind: 'bundled_first_party';
+                    packagedRuntime: {
+                        kind: 'cli_version_root';
+                        versionRootId: string;
+                    } | {
+                        kind: 'pinned_runner_snapshot';
+                        snapshotId: string;
+                    } | {
+                        kind: 'source_declaration';
+                        packageName: string;
+                    };
+                } | {
+                    kind: 'development';
+                    registeredRootId: string;
+                } | {
+                    kind: 'managed';
+                    immutableGenerationId: string;
+                    installSource: 'archive' | 'localPath' | 'npm';
+                };
+                state: 'attention' | 'backingOff' | 'baselined' | 'observing' | 'uninitialized';
+                code: null | string;
+                lastObservedAt: null | number;
+                lastDispositionAt: null | number;
+                nextRetryAt: null | number;
+                observedCount: number;
+                admittedCount: number;
+                skippedCount: number;
+                revision: number;
+                explanation?: undefined | {
+                    reason: string;
+                    requiredFact: 'availableSourceObservationOrAdmission';
+                    remedy: 'restoreSourceRegistrationOrAdmission';
+                    underlyingCause?: 'notRecorded' | undefined;
+                };
+            };
+            sourceCatalogStatus?: null | undefined | {
+                observedRevision: string;
+                adoptedRevision: null | string;
+                state: 'current' | 'reconciling';
+                scanStartedAt: null | number;
+                nextRetryAt: null | number;
+            };
+            lastRun?: null | undefined | {
+                startedAt: string;
+                id: string;
+                createdAt: string;
+                state: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'interrupted' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'queued' | 'running' | 'skipped' | 'succeeded' | 'waiting_for_review';
+                attentionRequired: boolean;
+                failureUnseen: boolean;
+                invocationAttentionRequired: boolean;
+                workflowCustodyState: 'pending' | 'settled' | null;
+            };
+        }[];
+        nextCursor?: null | string | undefined;
+        skippedNotSharedCount?: number | undefined;
         healthSources?: undefined | {
             sourceInstanceId: string;
             revision: string;
@@ -19496,6 +21216,67 @@ export type WorkflowsActionResultById = {
                         environmentId: string;
                         service: string;
                         database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
                     };
                 } | {
                     kind: 'environment';
@@ -20713,6 +22494,67 @@ export type WorkflowsActionResultById = {
                         environmentId: string;
                         service: string;
                         database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
                     };
                 } | {
                     kind: 'environment';
@@ -21934,6 +23776,67 @@ export type WorkflowsActionResultById = {
                         environmentId: string;
                         service: string;
                         database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
                     };
                 } | {
                     kind: 'environment';
@@ -22975,6 +24878,22 @@ export type WorkflowsActionResultById = {
                 kind: 'trigger';
                 triggerId: string;
                 triggerRevision: number;
+                triggerKind: 'action';
+                occurrenceKey: string;
+                occurredAt: number;
+                evidence: {
+                    actionId: string;
+                    requestId: string;
+                    phase: 'after' | 'before';
+                    status?: 'failed' | 'succeeded' | undefined;
+                    errorCode?: string | undefined;
+                    machineId?: string | undefined;
+                    originRunId?: string | undefined;
+                };
+            } | {
+                kind: 'trigger';
+                triggerId: string;
+                triggerRevision: number;
                 triggerKind: 'pluginEvent';
                 occurrenceKey: string;
                 occurredAt: number;
@@ -23313,6 +25232,67 @@ export type WorkflowsActionResultById = {
                         environmentId: string;
                         service: string;
                         database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
                     };
                 } | {
                     kind: 'environment';
@@ -24281,6 +26261,188 @@ export type WorkflowsActionResultById = {
             triggerId: string;
             definition: WorkflowsActionDefinition3;
         };
+        attached?: undefined | {
+            automationId: string;
+            triggerId: string;
+            workflowDefinitionId: null | string;
+            relation: 'context' | 'direct';
+            enabled: boolean;
+            revision: number;
+            summary: {
+                kind: 'action';
+                phase: 'after' | 'before';
+                actionIds: string[];
+                mode?: 'notify' | 'wait' | undefined;
+                subjectKind?: string | undefined;
+                onFailure?: 'ask' | 'refuse' | undefined;
+                subjectKey?: string | undefined;
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            } | {
+                kind: 'ciFailed';
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            } | {
+                kind: 'pluginEvent';
+                eventRef: {
+                    pluginId: string;
+                    localId: string;
+                };
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            } | {
+                kind: 'prComment';
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            } | {
+                kind: 'runLifecycle';
+                condition: 'needs_attention' | 'terminal';
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            } | {
+                kind: 'schedule';
+                schedule: {
+                    kind: 'cron';
+                    scheduleExpr: string;
+                    everyMs: null;
+                    timezone: null | string;
+                } | {
+                    kind: 'interval';
+                    scheduleExpr: null;
+                    everyMs: number;
+                    timezone: null | string;
+                } | {
+                    kind: 'once';
+                    scheduledAt: number;
+                };
+                nextRunAt?: null | number | undefined;
+                remainingOccurrences?: null | number | undefined;
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            } | {
+                kind: 'sessionLifecycle';
+                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                automationId?: string | undefined;
+                triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
+                setUpBy?: undefined | {
+                    accountId: string;
+                    displayName: null | string;
+                };
+            };
+            setUpBy: {
+                accountId: string;
+                displayName: null | string;
+            };
+            workflowAccess?: undefined | {
+                ownerAccountId: string;
+                access: 'admin' | 'edit' | 'owner' | 'view';
+            };
+            sourceStatus?: null | undefined | {
+                automationId: string;
+                triggerId: string;
+                triggerRevision: number;
+                eventRef: {
+                    pluginId: string;
+                    localId: string;
+                };
+                sourceSelectorId: string;
+                reporterMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
+                reporterSourceCustody: {
+                    kind: 'account_release';
+                    pluginId: string;
+                    version: string;
+                    archiveDigestSha256: string;
+                } | {
+                    kind: 'bundled_first_party';
+                    packagedRuntime: {
+                        kind: 'cli_version_root';
+                        versionRootId: string;
+                    } | {
+                        kind: 'pinned_runner_snapshot';
+                        snapshotId: string;
+                    } | {
+                        kind: 'source_declaration';
+                        packageName: string;
+                    };
+                } | {
+                    kind: 'development';
+                    registeredRootId: string;
+                } | {
+                    kind: 'managed';
+                    immutableGenerationId: string;
+                    installSource: 'archive' | 'localPath' | 'npm';
+                };
+                state: 'attention' | 'backingOff' | 'baselined' | 'observing' | 'uninitialized';
+                code: null | string;
+                lastObservedAt: null | number;
+                lastDispositionAt: null | number;
+                nextRetryAt: null | number;
+                observedCount: number;
+                admittedCount: number;
+                skippedCount: number;
+                revision: number;
+                explanation?: undefined | {
+                    reason: string;
+                    requiredFact: 'availableSourceObservationOrAdmission';
+                    remedy: 'restoreSourceRegistrationOrAdmission';
+                    underlyingCause?: 'notRecorded' | undefined;
+                };
+            };
+            sourceCatalogStatus?: null | undefined | {
+                observedRevision: string;
+                adoptedRevision: null | string;
+                state: 'current' | 'reconciling';
+                scanStartedAt: null | number;
+                nextRetryAt: null | number;
+            };
+            lastRun?: null | undefined | {
+                startedAt: string;
+                id: string;
+                createdAt: string;
+                state: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'interrupted' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'queued' | 'running' | 'skipped' | 'succeeded' | 'waiting_for_review';
+                attentionRequired: boolean;
+                failureUnseen: boolean;
+                invocationAttentionRequired: boolean;
+                workflowCustodyState: 'pending' | 'settled' | null;
+            };
+        }[];
+        nextCursor?: null | string | undefined;
+        skippedNotSharedCount?: number | undefined;
         healthSources?: undefined | {
             sourceInstanceId: string;
             revision: string;
@@ -24688,6 +26850,67 @@ export type WorkflowsActionResultById = {
                         environmentId: string;
                         service: string;
                         database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
                     };
                 } | {
                     kind: 'environment';
@@ -25905,6 +28128,67 @@ export type WorkflowsActionResultById = {
                         environmentId: string;
                         service: string;
                         database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
                     };
                 } | {
                     kind: 'environment';
@@ -27122,6 +29406,67 @@ export type WorkflowsActionResultById = {
                         environmentId: string;
                         service: string;
                         database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
                     };
                 } | {
                     kind: 'environment';
@@ -28225,6 +30570,7 @@ type WorkflowsActionDefinition2 = Readonly<{
             folderId: null | string;
             tagIds: string[];
         };
+        memoryEnabled?: boolean | undefined;
         secretReferenceOverlay?: undefined | {
             v: 1;
             bindings: Record<string, {
@@ -28232,7 +30578,6 @@ type WorkflowsActionDefinition2 = Readonly<{
                 revision?: number | undefined;
             }>;
         };
-        memoryEnabled?: boolean | undefined;
         teamCredentialBindings?: ({
             v: 1;
             slot: {
@@ -28575,6 +30920,7 @@ type WorkflowsActionSelection1 = {
         folderId: null | string;
         tagIds: string[];
     };
+    memoryEnabled?: boolean | undefined;
     secretReferenceOverlay?: undefined | {
         v: 1;
         bindings: Record<string, {
@@ -28582,7 +30928,6 @@ type WorkflowsActionSelection1 = {
             revision?: number | undefined;
         }>;
     };
-    memoryEnabled?: boolean | undefined;
     teamCredentialBindings?: ({
         v: 1;
         slot: {
@@ -28920,6 +31265,116 @@ type WorkflowsActionDefinition3 = {
     automationDisplay?: undefined | {
         name: string;
         description: null | string;
+    };
+    subject?: undefined | {
+        checkId: string;
+        sourceInstanceId: string;
+        kind: 'healthCheck';
+        serverId: string;
+    } | {
+        kind: 'app';
+        serverId: string;
+        projectSourceId: string;
+    } | {
+        kind: 'approvalProfile';
+        serverId: string;
+        profileId: string;
+    } | {
+        kind: 'backup';
+        serverId: string;
+        environmentId: string;
+    } | {
+        kind: 'database';
+        serverId: string;
+        target: {
+            kind: 'environment';
+            environmentId: string;
+            service: string;
+            database: string;
+        } | {
+            savedSecretId: string;
+            accountId: string;
+            workspace: ({
+                serverId: string;
+                workspaceId: string;
+                machineId: string;
+                rootPath: string;
+                kind?: undefined;
+            } | {
+                v: 2;
+                kind: 'managed';
+                serverId: string;
+                workspaceId: string;
+                managedId: string;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
+                rootPath: string;
+                machineId?: undefined;
+            }) & JsonValue;
+            installationId: string;
+            projectKey: string;
+            kind: 'manual';
+        } | {
+            source: {
+                kind: 'env_file';
+                path: string;
+                variable: string;
+            } | {
+                kind: 'service';
+                serviceId: string;
+                variable: string;
+            } | {
+                kind: 'sqlite_file';
+                path: string;
+            };
+            accountId: string;
+            workspace: ({
+                serverId: string;
+                workspaceId: string;
+                machineId: string;
+                rootPath: string;
+                kind?: undefined;
+            } | {
+                v: 2;
+                kind: 'managed';
+                serverId: string;
+                workspaceId: string;
+                managedId: string;
+                controller: {
+                    machineId: string;
+                    installationId: string;
+                };
+                rootPath: string;
+                machineId?: undefined;
+            }) & JsonValue;
+            installationId: string;
+            projectKey: string;
+            kind: 'worktree';
+        };
+    } | {
+        kind: 'environment';
+        serverId: string;
+        environmentId: string;
+    } | {
+        kind: 'plugin';
+        serverId: string;
+        pluginId: string;
+        subjectKindId: string;
+        identity: JsonValue;
+    } | {
+        kind: 'session';
+        serverId: string;
+        sessionId: string;
+    } | {
+        serverId: string;
+        machineId: string;
+        kind: 'machine';
+    } | {
+        serverId: string;
+        projectKey: string;
+        kind: 'project';
     };
     webhookRoutingSourceInstanceId?: string | undefined;
 };

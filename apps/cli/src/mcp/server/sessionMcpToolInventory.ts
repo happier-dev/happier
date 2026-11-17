@@ -76,7 +76,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
     };
     const readPluginToolCatalog = async (signal?: AbortSignal): Promise<readonly ProjectedPluginToolCatalogEntry[]> => {
         signal?.throwIfAborted();
-        if (resolveSessionApprovalProfileReferenceV1(params.client.getMetadataSnapshot?.() ?? {}, params.actionSettingsProvider.getActionsSettings())) {
+        if (resolveSessionApprovalProfileReferenceV1(params.client.getMetadataSnapshot?.() ?? {})) {
             await params.actionSettingsProvider.prepareApprovalProfiles?.(signal);
         }
         if (!(params.happierToolsEnabled ?? isSessionHappierToolsEnabled(params.client.getMetadataSnapshot?.()))) return [];

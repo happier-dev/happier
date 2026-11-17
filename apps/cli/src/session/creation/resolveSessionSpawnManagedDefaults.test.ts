@@ -5,8 +5,8 @@ import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncr
 import { rebindRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse, SessionSpawnNewInputV2Schema, SessionSpawnNewResultV1Schema } from '@happier-dev/protocol';
-import type { SessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import type { ActionExecutorContext, ActionExecuteResult, ActionExecuteFailure } from '@happier-dev/protocol/actions';
+import type { SessionSpawnNewActionAuthoringInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams/capabilities';
 import { resolveTeamAdmissionProjectionV1 } from '@happier-dev/protocol/teams/projections';
@@ -50,6 +50,21 @@ const initialPolicy = configuration.organizationPolicy;
 afterEach(() => { Object.defineProperty(configuration, 'organizationPolicy', { value: initialPolicy, configurable: true }); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('Session spawn defaults at admission', () => {
+  it('uses explicit Session placement without switching to Workflow policy', async () => {
+    const configured = { provisioner: { pluginId: 'example.sandbox', localId: 'sandbox' }, presetId: 'development-preset' };
+    const input = { executionTarget: { serverId: 'home', machineId: 'machine' }, agentTarget: target,
+      sessionPlacement: { kind: 'machine' as const, target: { serverId: 'home', machineId: 'machine' },
+        configuredSandbox: { kind: 'sandbox' as const, configuredSandboxId: 'development', lifecycle: 'shared-kept' as const, ...configured } } };
+    const resolved = await resolveSessionSpawnManagedDefaults(input, {
+      agentId: 'codex', accountSettings: {}, organizationPolicy: { status: 'absent' },
+      openedMachineMetadata: { isolationPolicyV1: { configuredSandboxes: { development: configured },
+        workKinds: { sessions: { kind: 'directly' }, botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } } } },
+      readTeam: async () => team(), readHome: async () => ({ homeDefaults: null }),
+    });
+    expect(resolved.resolveIsolation()).toMatchObject({ workKind: 'sessions',
+      choice: { kind: 'sandbox', configuredSandboxId: 'development', lifecycle: 'shared-kept' } });
+  });
+
   it.each(['configured', 'missing', 'preset-mismatch', 'machine'] as const)(
     'honors an admitted Workflow selection through Machine policy (%s)', async scenario => {
     const configured = { provisioner: { pluginId: 'example.sandbox', localId: 'sandbox' }, presetId: 'development-preset' };
@@ -182,6 +197,9 @@ describe('Session spawn defaults at admission', () => {
     { name: 'retired requester snapshot refuses', surface: 'mcp' as const, layer: 'retired', permission: 'read-only', modelId: 'member-model' },
     { name: 'MCP Team defaults', surface: 'mcp' as const, layer: 'team', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'saved member defaults', surface: 'mcp' as const, layer: 'member', permission: 'read-only', modelId: 'member-model' },
+    { name: 'Machine approval profile is captured at Session birth', surface: 'cli' as const, layer: 'approval-machine', permission: 'safe-yolo', modelId: 'team-model' },
+    { name: 'explicit null clears the Machine approval profile at Session birth', surface: 'cli' as const, layer: 'approval-null', permission: 'safe-yolo', modelId: 'team-model' },
+    { name: 'Team approval profile is captured with derived provenance at Session birth', surface: 'cli' as const, layer: 'approval-team', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'Voice spawn binding reaches saved member model and service defaults', surface: 'voice' as const, layer: 'member', permission: 'read-only', modelId: 'member-model' },
     { name: 'explicit Muse source excludes the saved Codex pool', surface: 'mcp' as const, layer: 'muse', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'no explicit source retains the saved Codex pool', surface: 'mcp' as const, layer: 'pool-default', permission: 'safe-yolo', modelId: 'team-model' },
@@ -202,6 +220,8 @@ describe('Session spawn defaults at admission', () => {
     const reads: string[] = [];
     const launched: SpawnDaemonSessionRequest[] = [];
     const settings = accountSettingsParse({ memoryUpkeepInNewBots: false,
+      ...(testCase.layer === 'approval-machine' || testCase.layer === 'approval-null'
+        ? { actionsSettingsV1: { v: 1, actions: {}, machineApprovalProfiles: { machine: 'custom:machine-profile' } } } : {}),
       ...(testCase.layer === 'member' || testCase.layer === 'policy' || crossAccount ? {
         sessionDefaultPermissionModeByTargetKey: { [targetKey]: 'read-only' },
         providerDefaultModelSelectionsByAgentTargetKeyV1: { [targetKey]: model('member-model') },
@@ -220,6 +240,7 @@ describe('Session spawn defaults at admission', () => {
       if (crossAccount) expect(AxiosHeaders.from(config.headers).get('Authorization')).toBe(`Bearer ${token}`);
       if (path === '/v1/teams/get') {
         const projection = team();
+        if (testCase.layer === 'approval-team') projection.policy.managedDefaults!.team.approvalProfileId = 'custom:team-profile';
         if (testCase.layer === 'group') projection.managedDefaultsGroupIds = ['group'];
         if (testCase.layer === 'v2' || testCase.layer === 'team-resource') projection.policy.managedDefaults!.team.modelByAgentTargetKey = {
           [targetKey]: testCase.layer === 'v2' ? { v: 2, updatedAt: 1, ref: { source: 'native', agentTargetKey: targetKey, modelId: 'team-model' } }
@@ -317,6 +338,7 @@ describe('Session spawn defaults at admission', () => {
     const executor = createCliActionExecutor(params);
     const input = SessionSpawnNewInputV2Schema.parse({ creationKey: `defaults-${testCase.layer}`,
       executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/tmp' }, agentTarget: target,
+      ...(testCase.layer === 'approval-null' ? { approvalProfileId: null } : {}),
       ...(testCase.layer === 'home' ? {} : { primaryTeamId: 'team' }),
       ...(testCase.layer === 'automatic' ? { configuration: { mode: { value: null, updatedAtMs: 1 },
         model: { value: null, updatedAtMs: 1, selectionSource: 'explicit' },
@@ -328,21 +350,23 @@ describe('Session spawn defaults at admission', () => {
       connectedServices: { v: 2, bindingsByServiceId: testCase.layer === 'muse'
         ? { 'happier.agent.muse/muse-account': { source: 'connected', selection: 'profile', profileId: 'own-muse' } }
         : testCase.layer === 'policy' ? { [serviceId]: { source: 'connected', profileId: 'explicit-account' } } : {} }, memoryEnabled: false });
-    // Voice binds the Agent before forwarding to the ordinary receiving Action.
+    // Voice preserves the authoring input for ordinary creation preparation.
     // Leave model/services unset: supplying them here would hide a defaults bypass.
     // Keep the UI module in its owning compiler program, as other cross-app
     // compositions do; Vitest still loads its real implementation.
     const voiceBinderSource = '../../../../ui/sources/voice/tools/actionImpl/bindSessionSpawnInput';
     const voiceBinder = testCase.surface === 'voice' ? await vi.importActual<{
-      bindVoiceSessionSpawnInput(input: unknown,
-        execute: (actionId: string, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>
-      ): Promise<{ ok: true; input: SessionSpawnNewActionInputV2 } | ActionExecuteFailure>;
+      bindVoiceSessionSpawnInput(input: unknown):
+        { ok: true; input: SessionSpawnNewActionAuthoringInputV2 } | ActionExecuteFailure;
     }>(voiceBinderSource) : null;
     const voiceInput = voiceBinder
-      ? await voiceBinder.bindVoiceSessionSpawnInput(input, (actionId, request, context) => executor.execute(actionId, request, context))
+      ? voiceBinder.bindVoiceSessionSpawnInput(input)
       : null;
     if (voiceInput && !voiceInput.ok) throw new Error(voiceInput.errorCode);
-    const spawn = testCase.surface === 'voice' && voiceInput?.ok
+    const spawn = testCase.layer.startsWith('approval-')
+      ? executor.execute('session.spawn_new', input, { surface: testCase.surface, authority: 'present_user',
+        serverId: 'home', actionRequestId: `defaults-${testCase.layer}`, bypassApprovals: true })
+      : testCase.surface === 'voice' && voiceInput?.ok
       ? executor.execute('session.spawn_new', voiceInput.input, { surface: 'voice', authority: 'present_user',
         serverId: 'home', actionRequestId: 'voice-member-defaults', bypassApprovals: true })
       : deps.sessionSpawnNew!({ ...input,
@@ -381,8 +405,15 @@ describe('Session spawn defaults at admission', () => {
     }
     expect(launched, JSON.stringify(result)).toHaveLength(1);
     expect(launched[0]).toMatchObject({ permissionMode: testCase.permission,
-      ...(testCase.layer === 'team-resource' || testCase.layer === 'automatic' ? {} : { modelSelection: model(testCase.modelId) }),
+      ...(testCase.layer === 'team-resource' || testCase.layer === 'automatic' || testCase.layer === 'v2' ? {} : { modelSelection: model(testCase.modelId) }),
     });
+    if (testCase.layer.startsWith('approval-')) {
+      const approvalProfileId = testCase.layer === 'approval-null' ? null
+        : testCase.layer === 'approval-team' ? 'custom:team-profile' : 'custom:machine-profile';
+      const approvalProfileTeamOrGroupDerived = testCase.layer === 'approval-team';
+      expect(launched[0]).toMatchObject({ approvalProfileId, approvalProfileTeamOrGroupDerived,
+        sessionCreationCorrespondence: { recipe: { approvalProfileId, approvalProfileTeamOrGroupDerived } } });
+    }
     if (testCase.layer.startsWith('isolated')) {
       const nativeSandbox = testCase.layer === 'isolated' ? 'off' : 'on';
       expect(launched[0]).toMatchObject({ nativeSandbox, sessionCreationCorrespondence: { recipe: { configuration: { nativeSandbox } } } });
@@ -400,11 +431,16 @@ describe('Session spawn defaults at admission', () => {
       expect(launched[0]?.connectedServices).toMatchObject({ v: 2, bindingsByServiceId: expectedBindings });
     }
     if (testCase.layer === 'automatic') expect(launched[0]?.modelSelection).toBeUndefined();
+    if (testCase.layer === 'v2') expect(launched[0]?.modelSelection).toEqual({ v: 2, updatedAt: 1,
+      ref: { source: 'native', agentTargetKey: targetKey, modelId: 'team-model' } });
     if (testCase.layer === 'team-resource') {
-      expect(launched[0]?.modelSelection).toBeUndefined();
+      expect(launched[0]?.modelSelection).toEqual({ v: 2, updatedAt: 1, ref: { source: 'team_resource',
+        resourceId: 'model-resource', teamId: 'team', expectedResourceRevision: 3, deliveryMode: 'brokered',
+        agentTargetKey: targetKey, modelId: 'team-model' } });
       expect(launched[0]?.teamCredentialBindings).toEqual([expect.objectContaining({ slot: { kind: 'provider_model' },
         resourceId: 'model-resource', expectedResourceRevision: 3, providerModelSelection: { agentTargetKey: targetKey, modelId: 'team-model' } })]);
     }
-    expect(reads).toEqual([testCase.layer === 'home' ? '/v1/home/governance/get' : '/v1/teams/get']);
+    const governanceReads = reads.filter(path => path === '/v1/teams/get' || path === '/v1/home/governance/get');
+    expect(governanceReads).toEqual([testCase.layer === 'home' ? '/v1/home/governance/get' : '/v1/teams/get']);
   });
 });

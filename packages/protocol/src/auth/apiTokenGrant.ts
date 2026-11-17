@@ -21,17 +21,40 @@ import { SessionSpawnNewInputV2BaseSchema, SessionSpawnNewInputV2Schema } from '
 import { ConnectedServiceBindingsV2Schema, type ConnectedServiceBindingsV2 } from '../connect/connectedServiceBindings.js';
 import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
+import { ManagedPresetSelectionV1Schema } from '../machines/managed/managedConfigurationV1.js';
+import { ManagedControllerV1Schema } from '../machines/managed/managedMachineV1.js';
+import type { ManagedAcquireInputV1 } from '../machines/managed/actionsV1.js';
+
+/** Exact non-content preset route captured by Session root admission. */
+export const ApiTokenSessionPresetAcquisitionV1Schema = lazyZodSchema(() => z.strictObject({
+  selection: ManagedPresetSelectionV1Schema,
+  controller: ManagedControllerV1Schema,
+}));
+export type ApiTokenSessionPresetAcquisitionV1 = z.infer<typeof ApiTokenSessionPresetAcquisitionV1Schema>;
 
 /** Prompt-free admission projection; ordinary Session input retains private custody. */
 export const ApiTokenSessionSpawnAdmissionV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.pick(SessionSpawnNewInputV2BaseSchema, {
   executionTarget: true, agentTarget: true, directory: true, organizationPlacement: true,
   modelSelection: true, permissionMode: true, connectedServices: true,
-}), { machineSetupRequested: z.optional(z.literal(true)) })));
+}), { managedPresetAcquisition: z.optional(ApiTokenSessionPresetAcquisitionV1Schema),
+  machineSetupRequested: z.optional(z.literal(true)) })));
 export type ApiTokenSessionSpawnAdmissionV1 = z.infer<typeof ApiTokenSessionSpawnAdmissionV1Schema>;
-export function projectApiTokenSessionSpawnAdmissionV1(input: unknown): ApiTokenSessionSpawnAdmissionV1 {
+export function projectApiTokenSessionSpawnAdmissionV1(input: unknown,
+  options: Readonly<{ managedPresetAcquisition?: ManagedAcquireInputV1 }> = {}): ApiTokenSessionSpawnAdmissionV1 {
   const canonical = SessionSpawnNewInputV2Schema.parse(input);
+  const captured = options.managedPresetAcquisition;
+  const acquisition = captured ? ApiTokenSessionPresetAcquisitionV1Schema.parse({ selection: captured.selection,
+    controller: 'controller' in captured ? captured.controller : undefined }) : undefined;
+  if (acquisition && (canonical.sessionPlacement?.kind !== 'preset'
+    || canonical.sessionPlacement.homeId !== acquisition.selection.homeId
+    || canonical.sessionPlacement.presetId !== acquisition.selection.id
+    || canonical.executionTarget.serverId !== acquisition.selection.homeId
+    || canonical.executionTarget.machineId !== acquisition.controller.machineId)) {
+    throw new Error('Session preset acquisition does not match its placement and execution target');
+  }
   return ApiTokenSessionSpawnAdmissionV1Schema.parse({
     executionTarget: canonical.executionTarget, agentTarget: canonical.agentTarget, directory: canonical.directory,
+    ...(acquisition ? { managedPresetAcquisition: acquisition } : {}),
     ...(canonical.organizationPlacement !== undefined ? { organizationPlacement: canonical.organizationPlacement } : {}),
     ...(canonical.modelSelection !== undefined ? { modelSelection: canonical.modelSelection } : {}),
     ...(canonical.permissionMode !== undefined ? { permissionMode: canonical.permissionMode } : {}),

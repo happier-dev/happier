@@ -23,6 +23,28 @@ import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { computeDeploymentEnvironmentUpdateInputDigestV1, computeDeploymentEnvironmentUpdateMetadataDigestV1,
   isDeploymentEnvironmentUpdateNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 
+it.each(['plain', 'e2ee'] as const)('binds demanded Project defaults operands in the %s envelope', mode => {
+  const actionId = 'projects.sessionDefaults.get';
+  const target = { kind: 'machine', machineId: 'controller' } as const;
+  const input = { projectRef: { serverId: 'srv_home', projectKey: 'selected' }, sourceRef: { serverId: 'srv_home', sourceId: 'source' } };
+  const envelope = mode === 'plain' ? { v: 1, requestId: 'project-defaults', target, input } as const
+    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: { serverIdentityId: 'srv_home', accountId: 'actor', actionId, requestId: 'project-defaults', target,
+        authentication: { kind: 'account', tokenEpoch: 1 } }, input,
+      material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(9) }, randomBytes: n => new Uint8Array(n).fill(2) });
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'proof', binding: {
+    accountId: 'actor', custodianAccountId: 'actor', authentication: { kind: 'account', tokenEpoch: 1 },
+    serverIdentityId: 'srv_home', machineId: target.machineId, installationId: 'installation', actionId,
+    requestId: envelope.requestId, target, accountEncryptionMode: mode,
+    ...(envelope.v === 2 && envelope.machineRuntimeDemand ? { machineRuntimeDemand: envelope.machineRuntimeDemand } : {}),
+    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), projectSessionDefaultsAdmission: input,
+  } });
+  expect(isExternalActionAuthorizationBoundToEnvelope(authorization.binding, { actionId, machineId: target.machineId, envelope })).toBe(true);
+  expect(isExternalActionAuthorizationBoundToEnvelope({ ...authorization.binding,
+    projectSessionDefaultsAdmission: { ...input, projectRef: { serverId: 'srv_home', projectKey: 'sibling' } } },
+    { actionId, machineId: target.machineId, envelope })).toBe(false);
+});
+
 it.each([
   ['account', { authentication: { kind: 'account', tokenEpoch: 1 } }, 'present_user'],
   ['terminal', { authentication: { kind: 'terminal', tokenEpoch: 1 } }, 'account_automation'],
@@ -463,6 +485,37 @@ it('binds the controller proof when its admitted receiver signs an archive phase
   expect(verifyExternalActionMachineRpcRequestV1({ ...request, signature, publicKey: key.publicKey })).toBe(true);
   const changed = { ...request, deploymentChildExecution: { ...sourcePacket, requestId: 'another-child' } };
   expect(verifyExternalActionMachineRpcRequestV1({ ...changed, signature, publicKey: key.publicKey })).toBe(false);
+});
+
+it('binds a Session preset carrier only to the exact projected preset and controller', () => {
+  const target = { kind: 'machine', machineId: 'controller' } as const;
+  const acquisition = { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 2 },
+    controller: { machineId: target.machineId, installationId: 'installation' } } as const;
+  const envelope = { v: 1, requestId: 'preset-session', target, input: {}, sessionSpawnAdmission: {
+    executionTarget: { serverId: 'home', machineId: target.machineId }, directory: { kind: 'managed' },
+    managedPresetAcquisition: acquisition } } as const;
+  const binding = { serverIdentityId: 'home', accountId: 'member', custodianAccountId: 'owner',
+    machineId: target.machineId, installationId: 'installation', actionId: 'session.spawn_new', requestId: envelope.requestId,
+    target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    authentication: { kind: 'account', tokenEpoch: 0 }, sessionPresetAcquisition: acquisition
+  } satisfies ExternalActionExecutionAuthorizationBindingV1;
+  const input = { actionId: binding.actionId, machineId: target.machineId, envelope };
+  expect(isExternalActionAuthorizationBoundToEnvelope(binding, input)).toBe(true);
+  expect(isExternalActionAuthorizationBoundToEnvelope({ ...binding, sessionPresetAcquisition: {
+    ...acquisition, admission: { preset: { id: acquisition.selection.id, homeId: acquisition.selection.homeId,
+      revision: acquisition.selection.revision, owner: { kind: 'team', teamId: 'team' }, controller: acquisition.controller,
+      contentEncryptionMode: 'plain', configurationRevision: 0,
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+      presetContent: { content: { t: 'plain', v: { privateSetup: 'retained' } }, recipients: [] }, delegated: true },
+  } }, input)).toBe(true);
+  for (const changed of [{ ...acquisition, selection: { ...acquisition.selection, id: 'other' } },
+    { ...acquisition, selection: { ...acquisition.selection, revision: 3 } },
+    { ...acquisition, controller: { ...acquisition.controller, installationId: 'other' } }]) {
+    expect(isExternalActionAuthorizationBoundToEnvelope({ ...binding, sessionPresetAcquisition: changed }, input)).toBe(false);
+  }
+  expect(isExternalActionAuthorizationBoundToEnvelope({ ...binding, sessionPresetAcquisition: undefined }, input)).toBe(false);
+  const foreign = { ...binding, actionId: 'session.fork' };
+  expect(isExternalActionAuthorizationBoundToEnvelope(foreign, { ...input, actionId: foreign.actionId })).toBe(false);
 });
 
 it.each(['machine', 'session'] as const)('binds an original %s-targeted envelope to its exact root and execution Machine', kind => {

@@ -31,6 +31,28 @@ Matching development Protocol, CLI and UI readers consume these authoring
 summaries together. This changes neither execution admission nor persisted
 state and introduces no compatibility adapter.
 
+## Session preset carrier admission (unreleased 0.3, implementation in progress)
+
+A Session selected from a shared Machine preset can reach that preset's hidden
+controller through the existing preset admission owner. The prompt-free Session
+admission optionally carries `managedPresetAcquisition`: only the selected
+Home/preset/revision and controller Machine/installation. Home admits that pair
+once and retains the canonical preset metadata, mode-tagged content, recipients
+and delegation in the signed root's `sessionPresetAcquisition`. The installed
+receiver compares the public pair with the opened Session input; its existing
+Home verifier authenticates the full supplied binding against the token before
+the snapshot is consumed. Encrypted preset content stays opaque to Home.
+
+The reviewed resource-bound acquisition consumes that admitted snapshot without
+mutable preset or Group admission reads. Archive and edits apply to the next root;
+the admitted creation retains its revision and policy through first allocation.
+Capacity is measured by the allocation owner. Direct controller launches keep
+their existing Machine authority requirement.
+
+Matching development Protocol, Home, CLI and UI readers must reload together;
+older strict readers reject these optional fields when present. No migration,
+new grant, proof format or route is introduced. Composed validation is pending.
+
 ## Workflow command JSON input (unreleased 0.3)
 
 The closed `machines.command.run` input accepts optional strict JSON `stdin`.

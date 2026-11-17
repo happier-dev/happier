@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import type { ProjectAccountRowPayloadV1, ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { PROJECT_ACCOUNT_ROW_KINDS_V1, type ProjectAccountRowPayloadV1, type ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { fetchAccountEncryptionProjectRowsMigrationCandidates } from './fetchAccountEncryptionProjectRowsMigrationCandidates';
 import { buildAccountEncryptionProjectRowsDirective } from './buildAccountEncryptionProjectRowsDirective';
@@ -14,6 +14,8 @@ const payloads: ProjectAccountRowPayloadV1[] = [
     { key: { kind: 'relationship-graph' }, value: { relationships: [] } },
     { key: { kind: 'project-organization', serverId: 'home', projectKey: 'project' }, value: { hidden: true, pinned: true } },
     { key: { kind: 'services-organization', serverId: 'home' }, value: { pinnedEnvironmentIds: ['env-a'] } },
+    { key: { kind: 'project-session-defaults', serverId: 'home', projectKey: 'project' },
+        value: { placement: { kind: 'preset', homeId: 'home', presetId: 'selected-preset' } } },
 ];
 
 describe('Project row Account encryption census and reseal', () => {
@@ -24,7 +26,7 @@ describe('Project row Account encryption census and reseal', () => {
             expect(path).toBe('/v1/account/project-rows/list');
             expect(init?.method).toBe('POST');
             // Every registered family, by asking: a list without kinds is the older Project-only census.
-            expect(JSON.parse(String(init?.body))).toEqual({ kinds: ['workspace-ref', 'relationship-graph', 'project-organization', 'services-organization'] });
+            expect(JSON.parse(String(init?.body))).toEqual({ kinds: [...PROJECT_ACCOUNT_ROW_KINDS_V1] });
             return Response.json({ status: 'listed', rows: [...rows, tombstone], coverage: 'complete' });
         };
         for (const sourceMode of ['plain', 'e2ee'] as const) {
@@ -34,7 +36,9 @@ describe('Project row Account encryption census and reseal', () => {
             expect(candidates.map(row => row.payload)).toEqual(payloads);
             const target = sourceMode === 'plain' ? { mode: 'e2ee' as const, material, randomBytes } : { mode: 'plain' as const };
             const directive = buildAccountEncryptionProjectRowsDirective({ candidates, target });
-            expect(directive!.items).toHaveLength(4);
+            expect(directive!.items).toHaveLength(payloads.length);
+            const selectedDefaults = directive!.items.find(item => item.key.kind === 'project-session-defaults');
+            expect(selectedDefaults?.content?.t).toBe(target.mode === 'plain' ? 'plain' : 'encrypted');
             rows = directive!.items.map(item => ({ key: item.key, revision: item.expectedRevision + 1, content: item.content }));
         }
         expect(rows).toEqual(payloads.map(payload => ({ key: payload.key, revision: 9, content: { t: 'plain', v: payload } })));

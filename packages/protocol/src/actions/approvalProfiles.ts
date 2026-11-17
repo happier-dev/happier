@@ -69,17 +69,14 @@ export type BoundApprovalProfileV1 = Readonly<{
 }>;
 
 /**
- * The one Session → profile reference rule, read at each admission: the Session's own choice,
- * else the person's default for the Session's Machine, else none (Account settings).
- * A Session without its own choice stores null or nothing.
+ * The Session's captured choice. Machine defaults are resolved only when creating a root.
  */
 export function resolveSessionApprovalProfileReferenceV1(
-  metadata: Readonly<{ approvalProfileId?: unknown; machineId?: unknown }>,
-  settings: Readonly<{ machineApprovalProfiles?: Readonly<Record<string, string>> }> | null | undefined,
+  metadata: Readonly<{ approvalProfileId?: unknown }>,
 ): string | null {
   const own = ApprovalProfileIdV1Schema.safeParse(metadata.approvalProfileId);
   if (own.success) return own.data;
-  return typeof metadata.machineId === 'string' ? settings?.machineApprovalProfiles?.[metadata.machineId] ?? null : null;
+  return null;
 }
 
 const EMPTY_ACTION_ROW: ActionSettingsOverride = Object.freeze({ enabledPlacements: [], disabledPlacements: [],

@@ -7,12 +7,12 @@ import type { PluginActionWorkflowBlockV1 } from './pluginActionDtoSupport.gener
 export type WorkflowDiagnosticsActionInputById = {
     readonly "workflow.trigger.test": {
         trigger: null | {
-            sourceInstanceId: string;
-            sourceContractVersion: number;
             eventRef: {
                 pluginId: string;
                 localId: string;
             };
+            sourceInstanceId: string;
+            sourceContractVersion: number;
             filter: null | {
                 v: 1;
                 all: ({
@@ -28,20 +28,22 @@ export type WorkflowDiagnosticsActionInputById = {
             maximumObservationAgeMs: null | number;
         };
         observation: {
-            sourceInstanceId: string;
-            sourceContractVersion: number;
             eventRef: {
                 pluginId: string;
                 localId: string;
             };
+            sourceInstanceId: string;
+            sourceContractVersion: number;
             occurredAt: number;
             observationReceivedAt: number;
             payload: JsonValue;
         };
     };
-    readonly "workflow.starters.list": Record<string, never>;
+    readonly "workflow.starters.list": {
+        [x: string]: never;
+    };
     readonly "workflow.starters.resolve": {
-        key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-move' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
+        key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
         session?: undefined | {
             sessionId: string;
             machineId: string;
@@ -55,7 +57,7 @@ export type WorkflowDiagnosticsActionResultById = {
     };
     readonly "workflow.starters.list": {
         examples: {
-            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-move' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
+            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
             titleKey: string;
             descriptionKey: string;
             definition: Readonly<{
@@ -274,10 +276,7 @@ export type WorkflowDiagnosticsActionResultById = {
                         };
                     })[] | undefined;
                     permissionModeUpdatedAt?: number | undefined;
-                    launchEnvironment?: undefined | {
-                        values: Record<string, string>;
-                        unset: string[];
-                    };
+                    environmentVariables?: Record<string, string> | undefined;
                     providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;
@@ -354,29 +353,6 @@ export type WorkflowDiagnosticsActionResultById = {
                     };
                     roleId?: string | undefined;
                     engine?: undefined | {
-                        agentTarget: {
-                            kind: 'agent';
-                            identity: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            definitionId?: string | undefined;
-                        };
-                        modelSelection?: null | undefined | {
-                            v: 1;
-                            ref: {
-                                agentTargetKey: string;
-                                providerConnectionId: null;
-                                modelId: string;
-                            } | {
-                                agentTargetKey: string;
-                                providerConnectionId: string;
-                                modelId: string;
-                            };
-                            updatedAt: number;
-                        };
-                        effort?: string | undefined;
-                    } | {
                         kind: 'input';
                         name: string;
                         path?: (number | string)[] | undefined;
@@ -384,8 +360,6 @@ export type WorkflowDiagnosticsActionResultById = {
                         kind: 'item';
                         field: 'value';
                         path?: (number | string)[] | undefined;
-                    } | {
-                        role: string;
                     };
                     participant?: undefined | {
                         kind: 'input';
@@ -499,7 +473,7 @@ export type WorkflowDiagnosticsActionResultById = {
     readonly "workflow.starters.resolve": {
         status: 'ready';
         example: {
-            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-move' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
+            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
             titleKey: string;
             descriptionKey: string;
             definition: Readonly<{
@@ -718,10 +692,7 @@ export type WorkflowDiagnosticsActionResultById = {
                         };
                     })[] | undefined;
                     permissionModeUpdatedAt?: number | undefined;
-                    launchEnvironment?: undefined | {
-                        values: Record<string, string>;
-                        unset: string[];
-                    };
+                    environmentVariables?: Record<string, string> | undefined;
                     providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;
@@ -798,29 +769,6 @@ export type WorkflowDiagnosticsActionResultById = {
                     };
                     roleId?: string | undefined;
                     engine?: undefined | {
-                        agentTarget: {
-                            kind: 'agent';
-                            identity: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            definitionId?: string | undefined;
-                        };
-                        modelSelection?: null | undefined | {
-                            v: 1;
-                            ref: {
-                                agentTargetKey: string;
-                                providerConnectionId: null;
-                                modelId: string;
-                            } | {
-                                agentTargetKey: string;
-                                providerConnectionId: string;
-                                modelId: string;
-                            };
-                            updatedAt: number;
-                        };
-                        effort?: string | undefined;
-                    } | {
                         kind: 'input';
                         name: string;
                         path?: (number | string)[] | undefined;
@@ -828,8 +776,6 @@ export type WorkflowDiagnosticsActionResultById = {
                         kind: 'item';
                         field: 'value';
                         path?: (number | string)[] | undefined;
-                    } | {
-                        role: string;
                     };
                     participant?: undefined | {
                         kind: 'input';
@@ -939,6 +885,131 @@ export type WorkflowDiagnosticsActionResultById = {
                 events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
             };
             trigger?: undefined | {
+                kind: 'action';
+                consentFor: {
+                    automationId: string;
+                    triggerId: string;
+                };
+                consentedWorkflowRevision: number;
+                enabled: boolean;
+            } | {
+                kind: 'action';
+                phase: 'after' | 'before';
+                actionIds: string[];
+                enabled: boolean;
+                subject?: undefined | {
+                    checkId: string;
+                    sourceInstanceId: string;
+                    kind: 'healthCheck';
+                    serverId: string;
+                } | {
+                    kind: 'app';
+                    serverId: string;
+                    projectSourceId: string;
+                } | {
+                    kind: 'approvalProfile';
+                    serverId: string;
+                    profileId: string;
+                } | {
+                    kind: 'backup';
+                    serverId: string;
+                    environmentId: string;
+                } | {
+                    kind: 'database';
+                    serverId: string;
+                    target: {
+                        kind: 'environment';
+                        environmentId: string;
+                        service: string;
+                        database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
+                    };
+                } | {
+                    kind: 'environment';
+                    serverId: string;
+                    environmentId: string;
+                } | {
+                    kind: 'plugin';
+                    serverId: string;
+                    pluginId: string;
+                    subjectKindId: string;
+                    identity: JsonValue;
+                } | {
+                    kind: 'session';
+                    serverId: string;
+                    sessionId: string;
+                } | {
+                    serverId: string;
+                    machineId: string;
+                    kind: 'machine';
+                } | {
+                    serverId: string;
+                    projectKey: string;
+                    kind: 'project';
+                };
+                mode?: 'notify' | 'wait' | undefined;
+                onFailure?: 'ask' | 'refuse' | undefined;
+            } | {
                 kind: 'ciFailed' | 'prComment';
                 pullRequest: {
                     repository: string;
@@ -1015,6 +1086,116 @@ export type WorkflowDiagnosticsActionResultById = {
                     name: string;
                     description: null | string;
                 };
+                subject?: undefined | {
+                    checkId: string;
+                    sourceInstanceId: string;
+                    kind: 'healthCheck';
+                    serverId: string;
+                } | {
+                    kind: 'app';
+                    serverId: string;
+                    projectSourceId: string;
+                } | {
+                    kind: 'approvalProfile';
+                    serverId: string;
+                    profileId: string;
+                } | {
+                    kind: 'backup';
+                    serverId: string;
+                    environmentId: string;
+                } | {
+                    kind: 'database';
+                    serverId: string;
+                    target: {
+                        kind: 'environment';
+                        environmentId: string;
+                        service: string;
+                        database: string;
+                    } | {
+                        savedSecretId: string;
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'manual';
+                    } | {
+                        source: {
+                            kind: 'env_file';
+                            path: string;
+                            variable: string;
+                        } | {
+                            kind: 'service';
+                            serviceId: string;
+                            variable: string;
+                        } | {
+                            kind: 'sqlite_file';
+                            path: string;
+                        };
+                        accountId: string;
+                        workspace: ({
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                            kind?: undefined;
+                        } | {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                            machineId?: undefined;
+                        }) & JsonValue;
+                        installationId: string;
+                        projectKey: string;
+                        kind: 'worktree';
+                    };
+                } | {
+                    kind: 'environment';
+                    serverId: string;
+                    environmentId: string;
+                } | {
+                    kind: 'plugin';
+                    serverId: string;
+                    pluginId: string;
+                    subjectKindId: string;
+                    identity: JsonValue;
+                } | {
+                    kind: 'session';
+                    serverId: string;
+                    sessionId: string;
+                } | {
+                    serverId: string;
+                    machineId: string;
+                    kind: 'machine';
+                } | {
+                    serverId: string;
+                    projectKey: string;
+                    kind: 'project';
+                };
             } | {
                 kind: 'pluginEvent';
                 eventRef: {
@@ -1063,6 +1244,8 @@ export type WorkflowDiagnosticsActionResultById = {
                     c: string;
                 };
                 enabled: boolean;
+                subjectKind?: string | undefined;
+                subjectKey?: string | undefined;
             } | {
                 kind: 'schedule';
                 schedule: {
@@ -1121,6 +1304,23 @@ export type WorkflowDiagnosticsActionResultById = {
                 };
                 kind: 'sessionLifecycle';
                 enabled: boolean;
+            } | {
+                triggerDefinitionEnvelope: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: PluginJsonValueV2;
+                };
+                kind: 'action';
+                phase: 'after' | 'before';
+                actionIds: string[];
+                enabled: boolean;
+                reachesOthers?: boolean | undefined;
+                subjectKind?: string | undefined;
+                subjectKey?: string | undefined;
+                mode?: 'notify' | 'wait' | undefined;
+                onFailure?: 'ask' | 'refuse' | undefined;
             };
             sessionTarget?: undefined | {
                 sessionId: string;

@@ -1,4 +1,6 @@
 import tweetnacl from 'tweetnacl';
+import { ManagedMachinePresetRecipientsV1Schema, type ManagedMachinePresetRecipientV1, type ManagedMachinePresetRecipientsV1 } from './managedMachinePresetContentCarrierV1.js';
+export { ManagedMachinePresetRecipientV1Schema, ManagedMachinePresetRecipientsV1Schema, type ManagedMachinePresetRecipientV1, type ManagedMachinePresetRecipientsV1 } from './managedMachinePresetContentCarrierV1.js';
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { openEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
@@ -271,19 +273,6 @@ export function createManagedMachinePresetStoredContentV1Schema<Choices extends 
 export const ManagedMachinePresetStoredContentV1Schema = lazyZodSchema(() =>
   createManagedMachinePresetStoredContentV1Schema(PluginJsonValueV2Schema));
 export type ManagedMachinePresetStoredContentV1 = Readonly<z.infer<typeof ManagedMachinePresetStoredContentV1Schema>>;
-
-/** Persisted recipient envelopes are Account-scoped; Machine recipients are not a valid shape. */
-export const ManagedMachinePresetRecipientV1Schema = lazyZodSchema(() => z.strictObject({
-  accountId: id(),
-  envelope: SavedSecretResourceRecipientEnvelopeV1Schema,
-}));
-export type ManagedMachinePresetRecipientV1 = Readonly<z.infer<typeof ManagedMachinePresetRecipientV1Schema>>;
-
-export const ManagedMachinePresetRecipientsV1Schema = lazyZodSchema(() => z.array(
-  ManagedMachinePresetRecipientV1Schema,
-).check(z.refine((items) => new Set(items.map(item => item.accountId)).size === items.length,
-  { message: 'Duplicate accountId' })));
-export type ManagedMachinePresetRecipientsV1 = ReadonlyArray<ManagedMachinePresetRecipientV1>;
 
 /** Opaque content storage shared by Preset and Managed Machine server projections. */
 export const ManagedMachinePresetEnvelopeV1Schema = lazyZodSchema(() => z.strictObject({

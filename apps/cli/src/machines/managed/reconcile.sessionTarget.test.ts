@@ -803,7 +803,30 @@ describe('Session placement on a managed target (driver)', () => {
         await expect(driver.openSessionTarget(recovery)).resolves.toMatchObject({ id: target.id });
     });
 
-    it('places a Session only for the row\'s custodian; another requester is refused before any native IO', async () => {
+    it.each(['admitted', 'uncommitted', 'different-requester', 'unbound'] as const)(
+      'places only the committed resource-bound creator Session across controller custody (%s)', async scenario => {
+        const h = harness({ guest: true });
+        const row = ManagedMachineV1Schema.parse({ ...machine, enrollmentAccountId: 'member',
+            ...(scenario === 'unbound' ? {} : { acquisitionMode: 'resource-bound' }),
+            preset: { id: 'team-preset', revision: 3, contentEncryptionMode: 'plain' } });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => row });
+        const lifetime = new AbortController();
+        onTestFinished(() => lifetime.abort());
+        const opening = driver.openSessionTarget({ managedId: row.id, sessionId: 'holder-nonce',
+            ...(scenario === 'uncommitted' ? {} : { committedSessionId: 'home-committed-session' }),
+            requesterAccountId: scenario === 'different-requester' ? 'another-member' : 'member',
+            lifetime: lifetime.signal, holder });
+        if (scenario === 'admitted') {
+            const target = await opening;
+            await expect(target.exec('true', lifetime.signal)).resolves.toMatchObject({ status: 0 });
+            expect(h.calls).toContain('bootstrap');
+        } else {
+            await expect(opening).rejects.toMatchObject({ code: 'managed_target_access_unavailable' });
+            expect(h.calls).toEqual([]);
+        }
+    });
+
+    it('places an ordinary target only for the row\'s custodian; another requester is refused before any native IO', async () => {
         const h = harness();
         const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => machine });
         const session = new AbortController();

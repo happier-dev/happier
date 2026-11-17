@@ -1,11 +1,15 @@
 import { ResourceTeamShareScopeV1Schema } from '../teams/resourceGrantAccessV1.js';
+import { ManagedAdmissionPresetContentV1Schema } from '../machines/managed/managedMachinePresetContentCarrierV1.js';
+import { ManagedMachinePresetV1BaseSchema } from '../machines/managed/managedMachinePresetStructureV1.js';
+import { ApiTokenSessionPresetAcquisitionV1Schema } from '../auth/apiTokenGrant.js';
 import { ManagedMachinePresetPrepareInputV1Schema, ManagedMachinePresetRevisionInputV1Schema } from '../machines/managed/managedMachinePresetRevisionV1.js';
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1, MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '../machines/managed/machinePresetActionIdsV1.js';
 import { ExternalActionRequestIdV1Schema, ExternalActionPreOpenFailureCodeSchema, ExternalActionTargetRefusalPhaseSchema } from './externalActionHttpError.js';
 import { ExternalActionWorkflowSessionLeafV1Schema } from './workflowSessionChildV1.js';
 export { ExternalActionWorkflowSessionLeafV1Schema, projectExternalActionWorkflowSessionLeafContextV1, type ExternalActionWorkflowSessionLeafV1,
   type InstalledWorkflowSessionLeafAdmission } from './workflowSessionChildV1.js';
-import { ACTION_INVOKE_ACTION_ID_V1, WorkflowActionIdV1Schema } from './actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, WorkflowActionIdV1Schema } from './actionIds.js';
+import { ProjectSessionDefaultsGetInputV1Schema, type ProjectSessionDefaultsGetInputV1 } from '../projects/projectSessionDefaultsSelectionV1.js';
 export * from './externalActionHttpError.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -1001,6 +1005,7 @@ export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.stric
   deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
   deploymentNativeAdmission: z.optional(DeploymentNativeAdmissionV1Schema),
   registryAppUpdateAdmission: z.optional(RegistryAppUpdateAdmissionV1Schema),
+  projectSessionDefaultsAdmission: z.optional(ProjectSessionDefaultsGetInputV1Schema),
 }));
 export type ExternalActionRequestEnvelopeV2 = z.infer<typeof ExternalActionRequestEnvelopeV2Schema>;
 export const ExternalActionRequestEnvelopeSchema = lazyZodSchema(() => z.union([
@@ -1075,6 +1080,20 @@ export function projectExternalActionDiscussionEnvelopeIdV1(input: Readonly<{
   return input.envelope.v === 1 ? projectExternalActionDiscussionIdV1(input.actionId, input.envelope.input)
     : input.envelope.discussionId;
 }
+export function projectExternalActionProjectSessionDefaultsAdmissionV1(actionId: string, input: unknown): ProjectSessionDefaultsGetInputV1 | undefined {
+  return actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 ? ProjectSessionDefaultsGetInputV1Schema.parse(input) : undefined;
+}
+
+export function projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1(input: Readonly<{
+  actionId: string; envelope: ExternalActionRequestEnvelope;
+}>): ProjectSessionDefaultsGetInputV1 | undefined {
+  if (input.actionId !== PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1) {
+    if (input.envelope.v === 2 && input.envelope.projectSessionDefaultsAdmission !== undefined) throw new TypeError('Unexpected Project defaults admission');
+    return undefined;
+  }
+  return ProjectSessionDefaultsGetInputV1Schema.parse(input.envelope.v === 1 ? input.envelope.input : input.envelope.projectSessionDefaultsAdmission);
+}
+
 export function projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1(input: Readonly<{
   actionId: string; envelope: ExternalActionRequestEnvelope;
 }>): RegistryAppUpdateAdmissionV1 | undefined {
@@ -1332,6 +1351,19 @@ const ExternalActionSessionSourceV1Schema = lazyZodSchema(() => z.strictObject({
   machineId: ExternalActionTargetIdV1Schema, installationId: ExternalActionTargetIdV1Schema,
 }));
 
+/** Same admitted preset, authenticated by the existing root signature. */
+export const ExternalActionSessionPresetAcquisitionV1Schema = lazyZodSchema(() => z.extend(ApiTokenSessionPresetAcquisitionV1Schema, {
+  admission: z.optional(z.strictObject({
+    preset: z.omit(ManagedMachinePresetV1BaseSchema, { content: true, recipients: true }),
+    presetContent: ManagedAdmissionPresetContentV1Schema,
+    delegated: z.boolean(),
+  })),
+}).check(z.refine(value => !value.admission || value.admission.preset.id === value.selection.id
+  && value.admission.preset.homeId === value.selection.homeId && value.admission.preset.revision === value.selection.revision
+  && (value.admission.preset.contentEncryptionMode === 'plain') === (value.admission.presetContent.content.t === 'plain'),
+  { message: 'Admitted preset snapshot must match its selection and mode' })));
+export type ExternalActionSessionPresetAcquisitionV1 = z.infer<typeof ExternalActionSessionPresetAcquisitionV1Schema>;
+
 /** Home-authenticated invocation facts. The selected daemon owns plaintext transformation. */
 const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     serverIdentityId: ExternalActionServerPrincipalIdV1Schema,
@@ -1359,6 +1391,8 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     managedAdmission: z.optional(z.union([ExternalActionManagedRecoveryAdmissionV1Schema, ExternalActionManagedControlAdmissionV1Schema])),
     /** Home admitted this exact preset using custodian-reviewed Team delegation. */
     managedAcquireDelegation: z.optional(z.literal(true)),
+    /** Home admitted this Session's exact selected preset/controller carrier. */
+    sessionPresetAcquisition: z.optional(ExternalActionSessionPresetAcquisitionV1Schema),
     /** Issuer-qualified private Account executor, scoped by the signed control admission. */
     managedAccountExecutor: z.optional(z.strictObject({ enrolledMachineId: ExternalActionTargetIdV1Schema })),
     /** Home-derived exact parent identity; only its installed post-approval child can establish this fact. */
@@ -1388,12 +1422,19 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     deploymentLinkAdmission: z.optional(z.strictObject({ environmentId: DeploymentIdentifierV1Schema, owner: ProjectSourceOwnerV1Schema })),
     deploymentNativeAdmission: z.optional(DeploymentNativeAdmissionV1Schema),
     registryAppUpdateAdmission: z.optional(RegistryAppUpdateAdmissionV1Schema),
+    projectSessionDefaultsAdmission: z.optional(ProjectSessionDefaultsGetInputV1Schema),
   });
 export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionApiTokenServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionAccountServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionTerminalServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
 ]).check(z.superRefine((value, context) => {
+  const projectDefaults = value.projectSessionDefaultsAdmission;
+  if (value.actionId === PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 ? !projectDefaults
+    || [projectDefaults.projectRef, projectDefaults.sourceRef].some(ref => ref && ref.serverId !== value.serverIdentityId)
+    : projectDefaults !== undefined) {
+    context.addIssue({ code: 'custom', path: ['projectSessionDefaultsAdmission'], message: 'Project defaults bind their exact selected Home operands.' });
+  }
   if (value.workspaceSyncAdmission && (!isProjectWorkspaceSyncOpenActionV1(value.actionId) && !isProjectWorkspaceSyncPreparationActionV1(value.actionId)
     || value.workspaceSyncAdmission.source.actorAccountId !== value.accountId)) {
     context.addIssue({ code: 'custom', path: ['workspaceSyncAdmission'], message: 'Sync source facts belong to their admitted requester.' });
@@ -1814,6 +1855,8 @@ export function externalActionExecutionAuthorizationRequestSchemaForActionV1(act
 export type ExternalActionExecutionAuthorizationRequestV1 = z.infer<typeof ExternalActionExecutionAuthorizationRequestV1Schema>;
 export const ExternalActionExecutionAuthorizationVerifyRequestV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
+  /** Native consumers authenticate the supplied full binding against the token once. */
+  binding: z.optional(ExternalActionExecutionAuthorizationBindingV1Schema),
   nativePurpose: z.optional(z.literal('machine_npm_profile_acquisition')),
   admittedMachineRole: z.optional(z.enum(['use', 'manage'])),
   managedFiniteWakeTarget: z.optional(ManagedWakeTargetV1Schema),

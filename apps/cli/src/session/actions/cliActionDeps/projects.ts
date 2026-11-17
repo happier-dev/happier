@@ -22,7 +22,7 @@ import { randomUUID } from 'node:crypto';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { readHostAdmittedReviewedRootV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { ProjectAccountWorkspaceRefV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { ProjectAccountWorkspaceRefV1Schema, type ProjectAccountRowPayloadV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { resolveProjectAccountWorkspaceRefRemovalV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 import type { ProjectWorkspaceUpdateInputV1, ProjectWorkspaceUpdateOutputV1, ProjectWorkspaceForgetInputV1, ProjectWorkspaceForgetOutputV1 } from '@happier-dev/protocol/projects/projectWorkspaceActionsV1';
 import { configuration } from '@/configuration';
@@ -39,6 +39,9 @@ import type { CliProjectAdmission, CliProjectAdmissionFailure, CliAdmittedProjec
 import type { createCliApprovalsArtifactStore } from '../approvals/artifactStore';
 import type { CliActionExactHomeTarget } from './types';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
+function isOrganizationPayload(payload: ProjectAccountRowPayloadV1): payload is Extract<ProjectAccountRowPayloadV1, { key: { kind: 'project-organization' } }> {
+  return payload.key.kind === 'project-organization';
+}
 export function createCliProjectActionDeps(
   params: Pick<CliActionDepsParams, 'serverId' | 'credentials' | 'isCredentialCurrent' | 'machineActionDirectTargetTransport' | 'onRequesterSessionCredentialDisclosure' | 'projectAction' | 'projectWorkerAccountAction' | 'projectDefinitionAction' | 'serverHttpBaseUrl' | 'serverIdentityId' | 'token'>,
   { readAdmittedProjectRows, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, assertProjectRequesterCurrent, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome }: Readonly<{
@@ -127,7 +130,7 @@ export function createCliProjectActionDeps(
           for (const row of result.openedRows) {
             if (!row.payload) continue;
             if (row.key.kind === 'workspace-ref' && 'id' in row.payload.value) acknowledgedWorkspaceRef = row.payload.value;
-            if (row.key.kind === 'project-organization' && !('id' in row.payload.value) && !('relationships' in row.payload.value)) {
+            if (row.key.kind === 'project-organization' && isOrganizationPayload(row.payload)) {
               acknowledgedOrganization = row.payload.value;
             }
           }
@@ -300,11 +303,13 @@ export function createCliProjectActionDeps(
       input = { ...input, projectRef: { ...input.projectRef, serverId: await resolveProjectHomeIdentity() } };
       const accountId = context?.externalActionExecutionAuthorization?.binding.accountId ?? homeAccountId;
       if (!accountId) return { ok: false, errorCode: 'project_organization_access_denied' };
-      const { mutateProjectAccountOrganization } = await import("@/workspaces/projectAccountRows");
+      const { mutateProjectAccountOrganization, mutateProjectSessionDefaults } = await import("@/workspaces/projectAccountRows");
       return runWithServerHttpBaseUrl(todoHomeBaseUrl, () => updateProjectOrganizationV1({
         accountScope: () => params.serverId === undefined && configuration.activeServerId !== projectHomeId
           ? null : { serverId: input.projectRef.serverId, accountId },
         mutateOrganization: mutation => mutateProjectAccountOrganization({ ...mutation,
+          ...projectRowsAuthority(context, 'projects.organization.update', mutation.signal), serverId: mutation.serverId }),
+        mutateSessionDefaults: mutation => mutateProjectSessionDefaults({ ...mutation,
           ...projectRowsAuthority(context, 'projects.organization.update', mutation.signal), serverId: mutation.serverId }),
       }, input, context));
     },

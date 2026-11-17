@@ -30,8 +30,41 @@ import { isOrdinaryMachineSetupNativeActionIdV1, isMachineSetupCombinedActionIdV
     SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 
 import { MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedAcquireInputV1Schema, type ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { createMachinePresetActionClient } from './managedMachinePresets';
 
 const failure = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode });
+
+/** Same requester-bound Preset origin binder for native acquire and Session preparation. */
+export function bindUiManagedPresetAcquireOriginV1(params: Omit<Parameters<typeof bindManagedPresetAcquireOriginV1>[0], 'resolveExact'> & Readonly<{
+    account: LazyActionAccountContext; signal?: AbortSignal;
+}>) {
+    const { account, signal, ...binding } = params;
+    return bindManagedPresetAcquireOriginV1({ ...binding, resolveExact: async input => {
+        const response = await account.request(MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+            ...(signal ? { signal } : {}),
+        }, { includeAuth: true, retry: 'none' });
+        return await response.json();
+    } });
+}
+
+/** Read the selected public Preset once, then use the native acquisition binder. */
+export async function prepareUiManagedPresetAcquire(params: Readonly<{
+    account: LazyActionAccountContext;
+    selection: Omit<Extract<ManagedAcquireInputV1['selection'], { kind: 'preset' }>, 'revision'>;
+    requestId: string;
+    resolvePool: Parameters<typeof bindManagedPresetAcquireOriginV1>[0]['resolvePool'];
+    signal?: AbortSignal;
+}>) {
+    const read = await createMachinePresetActionClient({ request: params.account.request }).execute('machines.presets.get', {
+        homeId: params.selection.homeId, id: params.selection.id,
+    }, { signal: params.signal });
+    if (read.kind === 'refused') return read;
+    const input = ManagedAcquireInputV1Schema.parse({ selection: { ...params.selection, revision: read.preset.revision } });
+    return bindUiManagedPresetAcquireOriginV1({ account: params.account, signal: params.signal,
+        input, preset: read.preset, requestKey: params.requestId, resolvePool: params.resolvePool });
+}
 
 export { isManagedRetainedControlInvocation as isManagedMachineRetainedControlAction } from '@happier-dev/protocol/machines/managed/actionsV1';
 
@@ -97,17 +130,11 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
     const presetOrigin = params.presetOrigin ?? context.managedPresetOrigin;
     if (actionId === 'machines.managed.acquire' && presetOrigin) {
         let poolFailure: Extract<ActionExecuteResult, { ok: false }> | undefined;
-        const bound = await bindManagedPresetAcquireOriginV1({
+        const bound = await bindUiManagedPresetAcquireOriginV1({
+            account, signal: params.signal,
             input: ManagedMachineActionInputSchemasV1['machines.managed.acquire'].parse(input),
             preset: presetOrigin,
             requestKey: requestId,
-            resolveExact: async exactInput => {
-                const response = await account.request(MANAGED_PRESET_ACQUIRE_ROUTING_PATH_V1, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(exactInput),
-                    ...(params.signal ? { signal: params.signal } : {}),
-                }, { includeAuth: true, retry: 'none' });
-                return await response.json();
-            },
             resolvePool: async poolInput => {
                 const result = await (params.resolvePresetPool?.(poolInput) ?? Promise.resolve(failure('admission_unavailable')));
                 if (result.ok) return result.result;
