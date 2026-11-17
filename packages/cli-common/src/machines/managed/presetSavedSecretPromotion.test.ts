@@ -157,6 +157,7 @@ describe('managed preset Saved Secret promotion capture', () => {
           return archived ? [] : [retained];
         },
         readRecipientCensus: async input => {
+          if (!('presetId' in input)) throw new Error('Expected source preset recipient census');
           censusIds.push(input.presetId ?? '');
           return { kind: 'ready', contentEncryptionMode: 'plain', recipients: [] };
         },
@@ -284,6 +285,7 @@ describe('managed preset Saved Secret promotion capture', () => {
         listPresets: async () => ({ presets: [source] }),
         listManaged: async archived => archived ? [unavailable] : [readable],
         readRecipientCensus: async input => {
+          if (!('presetId' in input)) throw new Error('Expected source preset recipient census');
           censusIds.push(input.presetId ?? '');
           return { kind: 'ready', contentEncryptionMode: 'plain', recipients: [] };
         },

@@ -146,7 +146,7 @@ describe('preset authored configuration counter', () => {
   it.each(['plain', 'e2ee'] as const)('advances only launch/setup changes through real %s custody', async mode => {
     const accountKey = new Uint8Array(32).fill(13);
     const publicKey = tweetnacl.box.keyPair.fromSecretKey(accountKey).publicKey;
-    const recipientCensus = [{ account: { kind: 'account' as const, accountId: 'author', firstName: 'Author',
+    const recipientCensus = [{ account: { kind: 'account' as const, accountId: 'author', name: null, firstName: 'Author',
       lastName: null, username: 'author', avatarUrl: null }, readiness: { status: 'available' as const,
       contentPublicKey: encodeBase64(publicKey), contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) },
       envelopeStatus: 'missing' as const }];
@@ -257,7 +257,7 @@ describe('preset authored configuration counter', () => {
       readSelectedProvisioners: async () => [], randomBytes: (length: number) => new Uint8Array(length),
     } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[1];
     const request = { actionId: 'machines.presets.update', input: { id: 'preset', homeId: 'home', expectedRevision: 7,
-      patch: { retention: { kind: 'until-delete' }, configurationRevision: 88 } }, context: { runtimeAccountId: 'author' } };
+      patch: { retention: { kind: 'until-delete' }, configurationRevision: 88 } }, context: { runtimeAccountId: 'author' } } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[0];
     expect(await managed.prepareManagedMachinePresetAuthoringV1(request, deps)).toMatchObject({
       input: { patch: { retention: { kind: 'until-delete' } } } });
     const prepared = await managed.prepareManagedMachinePresetAuthoringV1(request, deps);

@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import type { JsonValue } from '@happier-dev/protocol';
 import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedMachineControllerError, ManagedMachineNativeRefusal } from './controllerErrors.js';
 import { settleManagedMachineDeleteIntent } from './destroy.js';
@@ -18,7 +19,7 @@ it.each([false, true])('preserves unknown Delete diagnostics without overriding 
     const settled = { ...machine, allocation: 'confirmed-absent' as const };
     const work = settleManagedMachineDeleteIntent({ machine,
         // The contributed native Action and Home report are external boundaries.
-        invoke: async role => role === 'destroy'
+        invoke: async (role): Promise<JsonValue> => role === 'destroy'
             ? { kind: 'unknown', code: 'native_command_failed', nativeCause }
             : { observedAt: 2, availability: 'absent' },
         report: async deletion => {
