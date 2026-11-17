@@ -19,7 +19,7 @@ import { readAppliedSessionCapabilitySelectionFromMetadataV1, readSessionCapabil
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
-import { sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
+import { projectSessionModelSelectionV2ToV1, sessionModelSelectionV2TeamBindingIntent, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { ProviderBoundModelRef, ConnectedServiceMaterializationIdentityV1, SessionModelSelectionV2, ConnectedServiceBindingsV2, SessionCapabilitySelectionV1, SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import type { CatalogAgentId } from '@/agent/catalog/ids';
@@ -263,9 +263,9 @@ function readAgentModeFromMetadata(
 function readModelFromOptions(
   options: SpawnSessionOptions | null | undefined,
   source: CandidateSource,
-): TimestampedCandidate<ProviderBoundModelRef | null> | null {
+): TimestampedCandidate<SessionModelSelection | null> | null {
   return options?.modelSelection
-    ? { source, value: options.modelSelection.ref, updatedAt: options.modelSelection.updatedAt }
+    ? { source, value: options.modelSelection, updatedAt: options.modelSelection.updatedAt }
     : null;
 }
 
@@ -281,30 +281,15 @@ function resolveModelTargetKey(params: ResolveSessionRuntimeSnapshotParams): str
 function readModelFromMetadata(
   metadata: Record<string, unknown> | null | undefined,
   agentTargetKey: string | null,
-): TimestampedCandidate<ProviderBoundModelRef | null> | null {
+): TimestampedCandidate<SessionModelSelection | null> | null {
+  const selection = readSessionModelSelectionV2FromMetadata(metadata);
+  if (selection) return { source: 'persisted', value: selection, updatedAt: selection.updatedAt };
   if (!agentTargetKey) return null;
   const resolved = resolveModelSelectionIntentFromSessionMetadata(metadata, agentTargetKey);
   return resolved
-    ? { source: 'persisted', value: resolved.selection, updatedAt: resolved.updatedAt }
+    ? { source: 'persisted', value: resolved.selection
+      ? { v: 1, ref: resolved.selection, updatedAt: resolved.updatedAt } : null, updatedAt: resolved.updatedAt }
     : null;
-}
-
-// The persisted V2 selection is discriminated on `ref.source`, so narrow that
-// union exhaustively: a non-Team source must never reach the Team binding
-// projection, and a new source has to be classified here rather than defaulted.
-function readTeamResourceModelSelection(
-  metadata: Record<string, unknown> | null | undefined,
-): TeamResourceSessionModelSelection | null {
-  const selection = readSessionModelSelectionV2FromMetadata(metadata);
-  if (!selection) return null;
-  const ref = selection.ref;
-  switch (ref.source) {
-    case 'native':
-    case 'account_provider_connection':
-      return null;
-    case 'team_resource':
-      return { v: selection.v, updatedAt: selection.updatedAt, ref };
-  }
 }
 
 // A resume id is the Agent's own opaque session identity. This owner decides
@@ -355,6 +340,7 @@ function chooseConnectedServiceMaterializationIdentity(
 function applySnapshotToSpawnOptions(
   options: SpawnSessionOptions,
   snapshot: SessionRuntimeSnapshot,
+  modelSelection: SessionModelSelection | null | undefined,
   explicitResumeId: string | null,
   retainedLiveRuntimeOptions?: SpawnSessionOptions | null,
 ): SpawnSessionOptions {
@@ -398,12 +384,8 @@ function applySnapshotToSpawnOptions(
   }
 
   if (snapshot.modelSelection) {
-    if (snapshot.modelSelection.value) {
-      next.modelSelection = {
-        v: 1,
-        ref: snapshot.modelSelection.value,
-        updatedAt: snapshot.modelSelection.updatedAt,
-      };
+    if (modelSelection) {
+      next.modelSelection = modelSelection;
     } else {
       delete next.modelSelection;
     }
@@ -412,17 +394,6 @@ function applySnapshotToSpawnOptions(
     next.teamCredentialBindings = snapshot.teamCredentialBindings;
   } else {
     delete next.teamCredentialBindings;
-  }
-  if (snapshot.teamModelSelection) {
-    next.modelSelection = {
-      v: 1,
-      ref: {
-        agentTargetKey: snapshot.teamModelSelection.ref.agentTargetKey,
-        providerConnectionId: null,
-        modelId: snapshot.teamModelSelection.ref.modelId,
-      },
-      updatedAt: snapshot.teamModelSelection.updatedAt,
-    };
   }
 
   if (retainedLiveRuntimeOptions) {
@@ -486,11 +457,26 @@ export function resolveSessionRuntimeSnapshot(
       ? 'tracked'
       : 'incoming'
     : null;
-  // A retained live process keeps the Team envelope it launched with, so the
-  // persisted Team intent is read only for the ordinary resolution mode.
-  const persistedTeamModelSelection = retainedLiveRuntimeOptions
-    ? null
-    : readTeamResourceModelSelection(params.persistedMetadata);
+  // Arbitrate the complete source envelope once; its native tuple and Team
+  // binding must describe the same winning selection, including incoming V2.
+  const selectedModel = retainedLiveRuntimeOptions
+    ? readModelFromOptions(retainedLiveRuntimeOptions, retainedLiveRuntimeSource!)
+    : chooseTimestamped([
+      readModelFromMetadata(params.persistedMetadata, modelTargetKey),
+      params.trackedModelSelection
+        ? { source: 'tracked', updatedAt: params.trackedModelSelection.updatedAt,
+          value: params.trackedModelSelection.value ? { v: 1 as const,
+            ref: params.trackedModelSelection.value, updatedAt: params.trackedModelSelection.updatedAt } : null }
+        : readModelFromOptions(params.trackedSpawnOptions, 'tracked'),
+      readModelFromOptions(params.incomingOptions, 'incoming'),
+    ]);
+  const selection = selectedModel?.value;
+  const teamModelSelection: TeamResourceSessionModelSelection | null = selection?.v === 2 && selection.ref.source === 'team_resource'
+    ? { v: 2, updatedAt: selection.updatedAt, ref: selection.ref } : null;
+  const nativeSelection = selection?.v === 2 ? projectSessionModelSelectionV2ToV1(selection) : selection;
+  const modelSelection = selectedModel ? { ...selectedModel,
+    value: teamModelSelection ? { agentTargetKey: teamModelSelection.ref.agentTargetKey, providerConnectionId: null,
+      modelId: teamModelSelection.ref.modelId } : nativeSelection?.ref ?? null } : null;
   const snapshot: SessionRuntimeSnapshot = {
     sessionId: readSessionId(params.incomingOptions),
     connectedServices: connectedServices?.value ?? null,
@@ -513,36 +499,29 @@ export function resolveSessionRuntimeSnapshot(
       readStringControlFromOptions(params.trackedSpawnOptions, 'agentModeId', 'agentModeUpdatedAt', 'tracked'),
       readStringControlFromOptions(params.incomingOptions, 'agentModeId', 'agentModeUpdatedAt', 'incoming'),
     ]),
-    modelSelection: retainedLiveRuntimeOptions
-      ? readModelFromOptions(retainedLiveRuntimeOptions, retainedLiveRuntimeSource!)
-      : chooseTimestamped([
-        readModelFromMetadata(params.persistedMetadata, modelTargetKey),
-        params.trackedModelSelection
-          ? { source: 'tracked', ...params.trackedModelSelection }
-          : readModelFromOptions(params.trackedSpawnOptions, 'tracked'),
-        readModelFromOptions(params.incomingOptions, 'incoming'),
-      ]),
+    modelSelection,
     teamCredentialBindings: (() => {
       if (retainedLiveRuntimeOptions) return retainedLiveRuntimeOptions.teamCredentialBindings ?? null;
-      if (!persistedTeamModelSelection) {
+      if (!teamModelSelection) {
         // The native attach consumer already uses this accepted Home witness.
         // V1's null Account Provider connection must not erase its Team route.
         const accepted = params.acceptedTeamCredentialBinding;
-        if (params.persistedMetadata?.modelSelectionIntentV2 !== undefined) return null;
+        if (selection?.v === 2 || params.persistedMetadata?.modelSelectionIntentV2 !== undefined) return null;
         return accepted?.slot.kind === 'provider_model' && accepted.resourceId !== null ? [accepted] : null;
       }
       // Protocol owns how a V2 Team selection becomes a launch binding intent,
       // including its route and Team identity; this owner only decides when.
-      const intent = sessionModelSelectionV2TeamBindingIntent(persistedTeamModelSelection);
+      const intent = sessionModelSelectionV2TeamBindingIntent(teamModelSelection);
       return intent.resourceId === null ? null : [intent];
     })(),
-    teamModelSelection: persistedTeamModelSelection,
+    teamModelSelection,
     vendorResumeId: chooseVendorResumeId(params, explicitResumeId),
   };
 
   const spawnOptions = applySnapshotToSpawnOptions(
     params.incomingOptions,
     snapshot,
+    selection,
     explicitResumeId,
     retainedLiveRuntimeOptions,
   );

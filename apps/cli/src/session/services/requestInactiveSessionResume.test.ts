@@ -315,6 +315,18 @@ describe('requestInactiveSessionResume', () => {
     });
   });
 
+  it('carries incoming Team model identity through the machine resume transport', async () => {
+    callMachineRpc.mockResolvedValue({ type: 'success', sessionId: 'session-1' });
+    const modelSelection = { v: 2 as const, updatedAt: 300, ref: {
+      source: 'team_resource' as const, agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'team-model',
+      resourceId: 'shared-model', teamId: 'team-1', expectedResourceRevision: 4, deliveryMode: 'brokered' as const,
+    } };
+    await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'workflow-team-input',
+      rawSession: rawSession(), metadata, incomingOptions: { modelSelection },
+    })).resolves.toEqual({ ok: true });
+    expect(callMachineRpc.mock.calls[0]?.[0]?.request).toMatchObject({ type: 'resume-session', modelSelection });
+  });
+
   it('resumes with the predecessor explicit offline launch family while retaining canonical Session identity', async () => {
     callMachineRpc.mockResolvedValue({ type: 'success', sessionId: 'session-1' });
     const request = { credentials, sessionId: 'session-1', localId: 'workflow-launch', rawSession: rawSession(),
