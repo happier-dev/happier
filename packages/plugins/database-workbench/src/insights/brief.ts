@@ -16,7 +16,6 @@ export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | Databas
         const genericRequest = {
             setup: 'Review the required database statistics setup and its restart impact before making a change.',
             connection: 'Diagnose this database connection using its existing target and credential owner.',
-            migration: 'Review the requested database migration and its data impact before making a change.',
         };
         const instructions = finding.kind === 'add_telemetry' ? [
             'Add OpenTelemetry to this project.',
@@ -30,6 +29,12 @@ export function buildDatabaseFindingBriefV1(finding: DatabaseFindingV1 | Databas
             'Use the exact structural target and typed statistics diagnosis in the evidence. Determine whether the installed extension, shared_preload_libraries, or an engine restart is required; distinguish database-local extension setup from server configuration and explain its impact before proposing SQL or configuration.',
             'Resolve the existing target and administrative credential references through their canonical owners. Prepare an editable plan and obtain the required review before applying setup. Use the existing setup executor when supported; otherwise provide explicit local or vendor instructions. Do not acquire elevated credentials or restart the server as a fallback.',
             `Verify by repeating ${DATABASE_STATS_READ_ACTION_ID_V1} with the evidence target and statistics request. Report the resulting typed capability and coverage; never reset statistics as part of setup or verification.`,
+        ] : finding.kind === 'migration' ? [
+            'Prepare a reviewable repository migration for the selected database.',
+            'Inspect the project’s existing schema and migration files, ORM or migration tool, and documented commands. Reuse that owner and its conventions; do not introduce a second schema-diff or migration executor.',
+            'Use the structural target in the evidence to establish the intended database. Resolve credentials through its existing owner and keep credential values out of the brief, source and transcript.',
+            'Describe the proposed schema change, data impact, and the existing tool’s supported recovery before applying anything. Keep the migration reproducible in version control and request the required review for writes.',
+            'After the agreed change, run the project’s existing migration validation and ordinary database read Actions to verify the resulting schema and data. Report any validation or target access that was unavailable.',
         ] : [genericRequest[finding.kind],
             'Use the structural target and typed diagnosis in the evidence. Resolve credentials through the existing target owner.',
             'Prepare an editable plan with the proposed configuration or SQL and ask for the required review. Use the existing setup executor when supported; otherwise give the person explicit local or vendor instructions.',

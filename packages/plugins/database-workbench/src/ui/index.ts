@@ -15,3 +15,4 @@ export type {
 export { createDatabaseWorkbenchPlacements } from './placements.js';
 export type { WorkbenchPaneState, WorkbenchPaneIdentity } from './state.js';
 export { projectDatabaseStatementMetrics } from '../insights/presentation.js';
+export { createDatabaseMigrationHandoffControl, type DatabaseMigrationTask } from '../insights/migration.js';
