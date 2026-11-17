@@ -81,6 +81,9 @@ it('P4-F8-known-good-brief-delivery', async () => {
       if (!navigatedDraftId) throw new Error('F8 ordinary authoring control did not navigate');
       expect(readNewSessionDraftProjectionFromRepository({ scope, draftId: navigatedDraftId })?.draft.input)
         .toBe('F8 ordinary editable authoring control');
+      expect(createNewSessionComposerDocumentOwner({ scope,
+        ref: { kind: 'newSession', instanceId: navigatedDraftId } }).read().document.text)
+        .toBe('F8 ordinary editable authoring control');
       const projection = await loadDaemonMergedProjectionCacheEntry({
         machineId: fixture.machine.target.machineId, serverId: ui.serverId, sections: ['composerAttachments'] });
       if (projection?.kind !== 'ready') throw new Error(`F8 fixture daemon attachment projection unavailable (${projection?.kind ?? 'absent'})`);
@@ -103,7 +106,7 @@ it('P4-F8-known-good-brief-delivery', async () => {
         expect(opened, JSON.stringify(opened)).toMatchObject({ kind: 'authoringResult', result: { kind: 'opened', destination: 'newSession' } });
         if (opened.kind !== 'authoringResult' || opened.result.kind !== 'opened') throw new Error('Task did not open an editable New draft');
         const taskComposer = createNewSessionComposerDocumentOwner({ scope,
-          ref: { kind: 'newSession', draftId: opened.result.draftId } });
+          ref: { kind: 'newSession', instanceId: opened.result.draftId } });
         const beforeEdit = taskComposer.read();
         expect(beforeEdit.document.text).toBe(task.brief.text);
         const taskDraft = readNewSessionDraftProjectionFromRepository({ scope, draftId: opened.result.draftId })?.draft;
@@ -114,7 +117,7 @@ it('P4-F8-known-good-brief-delivery', async () => {
           attachments: beforeEdit.document.composerAttachments.map(attachment =>
             composerAttachmentDraftToView(attachment, { entriesById: catalog })) });
         expect(createNewSessionComposerDocumentOwner({ scope,
-          ref: { kind: 'newSession', draftId: opened.result.draftId } }).read().document.text).toContain('F8_TASK_PERSON_REVIEW');
+          ref: { kind: 'newSession', instanceId: opened.result.draftId } }).read().document.text).toContain('F8_TASK_PERSON_REVIEW');
         expect(await fixture.postgres.sql('happier', 'SELECT count(*) FROM "Session"')).toBe(sessionsBefore);
         expect(await sessionUserMessages()).toEqual(deliveredBefore);
         return task;
@@ -293,7 +296,7 @@ it('P4-F8-known-good-brief-delivery', async () => {
       }
       expect(navigatedDraftId).toBe(openedPreview.result.draftId);
       const composer = createNewSessionComposerDocumentOwner({ scope,
-        ref: { kind: 'newSession', draftId: openedPreview.result.draftId } });
+        ref: { kind: 'newSession', instanceId: openedPreview.result.draftId } });
       const snapshot = composer.read();
       expect(snapshot.document.text).toBe(previewText);
       const draft = readNewSessionDraftProjectionFromRepository({ scope, draftId: openedPreview.result.draftId })?.draft;
@@ -304,7 +307,7 @@ it('P4-F8-known-good-brief-delivery', async () => {
         attachments: snapshot.document.composerAttachments.map(attachment =>
           composerAttachmentDraftToView(attachment, { entriesById: catalog })) });
       const persisted = createNewSessionComposerDocumentOwner({ scope,
-        ref: { kind: 'newSession', draftId: openedPreview.result.draftId } }).read().document;
+        ref: { kind: 'newSession', instanceId: openedPreview.result.draftId } }).read().document;
       expect(persisted.text).toContain('F8_PERSON_EDIT');
       expect(JSON.stringify(readNewSessionDraftProjectionFromRepository({ scope,
         draftId: openedPreview.result.draftId })?.draft.composerAttachmentSeeds ?? [])).toContain(selected.baseline.evidenceIdentity);

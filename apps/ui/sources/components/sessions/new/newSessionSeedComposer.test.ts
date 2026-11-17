@@ -56,6 +56,7 @@ describe('seedAndOpenNewSession', () => {
         }] });
         if (!seeded) throw new Error('Missing draft');
         const owner = createNewSessionComposerDocumentOwner({ scope, ref: { kind: 'newSession', instanceId: draftId } });
+        expect(owner.read().document.text).toBe('Investigate');
         owner.replaceDocument({ ...owner.read().document, text: 'Explain the plan' });
         expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ input: 'Explain the plan',
             composerAttachmentSeeds: seeded.composerAttachmentSeeds });
