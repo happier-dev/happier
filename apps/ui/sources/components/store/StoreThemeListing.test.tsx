@@ -33,7 +33,7 @@ const { projectStoreThemeCard } = await import('./catalog/storeThemes');
 const { ThemeMiniaturePreview } = await import('@/components/settings/appearance/ThemeModePreview');
 await initializeArtifactInventoryDemandHarness();
 
-it('opens one theme acquisition through the shared listing body and retries Keep without losing the tried face', async () => {
+async function createRegistryThemeListingFixture(options: Readonly<{ failAcquisition?: boolean }> = {}) {
     const indexUrl = 'https://theme-listing.example.test/index.json';
     const contentUrl = 'https://theme-listing.example.test/palette.json';
     const sourceId = deriveMarketplaceSourceId(indexUrl);
@@ -43,20 +43,19 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     const catalog = createPromptLibraryCatalogBoundary({ records: [{ key: 'registry-sources', value: { v: 2,
         disabledSourceIds: [], sources: [{ id: sourceId, title: 'Themes catalog', url: indexUrl,
             format: 'happier-catalog', kinds: ['theme'], enabled: true, addedAt: 1 }] } }] });
-    let acquisitions = 0;
-    let sourceReads = 0;
-    let catalogReads = 0;
-    let failLight = true;
+    const state = { acquisitions: 0, sourceReads: 0, catalogReads: 0, failLight: true,
+        failAcquisition: options.failAcquisition ?? false, catalogVersion: '1.0.0' };
     const fixture = await createArtifactInventoryDemandHarness({ handleRequest: async (url, init) => {
-        if (url.pathname.startsWith('/v1/account/entity-rows/prompt-library') && (init?.method ?? 'GET') === 'GET') sourceReads++;
+        if (url.pathname.startsWith('/v1/account/entity-rows/prompt-library') && (init?.method ?? 'GET') === 'GET') state.sourceReads++;
         const config = await catalog.handle(`${url.pathname}${url.search}`, init);
         if (config) return config;
-        if (url.href === indexUrl) { catalogReads++;
+        if (url.href === indexUrl) { state.catalogReads++;
             return Response.json({ source: { id: sourceId, title: 'Themes catalog', sourceUrl: indexUrl, kind: 'user' },
             freshness: { state: 'fresh', fetchedAtMs: 1 }, entries: [], picks: [], diagnostics: [], themes: [{ itemId: 'palette',
-                title: 'Palette', version: '1.0.0', listing: { includes, preview, license: 'Custom' }, contentUrl }] }); }
+                title: 'Palette', version: state.catalogVersion, listing: { includes, preview, license: 'Custom' }, contentUrl }] }); }
         if (url.href === contentUrl) {
-            acquisitions += 1;
+            state.acquisitions += 1;
+            if (state.failAcquisition) return Response.json({ error: 'unavailable' }, { status: 503 });
             return Response.json({ themes: includes.map(face => ({ ...face, document: { schemaVersion: 1,
                 id: `palette-${face.key}`, name: face.label, createdAt: '2026-11-16', updatedAt: '2026-11-16',
                 base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} }, assetAppearance: face.mode,
@@ -67,7 +66,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
             const encoded = input && typeof input === 'object' ? Reflect.get(input, 'header') : undefined;
             if (typeof encoded === 'string') {
                 const header = ThemeProfileArtifactHeaderSchema.parse(decodePlainArtifactStoredContent(encoded));
-                if (header.themeSource.kind === 'store' && header.themeSource.contributionId === 'light' && failLight) {
+                if (header.themeSource.kind === 'store' && header.themeSource.contributionId === 'light' && state.failLight) {
                     return Response.json({ error: 'artifact_access_forbidden' }, { status: 403 });
                 }
             }
@@ -78,16 +77,21 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => fixture.accountId, encryptionMode: 'plain' });
     fixture.artifactStore = artifacts;
     onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+    return { sourceId, preview, artifacts, state };
+}
+
+it('opens one theme acquisition through the shared listing body and retries Keep without losing the tried face', async () => {
+    const { sourceId, preview, artifacts, state } = await createRegistryThemeListingFixture();
     const browse = await renderHook(() => useRegistryItems({ kind: 'theme', sourceIds: [sourceId] }));
     await vi.waitFor(() => expect(browse.getCurrent().items).toHaveLength(1));
-    expect(acquisitions).toBe(0);
+    expect(state.acquisitions).toBe(0);
     const anatomy = await renderHook(() => useStoreThemeCardAnatomy());
     const card = projectStoreThemeCard(browse.getCurrent().items[0]!, 'Themes catalog');
     const gallery = await renderScreen(<>{anatomy.getCurrent().preview?.(card)}</>);
     expect(gallery.findAllByType(ThemeMiniaturePreview).map(node => node.props.miniature)).toEqual(preview);
     await gallery.update(<>{anatomy.getCurrent().preview?.(card)}</>);
-    expect(acquisitions, 'drawing and redrawing summary miniatures never acquires content').toBe(0);
-    expect(catalogReads, 'drawing summary miniatures reuses the one browse response').toBe(1);
+    expect(state.acquisitions, 'drawing and redrawing summary miniatures never acquires content').toBe(0);
+    expect(state.catalogReads, 'drawing summary miniatures reuses the one browse response').toBe(1);
     const summary = storeKinds.theme.summary(browse.getCurrent().items[0]!);
     const picked = summary.ref;
     if (picked.kind !== 'theme') throw new Error('Expected the theme browse reference');
@@ -109,7 +113,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     const screen = await renderScreen(listingSurface(true));
     const view = () => screen.findAllByType(StoreThemeListing)[0]?.props;
     await vi.waitFor(() => expect(view()?.facesState, view()?.facesError ?? undefined).toBe('ready'));
-    expect(acquisitions).toBe(1);
+    expect(state.acquisitions).toBe(1);
     await vi.waitFor(() => expect(view()?.meta).toContain('Themes catalog'));
     const sourceScope = storage.getState().settingsScope!;
     const sourceSnapshot = getPromptLibraryCatalogValue(sourceScope, 'registry-sources');
@@ -117,7 +121,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     const sourceValue = sourceSnapshot.value;
     const sourceRevision = sourceSnapshot.revision;
     const unrelatedUrl = 'https://unrelated-theme-source.example.test/index.json';
-    sourceReads = 0;
+    state.sourceReads = 0;
     listingCommits = 0;
     for (let index = 1; index <= 10; index++) {
         await act(async () => applyPromptLibraryCatalogAcknowledgedRecord(sourceScope, { key: 'registry-sources', value: {
@@ -125,8 +129,8 @@ it('opens one theme acquisition through the shared listing body and retries Keep
                 title: `Unrelated ${index}`, url: unrelatedUrl, format: 'happier-catalog', kinds: ['theme'], enabled: true, addedAt: 2 }],
         } }, sourceRevision + index, true));
     }
-    expect(sourceReads, 'unrelated source publications do not read registry configuration again').toBe(0);
-    expect(acquisitions).toBe(1);
+    expect(state.sourceReads, 'unrelated source publications do not read registry configuration again').toBe(0);
+    expect(state.acquisitions).toBe(1);
     expect(listingCommits, 'the listing observes only its own registry source').toBe(0);
     await act(async () => applyPromptLibraryCatalogAcknowledgedRecord(sourceScope, { key: 'registry-sources', value: {
         ...sourceValue, sources: sourceValue.sources.map(source => source.id === sourceId ? { ...source, title: 'Renamed theme catalog' } : source),
@@ -140,7 +144,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     expect(listingCommits, 'a hidden listing releases its source subscription').toBe(0);
     await screen.update(listingSurface(true));
     await vi.waitFor(() => expect(view()?.meta).toContain('Renamed while hidden'));
-    expect(acquisitions).toBe(1);
+    expect(state.acquisitions).toBe(1);
     expect(view()?.facts.map(fact => fact.key)).toEqual(['includes', 'changes', 'worksOn', 'licence']);
     const faces = (await getThemeRegistryLifecycle().prepareStorePreview({ sourceId, itemId: 'palette' },
         { expectedScope: storage.getState().settingsScope })).item.payload.themes;
@@ -153,10 +157,8 @@ it('opens one theme acquisition through the shared listing body and retries Keep
             origin: { kind: 'store', listing: { sourceId, itemId: 'palette' } } }); });
     }
     expect(barCommits, 'the hidden shell bar ignores the focused listing preview').toBe(0);
-    routeParams = {};
-    await screen.update(listingSurface(true));
+    await screen.update(listingSurface(false));
     expect(screen.findAllByType(ThemeTryBar)[0]?.props).toMatchObject({ visible: true, faceName: faces[10 % faces.length]!.document.profile.name });
-    routeParams = { selection: JSON.stringify(reference) };
     await screen.update(listingSurface(true));
     expect(screen.findAllByType(ThemeTryBar)[0]?.props.visible).toBe(false);
     await act(async () => { getThemeTryOnOwner().begin({ document: faces[0]!.document, mode: faces[0]!.mode,
@@ -178,7 +180,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     expect(listingCommits).toBe(0);
     await screen.update(listingSurface(true));
     expect(view()?.tryingFaceId).toBe(faces[10 % faces.length]!.key);
-    expect(acquisitions).toBe(1);
+    expect(state.acquisitions).toBe(1);
     await act(async () => { await view()!.onRevert(); });
     await act(async () => { await view()!.onTryFace('dark'); });
     await vi.waitFor(() => expect(view()?.tryingFaceId).toBe('dark'));
@@ -190,11 +192,11 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     await act(async () => { await view()!.onInstall(); });
     await vi.waitFor(() => expect(view()?.installFailures).toHaveLength(1));
     expect(view()?.tryingFaceId).toBe('light');
-    failLight = false;
+    state.failLight = false;
     await act(async () => { await view()!.onRetryFaces(); });
     await vi.waitFor(() => expect(view()?.installed).toBe(true));
     expect(view()?.tryingFaceId).toBeNull();
-    expect(acquisitions).toBe(1);
+    expect(state.acquisitions).toBe(1);
     const installed = artifacts.list();
     expect(installed).toHaveLength(2);
     expect(installed.map(row => row.headerVersion)).toEqual([1, 1]);
@@ -224,7 +226,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     await screen.update(listingSurface(true, 'page', selectedListing.reference));
     await vi.waitFor(() => expect(view()?.installed).toBe(true));
     expect(view()?.name).toBe('Palette');
-    expect(acquisitions).toBe(1);
+    expect(state.acquisitions).toBe(1);
     expect(typeof view()?.onUninstall).toBe('function');
     expect(screen.findAllByType(RoundButton).some(button => button.props.onPress === view()?.onUninstall)).toBe(true);
     await act(async () => { view()!.onTryFace('dark'); });
@@ -257,4 +259,55 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     // The library retains the preference; a missing selected Artifact renders the mode's base.
     expect(storage.getState().localSettings.themeProfileSelection.light).toEqual(selected);
     expect(readSelectedThemeProfiles(scope).activeProfileIds.light).toBeNull();
+});
+
+it('retries acquisition, checks installed versions, updates latest through retry and duplicates into Yours', async () => {
+    const { sourceId, artifacts, state } = await createRegistryThemeListingFixture({ failAcquisition: true });
+    state.failLight = false;
+    const reference = { type: 'registryItem' as const, kind: 'theme' as const, sourceId, itemId: 'palette' };
+    const screen = await renderScreen(<StoreListingBody reference={reference} presentation="page" onClose={() => {}} />);
+    const view = () => screen.findAllByType(StoreThemeListing)[0]?.props;
+    await vi.waitFor(() => expect(view()?.facesState).toBe('error'));
+    expect(state.acquisitions).toBe(1);
+    expect(screen.findAllByType(RoundButton).some(button => button.props.onPress === view()?.onRetryAcquisition)).toBe(true);
+    state.failAcquisition = false;
+    await act(async () => { await view()!.onRetryAcquisition!(); });
+    await vi.waitFor(() => expect(view()?.facesState, view()?.facesError ?? undefined).toBe('ready'));
+    expect(state.acquisitions).toBe(2);
+    await act(async () => { await view()!.onTryFace('light'); });
+    await act(async () => { await view()!.onInstall(); });
+    await vi.waitFor(() => expect(view()?.installed).toBe(true));
+    expect(state.acquisitions).toBe(2);
+    const installed = artifacts.list();
+    expect(typeof view()?.onCheckUpdates).toBe('function');
+    expect(typeof view()?.onDuplicate).toBe('function');
+    await act(async () => { await view()!.onCheckUpdates!(); });
+    expect(view()?.updateAvailable).toBe(false);
+    expect(state.acquisitions, 'checking never acquires theme bodies').toBe(2);
+    state.catalogVersion = '2.0.0';
+    await act(async () => { await view()!.onCheckUpdates!(); });
+    await vi.waitFor(() => expect(view()?.updateAvailable).toBe(true));
+    expect(screen.findAllByType(RoundButton).some(button => button.props.onPress === view()?.onUpdate)).toBe(true);
+    await act(async () => { await view()!.onTryFace('light'); });
+    await vi.waitFor(() => expect(view()?.tryingFaceId).toBe('light'));
+    state.failAcquisition = true;
+    await act(async () => { await view()!.onUpdate!(); });
+    expect(view()?.installFailures).toHaveLength(1);
+    expect(view()?.tryingFaceId).toBe('light');
+    expect(artifacts.list()).toHaveLength(2);
+    state.failAcquisition = false;
+    await act(async () => { await view()!.onRetryFaces(); });
+    expect(state.acquisitions, 'Update and its retry acquire latest even while an inspected preview is active').toBe(4);
+    expect(artifacts.list().map(record => ThemeProfileArtifactHeaderSchema.parse(decodePlainArtifactStoredContent(record.header)).themeSource))
+        .toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'store', provenance: expect.objectContaining({ ref: { kind: 'version', version: '2.0.0' } }) })]));
+    await vi.waitFor(() => expect(view()?.updateAvailable).toBe(false));
+    await act(async () => { await view()!.onDuplicate!(); });
+    const editable = artifacts.list().filter(record => ThemeProfileArtifactHeaderSchema.parse(decodePlainArtifactStoredContent(record.header)).themeSource.kind === 'yours');
+    expect(editable).toHaveLength(1);
+    expect(editable[0]?.id).not.toBe(installed[0]?.id);
+    const { router } = await import('expo-router');
+    expect(router.push).toHaveBeenCalledWith({ pathname: '/settings/appearance/themes/[profileId]', params: { profileId: JSON.stringify(['artifact', editable[0]!.id]) } });
+    await act(async () => { await view()!.onUninstall!(); });
+    await vi.waitFor(() => expect(artifacts.list()).toHaveLength(1));
+    expect(ThemeProfileArtifactHeaderSchema.parse(decodePlainArtifactStoredContent(artifacts.list()[0]!.header)).themeSource.kind).toBe('yours');
 });

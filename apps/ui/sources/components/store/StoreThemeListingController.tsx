@@ -1,5 +1,9 @@
 import * as React from 'react';
 import { useColorScheme } from 'react-native';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { getThemePresetSourceReferenceId } from '@/components/settings/appearance/themeProfiles/themeProfilePresetOptions';
+import { useRegistryUpdateCheck } from '@/registries/useRegistryUpdateCheck';
+import { buildStoreUpdates, captureStoreUpdateBasis } from './updates/storeUpdatesModel';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { ThemeInstallResultSchema, type ThemeActionOutput } from '@happier-dev/protocol/actions/themeActionFamily';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -14,7 +18,7 @@ import { getThemeRegistryLifecycle, getThemeTryOnOwner } from '@/theme/profiles/
 import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
 import { resolveThemeRuntimeVisualTheme } from '@/theme/profiles/themeProfileRuntime';
 import { t } from '@/text';
-import { describeStoreThemeModes, groupInstalledStoreThemes, projectStoreThemeCoverageFacts, type InstalledStoreThemeEntry } from './catalog/storeThemes';
+import { describeStoreThemeModes, groupInstalledStoreThemes, projectStoreThemeCoverageFacts, projectInstalledStoreThemeRows, type InstalledStoreThemeEntry } from './catalog/storeThemes';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { Modal } from '@/modal';
 import type { StoreThemeListingViewProps } from './storeThemeViewTypes';
@@ -22,13 +26,15 @@ import type { StoreThemeListingViewProps } from './storeThemeViewTypes';
 type Opened = ThemeActionOutput<typeof THEME_ACTION_IDS.storeGet>;
 type Listing = Readonly<{ sourceId: string; itemId: string; version?: string }>;
 const noInstalledEntries: readonly InstalledStoreThemeEntry[] = [];
+const noRefresh = () => {};
 
 /** Selected acquisition, Actions and the shared overlay feed the existing Store listing presentation. */
 export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     children(view: StoreThemeListingViewProps): React.ReactNode }>) {
     const presented = useLayoutPresentationActive();
     const scope = useAccountSettingsScope();
-    const { execute, ready } = useMountedActionExecution(scope);
+    const { execute, ready, isCurrent } = useMountedActionExecution(scope);
+    const router = useRouter();
     const owner = getThemeTryOnOwner();
     const { sourceId, itemId, version } = props.listing;
     const subscribePreview = React.useCallback((listener: () => void) => presented ? owner.subscribe(listener) : () => {}, [presented, owner]);
@@ -50,7 +56,9 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     const [opened, setOpened] = React.useState<Opened | null>(null);
     const [failed, setFailed] = React.useState<string | null>(null);
     const [busy, setBusy] = React.useState<StoreThemeListingViewProps['busy']>(null);
-    const [failures, setFailures] = React.useState<NonNullable<StoreThemeListingViewProps['installFailures']>>([]);
+    const [failedInstall, setFailedInstall] = React.useState<Readonly<{
+        kind: 'install' | 'update'; faces: NonNullable<StoreThemeListingViewProps['installFailures']>;
+    }> | null>(null);
     React.useEffect(() => {
         if (!ready) return;
         const interest = new AbortController();
@@ -82,31 +90,49 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     const coverageFacts = coverage ? projectStoreThemeCoverageFacts(coverage) : null;
     const installed = Boolean(faces?.length && faces.every(face => library.entries.some(entry => entry.source.contributionId === face.id)));
     const hasInstalledFaces = library.entries.length > 0;
+    const installedRows = React.useMemo(() => scope ? projectInstalledStoreThemeRows(library.entries, scope) : [], [library.entries, scope]);
+    const checkKeys = React.useMemo(() => library.entries.map(entry => entry.id), [library.entries]);
+    const captureBasis = React.useCallback(() => captureStoreUpdateBasis(installedRows), [installedRows]);
+    const { check, checkNow } = useRegistryUpdateCheck({ scopeKey: JSON.stringify(scope), execute, isCurrent,
+        kind: 'theme', keys: checkKeys, retry: noRefresh, enabled: presented && hasInstalledFaces, captureBasis });
+    const updates = React.useMemo(() => buildStoreUpdates(installedRows, check.results, check), [installedRows, check]);
+    const updateAvailable = updates.sections.some(section => section.entries.some(entry => entry.state === 'available'));
+    const duplicateEntry = library.entries.find(entry => entry.source.contributionId === (tryingFaceId ?? preferred?.id)) ?? library.entries[0];
     const run = async (kind: NonNullable<StoreThemeListingViewProps['busy']>, actionId: ActionId, input: unknown) => {
         setBusy(kind);
         try {
             const result = await execute(actionId, input);
             if (!result.ok) {
-                if (kind !== 'install') {
+                if (kind === 'acquire') { setFailed(result.error); return; }
+                if (kind !== 'install' && kind !== 'update') {
                     Modal.alert(t('common.error'), result.error);
                     return;
                 }
                 const partial = result.errorCode === 'theme_install_partial' ? ThemeInstallResultSchema.safeParse(result.details) : null;
-                setFailures(partial?.success ? partial.data.faces.flatMap(face => face.status === 'failed'
+                setFailedInstall({ kind, faces: partial?.success ? partial.data.faces.flatMap(face => face.status === 'failed'
                     ? [{ faceName: faces?.find(candidate => candidate.id === face.faceId)?.name ?? face.faceId, code: face.error.code }] : [])
-                    : [{ faceName: matching?.document?.profile.name ?? opened?.listing.summary.title ?? '', code: result.errorCode ?? 'action_failed' }]);
-            } else setFailures([]);
+                    : [{ faceName: matching?.document?.profile.name ?? opened?.listing.summary.title ?? '', code: result.errorCode ?? 'action_failed' }] });
+            } else {
+                setFailedInstall(null);
+                if (kind === 'acquire') { setOpened(result.result as Opened); setFailed(null); }
+                if (kind === 'duplicate') {
+                    const { entry } = result.result as ThemeActionOutput<typeof THEME_ACTION_IDS.duplicate>;
+                    router.push({ pathname: '/settings/appearance/themes/[profileId]', params: { profileId: getThemePresetSourceReferenceId(entry.reference) } });
+                }
+            }
         } catch (error) {
-            if (kind !== 'install') {
+            if (kind === 'acquire') { setFailed(error instanceof Error ? error.message : t('common.unknown')); return; }
+            if (kind !== 'install' && kind !== 'update') {
                 Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.unknown'));
                 return;
             }
-            setFailures([{ faceName: matching?.document?.profile.name ?? opened?.listing.summary.title ?? '',
-                code: readActionErrorCodeV1(error) ?? 'action_failed' }]);
+            setFailedInstall({ kind, faces: [{ faceName: matching?.document?.profile.name ?? opened?.listing.summary.title ?? '',
+                code: readActionErrorCodeV1(error) ?? 'action_failed' }] });
         } finally { setBusy(null); }
     };
     const install = () => matching ? run('install', THEME_ACTION_IDS.keep, { previewRef: matching.previewRef })
-        : run('install', THEME_ACTION_IDS.install, { listing });
+        : run('install', THEME_ACTION_IDS.install, { listing: { sourceId, itemId } });
+    const update = () => run('update', THEME_ACTION_IDS.install, { listing: { sourceId, itemId } });
     return props.children({
         name: opened?.listing.summary.title ?? '', kicker: [t('settingsAppearance.theme'), describeStoreThemeModes(faces?.map(face => face.mode) ?? [])].filter(Boolean).join(' · '),
         meta: opened ? [opened.listing.summary.publisher?.name, source?.title,
@@ -119,13 +145,18 @@ export function StoreThemeListingController(props: Readonly<{ listing: Listing;
             { key: 'changes', value: coverageFacts?.changes ?? t('common.unknown') },
             { key: 'worksOn', ...(coverageFacts?.worksOn ?? { value: t('common.unknown') }) },
             { key: 'licence', value: opened?.listing.metadata.license ?? t('common.unknown') },
-        ], busy, installFailures: failures,
+        ], busy: check.checking ? 'check' : busy, installFailures: failedInstall?.faces ?? [],
+        updateAvailable, checkError: check.failed ? check.code : null,
         onTryFace: id => {
             const face = faces?.find(candidate => candidate.id === id);
-            if (face) return run('try', THEME_ACTION_IDS.tryOn, { document: face.document, mode: face.mode, origin: { kind: 'store', listing } });
+            if (face) return run('try', THEME_ACTION_IDS.tryOn, { document: face.document, mode: face.mode, origin: { kind: 'store', listing: { sourceId, itemId } } });
         },
         onRevert: () => matching ? run('revert', THEME_ACTION_IDS.revert, { previewRef: matching.previewRef }) : undefined,
-        onInstall: install, onRetryFaces: install,
-        onUninstall: hasInstalledFaces ? () => run('uninstall', THEME_ACTION_IDS.uninstall, { listing }) : undefined,
+        onInstall: install, onRetryFaces: failedInstall?.kind === 'update' ? update : install,
+        onRetryAcquisition: () => run('acquire', THEME_ACTION_IDS.storeGet, { listing }),
+        onCheckUpdates: hasInstalledFaces ? checkNow : undefined,
+        onUpdate: updateAvailable ? update : undefined,
+        onDuplicate: duplicateEntry ? () => run('duplicate', THEME_ACTION_IDS.duplicate, { ref: duplicateEntry.reference }) : undefined,
+        onUninstall: hasInstalledFaces ? () => run('uninstall', THEME_ACTION_IDS.uninstall, { listing: { sourceId, itemId } }) : undefined,
     });
 }

@@ -64,13 +64,19 @@ export type StoreThemeListingViewProps = Readonly<{
   here: string;
   installed: boolean;
   facts: readonly StoreThemeListingFact[];
-  busy: 'try' | 'install' | 'revert' | 'uninstall' | null;
+  busy: 'try' | 'install' | 'revert' | 'uninstall' | 'acquire' | 'check' | 'update' | 'duplicate' | null;
+  updateAvailable?: boolean;
+  checkError?: string | null;
   /** Per-face install failures after a partial install (`theme_install_partial`), shown with Retry. */
   installFailures?: readonly Readonly<{ faceName: string; code: string }>[];
   onTryFace: (faceId: string) => void;
   onRevert: () => void;
   onInstall: () => void;
   onRetryFaces: () => void;
+  onRetryAcquisition?: () => void;
+  onCheckUpdates?: () => void;
+  onUpdate?: () => void;
+  onDuplicate?: () => void;
   onUninstall?: () => void;
   testID?: string;
 }>;

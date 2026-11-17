@@ -13,6 +13,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { WordCrossFade } from '@/components/ui/motion/WordCrossFade';
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 
@@ -88,6 +89,11 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
               : t('themeStore.facesLoading')}
           </Text>
           {props.facesError ? <Text variant="meta" style={styles.meta}>{props.facesError}</Text> : null}
+          {props.facesState === 'error' && props.onRetryAcquisition ? (
+            <RoundButton size="small" display="secondary" title={t('common.retry')}
+              onPress={props.onRetryAcquisition} loading={props.busy === 'acquire'}
+              disabled={props.busy !== null} testID={id('retryAcquisition')} />
+          ) : null}
         </View>
       )}
 
@@ -151,6 +157,21 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
             />
           ) : null}
         </View>
+        {props.onCheckUpdates || props.onDuplicate || props.onUpdate ? (
+          <View style={[styles.actions, phone ? styles.actionsPhone : null]}>
+            {props.onCheckUpdates ? <RoundButton size={phone ? 'normal' : 'small'} display="secondary"
+              title={t('capabilities.store.updates.checkNow')} onPress={props.onCheckUpdates}
+              loading={props.busy === 'check'} disabled={props.busy !== null} testID={id('check')} /> : null}
+            {props.onUpdate && props.updateAvailable ? <RoundButton size={phone ? 'normal' : 'small'} display="secondary"
+              title={t('common.update')} onPress={props.onUpdate} loading={props.busy === 'update'}
+              disabled={props.busy !== null} testID={id('update')} /> : null}
+            {props.onDuplicate ? <RoundButton size={phone ? 'normal' : 'small'} display="secondary"
+              title={t('settingsAppearance.themeProfiles.duplicateTheme')} onPress={props.onDuplicate}
+              loading={props.busy === 'duplicate'} disabled={props.busy !== null} testID={id('duplicate')} /> : null}
+          </View>
+        ) : null}
+        {props.checkError ? <SurfaceStateCard size="line" kind="warning"
+          title={t('capabilities.store.updates.checkFailed')} diagnosticCode={props.checkError} /> : null}
         <WordCrossFade
           wordKey={trying ? `trying:${props.tryingFaceId}` : 'idle'}
         >
@@ -175,6 +196,7 @@ export const StoreThemeListing = React.memo(function StoreThemeListing(
                 display="secondary"
                 title={t('themeStore.retryFaces')}
                 onPress={props.onRetryFaces}
+                disabled={props.busy !== null}
                 testID={id('retryFaces')}
               />
             </View>
