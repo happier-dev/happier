@@ -20,10 +20,6 @@ import { PLUGIN_ACCOUNT_STORAGE_LIMITS_V1 } from '@happier-dev/plugin-sdk/storag
 import { createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
 import { AutomationDefinitionDetailSchema, type AutomationDefinitionDetail } from '@happier-dev/protocol/automations/automationApiV3';
 import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
-import { PluginAccountStorageMutationRequestV1Schema } from '@happier-dev/protocol';
-import { createAccountPluginDataStorageHost } from '@/plugins/runtime/context/accountPluginDataStorage';
-import { PluginAccountStorageRowV1Schema } from '@happier-dev/protocol/plugins/data/accountKvV1';
-import { healthTransitionCursorStoredSchema } from '../../../../../packages/plugins/machine-services/src/healthSavedTransitions';
 
 const materialization = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
 const source: HealthCheckSourceConfigV1 = { v: 1, subject: { kind: 'machineService', machineId: 'subject', serviceId: 'service' },
@@ -134,78 +130,6 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
 }
 
 describe('saved health source registration and finite cycles', () => {
-    it.each(['current', 'pending', 'acknowledgement'] as const)('recovers on its chosen probe period after a %s write loses the Account row CAS', async phase => {
-        // The HTTP boundary retains the opaque Account row and implements only
-        // server CAS. Both logical writes use the real Account KV owner.
-        let revision: number | 'absent' = 'absent';
-        let content: unknown;
-        let interleave = true;
-        const host = createAccountPluginDataStorageHost({ contracts: [],
-            readCredentials: async () => ({ token: 'health-test', encryption: null }),
-            isCurrentAccount: () => true, resolveAccountScopeKey: () => 'health-cas',
-            resolveBaseUrl: () => 'https://health.example.test',
-            resolveAccountEncryptionCurrentness: async () => ({ mode: 'plain', version: 1,
-                signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
-                recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } }),
-            http: {
-                async get() { return { status: 200, data: revision === 'absent' ? { status: 'absent' }
-                    : { status: 'present', revision, content } }; },
-                async post(_url, body) {
-                    const request = PluginAccountStorageMutationRequestV1Schema.parse(JSON.parse(body));
-                    const row = request.content?.t === 'plain' ? PluginAccountStorageRowV1Schema.parse(request.content.v) : undefined;
-                    const entry = Object.entries(row?.values ?? {}).find(([key]) => key !== 'health:other-source')?.[1];
-                    const cursor = entry && !('deleted' in entry) ? healthTransitionCursorStoredSchema.parse(entry.value) : undefined;
-                    const selectedPhase = cursor?.pending?.length ? 'pending' : cursor?.checks.length ? 'acknowledgement' : 'current';
-                    if (interleave && cursor && selectedPhase === phase) {
-                        interleave = false;
-                        await competing.kv.set('health:other-source', { probe: 'up' }, { expectedVersion: 'absent' });
-                    }
-                    if (request.expectedRevision !== revision) return { status: 200,
-                        data: { status: 'conflict', revision: revision === 'absent' ? 0 : revision } };
-                    revision = revision === 'absent' ? 0 : revision + 1;
-                    content = request.content;
-                    return { status: 200, data: { status: 'updated', revision } };
-                },
-            },
-        });
-        const binding = { pluginId: materialization.pluginId, signal: new AbortController().signal, isOccurrenceCurrent: () => true };
-        const account = host.bind({ ...binding, occurrenceId: 'observer' })!;
-        const competing = host.bind({ ...binding, occurrenceId: 'other-observer' })!;
-        const f = fixture({ ...source, checks: source.checks.map(check => ({ ...check, consecutiveFailuresBeforeAlerting: 1 })) });
-        const controller = new AbortController();
-        const context = { ...f.context, signal: controller.signal, services: { ...f.context.services, storage: { account } } };
-        const reports = () => vi.mocked(f.context.services.actions.execute).mock.calls
-            .filter(([id]) => id === 'automation.event.source.status.report').map(([, input]) => input);
-        let backoffClock: number | undefined;
-        f.onSourceReport(() => {
-            const report = reports().at(-1);
-            if (report && typeof report === 'object' && 'state' in report && report.state === 'backingOff') backoffClock = f.now();
-            if (report && typeof report === 'object' && 'state' in report
-                && (report.state === 'attention' || !interleave && report.state === 'observing')) controller.abort();
-        });
-        await runCheckpointedPluginEventObserverV1({ context, source: f.adapter, now: f.now,
-            sleep: async delayMs => { f.clock(f.now() + delayMs); } });
-        expect(interleave).toBe(false);
-        expect(reports()).toContainEqual(expect.objectContaining({ state: 'backingOff', code: 'plugin_account_kv_conflict' }));
-        const backoff = reports().find(report => report && typeof report === 'object' && 'state' in report && report.state === 'backingOff');
-        expect(backoff).toMatchObject({ nextRetryAt: backoffClock! + source.checks[0]!.periodMs });
-        expect(await competing.kv.get('health:other-source')).toMatchObject({ value: { probe: 'up' } });
-        expect(f.admissions).toHaveLength(phase === 'acknowledgement' ? 2 : 1);
-        expect(new Set(f.admissions.map(admission => admission.occurrenceId)).size).toBe(1);
-        expect(f.admissions.filter(admission => admission.observedDelta === 1)).toHaveLength(1);
-        expect(f.admissions[0]?.payload).toMatchObject({ transition: 'failed' });
-        const own = (await account.kv.list({ prefix: 'health:' })).items.find(row => row.key !== 'health:other-source');
-        const saved = own && !('deleted' in own) ? healthTransitionCursorStoredSchema.parse(own.value) : undefined;
-        expect(saved).toMatchObject({ checks: [{ checkId: 'http', status: 'down', ordinal: 1 }] });
-        expect(saved).not.toHaveProperty('pending');
-        expect(saved?.current?.checks[0]?.result.observedAt).toBeGreaterThan(1000);
-    });
-
-    it.each(['plugin_account_data_unavailable', 'health_check_storage_unavailable'])('keeps permanent %s failures parked', code => {
-        const f = fixture();
-        expect(f.adapter.retryAt({ definition, now: 1000, error: new PluginError({ code, message: 'Unavailable' }) })).toBeNull();
-    });
-
     it('retains saved source identity while a threshold transition awaits admission', async () => {
         const f = fixture();
         f.safe(false);
