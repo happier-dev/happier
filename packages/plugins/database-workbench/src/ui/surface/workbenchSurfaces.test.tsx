@@ -78,7 +78,7 @@ function connectionResourceHandlers() {
 }
 
 /** The daemon's Action results for a small Postgres database; the host Action boundary is the only fake. */
-function daemonAnswers(targets: readonly DatabaseDescriptorV1[]) {
+function daemonAnswers(targets: readonly DatabaseDescriptorV1[], editableTextReference = false) {
   return vi.fn(
     async ({ action }: PluginUiTestkitExecuteActionInput): Promise<JsonValue> =>
       projectNativeJsonValueForTransport(
@@ -139,9 +139,10 @@ function daemonAnswers(targets: readonly DatabaseDescriptorV1[]) {
                     },
                   ],
                   primaryKey: ['id'],
-                  foreignKeys: [],
+                  foreignKeys: editableTextReference ? [{ name: 'invoice_customer', columns: ['number'],
+                    target: { schema: 'public', name: 'customers' }, targetColumns: ['code'] }] : [],
                   indexes: [],
-                  capabilities: [],
+                  capabilities: editableTextReference ? [{ operation: 'edits.apply', available: true }] : [],
                 },
               };
             case DATABASE_ROWS_READ_ACTION_ID_V1:
@@ -171,6 +172,7 @@ function daemonAnswers(targets: readonly DatabaseDescriptorV1[]) {
                   ],
                   rows: [
                     {
+                      ...(editableTextReference ? { identity: { key: [{ column: 'id', value: { type: 'integer', value: '48212' } }], original: [] } } : {}),
                       cells: [
                         { type: 'integer', value: '48212' },
                         { type: 'text', value: 'INV-2026-04812' },
@@ -197,6 +199,75 @@ async function settle(rounds = 10) {
 }
 
 describe('Database workbench surfaces', () => {
+  it.each(['rail', 'directory'])('reaches later catalogue pages from the %s', async (surface) => {
+    const base = daemonAnswers([descriptor]);
+    const reads: (string | undefined)[] = [];
+    const executeAction = async (request: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => {
+      if (request.action !== DATABASE_RELATIONS_LIST_ACTION_ID_V1) return base(request);
+      // This fixture is the daemon Action boundary; the real host has already admitted its input.
+      const input = request.input as { page: { after?: string } };
+      reads.push(input.page.after);
+      return projectNativeJsonValueForTransport({ ok: true, operation: 'relations.list',
+        relations: [{ relation: { schema: 'public', name: input.page.after ? 'later_table' : 'first_table' }, kind: 'table', estimatedRows: '2' }],
+        completeness: input.page.after ? { complete: true } : { complete: false, reason: 'page', continuation: {
+          kind: 'catalog', operation: 'relations.list', target: descriptor.target, schema: 'public', after: 'second' } } });
+    };
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: `paging-${surface}`, mountNonce: `paging-${surface}` },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderRail,
+      launchInput: projectNativeJsonValueForTransport({ scope, ...(surface === 'directory' ? { descriptor } : {}) }),
+      subPath: surface === 'directory' ? 'overview' : undefined,
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: surface === 'directory' ? 'database-session-details' : 'database-session-rail' }, container: surface === 'directory' ? 'detailsPane' : 'rightSidebarTab' }, target: { kind: 'session', sessionId: 'paging' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { ...connectionResourceHandlers(), executeAction },
+    });
+    try {
+      await settle(20);
+      expect(await fixture.getByText('first_table')).toBeTruthy();
+      expect(reads).toEqual([undefined]);
+      await fixture.press(await fixture.getByRole('button', { name: 'Next tables' }));
+      await settle(20);
+      expect(await fixture.getByText('later_table')).toBeTruthy();
+      await fixture.press(await fixture.getByRole('button', { name: 'Previous tables' }));
+      await settle(20);
+      expect(await fixture.getByText('first_table')).toBeTruthy();
+      expect(reads).toEqual([undefined, 'second']);
+    } finally { await fixture.dispose(); }
+  });
+
+  it('opens the Overview directory as the selected page detail', async () => {
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'page-overview', mountNonce: 'page-overview' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'overview',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([descriptor]), replacePageLocation: async ({ subPath }) => subPath },
+    });
+    try {
+      await settle(20);
+      expect(await fixture.getByText('~48.2K rows · 31 MB')).toBeTruthy();
+    } finally { await fixture.dispose(); }
+  });
+
+  it('keeps reference navigation beside an editable text foreign-key cell', async () => {
+    const replacePageLocation = vi.fn(async ({ subPath }: { subPath: string }) => subPath);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'text-reference', mountNonce: 'text-reference' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'data/public/invoices',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ detailsPane: { available: true } }),
+      handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([descriptor], true), replacePageLocation },
+    });
+    try {
+      await settle(20);
+      await act(async () => { await fixture.press(await fixture.getByRole('button', { name: '48,212' })); });
+      await settle(20);
+      expect(await fixture.getByRole('textbox', { name: 'number' })).toBeTruthy();
+      await fixture.press(await fixture.getByRole('button', { name: 'Open in customers' }));
+      await settle(20);
+      expect(replacePageLocation).toHaveBeenCalledWith(expect.objectContaining({ subPath: 'data/public/customers' }));
+    } finally { await fixture.dispose(); }
+  });
   it('lists the checkout’s databases on Dev servers and opens the chosen one in the workbench', async () => {
     const executeAction = daemonAnswers([descriptor]);
     const openSurface = vi.fn(async () => {});

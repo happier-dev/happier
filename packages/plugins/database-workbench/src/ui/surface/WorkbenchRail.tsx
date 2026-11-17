@@ -24,6 +24,7 @@ import {
 } from '../hooks.js';
 import { sameRelation } from '../location.js';
 import { approxRowsLabel } from './sizes.js';
+import { CataloguePagination } from './CataloguePagination.js';
 
 
 /** What a rail press asks for; the page navigates in place, the Session rail opens a details tab. */
@@ -155,7 +156,7 @@ function SchemaRelations(
     structure: boolean;
   }>,
 ) {
-  const { relations, status, error, refresh } = useDatabaseSchemaRelations(
+  const { relations, status, error, refresh, nextPage, previousPage } = useDatabaseSchemaRelations(
     props.targetKey,
     props.schema,
   );
@@ -218,6 +219,7 @@ function SchemaRelations(
           />
         );
       })}
+      <CataloguePagination kind="tables" nextPage={nextPage} previousPage={previousPage} />
     </>
   );
 }
@@ -239,7 +241,7 @@ export function WorkbenchRailList(
   }>,
 ) {
   const translate = usePluginTranslation();
-  const { schemas, status, error, refresh } = useDatabaseRelations(
+  const { schemas, status, error, refresh, nextPage, previousPage } = useDatabaseRelations(
     props.targetKey,
   );
   const [query, setQuery] = React.useState('');
@@ -336,6 +338,7 @@ export function WorkbenchRailList(
           />
         ))}
       </ItemGroup>
+      <CataloguePagination kind="schemas" nextPage={nextPage} previousPage={previousPage} />
     </Stack>
   );
 }

@@ -12,6 +12,7 @@ import {
   useWorkbenchLocation,
 } from '../hooks.js';
 import { approxRowsLabel, bytesLabel } from './sizes.js';
+import { CataloguePagination } from './CataloguePagination.js';
 
 type DirectoryRow = ReturnType<
   typeof useDatabaseSchemaRelations
@@ -197,6 +198,7 @@ function SchemaDirectory(
         />
       }
       model={model}
+      footer={<CataloguePagination kind="tables" nextPage={page.nextPage} previousPage={page.previousPage} />}
       anatomy={anatomy}
       presentation="table"
       collapsedGroups={EMPTY_SET}

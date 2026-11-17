@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import type { WorkbenchChange, WorkbenchClient, WorkbenchLocation } from './models.js';
 import { createWorkbenchInstance } from './workbench.js';
-import { useDatabaseSchemaRelations, useWorkbenchDraft, WorkbenchProvider } from './hooks.js';
+import { useDatabaseRelations, useDatabaseSchemaRelations, useWorkbenchDraft, WorkbenchProvider } from './hooks.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -71,12 +71,37 @@ it('exposes only the demanded schema page continuation and reuses held pages whe
         expect(page!.relations[0]).toMatchObject({ approxRows: '9007199254740993', size: { bytes: '1024', tableBytes: '768', indexBytes: '256' } });
         expect(page!.nextPageAfter).toBe('next-page');
         expect(calls).toEqual([undefined]);
-        await render(page!.nextPageAfter);
+        await act(async () => page!.nextPage!());
         expect(page!.relations.map(value => value.name)).toEqual(['later_table']);
         expect(page!.nextPageAfter).toBeUndefined();
-        await render();
+        await act(async () => page!.previousPage!());
         expect(page!.relations.map(value => value.name)).toEqual(['first_table']);
         expect(calls).toEqual([undefined, 'next-page']);
+    } finally { await act(async () => root.unmount()); instance.close(); }
+});
+
+it('pages schemas only on intent and reuses a previous catalogue page', async () => {
+    const calls: (string | undefined)[] = [];
+    const instance = workbench(async input => {
+        if (input.operation !== 'schemas.list') throw new Error('Only schemas are read');
+        calls.push(input.page.after);
+        return { ok: true, operation: 'schemas.list', schemas: [{ name: input.page.after ? 'later_schema' : 'public' }],
+            completeness: input.page.after ? { complete: true } : { complete: false, reason: 'page',
+                continuation: { kind: 'catalog', operation: 'schemas.list', target: descriptor.target, after: 'next-schema' } } };
+    });
+    let page: ReturnType<typeof useDatabaseRelations> | undefined;
+    function Probe() { page = useDatabaseRelations(targetKey); return null; }
+    const root = createRoot(document.createElement('div'));
+    try {
+        await act(async () => root.render(createElement(WorkbenchProvider, { instance }, createElement(Probe))));
+        expect(page!.schemas.map(value => value.name)).toEqual(['public']);
+        expect(calls).toEqual([undefined]);
+        await act(async () => page!.nextPage!());
+        expect(page!.schemas.map(value => value.name)).toEqual(['later_schema']);
+        expect(page!.nextPage).toBeUndefined();
+        await act(async () => page!.previousPage!());
+        expect(page!.schemas.map(value => value.name)).toEqual(['public']);
+        expect(calls).toEqual([undefined, 'next-schema']);
     } finally { await act(async () => root.unmount()); instance.close(); }
 });
 

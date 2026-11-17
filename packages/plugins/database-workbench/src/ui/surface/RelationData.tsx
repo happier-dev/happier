@@ -26,6 +26,7 @@ import {
   useListMultiSelectionController,
 } from '@happier-dev/plugin-ui/components';
 import {
+  WorkbenchProvider,
   useRelationPage,
   useWorkbenchCellState,
   useWorkbenchDraft,
@@ -314,9 +315,17 @@ function RowField(
   const title = props.column.primaryKey
     ? `${props.column.name} · ${props.translate('plugins.database.column.key', 'key')}`
     : props.column.name;
+  const reference = props.foreignKey && props.cell?.type !== 'null' ? props.foreignKey : undefined;
+  const referenceAction = reference ? (
+    <Button
+      variant="secondary"
+      size="small"
+      title={props.translate('plugins.database.row.openReference', 'Open in {table}', { table: reference.table })}
+      onPress={() => props.tools.openReference(props.rowKey, reference.name)}
+    />
+  ) : null;
   if (!textual || props.column.primaryKey) {
     const json = props.column.kind === 'json' && props.cell?.type !== 'null';
-    const reference = props.foreignKey && props.cell?.type !== 'null' ? props.foreignKey : undefined;
     return (
       <Item
         title={title}
@@ -328,14 +337,7 @@ function RowField(
               accessoryBelow: true,
               accessory: json ? (
                 <JsonValue rowKey={props.rowKey} column={props.column.name} tools={props.tools} translate={props.translate} />
-              ) : (
-                <Button
-                  variant="secondary"
-                  size="small"
-                  title={props.translate('plugins.database.row.openReference', 'Open in {table}', { table: reference!.table })}
-                  onPress={() => props.tools.openReference(props.rowKey, reference!.name)}
-                />
-              ),
+              ) : referenceAction,
             }
           : {})}
       />
@@ -352,22 +354,25 @@ function RowField(
       detailTone={state.kind === 'edited' ? 'attention' : undefined}
       accessoryBelow
       accessory={
-        <TextField
-          label={props.column.name}
-          value={value}
-          onChange={setValue}
-          autoCorrect={false}
-          autoCapitalize="none"
-          onSubmitEditing={() =>
-            props.onStage(
-              props.column.name,
-              value === (props.cell?.type === 'text' ? props.cell.value : '') &&
-                props.cell?.type !== 'null'
-                ? null
-                : { type: 'text', value },
-            )
-          }
-        />
+        <Stack gap="small">
+          <TextField
+            label={props.column.name}
+            value={value}
+            onChange={setValue}
+            autoCorrect={false}
+            autoCapitalize="none"
+            onSubmitEditing={() =>
+              props.onStage(
+                props.column.name,
+                value === (props.cell?.type === 'text' ? props.cell.value : '') &&
+                  props.cell?.type !== 'null'
+                  ? null
+                  : { type: 'text', value },
+              )
+            }
+          />
+          {referenceAction}
+        </Stack>
       }
     />
   );
@@ -378,6 +383,7 @@ export function RelationData(
   props: Readonly<{ relation: DatabaseRelationV1 }>,
 ) {
   const translate = usePluginTranslation();
+  const instance = useWorkbenchInstance();
   const location = useWorkbenchLocation();
   const page = useRelationPage(location);
   const [openKey, setOpenKey] = React.useState<string | null>(null);
@@ -549,16 +555,18 @@ export function RelationData(
       preferredListRatio={0.66}
       renderDetail={() =>
         open ? (
-          <RowDetail
-            row={open}
-            columns={page.columns}
-            relation={props.relation}
-            tools={tools}
-            editable={page.capabilities.edit}
-            {...(page.capabilities.reason
-              ? { reason: page.capabilities.reason }
-              : {})}
-          />
+          <WorkbenchProvider instance={instance}>
+            <RowDetail
+              row={open}
+              columns={page.columns}
+              relation={props.relation}
+              tools={tools}
+              editable={page.capabilities.edit}
+              {...(page.capabilities.reason
+                ? { reason: page.capabilities.reason }
+                : {})}
+            />
+          </WorkbenchProvider>
         ) : null
       }
     />

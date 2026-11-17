@@ -1,5 +1,5 @@
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react';
-import type { DatabaseRelationV1, DatabaseStatsReadV1, DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react';
+import type { DatabaseCompletenessV1, DatabaseRelationV1, DatabaseStatsReadV1, DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
 import type { WorkbenchInstance } from './workbench.js';
 import type { WorkbenchChange, WorkbenchLocation, WorkbenchStatementsObservation, WorkbenchStatus } from './models.js';
 import type { WorkbenchResource } from './resource.js';
@@ -46,6 +46,20 @@ function useResource<T>(resource: WorkbenchResource<T>) {
     useEffect(() => { void resource.demand(); }, [resource]);
     return snapshot;
 }
+/** Page intent stays local; acquisition and revisits use the instance's existing resources. */
+function useCatalogueCursor(identity: object, firstAfter?: string) {
+    const initial = useMemo(() => ({ identity, cursors: [firstAfter] }), [identity, firstAfter]);
+    const [held, setHeld] = useState(initial);
+    const history = held.identity === identity ? held : initial;
+    const next = useCallback((after: string) => setHeld({ identity, cursors: [...history.cursors, after] }), [identity, history]);
+    const previous = useCallback(() => setHeld({ identity, cursors: history.cursors.slice(0, -1) }), [identity, history]);
+    return { after: history.cursors[history.cursors.length - 1], next,
+        previousPage: history.cursors.length > 1 ? previous : undefined };
+}
+function catalogueAfter(completeness: DatabaseCompletenessV1 | undefined) {
+    return completeness && !completeness.complete && completeness.continuation?.kind === 'catalog'
+        ? completeness.continuation.after : undefined;
+}
 function useLocationValue<T>(instance: WorkbenchInstance, select: (location: WorkbenchLocation) => T): T {
     const subscribe = useCallback((listener: () => void) => instance.local.subscribe('location', listener), [instance]);
     const get = useCallback(() => select(instance.local.get('location')), [instance, select]);
@@ -75,24 +89,33 @@ export function useDatabaseTargets(scope: DatabaseTargetsListInputV1['scope']) {
 }
 export function useDatabaseRelations(targetKey: string, after?: string) {
     const instance = useWorkbenchInstance();
-    const resource = instance.relations(targetKey, after);
+    const cursor = useCatalogueCursor(instance.relations(targetKey, after), after);
+    const resource = instance.relations(targetKey, cursor.after);
     const snapshot = useResource(resource);
-    return useMemo(() => ({ schemas: snapshot.data?.schemas ?? emptySchemas, completeness: snapshot.data?.completeness, status: projectWorkbenchStatus(snapshot, snapshot.data?.schemas.length === 0),
-        error: snapshot.error, refresh: () => resource.invalidate() }), [snapshot, resource]);
+    return useMemo(() => {
+        const completeness = snapshot.data?.completeness;
+        const nextPageAfter = catalogueAfter(completeness);
+        return { schemas: snapshot.data?.schemas ?? emptySchemas, completeness, nextPageAfter,
+            nextPage: nextPageAfter === undefined ? undefined : () => cursor.next(nextPageAfter), previousPage: cursor.previousPage,
+            status: projectWorkbenchStatus(snapshot, snapshot.data?.schemas.length === 0),
+            error: snapshot.error, refresh: () => resource.invalidate() };
+    }, [snapshot, resource, cursor.next, cursor.previousPage]);
 }
 /** Mount in an expanded group. Unopened schemas perform zero relation reads. */
 export function useDatabaseSchemaRelations(targetKey: string, schema: string, after?: string) {
     const instance = useWorkbenchInstance();
-    const resource = instance.schemaRelations(targetKey, schema, after);
+    const cursor = useCatalogueCursor(instance.schemaRelations(targetKey, schema, after), after);
+    const resource = instance.schemaRelations(targetKey, schema, cursor.after);
     const snapshot = useResource(resource);
     return useMemo(() => {
         const completeness = snapshot.data?.completeness;
+        const nextPageAfter = catalogueAfter(completeness);
         return { relations: snapshot.data?.relations ?? emptyRows, completeness,
-            nextPageAfter: completeness && !completeness.complete && completeness.continuation?.kind === 'catalog'
-                ? completeness.continuation.after : undefined,
+            nextPageAfter, nextPage: nextPageAfter === undefined ? undefined : () => cursor.next(nextPageAfter),
+            previousPage: cursor.previousPage,
             status: projectWorkbenchStatus(snapshot, snapshot.data?.relations.length === 0), error: snapshot.error,
             refresh: () => resource.invalidate() };
-    }, [snapshot, resource]);
+    }, [snapshot, resource, cursor.next, cursor.previousPage]);
 }
 export function useRelationPage(location: WorkbenchLocation) {
     const instance = useWorkbenchInstance();

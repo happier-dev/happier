@@ -200,15 +200,11 @@ function WorkbenchPage(context: RenderContext) {
 }
 
 function WorkbenchLayout(props: Readonly<{ targetKey: string }>) {
-  const location = useWorkbenchLocation();
-  const chosen = location.mode === 'console' || location.mode === 'insights' || location.relation !== undefined;
   return (
     <ListDetailLayout
       minListWidth={232}
       minDetailWidth={360}
       preferredListRatio={0.24}
-      stackedPane={chosen ? 'detail' : 'list'}
-      detailActive={chosen}
       list={<WorkbenchRail targetKey={props.targetKey} />}
       detail={<WorkbenchMain targetKey={props.targetKey} />}
     />
