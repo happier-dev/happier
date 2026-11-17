@@ -4,6 +4,7 @@ import {
   isProviderBoundSessionMetadata,
   resolveAmbientProviderConnectionForModelIntent,
   resolveModelSelectionIntentFromSessionMetadata,
+  resolveSessionModelSelectionFromMetadata,
   readSessionModelSelectionV2FromMetadata,
 } from './metadataReaders.js';
 
@@ -148,6 +149,33 @@ describe('resolveModelSelectionIntentFromSessionMetadata', () => {
     }, 'backend:codex')).toThrowError(expect.objectContaining({
       code: 'model_selection_agent_target_mismatch',
     }));
+  });
+});
+
+describe('resolveSessionModelSelectionFromMetadata', () => {
+  it.each([
+    { source: 'native', modelId: 'native-model' },
+    { source: 'account_provider_connection', providerConnectionId: 'pc_work', modelId: 'account-model' },
+    { source: 'team_resource', teamId: 'team', resourceId: 'resource', expectedResourceRevision: 2,
+      deliveryMode: 'vendor-native', modelId: 'team-model' },
+  ])('retains $source instead of a stale V1 carrier', ref => {
+    const selection = { v: 2, updatedAt: 12, ref: { ...ref, agentTargetKey: 'backend:codex' } };
+    expect(resolveSessionModelSelectionFromMetadata({ modelSelectionIntentV2: selection,
+      modelSelectionIntentV1: { v: 1, updatedAt: 99, selection: { agentTargetKey: 'backend:codex',
+        providerConnectionId: null, modelId: 'old-native' } },
+    }, 'backend:codex')).toEqual(selection);
+  });
+
+  it('retains deployed V1 metadata and refuses corrupted or differently targeted current selections', () => {
+    const ref = { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'native-model' };
+    const metadata = { modelSelectionIntentV1: { v: 1, updatedAt: 9, selection: ref } };
+    expect(resolveSessionModelSelectionFromMetadata(metadata, ref.agentTargetKey))
+      .toEqual({ v: 1, updatedAt: 9, ref });
+    expect(() => resolveSessionModelSelectionFromMetadata({ ...metadata, modelSelectionIntentV2: {} }, ref.agentTargetKey))
+      .toThrow(expect.objectContaining({ code: 'model_selection_session_provider_state_unreadable' }));
+    expect(() => resolveSessionModelSelectionFromMetadata({ modelSelectionIntentV2: {
+      v: 2, updatedAt: 12, ref: { source: 'native', agentTargetKey: 'backend:claude', modelId: 'other' },
+    } }, ref.agentTargetKey)).toThrow(expect.objectContaining({ code: 'model_selection_agent_target_mismatch' }));
   });
 });
 

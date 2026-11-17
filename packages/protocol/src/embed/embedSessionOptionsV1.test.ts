@@ -2,6 +2,26 @@ import { describe, expect, it } from 'vitest';
 import { applyComposerControlAcknowledgementV1, ComposerOptionsInputV1Schema, EmbedSessionOptionsV1Schema, projectComposerOptionsInputV1 } from './embedSessionOptionsV1.js';
 
 describe('bounded composer options projection', () => {
+    it.each([
+        { source: 'account_provider_connection' as const, providerConnectionId: 'pc_work', modelId: 'shared-model' },
+        { source: 'team_resource' as const, teamId: 'team-design', resourceId: 'resource-model',
+            expectedResourceRevision: 3, deliveryMode: 'vendor-native' as const, modelId: 'shared-model' },
+    ])('retains the current $source choice in bounded options and control acknowledgement', ref => {
+        const modelSelectionIntentV2 = { v: 2 as const, updatedAt: 12,
+            ref: { ...ref, agentTargetKey: 'agent:happier.agent.codex/codex' } };
+        expect(projectComposerOptionsInputV1({ modelSelectionIntentV2, path: '/private' }))
+            .toEqual({ modelSelectionIntentV2 });
+        expect(applyComposerControlAcknowledgementV1({ sessionId: 's', options: {}, actionId: 'session.model.set',
+            result: { ok: true, sessionId: 's', status: 'intent_updated', updatedAt: 12,
+                modelId: ref.modelId, selection: modelSelectionIntentV2 },
+        })).toEqual({ modelSelectionIntentV2 });
+        const options = { modelSelectionIntentV2 };
+        expect(applyComposerControlAcknowledgementV1({ sessionId: 's', options, actionId: 'session.model.set',
+            result: { ok: true, sessionId: 's', status: 'already_active', modelId: ref.modelId,
+                activeSelection: { agentTargetKey: modelSelectionIntentV2.ref.agentTargetKey,
+                    providerConnectionId: null, modelId: ref.modelId } },
+        })).toBe(options);
+    });
     it('retains current controls on another Session, failed or malformed acknowledgement and uses the armed active model', () => {
         const options = projectComposerOptionsInputV1({ permissionMode: 'read-only', permissionModeUpdatedAt: 10 });
         for (const result of [

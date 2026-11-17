@@ -32,6 +32,17 @@ function buildSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('getModelOverrideForSpawn', () => {
+    it.each([
+        { source: 'account_provider_connection', providerConnectionId: 'pc_work', modelId: 'current-model' },
+        { source: 'team_resource', teamId: 'team-design', resourceId: 'resource-model',
+            expectedResourceRevision: 3, deliveryMode: 'vendor-native', modelId: 'current-model' },
+    ])('keeps the current $source instead of synthesizing a local native override', ref => {
+        const modelSelection = { v: 2, updatedAt: 12,
+            ref: { ...ref, agentTargetKey: 'agent:happier.agent.codex/codex' } };
+        expect(getModelOverrideForSpawn(buildSession({ modelMode: 'local-model', modelModeUpdatedAt: 20,
+            metadata: { path: '/repo', host: 'localhost', modelSelectionIntentV2: modelSelection },
+        }), modelSelection.ref.agentTargetKey)).toEqual({ modelSelection });
+    });
     it.each([null, ProviderConnectionIdSchema.parse('pc_work')])('omits persisted native default without losing a Provider model named default (connection=%s)', providerConnectionId => {
         const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId, modelId: 'default' };
         const result = getModelOverrideForSpawn(buildSession({

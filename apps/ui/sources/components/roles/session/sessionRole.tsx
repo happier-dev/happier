@@ -25,7 +25,7 @@ import {
 } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { useSessionSelector } from '@/sync/domains/state/storage';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { readSessionModelSelectionIntentFromMetadata } from '@/sync/domains/models/readSessionModelSelectionIntent';
+import { readSessionModelSelectionFromMetadata } from '@/sync/domains/models/readSessionModelSelectionIntent';
 import { roleActions } from '@/sync/ops/roles/roleActions';
 import { t } from '@/text';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -68,7 +68,7 @@ export function useSessionRoleDefaultEngine(sessionId: string, serverId?: string
     const agentTargetKey = useSessionAgentTargetKey(sessionId, serverId);
     const modelId = useSessionSelector(sessionId, serverId, session => {
         if (!session || !agentTargetKey) return null;
-        return readSessionModelSelectionIntentFromMetadata(readSessionOwnerMetadataView(session), agentTargetKey)?.selection?.modelId ?? null;
+        return readSessionModelSelectionFromMetadata(readSessionOwnerMetadataView(session), agentTargetKey)?.ref.modelId ?? null;
     });
     return React.useMemo(() => agentTargetKey
         ? { agentTargetKey, ...(modelId ? { modelId } : {}) }

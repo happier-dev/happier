@@ -1,6 +1,6 @@
 import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionSchema } from '@happier-dev/protocol/providers/selection/v2';
 import { SessionResumeRequestV1Schema, type SessionResumeRequestV1 } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/resolveBundledAgentIdFromContributionIdentity';
 
@@ -59,7 +59,7 @@ function buildValidatedResumeHappySessionRpcParams(input: BuildResumeHappySessio
         : undefined;
     const canonicalBackendTarget = explicitBackendTarget ?? predecessorBackendTarget;
     const canonicalModelSelection = modelSelection
-        ? SessionModelSelectionV1Schema.parse(modelSelection)
+        ? SessionModelSelectionSchema.parse(modelSelection)
         : null;
     const canonicalTargetKey = agentTarget
         ? buildBackendTargetKeyV2(agentTarget)

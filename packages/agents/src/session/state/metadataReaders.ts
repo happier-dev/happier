@@ -1,9 +1,9 @@
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import type { PermissionIntent } from '../../types.js';
-import { SessionModelSelectionIntentV1Schema, readSessionModelSelectionIntentSourceV1, resolveSessionModelSelectionIntentV1 } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionIntentV1Schema, SessionModelSelectionResolutionError, readSessionModelSelectionIntentSourceV1, resolveSessionModelSelectionIntentV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { SessionModelSelectionIntentV1 } from '@happier-dev/protocol/providers/model-selection';
 import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
-import type { SessionModelSelectionV2 } from '@happier-dev/protocol';
+import type { SessionModelSelection, SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 import { readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import {
   readPermissionModeIntentFromMetadata,
@@ -24,6 +24,22 @@ export function readSessionModelSelectionV2FromMetadata(metadata: unknown): Sess
   if (!obj) return null;
   const parsed = SessionModelSelectionV2Schema.safeParse(obj.modelSelectionIntentV2);
   return parsed.success ? parsed.data : null;
+}
+
+/** The current source-preserving selection, with V1 retained only for deployed metadata. */
+export function resolveSessionModelSelectionFromMetadata(metadata: unknown, agentTargetKey: string): SessionModelSelection | null {
+  const record = asRecord(metadata);
+  if (!record) return null;
+  if (record.modelSelectionIntentV2 !== undefined) {
+    const selection = readSessionModelSelectionV2FromMetadata(record);
+    if (!selection) throw new SessionModelSelectionResolutionError('model_selection_session_provider_state_unreadable');
+    if (selection.ref.agentTargetKey !== agentTargetKey) {
+      throw new SessionModelSelectionResolutionError('model_selection_agent_target_mismatch');
+    }
+    return selection;
+  }
+  const intent = resolveModelSelectionIntentFromSessionMetadata(record, agentTargetKey);
+  return intent?.selection ? { v: 1, updatedAt: intent.updatedAt, ref: intent.selection } : null;
 }
 
 /** A model-only edit retains the Session's selected Team resource and delivery. */

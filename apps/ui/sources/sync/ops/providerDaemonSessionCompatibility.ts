@@ -1,4 +1,6 @@
-import { SessionModelSelectionIntentV1Schema, type ProviderBoundModelRef, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents';
+import { isSessionModelRefSourceBound, type SessionModelRef, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { readSessionProviderBindingMetadataStateV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import {
     createRpcCallError,
@@ -16,13 +18,13 @@ export function isProviderSafeDaemonSessionMethodAbsent(error: unknown): boolean
 }
 
 export function requiresProviderSafeModelSelectionRpc(
-    ...selections: readonly (ProviderBoundModelRef | null | undefined)[]
+    ...selections: readonly (SessionModelRef | null | undefined)[]
 ): boolean {
-    return selections.some((selection) => selection?.providerConnectionId != null);
+    return selections.some((selection) => selection && isSessionModelRefSourceBound(selection));
 }
 
 export function requiresProviderSafeSessionRpc(params: Readonly<{
-    modelSelection?: SessionModelSelectionV1;
+    modelSelection?: SessionModelSelection;
     existingSessionMetadata?:
         | Readonly<{ state: 'known'; metadata: Readonly<Record<string, unknown>> }>
         | Readonly<{ state: 'unknown' }>;
@@ -37,6 +39,11 @@ export function requiresProviderSafeSessionRpc(params: Readonly<{
 
     if (readSessionProviderBindingMetadataStateV1(metadata).kind !== 'absent') {
         return true;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(metadata, 'modelSelectionIntentV2')) {
+        const selection = readSessionModelSelectionV2FromMetadata(metadata);
+        return selection === null || explicitSelectionRequiresProvider || requiresProviderSafeModelSelectionRpc(selection.ref);
     }
 
     if (!Object.prototype.hasOwnProperty.call(metadata, 'modelSelectionIntentV1')) {

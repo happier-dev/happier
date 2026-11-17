@@ -42,7 +42,7 @@ import { buildUnsupportedSessionPendingInputInterruptAndRunResult } from '@happi
 import { buildUnsupportedSessionTerminalComposerClearResult } from '@happier-dev/protocol/sessions/control/terminalComposerClearV1';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
-import { projectSessionModelSelectionV2ToV1, readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { isSessionModelRefSourceBound, projectSessionModelSelectionV2ToV1, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { SessionModelSelectionResolutionError, SessionModelSelectionV1Schema, resolveSessionModelSelectionInputRefV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { SessionModelSelectionV1, AgentSessionStartupInstructionsV1 } from '@happier-dev/protocol';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
@@ -899,7 +899,7 @@ function createNativeAgentDeferredStartupConfig(params: Readonly<{
                             : null;
                         const currentProviderBoundModel =
                             seed.modelSelection
-                            && readSessionModelSelectionProviderConnectionId(seed.modelSelection) !== null
+                            && isSessionModelRefSourceBound(seed.modelSelection.ref)
                                 ? seed.modelSelection
                                 : null;
                         return Object.freeze({
@@ -937,7 +937,7 @@ function createNativeAgentDeferredStartupConfig(params: Readonly<{
                 }
                 : {}),
             shouldCreate: ({ opts, seed }) => {
-                if (seed.modelSelection && readSessionModelSelectionProviderConnectionId(seed.modelSelection) !== null) return false;
+                if (seed.modelSelection && isSessionModelRefSourceBound(seed.modelSelection.ref)) return false;
                 return shouldUseDeferredSessionStartup({
                     startedBy: opts.startedBy === 'daemon' ? 'daemon' : 'terminal',
                     startingMode:

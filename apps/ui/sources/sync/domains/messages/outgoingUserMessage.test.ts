@@ -5,6 +5,22 @@ import { storage } from '@/sync/domains/state/storage';
 const initialStorageState = storage.getState();
 
 describe('outgoing user message projection', () => {
+    it.each([
+        { source: 'account_provider_connection', providerConnectionId: 'pc_work' },
+        { source: 'team_resource', teamId: 'team', resourceId: 'resource',
+            expectedResourceRevision: 2, deliveryMode: 'vendor-native' },
+    ])('carries the current $source without a native legacy message projection', async ref => {
+        const { buildOutgoingUserTextRecord } = await import('./outgoingUserMessage');
+        const modelSelection = { v: 2, updatedAt: 12,
+            ref: { ...ref, agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'shared-model' } };
+        const session = { metadataLayoutVersion: 1, metadata: { v: 1, agentPresentation: { agentId: 'codex' } },
+            ownerMetadataView: null, composerOptionsInput: { modelSelectionIntentV2: modelSelection },
+            modelMode: 'local-native', modelModeUpdatedAt: 20 };
+        const raw = buildOutgoingUserTextRecord({ text: 'hello', agentId: 'codex', permissionMode: 'default', settings: {}, session });
+        expect(raw.meta).toMatchObject({ modelSelectionV1: modelSelection });
+        expect(raw.meta).not.toHaveProperty('model');
+    });
+
     it.each(['codex', 'claude', 'opencode'])('sends Use CLI settings without a per-message override for %s', async agentId => {
         const { buildOutgoingUserTextRecord } = await import('./outgoingUserMessage');
         const selection = { agentTargetKey: `agent:happier.agent.${agentId}/${agentId}`, providerConnectionId: null, modelId: 'default' };

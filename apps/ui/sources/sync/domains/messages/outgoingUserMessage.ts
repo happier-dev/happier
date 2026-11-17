@@ -15,8 +15,9 @@ import { nowServerMs } from '@/sync/runtime/time';
 import type { RawRecord } from "@happier-dev/session-core/raw";
 import type { SessionMessageHostAdmissionOrigin } from '@/sync/domains/session/input/types';
 import { buildProtectedSessionInputTextRecordV1, buildTrustedHostSessionInputAdmissionV1, SESSION_INPUT_REQUEST_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY, stripSessionInputProtectedMeta } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import { projectSessionMessageModelSelectionToLegacyModelV1, withSessionMessageModelSelectionV1, type ProviderBoundModelRef, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
-import { resolveEffectiveApiTokenModelRefV1, resolveEffectiveApiTokenPermissionModeV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { projectSessionMessageModelSelectionToLegacyModelV1, withSessionMessageModelSelectionV1, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { isModelRefGrantedV1, resolveEffectiveApiTokenModelRefV1, resolveEffectiveApiTokenPermissionModeV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { SentFrom } from '@happier-dev/protocol/sentFrom';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
@@ -47,7 +48,7 @@ export function buildLocalOutboundAccountActor(scope: ServerAccountScope): Trans
 export function resolveOutgoingUserMessageModel(params: Readonly<{
     agentId: string | null;
     modelMode?: ModelMode | null;
-    structuredModelSelection?: SessionModelSelectionV1 | null;
+    structuredModelSelection?: SessionModelSelection | null;
 }>): MessageMeta['model'] | undefined {
     if (!params.agentId || !isBundledAgentId(params.agentId)) return undefined;
     const model = getAgentModelConfig(params.agentId);
@@ -79,21 +80,17 @@ function resolveOutgoingModelContext(sessionValue: unknown, fallbackAgentId: str
  * (`resolveEffectiveApiTokenModelRefV1`); with no list the Session's choice, Automatic included, stands.
  */
 function constrainOutgoingModelSelection(
-    selection: SessionModelSelectionV1 | null,
+    selection: SessionModelSelection | null,
     allowedModels: readonly ProviderBoundModelRef[] | null | undefined,
     agentTargetKey: string | null,
-): SessionModelSelectionV1 | null {
+): SessionModelSelection | null {
     if (!allowedModels) return selection;
-    const effective = resolveEffectiveApiTokenModelRefV1({ models: [...allowedModels] }, selection?.ref ?? 'automatic', agentTargetKey ?? undefined);
+    const models = [...allowedModels];
+    if (selection && selection.ref.agentTargetKey === agentTargetKey
+        && isModelRefGrantedV1({ models, permissionModes: null }, selection.ref)) return selection;
+    const effective = resolveEffectiveApiTokenModelRefV1({ models }, 'automatic', agentTargetKey ?? undefined);
     if (effective === null || effective === 'automatic') return selection;
-    if (selection && sameModelRef(selection.ref, effective)) return selection;
     return { v: 1, updatedAt: nowServerMs(), ref: effective };
-}
-
-function sameModelRef(left: ProviderBoundModelRef, right: ProviderBoundModelRef): boolean {
-    return left.agentTargetKey === right.agentTargetKey
-        && left.providerConnectionId === right.providerConnectionId
-        && left.modelId === right.modelId;
 }
 
 function stripOutgoingUserMessageProtectedMeta(

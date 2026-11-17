@@ -1,3 +1,4 @@
+import { projectSessionModelSelectionV2ToV1 } from '@happier-dev/protocol/providers/selection/v2';
 import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { SessionSurfacePresenceSignal } from '@/components/sessions/shell/sessionSurfacePresence';
 import { resolveSessionContinuationDaemonGeneration } from '@/components/sessions/agentPicker/resolveSessionAgentContinuationEligibility';
@@ -870,7 +871,10 @@ export function useSessionComposerController({
         [ownerMetadata],
     );
     const providerModelSelectionIntent = composerOptionsInput?.modelSelectionIntentV1 ?? null;
-    const providerModelSelection = providerModelSelectionIntent?.selection
+    const currentModelSelection = composerOptionsInput?.modelSelectionIntentV2;
+    const providerModelSelection = currentModelSelection
+        ? projectSessionModelSelectionV2ToV1(currentModelSelection)
+        : providerModelSelectionIntent?.selection
         ? { v: 1 as const, updatedAt: providerModelSelectionIntent.updatedAt, ref: providerModelSelectionIntent.selection }
         : null;
     const providerBindingStatus = useProviderBindingStatus({
@@ -880,7 +884,7 @@ export function useSessionComposerController({
         machineId: typeof machineId === 'string' ? machineId : null,
         serverId: sessionRouteServerId,
         selection: providerModelSelection,
-        selectionIntentPresent: providerModelSelectionIntent !== null,
+        selectionIntentPresent: currentModelSelection !== undefined || providerModelSelectionIntent !== null,
         launchBinding: providerLaunchBinding,
         declarationContext,
         completedTurnObservedAt: sessionRuntimeStatusSource.latestTurnStatus === 'completed' ? sessionRuntimeStatusSource.latestTurnStatusObservedAt : null,

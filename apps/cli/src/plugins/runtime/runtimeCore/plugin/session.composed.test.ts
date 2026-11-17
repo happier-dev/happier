@@ -782,6 +782,16 @@ describe('plugin session runtime adapters', () => {
         },
       },
     })).toBe(false);
+    expect(nativePlan.config.startupBootstrap?.shouldCreate?.({
+      opts: nativePlan.opts,
+      seed: {
+        permissionMode: 'safe-yolo', permissionModeUpdatedAt: 43, permissionModeSource: 'explicit',
+        modelSelection: { v: 2, updatedAt: 44, ref: {
+          source: 'team_resource', agentTargetKey: 'backend:acme.sample.backend', modelId: 'authorized-team-model',
+          teamId: 'team-models', resourceId: 'shared-source', expectedResourceRevision: 2, deliveryMode: 'vendor-native',
+        } },
+      },
+    })).toBe(false);
     expect(shouldUseDeferredBootstrap).toHaveBeenCalledWith({
       startedBy: 'terminal',
       startingMode: 'terminal',
@@ -1010,6 +1020,17 @@ describe('plugin session runtime adapters', () => {
       permissionModeSource: 'released_cache_v1',
       modelSelection: providerBoundModelSelection,
     });
+
+    const teamModelSelection = {
+      v: 2 as const, updatedAt: 109,
+      ref: { source: 'team_resource' as const, agentTargetKey: 'backend:acme.sample.backend',
+        teamId: 'team-models', resourceId: 'shared-source', expectedResourceRevision: 2,
+        deliveryMode: 'vendor-native' as const, modelId: 'authorized-team-model' },
+    };
+    expect(await resolveSeed({ opts: plan.opts, seed: {
+      permissionMode: 'default', permissionModeUpdatedAt: 109, permissionModeSource: 'fallback',
+      modelSelection: teamModelSelection,
+    } })).toMatchObject({ modelSelection: teamModelSelection });
 
     releasedCacheMocks.compatibility.read.mockReturnValue({
       permissionMode: 'safe-yolo',

@@ -413,6 +413,7 @@ export function useSessionProviderUsageGauge(
       ? ownerMetadata
       : session.composerOptionsInput;
   const activeModelId =
+    composerOptionsInput?.modelSelectionIntentV2?.ref.modelId ??
     composerOptionsInput?.modelSelectionIntentV1?.selection?.modelId ??
     composerSubject.modelMode;
   return useSessionProviderUsage({

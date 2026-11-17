@@ -8,6 +8,7 @@ import { computeSessionModelConfigOptionControls, getModelOptionsForSession } fr
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
 import { readDynamicModelProbeCache } from '@/sync/domains/models/dynamicModelProbeCache';
 import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
+import { projectSessionModelRefToExecutionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
@@ -37,9 +38,10 @@ export function createUiSessionConfigOptionAction(
             const composer = authoring ? resolveSessionComposerStateFromAuthoringContext(authoring, { fallbackAgentId: sessionAgentId }) : null;
             const agentId = composer?.agentId ?? sessionAgentId;
             const target = session ? resolveSessionActionDefaultTarget(resolveSessionActionDefaultBackend({ session })) : null;
-            const selection = session && target ? getModelOverrideForSpawn(session, buildBackendTargetKeyV2(target))?.modelSelection.ref : null;
+            const sourceSelection = session && target ? getModelOverrideForSpawn(session, buildBackendTargetKeyV2(target))?.modelSelection.ref : null;
+            const selection = sourceSelection ? projectSessionModelRefToExecutionModelSelection(sourceSelection).modelSelection : null;
             const composerInput = session?.composerOptionsInput === undefined ? metadata : session.composerOptionsInput;
-            let modelControls = agentId === null || selection?.providerConnectionId ? null : computeSessionModelConfigOptionControls({
+            let modelControls = agentId === null || sourceSelection && !selection || selection?.providerConnectionId ? null : computeSessionModelConfigOptionControls({
                 agentId,
                 metadata: composerInput,
                 modelId: selection?.modelId ?? 'default',

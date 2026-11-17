@@ -32,9 +32,9 @@ export function resolveSessionComposerState(params: Readonly<{
         || null;
     // A frame receives only its granted controls, never a complete owner view.
     const bounded = metadata === null ? params.session.composerOptionsInput : undefined;
-    const boundedModelId = bounded?.modelSelectionIntentV1
+    const boundedModelId = bounded?.modelSelectionIntentV2?.ref.modelId ?? (bounded?.modelSelectionIntentV1
         ? bounded.modelSelectionIntentV1.selection?.modelId ?? 'default'
-        : bounded?.modelOverrideV1?.modelId ?? bounded?.sessionModelsV1?.currentModelId ?? bounded?.acpSessionModelsV1?.currentModelId;
+        : bounded?.modelOverrideV1?.modelId ?? bounded?.sessionModelsV1?.currentModelId ?? bounded?.acpSessionModelsV1?.currentModelId);
     const modelMode = params.modelModeOverride
         ?? boundedModelId
         ?? params.snapshot.modelId

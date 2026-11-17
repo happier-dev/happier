@@ -13,6 +13,19 @@ function buildResumeHappySessionRpcParams(
 }
 
 describe('buildResumeHappySessionRpcParams', () => {
+    test.each([
+        { source: 'account_provider_connection' as const, providerConnectionId: 'pc_work', modelId: 'shared-model' },
+        { source: 'team_resource' as const, teamId: 'team-design', resourceId: 'resource-model',
+            expectedResourceRevision: 3, deliveryMode: 'vendor-native' as const, modelId: 'shared-model' },
+    ])('preserves a current $source model through Resume', ref => {
+        const modelSelection = { v: 2 as const, updatedAt: 12,
+            ref: { ...ref, agentTargetKey: 'agent:happier.agent.codex/codex' } };
+        expect(buildResumeHappySessionRpcParams({ sessionId: 'session-current', directory: '/repo',
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            modelSelection,
+        })).toMatchObject({ modelSelection });
+    });
+
     test('resumes a Global Voice Codex carrier from its canonical executable Agent target', () => {
         const agentTarget = {
             kind: 'agent' as const,

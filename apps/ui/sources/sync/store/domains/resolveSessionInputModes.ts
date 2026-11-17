@@ -5,7 +5,7 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { resolveMergedSessionPermissionMode } from './resolveMergedSessionPermissionMode';
-import { readSessionModelSelectionIntentFromMetadata } from '@/sync/domains/models/readSessionModelSelectionIntent';
+import { readSessionModelSelectionFromMetadata, readSessionModelSelectionIntentFromMetadata } from '@/sync/domains/models/readSessionModelSelectionIntent';
 
 type InputModes = Pick<Session, 'permissionMode' | 'permissionModeUpdatedAt' | 'modelMode' | 'modelModeUpdatedAt'>;
 
@@ -60,16 +60,19 @@ export function resolveSessionInputModes(params: Readonly<{
 
     const resolvedBackend = resolveSessionActionDefaultBackend({ session });
     const resolvedTarget = resolveSessionActionDefaultTarget(resolvedBackend);
-    const modelIntent = resolvedTarget
+    const modelSelection = resolvedTarget
+        ? readSessionModelSelectionFromMetadata(ownerMetadataView, buildBackendTargetKeyV2(resolvedTarget))
+        : null;
+    const modelIntent = !modelSelection && resolvedTarget
         ? readSessionModelSelectionIntentFromMetadata(
             ownerMetadataView,
             buildBackendTargetKeyV2(resolvedTarget),
         )
         : null;
-    const metadataModelId = modelIntent
+    const metadataModelId = modelSelection?.ref.modelId ?? (modelIntent
         ? modelIntent.selection?.modelId ?? 'default'
-        : null;
-    const metadataModelUpdatedAt = modelIntent?.updatedAt ?? null;
+        : null);
+    const metadataModelUpdatedAt = modelSelection?.updatedAt ?? modelIntent?.updatedAt ?? null;
 
     let mergedModelMode =
         existingModelMode ||

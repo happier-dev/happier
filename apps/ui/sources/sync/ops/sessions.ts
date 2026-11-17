@@ -47,8 +47,7 @@ import type {
     SessionAuthoringValueV1} from '@happier-dev/protocol/sessions/authoring/index';
 import type {
     SessionInitialGoalRequestV1} from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
-import type {
-    SessionModelSelectionV1} from '@happier-dev/protocol/providers/selection/v1';
+import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type {
     SessionPermissionRespondRpcParamsV1,
     SessionUserActionAnswerRpcParamsV1} from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
@@ -266,7 +265,7 @@ export interface ResumeSessionOptions {
     permissionMode?: PermissionMode;
     permissionModeUpdatedAt?: number;
     /** Optional explicit target-bound model selection. Omission means keep the persisted session intent. */
-    modelSelection?: SessionModelSelectionV1;
+    modelSelection?: SessionModelSelection;
     runtimeDescriptorV1?: import('@happier-dev/protocol/sessions/metadata/runtime-descriptor').RuntimeDescriptorV1;
     /**
      * Transcript cursor to use when the resume request is caused by a just-committed

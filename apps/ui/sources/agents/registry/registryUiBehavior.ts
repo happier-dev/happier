@@ -3,6 +3,7 @@ import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
 import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents';
 import { AccountProfile } from '@happier-dev/protocol/account/profile';
 import { type ExternalSessionsAgentId, ExternalSessionLinkEnsureRequest, ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
@@ -824,6 +825,7 @@ export function classifyAgentSessionComposerNonSteerablePayload(opts: {
         : null;
     const configuredBackend = readAcpConfiguredBackendV1FromMetadata(ownerMetadata);
     const agentTargetKey = explicitAgentTargetKey
+        || readSessionModelSelectionV2FromMetadata(ownerMetadata)?.ref.agentTargetKey
         || (canonicalIntent?.success
             ? canonicalIntent.data.selection?.agentTargetKey ?? ''
             : '')

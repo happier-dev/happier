@@ -126,6 +126,7 @@ export {
   isProviderBoundSessionMetadata,
   resolveAmbientProviderConnectionForModelIntent,
   resolveModelSelectionIntentFromSessionMetadata,
+  resolveSessionModelSelectionFromMetadata,
   readSessionModelSelectionV2FromMetadata,
   resolveMetadataStringOverrideV1,
   resolvePermissionIntentFromSessionMetadata,

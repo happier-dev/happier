@@ -1,4 +1,4 @@
-import { readSessionModelSelectionProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
+import { isSessionModelRefSourceBound } from '@happier-dev/protocol/providers/selection/v2';
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { SPAWN_SESSION_ERROR_CODES, SpawnSessionExecutionAuthorizationSchema, normalizeSpawnSessionErrorDetail, SpawnSessionErrorCodeSchema, type SpawnSessionErrorDetail, type SpawnSessionErrorCode } from '@happier-dev/protocol/spawnSession';
@@ -275,7 +275,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
   };
 
   try {
-    const method = (options.modelSelection ? readSessionModelSelectionProviderConnectionId(options.modelSelection) : null) != null
+    const method = options.modelSelection && isSessionModelRefSourceBound(options.modelSelection.ref)
       ? RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE
       : RPC_METHODS.SPAWN_HAPPY_SESSION;
     const request = buildMachineResumeRequest(options, params.sessionId, readinessSpawnNonce);

@@ -4,7 +4,6 @@ import { z } from '../zodRuntimePolicy.js';
 import { SessionOwnerMetadataV1Schema } from '../sessions/metadata/sessionMetadataSchemasV1.js';
 import { isApiTokenGrantActionAllowedV1, type ApiTokenGrantV1 } from '../auth/apiTokenGrant.js';
 import { SessionModelSetResultV1Schema } from '../sessions/control/modelTransitionV1.js';
-import { projectSessionModelSelectionV2ToV1 } from '../providers/selection/v2.js';
 import { parseSessionPermissionModeAlias } from '../sessions/metadata/sessionPermissionModes.js';
 
 /** The input consumed by the existing Session model/config-option readers, never a complete owner view. */
@@ -12,6 +11,7 @@ export const ComposerOptionsInputV1Schema = lazyZodSchema(() => (<T extends z.Zo
     sessionModelsV1: true,
     acpSessionModelsV1: true,
     modelSelectionIntentV1: true,
+    modelSelectionIntentV2: true,
     modelOverrideV1: true,
     sessionConfigOptionOverridesV1: true,
     acpConfigOptionOverridesV1: true,
@@ -32,7 +32,7 @@ export function projectComposerOptionsInputV1(metadata: unknown, grant?: ApiToke
     for (const key of Object.keys(ComposerOptionsInputV1Schema.shape)) {
         if (grant !== undefined) {
             const control = key === 'permissionMode' || key === 'permissionModeUpdatedAt' ? 'session.permission_mode.set'
-                : key === 'modelOverrideV1' || key === 'modelSelectionIntentV1' || key === 'sessionModelsV1' || key === 'acpSessionModelsV1'
+                : key === 'modelOverrideV1' || key === 'modelSelectionIntentV1' || key === 'modelSelectionIntentV2' || key === 'sessionModelsV1' || key === 'acpSessionModelsV1'
                     ? 'session.model.set' : null;
             if (control && (!grant || !isApiTokenGrantActionAllowedV1(grant, control))) continue;
         }
@@ -60,15 +60,22 @@ export function applyComposerControlAcknowledgementV1(input: Readonly<{
     const parsed = SessionModelSetResultV1Schema.safeParse(result);
     if (!parsed.success) return input.options;
     const model = parsed.data;
+    if (model.status === 'intent_updated' && 'ref' in model.selection) {
+        const { modelOverrideV1: _legacyOverride, modelSelectionIntentV1: _previousIntent, ...options } = input.options;
+        return ComposerOptionsInputV1Schema.parse({ ...options, modelSelectionIntentV2: model.selection });
+    }
+    // Applied V1 tuples do not identify a Team resource. The pushed owner
+    // projection supplies current source identity; this acknowledgement cannot replace it.
+    if (model.status !== 'intent_updated' && input.options.modelSelectionIntentV2) return input.options;
     const selection = model.status === 'intent_updated'
-        ? 'ref' in model.selection ? projectSessionModelSelectionV2ToV1(model.selection)?.ref : model.selection
+        ? model.selection
         : model.activeSelection;
     if (!selection) return input.options;
     // Active acknowledgements have no intent clock. Retain the existing clock rather
     // than inventing a local timestamp; an armed result reports the still-active model.
     const updatedAt = model.status === 'intent_updated' ? model.updatedAt
         : input.options.modelSelectionIntentV1?.updatedAt ?? input.options.modelOverrideV1?.updatedAt ?? 0;
-    const { modelOverrideV1: _legacyOverride, ...options } = input.options;
+    const { modelOverrideV1: _legacyOverride, modelSelectionIntentV2: _previousIntent, ...options } = input.options;
     return ComposerOptionsInputV1Schema.parse({ ...options, modelSelectionIntentV1: { v: 1, selection, updatedAt } });
 }
 

@@ -1,11 +1,12 @@
-import { isNativeAutomaticModelSelectionInputV1, SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { isNativeAutomaticModelSelectionInputV1, SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
+import { isSessionModelRefSourceBound, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 
 import type { Session } from '../state/storageTypes';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { readSessionModelSelectionIntentFromMetadata } from '@/sync/domains/models/readSessionModelSelectionIntent';
+import { readSessionModelSelectionFromMetadata, readSessionModelSelectionIntentFromMetadata } from '@/sync/domains/models/readSessionModelSelectionIntent';
 
 export type ModelOverrideForSpawn = {
-    modelSelection: SessionModelSelectionV1;
+    modelSelection: SessionModelSelection;
 };
 
 export function getModelOverrideForSpawn(session: Session, agentTargetKey: string): ModelOverrideForSpawn | null {
@@ -13,31 +14,19 @@ export function getModelOverrideForSpawn(session: Session, agentTargetKey: strin
         && Number.isFinite(session.modelModeUpdatedAt)
         ? session.modelModeUpdatedAt
         : null;
-    const metadataIntent = readSessionModelSelectionIntentFromMetadata(
-        session.composerOptionsInput === undefined ? readSessionOwnerMetadataView(session) : session.composerOptionsInput,
-        agentTargetKey,
-    );
-    const metadataUpdatedAt = metadataIntent?.updatedAt ?? 0;
+    const metadata = session.composerOptionsInput === undefined ? readSessionOwnerMetadataView(session) : session.composerOptionsInput;
+    const metadataSelection = readSessionModelSelectionFromMetadata(metadata, agentTargetKey);
+    // Only the deployed V1 clear has a clock without a selection.
+    const metadataUpdatedAt = metadataSelection?.updatedAt
+        ?? readSessionModelSelectionIntentFromMetadata(metadata, agentTargetKey)?.updatedAt ?? 0;
     const localModelId = typeof session.modelMode === 'string' ? session.modelMode.trim() : '';
-    if (metadataIntent?.selection?.providerConnectionId != null) {
-        return {
-            modelSelection: SessionModelSelectionV1Schema.parse({
-                v: 1,
-                updatedAt: metadataIntent.updatedAt,
-                ref: metadataIntent.selection,
-            }),
-        };
+    if (metadataSelection && isSessionModelRefSourceBound(metadataSelection.ref)) {
+        return { modelSelection: metadataSelection };
     }
 
     if (localUpdatedAt === null || localUpdatedAt <= metadataUpdatedAt) {
-        if (!metadataIntent?.selection || isNativeAutomaticModelSelectionInputV1(metadataIntent.selection)) return null;
-        return {
-            modelSelection: SessionModelSelectionV1Schema.parse({
-                v: 1,
-                updatedAt: metadataIntent.updatedAt,
-                ref: metadataIntent.selection,
-            }),
-        };
+        if (!metadataSelection || isNativeAutomaticModelSelectionInputV1({ modelId: metadataSelection.ref.modelId })) return null;
+        return { modelSelection: metadataSelection };
     }
 
     const modelId = localModelId;

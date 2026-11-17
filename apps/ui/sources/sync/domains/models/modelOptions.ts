@@ -13,7 +13,7 @@ import {
     getAgentModelConfig,
     isFreeformModelIdAllowed,
 } from '@happier-dev/agents';
-import { readSessionModelSelectionIntentFromMetadata } from '@/sync/domains/models/readSessionModelSelectionIntent';
+import { readSessionModelSelectionFromMetadata } from '@/sync/domains/models/readSessionModelSelectionIntent';
 
 /** A session's Agent identity remains open; generated catalog policy narrows explicitly. */
 export type AgentType = string;
@@ -136,11 +136,11 @@ function appendRequestedModelOption(options: readonly ModelOption[], selectedMod
 function readSelectedModelOverrideId(agentType: AgentType, metadata: ComposerOptionsInputV1 | null | undefined): string {
     const targetKey = readAgentUniverseBackendTargetKey(agentType);
     if (targetKey === null) return '';
-    const intent = readSessionModelSelectionIntentFromMetadata(
+    const selection = readSessionModelSelectionFromMetadata(
         metadata,
         targetKey,
     );
-    return typeof intent?.selection?.modelId === 'string' ? intent.selection.modelId : '';
+    return selection?.ref.modelId ?? '';
 }
 
 function supportsDynamicSessionModelList(agentType: AgentType): boolean {
