@@ -28,6 +28,8 @@ import { createManagedActivityInventory } from '../../../../../apps/cli/src/daem
 import { withConfiguredDaemonTestHome } from '../../../../../apps/cli/src/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createEnvKeyScope } from '../../../../../apps/cli/src/testkit/env/envScope';
 import { createCliMachineActionDeps } from '../../../../../apps/cli/src/session/actions/cliActionDeps/machine';
+import { resolveExternalActionServerRequestHeaders } from '../../../../../apps/cli/src/api/externalActionExecutionAuthorization';
+import { requireExternalActionHeaders } from '../../../../../apps/cli/src/api/externalActionHeaderRefusal';
 import { createCliMachineInventoryActionDeps } from '../../../../../apps/cli/src/session/actions/cliActionDeps/machineInventory';
 import { createCliActionInventoryDeps } from '../../../../../apps/cli/src/session/actions/cliActionDeps/createCliActionInventoryDeps';
 import { createCliMachineActionTransport, type CliMachineActionCall } from '../../../../../apps/cli/src/session/actions/cliActionDeps/machineTransport';
@@ -162,7 +164,11 @@ async function buildInventoryOutputFixture(directory: string, options: Inventory
     const params = { credentials: { token: 'native-output-transport', encryption: null }, token: 'native-output-transport', serverId: target.serverId,
       serverIdentityId: target.serverId };
     const { isMachineActionServerScopeCurrent } = createCliMachineActionTransport(params);
-    const machineDeps = createCliMachineActionDeps(params, { callMachineAction, isMachineActionServerScopeCurrent });
+    const machineDeps = createCliMachineActionDeps(params, { callMachineAction, isMachineActionServerScopeCurrent,
+      resolveServerRequestHeaders: (context, effectActionId, request) => requireExternalActionHeaders(
+        resolveExternalActionServerRequestHeaders({ context, effectActionId, ...request, daemonToken: params.token,
+          serverIdentityId: params.serverIdentityId })),
+    });
     const inventoryDeps = createCliMachineInventoryActionDeps(params, { callMachineAction,
       inventoryDeps: createCliActionInventoryDeps({ ...params, sessionId: '', mode: 'plain', ctx: null, callMachineAction }) });
     const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', serverId: target.serverId,

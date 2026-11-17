@@ -1,3 +1,5 @@
+import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
@@ -32,7 +34,9 @@ describe('Machine capability observation during unsigned approval replay', () =>
   it('preserves which combined target refused planning and its original typed cause', async () => {
     const params = { token: 'fixture', credentials: { token: 'fixture', encryption: null, credentialProvenance: 'stored_session' as const },
       serverId: 'home', serverIdentityId: 'home' };
-    const deps = createCliMachineActionDeps(params, createCliMachineActionTransport(params));
+    const deps = createCliMachineActionDeps(params, { ...createCliMachineActionTransport(params),
+      resolveServerRequestHeaders: (context, effectActionId, request) => requireExternalActionHeaders(
+        resolveExternalActionServerRequestHeaders({ context, effectActionId, ...request, daemonToken: params.token })) });
     vi.spyOn(machineRpc, 'callExactMachineRpc').mockRejectedValue(new RpcError('Machine access was refused.', 'permission_denied'));
     const combined = createCombinedMachineSetupActionDeps({ readDeps: () => deps, targetPlan: deps.machineSetupPlan!,
       readHostFacts: async () => ({ machines: [{ machineId: 'second', online: true }] }), orchestrationDirectory: '.',

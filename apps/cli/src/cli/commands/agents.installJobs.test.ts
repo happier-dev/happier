@@ -1,3 +1,5 @@
+import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -54,6 +56,8 @@ describe('Agent CLI compiled install jobs', () => {
     let readCount = 0;
     const credentials = { token: 'header.eyJzdWIiOiJhY2NvdW50In0.signature', encryption: null };
     const machineDeps = createCliMachineActionDeps({ credentials, token: credentials.token }, {
+      resolveServerRequestHeaders: (context, effectActionId, request) => requireExternalActionHeaders(
+        resolveExternalActionServerRequestHeaders({ context, effectActionId, ...request, daemonToken: credentials.token })),
       isMachineActionServerScopeCurrent: async () => true,
       callMachineAction: async ({ machineId, method, request }) => {
         if (method === RPC_METHODS.DAEMON_AGENTS_INSTALL_START) {

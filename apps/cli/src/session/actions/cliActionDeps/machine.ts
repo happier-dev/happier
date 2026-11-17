@@ -21,12 +21,15 @@ import type { refreshActiveProviderConnectionsCatalog } from '@/providers/settin
 import { revokeMachineWithProviderCleanup } from '@happier-dev/protocol/machines/account/revokeWithProviderCleanup';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
+import { readRequesterAccountActionContext, resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 export function createCliMachineActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'serverHttpBaseUrl' | 'isCredentialCurrent' | 'savedSecretOperationContext' | 'token' | 'serverId'>,
-  { callMachineAction, isMachineActionServerScopeCurrent }: Readonly<{
+  { callMachineAction, isMachineActionServerScopeCurrent, resolveServerRequestHeaders }: Readonly<{
     callMachineAction: CliMachineActionCall;
     isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent;
+    resolveServerRequestHeaders: (context: ActionExecutorContext | undefined, effectActionId: string,
+      request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>>;
   }>,
 ): Pick<ActionExecutorDeps, 'machineCommandRun' | 'machineWorkSummaryGet' | 'actionOperationAction' | 'machinePageAction' | 'machineTerminalAction' | 'machineAgentInstallStart' | 'machineAgentInstallRead' | 'machineAgentInstallCancel' | 'machineSetupPlan' | 'machineSetupApply' | 'machineSetupRemove' | 'machineSetupUpdatesApply'> {
   return {
@@ -151,11 +154,12 @@ export function createCliMachineActionDeps(
           return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
         }
         const credentials = params.savedSecretOperationContext?.credentials ?? params.credentials;
-        if (!credentials || !params.savedSecretOperationContext && params.token !== credentials.token
-          || context.runtimeAccountId && context.runtimeAccountId !== readAccountIdFromToken(credentials.token)) {
+        if (!context.externalActionExecutionAuthorization && (!credentials
+          || !params.savedSecretOperationContext && params.token !== credentials.token
+          || context.runtimeAccountId && context.runtimeAccountId !== readAccountIdFromToken(credentials.token))) {
           return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
         }
-        if (await params.isCredentialCurrent?.() === false) {
+        if (!context.externalActionExecutionAuthorization && await params.isCredentialCurrent?.() === false) {
           return { ok: false, errorCode: 'credential_scope_changed', error: 'credential_scope_changed' };
         }
         const spec = getActionSpec(actionId);
@@ -164,10 +168,13 @@ export function createCliMachineActionDeps(
         const request = actionId === 'machines.replacement.set' ? MachineReplacementSetInputSchema.parse(input) : null;
         const body = request ? { replacementMachineId: request.replacementMachineId,
           ...(request.confirmActiveOldMachine === undefined ? {} : { confirmActiveOldMachine: request.confirmActiveOldMachine }) } : undefined;
+        const path = transport.path.replace(':machineId', encodeURIComponent(input.machineId));
+        const headers = resolveServerRequestHeaders(context, actionId, { method: transport.method, path,
+          ...(body === undefined ? {} : { body }) });
         const { buildCurrentAccountStoredContentCompatibilityHttpHeaders } = await import("@/api/clientCompatibility/cliClientCompatibility");
-        const response = await axios.request<unknown>({ url: `${home.replace(/\/+$/, '')}${transport.path.replace(':machineId', encodeURIComponent(input.machineId))}`,
+        const response = await axios.request<unknown>({ url: `${home.replace(/\/+$/, '')}${path}`,
           method: transport.method, data: body,
-          headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${credentials.token}` },
+          headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...headers },
           validateStatus: () => true, ...(context.signal ? { signal: context.signal } : {}),
         });
         if (response.status >= 200 && response.status < 300) return { ok: true };
@@ -177,27 +184,34 @@ export function createCliMachineActionDeps(
         return { ok: false, status: response.status, error };
       }
       if (actionId === 'machines.remove') {
-        const credentials = params.savedSecretOperationContext?.credentials ?? params.credentials;
-        if (!credentials || !params.savedSecretOperationContext && params.token !== credentials.token
-          || context.runtimeAccountId && context.runtimeAccountId !== readAccountIdFromToken(credentials.token)) {
+        const authorization = context.externalActionExecutionAuthorization;
+        const requester = readRequesterAccountActionContext(authorization);
+        const availableCredentials = requester?.credentials ?? params.savedSecretOperationContext?.credentials ?? params.credentials;
+        if (!availableCredentials) return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
+        const { credentials, operation: operationContext } = resolveRequesterSavedSecretActionCustody({ authorization,
+          credentials: availableCredentials, operationContext: params.savedSecretOperationContext });
+        if (!authorization && (!operationContext && params.token !== credentials.token
+          || context.runtimeAccountId && context.runtimeAccountId !== readAccountIdFromToken(credentials.token))) {
           return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
         }
         if (!await isMachineActionServerScopeCurrent({ serverId: input.serverId ?? context.serverId, machineId: input.machineId, context, signal: context.signal })) {
           return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
         }
-        const home = params.savedSecretOperationContext?.serverHttpBaseUrl ?? params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+        const home = operationContext?.serverHttpBaseUrl ?? params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
+        const isCredentialCurrent = requester?.isCurrent ?? params.isCredentialCurrent;
+        const path = `/v1/machines/${encodeURIComponent(input.machineId)}/revoke`;
+        const headers = resolveServerRequestHeaders(context, actionId, { method: 'POST', path, body: {} });
         return runWithServerHttpBaseUrl(home, async () => {
           const { prepareCliProviderConnectionsStore } = await import("@/providers/settings/catalogStore");
           const store = await prepareCliProviderConnectionsStore({ credentials,
-            operationContext: params.savedSecretOperationContext, signal: context.signal,
-            isCredentialCurrent: params.isCredentialCurrent });
+            operationContext, signal: context.signal, isCredentialCurrent });
           const outcome = await revokeMachineWithProviderCleanup(input.machineId, {
             revoke: async () => {
               try {
                 await store.verifyCurrent();
                 const { buildCurrentAccountStoredContentCompatibilityHttpHeaders } = await import("@/api/clientCompatibility/cliClientCompatibility");
-                const response = await axios.post(`${home.replace(/\/+$/, '')}/v1/machines/${encodeURIComponent(input.machineId)}/revoke`, {}, {
-                  headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${credentials.token}` },
+                const response = await axios.post(`${home.replace(/\/+$/, '')}${path}`, {}, {
+                  headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...headers },
                   validateStatus: () => true, ...(context.signal ? { signal: context.signal } : {}),
                 });
                 if (response.status >= 200 && response.status < 300) return { ok: true } as const;
@@ -216,8 +230,7 @@ export function createCliMachineActionDeps(
             try {
               const { refreshActiveProviderConnectionsCatalog } = await import("@/providers/settings/hydrate");
               await refreshActiveProviderConnectionsCatalog({ credentials,
-                operationContext: params.savedSecretOperationContext, signal: context.signal,
-                isCredentialCurrent: params.isCredentialCurrent }, { afterChange: true });
+                operationContext, signal: context.signal, isCredentialCurrent }, { afterChange: true });
             } catch { /* Projection failure cannot erase the durable Provider row receipt. */ }
           }
           return outcome;

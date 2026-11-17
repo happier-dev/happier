@@ -369,7 +369,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     context: ActionExecutorContext | undefined,
     effectActionId: string,
     request: Readonly<{ method: string; path: string; body?: unknown }>,
-  ): Readonly<Record<string, string>> | null => {
+  ): Readonly<Record<string, string>> => {
     const resolved = resolveExternalActionServerRequestHeaders({
       context,
       effectActionId,
@@ -923,7 +923,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     isWidgetScopeCurrent: () => widgetDeps.isWidgetScopeCurrent() });
   const messageActionDeps = createCliMessageActionDeps(params, { assertProjectRequesterCurrent, callSessionActionRpc, callSessionRpcForTransport, dispatchSessionLifecycleHookEvent, projectAccountAdmission, readServerFeaturesSnapshot, resolveServerRequestHeaders, resolveTransportForSession, withProjectHome });
   const settingsDeps = createCliSettingsActionDeps(params, { callMachineAction });
-  const machineDeps = createCliMachineActionDeps(params, { callMachineAction, isMachineActionServerScopeCurrent });
+  const machineDeps = createCliMachineActionDeps(params, { callMachineAction, isMachineActionServerScopeCurrent, resolveServerRequestHeaders });
   const updatesRolloutDeps = createMachineUpdatesRolloutActionDeps({ orchestrationDirectory: configuration.happyHomeDir,
     startCombined: startCombinedWorkflow, waitForRun: request => waitForCombinedWorkflow(request, request.start.runId) });
   const setupDeps = createCombinedMachineSetupActionDeps({

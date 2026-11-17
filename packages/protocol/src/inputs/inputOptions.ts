@@ -443,7 +443,7 @@ export async function resolveInputOptions(params: Readonly<{
     const labels = readUsageScopeOptions(batch.results, usageField, selected, anchorOf);
     if (usageField === 'machines' && deps.machinesList) {
       if (!serverId) return { ok: false, errorCode: 'server_not_selected', error: 'server_not_selected' };
-      const machines = await deps.machinesList({ serverId, purpose: 'input' });
+      const machines = await deps.machinesList({ serverId, purpose: 'input' }, ctx);
       const failure = params.readFailure(machines);
       if (failure) return failure;
       ctx.signal?.throwIfAborted();
@@ -469,7 +469,7 @@ export async function resolveInputOptions(params: Readonly<{
     // Machine names only tell apart the same checkout on two machines; an unreadable list leaves the path to do that.
     // A host marks a row `named: false` when its label is not a real name (hidden or still loading), and supplies the word
     // for a machine it does not list (`unlistedLabel`), so every checkout is named the way the host's own screens name it.
-    const machineList = deps.machinesList ? await deps.machinesList({ serverId: selectedServerId, purpose: 'input' }) : undefined;
+    const machineList = deps.machinesList ? await deps.machinesList({ serverId: selectedServerId, purpose: 'input' }, ctx) : undefined;
     const machineLabels = new Map<string | undefined, string>();
     let unlistedLabel: string | undefined;
     if (machineList !== undefined && !params.readFailure(machineList)) {
@@ -498,7 +498,7 @@ export async function resolveInputOptions(params: Readonly<{
     if (!selectedServerId) return { ok: false, errorCode: 'server_not_selected', error: 'server_not_selected' };
     if (!deps.machinesList) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:machines.list' };
     const result = await deps.machinesList({ serverId: selectedServerId,
-      ...(ctx.surface === 'voice' ? {} : { purpose: 'input' as const }) });
+      ...(ctx.surface === 'voice' ? {} : { purpose: 'input' as const }) }, ctx);
     const failure = params.readFailure(result);
     if (failure) return failure;
     ctx.signal?.throwIfAborted();
@@ -820,7 +820,7 @@ export async function resolveInputOptions(params: Readonly<{
       ...(typeof input.limit === 'number' ? { limit: input.limit } : {}),
       // A form's Machine picker reads the Home inventory with its told-apart names and presence, like the typed Machine input.
       ...(voice ? {} : { purpose: 'input' as const }),
-    });
+    }, ctx);
     const failure = params.readFailure(result);
     if (failure) return failure;
     if (voice) return { ok: true, result: normalizeResolvedOptions(result) };

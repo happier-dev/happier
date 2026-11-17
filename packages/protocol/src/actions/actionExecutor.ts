@@ -6515,7 +6515,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
             ...(typeof data.refresh === 'boolean' ? { refresh: data.refresh } : {}),
             ...(data.refresh === true && ctx.surface === 'ui' ? { purpose: 'input' as const } : {}),
-          });
+          }, ctx);
           return completeActionResult(res);
         }
 

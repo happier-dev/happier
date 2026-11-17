@@ -487,7 +487,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const executor = createActionExecutor({ ...createDeps(), machinesList });
     const result = await executor.execute('action.options.resolve', { actionId: 'browser.extensions.install',
       fieldPath: 'machineId', optionsSourceId: 'sessions.spawn.machines.available', draftInput: {} }, { serverId: 'home' });
-    expect(machinesList).toHaveBeenCalledWith(expect.objectContaining({ purpose: 'input' }));
+    expect(machinesList).toHaveBeenCalledWith(expect.objectContaining({ purpose: 'input' }), expect.any(Object));
     expect(result).toMatchObject({ ok: true, result: { options: [
       { value: 'new', label: 'Build box · 7be4', description: 'Online' },
       { value: 'away', label: 'Laptop', description: 'Offline' },
@@ -1430,7 +1430,7 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
     const res = await executor.execute('machines.list', { limit: 20 });
     expect(res.ok).toBe(true);
-    expect(deps.machinesList).toHaveBeenCalledWith({ limit: 20 });
+    expect(deps.machinesList).toHaveBeenCalledWith({ limit: 20 }, expect.any(Object));
   });
 
   it('refreshes the UI machine inventory without admitting a public privacy-projection operand', async () => {
@@ -1438,10 +1438,10 @@ describe('createActionExecutor (inventory/discovery)', () => {
     const executor = createActionExecutor(deps);
     const ui = await executor.execute('machines.list', { refresh: true }, { surface: 'ui' });
     expect(ui).toMatchObject({ ok: true });
-    expect(deps.machinesList).toHaveBeenLastCalledWith({ refresh: true, purpose: 'input' });
+    expect(deps.machinesList).toHaveBeenLastCalledWith({ refresh: true, purpose: 'input' }, expect.objectContaining({ surface: 'ui' }));
     const agent = await executor.execute('machines.list', { refresh: true }, { surface: 'agent' });
     expect(agent).toMatchObject({ ok: true });
-    expect(deps.machinesList).toHaveBeenLastCalledWith({ refresh: true });
+    expect(deps.machinesList).toHaveBeenLastCalledWith({ refresh: true }, expect.objectContaining({ surface: 'agent' }));
     expect(getActionSpec('machines.list').inputSchema.safeParse({ refresh: true, purpose: 'input' }).success).toBe(false);
   });
 

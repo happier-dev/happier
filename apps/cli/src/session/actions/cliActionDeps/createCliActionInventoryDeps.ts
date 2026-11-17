@@ -53,7 +53,7 @@ import {
 
 import { createMachineInventoryProbe } from './probeMachineInventory';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
-import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readRequesterAccountActionContext, resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
 type ModelInventoryItem = Readonly<{
   id: string;
@@ -571,12 +571,15 @@ export function createCliActionInventoryDeps(params: Readonly<{
         items: limitItems(items, args.limit),
       };
     },
-    machinesList: async (args) => {
+    machinesList: async (args, context) => {
       const [{ configuration }, { listCurrentAccountMachines }] = await Promise.all([import("@/configuration"), import("@/api/machine/resolveCurrentAccountMachineTarget")]);
       // The listed Machines belong to this credential's Home. Publish its portable identity, not this
       // CLI home's profile id, which another Machine on the same Home spells differently.
       const serverId = params.serverIdentityId ?? args.serverId ?? params.serverId ?? configuration.activeServerId;
-      const items = (await listCurrentAccountMachines({ token: params.token, credentials: params.credentials,
+      const authorization = context?.externalActionExecutionAuthorization;
+      const credentials = authorization ? readRequesterAccountActionContext(authorization)?.credentials : params.credentials;
+      const items = (await listCurrentAccountMachines({ token: params.token, credentials, authorization,
+        effectActionId: authorization?.binding.actionId ?? 'machines.list', signal: context?.signal,
         serverHttpBaseUrl: params.serverHttpBaseUrl,
         ...(args.sharedWithTeamId ? { sharedWithTeamId: args.sharedWithTeamId } : {}) })).map((machine) => ({
         serverId, id: machine.id, value: machine.id, label: machine.label, machineId: machine.id,

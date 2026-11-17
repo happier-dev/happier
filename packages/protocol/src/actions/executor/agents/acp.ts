@@ -46,7 +46,7 @@ export async function dispatchAgentsAcp(inv: Pick<CoreInvocation, 'actionId' | '
             backend: request.backend, nowMs: Date.now() });
           if (!outcome.ok) return projectAcpUpsertRefusal(outcome);
           const selection = buildConfiguredAcpAgentSelectionV1(outcome.backend.id);
-          const inventory = await deps.machinesList({ purpose: 'input', ...(ctx.serverId ? { serverId: ctx.serverId } : {}) });
+          const inventory = await deps.machinesList({ purpose: 'input', ...(ctx.serverId ? { serverId: ctx.serverId } : {}) }, ctx);
           const failure = readActionFailureEnvelope(inventory);
           if (failure) return failure;
           const rawMachines = readRecord(inventory).items;

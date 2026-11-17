@@ -1,3 +1,5 @@
+import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import { describe, expect, it } from 'vitest';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
@@ -49,7 +51,10 @@ describe('ordinary signed cancellation Machine RPC publisher', () => {
         externalActionMachineInstallationId: installation.installationId,
         externalActionMachineRequestPrivateKey: installation.privateKey });
       const actions = createCliMachineActionDeps({ credentials: fixture.credentials, token: fixture.credentials.token,
-        serverId: address.serverId, serverHttpBaseUrl: 'https://cancel-home.invalid' }, transport);
+        serverId: address.serverId, serverHttpBaseUrl: 'https://cancel-home.invalid' }, { ...transport,
+        resolveServerRequestHeaders: (context, effectActionId, request) => requireExternalActionHeaders(
+          resolveExternalActionServerRequestHeaders({ context, effectActionId, ...request, daemonToken: fixture.credentials.token,
+            serverIdentityId: address.serverId, installationId: installation.installationId, privateKey: installation.privateKey })) });
       const result = await actions.actionOperationAction!({ actionId: 'action.operations.cancel', input: address,
         context: { surface: 'rpc', authority: 'present_user', serverId: address.serverId,
           actionRequestId: 'canonical-cancel-sender', externalActionExecutionAuthorization: prepared.authorization,
