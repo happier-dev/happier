@@ -42,6 +42,14 @@ Second opinion. Choose the target and review the launch configuration before
 starting. A Plan run is separate work, while changing this session's plan
 mode changes its current Agent's behavior.
 
+In unreleased 0.3 development, a generic Review can use an executable Agent
+without native JSON output support. Happier asks for structured findings and
+uses its repair turn if the first response cannot be parsed. A final output
+failure remains visible; it does not mean the review found no issues.
+Continuation depends on the selected reviewer's retention support. An
+ephemeral engine starts a fresh run for another pass rather than offering a
+follow-up on the finished run.
+
 Use a session row's **Put under** menu to choose its lead; dragging provides
 the same reporting operation where offered. Detach it to make it a root.
 The operation checks the expected current lead, access, Home and cycles.

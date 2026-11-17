@@ -629,6 +629,23 @@ catalog can retain the container for administration, but selection, allow-list,
 review and Voice inventories use concrete targets. Target schemas and key
 formatting remain strict and require the definition id.
 
+In unreleased 0.3 source, review eligibility is projected by the CLI's
+`buildReviewEngineInventoryItems` owner for executable Session and Run Agents,
+including configured ACP targets. Native JSON support is not an admission
+requirement for a generic review: the shared ReviewProfile prompt, parser and
+repair turn remain the output contract. Native schema delivery is an optional
+transport improvement. Review starts consume the selected profile's inventory
+retention policy; ephemeral engines do not acquire follow-up support merely
+because they were launched through `review.start`.
+
+Captured review scope belongs to `reviews/scope/resolve.ts`, which consumes
+the retained comparison metadata or admitted PR revision range before ambient
+workspace state. All adapters consume that resolved scope. Finding
+`scopeAttribution` belongs to the shared strict-output normalizer, not the
+engine or a UI reader: it uses positive captured before/after location evidence
+and keeps incomplete, conflicting and unlocated findings unknown. Review
+history and a Seen before link do not establish pre-existence.
+
 In 0.3 development, `backendTargetRefV2.ts#readBackendTargetKeyV2` is the
 presentation reader for retained or derived targets. It returns the canonical
 key or `null` for an unresolved target, without selecting a replacement Agent;

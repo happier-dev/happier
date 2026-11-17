@@ -326,6 +326,19 @@ scope helps locate relevant changes; it does not prove exclusive authorship.
   same Project do not establish who changed a file.
 </Callout>
 
+## Agent review scope in development
+
+In unreleased 0.3 development, a review started from a captured comparison
+uses that comparison's selected changes, including its recorded base and head.
+An engine that cannot represent the selected scope must report it as
+unsupported rather than review the current checkout instead.
+
+Finding attribution comes from captured evidence. Positive before-side
+evidence can establish a pre-existing issue; positive added after-side evidence
+can place it in the selected changes. Missing, partial or conflicting evidence
+leaves attribution unknown. A finding appearing in an earlier review does not
+by itself prove that it predates the selected changes.
+
 ## Related
 
 - [Review comments](/code/review-comments) — turning a diff into instructions for an agent.
