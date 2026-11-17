@@ -859,6 +859,8 @@ const settingsAppearanceTranslationExtension = {
     useBuiltInTheme: "使用内置主题",
     cssWebOnlyRule: ({ line, selector }: { line: number; selector: string }) => `第 ${line} 行 · ${selector}`,
     pickTarget: ({ surface, role }: { surface: string; role: string }) => `${surface} 使用 ${role}`,
+    pickFixedColor: "固定颜色",
+    pickDerivedFrom: ({ roles }: { roles: string }) => `由 ${roles} 派生的颜色`,
     pickInstructionPointer: "指向应用的任意部分以找到其颜色。按 Esc 停止。",
     pickInstructionTouch: "轻点应用的某个部分以找到其颜色。点完成返回编辑器。",
     pageDescription: '浅色和深色模式的配色。为每种模式选择一个，或自己制作。',

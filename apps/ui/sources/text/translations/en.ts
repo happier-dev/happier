@@ -963,6 +963,8 @@ const settingsAppearanceTranslationExtension = {
     useBuiltInTheme: "Use a built-in theme",
     cssWebOnlyRule: ({ line, selector }: { line: number; selector: string }) => `Line ${line} · ${selector}`,
     pickTarget: ({ surface, role }: { surface: string; role: string }) => `${surface} uses ${role}`,
+    pickFixedColor: "a fixed color",
+    pickDerivedFrom: ({ roles }: { roles: string }) => `colors derived from ${roles}`,
     pickInstructionPointer: "Point at any part of the app to find its color. Esc stops.",
     pickInstructionTouch: "Tap a part of the app to find its color. Done returns to the editor.",
     pageDescription:

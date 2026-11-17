@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { getThemeSurfaceReference, type SurfaceId } from '@happier-dev/plugin-sdk/ui';
+import { getThemeSurfaceReference, type SurfaceId, type ThemeSurfacePaintSource } from '@happier-dev/plugin-sdk/ui';
 import type { ThemeProfileDocument, ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 import type { CodeEditorHandle, EditorDecoration } from '@/components/ui/code/editor/codeEditorTypes';
 import { projectThemeSurfacePaintMap } from '@/theme/css/themeSurfacePaintMap';
@@ -21,6 +21,13 @@ function tokenLabel(id: string): string {
     const token = THEME_PROFILE_TOKEN_DEFINITIONS_BY_ID[id];
     return token?.labelKey ? t(token.labelKey) : token?.label ?? id;
 }
+function paintSourceLabel(source: ThemeSurfacePaintSource): string {
+    switch (source.kind) {
+        case 'token': return tokenLabel(source.ref);
+        case 'derived': return t('settingsAppearance.themeProfiles.pickDerivedFrom', { roles: source.from.map(tokenLabel).join(' · ') });
+        case 'fixed': return t('settingsAppearance.themeProfiles.pickFixedColor');
+    }
+}
 
 /** Existing editor views consume the CSS and paint owners only while demanded. */
 export function useThemeProfileEditorCss(input: Readonly<{
@@ -41,7 +48,7 @@ export function useThemeProfileEditorCss(input: Readonly<{
     [input.draft, input.document, input.mode]);
     const onPick = React.useCallback((target: ThemeInspectionTarget) => {
         const ids = editableTokens(target);
-        setPickedTokenIds(ids);
+        setPickedTokenIds(ids.length ? ids : undefined);
         input.onQueryChange('');
         input.onViewChange('colors');
     }, [input.onQueryChange, input.onViewChange]);
@@ -100,7 +107,7 @@ export function useThemeProfileEditorCss(input: Readonly<{
     const picker: ThemeProfileEditorViewProps['picker'] = inspector.available ? {
         active: inspector.active, onToggle: toggle,
         target: inspector.target ? { surface: inspector.target.address.surface,
-            roleLabel: targetIds.length ? targetIds.map(tokenLabel).join(' · ') : t('common.unavailable'),
+            roleLabel: [...new Set(inspector.target.paintRoles.map(role => paintSourceLabel(role.source)))].join(' · '),
             roleId: targetIds.length ? targetIds.join(', ') : inspector.target.selector } : null,
     } : undefined;
     return { picker, pickedTokenIds,

@@ -852,6 +852,8 @@ const settingsAppearanceTranslationExtension = {
     useBuiltInTheme: "Fes servir un tema integrat",
     cssWebOnlyRule: ({ line, selector }: { line: number; selector: string }) => `Línia ${line} · ${selector}`,
     pickTarget: ({ surface, role }: { surface: string; role: string }) => `${surface} fa servir ${role}`,
+    pickFixedColor: "un color fix",
+    pickDerivedFrom: ({ roles }: { roles: string }) => `colors derivats de ${roles}`,
     pickInstructionPointer: "Assenyala qualsevol part de l’app per trobar-ne el color. Esc atura.",
     pickInstructionTouch: "Toca una part de l’app per trobar-ne el color. Fet torna a l’editor.",
     pageDescription: 'Els colors del mode clar i del mode fosc. Tria\'n un per a cadascun, o crea el teu.',

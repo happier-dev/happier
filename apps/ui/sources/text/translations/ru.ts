@@ -853,6 +853,8 @@ const settingsAppearanceTranslationExtension = {
     useBuiltInTheme: "Использовать встроенную тему",
     cssWebOnlyRule: ({ line, selector }: { line: number; selector: string }) => `Строка ${line} · ${selector}`,
     pickTarget: ({ surface, role }: { surface: string; role: string }) => `${surface} использует ${role}`,
+    pickFixedColor: "фиксированный цвет",
+    pickDerivedFrom: ({ roles }: { roles: string }) => `цвета, полученные из ${roles}`,
     pickInstructionPointer: "Наведите на любую часть приложения, чтобы найти её цвет. Esc — выход.",
     pickInstructionTouch: "Коснитесь части приложения, чтобы найти её цвет. «Готово» вернёт в редактор.",
     pageDescription: 'Цвета светлого и тёмного режимов. Выберите тему для каждого или создайте свою.',

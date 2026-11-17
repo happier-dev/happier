@@ -887,6 +887,8 @@ const settingsAppearanceTranslationExtension = {
     useBuiltInTheme: "Usar um tema integrado",
     cssWebOnlyRule: ({ line, selector }: { line: number; selector: string }) => `Linha ${line} · ${selector}`,
     pickTarget: ({ surface, role }: { surface: string; role: string }) => `${surface} usa ${role}`,
+    pickFixedColor: "uma cor fixa",
+    pickDerivedFrom: ({ roles }: { roles: string }) => `cores derivadas de ${roles}`,
     pickInstructionPointer: "Aponte para qualquer parte do app para encontrar a cor. Esc para.",
     pickInstructionTouch: "Toque em uma parte do app para encontrar a cor. Concluir volta ao editor.",
     pageDescription: 'As cores dos modos claro e escuro. Escolha um para cada, ou crie o seu.',

@@ -859,6 +859,8 @@ const settingsAppearanceTranslationExtension = {
     useBuiltInTheme: "組み込みテーマを使う",
     cssWebOnlyRule: ({ line, selector }: { line: number; selector: string }) => `${line}行目 · ${selector}`,
     pickTarget: ({ surface, role }: { surface: string; role: string }) => `${surface}は${role}を使用`,
+    pickFixedColor: "固定色",
+    pickDerivedFrom: ({ roles }: { roles: string }) => `${roles}から派生した色`,
     pickInstructionPointer: "アプリの任意の部分を指して色を探します。Escで終了。",
     pickInstructionTouch: "アプリの一部をタップして色を探します。完了でエディタに戻ります。",
     pageDescription: 'ライトモードとダークモードの配色です。それぞれ選ぶか、自分で作成できます。',

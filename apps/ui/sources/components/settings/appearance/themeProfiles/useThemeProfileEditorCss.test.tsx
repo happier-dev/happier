@@ -9,6 +9,7 @@ import { prepareThemeCssAsync } from '@/theme/css/prepareThemeCss';
 import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
 import type { ThemeEditorView } from './themeProfileEditorViewTypes';
 import { useThemeProfileEditorCss } from './useThemeProfileEditorCss';
+import { t } from '@/text';
 vi.mock('react-native', async () => import('@/platform/shims/reactNativeWebShim'));
 
 it('projects only demanded CSS facts and inserts after the confirmed engine buffer, preserving diagnostics', async () => {
@@ -16,6 +17,7 @@ it('projects only demanded CSS facts and inserts after the confirmed engine buff
         css: '[data-surface="sidebar"] { display: none; }\n.arbitrary { color: red; }\n@import url("https://example.com/theme.css");' };
     const parsed = parseThemeProfileDocument(draft);
     if (!parsed.ok) throw new Error(parsed.error);
+    const profileDocument = parsed.document;
     let buffer = draft.css + '\n/* buffered edit */';
     const onChange = vi.fn();
     const onViewChange = vi.fn();
@@ -30,7 +32,7 @@ it('projects only demanded CSS facts and inserts after the confirmed engine buff
     let model!: ReturnType<typeof useThemeProfileEditorCss>;
     function Harness({ view, presented }: { view: ThemeEditorView; presented: boolean }) {
         model = useThemeProfileEditorCss({ draft, mode: 'light', view, presented, readonly: false,
-            document: () => parsed.document, editorRef, onChange, onViewChange, onQueryChange });
+            document: () => profileDocument, editorRef, onChange, onViewChange, onQueryChange });
         return null;
     }
     const host = document.createElement('div'); document.body.append(host);
@@ -62,5 +64,46 @@ it('projects only demanded CSS facts and inserts after the confirmed engine buff
         expect(model.css.coverage).toBeUndefined();
         expect(model.css.surfaces).toBeUndefined();
         expect(setDecorations.mock.lastCall).toEqual(['diagnostic', []]);
+    } finally { await act(async () => root.unmount()); host.remove(); }
+});
+
+it('preserves fixed and derived paint provenance without inventing editable colors', async () => {
+    const draft = { ...createThemeProfileDraft({ id: 'pick-provenance', name: 'Ink', now: '2026-11-17T00:00:00.000Z' }),
+        overrides: { light: { 'message.user.background': '#303030' }, dark: {} } };
+    const parsed = parseThemeProfileDocument(draft);
+    if (!parsed.ok) throw new Error(parsed.error);
+    const profileDocument = parsed.document;
+    let model!: ReturnType<typeof useThemeProfileEditorCss>;
+    function Harness() {
+        model = useThemeProfileEditorCss({ draft, mode: 'light', view: 'colors', presented: true, readonly: false,
+            document: () => profileDocument, editorRef: { current: null },
+            onChange: vi.fn(), onViewChange: vi.fn(), onQueryChange: vi.fn() });
+        return null;
+    }
+    const host = document.createElement('div'); document.body.append(host);
+    const root = createRoot(host);
+    const pick = async (surface: string, part: string, state = 'default') => {
+        const painted = document.createElement('div');
+        painted.dataset.surface = surface; painted.dataset.part = part; painted.dataset.state = state;
+        host.append(painted);
+        await act(async () => painted.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+        painted.remove();
+    };
+    try {
+        await act(async () => root.render(<Harness />));
+        await act(async () => model.picker?.onToggle());
+        await pick('session-row', 'meta');
+        expect(model.pickedTokenIds).toEqual(['text.secondary']);
+        const { THEME_PROFILE_TOKEN_DEFINITIONS_BY_ID: tokens } = await import('@/theme/profiles/themeProfileTokenRegistry');
+        const label = (id: string) => tokens[id]!.labelKey ? t(tokens[id]!.labelKey!) : tokens[id]!.label;
+        expect(model.picker?.target?.roleLabel).toBe(label('text.secondary'));
+        await pick('button', 'icon', 'selected');
+        expect.soft(model.picker?.target?.roleLabel).toBe(t('settingsAppearance.themeProfiles.pickFixedColor'));
+        expect.soft(model.pickedTokenIds).toBeUndefined();
+        await pick('user-bubble', 'root');
+        expect(model.pickedTokenIds).toEqual(['message.user.background', 'surface.selected']);
+        expect(model.picker?.target?.roleLabel).toBe(t('settingsAppearance.themeProfiles.pickDerivedFrom', {
+            roles: ['message.user.background', 'surface.selected'].map(label).join(' · '),
+        }));
     } finally { await act(async () => root.unmount()); host.remove(); }
 });
