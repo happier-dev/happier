@@ -75,7 +75,7 @@ import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode
 import { inPendingQueuePositionTx, reserveNextPendingQueuePosition } from "@/app/session/pending/reserveNextPendingQueuePosition";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import { parseSessionMessageRole, resolveSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
-import { hasExactCurrentPublisherAuthorityInTx } from "@/app/session/pending/hasExactCurrentPublisherAuthorityInTx";
+import { hasExactCurrentPublisherAuthorityInTx, readExactCurrentPublisherSessionInTx } from "@/app/session/pending/hasExactCurrentPublisherAuthorityInTx";
 import type { CurrentSessionPublisherAuthority } from "@/app/presence/sessionPublisherPresence";
 import {
     createSessionMessageFromPending,
@@ -2377,21 +2377,25 @@ export async function settlePendingInputAdmission(params: Readonly<{
         return await inTx(async (tx) => pendingPublicationResult<SettlePendingInputAdmissionResult>(async () => {
             // Custody-only recovery has no caller-authored request/validation.
             // Fence the actual retained original's publication audience before
-            // any Account/Session write, just as ordinary admission does.
-            const original = await tx.sessionPendingMessage.findUnique({ where: { sessionId_localId: { sessionId, localId } }, select: { replyProgress: true } })
-                ?? await tx.sessionMessage.findUnique({ where: { sessionId_localId: { sessionId, localId } }, select: { replyProgress: true } });
-            const originalReplyProgress = createStoredReadSchema(SessionMessageReplyProgressV1Schema).safeParse(original?.replyProgress);
-            const discussionId = originalReplyProgress.success ? originalReplyProgress.data.discussion?.discussionId : undefined;
-            await acquireSessionAccountCursorLocksInTx(tx, [sessionId], discussionId
-                ? await resolveDiscussionAudienceInTx(tx, discussionId) : []);
-            if (!await hasExactCurrentPublisherAuthorityInTx(
+            // any Account/Session write, just as ordinary admission does. The
+            // audience census runs only where the fence locks rows (not SQLite).
+            await acquireSessionAccountCursorLocksInTx(tx, [sessionId], [], { readAdditionalAccountIdsInTx: async currentTx => {
+                const original = await currentTx.sessionPendingMessage.findUnique({ where: { sessionId_localId: { sessionId, localId } }, select: { replyProgress: true } })
+                    ?? await currentTx.sessionMessage.findUnique({ where: { sessionId_localId: { sessionId, localId } }, select: { replyProgress: true } });
+                const originalReplyProgress = createStoredReadSchema(SessionMessageReplyProgressV1Schema).safeParse(original?.replyProgress);
+                const discussionId = originalReplyProgress.success ? originalReplyProgress.data.discussion?.discussionId : undefined;
+                return discussionId ? await resolveDiscussionAudienceInTx(currentTx, discussionId) : [];
+            } });
+            // The authority read also carries the Session facts this settlement decides from.
+            const publisher = await readExactCurrentPublisherSessionInTx(
                 tx,
                 params.publisherAuthority,
                 actorUserId,
                 sessionId,
                 undefined,
                 { admittedWork: true },
-            )) return { ok: false, error: "forbidden" } as const;
+            );
+            if (!publisher) return { ok: false, error: "forbidden" } as const;
 
             const existing = await tx.sessionPendingMessage.findUnique({
                 where: { sessionId_localId: { sessionId, localId } },
@@ -2555,11 +2559,8 @@ export async function settlePendingInputAdmission(params: Readonly<{
                     ...(params.decision.validation ? { validation: params.decision.validation } : {}),
                 }
                 : params.decision;
-            const session = await tx.session.findUnique({
-                where: { id: sessionId },
-                select: { accountId: true, encryptionMode: true },
-            });
-            if (!session || session.accountId !== actorUserId) return { ok: false, error: "not-found" } as const;
+            // Under the Session lock: the publisher-authority read's own row (its owner is the actor).
+            const session = publisher.session;
             const requestContent = existing.content as PrismaJson.SessionPendingMessageContent;
             const requestedAction = PendingRequestedActionV1StoredSchema.safeParse(existing.requestedAction);
             if (!requestedAction.success) return { ok: false, error: "conflict" } as const;

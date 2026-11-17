@@ -134,9 +134,13 @@ describe('pending pipeline operations per turn event (real SQLite)', () => {
         // One read of the fenced Session row serves admission, rejoin and the drain decision (the other three are the
         // publisher fence, the activation reconcile and the post-update publication read). RED (HEAD e4edd8f0a7d): 7.
         expect(count(materialized.operations, operation => /^Session\.findUnique(OrThrow)?$/.test(operation))).toBe(5);
-        // The retained row: the lock audience read, one read under the lock that also serves domain validation
-        // and the reply check, and one custody carry onto the Message. RED: 6.
-        expect(count(settled.operations, pendingRowRead)).toBe(3);
+        // The retained row: one read under the lock that also serves domain validation and the reply check, and
+        // one custody carry onto the Message. SQLite's fence locks no rows, so it runs no lock-audience census
+        // and reads no row before it. RED: 6, then 3 (HEAD 3ba6310f489).
+        expect(count(settled.operations, pendingRowRead)).toBe(2);
+        // The publisher-authority read carries the owner and encryption mode the settlement decides from (the
+        // others: the mutation's own Session reads and two change-row links). RED (HEAD 3ba6310f489): 6.
+        expect(count(settled.operations, operation => /^Session\.findUnique(OrThrow)?$/.test(operation))).toBe(5);
         // The resolved row and one custody carry. RED: 3.
         expect(count(accepted.operations, pendingRowRead)).toBe(2);
     });

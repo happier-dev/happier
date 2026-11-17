@@ -25,12 +25,25 @@ export async function readExactCurrentPublisherAuthorityInTx(
     expectedRuntimeActivityRevision?: number,
     options?: PublisherAuthorityReadOptions,
 ): Promise<CurrentSessionPublisherAuthority | null> {
+    return (await readExactCurrentPublisherSessionInTx(tx, authority, actorUserId, sessionId,
+        expectedRuntimeActivityRevision, options))?.authority ?? null;
+}
+
+/** The exact-authority read, with the Session facts its caller decides from in the same read. */
+export async function readExactCurrentPublisherSessionInTx(
+    tx: Tx,
+    authority: CurrentSessionPublisherReadAuthority,
+    actorUserId: string,
+    sessionId: string,
+    expectedRuntimeActivityRevision?: number,
+    options?: PublisherAuthorityReadOptions,
+): Promise<Readonly<{ authority: CurrentSessionPublisherAuthority; session: Readonly<{ accountId: string; encryptionMode: string }> }> | null> {
     if (authority.accountId !== actorUserId || authority.sessionId !== sessionId) return null;
     if (!options?.admittedWork
         && !await hasCurrentSessionScopedMachineAccessInTx({ tx, ...authority, lockAuthority: options?.lockMachineAuthority })) return null;
     const session = await tx.session.findUnique({
         where: { id: sessionId },
-        select: { accountId: true, active: true, archivedAt: true, lastActiveAt: true, runtimeActivityRevision: true,
+        select: { accountId: true, encryptionMode: true, active: true, archivedAt: true, lastActiveAt: true, runtimeActivityRevision: true,
             publisherGeneration: true, publisherGenerationLastActiveAt: true },
     });
     if (
@@ -45,8 +58,8 @@ export async function readExactCurrentPublisherAuthorityInTx(
         || (expectedRuntimeActivityRevision !== undefined
             && session.runtimeActivityRevision !== BigInt(expectedRuntimeActivityRevision))
     ) return null;
-    return { accountId: authority.accountId, machineId: authority.machineId, sessionId,
-        committedFence: session.lastActiveAt };
+    return { authority: { accountId: authority.accountId, machineId: authority.machineId, sessionId,
+        committedFence: session.lastActiveAt }, session: { accountId: session.accountId, encryptionMode: session.encryptionMode } };
 }
 
 export async function hasExactCurrentPublisherAuthorityInTx(
