@@ -264,16 +264,18 @@ export function SecretRequirementModal(props: SecretRequirementModalProps) {
         if (!props.machineId) return t('profiles.requirements.machineEnvStatus.checkFor', { env: envName });
         const target = machineName ?? t('profiles.requirements.machineEnvStatus.theMachine');
         if (envPresence.isLoading) return t('profiles.requirements.machineEnvStatus.checking', { env: envName });
+        if (!envPresence.isPreviewEnvSupported) return t('common.unavailable');
         if (machineHasRequiredSecret) return t('profiles.requirements.machineEnvStatus.found', { env: envName, machine: target });
         return t('profiles.requirements.machineEnvStatus.notFound', { env: envName, machine: target });
-    }, [activeEnvVarName, envPresence.isLoading, machineHasRequiredSecret, machineName, props.machineId]);
+    }, [activeEnvVarName, envPresence.isLoading, envPresence.isPreviewEnvSupported, machineHasRequiredSecret, machineName, props.machineId]);
 
     const machineEnvSubtitle = React.useMemo(() => {
         if (!props.machineId) return undefined;
         if (envPresence.isLoading) return t('profiles.requirements.machineEnvSubtitle.checking');
+        if (!envPresence.isPreviewEnvSupported) return t('common.unavailable');
         if (machineHasRequiredSecret) return t('profiles.requirements.machineEnvSubtitle.found');
         return t('profiles.requirements.machineEnvSubtitle.notFound');
-    }, [envPresence.isLoading, machineHasRequiredSecret, props.machineId]);
+    }, [envPresence.isLoading, envPresence.isPreviewEnvSupported, machineHasRequiredSecret, props.machineId]);
 
     const activeSelectedSavedSecretId = React.useMemo(() => {
         const selectedRaw = props.selectedSecretIdByEnvVarName?.[activeEnvVarName];

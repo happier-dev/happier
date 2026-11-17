@@ -128,10 +128,12 @@ export const ExecutionRunSecretReferenceOverlayField = React.memo((props: Readon
             status: machineStatus?.isSet === true
                 ? t('profiles.requirements.configured')
                 : machineStatus === undefined
-                    ? t('profiles.requirements.checking')
+                    ? !machineEnvPresence.isLoading && !machineEnvPresence.isPreviewEnvSupported
+                        ? t('common.unavailable')
+                        : t('profiles.requirements.checking')
                     : t('profiles.requirements.notConfigured'),
         };
-    }), [catalog.resolveReference, machineEnvPresence.meta, props.defaultBindings, requirements, selectedSecretIds]);
+    }), [catalog.resolveReference, machineEnvPresence.isLoading, machineEnvPresence.isPreviewEnvSupported, machineEnvPresence.meta, props.defaultBindings, requirements, selectedSecretIds]);
 
     React.useEffect(() => {
         props.onChange({

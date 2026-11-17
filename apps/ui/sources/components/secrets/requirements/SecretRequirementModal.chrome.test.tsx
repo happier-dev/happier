@@ -4,10 +4,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
 import {
     findTestInstanceByTypeContainingText,
+    renderScreen,
     pressTestInstanceAsync,
 } from '@/dev/testkit';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import { SecretRequirementModal } from './SecretRequirementModal';
 
 const sharedEntries = [{
     ref: 'happier:shared-secret:v1:shared-a', source: 'shared_resource', relationship: 'recipient',
@@ -129,9 +131,7 @@ vi.mock('@/components/ui/text/Text', () => ({
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('SecretRequirementModal', () => {
-    it('names an unnamed machine as unnamed, never by its id, in the machine check', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
-        const { SecretRequirementModal } = await import('./SecretRequirementModal');
+    it('shows unavailable rather than absence or a raw Machine id when the environment cannot be checked', async () => {
         machineState.value = { id: 'f98b860d-63e0-436e', metadata: {} };
         renderedItemTitles.length = 0;
         try {
@@ -145,8 +145,7 @@ describe('SecretRequirementModal', () => {
                     onClose: () => {},
                 }),
             );
-            const machineCheck = renderedItemTitles.find((title) => title.startsWith('profiles.requirements.machineEnvStatus.'));
-            expect(machineCheck).toContain('machine=machine.unnamedMachine');
+            expect(renderedItemTitles).toContain('common.unavailable');
             expect(renderedItemTitles.join('\n')).not.toContain('f98b860d');
         } finally {
             machineState.value = null;
@@ -154,8 +153,6 @@ describe('SecretRequirementModal', () => {
     });
 
     it('drives modal card chrome when setChrome is provided', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
-        const { SecretRequirementModal } = await import('./SecretRequirementModal');
 
         const setChrome = vi.fn();
 
@@ -179,8 +176,6 @@ describe('SecretRequirementModal', () => {
     });
 
     it('lists personal keys from the Saved Secret catalog, and manages them only where the surface allows', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
-        const { SecretRequirementModal } = await import('./SecretRequirementModal');
         const profile = ({ id: 'p5', name: 'Profile' } satisfies Pick<AIBackendProfile, 'id' | 'name'>) as unknown as AIBackendProfile;
         await renderScreen(React.createElement(SecretRequirementModal, {
             profile, secretEnvVarName: 'OPENAI_API_KEY', machineId: null, defaultSecretId: null,
@@ -200,8 +195,6 @@ describe('SecretRequirementModal', () => {
     });
 
     it('picks a secret without managing it, and leads to Secrets settings for that', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
-        const { SecretRequirementModal } = await import('./SecretRequirementModal');
         const profile = ({ id: 'p6', name: 'Profile' } satisfies Pick<AIBackendProfile, 'id' | 'name'>) as unknown as AIBackendProfile;
         renderedItemTitles.length = 0;
         await renderScreen(React.createElement(SecretRequirementModal, {
@@ -216,8 +209,6 @@ describe('SecretRequirementModal', () => {
     });
 
     it('feeds Profile requirements from the same shared catalog as other pickers', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
-        const { SecretRequirementModal } = await import('./SecretRequirementModal');
 
         await renderScreen(React.createElement(SecretRequirementModal, {
             profile: ({ id: 'p2', name: 'Profile' } satisfies Pick<AIBackendProfile, 'id' | 'name'>) as unknown as AIBackendProfile,
@@ -229,8 +220,6 @@ describe('SecretRequirementModal', () => {
     });
 
     it('lets a ready shared secret become a Profile default', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
-        const { SecretRequirementModal } = await import('./SecretRequirementModal');
         const onResolve = vi.fn();
         const onSetDefaultSecretId = vi.fn();
 
@@ -254,8 +243,6 @@ describe('SecretRequirementModal', () => {
     });
 
     it('announces Use once as a button and titles the route screen as a page', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
-        const { SecretRequirementModal } = await import('./SecretRequirementModal');
         const { PageHeader } = await import('@/components/ui/layout/PageHeader');
         const screen = await renderScreen(React.createElement(SecretRequirementModal, {
             profile: ({ id: 'p4', name: 'Profile' } satisfies Pick<AIBackendProfile, 'id' | 'name'>) as unknown as AIBackendProfile,
@@ -280,8 +267,6 @@ describe('SecretRequirementModal', () => {
     });
 
     it('returns an Enter Once value without normalizing opaque whitespace', async () => {
-        const { renderScreen } = await import('@/dev/testkit');
-        const { SecretRequirementModal } = await import('./SecretRequirementModal');
         const onResolve = vi.fn();
         const screen = await renderScreen(React.createElement(SecretRequirementModal, {
             profile: ({ id: 'p3', name: 'Profile' } satisfies Pick<AIBackendProfile, 'id' | 'name'>) as unknown as AIBackendProfile,

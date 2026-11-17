@@ -6,24 +6,23 @@ import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
-import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { resetSavedSecretCatalogEngineForTests, refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
 import { applySavedSecretCatalogPage, resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { Modal } from '@/modal';
 import { ConnectSheetContent } from '@/components/settings/connectedServices/setup/ConnectSheetContent';
 import type { ConnectSheetContentProps } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
+import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
+import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { invalidateMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
+import { SecretRequirementModal } from '@/components/secrets/requirements/SecretRequirementModal';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { t } from '@/text';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc/errors';
 
 import { ExecutionRunSecretReferenceOverlayField, resolveExecutionRunSessionLaunchProfile } from './ExecutionRunSecretReferenceOverlayField';
 
 const viewport = vi.hoisted(() => ({ width: 390 }));
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () =>
-    (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(async () => ({
-        policy: 'redacted', values: {
-            OPENAI_API_KEY: { isSet: true, display: 'redacted' },
-            ANTHROPIC_API_KEY: { isSet: true, display: 'redacted' },
-        },
-    })));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
     useWindowDimensions: () => ({ width: viewport.width, height: 844, scale: 1, fontScale: 1 }),
 }));
@@ -36,7 +35,15 @@ vi.mock('socket.io-client', async importOriginal =>
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
     splitStreamingRevealTextParts: () => { throw new Error('Unexpected Markdown in key selection'); },
 }));
-installDisconnectedServerSocketBoundary();
+let previewReply: () => unknown = configuredPreview;
+function configuredPreview() {
+    return { policy: 'redacted', values: {
+        OPENAI_API_KEY: { isSet: true, display: 'redacted' },
+        ANTHROPIC_API_KEY: { isSet: true, display: 'redacted' },
+    } };
+}
+const rpcRequests = installSessionActionRpcBoundary(request =>
+    request.method.endsWith('preview-env') ? previewReply() : {});
 
 const profile = AIBackendProfileSchema.parse({ id: 'profile-work', name: 'Work',
     envVarRequirements: [{ name: 'OPENAI_API_KEY', required: true, kind: 'secret' }],
@@ -44,6 +51,9 @@ const profile = AIBackendProfileSchema.parse({ id: 'profile-work', name: 'Work',
 let home: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | null = null;
 
 beforeEach(() => {
+    invalidateMachineEnvPresence();
+    previewReply = configuredPreview;
+    rpcRequests.length = 0;
     vi.stubGlobal('indexedDB', indexedDB);
     vi.stubGlobal('IDBKeyRange', IDBKeyRange);
     viewport.width = 390;
@@ -58,15 +68,21 @@ afterEach(async () => {
     home = null;
 });
 
-async function setup(options: Readonly<{ multiRequirement?: boolean }> = {}) {
+async function setup(options: Readonly<{ multiRequirement?: boolean; machineId?: string }> = {}) {
     home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }) });
+    const request = home.request.getMockImplementation()!;
+    home.request.mockImplementation(async (input, init) => {
+        const machineResponse = createPlainMachineReadHttpResponseFixture(new URL(String(input)).pathname, init, home!.scope.accountId);
+        if (machineResponse) return machineResponse;
+        return request(input, init);
+    });
     const { entry } = await home.addOwnerResource();
     const fieldProfile = options.multiRequirement ? AIBackendProfileSchema.parse({ ...profile,
         envVarRequirements: [...profile.envVarRequirements!, { name: 'ANTHROPIC_API_KEY', required: true, kind: 'secret' }],
     }) : profile;
     const onChange = vi.fn();
     const render = (sharedEnabled = true) => <ExecutionRunSecretReferenceOverlayField profile={fieldProfile}
-        machineId={options.multiRequirement ? 'machine-1' : null} serverId={home!.scope.serverId} accountScope={home!.scope}
+        machineId={options.machineId ?? (options.multiRequirement ? 'machine-1' : null)} serverId={home!.scope.serverId} accountScope={home!.scope}
         defaultBindings={options.multiRequirement ? { OPENAI_API_KEY: entry.ref } : null}
         personalSecrets={[]} sharedEnabled={sharedEnabled} editable onChange={onChange} />;
     const screen = await renderScreen(render());
@@ -76,6 +92,32 @@ async function setup(options: Readonly<{ multiRequirement?: boolean }> = {}) {
 }
 
 describe('ExecutionRunSecretReferenceOverlayField', () => {
+    it.each(['unsupported', 'failure', 'absent'] as const)('settles %s Machine env reads truthfully in both secret presenters', async outcome => {
+        let settle!: (value: unknown) => void;
+        previewReply = () => new Promise(resolve => { settle = resolve; });
+        const { screen } = await setup({ machineId: 'machine-1' });
+        await vi.waitFor(() => expect(rpcRequests.some(request => request.method.endsWith('preview-env'))).toBe(true));
+        expect(screen.getTextContent()).toContain(t('profiles.requirements.checking'));
+        await act(async () => settle(outcome === 'unsupported'
+            ? { error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }
+            : outcome === 'failure' ? { error: 'Machine environment read failed' }
+                : { policy: 'redacted', values: { OPENAI_API_KEY: { isSet: false, display: 'unset' } } }));
+        const unavailable = outcome !== 'absent';
+        const modal = await renderScreen(<SecretRequirementModal profile={profile} secretEnvVarName="OPENAI_API_KEY"
+            machineId="machine-1" accountScope={home!.scope} defaultSecretId={null} onResolve={() => {}} onClose={() => {}} />);
+        await vi.waitFor(() => {
+            const machineOption = modal.findAllByType(DropdownMenu)[0]!.props.items.find((item: { id: string }) => item.id === 'machine');
+            expect({
+                launcherSettled: screen.getTextContent().includes(t(unavailable ? 'common.unavailable' : 'profiles.requirements.notConfigured')),
+                launcherChecking: screen.getTextContent().includes(t('profiles.requirements.checking')),
+                modalStatus: machineOption.subtitle,
+            }).toEqual({
+                launcherSettled: true,
+                launcherChecking: false,
+                modalStatus: t(unavailable ? 'common.unavailable' : 'profiles.requirements.machineEnvSubtitle.notFound'),
+            });
+        });
+    });
     it('resolves the Session profile from the canonical catalog with its entity bindings', () => {
         const canonicalProfile = { ...profile, secretBindings: { OPENAI_API_KEY: 'happier:shared-secret:v1:resource-a' } };
         expect(resolveExecutionRunSessionLaunchProfile({ profileId: profile.id }, [canonicalProfile])).toEqual(canonicalProfile);
