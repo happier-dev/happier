@@ -54,7 +54,14 @@ export type DeploymentTargetLinkChoiceV1 = Readonly<{
     title: string;
     content: NonNullable<DeploymentEnvironmentDetailV1['targetLinks'][number]['content']>;
 }>;
+type EnvironmentPage = Extract<ReturnType<typeof DeploymentEnvironmentListResultV1Schema.parse>, { ok: true }>;
+export type DeploymentEnvironmentNamePage = Readonly<Pick<EnvironmentPage, 'nextCursor' | 'coverage'> & {
+    items: readonly (EnvironmentPage['items'][number] & Readonly<{ name: string }>)[];
+}>;
 type UiDeploymentReadTransport = Omit<DeploymentReadTransportV1, 'readEnvironment'> & Readonly<{
+    /** Menu pages and saved identities share private, header-only presentation. */
+    readEnvironmentNames: (scope: DeploymentReadScopeV1, query: Readonly<{ cursor?: string; environmentId?: string }>,
+        options: DeploymentReadOptionsV1) => Promise<DeploymentReadResultV1<DeploymentEnvironmentNamePage>>;
     readEnvironment: (scope: DeploymentReadScopeV1, environmentId: string, options: DeploymentReadOptionsV1)
         => Promise<DeploymentReadResultV1<DeploymentEnvironmentDetailV1>>;
     readTargetLinks: (scope: DeploymentReadScopeV1,
@@ -102,6 +109,19 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             || !areServerProfileIdentifiersEquivalent(detail.environment.serverId, lifetime.scope.serverId)
             || !detail.targetLinks.every(link => link.environmentId === environmentId)) return failure('invalid_response');
         return { ok: true as const, value: detail };
+    };
+    const readEnvironmentPageMetadata = async (scope: DeploymentReadScopeV1,
+        query: Parameters<DeploymentReadTransportV1['listEnvironments']>[1], options: DeploymentReadOptionsV1) => {
+        const parsed = DeploymentEnvironmentListResultV1Schema.safeParse(await execute('deployments.environments.list',
+            { ...home, projectSourceId: scope.projectSourceId, ...query }, { signal: options.signal }));
+        if (!parsed.success) return failure('invalid_response');
+        const page = parsed.data;
+        if (!page.ok) return failure(page.error);
+        const requestedEnvironmentIds = query.environmentIds === undefined ? undefined : new Set(query.environmentIds);
+        if (!page.items.every(row => (scope.projectSourceId === undefined || row.projectSourceId === scope.projectSourceId)
+            && (requestedEnvironmentIds === undefined || requestedEnvironmentIds.has(row.id))
+            && areServerProfileIdentifiersEquivalent(row.serverId, lifetime.scope.serverId))) return failure('invalid_response');
+        return { ok: true as const, value: page };
     };
     const transport = {
         listDomainPage: (scope, query, options) => scoped(scope, options, async account => {
@@ -252,15 +272,9 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         listEnvironments: (scope, query, options): Promise<DeploymentReadResultV1<DeploymentEnvironmentCollectionV1>> => query.environmentIds?.length === 0 || query.previewPullRequestIds?.length === 0
             ? Promise.resolve({ ok: true, value: { items: [], nextCursor: null } })
             : scoped(scope, options, async account => {
-            const parsed = DeploymentEnvironmentListResultV1Schema.safeParse(await execute('deployments.environments.list',
-                { ...home, projectSourceId: scope.projectSourceId, ...query }, { signal: options.signal }));
-            if (!parsed.success) return failure('invalid_response');
-            const page = parsed.data;
-            if (!page.ok) return failure(page.error);
-            const requestedEnvironmentIds = query.environmentIds === undefined ? undefined : new Set(query.environmentIds);
-            if (!page.items.every(row => (scope.projectSourceId === undefined || row.projectSourceId === scope.projectSourceId)
-                && (requestedEnvironmentIds === undefined || requestedEnvironmentIds.has(row.id))
-                && areServerProfileIdentifiersEquivalent(row.serverId, lifetime.scope.serverId))) return failure('invalid_response');
+            const metadata = await readEnvironmentPageMetadata(scope, query, options);
+            if (!metadata.ok) return metadata;
+            const page = metadata.value;
             const environmentsById = new Map(page.items.map(row => [row.id, row]));
             if (page.runtimeTargetLinks?.some(link => environmentsById.get(link.environmentId)?.runtimeTargetLinkId !== link.id)) return failure('invalid_response');
             const runtimeByEnvironment = new Map(page.runtimeTargetLinks?.map(link => [link.environmentId, link]));
@@ -438,6 +452,31 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         }),
     } satisfies DeploymentReadTransportV1;
     return { ...transport,
+        readEnvironmentNames: (scope, query, options) => scoped(scope, options, async account => {
+            const metadata = query.environmentId === undefined
+                ? await readEnvironmentPageMetadata(scope, query, options)
+                : await readEnvironmentMetadata(scope, query.environmentId, options);
+            if (!metadata.ok) return metadata;
+            const page = 'items' in metadata.value ? metadata.value
+                : { items: [metadata.value.environment], nextCursor: null, coverage: undefined };
+            const headers = await readArtifactsByRow(page.items.map(row => row.contentArtifactId),
+                ids => account.readArtifactHeaders(ids, { signal: options.signal }));
+            const sourceNames = new Map('projectSources' in page ? page.projectSources?.map(source => [source.id, source.name]) : undefined);
+            const items: DeploymentEnvironmentNamePage['items'][number][] = [];
+            let coverage = page.coverage;
+            for (const [index, environment] of page.items.entries()) {
+                const result = headers[index];
+                const artifact = result?.status === 'fulfilled' ? result.value : null;
+                const presentation = readEnvironmentPresentation(environment,
+                    artifact?.isDecrypted && artifact.rawHeader && artifact.bodyVersion !== undefined ? {
+                        artifactId: artifact.id, header: artifact.rawHeader, body: null,
+                        revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion },
+                    } : null, sourceNames);
+                if (!presentation.label.ok) { coverage = 'partial'; continue; }
+                items.push({ ...environment, name: presentation.label.title });
+            }
+            return { ok: true, value: { items, nextCursor: page.nextCursor, coverage } };
+        }),
         readTargetLinks: (scope, targetLinks, options) => scoped(scope, options, async account => {
             if (targetLinks.length === 0) return { ok: true, value: [] };
             const artifacts = await readArtifactsByRow(targetLinks.map(link => link.contentArtifactId),

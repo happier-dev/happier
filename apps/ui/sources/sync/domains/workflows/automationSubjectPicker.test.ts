@@ -1,9 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 import { projectAutomationSubjectPickerActionPage, resolveAutomationSubjectPickerListRead } from './automationSubjectPicker';
 
 describe('automation subject picker read ownership', () => {
+    it('preserves the Environment identity owner’s portable Home instead of a routing alias', () => {
+        const environment = createDeploymentEnvironmentHeaderV1({ serverId: 'portable-home' });
+        for (const kind of ['environment', 'backup'] as const) {
+            expect(projectAutomationSubjectPickerActionPage({ kind: { kind }, serverId: 'routing-alias',
+                result: { ok: true, items: [{ ...environment, name: 'Private title' }], nextCursor: null },
+            }).items[0]?.subject).toEqual({ kind, serverId: environment.serverId, environmentId: environment.id });
+        }
+    });
     it('selects saved health-check identities from the saved-source owner without synthesizing checks', () => {
         const subject = { kind: 'healthCheck' as const, serverId: 'home-a', sourceInstanceId: 'saved-source', checkId: 'check-a' };
         expect(projectAutomationSubjectPickerActionPage({ kind: { kind: 'healthCheck' }, serverId: 'home-a', result: {

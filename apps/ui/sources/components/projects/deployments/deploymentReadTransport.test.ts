@@ -43,6 +43,65 @@ describe('deployment scoped read transport', () => {
     beforeEach(async () => { await homes.reset(); });
     afterEach(() => standardCleanup());
 
+    it.each(['plain', 'e2ee'] as const)('opens %s Environment and Backup subject names from private headers on the addressed Home', async mode => {
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-owner' })).toString('base64url')}.signature`;
+        const secret = new Uint8Array(32).fill(11);
+        const serverId = await homes.addHome({ name: 'Subject names', serverUrl: 'https://subject-names.test',
+            serverIdentityId: 'srv_subject_names', accountId: 'account-owner', accountEncryptionMode: mode,
+            ...(mode === 'e2ee' ? { credentials: { token, secret: encodeBase64(secret, 'base64url') } } : {}) });
+        if (mode === 'e2ee') homes.answer(serverId, '/v1/account/encryption/currentness', { body: {
+            mode: 'e2ee', version: 1, signingKeyFingerprint: 'signing-fingerprint',
+            contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+                createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret } }).contentPublicKeyFingerprint),
+            updatedAt: 1, recipientEnvelopeReadiness: { status: 'available' },
+        } });
+        const details = ['first', 'second'].map(id => createDeploymentEnvironmentDetailV1({
+            environment: createDeploymentEnvironmentHeaderV1({ id, serverId: 'srv_subject_names', contentArtifactId: `subject-${id}` }),
+        }));
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        try {
+            for (const detail of details) await account.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
+                header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Private staging' }, body: JSON.stringify(detail.content) });
+        } finally { account.dispose(); }
+        const root = '/v1/deployments/environments';
+        const metadata = [...details.map(detail => detail.environment), {
+            ...details[0]!.environment, id: 'unreadable', contentArtifactId: 'missing-private-header', name: 'Never use metadata title',
+        }];
+        homes.answer(serverId, root, { body: { ok: true, items: metadata, nextCursor: 'next', coverage: 'partial' } });
+        homes.answer(serverId, `${root}/first`, { body: { ok: true, environment: details[0]!.environment, targetLinks: [] } });
+        await homes.addHome({ name: 'Focused foreign Home', serverUrl: 'https://foreign-subject-names.test', accountId: 'foreign-owner', active: true });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account-owner' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const { readAutomationSubjectPickerActionPage, readAutomationSubjectPickerSelection } = await import('@/sync/domains/workflows/automationSubjectPicker');
+        for (const kind of ['environment', 'backup'] as const) {
+            const before = homes.requests.length;
+            const page = await readAutomationSubjectPickerActionPage({ lifetime, kind: { kind } });
+            expect(page).toMatchObject({ items: details.map(detail => ({ label: 'Private staging', subject: {
+                kind, serverId: detail.environment.serverId, environmentId: detail.environment.id,
+            } })), nextCursor: 'next', coverage: 'partial' });
+            const reads = homes.requests.slice(before);
+            expect(reads.filter(request => request.path === '/v1/artifacts/read').map(request => request.input))
+                .toEqual([{ artifactIds: metadata.map(environment => environment.contentArtifactId), projection: 'headers' }]);
+            expect(reads.every(request => request.serverId === serverId)).toBe(true);
+            const exactBefore = homes.requests.length;
+            expect(await readAutomationSubjectPickerSelection({ lifetime,
+                subject: { kind, serverId, environmentId: 'first' } })).toEqual({
+                label: 'Private staging', subject: { kind, serverId, environmentId: 'first' },
+            });
+            const exact = homes.requests.slice(exactBefore);
+            expect([...new Set(exact.filter(request => request.path.startsWith(root)).map(request => request.path.split('?')[0]))])
+                .toEqual([`${root}/first`]);
+            expect(exact.filter(request => request.path === '/v1/artifacts/read').map(request => request.input))
+                .toEqual([{ artifactIds: [details[0]!.environment.contentArtifactId], projection: 'headers' }]);
+        }
+        const beforeForeign = homes.requests.length;
+        await expect(readAutomationSubjectPickerSelection({ lifetime,
+            subject: { kind: 'environment', serverId: 'foreign-subject-names.test', environmentId: 'first' },
+        })).rejects.toMatchObject({ code: 'action_account_scope_changed' });
+        expect(homes.requests).toHaveLength(beforeForeign);
+    });
+
     it.each(['deployment_service', 'managed_deployment', 'deployment_service_disabled'] as const)('retains %s database subjects through scoped semantic Actions and reads native size', async kind => {
         const disabled = kind === 'deployment_service_disabled';
         const nativeKind = kind !== 'managed_deployment';

@@ -24,6 +24,7 @@ export type AutomationSubjectPickerOption = Readonly<{
     label: string;
     description?: string;
 }>;
+export type AutomationEnvironmentSubject = Extract<AutomationSubjectV1, { kind: 'environment' | 'backup' }>;
 
 /** A requested owner page, never an Account-wide inventory assembled by the picker. */
 export type AutomationSubjectPickerPage = Readonly<{
@@ -93,7 +94,7 @@ export function projectAutomationSubjectPickerActionPage(input: Readonly<{
             if (!page.ok) throw new Error(page.error);
             const kind = input.kind.kind;
             return { items: page.items.map(environment => ({ label: environment.name ?? environment.id,
-                subject: { kind, serverId, environmentId: environment.id } })), nextCursor: page.nextCursor,
+                subject: { kind, serverId: environment.serverId, environmentId: environment.id } })), nextCursor: page.nextCursor,
             coverage: page.coverage ?? 'unknown' };
         }
         case 'session': {
@@ -129,6 +130,13 @@ export async function readAutomationSubjectPickerActionPage(input: Readonly<{
 }> & AutomationSubjectPickerActionPageRequest):
     Promise<AutomationSubjectPickerPage> {
     const serverId = input.lifetime.scope.serverId;
+    if (input.kind.kind === 'environment' || input.kind.kind === 'backup') {
+        const { createDeploymentReadTransport } = await import('@/components/projects/deployments/deploymentReadTransport');
+        const result = await createDeploymentReadTransport(input.lifetime).readEnvironmentNames(input.lifetime.scope,
+            { cursor: 'cursor' in input ? input.cursor : undefined }, { signal: input.signal ?? new AbortController().signal });
+        if (!result.ok) throw new WorkflowActionError({ message: result.failure.code, rawCode: result.failure.code });
+        return projectAutomationSubjectPickerActionPage({ kind: input.kind, serverId, result: { ok: true, ...result.value } });
+    }
     const page = 'page' in input ? input.page : input;
     const read = resolveAutomationSubjectPickerListRead({ kind: input.kind, serverId,
         cursor: page.cursor, ...('limit' in page ? { limit: page.limit } : {}),
@@ -149,6 +157,21 @@ export async function readAutomationSubjectPickerActionPage(input: Readonly<{
     return callWorkflowAction({ actionId: read.actionId, input: read.input, accountLifetime: input.lifetime,
         context: { ...input.context, surface: 'ui', serverId }, signal: input.signal,
         parseResult: result => projectAutomationSubjectPickerActionPage({ kind: input.kind, serverId, result }) });
+}
+
+/** Resolve a saved native identity without demanding its catalogue or its content body. */
+export async function readAutomationSubjectPickerSelection(input: Readonly<{
+    lifetime: ServerAccountScopeLifetime; subject: AutomationEnvironmentSubject; signal?: AbortSignal;
+}>): Promise<AutomationSubjectPickerOption | null> {
+    const { createDeploymentReadTransport } = await import('@/components/projects/deployments/deploymentReadTransport');
+    const result = await createDeploymentReadTransport(input.lifetime).readEnvironmentNames(
+        { ...input.lifetime.scope, serverId: input.subject.serverId }, { environmentId: input.subject.environmentId },
+        { signal: input.signal ?? new AbortController().signal });
+    if (!result.ok) throw new WorkflowActionError({ message: result.failure.code, rawCode: result.failure.code });
+    const page = projectAutomationSubjectPickerActionPage({ kind: { kind: input.subject.kind },
+        serverId: input.subject.serverId, result: { ok: true, ...result.value } });
+    const option = page.items[0];
+    return option ? { ...option, subject: input.subject } : null;
 }
 
 export type AutomationSubjectPickerListRead =
