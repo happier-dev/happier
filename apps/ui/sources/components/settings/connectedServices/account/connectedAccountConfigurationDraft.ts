@@ -47,7 +47,7 @@ export function listConnectedAccountConfigurationOptions(
 ): readonly ConnectedAccountConfigurationOption[] {
     if (field.presentation?.options) return field.presentation.options;
     const enumValues = field.schema.type === 'array'
-        ? field.schema.items?.enum
+        ? (Array.isArray(field.schema.items) ? undefined : field.schema.items?.enum)
         : field.schema.enum;
     if (!enumValues) return [];
     const options: ConnectedAccountConfigurationOption[] = [];

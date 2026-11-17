@@ -233,8 +233,15 @@ function createPluginJsonSchemaZodAdapter<Schema extends z.ZodMiniType>(schema: 
       // shared root properties could otherwise synthesize a valid empty arm.
       if (unmatchedUnion) return value;
       if (Array.isArray(value)) {
-        const items = members.flatMap((member) => member.items ? [member.items] : []);
-        return items.length ? value.map((item) => project({ allOf: items }, item, retainUnionFields)) : value;
+        return value.map((item, index) => {
+          const schemas = members.flatMap((member) => {
+            const child = Array.isArray(member.items)
+              ? member.items[index] ?? (typeof member.additionalItems === 'object' ? member.additionalItems : undefined)
+              : member.items;
+            return child ? [child] : [];
+          });
+          return schemas.length ? project({ allOf: schemas }, item, retainUnionFields) : item;
+        });
       }
       if (!value || typeof value !== 'object') return value;
       const objectMembers = members.filter((member) => member.type === 'object' || member.properties);

@@ -39,6 +39,11 @@ export function resolveDeclaredInputLeaves(
       for (const arm of expandDeclaredInputAlternatives(position)) {
         const property = policy === 'review-field' && segment === '[]' && arm.type === 'array' ? arm.items
           : arm.type === 'object' ? arm.properties?.[segment] : undefined;
+        if (Array.isArray(property)) {
+          next.push(...property);
+          if (typeof arm.additionalItems === 'object') next.push(arm.additionalItems);
+          continue;
+        }
         if (!property) {
           if (policy !== 'every-arm') continue;
           return null;

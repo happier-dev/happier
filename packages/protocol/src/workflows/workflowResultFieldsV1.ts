@@ -122,6 +122,7 @@ function projectField(
   if (schema.type === 'array') {
     if (schema.enum !== undefined || schema.items === undefined) return null;
     const items = schema.items;
+    if (Array.isArray(items)) return null;
     if (Object.keys(items).some((key) => key !== 'type')) return null;
     const itemType = readScalarType(items.type);
     return itemType === null ? null : { ...base, type: 'list', itemType };

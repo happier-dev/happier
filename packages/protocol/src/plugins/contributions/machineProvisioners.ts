@@ -71,8 +71,16 @@ function machineProvisionerResultMatches(declared: PluginJsonSchemaV2, canonical
         .map(([name, schema]) => [name, name !== 'value' && supplied.properties?.[name]
           ? projectWriterShape(schema, supplied.properties[name]) : schema])) };
     }
-    if (expected.items && supplied.items) {
+    if (Array.isArray(expected.items)) {
+      const suppliedItems = supplied.items;
+      if (Array.isArray(suppliedItems) && suppliedItems.length === expected.items.length) {
+        projected = { ...projected, items: expected.items.map((item, index) => projectWriterShape(item, suppliedItems[index]!)) };
+      }
+    } else if (expected.items && supplied.items && !Array.isArray(supplied.items)) {
       projected = { ...projected, items: projectWriterShape(expected.items, supplied.items) };
+    }
+    if (typeof expected.additionalItems === 'object' && typeof supplied.additionalItems === 'object') {
+      projected = { ...projected, additionalItems: projectWriterShape(expected.additionalItems, supplied.additionalItems) };
     }
     // Canonical role unions keep their discriminants and complete arm set.
     // This is optional-property evolution, not general JSON Schema subtyping.

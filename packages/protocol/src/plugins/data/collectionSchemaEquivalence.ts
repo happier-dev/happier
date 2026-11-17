@@ -38,9 +38,10 @@ export function areCollectionSchemaLayoutsEquivalent(source: PluginJsonSchemaV2,
     for (const key of ['allOf', 'anyOf', 'oneOf'] as const) {
       if (schema[key]) identity[key] = schema[key].map(childSlot);
     }
-    for (const key of ['items', 'not', 'propertyNames', 'additionalProperties'] as const) {
+    if (Array.isArray(schema.items)) identity.items = schema.items.map(childSlot);
+    for (const key of ['items', 'additionalItems', 'not', 'propertyNames', 'additionalProperties'] as const) {
       const child = schema[key];
-      if (child !== undefined && typeof child === 'object') identity[key] = childSlot(child);
+      if (child !== undefined && typeof child === 'object' && !Array.isArray(child)) identity[key] = childSlot(child);
     }
     return { identity: createCanonicalJsonSigningInput(identity), children };
   };

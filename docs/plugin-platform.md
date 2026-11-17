@@ -5599,6 +5599,13 @@ optional and lazy wrappers. This is not a second parser or a public
 SDK flavor change. The private neutral-to-Zod Action bridge uses Zod's native
 lazy combinator because its contract is the base `ZodType`, including recursive
 JSON Schema projection, rather than a concrete fluent schema type.
+The unreleased Plugin JSON Schema dialect includes draft-07 tuple `items` arrays
+and boolean or schema-valued `additionalItems`. Tuple positions retain their own
+constraints; minimum length and closed tails follow the declaration. Native
+Action projections, Plugin admission, stored readers and the SDK compiler consume
+one dialect, including optional Bot face fields on `session.spawn_new`. Matching
+development Protocol, SDK and hosts reload together under the unpublished direct
+cut; older strict development readers reject tuple declarations.
 The internal JSON Schema validator reuses compiled validators by admitted schema
 identity, separately for draft-07 and draft-2020-12. Each new identity owns a
 disposable AJV engine, so retiring that schema and its validator also releases

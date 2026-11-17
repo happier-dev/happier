@@ -88,7 +88,7 @@ export function validatePluginDeclarativeDataNodeV1(node: PluginDeclarativeDataN
     const inputValidator = compilePluginJsonSchema(node.data.inputSchema);
     if (node.data.input !== undefined && !isValidPluginJsonSchemaValue(inputValidator, node.data.input)) throw new Error('declarative_data_input_invalid');
     const root = node.kind === 'metric' ? node.data.outputSchema : schemaAt(node.data.outputSchema, node.rows)?.items;
-    if (!root || (node.kind !== 'metric' && schemaAt(node.data.outputSchema, node.rows)?.type !== 'array')) throw new Error('declarative_data_rows_invalid');
+    if (!root || Array.isArray(root) || (node.kind !== 'metric' && schemaAt(node.data.outputSchema, node.rows)?.type !== 'array')) throw new Error('declarative_data_rows_invalid');
     for (const field of fields) {
       const declared = schemaAt(root, field.path);
       if (!declared || (declared.type !== field.type && !(field.type === 'number' && declared.type === 'integer'))) throw new Error('declarative_data_field_invalid');

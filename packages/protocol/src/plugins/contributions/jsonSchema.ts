@@ -14,7 +14,9 @@ export function isRecursivelyClosedPluginJsonSchemaV2(schema: PluginJsonSchemaV2
   return Object.values(schema.properties ?? {}).every(isRecursivelyClosedPluginJsonSchemaV2)
     && Object.values(schema.definitions ?? {}).every(isRecursivelyClosedPluginJsonSchemaV2)
     && Object.values(schema.$defs ?? {}).every(isRecursivelyClosedPluginJsonSchemaV2)
-    && (!schema.items || isRecursivelyClosedPluginJsonSchemaV2(schema.items))
+    && (Array.isArray(schema.items) ? schema.items.every(isRecursivelyClosedPluginJsonSchemaV2)
+      : !schema.items || isRecursivelyClosedPluginJsonSchemaV2(schema.items))
+    && (typeof schema.additionalItems !== 'object' || isRecursivelyClosedPluginJsonSchemaV2(schema.additionalItems))
     && (!schema.not || isRecursivelyClosedPluginJsonSchemaV2(schema.not))
     && [...(schema.anyOf ?? []), ...(schema.oneOf ?? []), ...(schema.allOf ?? [])].every(isRecursivelyClosedPluginJsonSchemaV2);
 }
@@ -114,7 +116,8 @@ export type PluginJsonSchemaV2 = {
   propertyNames?: PluginJsonSchemaV2;
   required?: string[];
   additionalProperties?: boolean | PluginJsonSchemaV2;
-  items?: PluginJsonSchemaV2;
+  items?: PluginJsonSchemaV2 | PluginJsonSchemaV2[];
+  additionalItems?: boolean | PluginJsonSchemaV2;
   minItems?: number;
   maxItems?: number;
   uniqueItems?: boolean;
@@ -158,7 +161,9 @@ const PluginJsonSchemaV2Definition: z.ZodMiniType<PluginJsonSchemaV2> = lazyZodS
   default: z.optional(PluginJsonValueV2Schema), enum: z.optional(z.array(PluginJsonValueV2Schema)), const: z.optional(PluginJsonValueV2Schema),
   properties: z.optional(z.record(z.string(), PluginJsonSchemaV2Schema)), required: z.optional(z.array(z.string())),
   propertyNames: z.optional(PluginJsonSchemaV2Schema),
-  additionalProperties: z.optional(z.union([z.boolean(), PluginJsonSchemaV2Schema])), items: z.optional(PluginJsonSchemaV2Schema),
+  additionalProperties: z.optional(z.union([z.boolean(), PluginJsonSchemaV2Schema])),
+  items: z.optional(z.union([PluginJsonSchemaV2Schema, z.array(PluginJsonSchemaV2Schema)])),
+  additionalItems: z.optional(z.union([z.boolean(), PluginJsonSchemaV2Schema])),
   minItems: z.optional(z.number().check(z.int(), z.nonnegative())), maxItems: z.optional(z.number().check(z.int(), z.nonnegative())),
   uniqueItems: z.optional(z.boolean()),
   minimum: z.optional(z.number()), maximum: z.optional(z.number()),

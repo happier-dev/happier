@@ -77,35 +77,17 @@ function assertUniqueStrings(values: readonly string[], label: string): void {
 function assertSchemaSemantics(schema: Readonly<Record<string, unknown>>): void {
   if (Array.isArray(schema.enum) && schema.enum.length === 0) throw invalidSchema('enum must contain at least one value');
   if (Array.isArray(schema.required)) assertUniqueStrings(schema.required as readonly string[], 'required');
-  if (schema.not && typeof schema.not === 'object' && !Array.isArray(schema.not)) {
-    assertSchemaSemantics(schema.not as Readonly<Record<string, unknown>>);
-  }
   for (const keyword of ['anyOf', 'oneOf', 'allOf'] as const) {
     const variants = schema[keyword];
-    if (!Array.isArray(variants)) continue;
-    if (variants.length === 0) throw invalidSchema(`${keyword} must contain at least one schema`);
-    for (const variant of variants) assertSchemaSemantics(variant as Readonly<Record<string, unknown>>);
+    if (Array.isArray(variants) && variants.length === 0) throw invalidSchema(`${keyword} must contain at least one schema`);
   }
-  if (schema.items && typeof schema.items === 'object' && !Array.isArray(schema.items)) {
-    assertSchemaSemantics(schema.items as Readonly<Record<string, unknown>>);
-  }
-  if (schema.additionalProperties && typeof schema.additionalProperties === 'object'
-    && !Array.isArray(schema.additionalProperties)) {
-    assertSchemaSemantics(schema.additionalProperties as Readonly<Record<string, unknown>>);
-  }
-  if (schema.propertyNames && typeof schema.propertyNames === 'object' && !Array.isArray(schema.propertyNames)) {
-    assertSchemaSemantics(schema.propertyNames as Readonly<Record<string, unknown>>);
-  }
-  // Visit the finite schema document, never expand references: recursive
-  // references remain JSON strings for the single AJV compiler to resolve.
-  for (const keyword of ['properties', 'definitions', '$defs'] as const) {
-    const children = schema[keyword];
-    if (children && typeof children === 'object' && !Array.isArray(children)) {
-      for (const child of Object.values(children)) {
-        assertSchemaSemantics(child as Readonly<Record<string, unknown>>);
-      }
+  // Visit the finite schema document, never expand references. The shared
+  // walker includes tuple positions and typed additional items.
+  forEachJsonSchemaChild(schema, child => {
+    if (child && typeof child === 'object' && !Array.isArray(child)) {
+      assertSchemaSemantics(child as Readonly<Record<string, unknown>>);
     }
-  }
+  });
 }
 
 /** @internal Only this owner's admitted/constructed immutable documents are reusable. */
@@ -282,14 +264,7 @@ export function projectProtocolStoredReadJsonSchema(jsonSchema: object): Readonl
       needsProjection = true;
       raw.additionalProperties = true;
     }
-    for (const key of ['properties', 'definitions', '$defs']) {
-      if (isProtocolRecord(raw[key])) Object.values(raw[key]).forEach(openObjects);
-    }
-    for (const key of ['anyOf', 'oneOf', 'allOf']) {
-      if (Array.isArray(raw[key])) raw[key].forEach(openObjects);
-    }
-    openObjects(raw.items);
-    openObjects(raw.additionalProperties);
+    forEachJsonSchemaChild(raw, openObjects);
   };
   openObjects(document);
   return { document, needsProjection };

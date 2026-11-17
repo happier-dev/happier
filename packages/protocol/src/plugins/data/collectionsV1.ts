@@ -1138,7 +1138,8 @@ function schemaChildren(schema: PluginJsonSchemaV2): PluginJsonSchemaV2[] {
   return [
     ...Object.values(schema.properties ?? {}), ...Object.values(schema.definitions ?? {}), ...Object.values(schema.$defs ?? {}),
     ...(schema.allOf ?? []), ...(schema.anyOf ?? []), ...(schema.oneOf ?? []),
-    schema.items, schema.not, schema.propertyNames,
+    ...(Array.isArray(schema.items) ? schema.items : [schema.items]), schema.not, schema.propertyNames,
+    typeof schema.additionalItems === 'object' ? schema.additionalItems : undefined,
     typeof schema.additionalProperties === 'object' ? schema.additionalProperties : undefined,
   ].filter(child => child !== undefined);
 }
@@ -1247,7 +1248,15 @@ function isCollectionSchemaWidening(source: PluginJsonSchemaV2, target: PluginJs
     if (target[key] !== undefined && (source[key] === undefined || target[key] < source[key])) return false;
   }
   if (target.uniqueItems && !source.uniqueItems) return false;
-  if (target.items && (!source.items || !isCollectionSchemaWidening(source.items, target.items))) return false;
+  if (Array.isArray(target.items) || Array.isArray(source.items)) {
+    const sourceItems = source.items;
+    const targetItems = target.items;
+    // Positional contracts evolve at the same positions; changing the tuple
+    // layout is not an automatically proved widening.
+    if (!Array.isArray(sourceItems) || !Array.isArray(targetItems)
+      || sourceItems.length !== targetItems.length
+      || !sourceItems.every((item, index) => isCollectionSchemaWidening(item, targetItems[index]!))) return false;
+  } else if (target.items && (!source.items || !isCollectionSchemaWidening(source.items, target.items))) return false;
   if ((target.required ?? []).some(field => !(source.required ?? []).includes(field))) return false;
   for (const [field, schema] of Object.entries(source.properties ?? {})) {
     const candidate = Object.hasOwn(target.properties ?? {}, field) ? target.properties![field]
@@ -1332,7 +1341,11 @@ function isRetainedUnionArmWidening(source: PluginJsonSchemaV2, target: PluginJs
       return Object.entries(fields).every(([field, schema]) => Object.hasOwn(candidates, field)
         && isRetainedUnionArmWidening(schema, candidates[field]!));
     }
-    if ((key === 'items' || key === 'additionalProperties') && typeof before === 'object' && typeof after === 'object') {
+    if (key === 'items' && (Array.isArray(before) || Array.isArray(after))) {
+      return Array.isArray(before) && Array.isArray(after) && before.length === after.length
+        && before.every((member, index) => isRetainedUnionArmWidening(member, after[index] as PluginJsonSchemaV2));
+    }
+    if ((key === 'items' || key === 'additionalItems' || key === 'additionalProperties') && typeof before === 'object' && typeof after === 'object') {
       return isRetainedUnionArmWidening(before as PluginJsonSchemaV2, after as PluginJsonSchemaV2);
     }
     return canonicalJson(before) === canonicalJson(after);
@@ -1349,9 +1362,9 @@ function normalizeSchema(value: PluginJsonSchemaV2): PluginJsonSchemaV2 {
         .map(([property, schema]) => [property, normalizeSchema(schema)]));
     } else if ((key === 'required' || key === 'enum') && Array.isArray(item)) {
       normalized[key] = [...item].sort((left, right) => compareCanonicalText(canonicalJson(left), canonicalJson(right)));
-    } else if ((key === 'anyOf' || key === 'oneOf' || key === 'allOf') && Array.isArray(item)) {
+    } else if ((key === 'anyOf' || key === 'oneOf' || key === 'allOf' || key === 'items') && Array.isArray(item)) {
       normalized[key] = item.map((entry) => normalizeSchema(entry as PluginJsonSchemaV2));
-    } else if ((key === 'propertyNames' || key === 'additionalProperties' || key === 'items' || key === 'not')
+    } else if ((key === 'propertyNames' || key === 'additionalProperties' || key === 'additionalItems' || key === 'items' || key === 'not')
       && item && typeof item === 'object') {
       normalized[key] = normalizeSchema(item as PluginJsonSchemaV2);
     } else {

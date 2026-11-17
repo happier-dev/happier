@@ -8449,7 +8449,8 @@ export type PluginJsonSchemaV2<Input extends boolean = false> = Input extends tr
     propertyNames?: PluginJsonSchemaV2<true> | undefined;
     required?: string[] | undefined;
     additionalProperties?: PluginJsonSchemaV2<true> | boolean | undefined;
-    items?: PluginJsonSchemaV2<true> | undefined;
+    items?: PluginJsonSchemaV2<true> | PluginJsonSchemaV2<true>[] | undefined;
+    additionalItems?: PluginJsonSchemaV2<true> | boolean | undefined;
     minItems?: number | undefined;
     maxItems?: number | undefined;
     uniqueItems?: boolean | undefined;
@@ -8483,7 +8484,8 @@ export type PluginJsonSchemaV2<Input extends boolean = false> = Input extends tr
     propertyNames?: PluginJsonSchemaV2 | undefined;
     required?: string[] | undefined;
     additionalProperties?: PluginJsonSchemaV2 | boolean | undefined;
-    items?: PluginJsonSchemaV2 | undefined;
+    items?: PluginJsonSchemaV2 | PluginJsonSchemaV2[] | undefined;
+    additionalItems?: PluginJsonSchemaV2 | boolean | undefined;
     minItems?: number | undefined;
     maxItems?: number | undefined;
     uniqueItems?: boolean | undefined;

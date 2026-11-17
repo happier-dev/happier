@@ -12,10 +12,16 @@ function schemaPropertyOrdersEqual(left: PluginJsonSchemaV2, right: PluginJsonSc
     for (const key of ['properties', '$defs', 'definitions'] as const) {
       for (const name of Object.keys(before[key] ?? {})) pending.push([before[key]![name]!, after[key]![name]!]);
     }
-    for (const key of ['items', 'additionalProperties', 'propertyNames', 'not'] as const) {
+    for (const key of ['items', 'additionalItems', 'additionalProperties', 'propertyNames', 'not'] as const) {
       const child = before[key];
       const counterpart = after[key];
-      if (typeof child === 'object' && typeof counterpart === 'object') pending.push([child, counterpart]);
+      if (typeof child === 'object' && typeof counterpart === 'object'
+        && !Array.isArray(child) && !Array.isArray(counterpart)) pending.push([child, counterpart]);
+    }
+    const items = before.items;
+    const counterparts = after.items;
+    if (Array.isArray(items) && Array.isArray(counterparts)) {
+      items.forEach((child, index) => pending.push([child, counterparts[index]!]));
     }
     for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
       before[key]?.forEach((child, index) => pending.push([child, after[key]![index]!]));

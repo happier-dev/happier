@@ -454,7 +454,7 @@ export const PluginSettingsContributionV2Schema = lazyZodSchema(() => z.strictOb
     const options = field.presentation?.options;
     if (options) {
       const schemaOptions = field.schema.type === 'array'
-        ? field.schema.items?.enum
+        ? (Array.isArray(field.schema.items) ? undefined : field.schema.items?.enum)
         : field.schema.enum;
       options.forEach((option, optionIndex) => {
         if (!schemaOptions || !containsEquivalentPluginJsonValue(schemaOptions, option.value)) {

@@ -484,7 +484,7 @@ function widgetMatchesInputLeaf(
       return type === 'integer';
     case 'text_list':
     case 'multiselect':
-      return inputLeaf.type === 'array' && inputLeaf.items?.type === 'string';
+      return inputLeaf.type === 'array' && !Array.isArray(inputLeaf.items) && inputLeaf.items?.type === 'string';
     case 'boolean':
       return type === 'boolean';
     case 'json':
