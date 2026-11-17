@@ -46,6 +46,7 @@ export function readPrefixServerSelection(argv) {
   return {
     hasExplicitSelection: Boolean(server || serverUrl || webappUrl || publicServerUrl || localServerUrl),
     explicitServerUrl: serverUrl || publicServerUrl || null,
+    onlyServerId: server && !serverUrl && !webappUrl && !publicServerUrl && !localServerUrl ? server : null,
     commandArgv,
     isAuthCommand: commandArgv[0] === 'auth' || commandArgv[0] === 'logout',
   };

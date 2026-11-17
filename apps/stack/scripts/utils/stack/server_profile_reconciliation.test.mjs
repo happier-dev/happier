@@ -8,6 +8,7 @@ import {
   assertStackServerProfileReconciled,
   classifyStackServerProfileFailure,
   buildStackServerProfileSetArgs,
+  stackOwnsServerProfile,
 } from './server_profile_reconciliation.mjs';
 
 function readFlag(args, flag) {
@@ -136,4 +137,22 @@ test('profile refusal preserves auth reason and stops worker retries without cop
   assert.equal(classifyStackServerProfileFailure(new Error('transport failed')), null);
   error.exitCode = 2;
   assert.equal(classifyStackServerProfileFailure(error), null);
+});
+
+test('an explicit --server naming a profile of the stack public URL is the stack endpoint, a foreign profile is not', async () => {
+  const homeDir = await mkdtemp(join(tmpdir(), 'hstack-profile-own-'));
+  const profile = (id, serverUrl) => ({ id, serverUrl, localServerUrl: 'http://127.0.0.1:15836', webappUrl: serverUrl });
+  await writeFile(join(homeDir, 'settings.json'), JSON.stringify({
+    schemaVersion: 5,
+    activeServerId: 'stack_qa__id_d',
+    servers: {
+      'qa.localhost-3039': profile('qa.localhost-3039', 'http://qa.localhost:3039'),
+      cloud: profile('cloud', 'https://api.example.com'),
+    },
+  }));
+  const publicServerUrl = 'http://qa.localhost:3039';
+
+  assert.equal(stackOwnsServerProfile({ homeDir, serverId: 'qa.localhost-3039', publicServerUrl }), true);
+  assert.equal(stackOwnsServerProfile({ homeDir, serverId: 'cloud', publicServerUrl }), false);
+  assert.equal(stackOwnsServerProfile({ homeDir, serverId: 'missing', publicServerUrl }), false);
 });

@@ -24,6 +24,7 @@ import { projectBorrowedExpoWebappEnv } from './runtime/shared/borrowed_expo.mjs
 import {
   assertStackServerProfileReconciled,
   buildStackServerProfileSetArgs,
+  stackOwnsServerProfile,
   deriveEnvServerIdFromUrl,
   readActiveServerUrlsFromCliSettings,
 } from './utils/stack/server_profile_reconciliation.mjs';
@@ -33,8 +34,7 @@ function isNodeRuntimeEntrypoint(entrypoint) {
   return /\.(?:cjs|js|mjs)$/i.test(String(entrypoint ?? '').trim());
 }
 
-function runCliProfileReconciliation({ resolvedCli, env, cliHomeDir, internalServerUrl, publicServerUrl }) {
-  const serverId = String(env.HAPPIER_ACTIVE_SERVER_ID ?? '').trim();
+function runCliProfileReconciliation({ resolvedCli, env, cliHomeDir, internalServerUrl, publicServerUrl, serverId = String(env.HAPPIER_ACTIVE_SERVER_ID ?? '').trim() }) {
   const args = buildStackServerProfileSetArgs({ serverId, internalServerUrl, publicServerUrl });
   const profile = { homeDir: cliHomeDir, serverId, internalServerUrl, publicServerUrl };
   try {
@@ -251,6 +251,14 @@ async function main() {
   // the environment; keep the authenticated descriptor intact until then.
   if (isStackScopedInvocation && !prefixServerSelection.hasExplicitSelection && !prefixServerSelection.isAuthCommand) {
     runCliProfileReconciliation({ resolvedCli, env, cliHomeDir, internalServerUrl, publicServerUrl });
+  }
+  if (
+    isStackScopedInvocation && prefixServerSelection.onlyServerId && !prefixServerSelection.isAuthCommand
+    && stackOwnsServerProfile({ homeDir: cliHomeDir, serverId: prefixServerSelection.onlyServerId, publicServerUrl })
+  ) {
+    runCliProfileReconciliation({
+      resolvedCli, env, cliHomeDir, internalServerUrl, publicServerUrl, serverId: prefixServerSelection.onlyServerId,
+    });
   }
   if (isStackScopedInvocation && requiresStackDaemonPreflight(forwardedArgv)) {
     const cliIdentity = (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default';

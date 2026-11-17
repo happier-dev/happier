@@ -86,6 +86,15 @@ export function readStackServerProfileHomeDescriptor({ homeDir, serverId }) {
   return HomeConnectionDescriptorV1Schema.parse(profile.homeConnectionDescriptor);
 }
 
+// An explicit `--server <id>` that names a saved profile of the stack's own public URL selects the
+// stack endpoint, not a foreign server, so the stack's current relay URLs apply to that profile.
+export function stackOwnsServerProfile({ homeDir, serverId, publicServerUrl }) {
+  const id = String(serverId ?? '').trim();
+  const profile = id ? coerceServerProfileFromSettings(readCliSettings(homeDir)?.servers?.[id]) : null;
+  const expected = comparableServerUrl(publicServerUrl);
+  return Boolean(profile && expected && comparableServerUrl(profile.serverUrl) === expected);
+}
+
 export function assertStackServerProfileReconciled({
   homeDir,
   serverId,
