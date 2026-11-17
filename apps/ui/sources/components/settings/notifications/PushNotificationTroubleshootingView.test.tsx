@@ -31,7 +31,8 @@ async function renderSettingsView(node: React.ReactElement) {
         actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, ...(deleteDisabled
             ? { actions: { 'notifications.push.tokens.remove': { disabledSurfaces: ['ui'] } } }
             : { approvalWaivedSurfaces: {
-            'notifications.push.tokens.remove': ['ui'], 'notifications.push.register': ['ui'], 'notifications.push.test': ['ui'],
+            'notifications.push.tokens.list': ['ui'], 'notifications.push.tokens.remove': ['ui'],
+            'notifications.push.register': ['ui'], 'notifications.push.test': ['ui'],
         } }) }) });
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(home), accountId: 'push-owner' };
     storage.setState({ profileScope: scope, settingsScope: scope, settings, settingsVersion: 1 });
@@ -124,7 +125,8 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: createPassthroughComponentMock('ItemGroup'),
+    ItemGroup: (props: Record<string, unknown> & { action?: React.ReactNode; children?: React.ReactNode }) =>
+        React.createElement('ItemGroup', props, props.action, props.children),
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -135,6 +137,8 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
     ItemRowActions: createItemRowActionsMock(),
 }));
 
+await loadSyncSingletonForTests();
+
 describe('PushNotificationTroubleshootingView', () => {
     beforeEach(async () => {
         await harness.reset();
@@ -144,11 +148,60 @@ describe('PushNotificationTroubleshootingView', () => {
         home = await harness.addHome({ name: 'Push', serverUrl: 'https://push-troubleshooting.example', serverIdentityId: 'srv_push',
             accountId: 'push-owner', currentAccount: true });
         modalConfirmMock.mockReset();
+        modalConfirmMock.mockResolvedValue(true);
         modalAlertMock.mockReset();
         deleteDisabled = false;
         settingsValue = {
             notificationsSettingsV1: { v: 1, pushEnabled: true },
         };
+    });
+
+    it('keeps a failed initial token inventory distinct from a successful empty inventory and recovers on refresh', async () => {
+        const Notifications = await import('expo-notifications');
+        vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({
+            status: PermissionStatus.GRANTED, expires: 'never', granted: true, canAskAgain: false,
+        });
+        vi.mocked(Notifications.getExpoPushTokenAsync).mockResolvedValue({ type: 'expo', data: 'ExponentPushToken[current]' });
+        harness.answer(home, '/v1/push-tokens', { status: 503, body: { error: 'token list unavailable' } });
+
+        const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
+        const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
+        await waitForHomeGovernance(() => expect(screen.findRowByTitle('settingsNotifications.pushTroubleshooting.loadError')).toBeTruthy());
+        expect(screen.findRowByTitle('settingsNotifications.pushTroubleshooting.devices.emptyTitle')).toBeNull();
+        expect(screen.findGroup('settingsNotifications.pushTroubleshooting.devices.title')?.props.description).toBeUndefined();
+        expect(screen.findRow('settings-notifications-push-troubleshooting-refresh')?.props.disabled).toBeFalsy();
+        await act(async () => { await screen.findRow('settings-notifications-push-troubleshooting-test-remote')!.props.action(); });
+        expect(modalAlertMock).toHaveBeenLastCalledWith('settingsNotifications.pushTroubleshooting.remoteTest.title',
+            'settingsNotifications.pushTroubleshooting.loadError');
+
+        answerPushTokens([]);
+        await act(async () => { screen.pressByTestId('settings-notifications-push-troubleshooting-refresh'); });
+        await waitForHomeGovernance(() => expect(screen.findRowByTitle('settingsNotifications.pushTroubleshooting.devices.emptyTitle')).toBeTruthy());
+        expect(screen.findRowByTitle('settingsNotifications.pushTroubleshooting.loadError')).toBeNull();
+        expect(screen.findGroup('settingsNotifications.pushTroubleshooting.devices.title')?.props.description)
+            .toBe('settingsNotifications.pushTroubleshooting.devices.footer');
+    });
+
+    it.each([false, true])('retains the last successful token inventory when refresh fails (nonempty=%s)', async nonempty => {
+        const Notifications = await import('expo-notifications');
+        vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({
+            status: PermissionStatus.GRANTED, expires: 'never', granted: true, canAskAgain: false,
+        });
+        vi.mocked(Notifications.getExpoPushTokenAsync).mockResolvedValue({ type: 'expo', data: 'ExponentPushToken[current]' });
+        answerPushTokens(nonempty ? [{ id: 'retained', token: 'ExponentPushToken[current]', createdAt: 1, updatedAt: 2 }] : []);
+        const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
+        const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
+        const readSnapshot = () => nonempty
+            ? screen.findRow('settings-notifications-push-troubleshooting-device-retained')
+            : screen.findRowByTitle('settingsNotifications.pushTroubleshooting.devices.emptyTitle');
+        await waitForHomeGovernance(() => expect(readSnapshot()).toBeTruthy());
+        harness.answer(home, '/v1/push-tokens', { status: 503, body: { error: 'token list unavailable' } });
+        await act(async () => { screen.pressByTestId('settings-notifications-push-troubleshooting-refresh'); });
+        await waitForHomeGovernance(() => expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'settingsNotifications.pushTroubleshooting.loadError'));
+        expect(readSnapshot()).toBeTruthy();
+        expect(screen.findRowByTitle('settingsNotifications.pushTroubleshooting.loadError')).toBeNull();
+        expect(screen.findGroup('settingsNotifications.pushTroubleshooting.devices.title')?.props.description)
+            .toBe('settingsNotifications.pushTroubleshooting.devices.footer');
     });
 
     it('backfills the account push status from legacy notification settings', async () => {

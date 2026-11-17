@@ -54,8 +54,8 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
     const [permission, setPermission] = React.useState<PushPermissionOutcome | null>(null);
     const [tokenOutcome, setTokenOutcome] = React.useState<ExpoPushTokenOutcome | null>(null);
     const [currentToken, setCurrentToken] = React.useState<string | null>(null);
-    const [tokens, setTokens] = React.useState<PushTokenRegistrationDiagnostics[]>([]);
-    const [loading, setLoading] = React.useState(false);
+    const [tokens, setTokens] = React.useState<PushTokenRegistrationDiagnostics[] | null>(null);
+    const [loading, setLoading] = React.useState(true);
     const [deletingToken, setDeletingToken] = React.useState<string | null>(null);
 
     const isMountedRef = React.useRef(true);
@@ -98,7 +98,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
                 if (!outcome.response.ok) throw new Error(outcome.response.error);
                 setTokens(NotificationConfigurationActionOutputSchemas['notifications.push.tokens.list'].parse(outcome.response.result).tokens);
             } else {
-                setTokens([]);
+                setTokens(null);
             }
         } catch {
             if (showErrors && isMountedRef.current && execution.isCurrent()) {
@@ -111,7 +111,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
         }
     }, [auth.credentials, execution.execute, execution.isCurrent]);
 
-    React.useEffect(() => { setTokens([]); setDeletingToken(null); }, [scope?.serverId, scope?.accountId]);
+    React.useEffect(() => { setTokens(null); setDeletingToken(null); }, [scope?.serverId, scope?.accountId]);
 
     React.useEffect(() => {
         void loadTroubleshootingState();
@@ -145,10 +145,12 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
     }, [auth.credentials, execution.execute, execution.isCurrent, loadTroubleshootingState]);
 
     const testRemotePush = async () => {
-        const registration = tokens.find(token => token.isCurrentDevice);
+        const registration = tokens?.find(token => token.isCurrentDevice);
         const title = t('settingsNotifications.pushTroubleshooting.remoteTest.title');
         if (!registration) {
-            await Modal.alert(title, t('settingsNotifications.pushTroubleshooting.remoteTest.notRegistered'));
+            await Modal.alert(title, tokens === null
+                ? t('settingsNotifications.pushTroubleshooting.loadError')
+                : t('settingsNotifications.pushTroubleshooting.remoteTest.notRegistered'));
             return;
         }
         try {
@@ -187,7 +189,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
     }, [auth.credentials, execution.execute, execution.isCurrent, loadTroubleshootingState]);
 
     const tokenFingerprint = currentToken ? formatPushTokenFingerprint(currentToken) : null;
-    const currentTokenPresentOnServer = tokens.some(row => row.isCurrentDevice);
+    const currentTokenPresentOnServer = tokens?.some(row => row.isCurrentDevice) === true;
     const permissionDetail = resolvePermissionDetail(permission);
     const permissionSubtitle = resolvePermissionSubtitle(permission);
     const permissionState = permission?.ok ? permission.permission : null;
@@ -195,7 +197,7 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
     // The OS will not ask again: the only way forward is system settings.
     const permissionBlocked = Boolean(permissionState && !permissionState.granted && permissionState.status !== 'unsupported' && !permissionState.canAskAgain);
 
-    const devicesFooter = t('settingsNotifications.pushTroubleshooting.devices.footer', {
+    const devicesFooter = tokens === null ? undefined : t('settingsNotifications.pushTroubleshooting.devices.footer', {
         count: String(tokens.length),
         serverUrl: scope ? (getServerProfileById(scope.serverId)?.serverUrl ?? '') : activeServer.serverUrl,
     });
@@ -288,7 +290,14 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
                 title={t('settingsNotifications.pushTroubleshooting.devices.title')}
                 description={devicesFooter}
             >
-                {tokens.length === 0 ? (
+                {tokens === null ? (
+                    <Item
+                        title={loading ? t('common.loading') : t('settingsNotifications.pushTroubleshooting.loadError')}
+                        showChevron={false}
+                        mode="info"
+                        loading={loading}
+                    />
+                ) : tokens.length === 0 ? (
                     <Item
                         title={t('settingsNotifications.pushTroubleshooting.devices.emptyTitle')}
                         subtitle={t('settingsNotifications.pushTroubleshooting.devices.emptySubtitle')}
