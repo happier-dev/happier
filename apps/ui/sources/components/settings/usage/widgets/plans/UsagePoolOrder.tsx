@@ -143,7 +143,7 @@ function memberReason(
   }
   const deadline = member.candidate?.preferenceDeadlineMs ?? null;
   return [
-    member.selected
+    member.evidence?.decision === 'selected'
       ? t(BASIS_KEYS[trace.selectionBasis])
       : member.rank === null
         ? null

@@ -896,8 +896,8 @@ it("lists a pool in the selector's own order and builds the why detail from its 
     windowDurationMs: 7 * DAY,
   });
   const quota = [
-    quotaRead('work', now, [weekly(30)]),
     quotaRead('personal', now, [weekly(10)]),
+    quotaRead('work', now, [weekly(30)]),
     quotaRead('side', now, [weekly(100)]),
   ];
   const group = { service, groupId: 'pool' };
@@ -910,7 +910,7 @@ it("lists a pool in the selector's own order and builds the why detail from its 
     preferenceDeadlineMs: now + 2 * DAY,
   });
   const selection = {
-    selected: candidate('personal', 1),
+    selected: candidate('work', 0),
     reason: 'selected' as const,
     excluded: [
       {
@@ -923,16 +923,16 @@ it("lists a pool in the selector's own order and builds the why detail from its 
       activeProfileId: 'personal',
       reason: 'selected' as const,
       strategy: 'expiry_first' as const,
-      selectionBasis: 'active_stickiness' as const,
-      sticky: true,
+      selectionBasis: 'preference' as const,
+      sticky: false,
       orderedEligibleCandidates: [
-        candidate('personal', 1),
         candidate('work', 0),
+        candidate('personal', 1),
       ],
       candidates: [
         {
           profileId: 'work',
-          decision: 'eligible' as const,
+          decision: 'selected' as const,
           quotaEvidence: {
             status: 'fresh' as const,
             remainingPercent: 62,
@@ -941,7 +941,7 @@ it("lists a pool in the selector's own order and builds the why detail from its 
         },
         {
           profileId: 'personal',
-          decision: 'selected' as const,
+          decision: 'eligible' as const,
           quotaEvidence: { status: 'stale_or_missing' as const },
         },
         {
@@ -1010,7 +1010,9 @@ it("lists a pool in the selector's own order and builds the why detail from its 
   expect(queue.every(Boolean)).toBe(true);
   expect(queue[0]!.props.accessibilityLabel).toContain(t('usage.board.plans.usedFirstInUse'));
   expect(queue[1]!.props.accessibilityLabel).not.toContain(t('usage.board.plans.usedFirstInUse'));
-  // The Account's own read order is work, personal: the queue follows the selector's order instead.
+  expect(queue[1]!.props.accessibilityLabel).toContain(t('usage.board.plans.basisPreference'));
+  expect(queue[0]!.props.accessibilityLabel).not.toContain(t('usage.board.plans.basisPreference'));
+  // The Account's own read order is personal, work: the queue follows the selector's order instead.
   const order = screen
     .findAll(
       (node) =>
@@ -1022,8 +1024,8 @@ it("lists a pool in the selector's own order and builds the why detail from its 
     )
     .map((node) => node.props.testID as string);
   expect([...new Set(order)]).toEqual([
-    'cap.usedFirst.pool.personal',
     'cap.usedFirst.pool.work',
+    'cap.usedFirst.pool.personal',
     'cap.usedFirst.pool.side',
   ]);
   expect(screen.getTextContent()).toContain('Expiring first');
