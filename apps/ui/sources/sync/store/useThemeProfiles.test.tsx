@@ -17,7 +17,7 @@ async function home(suffix: string) {
     const fixture = await createPlainArtifactHomeFixture(`https://theme-source-${suffix}.test`, { currentAccount: true });
     onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
     const scope = { serverId: fixture.home.id, accountId: 'artifact-account' };
-    const row = (index: number): DecryptedArtifact => ({
+    const row = (index: number): Extract<DecryptedArtifact, { isDecrypted: true }> => ({
         id: `theme-${index}`, sourceServerId: scope.serverId, ownerAccountId: scope.accountId, access: 'owner', isDecrypted: true,
         title: `Theme ${index}`, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 0, updatedAt: 0,
         rawHeader: { v: 1, kind: 'theme_profile.v1', title: `Theme ${index}`, mode: 'dark', themeSource: { kind: 'yours' },

@@ -61,9 +61,13 @@ async function artifactBoundary(serverId: string) {
         return new Map(boundary.list().map(row => {
             const parsed = parseThemeProfileDocument(JSON.parse(boundary.readPlainBody(row.id)!));
             if (!parsed.ok) throw new Error('Stored theme document is invalid');
+            if (row.bodyVersion === undefined) throw new Error('Stored theme fixture has no body revision');
             return [row.id, { document: parsed.document, revision: row.bodyVersion, headerVersion: row.headerVersion } satisfies ThemeProfileArtifactRecord] as const;
         }));
-    }, withLibrary, writes: () => boundary.list().reduce((total, row) => total + row.bodyVersion, 0),
+    }, withLibrary, writes: () => boundary.list().reduce((total, row) => {
+        if (row.bodyVersion === undefined) throw new Error('Stored theme fixture has no body revision');
+        return total + row.bodyVersion;
+    }, 0),
     loseReply: (beforeLoss: () => void) => boundary.afterNextCreate(async () => { beforeLoss(); throw new Error('Artifact reply lost'); }),
     assertScopedIds: () => {
         for (const request of harness.requests.filter(request => request.serverId === serverId && request.path === '/v1/artifacts' && request.method === 'POST')) {

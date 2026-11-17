@@ -9840,7 +9840,7 @@ class Sync {
                         && mode === resolveThemeRuntimeVisualTheme(preference, systemTheme),
                     mutation: () => {
                         throwIfAborted(params.signal);
-                        const current = storage.getState().localSettings.themeProfileSelection;
+                        const current = storage.getState().localSettings.themeProfileSelection ?? { light: null, dark: null };
                         storage.getState().applyLocalSettings({ themeProfileSelection: { ...current, [mode]: reference } });
                     },
                 });

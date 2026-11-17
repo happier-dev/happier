@@ -776,7 +776,7 @@ describe('Theme profile editor', () => {
         const swatch = screen.findByTestId('settings-theme-color-swatch-light-background.canvas');
         expect(swatch?.props.color).toBeUndefined();
         expect(flattenTestStyle(swatch?.props.style).backgroundColor).toBe('#123456');
-        expect(getThemeTryOnOwner().read()?.document.profile.overrides.light['background.canvas']).toBe('#123456');
+        expect(getThemeTryOnOwner().read()?.document?.profile.overrides.light['background.canvas']).toBe('#123456');
     });
 
     it('opens an addressed retained agent draft without saving it first', async () => {

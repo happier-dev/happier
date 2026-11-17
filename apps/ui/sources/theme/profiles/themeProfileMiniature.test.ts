@@ -29,7 +29,8 @@ describe('seed resolution lifecycle', () => {
         if (!parsed.ok) throw new Error('Invalid fixture');
         const dark = resolveThemeProfile({ mode: 'dark', profile: parsed.document.profile });
         expect(resolveThemeProfile({ mode: 'dark', profile: { ...parsed.document.profile, seeds: { canvas: '#172033', accent: '#aabbcc' } } })).toBe(dark);
-        expect(resolveThemeProfile({ mode: 'dark', profile: { ...parsed.document.profile, updatedAt: 'later' } })).toBe(dark);
+        const metadataEdit = { ...parsed.document.profile, updatedAt: 'later' };
+        expect(resolveThemeProfile({ mode: 'dark', profile: metadataEdit })).toBe(dark);
         expect(resolveThemeProfile({ mode: 'dark', profile: { ...parsed.document.profile, seeds: { canvas: '#172034', accent: '#aabbcc' } } })).not.toBe(dark);
         expect(resolveThemeProfile({ mode: 'light', profile: parsed.document.profile }).colors.background.canvas).toBe(resolveThemeProfile({ mode: 'light', profile: null }).colors.background.canvas);
     });

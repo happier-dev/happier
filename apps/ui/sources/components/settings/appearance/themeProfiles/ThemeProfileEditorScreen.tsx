@@ -459,7 +459,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
                     title={t(sourceRead.state === 'loading' ? 'common.loading' : 'settingsAppearance.themeProfiles.missingProfile')}
                     description={sourceRead.state === 'loading' ? undefined : t('settingsAppearance.themeProfiles.missingProfileDescription')}
                 />
-                {previewSource.error || sourceRead.state === 'failed' ? <SurfaceStateCard kind="error"
+                {previewSource.error || sourceRead.state === 'failed' ? <SurfaceStateCard kind="error" title={t('common.error')}
                     reason={resolveActionExecutionErrorMessage(previewSource.error ?? sourceRead.failure, t('artifacts.browser.loadFailedBody'), { safeToRetry: true })}
                     {...(!previewSource.error ? { action: { label: t('common.retry'), onPress: sourceRead.retry } } : {})}
                     accessibilitySemantics="alert" /> : null}

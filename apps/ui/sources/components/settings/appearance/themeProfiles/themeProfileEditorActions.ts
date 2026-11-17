@@ -1,8 +1,8 @@
-import { THEME_ACTION_IDS, type ThemeActionId } from '@happier-dev/protocol/actions/themeActionIdsV1';
-import type { ThemeActionInput, ThemeActionOutput } from '@happier-dev/protocol/actions/themeActionFamily';
+import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { mergeThemeProfileDocumentEdit, type ThemeProfileDocument, type ThemeProfileMode, type ThemeProfileV1, type ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
+import type { ThemeUiActionExecute } from './useThemeActionExecution';
 
-export type ThemeEditorExecute = <Id extends ThemeActionId>(id: Id, input: ThemeActionInput<Id>) => Promise<ThemeActionOutput<Id>>;
+export type ThemeEditorExecute = ThemeUiActionExecute;
 export type ThemeEditorDraft = Readonly<{ document: ThemeProfileDocument; draft: ThemeProfileV1; mode: ThemeProfileMode; css?: string }>;
 
 function editedDocument(input: ThemeEditorDraft): ThemeProfileDocument {
