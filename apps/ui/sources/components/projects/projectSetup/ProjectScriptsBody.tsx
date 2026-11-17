@@ -232,9 +232,10 @@ export function ProjectScriptsBody({
   } else if (page && phone && reviewPageOpen && setupReview.reviewing && read.value.definition.document?.status === 'valid') {
     ownsScroll = true;
     content = (
-      <ProjectSetupReviewPage
+      <PhoneSetupReviewPage
         testID={`${testID}.setup.reviewPage`}
-        manifest={read.value.definition.document.manifest}
+        inspection={read.value}
+        binding={binding}
         review={setupReview}
         onBack={closeReviewPage}
         onViewFile={() => { closeReviewPage(); setEditor({ key, seed: false, mode: 'raw' }); }}
@@ -1515,6 +1516,40 @@ function useSetupOpening(
     reason: mine?.reason ?? null,
     open,
   };
+}
+
+/**
+ * The phone's pushed setup review (lab L6 reviewp): the composed definition the Machine runs, each line
+ * naming its layer when there is more than the repository file, like the inline review on wider screens.
+ */
+function PhoneSetupReviewPage(
+  props: Readonly<{
+    testID: string;
+    inspection: ProjectDefinitionInspection;
+    binding: ServerCredentialAccountScopeBinding | null;
+    review: React.ComponentProps<typeof ProjectSetupReviewPage>['review'];
+    onBack: () => void;
+    onViewFile: (() => void) | null;
+  }>,
+) {
+  const effective = readProjectEffectiveDefinition(props.inspection);
+  const definition = effective.kind === 'available' ? effective.value : null;
+  const source = useProjectSource(props.binding, definition?.sharedBasis?.sourceId ?? null);
+  const sharedName = source.source?.source.name ?? null;
+  const layers = React.useMemo(() => readProjectSetupLayers(definition, sharedName), [definition, sharedName]);
+  const document = props.inspection.definition.document;
+  const manifest = definition?.effectiveManifest ?? (document?.status === 'valid' ? document.manifest : null);
+  if (!manifest) return null;
+  return (
+    <ProjectSetupReviewPage
+      testID={props.testID}
+      manifest={manifest}
+      review={props.review}
+      onBack={props.onBack}
+      onViewFile={props.onViewFile}
+      layerOf={layers.sharedSourceId || layers.personalChanges > 0 ? layers.layerOf : null}
+    />
+  );
 }
 
 /** The header's "…" beside Edit project file (lab L6 menu): what you can do with a shared setup. */

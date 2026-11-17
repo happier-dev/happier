@@ -67,6 +67,8 @@ export function ProjectSetupReviewPage(
     review: ReturnType<typeof useProjectSetupReviewDecision>;
     onBack: () => void;
     onViewFile: (() => void) | null;
+    /** Each effect line's layer when the project's setup has more than the repository file (lab L6 reviewp). */
+    layerOf?: ((path: readonly string[]) => string | null) | null;
   }>,
 ) {
   const { review, onBack } = props;
@@ -91,6 +93,7 @@ export function ProjectSetupReviewPage(
               sharedRunAs={review.machine.sharedRunAs}
               sharedTrustDetail={review.machine.sharedTrustDetail}
               reviewedEffect={review.reviewedEffect}
+              layerOf={props.layerOf ?? null}
               framed
               scope={scope}
               onScopeChange={review.setScope}
