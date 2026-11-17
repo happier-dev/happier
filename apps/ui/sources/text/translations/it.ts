@@ -20947,6 +20947,8 @@ settingsSession: {
             working: (params: { count: number }) => `${params.count} al lavoro`,
             rowNeedsYou: (params: { name: string }) => `${params.name}, ha bisogno di te`,
             rowWorking: (params: { name: string }) => `${params.name}, al lavoro`,
+            moonNeedsYou: (params: { name: string }) => `${params.name} · ha bisogno di te`,
+            moonWorking: (params: { name: string }) => `${params.name} · al lavoro`,
         },
         promote: 'Trasforma in un bot', demote: 'Trasforma in una sessione normale',
         menu: {

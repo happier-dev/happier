@@ -20945,6 +20945,8 @@ settingsSession: {
             working: (params: { count: number }) => `${params.count} trabajando`,
             rowNeedsYou: (params: { name: string }) => `${params.name}, te necesita`,
             rowWorking: (params: { name: string }) => `${params.name}, trabajando`,
+            moonNeedsYou: (params: { name: string }) => `${params.name} · te necesita`,
+            moonWorking: (params: { name: string }) => `${params.name} · trabajando`,
         },
         promote: 'Convertir en un bot', demote: 'Convertir en una sesión normal',
         menu: {

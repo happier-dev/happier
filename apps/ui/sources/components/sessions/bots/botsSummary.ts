@@ -179,6 +179,18 @@ export function useOrderedBotNames(bots: readonly OrderedBot[]): readonly string
 }
 
 /** What a Bot's face says to a screen reader: its name, and that it needs you or is working. */
+/**
+ * A Home moon's visible name (lab r6-shell-O): a working or waiting Bot says its state in words beside its name, so
+ * needs-you is never told by colour alone; a quiet Bot stays unnamed on the orbit.
+ */
+export function orderedBotMoonLabel(bot: Pick<OrderedBot, 'activity'>, name: string): string | null {
+  return bot.activity === 'needsYou'
+    ? t('bots.roster.moonNeedsYou', { name })
+    : bot.activity === 'working'
+      ? t('bots.roster.moonWorking', { name })
+      : null;
+}
+
 export function orderedBotAccessibilityLabel(bot: OrderedBot, name: string): string {
   return bot.activity === 'needsYou'
     ? t('bots.roster.rowNeedsYou', { name })

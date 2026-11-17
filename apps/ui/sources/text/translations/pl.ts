@@ -20770,6 +20770,8 @@ settingsSession: {
             working: (params: { count: number }) => `${params.count} pracuje`,
             rowNeedsYou: (params: { name: string }) => `${params.name}, czeka na ciebie`,
             rowWorking: (params: { name: string }) => `${params.name}, pracuje`,
+            moonNeedsYou: (params: { name: string }) => `${params.name} · czeka na ciebie`,
+            moonWorking: (params: { name: string }) => `${params.name} · pracuje`,
         },
         promote: 'Zmień w bota', demote: 'Zmień w zwykłą sesję',
         menu: {

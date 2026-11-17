@@ -20560,6 +20560,8 @@ settingsSession: {
             working: (params: { count: number }) => `${params.count} 个工作中`,
             rowNeedsYou: (params: { name: string }) => `${params.name}，需要你`,
             rowWorking: (params: { name: string }) => `${params.name}，工作中`,
+            moonNeedsYou: (params: { name: string }) => `${params.name} · 需要你`,
+            moonWorking: (params: { name: string }) => `${params.name} · 工作中`,
         },
         promote: '设为机器人', demote: '设为普通会话',
         menu: {

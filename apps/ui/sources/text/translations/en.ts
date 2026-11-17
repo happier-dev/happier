@@ -24790,6 +24790,9 @@ export const en: TranslationStructure = {
         working: (params: { count: number }) => `${params.count} working`,
         rowNeedsYou: (params: { name: string }) => `${params.name}, needs you`,
         rowWorking: (params: { name: string }) => `${params.name}, working`,
+        // A Home moon's name and its state, on the line under its face (lab r6-shell-O); never colour alone.
+        moonNeedsYou: (params: { name: string }) => `${params.name} · needs you`,
+        moonWorking: (params: { name: string }) => `${params.name} · working`,
     },
     promote: 'Make this a bot',
     demote: 'Make a regular session',
@@ -25065,7 +25068,7 @@ type EnglishNamespaces0 = {
     readonly roster: {
         readonly newHint: string; readonly pinHint: string;
         readonly needsYou: (params: { count: number }) => string; readonly working: (params: { count: number }) => string;
-        readonly rowNeedsYou: (params: { name: string }) => string; readonly rowWorking: (params: { name: string }) => string;
+        readonly rowNeedsYou: (params: { name: string }) => string; readonly rowWorking: (params: { name: string }) => string; readonly moonNeedsYou: (params: { name: string }) => string; readonly moonWorking: (params: { name: string }) => string;
         readonly moreOnHome: (params: { count: number }) => string; readonly moreOnHomeA11y: (params: { count: number }) => string;
     };
     readonly promote: 'Make this a bot';

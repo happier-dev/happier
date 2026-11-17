@@ -14,6 +14,7 @@ import {
   layoutHomeOrbitBots,
   type HomeOrbitBotActivity,
 } from '@/components/atmosphere/orbit/homeOrbitScene';
+import { orderedBotMoonLabel } from '@/components/sessions/bots/botsSummary';
 import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -86,7 +87,8 @@ export function HomeBotMoonsSpecimen() {
     const labels: Record<string, string> = {};
     const accessibilityLabels: Record<string, string> = {};
     for (const moon of MOONS) {
-      if (moon.activity !== 'quiet') labels[moon.key] = moon.name;
+      const label = orderedBotMoonLabel(moon, moon.name);
+      if (label) labels[moon.key] = label;
       accessibilityLabels[moon.key] = moon.name;
     }
     return {

@@ -20819,6 +20819,8 @@ settingsSession: {
             working: (params: { count: number }) => `${params.count} en cours`,
             rowNeedsYou: (params: { name: string }) => `${params.name}, a besoin de toi`,
             rowWorking: (params: { name: string }) => `${params.name}, en cours`,
+            moonNeedsYou: (params: { name: string }) => `${params.name} · a besoin de toi`,
+            moonWorking: (params: { name: string }) => `${params.name} · en cours`,
         },
         promote: 'Transformer en bot', demote: 'Transformer en session normale',
         menu: {

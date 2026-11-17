@@ -472,7 +472,9 @@ export function layoutHomeOrbitBots(
         speed: bot.activity === 'working' ? WORKING_SPEED * (lanes[0]!.rx / lanes[k]!.rx) : 0,
         size,
         park: null,
-        labelWidth: 0,
+        // A working moon carries its name and state with it (lab r6-shell-O "Release captain · working"); a quiet
+        // one at rest stays unnamed, so a calm Home is not a field of labels.
+        labelWidth: bot.activity === 'working' ? HOME_ORBIT_BOT_LABEL_MAX_WIDTH_PX : 0,
       });
     });
   });

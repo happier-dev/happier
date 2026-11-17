@@ -14,7 +14,7 @@ import {
   type HomeOrbitRect,
 } from '@/components/atmosphere/orbit/homeOrbitScene';
 import type { OrderedBot } from '@/components/sessions/bots/botActivity';
-import { orderedBotAccessibilityLabel, useOrderedBotNames, useOrderedBots } from '@/components/sessions/bots/botsSummary';
+import { orderedBotAccessibilityLabel, orderedBotMoonLabel, useOrderedBotNames, useOrderedBots } from '@/components/sessions/bots/botsSummary';
 import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
 import {
   useIsNearViewport,
@@ -90,7 +90,8 @@ function HomeBotMoonsScene(
     const accessibilityLabels: Record<string, string> = {};
     bots.forEach((bot, index) => {
       const name = names[index] ?? '';
-      if (bot.activity !== 'quiet') labels[bot.key] = name;
+      const label = orderedBotMoonLabel(bot, name);
+      if (label) labels[bot.key] = label;
       accessibilityLabels[bot.key] = orderedBotAccessibilityLabel(bot, name);
     });
     return {

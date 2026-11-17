@@ -20895,6 +20895,8 @@ settingsSession: {
             working: (params: { count: number }) => `Работают: ${params.count}`,
             rowNeedsYou: (params: { name: string }) => `${params.name}, ждёт вас`,
             rowWorking: (params: { name: string }) => `${params.name}, работает`,
+            moonNeedsYou: (params: { name: string }) => `${params.name} · ждёт вас`,
+            moonWorking: (params: { name: string }) => `${params.name} · работает`,
         },
         promote: 'Сделать ботом', demote: 'Сделать обычной сессией',
         menu: {

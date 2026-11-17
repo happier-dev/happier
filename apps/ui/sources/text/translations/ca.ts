@@ -19745,6 +19745,8 @@ La meva pregunta: `,
             working: (params: { count: number }) => `${params.count} treballant`,
             rowNeedsYou: (params: { name: string }) => `${params.name}, et necessita`,
             rowWorking: (params: { name: string }) => `${params.name}, treballant`,
+            moonNeedsYou: (params: { name: string }) => `${params.name} · et necessita`,
+            moonWorking: (params: { name: string }) => `${params.name} · treballant`,
         },
         promote: 'Converteix en un bot', demote: 'Converteix en una sessió normal',
         menu: {

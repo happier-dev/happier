@@ -20855,6 +20855,8 @@ settingsSession: {
             working: (params: { count: number }) => `${params.count} 件が作業中`,
             rowNeedsYou: (params: { name: string }) => `${params.name}、対応待ち`,
             rowWorking: (params: { name: string }) => `${params.name}、作業中`,
+            moonNeedsYou: (params: { name: string }) => `${params.name} · 対応が必要`,
+            moonWorking: (params: { name: string }) => `${params.name} · 作業中`,
         },
         promote: 'ボットにする', demote: '通常のセッションにする',
         menu: {

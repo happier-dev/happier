@@ -15597,6 +15597,8 @@ settingsSession: {
             working: (params: { count: number }) => `${params.count} 個工作中`,
             rowNeedsYou: (params: { name: string }) => `${params.name}，需要你`,
             rowWorking: (params: { name: string }) => `${params.name}，工作中`,
+            moonNeedsYou: (params: { name: string }) => `${params.name} · 需要你`,
+            moonWorking: (params: { name: string }) => `${params.name} · 工作中`,
         },
         promote: '設為機器人', demote: '設為一般工作階段',
         menu: {

@@ -246,8 +246,9 @@ describe('Home Bot moons (lab R6 "Bots orbit Home")', () => {
           }
         }
       });
-      // Only a moon that rests where it stays is named: one in orbit would cross its neighbours' names.
-      for (const moon of moons) expect(moon.labelWidth > 0, moon.key).toBe(moon.park !== null);
+      // A waiting moon and a working one carry their names (lab r6-shell-O, "Release captain · working"); a quiet
+      // moon at rest stays unnamed, so a calm Home is not a field of labels.
+      for (const moon of moons) expect(moon.labelWidth > 0, moon.key).toBe(moon.park !== null || moon.activity === 'working');
     }
   });
 
