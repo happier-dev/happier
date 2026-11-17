@@ -404,7 +404,7 @@ describe('finite host operation custody', () => {
       generateOperationId: () => `restore-operation-${++sequence}` });
     const input = { mode: 'prepare' as const, serverId: 'home', environmentId: 'environment',
       machineId: 'target', installationId: 'installation', targetLinkId: 'link', deploymentId: 'capture',
-      restoreBackupId: 'backup', expectedRevision: 1 };
+      source: { kind: 'repository' as const, snapshotId: 'backup' }, expectedRevision: 1 };
     const prepared = { kind: 'prepared', operationId: 'restore-operation-1', evidence: { capture: 'backup' } };
     await runtime.observeExecution({ actionId: 'deployments.backups.restore', input,
       execute: async () => ({ ok: true, result: prepared }) });
@@ -421,7 +421,7 @@ describe('finite host operation custody', () => {
     const first = await invoke(confirm, 'transport-one');
     expect(await invoke(confirm, 'transport-two')).toEqual(first);
     expect(effects).toBe(1);
-    expect(await invoke({ ...confirm, restoreBackupId: 'substituted-backup' }, 'transport-three'))
+    expect(await invoke({ ...confirm, source: { ...confirm.source, snapshotId: 'substituted-backup' } }, 'transport-three'))
       .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
     expect(effects).toBe(1);
   });

@@ -190,7 +190,8 @@ describe('action operation store', () => {
     create('another-account', { ...ACCOUNT_SCOPE, accountId: 'account-2' });
     create('another-machine', { ...ACCOUNT_SCOPE, machineId: 'machine-2' });
     create('session-capture', { ...ACCOUNT_SCOPE, sessionId: 'session-1' });
-    const restoreInput = { ...target, expectedRevision: 1, restoreBackupId: 'capture', mode: 'prepare' as const };
+    const restoreInput = { ...target, expectedRevision: 1,
+      source: { kind: 'repository' as const, snapshotId: 'c'.repeat(64), backupOperationId: 'capture' }, mode: 'prepare' as const };
     store.create({ operationId: 'restore', scope: ACCOUNT_SCOPE, actionId: 'deployments.backups.restore',
       title: 'Restore', cancellation: 'supported', inputIdentity: JSON.stringify(restoreInput) });
     store.project(ActionOperationSnapshotV1Schema.parse({ ...store.get(ACCOUNT_SCOPE, 'capture'),
