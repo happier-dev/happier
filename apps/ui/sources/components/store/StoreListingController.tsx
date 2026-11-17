@@ -5,7 +5,7 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { CapabilityAddDetailAction, type CapabilityListingConfig } from '@/components/capabilities/add/CapabilityAddModal';
 import { CapabilityDetailHeader } from '@/components/capabilities/detail/CapabilityDetailHeader';
 import { useRegistryItem } from '@/registries/useRegistryItem';
-import { useRegistrySources } from '@/registries/useRegistrySources';
+import { useRegistrySourceDescriptor } from '@/registries/useRegistrySourceRevision';
 import { PluginListingFacts } from '@/components/settings/plugins/listing/PluginListingFacts';
 import { admitRegistrySummaryMark } from '@/registries/registryBrandMark';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -41,8 +41,7 @@ function useBrowserExtensionListing(reference: MarketplaceCatalogReferenceV1): B
     const selected = reference.type === 'registryItem' && reference.kind === 'browserExtension' ? reference : null;
     const read = useRegistryItem({ kind: 'browserExtension', sourceId: selected?.sourceId ?? '',
         itemId: selected?.itemId ?? '', ...(selected?.version ? { version: selected.version } : {}) }, selected !== null);
-    const sources = useRegistrySources('browserExtension', selected !== null);
-    const sourceTitle = sources.sources.find(source => source.id === selected?.sourceId)?.title;
+    const sourceTitle = useRegistrySourceDescriptor(selected?.sourceId ?? '', selected !== null)?.title;
     const scope = useAccountSettingsScope();
     const execution = useMountedActionExecution(scope);
     const { binding, execute, getSignal } = execution;

@@ -38,7 +38,7 @@ const [{ usePluginCatalog }, { usePromptLibraryCatalogValue }] = await Promise.a
     import('@/components/settings/plugins/model/usePluginCatalog'), import('@/sync/store/usePromptLibraryCatalog'),
 ]);
 const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
-const { useRegistrySourceRevision } = await import('./useRegistrySourceRevision');
+const { useRegistrySourceRevision, useRegistrySourceDescriptor } = await import('./useRegistrySourceRevision');
 const { useRegistrySources } = await import('./useRegistrySources');
 const { useSourceTitle } = await import('@/components/store/StoreKindPage');
 const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
@@ -954,6 +954,52 @@ describe('registry item last-known reads through the Account and HTTP owners', (
                 expect(hook.getCurrent().sources).toContainEqual(expect.objectContaining({ id: sourceId }));
             });
         } finally { await act(async () => { await replacement.rollback(); }); }
+    });
+    it('keeps an addressed listing title quiet for unrelated source publications and current across selection and presentation', async () => {
+        const serverUrl = 'https://registry-listing-title.test';
+        const firstUrl = `${serverUrl}/first.json`;
+        const secondUrl = `${serverUrl}/second.json`;
+        const firstId = deriveMarketplaceSourceId(firstUrl);
+        const secondId = deriveMarketplaceSourceId(secondUrl);
+        const first = { id: firstId, title: 'First catalog', format: 'happier-catalog' as const,
+            kinds: ['browserExtension' as const], url: firstUrl, enabled: true, addedAt: 1 };
+        const second = { ...first, id: secondId, title: 'Second catalog', url: secondUrl };
+        const fixture = await createPlainPromptLibraryCatalogHomeFixture(serverUrl, {
+            key: 'registry-sources', value: { v: 2, disabledSourceIds: [HAPPIER_PICKS_SOURCE_ID], sources: [first, second] },
+        }, 'updated');
+        onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+        let renders = 0;
+        const hook = await renderHook(({ sourceId, enabled }: { sourceId: string; enabled: boolean }) => {
+            renders++;
+            return useRegistrySourceDescriptor(sourceId, enabled)?.title;
+        }, { initialProps: { sourceId: firstId, enabled: true } });
+        await waitForHomeGovernance(() => expect(hook.getCurrent()).toBe('First catalog'));
+        const scope = storage.getState().settingsScope!;
+        const snapshot = getPromptLibraryCatalogValue(scope, 'registry-sources');
+        if (!snapshot.value || typeof snapshot.revision !== 'number') throw new Error('Expected an acknowledged source catalog');
+        const value = snapshot.value;
+        const revision = snapshot.revision;
+        const before = { renders, requests: fixture.requests.length };
+        for (let index = 1; index <= 10; index++) {
+            await act(async () => applyPromptLibraryCatalogAcknowledgedRecord(scope, { key: 'registry-sources',
+                value: { ...value, sources: [first, { ...second, title: `Other catalog ${index}` }] } }, revision + index, true));
+            await flushHookEffects();
+        }
+        expect(renders - before.renders).toBe(0);
+        expect(fixture.requests.length - before.requests).toBe(0);
+        await act(async () => applyPromptLibraryCatalogAcknowledgedRecord(scope, { key: 'registry-sources',
+            value: { ...value, sources: [{ ...first, title: 'Renamed first catalog' }, second] } }, revision + 11, true));
+        await waitForHomeGovernance(() => expect(hook.getCurrent()).toBe('Renamed first catalog'));
+        await hook.rerender({ sourceId: secondId, enabled: true });
+        expect(hook.getCurrent()).toBe('Second catalog');
+        await hook.rerender({ sourceId: secondId, enabled: false });
+        const hiddenRenders = renders;
+        await act(async () => applyPromptLibraryCatalogAcknowledgedRecord(scope, { key: 'registry-sources',
+            value: { ...value, sources: [first, { ...second, title: 'Renamed while hidden' }] } }, revision + 12, true));
+        expect(renders - hiddenRenders).toBe(0);
+        await hook.rerender({ sourceId: secondId, enabled: true });
+        await waitForHomeGovernance(() => expect(hook.getCurrent()).toBe('Renamed while hidden'));
+        expect(fixture.requests.length - before.requests).toBe(0);
     });
     it('renders registry observers only for changed source facts, not read freshness', async () => {
         const { fixture } = await setupHome('source-render-cost');

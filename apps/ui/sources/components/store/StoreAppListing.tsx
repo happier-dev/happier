@@ -1,5 +1,5 @@
 import { DeploymentTemplateMappingCorrection } from '@/components/projects/deployments/DeploymentTemplateMappingCorrection';
-import { useRegistrySources } from '@/registries/useRegistrySources';
+import { useRegistrySourceDescriptor } from '@/registries/useRegistrySourceRevision';
 import { appListingCatalogFacts, appListingProse } from './catalog/storeAppListingFacts';
 import * as React from 'react';
 import { useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
@@ -200,7 +200,7 @@ export function StoreAppListing(
 
   // A catalog App's summary version pins its template catalog's content, not the App's own release: Versions shows
   // only a real release, never the content digest.
-  const catalogSource = useRegistrySources('app').sources.find((source) => source.id === summary.sourceId);
+  const catalogSource = useRegistrySourceDescriptor(summary.sourceId, presented);
   const catalogFacts = appListingCatalogFacts({ version: summary.version, repository: summary.links?.repository, catalog: catalogSource });
   const prose = appListingProse({ summary: summary.description, about: catalogText(app?.description) });
   const website = summary.links?.website ?? app?.documentationUrl;
