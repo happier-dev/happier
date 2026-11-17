@@ -1,7 +1,8 @@
 
 /** Action identity leaf: schema modules and the registry share these constants. */
+export const WIDGET_CATALOG_LIST_ACTION_ID_V1 = 'widgets.catalog.list' as const;
 export const WIDGET_INSTANCE_ACTION_IDS_V1 = [
-  'widgets.catalog.list', 'widgets.item.list', 'widgets.item.add', 'widgets.item.remove',
+  WIDGET_CATALOG_LIST_ACTION_ID_V1, 'widgets.item.list', 'widgets.item.add', 'widgets.item.remove',
   'widgets.item.move', 'widgets.item.rename', 'widgets.item.size.set', 'widgets.item.frame.set',
   'widgets.item.network.set',
   'widgets.item.inputs.get', 'widgets.item.inputs.validate', 'widgets.item.inputs.set',

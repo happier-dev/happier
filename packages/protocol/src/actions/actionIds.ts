@@ -226,9 +226,10 @@ export const EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER_ACTION_ID = 'sessions.extern
 export const WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 = 'workflow.activity.list';
 
 export const WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1 = 'workflow.subjects.list';
+export const WORKFLOW_VALIDATE_ACTION_ID_V1 = 'workflow.validate' as const;
 export const WORKFLOW_ACTION_IDS_V1 = [
   WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1,
-  'workflow.validate', WORKFLOW_RUN_START_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1, 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
+  WORKFLOW_VALIDATE_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1, 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
   'workflow.run.read_state.set',
   'workflow.run.pause', 'workflow.run.resume', 'workflow.run.cancel', 'workflow.run.invocations.list',
   'workflow.run.invocations.get', 'workflow.run.invocations.retry', 'workflow.run.delete',

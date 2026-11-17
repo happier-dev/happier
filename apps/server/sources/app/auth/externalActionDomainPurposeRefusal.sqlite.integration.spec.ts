@@ -158,6 +158,13 @@ it('names the refusing reviewed-purpose check without changing admission', async
       expected: Readonly<{ admitted: true } | { admitted: false; phase: string }>,
     ]
   > = [
+    ['workflow.validate', { definition: { version: 1, blocks: [{ kind: 'wait', id: 'review',
+      document: { text: 'Review', references: [], attachments: [] } }] }, target: { machineId: machine.id } },
+      'GET', '/v1/machines', undefined, { admitted: true }],
+    ['widgets.catalog.list', { surface: { serverId: homeId, accountId: account.id, owner: { kind: 'home' } } },
+      'GET', '/v1/machines', undefined, { admitted: true }],
+    ['widgets.catalog.list', { surface: { serverId: homeId, accountId: account.id, owner: { kind: 'home' } } },
+      'POST', '/v1/plugins/availability/materializations/read', {}, { admitted: true }],
     ['sessions.external.candidates.list', { machineId: machine.id, agentId: 'codex', source: { kind: 'codexHome', home: 'user' }, limit: 10 },
       'GET', '/v1/account/encryption/currentness', undefined, { admitted: true }],
     ['sessions.external.candidates.list', { machineId: machine.id, agentId: 'codex', source: { kind: 'codexHome', home: 'user' }, limit: 10 },

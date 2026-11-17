@@ -1,3 +1,6 @@
+import { WORKFLOW_VALIDATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { WIDGET_CATALOG_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/widgets/instanceIdsV1';
+import { PluginAvailabilityMaterializationsReadActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { MACHINE_LIST_ACTION_ID_V1, EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { MACHINE_REMOVE_ACTION_ID_V1, MACHINE_REPLACEMENT_SET_ACTION_ID_V1, MACHINE_REPLACEMENT_CLEAR_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { MACHINE_REBOOT_ACTION_IDS } from '@happier-dev/protocol/machines/rebootActionIdsV1';
@@ -4128,6 +4131,10 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if ((managedBoundSessionPurpose = await readManagedBoundSessionHttpPurpose(
         verified.binding, verified.effectActionId, proof)) !== null) {
         if (!managedBoundSessionPurpose) return refuse('managed_bound_session_setup');
+    } else if (verified.binding.actionId === WORKFLOW_VALIDATE_ACTION_ID_V1
+        && verified.effectActionId === verified.binding.actionId && proof.method.toUpperCase() === 'GET'
+        && proof.body === undefined && proof.path.split('?')[0] === '/v1/machines') {
+        // Workflow validation reads the inventory through the native route.
     } else if (verified.binding.actionId === MACHINE_LIST_ACTION_ID_V1) {
         if (verified.effectActionId !== verified.binding.actionId || proof.method.toUpperCase() !== 'GET'
             || proof.body !== undefined || proof.path.split('?')[0] !== '/v1/machines') return refuse('verification_purpose');
@@ -4142,6 +4149,12 @@ export async function verifyExternalActionDomainExecutionRequest(
         if (verified.effectActionId !== verified.binding.actionId || target.kind !== 'machine'
             || proof.method.toUpperCase() !== method
             || proof.path !== path?.replace(':machineId', encodeURIComponent(target.machineId))) return refuse('verification_purpose');
+    } else if (verified.binding.actionId === WIDGET_CATALOG_LIST_ACTION_ID_V1
+        && verified.effectActionId === verified.binding.actionId
+        && (proof.method.toUpperCase() === 'GET' && proof.path === '/v1/machines' && proof.body === undefined
+            || proof.method.toUpperCase() === 'POST' && proof.path === '/v1/plugins/availability/materializations/read'
+                && PluginAvailabilityMaterializationsReadActionInputV1Schema.safeParse(proof.body).success)) {
+        // Catalog preparation shares the native inventory; Session reads retain their ordinary route owner.
     } else if (verified.binding.actionId === EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1) {
         const lookup = proof.method.toUpperCase() === 'POST' && proof.path === '/v2/sessions/lookup-by-tags'
             ? SessionLookupByTagsRequestV2Schema.safeParse(proof.body) : null;
@@ -4154,9 +4167,8 @@ export async function verifyExternalActionDomainExecutionRequest(
         const method = proof.method.toUpperCase();
         const referencePurpose = isManagedReferenceCensusActionIdV1(verified.binding.actionId)
             && verified.effectActionId === verified.binding.actionId
-            && (isMachineDeploymentReferenceHttpPurpose(verified.binding, verified.effectActionId, proof)
-                || method === 'POST' && path === machinePoolActionEndpointPathV1('machines.pools.list')
-                    && MachinePoolListInputV1Schema.safeParse(proof.body).success);
+            && method === 'POST' && path === machinePoolActionEndpointPathV1('machines.pools.list')
+            && MachinePoolListInputV1Schema.safeParse(proof.body).success;
         const recovery = isExternalActionManagedResourceAction(verified.binding.actionId) ? verified.binding.managedAdmission : undefined;
         const parsedControl = isManagedControlAdmissionActionIdV1(verified.binding.actionId)
             ? ExternalActionManagedControlAdmissionV1Schema.safeParse(verified.binding.managedAdmission) : undefined;
