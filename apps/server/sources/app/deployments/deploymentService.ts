@@ -28,6 +28,7 @@ import { projectDeploymentReceiptActivityV1 } from '@happier-dev/deployment-prot
 import { resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { deploymentTeardownMembershipAdmissionSchema, haveDeploymentMembershipRoutesInTx } from './deploymentMembershipService';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { revokeDeploymentAppMachinesInTx } from './deploymentAppRevocation';
 
 type Receipt = NonNullable<Awaited<ReturnType<Tx['deployment']['findUnique']>>>;
 /** Detach and Environment removal retire the association while retaining native resource custody. */
@@ -431,6 +432,10 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
         await publishDeploymentChangesInTx(tx, loaded, loaded.row.id, loaded.row.revision, undefined, false, accountIds);
     }
     let environmentRevision = loaded.row.revision;
+    if (input.teardownProof && !removeEnvironment) {
+        await revokeDeploymentAppMachinesInTx(tx, { environmentId: loaded.row.id, targetLinkId: link.id,
+            ...(!completeTeardown ? { removedMachines: input.teardownProof.machines } : {}) });
+    }
     if (input.teardownProof && completeTeardown) {
         await tx.deploymentTargetLink.update({ where: { id: link.id }, data: { activeDeploymentId: null,
             state: input.teardownProof.retainedProviderResource ? 'provisioned' : 'configured', revision: { increment: 1 } } });

@@ -203,7 +203,8 @@ export function registerTerminalAuthRequestRoutes(
                 if (resolved.status === "unavailable") {
                     return { status: "evidence_unavailable" } as const;
                 }
-                return { status: "created", token: await auth.createTokenInTx(tx, answer.responseAccountId!, { session: answer.id }, {
+                return { status: "created", token: await auth.createTokenInTx(tx, answer.responseAccountId!, { session: answer.id,
+                    ...(answer.deploymentAppEnrollment !== null ? { deploymentAppEnrollment: answer.deploymentAppEnrollment } : {}) }, {
                     kind: "terminal",
                     authority: "account_automation",
                     ...(resolved.evidence.length > 0 ? { authenticationEvidence: resolved.evidence } : {}),
@@ -359,7 +360,8 @@ export function registerTerminalAuthRequestRoutes(
             if (resolved.status === "unavailable") {
                 return { status: "evidence_unavailable" } as const;
             }
-            return { status: "created", token: await auth.createTokenInTx(tx, authRequest.responseAccountId!, { session: authRequest.id }, {
+            return { status: "created", token: await auth.createTokenInTx(tx, authRequest.responseAccountId!, { session: authRequest.id,
+                ...(authRequest.deploymentAppEnrollment !== null ? { deploymentAppEnrollment: authRequest.deploymentAppEnrollment } : {}) }, {
                 kind: "terminal",
                 authority: "account_automation",
                 ...(resolved.evidence.length > 0 ? { authenticationEvidence: resolved.evidence } : {}),

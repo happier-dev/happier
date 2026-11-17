@@ -74,6 +74,21 @@ export async function deploymentAppTerminalEnrollmentIsActiveInTx(tx: Tx, input:
         && deploymentInProgressStates().includes(row.state);
 }
 
+/** The signed pairing selector survives pairing retention; Machine remains the revocation owner. */
+export async function deploymentAppTerminalCredentialIsCurrentInTx(tx: Tx, extras: unknown, accountId: string): Promise<boolean> {
+    const data = extras !== null && typeof extras === 'object' && !Array.isArray(extras) ? extras : {};
+    const marked = Object.hasOwn(data, 'deploymentAppEnrollment');
+    const session = 'session' in data && typeof data.session === 'string' ? data.session : null;
+    if (!session) return !marked;
+    const machine = await tx.machine.findUnique({ where: { terminalAuthRequestId: session },
+        select: { accountId: true, revokedAt: true, replacedByMachineId: true } });
+    if (machine) return machine.accountId === accountId && classifyMachineAvailabilityState(machine) === 'available';
+    // An issued App credential may not have reached ordinary registration yet.
+    // Its admitted job supplies currentness until registration durably binds it.
+    return !marked || await deploymentAppTerminalEnrollmentIsActiveInTx(tx,
+        'deploymentAppEnrollment' in data ? data.deploymentAppEnrollment : undefined, accountId);
+}
+
 /** The installed child's ordinary registration is the sole producer of its completed association. */
 export async function linkDeploymentAppEnrollmentInTx(tx: Tx, input: DeploymentAppEnrollmentCorrelationV1,
     accountId: string, machineId: string, terminalAuthRequestId?: string): Promise<void> {
@@ -81,15 +96,24 @@ export async function linkDeploymentAppEnrollmentInTx(tx: Tx, input: DeploymentA
     if (!machine || machine.accountId !== accountId || classifyMachineAvailabilityState(machine) !== 'available'
         || !machine.installationId || machine.id === input.controller.machineId
         || machine.installationId === input.controller.installationId) throw new ManagedMachineError('resource_mismatch');
+    if (machine.deploymentAppDeploymentId === input.deploymentId
+        && (!terminalAuthRequestId || machine.terminalAuthRequestId === terminalAuthRequestId)) return;
+    if (machine.terminalAuthRequestId || machine.deploymentAppDeploymentId && machine.deploymentAppDeploymentId !== input.deploymentId
+        || !terminalAuthRequestId) throw new ManagedMachineError('enrollment_retired');
+    const bound = await tx.machine.findUnique({ where: { terminalAuthRequestId }, select: { id: true } });
+    if (bound && bound.id !== machineId) throw new ManagedMachineError('enrollment_retired');
+    // Retained pre-binding Home volumes can register after pairing retention.
+    // Their existing App association is not evidence of which credential was issued.
     if (machine.deploymentAppDeploymentId === input.deploymentId) return;
-    if (machine.deploymentAppDeploymentId || !terminalAuthRequestId) throw new ManagedMachineError('enrollment_retired');
     const request = await tx.terminalAuthRequest.findUnique({ where: { id: terminalAuthRequestId },
         select: { deploymentAppEnrollment: true, responseAccountId: true } });
     if (!request || request.responseAccountId !== accountId || !isDeepStrictEqual(request.deploymentAppEnrollment, input)
         || !await deploymentAppTerminalEnrollmentIsActiveInTx(tx, request.deploymentAppEnrollment, accountId)) {
         throw new ManagedMachineError('enrollment_retired');
     }
-    await tx.machine.update({ where: { id: machineId }, data: { deploymentAppDeploymentId: input.deploymentId } });
+    await tx.machine.update({ where: { id: machineId }, data: {
+        deploymentAppDeploymentId: input.deploymentId, terminalAuthRequestId,
+    } });
 }
 
 /** Existing Machine reads supply the pointer; ordinary Machines add no receipt lookup. */

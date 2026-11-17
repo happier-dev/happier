@@ -61,6 +61,7 @@ import { readWorkspaceSyncAdmissionInTx } from './workspaceSyncAdmission';
 import type { WorkflowExternalActionAdmission } from './externalActionExecutionAuthorization';
 import { admitAccountPrivateLabelWriteInTx, projectAccountPrivateLabelForRecipientV1 } from '@/app/encryption/accountPrivateLabelContent';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
+import { deploymentAppTerminalCredentialIsCurrentInTx } from '@/app/deployments/deploymentAppEnrollment';
 
 interface TokenGeneratorLike {
     new: (payload: Readonly<{
@@ -1628,10 +1629,14 @@ class AuthModule {
             this.tokenCache?.set(token, decoded);
         }
 
-        // The account row is authoritative for revocation, including cache hits.
+        // Account and bound App Machine revocation are consumed at this request boundary, including cache hits.
         const account = await inTx(
-            tx => this.readCurrentSignedCredentialAccount(tx, decoded.userId, decoded.tokenEpoch),
-            { readOnly: true, singleStatementRead: true },
+            async tx => {
+                const current = await this.readCurrentSignedCredentialAccount(tx, decoded.userId, decoded.tokenEpoch);
+                return current && (decoded.provenance.kind !== 'terminal'
+                    || await deploymentAppTerminalCredentialIsCurrentInTx(tx, decoded.extras, decoded.userId)) ? current : null;
+            },
+            { readOnly: true, singleStatementRead: decoded.provenance.kind !== 'terminal' },
         );
         if (!account) {
             return decoded.provenance.kind === "ephemeral_session_runner"

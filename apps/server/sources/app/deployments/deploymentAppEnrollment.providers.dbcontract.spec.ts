@@ -4,7 +4,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createDbMaintenanceClient, getDbProviderFromEnv } from '@/storage/prisma';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
-import { readDeploymentAppEnrollmentsForMachinesInTx } from './deploymentAppEnrollment';
+import { deploymentAppTerminalCredentialIsCurrentInTx, readDeploymentAppEnrollmentsForMachinesInTx } from './deploymentAppEnrollment';
 
 const provider = getDbProviderFromEnv(process.env, 'postgres');
 
@@ -20,7 +20,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('App enrollment
             const machine = await client.machine.create({ data: { id: randomUUID(), accountId: account.id,
                 metadata: '{}', installationId: randomUUID() } });
             expect(await client.machine.findUnique({ where: { id: machine.id } })).toMatchObject({
-                id: machine.id, accountId: account.id, metadata: '{}',
+                id: machine.id, accountId: account.id, metadata: '{}', terminalAuthRequestId: null,
             });
             const requests: { model?: string; action: string; args: unknown }[] = [];
             let stop = observePrismaRequests(client, { before: request => { requests.push(request); } });
@@ -45,7 +45,9 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('App enrollment
                 operation: 'deploy', state: 'succeeded', acceptedControllerMachineId: machine.id,
                 acceptedControllerInstallationId: machine.installationId, ...content } });
             const child = await client.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: '{}',
-                installationId: randomUUID(), deploymentAppDeploymentId: receipt.id } });
+                installationId: randomUUID(), deploymentAppDeploymentId: receipt.id, terminalAuthRequestId: randomUUID() } });
+            await expect(client.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: '{}',
+                terminalAuthRequestId: child.terminalAuthRequestId } })).rejects.toMatchObject({ code: 'P2002' });
             requests.length = 0;
             stop = observePrismaRequests(client, { before: request => { requests.push(request); } });
             try {
@@ -56,6 +58,20 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('App enrollment
                 expect(requests).toEqual([expect.objectContaining({ model: 'Deployment', action: 'findMany',
                     args: expect.objectContaining({ where: { id: { in: [receipt.id] } } }) })]);
             } finally { stop(); }
+            requests.length = 0;
+            stop = observePrismaRequests(client, { before: request => { requests.push(request); } });
+            try {
+                expect(await client.$transaction(tx => deploymentAppTerminalCredentialIsCurrentInTx(tx,
+                    { session: child.terminalAuthRequestId }, account.id))).toBe(true);
+                expect(requests).toEqual([expect.objectContaining({ model: 'Machine', action: 'findUnique',
+                    args: expect.objectContaining({ where: { terminalAuthRequestId: child.terminalAuthRequestId } }) })]);
+                requests.length = 0;
+                expect(await client.$transaction(tx => deploymentAppTerminalCredentialIsCurrentInTx(tx,
+                    undefined, account.id))).toBe(true);
+                expect(requests).toEqual([]);
+            } finally { stop(); }
+            expect(await client.$transaction(tx => deploymentAppTerminalCredentialIsCurrentInTx(tx,
+                { session: child.terminalAuthRequestId }, randomUUID()))).toBe(false);
             if (provider === 'postgres') {
                 const plan = await client.$transaction(async tx => {
                     await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
@@ -63,6 +79,21 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('App enrollment
                 });
                 expect(JSON.stringify(plan)).toContain('"Index Cond"');
                 expect(JSON.stringify(plan)).not.toContain('"Node Type":"Seq Scan"');
+                const bindingPlan = await client.$transaction(async tx => {
+                    await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
+                    return tx.$queryRawUnsafe<unknown[]>('EXPLAIN (FORMAT JSON) SELECT "id" FROM "Machine" WHERE "terminalAuthRequestId" = $1', child.terminalAuthRequestId);
+                });
+                expect(JSON.stringify(bindingPlan)).toContain('Machine_terminalAuthRequestId_key');
+                const lifecyclePlan = await client.$transaction(async tx => {
+                    await tx.$executeRawUnsafe('SET LOCAL enable_seqscan = off');
+                    return tx.$queryRawUnsafe<unknown[]>('EXPLAIN (FORMAT JSON) SELECT "id" FROM "Machine" WHERE "deploymentAppDeploymentId" = $1', receipt.id);
+                });
+                expect(JSON.stringify(lifecyclePlan)).toContain('Machine_deploymentAppDeploymentId_idx');
+            } else {
+                const bindingPlan = await client.$queryRawUnsafe<{ key: string | null }[]>('EXPLAIN SELECT `id` FROM `Machine` FORCE INDEX (`Machine_terminalAuthRequestId_key`) WHERE `terminalAuthRequestId` = ?', child.terminalAuthRequestId);
+                expect(bindingPlan.map(row => row.key)).toContain('Machine_terminalAuthRequestId_key');
+                const lifecyclePlan = await client.$queryRawUnsafe<{ key: string | null }[]>('EXPLAIN SELECT `id` FROM `Machine` FORCE INDEX (`Machine_deploymentAppDeploymentId_idx`) WHERE `deploymentAppDeploymentId` = ?', receipt.id);
+                expect(lifecyclePlan.map(row => row.key)).toContain('Machine_deploymentAppDeploymentId_idx');
             }
         } finally { await client.$disconnect(); }
     });

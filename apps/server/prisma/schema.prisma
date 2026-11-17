@@ -2611,6 +2611,8 @@ enum MachineKind {
 
 model Machine {
     deploymentAppDeploymentId String?
+    /// Stable issued terminal credential selector; deliberately survives pairing-request retention and App redeploy.
+    terminalAuthRequestId String? @unique
     environmentSecretGrants MachineSecretGrant[]
     controlledDeploymentEnvironments DeploymentEnvironment[] @relation("DeploymentController")
     builtDeploymentEnvironments DeploymentEnvironment[] @relation("DeploymentBuilder")
@@ -2668,6 +2670,7 @@ model Machine {
     poolMemberships    MachinePoolMember[]
 
     @@unique([accountId, id])
+    @@index([deploymentAppDeploymentId])
     @@index([accountId])
     @@index([accountId, installationId])
     @@index([accountId, replacedByMachineId])

@@ -19,6 +19,7 @@ import { readLatestDeploymentTeardownInTx, hasCurrentDeploymentTeardownProofInTx
 import { loadDeploymentTargetRowsInTx, projectDeploymentTargetHeader } from './deploymentTargetLinkService';
 import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { publishSavedSecretUsageChangesInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
+import { revokeDeploymentAppMachinesInTx } from './deploymentAppRevocation';
 
 type DispositionInput = Pick<DeploymentEnvironmentDeleteInputV1,
     'serverId' | 'environmentId' | 'expectedRevision' | 'requestKey' | 'detachKeepRunning'>;
@@ -186,6 +187,7 @@ export async function removeAdmittedDeploymentEnvironmentInTx(tx: Tx, input: Rea
     now: Date; detachKeepRunning?: boolean; knownAccountIds?: readonly string[];
 }>): Promise<number> {
     const { environment, now } = input;
+    await revokeDeploymentAppMachinesInTx(tx, { environmentId: environment.id });
     await disableDeploymentEnvironmentAutomationsInTx(tx, environment.id);
     await withdrawEnvironmentSecretGrantsInTx(tx, { environmentId: environment.id });
     await tx.deploymentTargetLink.updateMany({ where: { environmentId: environment.id, deletedAt: null, detachedAt: null },
