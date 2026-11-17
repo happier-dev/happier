@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { extname, join, relative, resolve, sep } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { runQaBrowserSession, runQaBrowserWorker } from '../../utils/dev_targets/qa_browser.mjs';
 import { resolveControlledQaBrowserTarget } from '../../utils/dev_targets/service_placement.mjs';
@@ -38,6 +38,7 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
   }
   const scratch = await mkdtemp(join(tmpdir(), 'hstack-reload-smoke-'));
   const children = [];
+  let database = null;
   const cancellation = new AbortController();
   const cancel = () => {
     cancellation.abort(signal?.reason);
@@ -64,19 +65,11 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
     for (const key of ['HAPPY_SERVER_LIGHT_DATA_DIR', 'HAPPY_SERVER_LIGHT_FILES_DIR',
       'HAPPY_SERVER_LIGHT_PRIVATE_FILES_DIR', 'HAPPY_SERVER_LIGHT_DB_DIR', 'HAPPY_SQLITE_MIGRATIONS_DIR']) delete isolated[key];
     if (dbProvider === 'postgres') {
-      // Like the daemon command-loader probe, execute the actual entry with
-      // startup disabled only after its lazy runtime imports have loaded.
-      await runCapture(process.execPath, [server.entrypoint, '--probe-runtime-import'], {
-        cwd: server.serverDir, env: isolated, signal: cancellation.signal,
-      });
-      signal?.throwIfAborted();
-      logger.log('[reload] PostgreSQL server imports passed; skipping its database-backed migration and health smoke because the shared DATABASE_URL is forbidden');
-      if (ui) {
-        smokeComponent = 'ui';
-        await assertWebArtifactPayload({ payloadDir: ui.uiDir, entrypoint: ui.entrypoint ?? 'index.html' });
-        await serveSourceWebArtifactForSmoke({ ui, env: isolated, signal: cancellation.signal });
-      }
-      return;
+      // The Stack's (often shared) DATABASE_URL stays forbidden. A scratch
+      // PostgreSQL wire endpoint lets the replacement run its real driver,
+      // migrations and boot before retirement, like the other flavours.
+      database = await startScratchPostgres({ dir: join(scratch, 'postgres') });
+      isolated.DATABASE_URL = database.url;
     }
     const serverEnv = buildServerRuntimeEnv({ baseEnv: isolated, serverPort: port,
       canonicalServerUrl: url, publicServerUrl: url, serveUi: Boolean(ui), uiRequired: Boolean(ui),
@@ -112,8 +105,34 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
     for (const child of children) {
       if (child.exitCode == null && child.signalCode == null) await killProcessTree(child, 'SIGTERM');
     }
+    // Its server is gone: release the scratch PostgreSQL before its directory.
+    await database?.stop();
     await rm(scratch, { recursive: true, force: true });
   }
+}
+
+/** PGlite served over the PostgreSQL protocol by the server's own framed socket
+ * owner (the light server's PGlite mode uses the same pair). Tooling-side: the
+ * scratch database is smoke infrastructure, not part of the replacement graph. */
+async function startScratchPostgres({ dir }) {
+  const serverPackage = new URL('../../../../server/package.json', import.meta.url);
+  const { PGlite } = await import(pathToFileURL(createRequire(serverPackage).resolve('@electric-sql/pglite')).href);
+  const { FramedPgliteSocketServer } = await import(new URL('../../../../server/sources/storage/pgliteFramedSocketServer.mjs', import.meta.url).href);
+  const db = new PGlite(dir);
+  await db.waitReady;
+  const socket = new FramedPgliteSocketServer({ db, host: '127.0.0.1', port: 0 });
+  try { await socket.start(); } catch (error) { await db.close(); throw error; }
+  let stopped = false;
+  return {
+    // pglite is single-connection; the socket server returns host:port only.
+    url: `postgresql://postgres@${socket.getServerConn()}/postgres?sslmode=disable&connection_limit=1`,
+    async stop() {
+      if (stopped) return;
+      stopped = true;
+      await socket.stop();
+      await db.close();
+    },
+  };
 }
 
 async function serveSourceWebArtifactForSmoke({ ui, env, signal }) {

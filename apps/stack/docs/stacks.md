@@ -328,10 +328,12 @@ against scratch SQLite or PGlite data on an available loopback port, and loads
 the export in an isolated browser. Preparation runs on each actual service
 host, under the existing resource admission policy. Compiler services are
 released before browser smoke; the live Stack database is never used by smoke.
-For a light server backed by PostgreSQL, smoke loads the real server entry and
-its startup imports in an isolated process with database credentials removed,
-then returns before database initialization. A module-load failure refuses the
-replacement. This verifies imports, not PostgreSQL migrations or connectivity.
+For a light server backed by PostgreSQL, smoke starts a scratch PGlite database
+served over the PostgreSQL wire protocol (the server's own framed socket server),
+then runs the replacement's migration deploy and server boot against it with the
+Stack's database credentials removed, and requires canonical `/health`. This
+proves the replacement's driver, migrations and boot, not the Stack database's
+connectivity or data.
 
 When a module load or bundle fails, the existing refusal reports
 `firstFailingModule`, `entryGraph` and `component`. A compiler or runtime probe's
@@ -451,7 +453,7 @@ executed only after daemon startup. The browser check covers initial rendering,
 script delivery and boot exceptions, not later authenticated routes or tooltip
 interactions. Full-server infrastructure and external PostgreSQL/MySQL smoke
 databases are not provisioned by this path. Full-server and MySQL reloads fail
-before retirement; light PostgreSQL reloads use the database-free import check.
+before retirement; light PostgreSQL reloads use the scratch PGlite health smoke.
 The complete named-Stack cutover remains a manual validation step for the
 operator applying these development tooling changes.
 
