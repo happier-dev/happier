@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { FeaturesResponseSchema, SessionWorkStateGetResponseV1Schema } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { decryptLegacy } from '../../../../apps/cli/src/api/encryption';
@@ -23,7 +23,9 @@ const run = createRunDirs({ runLabel: 'fin-goal' });
 describe('FIN J9: native Goal handoff preserves an ordinary ready Session', () => {
   let harness: StartedCodexAppServerRemoteHarness | undefined;
   let socket: SocketCollector | undefined;
-  afterEach(async () => {
+  let refuseCleanup = false;
+  let cleanupRefusals = 0;
+  afterAll(async () => {
     try {
       socket?.close();
       await harness?.stop();
@@ -34,9 +36,7 @@ describe('FIN J9: native Goal handoff preserves an ordinary ready Session', () =
     }
   });
 
-  it('refuses only the Goal transition when Keep-going cleanup is refused, then accepts another prompt and explicit retry', async () => {
-    let refuseCleanup = false;
-    let cleanupRefusals = 0;
+  beforeAll(async () => {
     const sourceOptions = [process.env.NODE_OPTIONS, '--import',
       pathToFileURL(resolve(repoRootDir(), 'packages/cli-common/registerSourceRuntime.mjs')).href].filter(Boolean).join(' ');
     vi.stubEnv('NODE_OPTIONS', sourceOptions);
@@ -53,6 +53,10 @@ describe('FIN J9: native Goal handoff preserves an ordinary ready Session', () =
         rewrite: () => { cleanupRefusals++; return JSON.stringify({ code: 'target_unavailable' }); },
       } },
     });
+  });
+
+  it('refuses only the Goal transition when Keep-going cleanup is refused, then accepts another prompt and explicit retry', async () => {
+    if (!harness) throw new Error('J9 native Goal harness did not start');
     const { auth, secret, serverBaseUrl, sessionId, requestLogPath } = harness;
     const features = FeaturesResponseSchema.parse((await fetchJson<unknown>(`${serverBaseUrl}/v1/features`)).data);
     const serverId = features.capabilities.serverIdentity.serverIdentityId;
