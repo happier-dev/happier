@@ -90,3 +90,45 @@ setTimeout(() => process.exit(0), 5000);
     await closed;
   }
 });
+
+test('a Node foreground child observes its launcher being killed as a hangup', { skip: process.platform === 'win32' ? 'SIGKILL of a POSIX launcher' : false, timeout: 20_000 }, async (t) => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-foreground-lifeline-' });
+  const launcher = fixture.path('launcher.mjs');
+  const payload = fixture.path('payload.mjs');
+  // The payload stands in for a retained foreground command (a QA browser
+  // holder): it runs until its owner hangs up, then reports that it saw it.
+  const pidFile = fixture.path('payload.pid');
+  await writeFile(payload, `import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);
+process.on('SIGHUP', () => { process.stdout.write('HANGUP\\n'); process.exit(129); });
+require('node:fs').writeFileSync(process.env.PAYLOAD_PID_FILE, String(process.pid));
+process.stdout.write('PAYLOAD_READY\\n');
+setInterval(() => {}, 1 << 30);
+`);
+  await writeFile(launcher, `
+import { runForegroundChild } from ${JSON.stringify(new URL('./foreground_child.mjs', import.meta.url).href)};
+await runForegroundChild({ command: process.execPath, args: [${JSON.stringify(payload)}],
+  options: { stdio: 'inherit', detached: true } });
+`);
+  const child = spawn(process.execPath, [launcher], { stdio: ['ignore', 'pipe', 'inherit'],
+    env: { ...process.env, PAYLOAD_PID_FILE: pidFile } });
+  let payloadPid;
+  t.after(() => {
+    try { child.kill('SIGKILL'); } catch {}
+    // Stop only the payload this test recorded, so a RED run leaves nothing behind.
+    if (payloadPid) try { process.kill(payloadPid, 'SIGKILL'); } catch {}
+  });
+  let output = '';
+  const seen = text => new Promise(resolve => {
+    const check = () => { if (output.includes(text)) { child.stdout.off('data', onData); resolve(); } };
+    const onData = chunk => { output += chunk; check(); };
+    child.stdout.on('data', onData);
+    check();
+  });
+  await seen('PAYLOAD_READY');
+  payloadPid = Number(await readFile(pidFile, 'utf8'));
+  // An agent tool that cancels with SIGKILL gives the launcher no chance to
+  // forward a signal; the detached payload is in its own process group.
+  process.kill(child.pid, 'SIGKILL');
+  await Promise.race([seen('HANGUP'), new Promise((_, reject) => setTimeout(
+    () => reject(new Error('payload outlived its killed launcher without a hangup')), 10_000).unref())]);
+});

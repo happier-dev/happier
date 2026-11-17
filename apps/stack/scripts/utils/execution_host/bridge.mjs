@@ -1,25 +1,9 @@
-import { spawn } from 'node:child_process';
 import { dirname, isAbsolute, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { shouldDelegateToActiveExecutionHost } from './controller.mjs';
 import { mapHostCwdToGuest, resolveHostWorkspaceMapping, runDelegatedHstackCommand } from './delegation.mjs';
-import { runForegroundChild } from './foreground_child.mjs';
-
-function defaultBoundary() {
-  return {
-    spawn(command, args, options) {
-      return spawn(command, args, options);
-    },
-    onSignal(handler) {
-      const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
-      for (const signal of signals) process.on(signal, handler);
-      return () => {
-        for (const signal of signals) process.off(signal, handler);
-      };
-    },
-  };
-}
+import { defaultForegroundChildBoundary as defaultBoundary, runForegroundChild } from './foreground_child.mjs';
 
 export async function runNativeExecutionHostBridge({
   profile, launcher, argv, cwd, env, platform = process.platform,
