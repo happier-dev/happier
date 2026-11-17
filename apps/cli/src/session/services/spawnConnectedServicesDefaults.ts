@@ -340,8 +340,6 @@ function resolveCurrentTeamResourceDefault(params: Readonly<{
 
   const services = serviceIds.map(parseQualifiedPluginContributionKey).filter(service => service !== null);
   for (const resource of catalog.resources) {
-    if (resource.readiness.kind !== 'available'
-      && !readTeamCredentialLaunchReadinessRefusal(resource, selection.deliveryMode)) continue;
     const offeredSelection = resolveTeamResourceConnectedServiceSelectionV1({ resource, teamId: params.teamId, selection, services });
     if (offeredSelection) return { resource, selection: offeredSelection };
   }

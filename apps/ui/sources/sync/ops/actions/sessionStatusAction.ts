@@ -1,3 +1,4 @@
+import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import { buildMachineAgentInventoryKey } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { readSystemSessionMetadataFromMetadata } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
@@ -262,12 +263,14 @@ export function createUiSessionStatusGet(account: LazyActionAccountContext | nul
         const requirements = readAccountAgentProviderRequirements(teamRoute.agentTargetKey,
           providerDeclarationContext(selectedMachineId, projection));
         const routeCurrent = acceptedRouteResource !== null || currentModel?.availability === 'available';
+        const routeReadiness = routeResource
+          ? readTeamCredentialDeliveryReadinessV1(routeResource.readiness, teamRoute.deliveryMode) : null;
         credential = { kind: 'team', ...credentialIdentity!,
-          readiness: routeCurrent ? routeResource?.readiness ?? null : null,
+          readiness: routeCurrent ? routeReadiness : null,
           recoveryAction: routeCurrent ? routeResource?.recoveryAction ?? null : null };
         providerRoute = {
           ready: Boolean(requirements && routeCurrent
-            && routeResource?.readiness.kind === 'available'),
+            && routeReadiness?.kind === 'available'),
           suppressedConnectedServiceIds: requirements?.authIsolation.suppressConnectedServiceIds ?? [],
           acceptedConnectedServiceIds,
         };

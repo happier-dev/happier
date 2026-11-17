@@ -4,6 +4,7 @@ import { resolveMachineAgentState } from './resolveMachineAgentState';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { ConnectedServicesAccountGroupOptionsByServiceId } from '@happier-dev/agents';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
+import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import type { SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { areTeamResourceConnectedServiceSelectionsEqual } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
@@ -29,7 +30,7 @@ export function resolveMachineAgentSignIn(input: Readonly<{
         if (!binding || binding.source === 'native') return { ...service, connected: false, healthy: false };
         if (binding.source === 'team_resource') {
             const resource = input.teamCredentialResources?.find((resource) => resource.id === binding.resourceId
-                && resource.readiness.kind === 'available'
+                && readTeamCredentialDeliveryReadinessV1(resource.readiness, binding.deliveryMode).kind === 'available'
                 && resource.connectedServiceSelections.some((selection) => selection.resourceId === binding.resourceId
                     && areTeamResourceConnectedServiceSelectionsEqual(selection, binding)));
             return { ...service, connected: true, healthy: Boolean(resource) };
@@ -76,7 +77,8 @@ export function resolveMachineAgentSignIn(input: Readonly<{
 }
 
 export type MachineAgentCredentialSelection = Readonly<{
-    credentialBindings: ConnectedServiceBindingsV2 | null;
+    /** Omission retains the evaluated Account default; null explicitly selects native authentication. */
+    credentialBindings?: ConnectedServiceBindingsV2 | null;
     /** Selected model intent; authentication stays unknown until its route has been evaluated. */
     modelRef?: SessionModelRef | null;
     providerRoute?: Readonly<{
@@ -93,6 +95,8 @@ export function projectMachineAgentForCredential(agent: MachineAgent | null | un
     const modelRef = selection.modelRef;
     const unreadRoute = selection.providerRoute == null && modelRef != null
         && ('source' in modelRef ? modelRef.source !== 'native' : modelRef.providerConnectionId !== null);
+    if (selection.credentialBindings === undefined && selection.providerRoute == null
+        && !unreadRoute && selection.credentialBindingsReady !== false) return agent;
     const suppressedServiceIds = new Set((selection.providerRoute?.ready ? selection.providerRoute.suppressedConnectedServiceIds : [])
         .map(resolveQualifiedConnectedAccountServiceKey).filter((key): key is string => key !== null));
     // The selected route's exact declaration owns accepted services. Inventory

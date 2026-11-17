@@ -1,3 +1,4 @@
+import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import { readAccountAgentBrokeredUse, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import type * as React from 'react';
@@ -320,19 +321,19 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             // repair authority is decided again by the destination it names.
             const resourceCurrent = params.teamCredentialResourceStatusByKey === undefined
                 || (params.teamCredentialResourceStatusByKey.get(`${resource.teamId}:${resource.id}`)?.kind === 'current');
-            const selectable = resourceCurrent && resource.readiness.kind === 'available';
-            // A catalog that isn't current yet is retried; otherwise the Home names the recovery.
-            const recovery = selectable
-                ? null
-                : resourceCurrent
-                    ? teamCredentialRecoveryPresentation(resource.recoveryAction, { isSourceCustodian: false })
-                    : { destination: 'retry' as const, labelKey: 'teams.unavailable.retry' as const };
             const resourceStatus = params.teamCredentialResourceStatusByKey?.get(`${resource.teamId}:${resource.id}`);
             const seenSelectionIds = new Set<string>();
             for (const selection of resource.connectedServiceSelections) {
                 if (selection.deliveryMode === 'brokered' && !brokeredSupported) continue;
                 if (selection.deliveryMode === 'direct'
                     && buildQualifiedPluginContributionKey(selection.disclosedMember.service) !== serviceId) continue;
+                const readiness = readTeamCredentialDeliveryReadinessV1(resource.readiness, selection.deliveryMode);
+                const selectable = resourceCurrent && readiness.kind === 'available';
+                const recovery = selectable
+                    ? null
+                    : resourceCurrent
+                        ? teamCredentialRecoveryPresentation(resource.recoveryAction, { isSourceCustodian: false })
+                        : { destination: 'retry' as const, labelKey: 'teams.unavailable.retry' as const };
                 const matchesBinding = binding?.source === 'team_resource'
                     && areTeamResourceConnectedServiceSelectionsEqual(binding, selection);
                 const matchesAppliedRoute = params.appliedTeamRoute !== undefined
@@ -353,13 +354,13 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                     binding: selection,
                 }) : {};
                 const teamName = params.teamNameById?.[resource.teamId]?.trim();
-                if (!selectable) markUnavailable(optionId, resourceShortUnavailableLabel(resource.readiness, resourceStatus));
+                if (!selectable) markUnavailable(optionId, resourceShortUnavailableLabel(readiness, resourceStatus));
                 // Unusable: a few words and the step this viewer can take; the row press opens that recovery.
                 const subtitle = [(selectable
                     ? joinHappierFacts(teamName, params.translate(selection.deliveryMode === 'brokered'
                         ? 'teams.credentials.delivery.brokered'
                         : 'teams.credentials.delivery.direct'))
-                    : joinHappierFacts(teamName, resourceShortUnavailableLabel(resource.readiness, resourceStatus),
+                    : joinHappierFacts(teamName, resourceShortUnavailableLabel(readiness, resourceStatus),
                         recovery === null ? null : recoveryShortLabel(recovery))), availability.subtitle,
                 selection.deliveryMode === 'direct'
                     ? describeDirectDeliveryVisibility(params.directDelivery?.visibility ?? readDirectDeliveryVisibility(), params.translate, params.directDelivery?.placement) : null,
@@ -388,7 +389,9 @@ export function buildNewSessionConnectedServicesSelectionListModel(
                 && resource.sourcePresentation?.kind === 'connected_service'
                 && buildQualifiedPluginContributionKey(resource.sourcePresentation.service) === serviceId
             ));
-            const retainedRecovery = retainedResource?.readiness.kind === 'available'
+            const retainedReadiness = retainedResource
+                ? readTeamCredentialDeliveryReadinessV1(retainedResource.readiness, binding.deliveryMode) : null;
+            const retainedRecovery = retainedResource && retainedReadiness?.kind === 'available'
                 ? (params.teamCredentialResourceStatusByKey === undefined
                     || (params.teamCredentialResourceStatusByKey.get(`${retainedResource.teamId}:${retainedResource.id}`)?.kind === 'current')
                     ? null
@@ -397,8 +400,8 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             const retainedStatus = retainedResource
                 ? params.teamCredentialResourceStatusByKey?.get(`${retainedResource.teamId}:${retainedResource.id}`)
                 : undefined;
-            markUnavailable(optionId, retainedResource
-                ? resourceShortUnavailableLabel(retainedResource.readiness, retainedStatus)
+            markUnavailable(optionId, retainedReadiness
+                ? resourceShortUnavailableLabel(retainedReadiness, retainedStatus)
                 : params.translate('common.unavailable'));
             const retainedTeamName = retainedResource
                 ? params.teamNameById?.[retainedResource.teamId]?.trim()
@@ -406,10 +409,10 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             options.push({
                 id: optionId,
                 label: params.teamCredentialDisplayNames?.[binding.resourceId] ?? params.translate('common.unavailable'),
-                subtitle: [retainedResource
+                subtitle: [retainedReadiness
                     ? joinHappierFacts(
                         retainedTeamName,
-                        resourceShortUnavailableLabel(retainedResource.readiness, retainedStatus),
+                        resourceShortUnavailableLabel(retainedReadiness, retainedStatus),
                         retainedRecovery === null ? null : recoveryShortLabel(retainedRecovery),
                     )
                     : params.translate('common.unavailable'),

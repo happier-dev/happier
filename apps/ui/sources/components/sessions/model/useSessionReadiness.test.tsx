@@ -30,7 +30,7 @@ const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/
 afterEach(() => { standardCleanup(); storage.setState(storage.getInitialState(), true); network.resetRequests(); });
 afterAll(() => network.dispose());
 
-it('uses a stopped Session Home-accepted Team provider binding instead of local native sign-in', async () => {
+it.each(['brokered', 'direct', 'vendor-native'] as const)('uses a stopped Session Home-accepted Team provider binding instead of local native sign-in (%s)', async (deliveryMode) => {
     const home = await network.addHome('https://readiness-team-route.test', 'alice');
     const scope = { serverId: home.id, accountId: 'alice' };
     const accountLifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
@@ -40,7 +40,7 @@ it('uses a stopped Session Home-accepted Team provider binding instead of local 
     const teamModel = {
         kind: 'team_credential_provider_model' as const,
         teamId: 'team-1', resourceId: 'resource-1', expectedResourceRevision: 3,
-        deliveryMode: 'brokered' as const, agentTargetKey, modelId: 'gpt-5.6-luna',
+        deliveryMode, agentTargetKey, modelId: 'gpt-5.6-luna',
     };
     const metadata = MetadataSchema.parse({
         machineId, path: '/work', host: 'server', flavor: 'codex',
@@ -56,7 +56,8 @@ it('uses a stopped Session Home-accepted Team provider binding instead of local 
     const machine = createMachineFixture({ id: machineId, active: true, activeAt: Date.now(),
         access: AccessibleMachineAccessV1Schema.parse({ custodian: { accountId: 'alice', displayName: 'Alice' },
             role: 'manage', resourceMode: 'plain', accessState: 'ready' }) });
-    storage.setState({ machineListByServerId: { [home.id]: [machine] } });
+    storage.getState().applyMachines([machine], true, { sourceServerId: home.id });
+    storage.getState().markMachineListSettled(home.id);
     const native = createReadyMachineAgentInventoryFixture([{ agentId: 'codex', title: 'Codex' }]);
     const providerRequirements = readAccountAgentProviderRequirements(agentTargetKey, { kind: 'account' });
     if (!providerRequirements) throw new Error('Expected bundled Codex Provider requirements');
@@ -73,12 +74,13 @@ it('uses a stopped Session Home-accepted Team provider binding instead of local 
     } });
     let resourceReadiness: { kind: 'available' } | { kind: 'limit_reached'; metric: 'inference_requests'; resetsAtUtc: string } = { kind: 'available' };
     const resource = () => TeamCredentialResourceCatalogEntryV1Schema.parse({
-        id: teamModel.resourceId, teamId: teamModel.teamId, displayName: 'Coordination QA Codex pool',
+        id: teamModel.resourceId, teamId: teamModel.teamId, displayName: { content: { t: 'plain', v: 'Coordination QA Codex pool' }, recipientEnvelope: null },
         resourceRevision: teamModel.expectedResourceRevision, readiness: resourceReadiness,
         recoveryAction: resourceReadiness.kind === 'available' ? null : 'source_owner_action',
-        mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered',
-        sessionUsePolicy: 'personal_allowed', connectedServiceSelections: [{
+        mayBroker: true, mayReceiveDirect: deliveryMode === 'direct', directMaterialState: deliveryMode === 'direct' ? 'current' : 'never_delivered',
+        sessionUsePolicy: 'personal_allowed', connectedServiceSelections: deliveryMode === 'vendor-native' ? [] : [{
             source: 'team_resource', resourceId: teamModel.resourceId, deliveryMode: teamModel.deliveryMode,
+            ...(deliveryMode === 'direct' ? { disclosedMember: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'shared-account' } } : {}),
         }],
         // The unqualified entitled-resource read intentionally omits model rows. The Home-accepted
         // Session binding is the durable proof of the selected model route for this stopped Session.
@@ -127,8 +129,9 @@ it('uses a stopped Session Home-accepted Team provider binding instead of local 
     resourceReadiness = { kind: 'limit_reached', metric: 'inference_requests', resetsAtUtc: '2026-10-26T00:00:00Z' };
     await act(async () => { publishHomeAccountChange(home.id, ['teams'], { source: 'socket', changeKinds: ['account'] }); });
     await vi.waitFor(() => expect(hook.getCurrent().readiness).toMatchObject({
-        status: 'unavailable', cause: 'credential', agent: { state: 'unknown' },
-        credential: { kind: 'team', readiness: resourceReadiness, recoveryAction: 'source_owner_action' },
+        status: deliveryMode === 'brokered' ? 'unavailable' : 'ready', cause: deliveryMode === 'brokered' ? 'credential' : null,
+        agent: { state: deliveryMode === 'brokered' ? 'unknown' : 'ready' },
+        credential: { kind: 'team', readiness: deliveryMode === 'brokered' ? resourceReadiness : { kind: 'available' }, recoveryAction: 'source_owner_action' },
     }));
 });
 
@@ -143,7 +146,8 @@ it('updates demanded readiness after a pushed Session access change without poll
     const session = createSessionFixture({ id: 'shared-bot', serverId: home.id, encryptionMode: 'plain',
         metadata: { machineId: 'sleeping', path: '/work', host: 'laptop', flavor: 'codex' },
         access: createSessionAccessFixture(level) });
-    storage.setState({ machineListByServerId: { [home.id]: [createMachineFixture({ id: 'sleeping', active: false, activeAt: 0 })] } });
+    storage.getState().applyMachines([createMachineFixture({ id: 'sleeping', active: false, activeAt: 0 })], true, { sourceServerId: home.id });
+    storage.getState().markMachineListSettled(home.id);
     network.resetRequests();
     network.setHttpResponder(async input => new URL(String(input)).pathname === `/v2/sessions/${session.id}`
         ? Response.json(createPlainSessionByIdResponseFixture({ ...session, access: createSessionAccessFixture(level) })) : null);
@@ -176,7 +180,7 @@ it('demands the operation Account purpose and observes reconnect acknowledgement
     const purpose = { consumer: { pluginId: 'acme.external', localId: 'helper' }, purpose: 'outside-write' };
     const account = { service, accountId: 'work' };
     const teamSelection = { source: 'team_resource' as const, resourceId: 'shared-resource', deliveryMode: 'direct' as const, disclosedMember: account };
-    const teamResource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: teamSelection.resourceId, teamId: 'team', displayName: 'Shared Acme',
+    const teamResource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: teamSelection.resourceId, teamId: 'team', displayName: { content: { t: 'plain', v: 'Shared Acme' }, recipientEnvelope: null },
         resourceRevision: 1, readiness: { kind: 'limit_reached', metric: 'inference_requests', resetsAtUtc: '2026-10-20T00:00:00Z' },
         recoveryAction: 'source_owner_action', mayBroker: false, mayReceiveDirect: true, directMaterialState: 'current',
         sessionUsePolicy: 'personal_allowed', providerModels: [], connectedServiceSelections: [teamSelection], sourcePresentation: { kind: 'connected_service', service } });
@@ -194,7 +198,8 @@ it('demands the operation Account purpose and observes reconnect acknowledgement
     const machine = createMachineFixture({ id: 'credential-machine', active: true, activeAt: Date.now(),
         access: AccessibleMachineAccessV1Schema.parse({ custodian: { accountId: 'alice', displayName: 'Alice' },
             role: 'manage', resourceMode: 'plain', accessState: 'ready' }) });
-    storage.setState({ machineListByServerId: { [home.id]: [machine] } });
+    storage.getState().applyMachines([machine], true, { sourceServerId: home.id });
+    storage.getState().markMachineListSettled(home.id);
     let connected = false;
     const profile = () => AccountProfileSchema.parse({ id: 'alice', connectedAccountsV4: [{ ref: account, status: 'connected',
         revisionSemantics: 'revisioned', credentialRevision: `csr_${'a'.repeat(22)}`, authenticationModeId: 'manual',
@@ -253,9 +258,9 @@ it('demands the operation Account purpose and observes reconnect acknowledgement
     await vi.waitFor(() => expect(hook.getCurrent().readiness).toMatchObject({ operation: 'conversation', status: 'ready', credential: { kind: 'not_required' } }));
     useTeamResource = true;
     await hook.rerender({ operation: 'credential' });
-    await vi.waitFor(() => expect(hook.getCurrent().readiness).toMatchObject({ operation: 'credential', status: 'unavailable', cause: 'credential',
+    await vi.waitFor(() => expect(hook.getCurrent().readiness).toMatchObject({ operation: 'credential', status: 'ready', cause: null,
         credential: { kind: 'team', teamId: teamResource.teamId, resourceId: teamResource.id,
-            readiness: teamResource.readiness, recoveryAction: teamResource.recoveryAction } }));
+            readiness: { kind: 'available' }, recoveryAction: teamResource.recoveryAction } }));
     expect(hook.getCurrent().repair).toBeNull(); // Team source repair stays at its own resource owner.
     sharedInvoker = true;
     const privateReads = network.httpRequests.filter(request => request.url.endsWith('/v1/account/profile') || request.url.endsWith('/connected-accounts/purposes')).length;
@@ -263,7 +268,7 @@ it('demands the operation Account purpose and observes reconnect acknowledgement
     await vi.waitFor(() => expect(hook.getCurrent().readiness?.credential).toEqual({ kind: 'unknown' }));
     legacySharedLocality = true;
     await act(async () => { await hook.getCurrent().refresh(); });
-    await vi.waitFor(() => expect(hook.getCurrent().readiness?.credential).toMatchObject({ kind: 'team', readiness: teamResource.readiness }));
+    await vi.waitFor(() => expect(hook.getCurrent().readiness?.credential).toMatchObject({ kind: 'team', readiness: { kind: 'available' } }));
     expect(network.httpRequests.filter(request => request.url.endsWith('/v1/account/profile') || request.url.endsWith('/connected-accounts/purposes'))).toHaveLength(privateReads);
     useTeamResource = false;
     await hook.rerender({ operation: 'conversation' });
@@ -278,7 +283,8 @@ it('demands the exact Session only while open and keeps an offline Bot visible w
     const accountLifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
     const session = createSessionFixture({ id: 'offline-bot', serverId: home.id, encryptionMode: 'plain',
         metadata: { machineId: 'sleeping', path: '/work', host: 'laptop', flavor: 'codex' }, access: createSessionAccessFixture('owner') });
-    storage.setState({ machineListByServerId: { [home.id]: [createMachineFixture({ id: 'sleeping', active: false, activeAt: 0 })] } });
+    storage.getState().applyMachines([createMachineFixture({ id: 'sleeping', active: false, activeAt: 0 })], true, { sourceServerId: home.id });
+    storage.getState().markMachineListSettled(home.id);
     network.resetRequests();
     network.setHttpResponder(async input => new URL(String(input)).pathname === `/v2/sessions/${session.id}`
         ? Response.json(createPlainSessionByIdResponseFixture(session)) : null);
@@ -318,7 +324,8 @@ it('shares exact native repair facts with the status Action and refreshes throug
     const machine = createMachineFixture({ id: 'native-machine', active: true, activeAt: Date.now(),
         access: AccessibleMachineAccessV1Schema.parse({ custodian: { accountId: 'alice', displayName: 'Alice' },
             role: 'manage', resourceMode: 'plain', accessState: 'ready' }) });
-    storage.setState({ machineListByServerId: { [home.id]: [machine] } });
+    storage.getState().applyMachines([machine], true, { sourceServerId: home.id });
+    storage.getState().markMachineListSettled(home.id);
     network.resetRequests();
     network.setHttpResponder(async input => new URL(String(input)).pathname === `/v2/sessions/${session.id}`
         ? Response.json(createPlainSessionByIdResponseFixture(session)) : null);
@@ -420,7 +427,8 @@ it('settles while a busy Session publishes unrelated arrivals without another st
     const session = createSessionFixture({ id: 'busy-coordinator', serverId: home.id, encryptionMode: 'plain',
         metadata: { machineId: 'sleeping', path: '/work', host: 'laptop', flavor: 'codex' },
         access: createSessionAccessFixture('view') });
-    storage.setState({ machineListByServerId: { [home.id]: [createMachineFixture({ id: 'sleeping', active: false, activeAt: 0 })] } });
+    storage.getState().applyMachines([createMachineFixture({ id: 'sleeping', active: false, activeAt: 0 })], true, { sourceServerId: home.id });
+    storage.getState().markMachineListSettled(home.id);
     const gates: Array<ReturnType<typeof createDeferred<void>>> = [];
     network.resetRequests();
     network.setHttpResponder(async input => {
@@ -491,10 +499,11 @@ it('observes admitted selection keys without reading status for title or project
                 agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-5.6-luna',
             } } },
         access: createSessionAccessFixture('owner') });
-    storage.setState({ machineListByServerId: { [home.id]: [
+    storage.getState().applyMachines([
         createMachineFixture({ id: 'machine-a', active: false, activeAt: 0 }),
         createMachineFixture({ id: 'machine-b', active: false, activeAt: 0 }),
-    ] } });
+    ], true, { sourceServerId: home.id });
+    storage.getState().markMachineListSettled(home.id);
     storage.getState().applySessions([session]);
     network.resetRequests();
     network.setHttpResponder(async input => new URL(String(input)).pathname === `/v2/sessions/${session.id}`
@@ -530,7 +539,8 @@ it('refreshes exact Machine and reconnect facts, then retires all readiness dema
     let session = createSessionFixture({ id: 'recovery-bot', serverId: home.id, encryptionMode: 'plain',
         metadata: { machineId: 'sleeping', path: '/work', host: 'laptop', flavor: 'codex' },
         access: createSessionAccessFixture('owner', { submitAgentInput: false }) });
-    storage.setState({ machineListByServerId: { [home.id]: [createMachineFixture({ id: 'sleeping', active: false, activeAt: 0 })] } });
+    storage.getState().applyMachines([createMachineFixture({ id: 'sleeping', active: false, activeAt: 0 })], true, { sourceServerId: home.id });
+    storage.getState().markMachineListSettled(home.id);
     // Inventory and access are independent inputs: settle inventory before measuring access recovery.
     await refreshMachineAgents({ serverId: home.id, machineId: 'sleeping', accountLifetime, agentId: 'codex' });
     network.resetRequests();

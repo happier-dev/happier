@@ -481,7 +481,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
     expect(mergeSessionTeamCredentialBindingIntents({ explicit: undefined, admitted: null })).toBeUndefined();
   });
 
-  it('requires the exact disclosed member for a direct Team resource default', () => {
+  it.each(['available', 'limit_reached'] as const)('requires the exact disclosed member for a direct Team resource default (%s)', (readinessKind) => {
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' } as const;
     const disclosedMember = { service, accountId: 'source-account' } as const;
     const binding = {
@@ -510,7 +510,8 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       teamId: binding.teamId,
       displayName: resourceDisplayName(binding.resourceId, 'Shared Codex account'), sourceOwnerDisplayName: null,
       resourceRevision: binding.expectedResourceRevision,
-      readiness: { kind: 'available' as const },
+      readiness: readinessKind === 'available' ? { kind: 'available' as const }
+                : { kind: 'limit_reached' as const, metric: 'inference_requests' as const, resetsAtUtc: '2026-11-18T00:00:00Z' },
       recoveryAction: null,
       mayBroker: false,
       mayReceiveDirect: true,

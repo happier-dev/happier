@@ -54,8 +54,8 @@ describe('Workflow model source readiness', () => {
             } });
             network.resetRequests();
             const hook = await renderHook(() => useWorkflowRunAgentReadiness({ enabled: true, machineId: machine.id, definition }));
-            if (source === 'account_provider_connection') expect(hook.getCurrent()).toBeNull();
-            else expect(hook.getCurrent()).toBeTruthy();
+            if (source === 'native') expect(hook.getCurrent()).toBeTruthy();
+            else expect(hook.getCurrent()).toBeNull();
             expect(network.requests.filter(request => request.method === 'capabilities.detect')).toEqual([]);
         },
     );

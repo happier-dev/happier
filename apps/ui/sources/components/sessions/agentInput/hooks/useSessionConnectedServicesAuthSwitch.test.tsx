@@ -2456,7 +2456,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         }));
     });
 
-    it('passes current Team Connected Service witnesses through the existing-session picker and V2 switch payload', async () => {
+    it.each(['available', 'limit_reached'] as const)('passes current Team Connected Service witnesses through the existing-session picker and V2 switch payload (%s)', async (readinessKind) => {
         const selection = {
             source: 'team_resource' as const,
             resourceId: 'resource-1',
@@ -2472,7 +2472,8 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             displayName: { content: { t: 'plain', v: 'Shared Claude' }, recipientEnvelope: null },
             sourceOwnerDisplayName: null,
             resourceRevision: 4,
-            readiness: { kind: 'available' as const },
+            readiness: readinessKind === 'available' ? { kind: 'available' as const }
+                : { kind: 'limit_reached' as const, metric: 'inference_requests' as const, resetsAtUtc: '2026-11-18T00:00:00Z' },
             recoveryAction: null,
             mayBroker: false,
             mayReceiveDirect: true,

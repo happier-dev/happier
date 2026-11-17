@@ -2193,7 +2193,7 @@ describe('useNewSessionConnectedServices', () => {
         await hook.unmount();
     });
 
-    it('commits the exact direct Connected Service selection once after disclosure continues', async () => {
+    it.each(['available', 'limit_reached'] as const)('commits the exact direct Connected Service selection once after disclosure continues (%s)', async (readinessKind) => {
         modalConfirmMock.mockResolvedValue(true);
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
         const setAgentOptionStateForCurrentAgent = vi.fn();
@@ -2208,7 +2208,8 @@ describe('useNewSessionConnectedServices', () => {
         };
         const resource = {
             id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain', v: 'Shared Claude' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1, sourceOwnerDisplayName: null, resourceRevision: 4,
-            readiness: { kind: 'available' as const }, recoveryAction: null,
+            readiness: readinessKind === 'available' ? { kind: 'available' as const }
+                : { kind: 'limit_reached' as const, metric: 'inference_requests' as const, resetsAtUtc: '2026-11-18T00:00:00Z' }, recoveryAction: null,
             deliveryMode: 'direct' as const, mayBroker: false, mayReceiveDirect: true,
             directMaterialState: 'current' as const,
             sessionUsePolicy: 'personal_allowed' as const,

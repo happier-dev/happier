@@ -12,6 +12,30 @@ import { projectMachineAgentConnectedServices } from './machineAgentConnectedSer
 import { projectMachineAgent, projectMachineAgentForCredential, resolveMachineAgentSignIn } from './machineAgentModel';
 import { isMachineAgentReady } from './resolveMachineAgentState';
 import { presentConnectedAccountIdentity } from '@/sync/domains/connectedServices/maskAccountEmail';
+import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
+import { createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/machineFixtures';
+
+it('projects the selected Team delivery readiness instead of borrowing broker limits or native sign-in', () => {
+    const service = { pluginId: 'acme.agent', localId: 'account' };
+    const direct = { source: 'team_resource' as const, resourceId: 'resource', deliveryMode: 'direct' as const,
+        disclosedMember: { service, accountId: 'shared-account' } };
+    const brokered = { source: 'team_resource' as const, resourceId: 'resource', deliveryMode: 'brokered' as const };
+    const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+        id: 'resource', teamId: 'team', displayName: { content: { t: 'plain', v: 'Shared account' }, recipientEnvelope: null }, resourceRevision: 1,
+        readiness: { kind: 'limit_reached', metric: 'inference_requests', resetsAtUtc: '2026-11-18T00:00:00Z' },
+        recoveryAction: null, mayBroker: true, mayReceiveDirect: true, directMaterialState: 'current', sessionUsePolicy: 'personal_allowed',
+        providerModels: [], connectedServiceSelections: [direct, brokered], sourcePresentation: { kind: 'connected_service', service },
+    });
+    const signIn = (binding: typeof direct | typeof brokered, resources = [resource]) => resolveMachineAgentSignIn({
+        native: { status: 'signedOut', loginSupport: 'login_terminal' },
+        connectedServices: [{ serviceId: 'acme.agent/account', title: 'Acme account', connected: false, healthy: false }],
+        credentialBindings: { v: 2, bindingsByServiceId: { 'acme.agent/account': binding } }, teamCredentialResources: resources,
+    });
+    expect(signIn(direct)).toMatchObject({ status: 'signedIn', via: { kind: 'connected' } });
+    expect(signIn(brokered)).toMatchObject({ status: 'signedOut', via: null });
+    expect(signIn(direct, [{ ...resource, readiness: { kind: 'source_unavailable' } }])).toMatchObject({ status: 'signedOut' });
+    expect(signIn(direct, [{ ...resource, connectedServiceSelections: [brokered] }])).toMatchObject({ status: 'signedOut' });
+});
 
 const service = { pluginId: 'acme.agent', localId: 'account' };
 const profileDefaults = {
@@ -49,6 +73,25 @@ const defaults = {
     accountTransport: 'advertised-v4' as const,
     entries: [entry], now: 1_000,
 };
+
+it.each([true, false])('retains evaluated Account-default authentication when only a native model is authored (healthy=%s)', (healthy) => {
+    const profiles = [account({ status: healthy ? 'connected' : 'needs_reauth' }),
+        account({ ref: { service, accountId: 'backup' } })];
+    const connectedServices = projectMachineAgentConnectedServices({ ...defaults,
+        profile: { ...profileDefaults, connectedAccountsV4: profiles } }).acme;
+    const facts = createReadyMachineAgentInventoryFixture([{ agentId: 'acme', title: 'Acme' }]).capabilities.results['cli.acme']!.data;
+    const held = projectMachineAgent({ agentId: 'acme', title: 'Acme',
+        facts: { ...facts, signIn: { status: 'signedOut', loginSupport: 'status_only', required: false } },
+        checking: false, stale: false, connectedServices, job: null,
+        credentialSelection: { credentialBindings: { v: 2, bindingsByServiceId: {
+            'acme.agent/account': { source: 'connected', selection: 'profile', profileId: 'work' },
+        } } },
+    });
+    expect(held.state).toBe(healthy ? 'ready' : 'needsSignIn');
+    expect(projectMachineAgentForCredential(held, {
+        modelRef: { source: 'native', agentTargetKey: 'agent:acme.agent/acme', modelId: 'model-a' },
+    })).toMatchObject({ state: held.state, signIn: { status: held.signIn.status } });
+});
 
 describe('projectMachineAgentConnectedServices', () => {
     it.each([false, true])('uses shared disambiguated account names under the device identity privacy policy: hidden=%s', (hidden) => {

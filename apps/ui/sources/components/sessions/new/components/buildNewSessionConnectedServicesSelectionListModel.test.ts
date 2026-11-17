@@ -427,7 +427,7 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
         expect(missingApplied.selectedOptionId).toBeNull();
     });
 
-    it('writes the exact recipient-safe Team resource witness selected in New Session', () => {
+    it.each(['available', 'limit_reached'] as const)('writes the exact recipient-safe Direct Team witness when broker readiness is %s', readinessKind => {
         const setBindingForService = vi.fn();
         const selection = {
             source: 'team_resource' as const,
@@ -447,7 +447,9 @@ describe('buildNewSessionConnectedServicesSelectionListModel', () => {
             teamCredentialDisplayNames: { 'resource-1': 'Shared mail' },
             teamCredentialResources: [{
                 id: 'resource-1', teamId: 'team-1', displayName: { content: { t: 'plain' as const, v: 'Shared mail' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1,
-                sourceOwnerDisplayName: null, resourceRevision: 7, readiness: { kind: 'available' }, recoveryAction: null,
+                sourceOwnerDisplayName: null, resourceRevision: 7,
+                readiness: readinessKind === 'available' ? { kind: 'available' }
+                    : { kind: 'limit_reached', metric: 'inference_requests', resetsAtUtc: '2026-11-18T00:00:00Z' }, recoveryAction: null,
                 mayBroker: false, mayReceiveDirect: true,
                 directMaterialState: 'current', directDeliveryRecorded: true, sessionUsePolicy: 'personal_allowed',
                 providerModels: [],

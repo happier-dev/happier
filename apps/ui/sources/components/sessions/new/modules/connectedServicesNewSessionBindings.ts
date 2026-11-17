@@ -1,3 +1,4 @@
+import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import {
   buildConnectedServiceAccountGroupOptionsByServiceId as buildSharedConnectedServiceAccountGroupOptionsByServiceId,
   buildConnectedServiceProfileOptionsByServiceId as buildSharedConnectedServiceProfileOptionsByServiceId,
@@ -164,7 +165,7 @@ export function composeConnectedServiceTeamCredentialBindingIntents(params: Read
     if (selection?.source !== 'team_resource') continue;
     const resource = params.resources.find((candidate) => (
       candidate.id === selection.resourceId
-      && candidate.readiness.kind === 'available'
+      && readTeamCredentialDeliveryReadinessV1(candidate.readiness, selection.deliveryMode).kind === 'available'
       && candidate.connectedServiceSelections.some((candidateSelection) => (
         areTeamResourceConnectedServiceSelectionsEqual(candidateSelection, selection)
       ))

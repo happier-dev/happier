@@ -1,3 +1,4 @@
+import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import { useDirectDeliveryDisclosure } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import React from 'react';
@@ -427,7 +428,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
             || (teamCredentialContextRef.current.resourceStatusByKey.get(`${selectedResource.teamId}:${requestedTeamBinding.resourceId}`)?.kind === 'current'))
           && teamCredentialContextRef.current.resources.some((resource) => (
             resource.id === requestedTeamBinding.resourceId
-            && resource.readiness.kind === 'available'
+            && readTeamCredentialDeliveryReadinessV1(resource.readiness, requestedTeamBinding.deliveryMode).kind === 'available'
             && resource.connectedServiceSelections.some((selection) => (
               selection.resourceId === requestedTeamBinding.resourceId
               && teamResourceConnectedServiceSelectionKey(selection) === teamResourceConnectedServiceSelectionKey(requestedTeamBinding)
@@ -444,7 +445,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
           && teamCredentialContextRef.current.resources.some((resource) => (
             resource.id === selectedResource.id
             && resource.resourceRevision === selectedResource.resourceRevision
-            && resource.readiness.kind === 'available'
+            && readTeamCredentialDeliveryReadinessV1(resource.readiness, requestedTeamBinding.deliveryMode).kind === 'available'
           ))
         ))) return;
     }

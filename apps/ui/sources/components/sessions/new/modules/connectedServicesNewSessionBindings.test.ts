@@ -447,7 +447,7 @@ describe('connectedServicesNewSessionBindings', () => {
 });
 
 describe('composeConnectedServiceTeamCredentialBindingIntents', () => {
-    it('turns the Agent page Team purpose default into the New Session Team slot binding at the current revision', async () => {
+    it.each(['available', 'limit_reached'] as const)('turns the Agent page Direct Team default into the current Session slot when broker readiness is %s', async readinessKind => {
         const { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults, writeAgentConnectedAccountPurposeDefault} = await import('@happier-dev/protocol/account/settings/connected-services');
         const { composeConnectedServiceTeamCredentialBindingIntents } = await import('./connectedServicesNewSessionBindings');
         const consumer = { pluginId: 'happier.agent.claude', localId: 'claude' } as const;
@@ -476,7 +476,8 @@ describe('composeConnectedServiceTeamCredentialBindingIntents', () => {
         expect(bindings).not.toBeNull();
         const resource = {
             id: 'resource-acme', teamId: 'team-acme', displayName: { content: { t: 'plain', v: 'Acme' }, recipientEnvelope: null, legacyPlaintext: true } satisfies PrivateLabelReadV1, sourceOwnerDisplayName: null, resourceRevision: 5,
-            readiness: { kind: 'available' as const }, recoveryAction: null,
+            readiness: readinessKind === 'available' ? { kind: 'available' as const }
+                : { kind: 'limit_reached' as const, metric: 'inference_requests' as const, resetsAtUtc: '2026-11-18T00:00:00Z' }, recoveryAction: null,
             mayBroker: false, mayReceiveDirect: true, directMaterialState: 'current' as const,
             sessionUsePolicy: 'personal_allowed' as const, providerModels: [],
             connectedServiceSelections: [selection],
