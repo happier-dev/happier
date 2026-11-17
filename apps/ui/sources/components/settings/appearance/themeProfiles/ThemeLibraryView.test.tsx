@@ -40,3 +40,23 @@ it('windows a 200-theme library through the shared Collection', async () => {
     expect(tiles.length).toBeGreaterThan(0);
     expect(tiles.length).toBeLessThan(200);
 });
+
+it('shows omitted theme parts and phone CSS coverage beside the update repair', async () => {
+    const miniature = projectThemeLibraryEntry(document(firstId, 'Preview')).miniature;
+    const preview = { kind: 'miniature' as const, miniature };
+    const update = vi.fn();
+    const screen = await renderSettingsView(<ThemeLibraryView mode="light" selectedKey="light"
+        slots={{ light: { mode: 'light', name: 'Light', sourceLabel: 'Built-in', preview, showing: true },
+            dark: { mode: 'dark', name: 'Dark', sourceLabel: 'Built-in', preview, showing: false } }}
+        tiles={[]} hasOwnThemes addMenu={[]} onNewTheme={() => {}} onChooseMode={() => {}} onChooseTheme={() => {}}
+        facts={[{ kind: 'partial', name: 'Future', unsupportedPaths: ['style.futurePresentation'], webOnlyRules: 2, onUpdate: update }]} />);
+    const notice = screen.findByTestId('settings-theme-notice');
+    expect(notice).not.toBeNull();
+    const text = notice!.findAll(node => typeof node.type === 'string').flatMap(node => node.children).join(' ');
+    expect(text).toContain('style.futurePresentation');
+    expect(text).toContain('count=2');
+    const repair = notice!.findAll(node => typeof node.props.onPress === 'function')[0];
+    expect(repair).toBeDefined();
+    await act(async () => { repair!.props.onPress(); });
+    expect(update).toHaveBeenCalledOnce();
+});

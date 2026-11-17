@@ -69,6 +69,21 @@ export function useThemeLibraryEntries(): readonly ThemeLibraryEntry[] {
     return useThemeLibraryInventory().entries;
 }
 
+/** A transcript result reads one retained header without acquiring the library or its bodies. */
+export function useThemeLibraryEntry(reference: ThemeReference | null): ThemeLibraryEntry | null {
+    const scope = useAccountSettingsScope();
+    const id = reference?.kind === 'artifact' ? reference.id : '';
+    const subscription = React.useMemo(() => ({ artifacts: [id] } satisfies StorageSubscriptionScope), [id]);
+    const row = getStorage()(React.useCallback(state => id ? state.artifacts[id] ?? null : null, [id]), subscription);
+    const plugin = usePluginThemeList(reference?.kind === 'plugin' ? reference : null);
+    return React.useMemo(() => {
+        if (reference?.kind === 'artifact') return row && scope ? projectThemeProfileArtifactSummary(row, scope)?.entry ?? null : null;
+        if (reference?.kind === 'built-in') return getBuiltInThemeLibraryEntries().find(entry => entry.reference.kind === 'built-in'
+            && entry.reference.presetId === reference.presetId) ?? null;
+        return plugin ? projectPluginThemeLibraryEntries([plugin])[0] ?? null : null;
+    }, [reference, row, scope, plugin]);
+}
+
 /** Editors, export and selected runtime consumers share Artifact's addressed loading lifecycle. */
 export function useThemeProfileDocument(reference: ThemeReference | null): Readonly<{
     state: ArtifactBodyState; document: ThemeProfileDocument | null; failure?: unknown; retry(): void;

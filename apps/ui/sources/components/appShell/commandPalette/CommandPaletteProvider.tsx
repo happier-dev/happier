@@ -21,7 +21,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { useShallow } from 'zustand/react/shallow';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
-import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { readDocumentFocusReturnTarget } from '@/keyboard/focusReturn';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
@@ -198,6 +198,21 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             openSession: navigateToSession,
         }),
     }), [navigateToSession]);
+    const loadThemeCommands = useCallback(async () => {
+        const [{ buildThemeCommands }, { getSyncSingleton }, { readThemeProfileReferenceSelection },
+            { readSystemTheme, resolveThemeRuntimeVisualTheme }] = await Promise.all([
+            import('./themeCommands'), import('@/sync/runtime/getSyncSingleton'),
+            import('@/theme/profiles/themeProfilePersistence'), import('@/theme/profiles/themeProfileRuntime'),
+        ]);
+        const state = storage.getState();
+        return getSyncSingleton().withThemeProfileLibrary(async library => buildThemeCommands({
+            entries: await library.list(), undoHandle: library.lastUndo(),
+            mode: resolveThemeRuntimeVisualTheme(state.localSettings.themePreference, readSystemTheme()),
+            selection: readThemeProfileReferenceSelection(state.localSettings.themeProfileSelection),
+            execute: async (id, input) => requireActionSuccess(await actionExecutor.execute(id, input, { surface: 'ui' })),
+            push: path => router.push(path as never),
+        }));
+    }, [actionExecutor, router]);
     const openDesktopWindow = React.useCallback(async (input: import('@happier-dev/protocol/actions/actionSpecs').DesktopWindowsOpenInput) => {
         const result = await actionExecutor.execute('desktop.windows.open', input, { surface: 'ui' });
         return result.ok;
@@ -283,6 +298,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
             shortcutLabels,
             petControls,
             fileViewControls,
+            themeCommands: loadThemeCommands,
             paneControls: {
                 readColumn: readShellColumnActionOwner,
                 focusRegion: direction => { focusPaneRegion(direction); },
@@ -323,7 +339,7 @@ function WebCommandPaletteProvider({ children }: { children: React.ReactNode }) 
                 await Modal.alertAsync(title, message);
             },
         });
-    }, [openExecutionRunDraft, commandContextSessionId, commandContextServerId, currentUiContextReader, executionRunsEnabled, voiceEnabled, petsCompanionEnabled, workflowsEnabled, paletteDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, navigateToSession, actionExecutor, desktopWindowCommands, fileViewControls, startAskHappier, togglePaneArrangement]);
+    }, [openExecutionRunDraft, commandContextSessionId, commandContextServerId, currentUiContextReader, executionRunsEnabled, voiceEnabled, petsCompanionEnabled, workflowsEnabled, paletteDestinations, activateCompactAppDestination, shortcutLabels, petControls, pluginActionPresentation, router, openNewSession, openNewWorkflow, openWorkflowAgentAuthoring, navigateToSession, actionExecutor, desktopWindowCommands, fileViewControls, loadThemeCommands, startAskHappier, togglePaneArrangement]);
 
     const actionCommandBuilder = React.useRef(buildCommands);
     actionCommandBuilder.current = buildCommands;

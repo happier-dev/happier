@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import type { ThemeLibraryEntry, ThemeProfileMode, ThemeReference } from '@/theme/profiles/themeProfileTypes';
+import type { ThemeLibraryEntry, ThemeProfileDocument, ThemeProfileMode, ThemeReference } from '@/theme/profiles/themeProfileTypes';
+import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
 import { resolveThemeProfile } from '@/theme/profiles/resolveThemeProfile';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
@@ -21,6 +22,9 @@ export type ThemeLibraryModelInput = Readonly<{
     labels: Readonly<{ sourceYours: string; sourceStore: string; sourcePlugin: string; editTheme: string; exportFile: string }>;
     selection: Readonly<Record<ThemeProfileMode, ThemeReference | null>>;
     showing: ThemeProfileMode;
+    native?: boolean;
+    selectedDocuments?: Readonly<Record<ThemeProfileMode, ThemeProfileDocument | null>>;
+    onUpdate?: () => void;
     failed?: boolean;
     retry: () => void;
     pluginNames?: ReadonlyMap<string, string>;
@@ -86,7 +90,33 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
         };
         return { light: slot('light'), dark: slot('dark') };
     }, [activeOption, title, sourceLabel, previewFor, input.showing, input.onUseOtherDevices]);
+    const facts = React.useMemo((): NonNullable<ThemeLibraryViewProps['facts']> => {
+        const result: NonNullable<ThemeLibraryViewProps['facts']>[number][] = [];
+        const partialIds = new Set<string>();
+        for (const slotMode of ['light', 'dark'] as const) {
+            const option = activeOption(slotMode);
+            const document = input.selectedDocuments?.[slotMode];
+            const compatibility = option.entry?.compatibility ?? document?.compatibility;
+            const webOnlyRules = input.native && document ? prepareThemeProfileCss(document.profile).coverage.webOnly : 0;
+            if ((compatibility?.status === 'partial' || webOnlyRules > 0) && !partialIds.has(option.id)) {
+                partialIds.add(option.id);
+                result.push({ kind: 'partial', name: title(option), requiresAppVersion: compatibility?.requiresAppVersion,
+                    unsupportedPaths: compatibility?.unsupportedPaths ?? [], ...(webOnlyRules ? { webOnlyRules } : {}),
+                    ...(input.onUpdate ? { onUpdate: input.onUpdate } : {}) });
+            }
+        }
+        const document = input.selectedDocuments?.[input.showing];
+        const areas = document ? [...new Set(prepareThemeProfileCss(document.profile).coverage.hides
+            .filter(hidden => hidden.mode === 'both' || hidden.mode === input.showing)
+            .map(hidden => hidden.address.surface))] : [];
+        if (areas.length) result.push({ kind: 'hides', name: title(activeOption(input.showing)), areas,
+            onUseBuiltIn: () => {
+                void execute(THEME_ACTION_IDS.apply, { ref: null, mode: input.showing }).catch(error => input.onFailure?.(error));
+            } });
+        return result;
+    }, [activeOption, title, input.selectedDocuments, input.showing, input.native, input.onUpdate, input.onFailure, execute]);
     return { slots, mode, selectedKey: activeOption(mode).id, tiles, hasOwnThemes: input.options.some(option => option.entry?.source.kind === 'yours'),
+        facts,
         addMenu, onNewTheme: openCreate, onChooseMode: setMode, onChooseTheme: chooseTheme, onOpenStore: input.onOpenStore,
         ...(failure ? { notice: { text: resolveActionExecutionErrorMessage(failure.error, t('common.unavailable')),
             action: { title: t('common.retry'), onPress: () => chooseTheme(failure.key) } } }

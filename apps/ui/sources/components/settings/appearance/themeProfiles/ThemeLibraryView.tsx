@@ -238,6 +238,7 @@ function SlotFooter(
         </Text>
       ) : null}
       {slot.onUseOtherDevices ? (
+        <View ref={slot.devicesAnchorRef as React.Ref<React.ElementRef<typeof View>>} collapsable={false}>
         <TextLinkButton
           testID={`settings-theme-slot-${slot.mode}-devices`}
           size="meta"
@@ -245,6 +246,7 @@ function SlotFooter(
           label={t('settingsAppearance.themeProfiles.useOnOtherDevices')}
           onPress={slot.onUseOtherDevices}
         />
+        </View>
       ) : null}
     </View>
   );
@@ -253,10 +255,16 @@ function SlotFooter(
 /** The words for a fact about a theme in use, and its one repair. */
 function factNotice(fact: ThemeLibraryFact): ThemeLibraryNotice {
   if (fact.kind === 'partial') {
-    return {
-      text: fact.requiresAppVersion
+    const summary = fact.webOnlyRules && !fact.unsupportedPaths?.length
+      ? t('settingsAppearance.themeProfiles.partlyShownCss', { name: fact.name })
+      : fact.requiresAppVersion
         ? t('settingsAppearance.themeProfiles.partlyShownVersion', { name: fact.name, version: fact.requiresAppVersion })
-        : t('settingsAppearance.themeProfiles.partlyShown', { name: fact.name }),
+        : t('settingsAppearance.themeProfiles.partlyShown', { name: fact.name });
+    return {
+      text: [summary,
+        ...(fact.unsupportedPaths?.length ? [t('settingsAppearance.themeProfiles.partlyShownOmitted', { parts: fact.unsupportedPaths.join(', ') })] : []),
+        ...(fact.webOnlyRules ? [t('settingsAppearance.themeProfiles.partlyShownWebOnly', { count: fact.webOnlyRules })] : []),
+      ].join(' '),
       ...(fact.onUpdate ? { action: { title: t('settingsAppearance.themeProfiles.updateHappier'), onPress: fact.onUpdate } } : {}),
     };
   }

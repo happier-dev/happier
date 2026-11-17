@@ -20,6 +20,7 @@ import { useOptionalCurrentUiContextReader } from '@/components/appShell/current
 import { PLUGIN_SEARCH_SECTIONS, useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import type { Command } from '@/components/appShell/commandPalette/types';
+import { readCommandPaletteOptionCommand } from '@/components/appShell/commandPalette/buildCommandPaletteSelectionListSections';
 import { Modal } from '@/modal';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
@@ -1298,7 +1299,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
         }
     }, [credentialBindings]);
 
-    const handleSelect = useEventCallback((optionId: string, _option: SelectionListOption, intent: 'preview' | 'beside' = 'preview') => {
+    const handleSelect = useEventCallback((optionId: string, option: SelectionListOption, intent: 'preview' | 'beside' = 'preview') => {
         if (optionId === EXTERNAL_CONVERSATION_SEARCH_OPTION_ID || optionId === ALL_FILE_MATCHES_OPTION_ID || optionId === MORE_FILES_OPTION_ID
             || optionId.startsWith(FILE_CONTENT_FOLDER_OPTION_PREFIX)) {
             committedResultRef.current = null;
@@ -1310,7 +1311,8 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
         if (optionId.startsWith(REPLACE_OPTION_PREFIX) && !committedResultRef.current) return;
         const result = committedResultRef.current;
         const pluginActivation = committedPluginActivationRef.current;
-        const command = result || pluginActivation ? null : findCommandForOptionId(props.commands, optionId);
+        const command = result || pluginActivation ? null : findCommandForOptionId(props.commands, optionId)
+            ?? readCommandPaletteOptionCommand(option);
         committedResultRef.current = null;
         committedPluginActivationRef.current = null;
         setSelectedOptionId(optionId);

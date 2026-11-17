@@ -332,6 +332,24 @@ afterEach(async () => {
 });
 
 describe('Theme profile settings screen', () => {
+    it('opens the connected-device picker from either in-use slot without changing the selection', async () => {
+        const screen = await renderProfilesScreen();
+        const selection = storage.getState().localSettings.themeProfileSelection;
+        expect(screen.findByTestId('settings-theme-slot-light-devices')).not.toBeNull();
+        expect(screen.findByTestId('settings-theme-slot-dark-devices')).not.toBeNull();
+        expect(screen.findByTestId('theme-device-picker')).toBeNull();
+        await screen.pressByTestIdAsync('settings-theme-slot-light-devices');
+        expect(screen.findByTestId('theme-device-picker')).not.toBeNull();
+        expect(storage.getState().localSettings.themeProfileSelection).toBe(selection);
+        const overlay = screen.tree.findAll(node => node.props.phonePresentation === 'sheet'
+            && typeof node.props.onRequestClose === 'function')[0];
+        await act(async () => { overlay!.props.onRequestClose(); });
+        expect(screen.findByTestId('theme-device-picker')).toBeNull();
+        await screen.pressByTestIdAsync('settings-theme-slot-dark-devices');
+        expect(screen.findByTestId('theme-device-picker')).not.toBeNull();
+        expect(storage.getState().localSettings.themeProfileSelection).toBe(selection);
+    });
+
     it('offers each mode its themes as visual tiles, with your own themes in their mode', async () => {
         setThemeProfiles({
             activeProfileIds: { light: null, dark: null },
@@ -483,6 +501,16 @@ describe('Theme profile editor', () => {
         expect(screen.getTextContent()).toContain('settingsAppearance.themeProfiles.sourceStore');
     });
 
+    it('opens current CSS directly from the theme recovery route', async () => {
+        const { JSDOM } = await import('jsdom');
+        const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
+        vi.stubGlobal('window', dom.window);
+        vi.stubGlobal('document', dom.window.document);
+        onTestFinished(() => { vi.unstubAllGlobals(); dom.window.close(); });
+        shared.params = { profileId: 'new', from: 'paperLight', view: 'css' };
+        const screen = await renderSettingsView(React.createElement(ThemeProfileEditorScreen), { flushOptions: { cycles: 0 } });
+        expect(screen.findByTestId('settings-theme-profile-css')).not.toBeNull();
+    });
 
     it('retains unsupported presentation through an unrelated edit and deliberate style changes', async () => {
         const raw = { ...baseProfile('862d417f-f6f9-480d-a7c0-82735194d027'), schemaVersion: 2,

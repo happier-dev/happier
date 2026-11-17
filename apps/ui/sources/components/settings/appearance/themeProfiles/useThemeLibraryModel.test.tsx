@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionsSettingsV1, isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { THEME_ACTION_IDS, ThemeActionOutputSchemas, type ThemeActionRequest, type ThemeActionId, type ThemeActionInput, type ThemeActionOutput } from '@happier-dev/protocol/actions/themeActionFamily';
@@ -11,6 +11,11 @@ import type { ThemeUiActionExecute } from './useThemeActionExecution';
 import { buildThemePresetSourceOptions } from './themeProfilePresetOptions';
 import { createThemePluginShareForm } from './themePluginShareForm';
 import { createShareThemePlugin } from '@/theme/profiles/shareThemePlugin';
+
+import { mergeThemeProfileDocumentEdit, parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { standardCleanup } from '@/dev/testkit';
+
+afterEach(standardCleanup);
 
 describe('theme library controller', () => {
     it('browses headers without bodies and applies through policy without changing the other mode', async () => {
@@ -92,5 +97,57 @@ describe('theme library Share controller', () => {
             shared: { project: '/chosen', archive: '/chosen.tgz', digest: 'digest' } } });
         form.retire();
         await hook.unmount();
+    });
+});
+
+describe('theme library recovery facts', () => {
+    it('reads partial support and mode-specific hides from the selected document and repairs through apply', async () => {
+        const harness = createThemeActionHarness();
+        const document = mergeThemeProfileDocumentEdit(themeActionDocument('00000000-0000-4000-8000-000000000019'), {
+            css: '.dark [data-surface="sidebar"][data-part="root"] { display: none; } .future-effect { filter: blur(1px); }',
+            requiresAppVersion: '99.0.0',
+        });
+        await harness.library.save({ document });
+        await harness.library.select({ reference: { kind: 'artifact', id: document.profile.id }, mode: 'dark' });
+        const executeTheme = createThemeActionExecute({ withLibrary: operation => operation(harness.library),
+            clientId: () => 'this-client', readSelection: () => harness.selection });
+        const execute: ThemeUiActionExecute = async (actionId, input) => {
+            const result = await executeTheme({ actionId, input, context: { surface: 'ui' } } as ThemeActionRequest);
+            if ('errorCode' in result) throw new Error(result.errorCode);
+            return result as ThemeActionOutput<typeof actionId>;
+        };
+        const options = buildThemePresetSourceOptions(await harness.library.list());
+        const input: ThemeLibraryModelInput = { options, selection: harness.selection, showing: 'dark', native: true,
+            selectedDocuments: { light: null, dark: document },
+            labels: { sourceYours: 'Yours', sourceStore: 'Store', sourcePlugin: 'Plugin', editTheme: 'Edit', exportFile: 'Export' },
+            retry() {}, onCreate() {}, onEdit() {}, onExport() {}, onImport() {}, onUpdate() {},
+        };
+        const hook = await renderHook(value => useThemeLibraryModel(value, execute), { initialProps: input });
+        expect(hook.getCurrent().facts).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'partial', requiresAppVersion: '99.0.0',
+                unsupportedPaths: expect.arrayContaining(['style.futurePresentation']), webOnlyRules: 1, onUpdate: expect.any(Function) }),
+            expect.objectContaining({ kind: 'hides', areas: ['sidebar'] }),
+        ]));
+        const hidden = hook.getCurrent().facts?.find(fact => fact.kind === 'hides');
+        if (hidden?.kind !== 'hides') throw new Error('Expected hidden surface metadata');
+        await hook.rerender({ ...input, showing: 'light' });
+        expect(hook.getCurrent().facts?.some(fact => fact.kind === 'hides')).toBe(false);
+        await hook.rerender(input);
+        const writes = harness.writes();
+        await act(async () => { hidden.onUseBuiltIn(); });
+        expect(harness.selection.dark).toBeNull();
+        expect(harness.writes()).toBe(writes);
+        const supported = parseThemeProfileDocument({ ...document.profile, id: '00000000-0000-4000-8000-000000000020' });
+        if (!supported.ok || supported.document.compatibility.status !== 'supported') throw new Error('Expected a supported theme fixture');
+        await harness.library.save({ document: supported.document });
+        await harness.library.select({ reference: { kind: 'artifact', id: supported.document.profile.id }, mode: 'dark' });
+        const nativeInput = { ...input, options: buildThemePresetSourceOptions(await harness.library.list()),
+            selectedDocuments: { light: null, dark: supported.document } };
+        await hook.rerender(nativeInput);
+        expect(hook.getCurrent().facts).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: 'partial', unsupportedPaths: [], webOnlyRules: 1 }),
+        ]));
+        await hook.rerender({ ...nativeInput, native: false });
+        expect(hook.getCurrent().facts?.some(fact => fact.kind === 'partial')).toBe(false);
     });
 });

@@ -21,6 +21,27 @@ vi.mock('@/components/ui/media/CodeView', () => ({
 await import('./MCPToolView');
 
 describe('MCPToolView', () => {
+    it('mounts one theme card for consecutive proposals through the real result renderer', async () => {
+        const { THEME_ACTION_IDS, ThemeActionInputSchemas, ThemeActionOutputSchemas } = await import('@happier-dev/protocol/actions/themeActionFamily');
+        const { themeActionDocument } = await import('@/dev/testkit/harness/themeActionHarness');
+        const { prepareThemeProfileCss } = await import('@/theme/css/prepareThemeCss');
+        const { createToolCallMessageFixture } = await import('@/dev/testkit/fixtures/transcriptFixtures');
+        const { MCPToolView } = await import('./MCPToolView');
+        const messages = ['First', 'Second'].map(id => {
+            const document = themeActionDocument(id);
+            const input = ThemeActionInputSchemas[THEME_ACTION_IDS.tryOn].parse({ document, mode: 'dark', origin: { kind: 'agent' }, group: 'choices' });
+            const output = ThemeActionOutputSchemas[THEME_ACTION_IDS.tryOn].parse({ previewRef: id, coverage: prepareThemeProfileCss(document.profile).coverage, compatibility: document.compatibility });
+            return createToolCallMessageFixture({ id, tool: makeToolCall({ id, name: 'mcp__happier__action_execute', state: 'completed',
+                input: { actionId: THEME_ACTION_IDS.tryOn, input }, result: { ok: true, result: output } }) });
+        });
+        const first = await renderScreen(<MCPToolView {...makeToolViewProps(messages[0]!.tool, { messages, messageId: 'First', detailLevel: 'summary' })} />);
+        const last = await renderScreen(<MCPToolView {...makeToolViewProps(messages[1]!.tool, { messages, messageId: 'Second', detailLevel: 'summary' })} />);
+        expect(first.tree.findAll(node => node.props.testID === 'theme-action-result')).toHaveLength(0);
+        expect(last.tree.findAll(node => node.props.testID === 'theme-action-result').length).toBeGreaterThan(0);
+        expect(last.getTextContent()).toContain('Second');
+        await first.unmount();
+        await last.unmount();
+    });
     it('previews canonical MCP content and historical text aliases equally', async () => {
         for (const result of [
             { content: [{ type: 'text', text: 'Kept result body' }] },

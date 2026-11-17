@@ -60,6 +60,9 @@ export type ThemeLibraryFact =
       kind: 'partial';
       name: string;
       requiresAppVersion?: string;
+      unsupportedPaths?: readonly string[];
+      /** CSS-owner count of rules this native client cannot apply. */
+      webOnlyRules?: number;
       onUpdate?: () => void;
     }>
   | Readonly<{

@@ -21,7 +21,7 @@ export type ThemeTryOnSnapshot = ThemeTryOnInput & Readonly<{ previewRef: Previe
 export interface ThemeTryOnOwner {
     begin(input: ThemeTryOnInput): ThemeTryOnSnapshot;
     replace(previewRef: PreviewRef, input: ThemeTryOnInput): ThemeTryOnSnapshot;
-    read(): ThemeTryOnSnapshot | null;
+    read(previewRef?: PreviewRef): ThemeTryOnSnapshot | null;
     revert(previewRef: PreviewRef): void;
     keep(previewRef: PreviewRef): Promise<ThemeLibraryMutationResult>;
     subscribe(listener: () => void): () => void;
@@ -65,7 +65,8 @@ export function createThemeTryOnOwner(deps: Readonly<{
     return {
         begin,
         replace(previewRef, input) { requireScopedCurrent(previewRef); return begin(input); },
-        read: () => current && areAccountSettingsScopesEqual(current.scope, deps.captureScope()) ? current.snapshot : null,
+        read: previewRef => previewRef !== undefined ? requireScopedCurrent(previewRef).preview.snapshot
+            : current && areAccountSettingsScopesEqual(current.scope, deps.captureScope()) ? current.snapshot : null,
         revert(previewRef) { requireCurrent(previewRef); current = null; publish(); },
         async keep(previewRef) {
             const { preview, scope } = requireScopedCurrent(previewRef);

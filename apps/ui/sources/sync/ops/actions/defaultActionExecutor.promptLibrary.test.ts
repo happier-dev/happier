@@ -499,6 +499,24 @@ describe('createDefaultActionExecutor (prompt library routing)', () => {
         installHomeGovernanceBoundaries(homes);
     });
 
+    it('tries and reverts a theme through the shared device runtime without saving it', async () => {
+        const { THEME_ACTION_IDS } = await import('@happier-dev/protocol/actions/themeActionIdsV1');
+        const { themeActionDocument } = await import('@/dev/testkit/harness/themeActionHarness');
+        const { getThemeTryOnOwner } = await import('@/theme/profiles/themeTryOnRuntime');
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId };
+        const tried = await executor.execute(THEME_ACTION_IDS.tryOn, {
+            document: themeActionDocument('default-host'), mode: 'dark', origin: { kind: 'agent' },
+        }, context);
+        expect(tried).toMatchObject({ ok: true, result: { previewRef: expect.any(String) } });
+        const preview = getThemeTryOnOwner().read();
+        expect(preview?.document?.profile.name).toBe('default-host');
+        if (!preview) throw new Error('Expected shared preview');
+        expect(await executor.execute(THEME_ACTION_IDS.revert, { previewRef: preview.previewRef }, context))
+            .toMatchObject({ ok: true });
+        expect(getThemeTryOnOwner().read()).toBeNull();
+    });
+
     it.each([false, true])('reviews and applies template content through Account and Session transports (mounted recovery=%s)', async mountedRecovery => {
         const { BotTemplateReleaseV1Schema, projectBotTemplateArtifactHeaderV1 } = await import('@happier-dev/protocol/bots/templates/botTemplateV1');
         const { BotTemplateUpdateDiffResultV1Schema } = await import('@happier-dev/protocol/bots/templates/botTemplateActionsV1');

@@ -190,7 +190,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         if (!parsed.ok) throw new Error(parsed.error);
         return parsed.document;
     }, []);
-    const [view, setView] = React.useState<ThemeEditorView>('colors');
+    const [view, setView] = React.useState<ThemeEditorView>(() => getProfileIdParam(params.view) === 'css' ? 'css' : 'colors');
     const [colorQuery, setColorQuery] = React.useState('');
     const codeEditorRef = React.useRef<CodeEditorHandle>(null);
     const [invalidByToken, setInvalidByToken] = React.useState<Readonly<Record<string, boolean>>>({});

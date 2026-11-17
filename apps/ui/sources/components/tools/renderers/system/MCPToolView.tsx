@@ -22,6 +22,8 @@ import { presentActionApproval } from '@/components/approvals/actionApprovalPres
 import { resolveActionTitle } from '@/text/actionTitles';
 import { Typography } from '@/constants/Typography';
 import { resolveToolActionFailure, type ToolActionFailurePresentation } from '@/components/tools/shell/presentation/resolveToolActionFailure';
+import { readThemeActionCardPresentation } from '@/components/sessions/transcript/references/transcriptThemeAction';
+import { ThemeActionResult } from './ThemeActionResult';
 
 
 import { resolveMcpToolTitle } from '@happier-dev/session-core/tools';
@@ -147,7 +149,7 @@ function ActionFailureCode({ failure }: Readonly<{ failure: ToolActionFailurePre
     );
 }
 
-export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId, serverId, sessionId }) => {
+export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId, serverId, sessionId, messages }) => {
     const find = useToolFindState(messageId);
     if (detailLevel === 'title') return null;
 
@@ -169,6 +171,8 @@ export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel, messa
                 <View style={styles.container}>{outcome}</View>
             </ToolSectionView>
         ) : null;
+        const theme = readThemeActionCardPresentation({ tool, messages, messageId });
+        if (theme) return theme.visible ? <ThemeActionResult presentation={theme} fallback={summary} /> : null;
         // An agent's finite Project command shows its run's output, not the acknowledgement JSON.
         if (machineResourcesCall) return <MachineResourcesToolBody call={machineResourcesCall} serverId={serverId} />;
         return projectCommandCall

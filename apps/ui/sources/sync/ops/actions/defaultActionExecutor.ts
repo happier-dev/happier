@@ -35,7 +35,7 @@ import { projectAutomationEligibleEventsCatalogV1 } from '@happier-dev/protocol/
 import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { readRpcFailureCode } from './rpcFailureCode';
 import { createThemeActionExecute } from './themeActionDeps';
-import { getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
+import { getThemeTryOnOwner, bindThemeRegistryLifecycle } from '@/theme/profiles/themeTryOnRuntime';
 import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
 import { projectThemeSurfacePaintMap } from '@/theme/css/themeSurfacePaintMap';
 import { readThemeProfileReferenceSelection } from '@/theme/profiles/themeProfilePersistence';
@@ -2037,6 +2037,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             composerSurfaceStyle: storage.getState().settings.composerSurfaceStyle,
           }),
         },
+        withRegistryLifecycle: (operation, context) => operation(bindThemeRegistryLifecycle({
+          expectedScope: accountContext.accountLifetime.scope, signal: context.signal,
+        })),
         withLibrary: (operation, signal) => sync.withThemeProfileLibrary(operation,
           { expectedScope: accountContext.accountLifetime.scope, signal }),
         clientId: () => apiSocket.getSocketId(),

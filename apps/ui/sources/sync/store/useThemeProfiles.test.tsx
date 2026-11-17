@@ -4,7 +4,7 @@ import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactSt
 import { createArtifactInventoryDemandHarness, initializeArtifactInventoryDemandHarness } from '@/dev/testkit/harness/artifactInventoryDemandHarness';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { storage } from '@/sync/domains/state/storageStore';
-import { readThemeLibrarySnapshot, readThemeProfilesSnapshot, useThemeLibraryEntries, useThemeLibraryInventory, useThemeProfileDocument } from './useThemeProfiles';
+import { readThemeLibrarySnapshot, readThemeProfilesSnapshot, useThemeLibraryEntries, useThemeLibraryEntry, useThemeLibraryInventory, useThemeProfileDocument } from './useThemeProfiles';
 
 
 async function home(suffix: string) {
@@ -85,6 +85,23 @@ describe('Artifact-backed theme source', () => {
         expect(hook.getCurrent()).toBe(entries);
         expect(renders).toBe(0);
         expect(fixture.requests.filter(request => request.path.startsWith('/v1/artifacts/') && request.projection !== 'headers')).toEqual([]);
+    });
+
+    it('reads one retained card header without acquiring a body or observing other themes', async () => {
+        const fixture = await home('card-header');
+        storage.getState().applyArtifacts(Array.from({ length: 40 }, (_, index) => fixture.row(index)), {}, ['theme_profile.v1']);
+        let renders = 0;
+        const artifactReads = () => fixture.requests.filter(request => request.path.startsWith('/v1/artifacts')).length;
+        const readsBefore = artifactReads();
+        const reference = { kind: 'artifact', id: 'theme-0' } as const;
+        const hook = await renderHook(() => { renders++; return useThemeLibraryEntry(reference); });
+        const entry = hook.getCurrent();
+        renders = 0;
+        await act(async () => { storage.getState().updateArtifact({ ...fixture.row(1), title: 'Changed other theme' }); });
+        expect(renders).toBe(0);
+        expect(hook.getCurrent()).toBe(entry);
+        expect(entry?.name).toBe('Theme 0');
+        expect(artifactReads()).toBe(readsBefore);
     });
 
     it('demands a retained document by tagged reference and admits trusted reserved built-ins', async () => {

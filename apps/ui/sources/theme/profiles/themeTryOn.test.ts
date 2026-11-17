@@ -56,6 +56,14 @@ function setup() {
 }
 
 describe('one-document theme try-on', () => {
+    it('opens only the addressed retained preview for the editor', () => {
+        const state = setup();
+        const first = state.owner.begin({ document: document('first'), mode: 'dark', origin: { kind: 'agent' } });
+        expect(state.owner.read(first.previewRef)).toBe(first);
+        const second = state.owner.begin({ document: document('second'), mode: 'dark', origin: { kind: 'agent' } });
+        expect(() => state.owner.read(first.previewRef)).toThrowError(expect.objectContaining({ code: 'theme_preview_stale' }));
+        expect(state.owner.read(second.previewRef)).toBe(second);
+    });
     it('retains an identical declaration and handle until a real replacement publishes', async () => {
         const state = setup();
         const observed: (ThemeTryOnSnapshot | null)[] = [];

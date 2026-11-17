@@ -194,7 +194,7 @@ function createThemeActionSpecs() {
     approvalPolicy: id === THEME_ACTION_IDS.delete || id === THEME_ACTION_IDS.uninstall || id === THEME_ACTION_IDS.sharePlugin
       ? { agentDefault: 'authority', requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] }
       : id === THEME_ACTION_IDS.install
-        ? { uiConfirmation: 'direct', agentDefault: 'authority' }
+        ? { uiConfirmation: 'direct' }
         : { uiConfirmation: 'direct',
           ...(id === THEME_ACTION_IDS.tryOn || id === THEME_ACTION_IDS.save
             ? { agentDefaultForInput: hasThemeAuthorCss } : {}) },

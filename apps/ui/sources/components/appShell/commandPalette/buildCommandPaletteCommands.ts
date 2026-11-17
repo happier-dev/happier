@@ -123,6 +123,7 @@ type BuildCommandPaletteCommandsBaseParams = Readonly<{
   petControls?: PetCommandControls;
   paneControls?: PaneCommandControls;
   fileViewControls?: FileViewCommandControls;
+  themeCommands?: () => Promise<readonly Command[]>;
   askHappierRelease?: AskHappierContext['release'];
   nav: Readonly<{
     push: (path: string) => void;
@@ -236,6 +237,12 @@ export function buildCommandPaletteCommands(
       action: () => nav.push('/scan/terminal'),
     },
   ];
+
+  if (params.themeCommands) cmds.push({
+    id: 'theme.change', title: t('themePalette.change'), icon: 'palette',
+    category: t('commandPalette.commands.actionsCategory'), loadCommands: params.themeCommands,
+    action: () => nav.push('/settings/appearance/themes'),
+  });
 
   if (nav.openNewWindow) cmds.push({
     id: 'desktop.new-window', actionSpecId: 'desktop.windows.open',

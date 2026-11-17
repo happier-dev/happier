@@ -1,5 +1,5 @@
 import { mergeThemeProfileDocumentEdit, type ThemeProfileDocument, type ThemeLibraryEntry, type ThemeProfileLibrary, type ThemeLibraryMutationResult, type ThemeProfileMode, type ThemeProfileSource, type ThemeReference, type ThemeUndoContext, type ThemeUndoHandle } from '@happier-dev/protocol/account/settings/themeProfiles';
-import { HappyError } from '@/utils/errors/errors';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ArtifactCreateIdV1Schema } from '@happier-dev/protocol/artifacts/artifactIdV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { getBuiltInThemeLibraryEntries, getBuiltInThemeProfileDocument } from './builtInThemeProfiles';
@@ -38,7 +38,7 @@ function sameContent(left: ThemeProfileDocument, right: ThemeProfileDocument): b
 }
 function assertAcknowledgedContent(requested: ThemeProfileDocument, acknowledged: ThemeProfileDocument): void {
     if (!sameContent(acknowledged, requested)) {
-        throw new HappyError('Theme already exists; open it before editing', false, { code: 'conflict' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'conflict', error: 'Theme already exists; open it before editing' });
     }
 }
 
@@ -60,14 +60,14 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
         const summary = find(reference);
         if (summary) assertYours(summary.source);
         const current = summary ? await artifacts.get(document.profile.id) : null;
-        if (summary && !current) throw new HappyError('Theme not found', false, { code: 'theme_not_found' });
+        if (summary && !current) throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_not_found', error: 'Theme not found' });
         if (current && sameContent(current.document, document)) return { result: unchanged(summary), createdRecord: undefined };
         if (current && operation === 'keep') throw new Error('Save deliberate edits before applying this theme');
         const id = current || ArtifactCreateIdV1Schema.safeParse(document.profile.id).success ? document.profile.id : context.createId();
         const next = mergeThemeProfileDocumentEdit(document, { id, ...(current ? { updatedAt: new Date(context.now()).toISOString() } : {}) });
         const written = await artifacts.save(next, current?.revision);
         if (!current && operation === 'keep' && written.created === undefined) {
-            throw new HappyError('This server did not acknowledge whether the theme was created; open the saved theme before applying it', false, { code: 'artifact_content_unavailable' });
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'artifact_content_unavailable', error: 'This server did not acknowledge whether the theme was created; open the saved theme before applying it' });
         }
         if (!current) assertAcknowledgedContent(next, written.document);
         const entry = projectThemeLibraryEntry(written.document);
@@ -110,7 +110,7 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
         },
         duplicate: async ({ reference, name }) => {
             const document = await library.get(reference);
-            if (!document) throw new HappyError('Theme not found', false, { code: 'theme_not_found' });
+            if (!document) throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_not_found', error: 'Theme not found' });
             const timestamp = new Date(context.now()).toISOString();
             const copy = mergeThemeProfileDocumentEdit(document, { id: context.createId(), name: name ?? document.profile.name,
                 createdAt: timestamp, updatedAt: timestamp, source: { kind: 'yours' } });
@@ -122,7 +122,7 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
                 const record = await artifacts.get(reference.id);
                 if (record) entry = projectThemeLibraryEntry(record.document);
             }
-            if (reference && !entry) throw new HappyError('Theme not found', false, { code: 'theme_not_found' });
+            if (reference && !entry) throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_not_found', error: 'Theme not found' });
             const previousSelection = context.readSelection()[mode];
             const changed = !sameStrictJsonValue(previousSelection, reference);
             if (changed) await context.writeSelection(mode, reference);
@@ -132,7 +132,7 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
         lastUndo: () => undoState.current?.handle ?? null,
         undo: async handle => {
             const operation = undoState.current;
-            if (!operation || operation.handle !== handle) throw new HappyError('Theme Undo is no longer available', false, { code: 'theme_undo_handle_unknown' });
+            if (!operation || operation.handle !== handle) throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_undo_handle_unknown', error: 'Theme Undo is no longer available' });
             const undo = operation.context;
             let result = unchanged();
             if (undo.createdRecord) {
@@ -177,7 +177,7 @@ export function createThemeProfileSourceAdapter(context: ThemeProfileLibraryCont
             await context.artifacts.load();
             const currentSummary = index().get(keyOf(source));
             const current = currentSummary ? await context.artifacts.get(currentSummary.entry.id) : null;
-            if (currentSummary && !current) throw new HappyError('Theme not found', false, { code: 'theme_not_found' });
+            if (currentSummary && !current) throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_not_found', error: 'Theme not found' });
             let next = mergeThemeProfileDocumentEdit(document, { id: current?.document.profile.id ?? context.createId(),
                 ...(current ? { createdAt: current.document.profile.createdAt } : {}) });
             if (current) {

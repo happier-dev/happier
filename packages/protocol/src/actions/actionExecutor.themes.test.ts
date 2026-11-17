@@ -58,21 +58,21 @@ it('asks Agent and MCP for author CSS while colour-only and trusted user/plugin 
     context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(false);
 });
 
-it('keeps deletion, Store install and plugin authoring on the declared static Agent Ask default', () => {
+it('keeps deletion and plugin authoring on the declared static Agent Ask default', () => {
   for (const actionId of THEME_ACTION_ID_LIST) {
     expect(isAgentInitiatedApprovalRequiredByDefault(actionId), actionId)
       .toBe(actionId === THEME_ACTION_IDS.delete || actionId === THEME_ACTION_IDS.uninstall
-        || actionId === THEME_ACTION_IDS.sharePlugin || actionId === THEME_ACTION_IDS.install);
+        || actionId === THEME_ACTION_IDS.sharePlugin);
   }
 });
 
-it('asks Agent and MCP for every Store install while user and trusted plugin installs stay Direct', () => {
+it('keeps Store installs Direct for Agent, MCP, user and trusted plugins', () => {
   const actionId = THEME_ACTION_IDS.install;
   for (const surface of ['agent', 'mcp', 'ui', 'plugin'] as const) {
     expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
       input: { listing: { sourceId: 'catalog', itemId: 'colour-only-or-css' } },
       context: { surface, authority: 'present_user', actionCaller: { kind: 'host' } } }).required, surface)
-      .toBe(surface === 'agent' || surface === 'mcp');
+      .toBe(false);
   }
 });
 
@@ -134,7 +134,7 @@ it('admits selected Store acquisition and face retry inputs while uninstall keep
     const spec = getActionSpec(id);
     expect(spec.inputSchema.safeParse(input).success, suffix).toBe(true);
     expect(spec.inputSchema.safeParse({ ...input, url: 'https://unselected.example.test/theme' }).success, suffix).toBe(false);
-    expect(isAgentInitiatedApprovalRequiredByDefault(id), suffix).toBe(suffix === 'uninstall' || suffix === 'install');
+    expect(isAgentInitiatedApprovalRequiredByDefault(id), suffix).toBe(suffix === 'uninstall');
     const unavailable = await createActionExecutor({}).execute(id, input,
       { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
     expect(unavailable).toMatchObject({ ok: false, errorCode: 'client_not_connected' });

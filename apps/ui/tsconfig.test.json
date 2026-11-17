@@ -576,6 +576,7 @@
     "sources/components/appShell/commandPalette/buildCommandPaletteCommands.pluginActions.test.ts",
     "sources/components/appShell/commandPalette/buildCommandPaletteCommands.test.ts",
     "sources/components/appShell/commandPalette/commandPaletteActionRuntime.test.ts",
+    "sources/components/appShell/commandPalette/themeCommands.test.ts",
     "sources/components/appShell/currentUiContext/CurrentUiContextCommands.composition.test.tsx",
     "sources/components/appShell/currentUiContext/CurrentUiContextProvider.PluginSurfaceHost.composition.test.tsx",
     "sources/components/appShell/currentUiContext/CurrentUiContextProvider.test.ts",

@@ -768,6 +768,7 @@
     "sources/components/appShell/commandPalette/buildCommandPaletteCommands.ts",
     "sources/components/appShell/commandPalette/buildCommandPaletteSelectionListSections.tsx",
     "sources/components/appShell/commandPalette/index.ts",
+    "sources/components/appShell/commandPalette/themeCommands.ts",
     "sources/components/appShell/destinations/ColumnDestinationRows.tsx",
     "sources/components/appShell/destinations/PhoneDestinationsMenu.tsx",
     "sources/components/appShell/destinations/PluginAppPagesMenu.tsx",

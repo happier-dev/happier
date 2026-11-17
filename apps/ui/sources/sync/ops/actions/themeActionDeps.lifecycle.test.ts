@@ -62,6 +62,48 @@ describe('theme Actions through real library and try-on owners', () => {
             .toMatchObject({ ok: false, errorCode: 'client_not_connected' });
     });
 
+    it('returns consumable Undo for repeated apply and Keep, preserving typed missing and expired failures', async () => {
+        const f = setup();
+        const execute = createActionExecutor({ themeAction: createThemeActionExecute({
+            withLibrary: async operation => operation(f.library), readSelection: () => f.selection, clientId: () => 'this-app',
+            runtime: { preview: f.owner,
+                coverage: document => prepareThemeCss(document.profile.css ?? '').coverage,
+                detailedCoverage: document => prepareThemeCss(document.profile.css ?? '').detailedCoverage,
+                surfaceMap: () => [] },
+        }) });
+        const applied = await execute.execute(THEME_ACTION_IDS.apply, { ref: null, mode: 'dark' }, actionContext);
+        expect(applied).toMatchObject({ ok: true, result: { undoHandle: expect.any(String) } });
+        if (!applied.ok || typeof applied.result !== 'object' || !applied.result || !('undoHandle' in applied.result)) {
+            throw new Error('Expected successful apply');
+        }
+        expect(await execute.execute(THEME_ACTION_IDS.undo, { undoHandle: applied.result.undoHandle }, actionContext))
+            .toMatchObject({ ok: true, result: { restored: { dark: null } } });
+        expect(await execute.execute(THEME_ACTION_IDS.undo, { undoHandle: applied.result.undoHandle }, actionContext))
+            .toMatchObject({ ok: false, errorCode: 'theme_undo_handle_unknown' });
+
+        const saved = await f.library.save({ document: document('already-saved') });
+        if (!saved.entry) throw new Error('Expected saved fixture');
+        await f.library.select({ reference: saved.entry.reference, mode: 'dark' });
+        const retained = await f.library.get(saved.entry.reference);
+        if (!retained) throw new Error('Expected retained fixture');
+        const preview = f.owner.begin({ document: retained, mode: 'dark', origin: { kind: 'agent' } });
+        const kept = await execute.execute(THEME_ACTION_IDS.keep, { previewRef: preview.previewRef }, actionContext);
+        expect(kept).toMatchObject({ ok: true, result: { undoHandle: expect.any(String) } });
+        if (!kept.ok || typeof kept.result !== 'object' || !kept.result || !('undoHandle' in kept.result)) {
+            throw new Error('Expected successful Keep');
+        }
+        expect(await execute.execute(THEME_ACTION_IDS.undo, { undoHandle: kept.result.undoHandle }, actionContext))
+            .toMatchObject({ ok: true, result: { restored: { dark: saved.entry.reference } } });
+        expect(f.rows.size).toBe(1);
+        expect(f.writes()).toBe(1);
+        expect(await execute.execute(THEME_ACTION_IDS.keep, { previewRef: preview.previewRef }, actionContext))
+            .toMatchObject({ ok: false, errorCode: 'theme_preview_stale' });
+        for (const actionId of [THEME_ACTION_IDS.apply, THEME_ACTION_IDS.duplicate]) {
+            expect(await execute.execute(actionId, { ref: { kind: 'artifact', id: 'missing' },
+                ...(actionId === THEME_ACTION_IDS.apply ? { mode: 'dark' } : {}) }, actionContext))
+                .toMatchObject({ ok: false, errorCode: 'theme_not_found' });
+        }
+    });
     it('rejects a Store preview without its listing before creating the overlay', async () => {
         const f = setup();
         const execute = createActionExecutor({ themeAction: createThemeActionExecute({
