@@ -44,6 +44,8 @@ export type TranscriptNavigationRailProps = Readonly<{
     /** The rail subscribes to this session's navigation visibility itself. */
     sessionId: string;
     transcriptContentWidthPx: number;
+    /** The whole transcript is on screen: the rail has nothing to jump to and stays hidden. */
+    transcriptFitsPane?: boolean;
     transcriptMaxWidthPx?: number;
 }>;
 
@@ -141,6 +143,7 @@ export function TranscriptNavigationRail(props: TranscriptNavigationRailProps) {
         scrollTopPx,
         transcriptContentWidthPx: props.transcriptContentWidthPx,
         transcriptMaxWidthPx: props.transcriptMaxWidthPx,
+        transcriptFitsPane: props.transcriptFitsPane,
     });
     // The ONE visibility store, read where each fact changes: the current anchor
     // here (turn-boundary rate), each marker's visibility in that marker (scroll

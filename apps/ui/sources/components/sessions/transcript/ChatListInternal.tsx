@@ -2220,6 +2220,7 @@ export const ChatListInternal = React.memo(function ChatListInternal(props: Chat
                     reducedMotion={reducedMotionPreferred}
                     sessionId={props.sessionId}
                     transcriptContentWidthPx={Math.min(listLayoutWidthPx, transcriptContentMaxWidth)}
+                    transcriptFitsPane={listContentHeight > 0 && listLayoutHeight > 0 && listContentHeight <= listLayoutHeight}
                     transcriptMaxWidthPx={transcriptContentMaxWidth}
                 />
                 <TranscriptNavigationReturnPill

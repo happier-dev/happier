@@ -2,7 +2,7 @@ export type TranscriptNavigationRailPlatformOS = 'web' | 'ios' | 'android' | 'na
 
 export type TranscriptNavigationRailLayout = Readonly<{
     contentHeightPx: number;
-    hiddenReason: 'native-platform' | 'below-width-threshold' | 'too-few-entries' | 'insufficient-gutter' | null;
+    hiddenReason: 'native-platform' | 'below-width-threshold' | 'too-few-entries' | 'transcript-fits' | 'insufficient-gutter' | null;
     markerHeightPx: number;
     markerSpacingPx: number;
     overflow: boolean;
@@ -27,6 +27,8 @@ export type DeriveTranscriptNavigationRailLayoutInput = Readonly<{
     railWidthPx?: number;
     scrollTopPx?: number;
     transcriptContentWidthPx: number;
+    /** The whole transcript is on screen, so there is nothing to jump to. */
+    transcriptFitsPane?: boolean;
     transcriptMaxWidthPx?: number;
     viewportHeightRatio?: number;
 }>;
@@ -105,6 +107,9 @@ export function deriveTranscriptNavigationRailLayout(
     }
     if (entryCount < 2) {
         return { ...base, hiddenReason: 'too-few-entries', visible: false };
+    }
+    if (input.transcriptFitsPane === true) {
+        return { ...base, hiddenReason: 'transcript-fits', visible: false };
     }
     if (paneWidthPx < minPaneWidthPx) {
         return { ...base, hiddenReason: 'below-width-threshold', visible: false };

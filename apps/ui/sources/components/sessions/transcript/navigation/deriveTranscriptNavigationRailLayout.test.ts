@@ -27,6 +27,13 @@ describe('deriveTranscriptNavigationRailLayout', () => {
         }).visible).toBe(false);
     });
 
+    it('shows no rail while the whole transcript fits its pane: there is nothing to jump to', () => {
+        const wide = { entryCount: 3, paneHeightPx: 800, paneWidthPx: 1400, platformOS: 'web' as const, transcriptContentWidthPx: 800 };
+        expect(deriveTranscriptNavigationRailLayout({ ...wide, transcriptFitsPane: true }))
+            .toMatchObject({ visible: false, hiddenReason: 'transcript-fits' });
+        expect(deriveTranscriptNavigationRailLayout({ ...wide, transcriptFitsPane: false }).visible).toBe(true);
+    });
+
     it('hides when the transcript gutter cannot safely fit the rail', () => {
         expect(deriveTranscriptNavigationRailLayout({
             entryCount: 4,
