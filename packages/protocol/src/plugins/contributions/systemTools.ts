@@ -1,8 +1,9 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
-import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
-import { PluginJsonValueV2Schema, PluginLocalizedStringV2Schema } from './publicTypes.js';
+import { PluginContributionLocalIdSchema, PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
+import { PluginJsonValueV2Schema, PluginLocalizedStringV2Schema, PluginContributionReferenceV2Schema } from './publicTypes.js';
+import { ConnectedAccountPurposeIdSchema } from '../../connect/connectedAccountPurposeIdentity.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 
 const ProcessArgSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256), z.refine((value) => !value.includes('\0'), 'Process values cannot contain null bytes')));
@@ -47,6 +48,25 @@ export const PluginSystemToolReadinessV1Schema = lazyZodSchema(() => z.strictObj
 }));
 export type PluginSystemToolReadinessV1 = z.infer<typeof PluginSystemToolReadinessV1Schema>;
 
+const EnvironmentKeySchema = lazyZodSchema(() => z.string().check(z.regex(/^[A-Za-z_][A-Za-z0-9_]*$/u)));
+const AuthenticationSchema = lazyZodSchema(() => z.strictObject({
+  status: z.strictObject({ args: z.array(ProcessArgSchema), signedOutExitCodes: z.array(z.int()) }),
+  loginLaunches: z.array(z.strictObject({ kind: z.enum(['primary', 'device_code']), args: z.array(ProcessArgSchema) }))
+    .check(z.refine(launches => new Set(launches.map(launch => launch.kind)).size === launches.length, 'Login launch kinds must be unique.')),
+  connectedServices: z.array(asProtocolZod(PluginContributionIdentityV1Schema)),
+  environment: z.optional(z.record(EnvironmentKeySchema, z.string())),
+  unsetEnvironmentKeys: z.optional(z.array(EnvironmentKeySchema)),
+  unsetEnvironmentKeyPrefixes: z.optional(z.array(EnvironmentKeySchema)),
+}));
+const ConnectedAccountLaunchSchema = lazyZodSchema(() => z.strictObject({
+  purpose: ConnectedAccountPurposeIdSchema,
+  service: asProtocolZod(PluginContributionReferenceV2Schema),
+  environmentKey: EnvironmentKeySchema,
+  unsetEnvironmentKeys: z.optional(z.array(EnvironmentKeySchema)),
+  brokeredUnavailableCode: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  gitCredentialHelper: z.optional(z.strictObject({ host: z.string().check(z.trim(), z.minLength(1)), args: z.array(ProcessArgSchema) })),
+}));
+
 export const PluginSystemToolContributionV1Schema = lazyZodSchema(() => z.strictObject({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   title: PluginLocalizedStringV2Schema,
@@ -55,6 +75,8 @@ export const PluginSystemToolContributionV1Schema = lazyZodSchema(() => z.strict
   allowedArguments: z.optional(z.array(z.string())),
   platforms: z.optional(z.array(z.enum(['macos', 'linux', 'windows']))),
   readiness: z.optional(PluginSystemToolReadinessV1Schema),
+  authentication: z.optional(AuthenticationSchema),
+  connectedAccountLaunch: z.optional(ConnectedAccountLaunchSchema),
   metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
 }));
 export type PluginSystemToolContributionV1 = z.infer<typeof PluginSystemToolContributionV1Schema>;
