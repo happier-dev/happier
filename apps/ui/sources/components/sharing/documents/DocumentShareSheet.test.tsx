@@ -107,6 +107,7 @@ const host = vi.hoisted(() => ({
     blobUnavailable: false,
     settings: {} as Record<string, unknown>,
     attachedWorkflows: [] as import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1').WorkflowAttachedTriggerV1[],
+    attachedWorkflowPages: [] as import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1').WorkflowAttachedTriggerPageV1[],
     automationQueries: [] as unknown[],
 }));
 
@@ -174,6 +175,8 @@ async function serveHome(): Promise<void> {
             if (request.home !== 'home') return undefined;
             if (request.path === '/v3/automations/query' && request.method === 'POST') {
                 host.automationQueries.push(request.body);
+                const page = host.attachedWorkflowPages.shift();
+                if (page) return Response.json({ automations: [], ...page });
                 return Response.json({ automations: [], attached: host.attachedWorkflows,
                     nextCursor: null, skippedNotSharedCount: 0 });
             }
@@ -664,6 +667,7 @@ describe('DocumentShareSheet', () => {
         host.blobUnavailable = false;
         host.settings = {};
         host.attachedWorkflows = [];
+        host.attachedWorkflowPages = [];
         host.automationQueries = [];
         await serveHome();
         vi.useFakeTimers();
@@ -796,6 +800,50 @@ describe('DocumentShareSheet', () => {
         await screen.pressByTestIdAsync('document-share-linked-workflows-dismiss');
         await waitForHomeGovernance(() => expect(screen.findByTestId(`document-share-linked-workflow:${LINKED_WORKFLOW_ID}`)).toBeNull());
         expect(host.requests.filter(request => request.method === 'PUT')).toHaveLength(2);
+        await screen.unmount();
+    });
+
+    it('keeps linked Workflow paging reachable when the first page has no shareable choices', async () => {
+        host.document = { header: { kind: 'approval-profile.v1', name: 'Release' },
+            body: JSON.stringify({ kind: 'approval-profile.v1', profile: { name: 'Release' } }) };
+        host.grants = [];
+        await activateWidgetHome();
+        vi.useRealTimers();
+        const { WorkflowAttachedTriggerV1Schema } = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
+        const row = (triggerId: string, author: string) => WorkflowAttachedTriggerV1Schema.parse({
+            automationId: `linked-${triggerId}`, triggerId, workflowDefinitionId: LINKED_WORKFLOW_ID,
+            workflowAccess: { ownerAccountId: 'owner', access: 'owner' }, relation: 'direct', enabled: true, revision: 1,
+            summary: { kind: 'action', phase: 'before', actionIds: ['deployments.deploy'] },
+            setUpBy: { accountId: author, displayName: null },
+        });
+        host.attachedWorkflowPages = [
+            { attached: [row('another-person', 'another')], nextCursor: 'another-person', skippedNotSharedCount: 0 },
+            { attached: [row('own', 'owner')], nextCursor: null, skippedNotSharedCount: 0 },
+        ];
+        const screen = await renderScreen(<DocumentShareSheet artifactId="profile-1" kind="approval-profile.v1" />);
+        await waitForHomeGovernance(() => expect(host.automationQueries).toHaveLength(1));
+        const search = screen.find(node => node.props?.testID === 'document-share-search' && typeof node.props.onFocus === 'function');
+        await act(async () => { search.props.onFocus(); });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('document-share-candidate-team:payments')).not.toBeNull());
+        await screen.pressByTestIdAsync('document-share-candidate-team:payments');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('document-share-linked-workflows-more')).not.toBeNull());
+        expect(screen.findByTestId(`document-share-linked-workflow:${LINKED_WORKFLOW_ID}`)).toBeNull();
+        // Filtering the loaded rows must not strand the canonical reader's next page or fetch it eagerly.
+        expect(host.automationQueries).toHaveLength(1);
+        await screen.pressByTestIdAsync('document-share-linked-workflows-more');
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`document-share-linked-workflow:${LINKED_WORKFLOW_ID}`)).not.toBeNull());
+        expect(host.automationQueries).toEqual([
+            expect.not.objectContaining({ cursor: expect.anything() }),
+            expect.objectContaining({ cursor: 'another-person' }),
+        ]);
+        expect(screen.findByTestId('document-share-linked-workflows-more')).toBeNull();
+        const payments = { kind: 'team' as const, teamId: 'payments' };
+        host.reviewedMissingAudience = [payments];
+        await screen.pressByTestIdAsync(`document-share-linked-workflow-share:${LINKED_WORKFLOW_ID}`);
+        await waitForHomeGovernance(() => expect(host.requests.filter(request => request.method === 'PUT')).toEqual([
+            { method: 'PUT', body: { artifactId: 'profile-1', principal: payments, accessLevel: 'view' } },
+            { method: 'PUT', body: { artifactId: LINKED_WORKFLOW_ID, principal: payments, accessLevel: 'view' } },
+        ]));
         await screen.unmount();
     });
 

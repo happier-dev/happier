@@ -114,7 +114,7 @@ export function useLinkedWorkflowShareOffer(
   const offered =
     linked !== undefined &&
     audience.length > 0 &&
-    (refs.length > 0 || linked.status === 'failed');
+    (refs.length > 0 || Boolean(linked.nextCursor) || linked.status === 'failed');
   const { binding } = useServerCredentialAccountScopeBinding(
     offered ? scope.serverId : '',
   );
