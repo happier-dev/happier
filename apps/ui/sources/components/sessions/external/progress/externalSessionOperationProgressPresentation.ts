@@ -464,9 +464,10 @@ export function presentExternalSessionOperationProgress(
         ? {
             importedItemCount: progress.checkpoint.importedItemCount,
             totalItemEstimate: estimate,
+            // An unknown total animates as activity only while the import works; stopped, it shows the real state.
             ratio: estimate !== null && estimate > 0
                 ? Math.min(1, progress.checkpoint.importedItemCount / estimate)
-                : null,
+                : effectiveStatus === 'running' || effectiveStatus === 'cancel_requested' ? null : 0,
         }
         : null;
 

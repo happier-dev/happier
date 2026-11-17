@@ -14,6 +14,11 @@ export function getInactiveSessionUiState(opts: {
     /** Archived sessions say so; sending resumes one, and resuming unarchives it. */
     isArchived?: boolean;
     allowInputWhileInactive?: boolean;
+    /**
+     * An external import or takeover operation is pending (not terminal). Its own card is the way forward, so the
+     * session says nothing about not being resumable beside that card's Resume.
+     */
+    externalOperationPending?: boolean;
 }): InactiveSessionUiState {
     if (opts.isSessionActive) {
         return { shouldShowInput: true, inactiveStatusTextKey: null, noticeKind: 'none' };
@@ -28,6 +33,9 @@ export function getInactiveSessionUiState(opts: {
     }
 
     if (!opts.isResumable) {
+        if (opts.externalOperationPending) {
+            return { shouldShowInput: false, inactiveStatusTextKey: null, noticeKind: 'none' };
+        }
         return {
             shouldShowInput: false,
             inactiveStatusTextKey: opts.isArchived ? 'session.inactiveArchived' : 'session.inactiveNotResumable',

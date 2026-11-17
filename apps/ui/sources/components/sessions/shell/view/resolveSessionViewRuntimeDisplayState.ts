@@ -24,6 +24,8 @@ type Input = Readonly<{
     isMachineReachable: boolean;
     machineReachability: SessionMachineReachability;
     allowInputWhileInactive: boolean;
+    /** A non-terminal external import or takeover operation exists (its card owns the way forward). */
+    externalOperationPending: boolean;
     providerName: string;
     machineName: string;
 }>;
@@ -46,6 +48,7 @@ function buildCacheKey(input: Input): string {
         input.isMachineReachable ? 1 : 0,
         input.machineReachability,
         input.allowInputWhileInactive ? 1 : 0,
+        input.externalOperationPending ? 1 : 0,
         input.providerName,
         input.machineName,
     ]);
@@ -70,6 +73,7 @@ export function resolveSessionViewRuntimeDisplayState(input: Input): SessionView
         isMachineOnline: input.machineReachability === 'unknown' ? null : input.isMachineReachable,
         isArchived: input.session.archivedAt != null,
         allowInputWhileInactive: input.allowInputWhileInactive,
+        externalOperationPending: input.externalOperationPending,
     });
 
     const bottomNotice = inactiveUi.noticeKind === 'not-resumable'

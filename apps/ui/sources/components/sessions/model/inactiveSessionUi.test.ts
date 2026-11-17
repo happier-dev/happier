@@ -13,6 +13,15 @@ describe('getInactiveSessionUiState', () => {
             isSessionActive: false, isResumable: true, isMachineOnline: null,
         })).toEqual({ shouldShowInput: true, inactiveStatusTextKey: null, noticeKind: 'none' });
     });
+    // A pending import or takeover is the session's way forward; "can't be resumed" beside its Resume contradicts it.
+    it('says nothing about resuming the session while an external import or takeover operation is pending', () => {
+        expect(getInactiveSessionUiState({
+            isSessionActive: false, isResumable: false, isMachineOnline: true, externalOperationPending: true,
+        })).toEqual({ shouldShowInput: false, inactiveStatusTextKey: null, noticeKind: 'none' });
+        expect(getInactiveSessionUiState({
+            isSessionActive: false, isResumable: false, isMachineOnline: true, externalOperationPending: false,
+        })).toMatchObject({ noticeKind: 'not-resumable' });
+    });
     it('shows input for active sessions', () => {
         expect(getInactiveSessionUiState({
             isSessionActive: true,

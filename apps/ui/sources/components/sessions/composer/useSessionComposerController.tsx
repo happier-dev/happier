@@ -4475,6 +4475,7 @@ export function useSessionComposerController({
         machineReachability,
         allowInputWhileInactive: persistedVoiceComposerRouting?.kind === 'adapter_text'
             || (resumeEligibility === 'unknown' && isResumable),
+        externalOperationPending: externalSessionOperationShell.blocksNewOperation,
         providerName,
         machineName,
     });

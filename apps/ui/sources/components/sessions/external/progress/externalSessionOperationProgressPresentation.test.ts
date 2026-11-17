@@ -239,6 +239,23 @@ describe('presentExternalSessionOperationProgress', () => {
         ]);
     });
 
+    // An unknown total reads as indeterminate activity only while the import runs; paused, it shows what was
+    // really imported (nothing yet), so a stopped import never animates as if it were working.
+    it('shows an unknown total as activity only while running, and as the real count while paused', () => {
+        const checkpoint = { sourcePagesRead: 0, stagedItemCount: 0, importedItemCount: 0, requiredItemFailures: EMPTY_FAILURES };
+        const running = presentExternalSessionOperationProgress(
+            createProgress({ status: 'running', phase: 'staging', checkpoint }),
+            { observationContext: 'live', originAvailability: 'online' },
+        );
+        expect(running.importProgress).toEqual({ importedItemCount: 0, totalItemEstimate: null, ratio: null });
+
+        const paused = presentExternalSessionOperationProgress(
+            createProgress({ status: 'awaiting_user_resume', phase: 'staging', retryTargetPhase: 'staging', checkpoint }),
+            { observationContext: 'hydrated', originAvailability: 'online' },
+        );
+        expect(paused.importProgress).toEqual({ importedItemCount: 0, totalItemEstimate: null, ratio: 0 });
+    });
+
     it('reports an unknown origin as unknown instead of asserting it is offline', () => {
         const progress = createProgress({
             status: 'awaiting_user_resume',

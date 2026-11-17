@@ -83,6 +83,24 @@ vi.mock('@/components/ui/lists/Item', () => ({
     },
 }));
 
+vi.mock('@/components/ui/buttons/RoundButton', () => ({
+    // Test boundary, as for Item above: the card's decisions are RoundButtons whose `controlRef` is the focus
+    // handle focus restoration uses; the host element keeps the props the card passed (a real button role).
+    RoundButton: ({ controlRef, ...props }: Record<string, unknown> & { controlRef?: unknown; testID?: string }) => {
+        const testID = props.testID ?? '';
+        const node = itemFocusNodes.get(testID) ?? { focus: vi.fn() };
+        itemFocusNodes.set(testID, node);
+        React.useEffect(() => {
+            if (typeof controlRef === 'function') {
+                (controlRef as (value: unknown) => void)(node);
+                return () => (controlRef as (value: unknown) => void)(null);
+            }
+            return undefined;
+        });
+        return React.createElement('RoundButton', { accessibilityRole: 'button', ...props });
+    },
+}));
+
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
     ItemGroup: (props: Record<string, unknown> & { children?: React.ReactNode }) => React.createElement('ItemGroup', props, props.children),
 }));
