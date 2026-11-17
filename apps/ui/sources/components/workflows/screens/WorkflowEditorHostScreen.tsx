@@ -2066,6 +2066,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                     return { onSave: saveFromUi, triggersSummary: triggers.summary,
                         onAddTriggerWhen: (when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => addWorkflowTriggerWhen({ draft: triggers.draft, when, seed,
                             onChangeDraft: section.onChangeDraft, updateIncomplete: triggers.updateIncomplete }),
+                        hasTriggerRow: triggers.hasTriggerRow,
                         resultDecides: formatTriggerResultDecides(projectWorkflowTriggerRows(triggers.set, triggers.draft).map((row) => row.trigger)),
                         triggersSection: <WorkflowEditorTriggerSection draftStore={bodyDraftStore} {...section} />,
                         triggersSentence: <WorkflowEditorTriggerSection draftStore={bodyDraftStore} {...section} presentation="sentence" /> };

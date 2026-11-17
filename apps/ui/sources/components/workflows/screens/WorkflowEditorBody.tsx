@@ -432,7 +432,9 @@ export type WorkflowEditorBodyProps = Readonly<{
     /** The same triggers as the Sentence view's When clause (round 1116c). */
     triggersSentence?: React.ReactNode;
     /** Live events' "Add to this workflow" (D11): adds that event's start to the triggers above; absent when they are not this person's to change. */
-    onAddTriggerWhen?: (when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => void;
+    onAddTriggerWhen?: (when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => string;
+    /** Whether the row an add created is still one of the triggers (Undo takes it away), from the trigger editor. */
+    hasTriggerRow?: (clientId: string) => boolean;
     /** The document's reading presentation (04 §4.11), for a read-only workflow. */
     documentPresentation?: WorkflowDocumentPresentation;
     /** Options for Action-step fields with an `optionsSourceId`, for the workflow's Where Machine. */
@@ -1664,7 +1666,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         pane: (
             <View testID={`${testIDPrefix}-${shownCompanion}-pane`} style={styles.paneBody}>
                 {shownCompanion === 'events' ? <WorkflowLiveEventsPane testID={`${testIDPrefix}-live-events`} active
-                    onAddTrigger={props.onAddTriggerWhen ?? null} onClose={closeSettings} /> : null}
+                    onAddTrigger={props.onAddTriggerWhen ?? null} hasTriggerRow={props.hasTriggerRow ?? null} onClose={closeSettings} /> : null}
                 {companionHeader}
                 {agentCompanionAvailable ? agentSessionPane : null}
                 {shownCompanion === 'agent' && !props.authoringSessionId && props.authoringDraft !== undefined ? (
@@ -1700,7 +1702,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                     portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}>
                     {({ maxHeight }) => <View style={{ height: maxHeight }}>
                         <WorkflowLiveEventsPane testID={`${testIDPrefix}-live-events`} active
-                            onAddTrigger={props.onAddTriggerWhen ?? null} onClose={null} />
+                            onAddTrigger={props.onAddTriggerWhen ?? null} hasTriggerRow={props.hasTriggerRow ?? null} onClose={null} />
                     </View>}
                 </Popover>
             ) : null}

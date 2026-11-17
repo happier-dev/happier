@@ -59,6 +59,11 @@ export type WorkflowTriggerEditing = Readonly<{
     /** The one summary the header chip and the section both show (04 §9.1). */
     summary: string;
     /**
+     * Whether the trigger a new row added (by its on-screen identity) is still one of this workflow's triggers:
+     * drafted, held incomplete, or saved and not removed. Undo takes it away; Redo and Save keep it.
+     */
+    hasTriggerRow: (clientId: string) => boolean;
+    /**
      * Writes the pending trigger delta after the definition was saved (03 §5.3 "Save ordering").
      * `failed` keeps exactly the edits that were not applied.
      */
@@ -236,5 +241,10 @@ export function useWorkflowTriggerEditing(params: Readonly<{
         },
         [draft, set, status],
     );
-    return { set, draft, triggerEvents: eventProjection?.triggerEvents, intendedTriggers: eventProjection?.intendedTriggers, setDraft, captureSnapshot, restoreSnapshot, status, retry, dirty: isWorkflowTriggerDraftDirty(draft), incomplete, updateIncomplete, summary, save };
+    const hasTriggerRow = React.useCallback((clientId: string) => {
+        if (draft.adds.some((add) => add.clientId === clientId) || incomplete.pending.some((row) => row.clientId === clientId)) return true;
+        const triggerId = rowIdentities.clients.get(clientId)?.triggerId;
+        return triggerId !== undefined && !draft.removes.includes(triggerId) && (set?.triggers.some((row) => row.id === triggerId) ?? false);
+    }, [draft, incomplete, set, rowIdentities]);
+    return { set, draft, triggerEvents: eventProjection?.triggerEvents, intendedTriggers: eventProjection?.intendedTriggers, setDraft, captureSnapshot, restoreSnapshot, status, retry, dirty: isWorkflowTriggerDraftDirty(draft), incomplete, updateIncomplete, summary, hasTriggerRow, save };
 }

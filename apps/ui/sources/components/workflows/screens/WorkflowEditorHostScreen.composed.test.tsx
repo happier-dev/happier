@@ -1099,6 +1099,20 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(boundary.automationCreates[0]).toMatchObject({ triggers: [{ trigger }] });
     });
 
+    // QA-B E12: Live events' Added reads the editor's triggers, so Undo offers Add again and Redo shows Added.
+    it('answers whether a Live events add is still a trigger across Undo and Redo', async () => {
+        await serveMountedDraftActionHome();
+        await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const { createDefaultWhen } = await import('../triggers/sessionTriggerForm');
+        let clientId = '';
+        await act(async () => { clientId = readBodyProps()!.onAddTriggerWhen!(createDefaultWhen('schedule')); });
+        expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(true);
+        await act(async () => { readBodyProps()!.history!.undo(); });
+        expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(false);
+        await act(async () => { readBodyProps()!.history!.redo(); });
+        expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(true);
+    });
+
     it('adds an event and Only-when through the mounted Action without losing edits or splitting undo', async () => {
         const event = { pluginId: 'com.acme.events', localId: 'health' };
         const payloadSchema: PluginJsonSchemaV2 = { type: 'object', properties: { outcome: { type: 'string' } } };

@@ -46,7 +46,9 @@ export const WorkflowLiveEventsPane = React.memo(
     props: Readonly<{
       active: boolean;
       /** Adds the event's start to the mounted draft's triggers; absent when this person cannot manage them. */
-      onAddTrigger: ((when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => void) | null;
+      onAddTrigger: ((when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => string) | null;
+      /** The trigger editor's answer to whether a row an add created is still there (Undo takes it away). */
+      hasTriggerRow: ((clientId: string) => boolean) | null;
       /** Closes the companion; `null` inside the phone sheet, whose own title and close already stand above. */
       onClose: (() => void) | null;
       testID: string;
@@ -55,16 +57,22 @@ export const WorkflowLiveEventsPane = React.memo(
     const { feed, scope } = useWorkflowEventsFeed(props.active);
     const [filter, setFilter] = React.useState<WorkflowEventFilter>('all');
     const [expanded, setExpanded] = React.useState<string | null>(null);
-    const [added, setAdded] = React.useState<ReadonlySet<string>>(
-      () => new Set(),
+    // Which row each event's Add created; whether it still counts as added is the trigger editor's answer.
+    const [addedRows, setAddedRows] = React.useState<ReadonlyMap<string, string>>(
+      () => new Map(),
     );
+    const { hasTriggerRow } = props;
+    const isAdded = React.useCallback((key: string) => {
+      const clientId = addedRows.get(key);
+      return clientId !== undefined && hasTriggerRow !== null && hasTriggerRow(clientId);
+    }, [addedRows, hasTriggerRow]);
     const toggle = useEventCallback((key: string) =>
       setExpanded((current) => (current === key ? null : key)),
     );
     const { onAddTrigger } = props;
     const add = useEventCallback((key: string, when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => {
-      onAddTrigger?.(when, seed);
-      setAdded((current) => new Set(current).add(key));
+      const clientId = onAddTrigger?.(when, seed);
+      if (clientId !== undefined) setAddedRows((current) => new Map(current).set(key, clientId));
     });
     const renderExpanded = React.useCallback(
       (key: string) => (
@@ -74,12 +82,12 @@ export const WorkflowLiveEventsPane = React.memo(
           eventKey={key}
           scope={scope}
           retainedRuns={feed.retained?.runs}
-          added={added.has(key)}
+          added={isAdded(key)}
           onAdd={onAddTrigger === null ? null : add}
           testID={props.testID}
         />
       ),
-      [feed.projection, feed.retained?.runs, scope, added, onAddTrigger, add, props.testID, props.active],
+      [feed.projection, feed.retained?.runs, scope, isAdded, onAddTrigger, add, props.testID, props.active],
     );
     return (
       <View testID={props.testID} style={styles.pane}>

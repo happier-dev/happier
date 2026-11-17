@@ -314,7 +314,8 @@ export function createWorkflowTriggerClientId(): string {
 
 /**
  * Adds one new trigger that starts with this When (Add a trigger, Live events' "Add to this workflow"): into
- * the draft when it is complete, else held beside it as incomplete until its Session or Event is chosen.
+ * the draft when it is complete, else held beside it as incomplete until its Session or Event is chosen. Returns the
+ * new row's on-screen identity.
  */
 export function addWorkflowTriggerWhen(params: Readonly<{
     draft: WorkflowTriggerDraft;
@@ -323,13 +324,14 @@ export function addWorkflowTriggerWhen(params: Readonly<{
     sessionId?: string | null;
     onChangeDraft: (next: WorkflowTriggerDraft) => void;
     updateIncomplete: (update: (current: WorkflowTriggerIncomplete) => WorkflowTriggerIncomplete) => void;
-}>): void {
+}>): string {
     const clientId = createWorkflowTriggerClientId();
     const next = commitWorkflowTriggerWhen({ draft: params.draft, row: { kind: 'new', clientId }, when: params.when, enabled: true,
         sessionId: params.sessionId });
     if (next !== null) params.onChangeDraft(next);
     else params.updateIncomplete((current) => ({ ...current, pending: [...current.pending, { clientId, when: params.when,
         ...params.seed }] }));
+    return clientId;
 }
 
 export function removeWorkflowTriggerRow(draft: WorkflowTriggerDraft, row: WorkflowTriggerRowRef): WorkflowTriggerDraft {
