@@ -497,7 +497,13 @@ export async function publishBundledPluginArtifactsAfterWorkspaceBuild(opts = {}
   }
   if (mode === 'write' && opts.bundledPluginArtifactPublication?.aggregateOnly !== true) {
     const { prepareSourceCliPluginUiArtifacts } = await import('./prepareSourcePluginUiArtifacts.mjs');
-    await prepareSourceCliPluginUiArtifacts({ repoRoot, workspaceNames: sourcePluginUiWorkspaceNames, pluginFailures });
+    const result = await prepareSourceCliPluginUiArtifacts({ repoRoot, workspaceNames: sourcePluginUiWorkspaceNames, pluginFailures });
+    if (result?.pluginFailures.length > 0) {
+      // A required CLI build retries unavailable graphs before declaring ready.
+      throw Object.assign(new Error('Source Plugin UI artifact preparation failed'), {
+        code: 'plugin_ui_artifact_invalid',
+      });
+    }
   }
   return true;
 }

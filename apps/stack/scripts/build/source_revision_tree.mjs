@@ -15,7 +15,7 @@ import { captureSourceWebBuildInputs, resolveSourceRuntimeProducerContext, setBu
 import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
 import { run, runCapture } from '../utils/proc/proc.mjs';
 import { resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
-import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
+import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
 import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, isRevisionKeptUntrackedPath, readDeclaredShippedPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
@@ -30,10 +30,12 @@ import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, isRevisionKept
  * - Each Stack runs a hardlink clone of it with only its declared overlay files
  *   replaced by their verified checkout bytes. The daemon guest payload uses
  *   the same captured-input and payload owners as a bundle reload.
+ *   Daemon Plugin UI graphs use the canonical source compiler once per base or
+ *   changed input.
  * - HEAD moves every few minutes, so a reload at commit X runs the newest base B
  *   that is an ancestor of X, plus X's changes since B as a commit overlay (bytes
- *   from Git, not the checkout). Only a change to the installed-dependency shape
- *   (a package manifest, the lockfile or the workspace list) needs a new base.
+ *   from Git, not the checkout). Changes to installed dependencies or the base's
+ *   generation/preparation contract need a new base.
  * Other lanes' uncommitted and untracked edits never enter either tree.
  */
 const BASE_MARKER = '.happier-revision-tree.json';
@@ -47,9 +49,11 @@ async function git(repoDir, args) {
   return (await runGit('git', ['-C', repoDir, ...args], { maxBuffer: 1 << 30 })).stdout;
 }
 
-/** Paths that change what a base mounts or generates; they cannot be overlaid. */
+/** Paths that change what a base mounts or prepares; they cannot be overlaid. */
 function shapesBase(path) {
   return path === 'pnpm-lock.yaml' || path === 'pnpm-workspace.yaml' || path === 'package.json' || path.endsWith('/package.json')
+    // The base executes this preparer's result contract before commit overlays.
+    || path === 'apps/cli/scripts/prepareSourcePluginUiArtifacts.mjs'
     || isRevisionGeneratorInput(path);
 }
 
@@ -143,7 +147,7 @@ export async function writeSourceRevisionArchive({ repoDir, revision, outputPath
   return outputPath;
 }
 
-async function buildRevisionBase({ repoDir, baseDir, descriptor, env = process.env, signal, requestBaseArchive }) {
+async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi, installIdentity, env = process.env, signal, requestBaseArchive }) {
   const staging = `${baseDir}.tmp-${randomUUID()}`;
   let archivePath;
   try {
@@ -189,15 +193,17 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, env = process.e
   const workspaceDirs = [...workspaces.values()].map(workspace => relative(baseDir, workspace.root)).filter(Boolean);
   // The base mounts a pinned snapshot of the installation, so a later dependency
   // refresh of the shared checkout never changes (or refuses) a running tree.
-  const install = await prepareInstallSnapshot({ repoDir, treesRoot: dirname(baseDir), workspaceDirs, env, signal });
+  const install = installIdentity ? { identity: installIdentity, dir: join(dirname(baseDir), INSTALLS, installIdentity) }
+    : await prepareInstallSnapshot({ repoDir, treesRoot: dirname(baseDir), workspaceDirs, env, signal });
   await mountCapturedWorkspaceDependencies({ sourceDir: install.dir, captureDir: baseDir, workspaceDirs });
+  if (preparePluginUi) await prepareDaemonPluginUi({ treeDir: baseDir, env, signal });
   await deriveDaemonPluginPublication({ treeDir: baseDir, env, signal });
   // Clones share inodes with the base; a write-in-place would leak into every Stack.
   await setBundleReadOnly(baseDir, true);
   // The marker publishes the base; until it exists the next builder starts over.
   await chmod(baseDir, 0o755);
   await writeFile(join(baseDir, BASE_MARKER), JSON.stringify({ revision: descriptor.revision, installIdentity: install.identity,
-    components: BASE_COMPONENTS, builtAt: new Date().toISOString() }));
+    components: BASE_COMPONENTS, pluginUiPrepared: preparePluginUi, builtAt: new Date().toISOString() }));
   await chmod(baseDir, 0o555);
 }
 
@@ -257,6 +263,20 @@ async function sweepUnreferencedInstalls({ treesRoot, keep }) {
 
 const PROJECTIONS = '.source-daemon-projections';
 const SUPPORT_STORE = 'daemon-support-store';
+
+/** Source locators read package-local graphs, just like the source CLI. Keep
+ * compilation, retained-input reuse and publication failures with that owner. */
+async function prepareDaemonPluginUi({ treeDir, env, signal }) {
+  const locators = join(treeDir, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
+  if (!existsSync(locators)) return;
+  const code = `const { prepareSourceCliPluginUiArtifacts } = await import(${JSON.stringify(pathToFileURL(join(treeDir, 'apps/cli/scripts/prepareSourcePluginUiArtifacts.mjs')).href)});
+const { BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES } = await import(${JSON.stringify(pathToFileURL(locators).href)});
+await prepareSourceCliPluginUiArtifacts({ repoRoot: ${JSON.stringify(treeDir)},
+  workspaceNames: BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES.map(name => name.slice('@happier-dev/'.length)) });`;
+  await runSourceBuildCommand({ repoDir: treeDir, command: process.execPath,
+    args: sourceBuildNodeArgs({ repoDir: treeDir, scriptPath: '--input-type=module', args: ['-e', code] }),
+    cwd: treeDir, env, signal, captureStdout: false });
+}
 
 function supportStoreDir(treesRoot) {
   return join(resolve(treesRoot), SUPPORT_STORE);
@@ -377,16 +397,18 @@ async function readJson(path) {
  * The requesting Stack's reference is registered under the same lock, so a
  * concurrent sweep can never delete a base a clone is about to read.
  */
-export async function prepareSourceRevisionBase({ repoDir, treesRoot, descriptor, treeDir, env = process.env, signal, requestBaseArchive }) {
+export async function prepareSourceRevisionBase({ repoDir, treesRoot, descriptor, treeDir, preparePluginUi = false, env = process.env, signal, requestBaseArchive }) {
   const baseDir = join(resolve(treesRoot), descriptor.revision);
   await mkdir(treesRoot, { recursive: true });
   return await withBaseLock(baseDir, signal, async () => {
     const marker = await readJson(join(baseDir, BASE_MARKER));
-    // A base from before pinned installation snapshots mounts the live checkout, and
-    // one from before web exports lacks the UI's generated inputs: rebuild it.
-    const built = !marker?.installIdentity || !BASE_COMPONENTS.every(component => marker.components?.includes(component));
+    // Upgrade legacy installations, missing component inputs and pre-compiler bases.
+    // Existing clones retain their own files and pinned installation.
+    const built = !marker?.installIdentity || !BASE_COMPONENTS.every(component => marker.components?.includes(component))
+      || (preparePluginUi && !marker.pluginUiPrepared);
     if (marker && built) await setSourceRevisionTreeWritable(baseDir);
-    if (built) await buildRevisionBase({ repoDir: resolve(repoDir), baseDir, descriptor, env, signal, requestBaseArchive });
+    if (built) await buildRevisionBase({ repoDir: resolve(repoDir), baseDir, descriptor, preparePluginUi,
+      installIdentity: marker?.installIdentity, env, signal, requestBaseArchive });
     if (treeDir) {
       await mkdir(`${baseDir}.refs`, { recursive: true });
       await writeFile(referencePath(baseDir, treeDir), JSON.stringify({ treeDir, pid: process.pid }));
@@ -478,11 +500,11 @@ async function cloneTree(from, to, roots = { base: from, clone: to }) {
  * The base is never written.
  * @returns {Promise<{ baseDir: string, treeDir: string, baseBuilt: boolean, overlaid: number, revision: string, key: string }>}
  */
-export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeDir, descriptorPath, env = process.env, signal, requestBaseArchive }) {
+export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeDir, descriptorPath, preparePluginUi = false, env = process.env, signal, requestBaseArchive }) {
   repoDir = resolve(repoDir);
   treeDir = resolve(treeDir);
   const descriptor = await readTreeDescriptor(descriptorPath);
-  const base = await prepareSourceRevisionBase({ repoDir, treesRoot, descriptor, treeDir, env, signal, requestBaseArchive });
+  const base = await prepareSourceRevisionBase({ repoDir, treesRoot, descriptor, treeDir, preparePluginUi, env, signal, requestBaseArchive });
   const staging = `${treeDir}.tmp-${randomUUID()}`;
   let overlaid = 0;
   try {
@@ -523,7 +545,11 @@ export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeD
   }
   // Run where the tree's links resolve (its published path). The derivation
   // writes only its own output root and the unlinked evidence file.
-  if (touchesPluginInputs([...Object.keys(descriptor.commit?.paths ?? {}), ...Object.keys(descriptor.overlay)])) {
+  const changedPaths = [...Object.keys(descriptor.commit?.paths ?? {}), ...Object.keys(descriptor.overlay)];
+  // Shared imports and compiler inputs can change outside plugin directories.
+  // The compiler's retained-input inventory owns which graphs need rebuilding.
+  if (preparePluginUi && changedPaths.length) await prepareDaemonPluginUi({ treeDir, env, signal });
+  if (touchesPluginInputs(changedPaths)) {
     await deriveDaemonPluginPublication({ treeDir, env, signal });
   }
   const installIdentity = (await readJson(join(base.baseDir, BASE_MARKER))).installIdentity;
@@ -597,7 +623,7 @@ export async function prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir
     const started = performance.now();
     // Each preparation gets its own tree: the incumbent keeps running from its tree
     // until the restart retires it, and stop then releases every tree but the selected one.
-    const tree = await prepareStackSourceRevisionTree({ repoDir, treesRoot, signal, descriptorPath, env, requestBaseArchive,
+    const tree = await prepareStackSourceRevisionTree({ repoDir, treesRoot, signal, descriptorPath, env, requestBaseArchive, preparePluginUi: component === 'daemon',
       treeDir: join(resolve(stackBaseDir), 'source-runtime', `tree-${component}-${randomUUID().slice(0, 8)}`) });
     const t = tree.treeDir;
     const identity = createHash('sha256').update(JSON.stringify([tree.key, component, serverComponent, dbProvider ?? null])).digest('hex').slice(0, 16);

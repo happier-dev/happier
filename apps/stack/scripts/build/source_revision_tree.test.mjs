@@ -1,3 +1,4 @@
+// @happier-test-preparation source-condition
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFile } from 'node:child_process';
@@ -5,6 +6,7 @@ import { cp, lstat, mkdir, readdir, readFile, realpath, rm, symlink, writeFile }
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { generateServerClients, installServerGeneratorFixture, readGeneratedClientFields, writeServerSchemas, FIXTURE_MACHINE_SCHEMA } from '../testkit/core/server_generator_fixture.mjs';
 import { resolveSourceRevision } from './source_revision.mjs';
@@ -14,6 +16,126 @@ import { prepareSourceTreeRuntimeComponents, prepareStackSourceRevisionTree, rel
 
 const COMMITTED_MAIN = 'export { marker } from "@happier-dev/shared";';
 const COMMITTED_SHARED = 'export const marker = "committed";';
+
+test('daemon revision trees publish voice graphs at their declared plugin roots and reuse unchanged inputs', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const ownerUrl = path => new URL(path, import.meta.url).href;
+  await writeFile(join(repoDir, 'packages/cli-common/registerSourceRuntime.mjs'),
+    `import ${JSON.stringify(ownerUrl('../../../../packages/cli-common/registerSourceRuntime.mjs'))};`);
+  await mkdir(join(repoDir, 'apps/cli/scripts'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/cli/scripts/prepareSourcePluginUiArtifacts.mjs'),
+    `export { prepareSourceCliPluginUiArtifacts } from ${JSON.stringify(ownerUrl('../../../cli/scripts/prepareSourcePluginUiArtifacts.mjs'))};`);
+  await mkdir(join(repoDir, 'apps/cli/node_modules'), { recursive: true });
+  await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')),
+    join(repoDir, 'apps/cli/node_modules/esbuild'), process.platform === 'win32' ? 'junction' : 'dir');
+  const locators = [];
+  for (const directory of ['voice-one', 'voice-two', 'voice-broken', 'no-ui']) {
+    const root = join(repoDir, 'packages/plugins', directory);
+    const name = `@happier-dev/plugins-${directory}`;
+    const manifest = { schemaVersion: 2, id: `happier.${directory}`, version: '0.0.0', displayName: directory,
+      runtime: { apiVersion: 1 }, hostAccess: { required: [], optional: [] }, contributes: {} };
+    const exports = { '.': { 'happier-source': './src/index.ts', default: './dist/index.js' } };
+    if (directory !== 'no-ui') {
+      manifest.contributes.voiceProviders = [{ id: 'conversation', title: directory, kind: 'conversation',
+        roles: ['realtime_conversation', 'turn_control'], platforms: ['web', 'ios', 'android'],
+        capabilities: { turn: { cancelResponse: false, bargeIn: false } },
+        client: { artifactId: 'voice-runtime', exportName: 'activate' } }];
+      exports['./happier-plugin-ui/voice-runtime'] = { 'happier-source': './src/voice.ts', default: './dist/happier-plugin-ui/react-native/voice-runtime/entry.cjs.bundle' };
+    }
+    await mkdir(join(root, 'src'), { recursive: true });
+    await mkdir(join(root, '.happier-plugin'), { recursive: true });
+    await writeFile(join(root, '.happier-plugin/plugin.json'), JSON.stringify(manifest));
+    await writeFile(join(root, 'package.json'), JSON.stringify({ name, version: '0.0.0', type: 'module', exports }));
+    await writeFile(join(root, 'src/index.ts'), 'export {};');
+    await writeFile(join(root, 'src/voice.ts'), directory === 'voice-broken' ? 'export function activate( {'
+      : `import { marker } from '@happier-dev/shared'; export function activate() { return ${JSON.stringify(directory)} + marker; }`);
+    locators.push({ sourceSpec: { locator: name }, daemonEntryPath: null, manifest });
+  }
+  const locatorPath = 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts';
+  await mkdir(dirname(join(repoDir, locatorPath)), { recursive: true });
+  await writeFile(join(repoDir, locatorPath), `export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS = ${JSON.stringify(locators)};
+export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES = ${JSON.stringify(locators.map(locator => locator.sourceSpec.locator))};`);
+  await mkdir(join(repoDir, 'apps/ui'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/ui/package.json'), JSON.stringify({ name: '@happier-dev/app', dependencies: {} }));
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  await gitIn('add', 'apps/cli', 'apps/ui', 'packages/plugins', 'packages/cli-common');
+  await gitIn('commit', '--quiet', '-m', 'voice declarations and real compiler entry');
+  const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay: [], outputDir: fixture.path('descriptors') });
+  // This fixture supplies its own installed OS/tool boundary, never an installer.
+  const env = { ...process.env, HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
+    TSX_TSCONFIG_PATH: fileURLToPath(new URL('../../../cli/tsconfig.runtime.json', import.meta.url)),
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(repoDir, 'manual-payload') };
+  const prepare = component => prepareSourceTreeRuntimeComponents({ repoDir, env, stackBaseDir: fixture.path('stacks/qa'),
+    descriptorPath: revision.descriptorPath, components: [{ component }], logger: { error() {} } });
+  const { server } = await prepare('server');
+  const manifestAt = tree => join(tree, 'packages/plugins/voice-one/dist/happier-plugin-ui/ui-artifacts.json');
+  assert.equal(await lstat(manifestAt(dirname(dirname(server.serverDir)))).catch(error => error.code), 'ENOENT',
+    'server-only preparation does not compile Plugin UI');
+  const { daemon } = await prepare('daemon');
+  assert.equal((await lstat(manifestAt(dirname(dirname(daemon.cliDir)))).catch(error => error.code))?.isFile?.(), true,
+    'daemon preparation publishes the declared voice graph manifest');
+  const { stdout: serverMarker } = await promisify(execFile)(process.execPath, ['--conditions=happier-source', '--input-type=module', '-e',
+    'const {pathToFileURL}=await import("node:url"); console.log((await import(pathToFileURL(process.argv[1]))).marker);',
+    join(server.serverDir, 'sources/main.light.ts')]);
+  assert.equal(serverMarker.trim(), 'committed', 'an existing server clone keeps importing its own workspace after daemon preparation');
+  const tree = dirname(dirname(daemon.cliDir));
+  const { readGeneratedPluginUiArtifactsManifest } = await import('../../../cli/src/plugins/install/ui/generatedArtifacts.ts');
+  const { findGeneratedReactNativeArtifactEntry } = await import('../../../cli/src/plugins/projection/registry/ui/generatedUiArtifactOwners.ts');
+  for (const directory of ['voice-one', 'voice-two', 'voice-broken']) {
+    const root = join(tree, 'packages/plugins', directory);
+    const generated = await readGeneratedPluginUiArtifactsManifest(root);
+    const admitted = findGeneratedReactNativeArtifactEntry({ platform: 'web', owner: {
+      kind: 'voiceProvider', pluginId: `happier.${directory}`, pluginSource: { kind: 'package' },
+      contributionId: 'conversation', artifactId: 'voice-runtime', pluginRootPath: root,
+      manifestPath: join(root, '.happier-plugin/plugin.json'), generatedUiArtifactsManifest: generated ?? undefined,
+      declaredPlatforms: ['web', 'ios', 'android'], expectedExecutable: { exportName: 'activate' }, requiredHostMethods: [],
+    } });
+    if (directory === 'voice-broken') {
+      assert.equal(admitted.failure, 'generated_react_native_artifact_missing',
+        'an optional plugin compiler failure stays typed unavailable without refusing the daemon or its healthy siblings');
+      continue;
+    }
+    assert.ok(generated, `${directory}: the declaration reader must find its generated manifest`);
+    assert.equal(admitted.failure, null, `${directory}: generated Voice runtime must be admitted`);
+    const entry = admitted.entry;
+    assert.equal(entry?.tier, 'reactNative');
+    assert.ok(entry.executable.exports.includes('activate'));
+    const bytes = await readFile(join(root, 'dist/happier-plugin-ui', entry.entry), 'utf8');
+    assert.match(bytes, new RegExp(directory));
+  }
+  const first = await lstat(manifestAt(tree));
+  const { daemon: again } = await prepare('daemon');
+  assert.equal((await lstat(manifestAt(dirname(dirname(again.cliDir))))).ino, first.ino,
+    'unchanged daemon trees inherit one prepared base graph');
+  assert.equal((await readGeneratedPluginUiArtifactsManifest(join(tree, 'packages/plugins/no-ui')))?.entries.length ?? 0, 0);
+  const before = await readFile(manifestAt(tree), 'utf8');
+  const changedPath = 'packages/plugins/voice-one/src/voice.ts';
+  await writeFile(join(repoDir, changedPath), 'export function activate() { return "changed voice source"; }');
+  const changed = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay: [changedPath],
+    outputDir: fixture.path('changed-descriptors') });
+  const { daemon: overlaid } = await prepareSourceTreeRuntimeComponents({ repoDir, env, stackBaseDir: fixture.path('stacks/qa'),
+    descriptorPath: changed.descriptorPath, components: [{ component: 'daemon' }], logger: { error() {} } });
+  assert.notEqual(await readFile(manifestAt(dirname(dirname(overlaid.cliDir))), 'utf8'), before,
+    'a changed executable gets its own newly compiled graph');
+  assert.equal(await readFile(manifestAt(tree), 'utf8'), before, 'an overlay never changes an earlier daemon graph');
+  const sharedPath = 'packages/shared/src/index.ts';
+  await writeFile(join(repoDir, sharedPath), 'export const marker = "changed shared input";');
+  const shared = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay: [sharedPath],
+    outputDir: fixture.path('shared-descriptors') });
+  const { daemon: withSharedChange } = await prepareSourceTreeRuntimeComponents({ repoDir, env, stackBaseDir: fixture.path('stacks/qa'),
+    descriptorPath: shared.descriptorPath, components: [{ component: 'daemon' }], logger: { error() {} } });
+  assert.notEqual(await readFile(manifestAt(dirname(dirname(withSharedChange.cliDir))), 'utf8'), before,
+    'a shared dependency overlay recompiles its consuming graph');
+  assert.equal(await readFile(manifestAt(tree), 'utf8'), before, 'shared dependency compilation preserves the active daemon graph');
+  const preparerPath = 'apps/cli/scripts/prepareSourcePluginUiArtifacts.mjs';
+  await writeFile(join(repoDir, preparerPath), await readFile(join(repoDir, preparerPath), 'utf8') + '\n');
+  await gitIn('add', preparerPath);
+  await gitIn('commit', '--quiet', '-m', 'change the base preparer contract');
+  const withNewPreparer = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay: [],
+    outputDir: fixture.path('preparer-descriptors') });
+  assert.equal(withNewPreparer.base, withNewPreparer.revision,
+    'base preparation must use the selected revision\'s preparer contract before commit overlays can run');
+});
 
 const FIXTURE_SUPPORT_OWNER = `import { createHash } from 'node:crypto';
 import { resolveInstalledRuntimePackage } from ${JSON.stringify(new URL('../../../../packages/cli-common/workspaceRuntimeDependencies.mjs', import.meta.url).href)};

@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -129,7 +129,7 @@ export async function prepareSourcePluginUiArtifacts({ repoRoot, outputDir, plug
         continue;
       }
       const manifestPath = join(outputDir, `${directory}.json`);
-      await writeFile(manifestPath, JSON.stringify(manifest));
+      await writeJsonAtomic(manifestPath, manifest);
       const { artifactsRoot } = await buildUniversalPluginUiArtifacts(projectRoot, manifestPath,
         { ...buildOptions, outputDir: artifactOutputDir });
       artifactRoots[directory] = artifactsRoot;
