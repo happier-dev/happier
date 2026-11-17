@@ -113,10 +113,10 @@ it.each(['session', 'detached', 'execution-only'] as const)(
                         watch() { return { dispose() {} }; }, async dispose() {},
                     };
                 } };
-                const runtime: AgentRuntime = { executionRuns, sessions: { async open() { return {
+                const runtime: AgentRuntime = facet === 'session' ? { sessions: { async open() { return {
                     async send(request) { accept(request.input); return { status: 'admitted' as const }; },
                     watch() { return { dispose() {} }; }, async dispose() {},
-                }; } } };
+                }; } } } : { executionRuns };
                 const common = {
                     runtime, supportsResume: false,
                     lease: { pluginId: 'acme.native', pluginVersion: '1.0.0', agentId: 'acme.native/default',

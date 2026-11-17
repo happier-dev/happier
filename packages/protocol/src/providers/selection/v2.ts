@@ -5,8 +5,8 @@ import { z } from '../../zodRuntimePolicy.js';
 
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../ids.js';
 import { SessionActiveModelSelectionV1Schema, SessionModelSelectionV1Schema, serializeSessionModelSelectionV1, deserializeSessionModelSelectionV1, type SessionActiveModelSelectionV1, type SessionModelSelectionV1 } from './v1.js';
-import { TeamCredentialProviderModelSelectionV1Schema, TeamCredentialRouteV1Schema, type TeamCredentialProviderModelSelectionV1, type TeamCredentialRouteV1 } from '../../teams/credentials/resourceV1.js';
-import { SessionTeamCredentialNativeDeliveryV1Schema, type SessionTeamCredentialNativeDeliveryV1, type SessionTeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/sessionBindingIntentV1.js';
+import { TeamCredentialProviderModelSelectionV1Schema, TeamCredentialRouteV1Schema, type TeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/resourceV1.js';
+import { SessionTeamCredentialNativeDeliveryV1Schema, type SessionTeamCredentialBindingIntentV1, type SessionTeamCredentialProviderModelSelectionV1 } from '../../teams/credentials/sessionBindingIntentV1.js';
 
 /** The existing active-model carrier's second epoch retains the runtime-opened Team source. */
 export const SessionActiveModelSelectionV2Schema = lazyZodSchema(() => z.strictObject({
@@ -129,7 +129,7 @@ export function deserializeSessionModelSelection(value: string): SessionModelSel
 }
 
 /** Account Provider binding is a distinct source from native and Team-resource binding. */
-export function readSessionModelSelectionProviderConnectionId(selection: SessionModelSelection): string | null {
+export function readSessionModelSelectionProviderConnectionId(selection: SessionModelSelection): SessionModelSelectionV1['ref']['providerConnectionId'] {
   return selection.v === 1 ? selection.ref.providerConnectionId
     : selection.ref.source === 'account_provider_connection' ? selection.ref.providerConnectionId : null;
 }
@@ -157,20 +157,7 @@ export function projectSessionModelSelectionV2ToV1(
 export function sessionModelSelectionV2TeamBindingIntent(
   value: SessionModelSelectionV2,
   context?: Pick<SessionTeamCredentialProviderModelSelectionV1, 'application' | 'executionMachineId' | 'nativeSource'>,
-): Readonly<{
-  v: 1;
-  slot: Readonly<{ kind: 'provider_model' }>;
-  resourceId: string;
-  expectedResourceRevision: number;
-  deliveryMode: TeamCredentialRouteV1;
-  providerModelSelection: SessionTeamCredentialProviderModelSelectionV1;
-  nativeDelivery?: SessionTeamCredentialNativeDeliveryV1;
-  teamId?: string;
-}> | Readonly<{
-  v: 1;
-  slot: Readonly<{ kind: 'provider_model' }>;
-  resourceId: null;
-}> {
+): SessionTeamCredentialBindingIntentV1 {
   const selection = SessionModelSelectionV2Schema.parse(value);
   if (selection.ref.source !== 'team_resource') {
     return { v: 1, slot: { kind: 'provider_model' }, resourceId: null };

@@ -23,6 +23,7 @@ import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialResourceReadInputV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -157,7 +158,7 @@ describe('Session Team launch composition', () => {
     { source: 'native', agentTargetKey: target, modelId: 'native-model' },
     { source: 'account_provider_connection', agentTargetKey: target, modelId: 'personal-model', providerConnectionId: 'pc_personal' },
   ] as const)('preserves an explicit typed $source model against a stale Team binding', async ref => {
-    const modelSelection = { v: 2 as const, updatedAt: 10, ref };
+    const modelSelection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 10, ref });
     const launch = await normalizeSessionTeamCredentialLaunch({ options: { ...options, modelSelection,
       teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: resource.id,
         teamId: resource.teamId, expectedResourceRevision: resource.resourceRevision, deliveryMode: 'brokered' }] },
