@@ -11,6 +11,7 @@ import { readCliPrivateSourceEntries, readWorkspacePackages } from '../../../../
 import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { isPidAlive } from '../utils/proc/pids.mjs';
+import { isJsonOwnerFileLockActive } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { captureSourceWebBuildInputs, readSourceRuntimeProcessCommands, resolveSourceRuntimeProducerContext, setBundleReadOnly } from './build_source_runtime.mjs';
 import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
 import { run, runCapture } from '../utils/proc/proc.mjs';
@@ -544,13 +545,35 @@ export async function sweepSourceRevisionBases({ treesRoot, signal }) {
   treesRoot = resolve(treesRoot);
   const entries = await readdir(treesRoot, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
   const bases = [];
+  const unpublished = [];
   for (const entry of entries) {
-    if (!entry.isDirectory() || !/^[a-f0-9]{40,64}$/.test(entry.name)) continue;
+    if (!entry.isDirectory()) continue;
+    // A builder's staging directory (`<rev>.tmp-<uuid>`) belongs to its base lock.
+    const staging = /^([a-f0-9]{40,64})\.tmp-[0-9a-f-]{36}$/.exec(entry.name);
+    if (staging) { unpublished.push({ dir: join(treesRoot, entry.name), baseDir: join(treesRoot, staging[1]) }); continue; }
+    if (!/^[a-f0-9]{40,64}$/.test(entry.name)) continue;
     const marker = await readJson(join(treesRoot, entry.name, BASE_MARKER));
     if (marker) bases.push({ baseDir: join(treesRoot, entry.name), builtAt: Date.parse(marker.builtAt) || 0 });
+    else unpublished.push({ dir: join(treesRoot, entry.name), baseDir: join(treesRoot, entry.name) });
   }
   bases.sort((a, b) => b.builtAt - a.builtAt);
   const deleted = [];
+  // A builder holds the base lock until its marker publishes the base. Without a
+  // live holder, a markerless base or staging directory is a failed or killed build.
+  for (const { dir, baseDir } of unpublished) {
+    if (isJsonOwnerFileLockActive(`${baseDir}.lock`, { staleAfterMs: Infinity })) continue;
+    await withBaseLock(baseDir, signal, async () => {
+      if (dir === baseDir && await readJson(join(baseDir, BASE_MARKER))) return;
+      for (const name of dir === baseDir ? await readdir(`${baseDir}.refs`).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error)) : []) {
+        // Clones taken before a failed rebuild still name it; their next release retires it.
+        if (await isLiveReference(baseDir, await readJson(join(`${baseDir}.refs`, name)))) return;
+      }
+      await setSourceRevisionTreeWritable(dir);
+      await rm(dir, { recursive: true, force: true });
+      if (dir === baseDir) await rm(`${baseDir}.refs`, { recursive: true, force: true });
+      deleted.push(dir);
+    });
+  }
   for (const { baseDir } of bases.slice(1)) {
     await withBaseLock(baseDir, signal, async () => {
       let live = 0;
@@ -751,6 +774,9 @@ export async function prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir
   const dependencyPublication = { ...await readBuildInputDependencies({ sourceDir: repoDir, env }),
     markerPath: resolveDependencyRefreshMarkerPath(installRoot),
     generationPath: `${resolveDependencyRefreshLockPath(installRoot, env)}.generation` };
+  // Earlier preparations this Stack never selected (refused, cancelled or killed
+  // reloads) hold a tree and pin its base; release them before writing a new one.
+  await releaseStackSourceTrees({ stackBaseDir, components: components.map(({ component }) => component), signal, preparing: true });
   const prepared = {};
   for (const { component, serverComponent = 'happier-server-light', dbProvider } of components) {
     const started = performance.now();
@@ -840,11 +866,12 @@ console.log('HSTACK_GUEST_PAYLOAD ' + JSON.stringify(payload));`;
  * selection names. A restart selects its new tree before it stops the incumbent,
  * so only the incumbent's tree goes; a plain stop keeps the selected tree, which
  * the next start launches. A Stack without trees is untouched. */
-export async function releaseStackSourceTrees({ stackBaseDir, components = ['server', 'daemon'], signal }) {
+export async function releaseStackSourceTrees({ stackBaseDir, components = ['server', 'daemon'], signal, preparing = false }) {
   const sourceRoot = join(resolve(stackBaseDir), 'source-runtime');
   // An in-flight reload's finished tree is not selected yet. Its activation
   // still needs it; the Stack's next stop releases the incumbent's tree.
-  if (isPidAlive((await readJson(join(sourceRoot, 'start.pending.json')))?.pid)) return [];
+  // The preparing request is that in-flight reload itself (`preparing`).
+  if (!preparing && isPidAlive((await readJson(join(sourceRoot, 'start.pending.json')))?.pid)) return [];
   const entries = await readdir(sourceRoot, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
   const released = [];
   let liveCommands;
@@ -857,6 +884,8 @@ export async function releaseStackSourceTrees({ stackBaseDir, components = ['ser
       if (!entry.isDirectory() || !pattern.test(entry.name)) continue;
       const treeDir = join(sourceRoot, entry.name);
       if (selectedEntrypoint?.startsWith(treeDir + sep)) continue;
+      // A superseded preparation may still be writing its tree; its marker comes last.
+      if (preparing && !existsSync(join(treeDir, TREE_MARKER))) continue;
       // One observation per release sweep, shared with the low-level release owner.
       liveCommands ??= await readSourceRuntimeProcessCommands();
       if (liveCommands === null) return released;

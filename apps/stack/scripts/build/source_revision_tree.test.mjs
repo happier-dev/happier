@@ -15,7 +15,8 @@ import { generateServerClients, installServerGeneratorFixture, readGeneratedClie
 import { resolveSourceRevision, resolveSourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 import { beginPendingSourceStart } from '../runtime/shared/pending_source_start.mjs';
 import { prepareSourceTreeRuntimeComponents, prepareStackSourceRevisionTree, releaseStackSourceRevisionTree, releaseStackSourceTrees,
-  recordSourceTreeBases, resolveSourceTreeRevision, selectsSourceTreeReload, setSourceRevisionTreeWritable, sourceRevisionTreesRoot, writeSourceRevisionArchive } from './source_revision_tree.mjs';
+  recordSourceTreeBases, resolveSourceTreeRevision, selectsSourceTreeReload, setSourceRevisionTreeWritable, sourceRevisionTreesRoot, sweepSourceRevisionBases,
+  writeSourceRevisionArchive } from './source_revision_tree.mjs';
 
 const COMMITTED_MAIN = 'export { marker } from "@happier-dev/shared";';
 const COMMITTED_SHARED = 'export const marker = "committed";';
@@ -425,6 +426,34 @@ test('a base is deleted when its last Stack reference goes, and the newest base 
   assert.deepEqual(await bases(), [second.baseDir.split(/[\\/]/).pop()]);
 });
 
+// nl3 2026-11-17 (P03-NL3-DISK): 25 bases (63 GiB) had no marker. Their builds failed
+// (pnpm, ENOSPC) or were killed after the staging rename, and the sweep only saw
+// published bases, so nothing ever retired them. A builder holds the base lock until
+// it publishes; an unpublished base or staging directory no live builder holds goes.
+test('the base sweep retires unpublished bases and staging that no live builder holds', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-revision-unpublished-' });
+  const treesRoot = fixture.path('trees');
+  const exited = spawn(process.execPath, ['-e', '']);
+  await once(exited, 'exit');
+  const lock = (dir, pid) => writeFile(`${dir}.lock`, JSON.stringify({ pid, createdAtMs: Date.now(), updatedAtMs: Date.now() }));
+  const abandoned = join(treesRoot, 'a'.repeat(40));
+  const killed = join(treesRoot, 'b'.repeat(40));
+  const building = join(treesRoot, 'c'.repeat(40));
+  const staging = `${join(treesRoot, 'd'.repeat(40))}.tmp-0f6c9a5e-4d8b-4e43-9a27-5d3f0f6b9e11`;
+  for (const dir of [abandoned, killed, building, staging]) {
+    await mkdir(join(dir, 'apps'), { recursive: true });
+    await writeFile(join(dir, 'package.json'), '{}');
+  }
+  await lock(killed, exited.pid);
+  await lock(building, process.pid);
+  await sweepSourceRevisionBases({ treesRoot });
+  const exists = dir => lstat(dir).then(() => true, () => false);
+  assert.equal(await exists(abandoned), false, 'a failed build without a lock is retired');
+  assert.equal(await exists(killed), false, 'a killed builder\'s base is retired');
+  assert.equal(await exists(staging), false, 'a killed builder\'s staging is retired');
+  assert.equal(await exists(building), true, 'a live builder keeps its unpublished base');
+});
+
 // nl3 2026-11-15 (P03-INFRA-OPS run 1): a mirror host has no Git objects. Its base
 // copied the moving mirror and refused BUILD_INPUTS_CHANGED when another lane edited
 // a tracked file the description shipped no bytes for. A base takes every tracked
@@ -509,6 +538,36 @@ test('a restart onto a new tree keeps the tree it selected; stop releases only t
   // A later plain stop keeps the selected tree for the next start.
   await releaseStackSourceTrees({ stackBaseDir, components: ['server'] });
   assert.equal(await lstat(replacement.entrypoint).then(() => true, () => false), true);
+});
+
+// nl3 2026-11-17 (P03-NL3-DISK): beds that are reloaded but rarely stopped kept every
+// refused reload's tree (pfc1113-bed: 5 of 7 trees, ~2.8 GiB each), and those trees
+// pinned their bases. The Stack's next preparation releases them; the selected tree stays.
+test('a later preparation releases a refused reload\'s tree and keeps the selected one', { skip: process.platform === 'win32' }, async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  await gitIn('checkout', '--quiet', '--', '.');
+  await gitIn('clean', '-fdq');
+  const stackBaseDir = fixture.path('stacks-root/qa');
+  let described = 0;
+  const reload = async () => {
+    const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: sourceRevisionTreesRoot(stackBaseDir), rev: 'HEAD', overlay: [],
+      outputDir: fixture.path(`descriptors-${described += 1}`) });
+    const { server } = await prepareSourceTreeRuntimeComponents({ repoDir, env: { ...process.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(repoDir, 'manual-payload') }, stackBaseDir, descriptorPath: revision.descriptorPath,
+      components: [{ component: 'server' }], logger: { error() {} } });
+    return server;
+  };
+  const selected = await reload();
+  await writeFile(join(stackBaseDir, 'source-runtime/selected-server.json'), JSON.stringify({ entrypoint: selected.entrypoint }));
+  const refused = await reload();
+  // The next reload runs under its own pending request, as every reload does.
+  const pending = await beginPendingSourceStart({ stackBaseDir });
+  let next;
+  try { next = await reload(); } finally { await pending.dispose(); }
+  const exists = path => lstat(path).then(() => true, () => false);
+  assert.equal(await exists(refused.serverDir), false, 'the refused reload\'s tree is released');
+  assert.equal(await exists(selected.entrypoint), true, 'the selected tree stays');
+  assert.equal(await exists(next.entrypoint), true, 'the new preparation keeps its own tree');
 });
 
 // 2026-11-15: a runtime labelled with a clean revision ran clients generated from
