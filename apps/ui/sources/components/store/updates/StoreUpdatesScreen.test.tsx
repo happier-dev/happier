@@ -10,11 +10,21 @@ import { bindExternalActionExecutionAuthorizationHttpPathV1,
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { ThemeProfileArtifactHeaderSchema } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { createArtifactListHttpResponse, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+
+vi.mock('expo-router', async () =>
+    (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module,
+);
 
 const rpc = createProviderSettingsHarness({ machines: [] });
 installProviderSettingsRpcBoundary(rpc);
 const account = createProviderSettingsAccountHarness();
 const { StoreUpdatesScreen } = await import('./StoreUpdatesScreen');
+const { StoreUpdateRow } = await import('./StoreUpdateRow');
 const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
 const { ModalProvider } = await import('@/modal');
@@ -22,6 +32,82 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { StoreMachineScopeContext } = await import('@/components/settings/plugins/model/useStoreMachineScope');
 
 afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); });
+
+it('windows theme updates in the existing page while retaining version and review navigation', async () => {
+    const home = await account.restore({ currentAccount: true, serverIdentityId: 'srv_store_theme_updates',
+        machines: [createMachineFixture({ id: 'updates-machine', activeAt: Date.now(), metadata: {
+            ...createMachineFixture().metadata!, agentInventory: { checkedAt: 1, installedAgentIds: [] },
+        } })] });
+    const scope = storage.getState().settingsScope!;
+    const rows: Extract<DecryptedArtifact, { isDecrypted: true }>[] = Array.from({ length: 200 }, (_, index) => ({
+        id: `update-theme-${index}`, sourceServerId: scope.serverId, ownerAccountId: scope.accountId, access: 'owner',
+        isDecrypted: true, title: `Theme ${index}`, headerVersion: 1, bodyVersion: 1, seq: index, createdAt: 0, updatedAt: 0,
+        rawHeader: ThemeProfileArtifactHeaderSchema.parse({ v: 1, kind: 'theme_profile.v1', title: `Theme ${index}`,
+            mode: 'dark', themeSource: { kind: 'store', contributionId: 'dark', provenance: { sourceId: 'builtin:open-vsx',
+                itemId: `sample/palette-${index}`, sourceUrl: 'https://open-vsx.org/api', format: 'open-vsx',
+                importedAt: 1, ref: { kind: 'version', version: '1.0.0' } } },
+            compatibility: { status: 'supported', unsupportedPaths: [] }, palette: { overrides: {}, radius: 'soft' } }),
+    }));
+    const persisted = rows.map(row => createPlainArtifactHttpFixture(row, scope.accountId));
+    const catalog = createPromptLibraryCatalogBoundary();
+    account.home.answer(home.serverId, 'GET /v1/account/entity-rows/prompt-library', { select: async () => ({
+        body: await (await catalog.handle('/v1/account/entity-rows/prompt-library'))!.json(),
+    }) });
+    // Public registry HTTP and Account HTTP are genuine boundaries; the theme tracker stays real.
+    setRuntimeFetch(async (input, init) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+        if (url.origin === 'https://open-vsx.org') return Response.json({ namespace: 'sample',
+            name: url.pathname.split('/')[3], version: '2.0.0', displayName: 'Palette',
+            files: { manifest: 'https://open-vsx.org/manifest.json', download: 'https://open-vsx.org/package.vsix',
+                sha256: 'https://open-vsx.org/package.sha256' } });
+        return account.home.request(input, init);
+    });
+    for (const row of persisted) account.home.artifacts(home.serverId).replaceStoredRow(row);
+    account.home.answer(home.serverId, 'GET /v1/artifacts', { select: async (_input, request) => ({ body:
+        await createArtifactListHttpResponse(new URL(request.url), persisted).json(),
+    }) });
+    account.home.answer(home.serverId, '/v1/actions/browser.extensions.list', { select: body => {
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+        return { body: { v: 1, actionId: 'browser.extensions.list', requestId: envelope.requestId,
+            execution: { ok: true, result: { status: 'ready', entries: [] } } } };
+    } });
+    let checks = 0;
+    account.home.answer(home.serverId, '/v1/actions/registries.updates.check', { select: body => {
+        checks++;
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse(body);
+        return { body: { v: 1, actionId: 'registries.updates.check', requestId: envelope.requestId,
+            execution: { ok: true, result: { checkedAt: 10, results: [] } } } };
+    } });
+    const screen = await renderScreen(<ModalProvider><PluginSurfaceFocusEligibilityProvider active>
+        <StoreMachineScopeContext.Provider value={null}><StoreUpdatesScreen /></StoreMachineScopeContext.Provider>
+    </PluginSurfaceFocusEligibilityProvider></ModalProvider>);
+    await vi.waitFor(() => expect(screen.findAll(node => Array.isArray(node.props.families))[0]?.props.families
+        .find((family: { kind: string }) => family.kind === 'theme')?.result.rows).toHaveLength(200));
+    await vi.waitFor(() => expect(screen.findByTestId('store.updates.checkNow')?.props.disabled).toBe(false));
+    await screen.pressByTestIdAsync('store.updates.checkNow');
+    await vi.waitFor(() => expect(checks).toBe(1));
+    await vi.waitFor(() => expect(screen.tree.findAllByType(StoreUpdateRow).length, JSON.stringify({
+        themeRows: screen.findAll(node => Array.isArray(node.props.families))[0]?.props.families
+            .find((family: { kind: string }) => family.kind === 'theme')?.result.rows.length,
+        failure: screen.findByTestId('store.updates.checkFailed')?.props.diagnosticCode,
+    })).toBeGreaterThan(0));
+    await act(async () => screen.findHostByTestId('store.updates')?.props.onLayout?.({
+        nativeEvent: { layout: { x: 0, y: 0, width: 960, height: 600 } },
+    }));
+    const mounted = screen.tree.findAllByType(StoreUpdateRow);
+    console.info('[theme-window-cost] Store updates', { source: rows.length, mounted: mounted.length });
+    expect(mounted.length).toBeLessThan(200);
+    expect(mounted[0]!.findAll(node => typeof node.props.description === 'string'
+        && node.props.description.includes('1.0.0 → 2.0.0')).length).toBeGreaterThan(0);
+    const { router } = await import('expo-router');
+    await screen.pressByTestIdAsync(`${mounted[0]!.props.testID}.review`);
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/(app)/plugins/listing',
+        params: { selection: JSON.stringify({ type: 'registryItem', kind: 'theme',
+            ...mounted[0]!.props.entry.row.native.listing }) },
+    }));
+    await screen.unmount();
+});
 
 async function renderExtensionUpdate(partial = false, selectedMachine = false) {
     const machineId = 'extensions-machine';

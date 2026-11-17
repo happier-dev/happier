@@ -1,6 +1,9 @@
 import { useInstalledUpdates } from '@/updates/useInstalledUpdates';
 import { ManagedInventoryCoverage } from '@/components/store/inventory/ManagedInventoryCoverage';
 import * as React from 'react';
+import { List } from '@happier-dev/plugin-ui/components';
+import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { StoreProjectScopeChip } from '../StoreProjectScopeChip';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -36,6 +39,7 @@ const KIND_TITLE: Readonly<Record<StoreUpdateKind, () => string>> = {
   browserExtension: () => t('capabilities.store.kinds.browserExtension.title'),
   plugin: () => t('capabilities.store.kinds.plugin.title'),
 };
+const UPDATE_PAGE_LAYOUT = { estimatedRowHeight: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.minHeight };
 
 function formatTime(ms: number): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -89,6 +93,7 @@ export function StoreUpdatesScreen(): React.ReactNode {
       : t('capabilities.store.updates.purpose');
 
   return (
+    <CorePluginUiPresentationScope>
     <ItemList
       pageColumn="wide"
       keyboardShouldPersistTaps="handled"
@@ -185,14 +190,19 @@ export function StoreUpdatesScreen(): React.ReactNode {
                   title={KIND_TITLE[section.kind]()}
                   surface="none"
                 >
-                  {section.entries.map((entry) => (
-                    <StoreUpdateRow
-                      key={entry.key}
-                      entry={entry}
-                      host={rowHost}
-                      testID={`store.updates.row.${entry.key}`}
-                    />
-                  ))}
+                  <List
+                    testID={`store.updates.rows.${section.kind}`}
+                    items={section.entries}
+                    keyForItem={(entry) => entry.key}
+                    pageLayout={UPDATE_PAGE_LAYOUT}
+                    renderItem={(entry) => (
+                      <StoreUpdateRow
+                        entry={entry}
+                        host={rowHost}
+                        testID={`store.updates.row.${entry.key}`}
+                      />
+                    )}
+                  />
                 </ItemGroup>
               ))
             )}
@@ -200,6 +210,7 @@ export function StoreUpdatesScreen(): React.ReactNode {
         )}
       </PageContentColumn>
     </ItemList>
+    </CorePluginUiPresentationScope>
   );
 }
 
