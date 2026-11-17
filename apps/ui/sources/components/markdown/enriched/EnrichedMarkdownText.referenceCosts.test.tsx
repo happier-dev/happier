@@ -243,3 +243,34 @@ it.each([
         vi.useRealTimers();
     }
 });
+
+it.each([
+    { runtime: 'source', parserPath: 'src/web/parseMarkdown.ts', mathPath: 'src/web/katex.ts', componentPath: 'src/web/EnrichedMarkdownText.tsx' },
+    { runtime: 'emitted ESM', parserPath: 'lib/module/web/parseMarkdown.js', mathPath: 'lib/module/web/katex.js', componentPath: 'lib/module/web/EnrichedMarkdownText.js' },
+])('mounts a block in one commit once KaTeX has loaded, with math rendered in it ($runtime)', async ({ parserPath, mathPath, componentPath }) => {
+    // Long-thread scroll mounts markdown blocks long after KaTeX settled; each extra commit
+    // re-renders the block's whole document (P03-JOURNEYS-4 §1.3).
+    const React = await import('react');
+    const renderer = await import('react-test-renderer');
+    const parser = await import(/* @vite-ignore */ enrichedMarkdownPackageFileUrl(parserPath)) as { preloadMarkdownRuntime: () => Promise<void> };
+    await parser.preloadMarkdownRuntime();
+    const math = await import(/* @vite-ignore */ enrichedMarkdownPackageFileUrl(mathPath)) as { loadKaTeX: () => Promise<unknown> };
+    expect(await math.loadKaTeX()).not.toBeNull();
+    const { EnrichedMarkdownText } = await import(/* @vite-ignore */ enrichedMarkdownPackageFileUrl(componentPath)) as {
+        EnrichedMarkdownText: ComponentType<{ markdown: string; md4cFlags: { latexMath: boolean } }>;
+    };
+    let commits = 0;
+    const flags = { latexMath: true };
+    let screen: ReactTestRenderer | undefined;
+    try {
+        await renderer.act(async () => {
+            screen = renderer.create(React.createElement(React.Profiler, { id: 'block', onRender: () => { commits++; } },
+                React.createElement(EnrichedMarkdownText, { markdown: 'Prose with $$x^2$$ math.', md4cFlags: flags })));
+        });
+        await renderer.act(async () => { await math.loadKaTeX(); });
+        expect(JSON.stringify(screen!.toJSON())).toContain('katex');
+        expect(commits).toBe(1);
+    } finally {
+        if (screen) await renderer.act(async () => { screen!.unmount(); });
+    }
+});

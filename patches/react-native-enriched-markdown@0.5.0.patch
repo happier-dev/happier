@@ -2585,7 +2585,7 @@ index 6b10dda932331fb61e137e1b0714563a32a302d7..8dc779d832a676fa84ae6f38e640f771
    strong: {
      fontFamily: '',
 diff --git a/lib/module/web/EnrichedMarkdownText.js b/lib/module/web/EnrichedMarkdownText.js
-index c6c73b0..34c881a 100644
+index c6c73b0..2179708 100644
 --- a/lib/module/web/EnrichedMarkdownText.js
 +++ b/lib/module/web/EnrichedMarkdownText.js
 @@ -1,47 +1,68 @@
@@ -2601,7 +2601,8 @@ index c6c73b0..34c881a 100644
 +import { parseMarkdown, parseMarkdownSyncIfReady } from "./parseMarkdown.js";
 +import { RenderNode, selectNodeCapabilities, useSettledCapabilities } from "./renderers/index.js";
  import { indexTaskItems, markInlineImages } from "./utils.js";
- import { loadKaTeX } from "./katex.js";
+-import { loadKaTeX } from "./katex.js";
++import { loadKaTeX, readLoadedKaTeX } from "./katex.js";
 +import { createStreamingRevealState, markStreamingRevealOffsets, readRenderedComparisonText, updateStreamingRevealRanges } from "./streamingReveal.js";
  import { jsx as _jsx } from "react/jsx-runtime";
 +const STREAMING_REVEAL_RANGE_TTL_MS = 260;
@@ -2649,7 +2650,7 @@ index c6c73b0..34c881a 100644
 +    return parsed ? prepareAstForRendering(parsed) : null;
 +  }, [markdown, underline, latexMath, texMathBackslashDelimiters]);
 +  const [ast, setAst] = useState(null);
-+  const [katex, setKatex] = useState(null);
++  const [katex, setKatex] = useState(() => latexMath ? readLoadedKaTeX() ?? null : null);
 +  const [parseError, setParseError] = useState(false);
    useEffect(() => {
 +    // A warm synchronous AST is already the rendered authority. Only cold or
@@ -2675,7 +2676,7 @@ index c6c73b0..34c881a 100644
        }
      }).catch(error => {
        if (!cancelled) {
-@@ -50,21 +71,91 @@ export const EnrichedMarkdownText = ({
+@@ -50,21 +71,97 @@ export const EnrichedMarkdownText = ({
          }
          setParseError(true);
          setAst(null);
@@ -2694,6 +2695,12 @@ index c6c73b0..34c881a 100644
 +      return;
 +    }
 +    // Optional math readiness is independent of document parsing and streaming.
++    // Once loading has settled, the mount already holds the instance (equal state, no commit).
++    const loaded = readLoadedKaTeX();
++    if (loaded !== undefined) {
++      setKatex(loaded);
++      return;
++    }
 +    void loadKaTeX().then(instance => {
 +      if (!cancelled) setKatex(instance);
 +    });
@@ -2771,7 +2778,7 @@ index c6c73b0..34c881a 100644
    const lastChildStyle = useMemo(() => allowTrailingMargin ? normalizedStyle : zeroTrailingMargins(normalizedStyle), [normalizedStyle, allowTrailingMargin]);
    const styles = useMemo(() => buildStyles(normalizedStyle), [normalizedStyle]);
    const lastChildStyles = useMemo(() => buildStyles(lastChildStyle), [lastChildStyle]);
-@@ -76,19 +167,46 @@ export const EnrichedMarkdownText = ({
+@@ -76,19 +173,46 @@ export const EnrichedMarkdownText = ({
        userSelect: 'none'
      })
    }), [containerStyle, selectable]);
@@ -2823,7 +2830,7 @@ index c6c73b0..34c881a 100644
    const lastIdx = children.length - 1;
    return /*#__PURE__*/_jsx("div", {
      style: wrapperStyle,
-@@ -99,7 +217,7 @@ export const EnrichedMarkdownText = ({
+@@ -99,7 +223,7 @@ export const EnrichedMarkdownText = ({
        style: index === lastIdx ? lastChildStyle : normalizedStyle,
        styles: index === lastIdx ? lastChildStyles : styles,
        callbacks: callbacks,
@@ -2841,10 +2848,16 @@ index 34c173f4225cb8b352224a225b1769d41825c304..e50af5dcf9489499481d74a4ca1ae1f3
 +{"version":3,"names":["useState","useEffect","useLayoutEffect","useMemo","useRef","normalizeMarkdownStyle","zeroTrailingMargins","buildStyles","parseMarkdown","parseMarkdownSyncIfReady","RenderNode","indexTaskItems","markInlineImages","loadKaTeX","createStreamingRevealState","markStreamingRevealOffsets","readRenderedComparisonText","updateStreamingRevealRanges","jsx","_jsx","STREAMING_REVEAL_RANGE_TTL_MS","STREAMING_REVEAL_CLEANUP_BUFFER_MS","EMPTY_MARKDOWN_STYLE","EMPTY_MD4C_FLAGS","prepareAstForRendering","ast","EnrichedMarkdownText","markdown","markdownStyle","md4cFlags","onLinkPress","onLinkLongPress","onTaskListItemPress","allowTrailingMargin","containerStyle","selectable","streamingAnimation","renderRawFallback","dir","rest","normalizedStyle","underline","latexMath","texMathBackslashDelimiters","previousAstRef","syncAst","parsed","current","setAst","katex","setKatex","parseError","setParseError","cancelled","then","result","catch","error","__DEV__","console","instance","renderedAst","callbacks","previousComparisonTextRef","previousSourceLengthRef","activeRevealRangesRef","revealCleanupTimerRef","revealCleanupRevision","setRevealCleanupRevision","currentComparisonText","activeRevealRanges","activeRanges","previousComparisonText","nowMs","Date","now","ttlMs","previousSourceLength","currentSourceLength","length","streamingReveal","enabled","clearTimeout","nextExpiryMs","Math","min","map","range","expiresAtMs","delayMs","max","setTimeout","revision","capabilities","lastChildStyle","styles","lastChildStyles","wrapperStyle","display","flexDirection","undefined","userSelect","style","children","paragraph","whiteSpace","fallbackParagraphStyle","visibility","lastIdx","child","index","node","type"],"sources":["../../../src/web/EnrichedMarkdownText.tsx"],"sourcesContent":["import {\n  useState,\n  useEffect,\n  useLayoutEffect,\n  useMemo,\n  useRef,\n  type CSSProperties,\n} from 'react';\nimport type { EnrichedMarkdownTextProps } from '../types/MarkdownTextProps.web';\nimport { normalizeMarkdownStyle } from '../normalizeMarkdownStyle.web';\nimport {\n  zeroTrailingMargins,\n  buildStyles,\n} from './styles';\nimport { parseMarkdown, parseMarkdownSyncIfReady } from './parseMarkdown';\nimport { RenderNode } from './renderers';\nimport type { ASTNode, RendererCallbacks, RenderCapabilities } from './types';\nimport { indexTaskItems, markInlineImages } from './utils';\nimport { loadKaTeX } from './katex';\nimport type { KaTeXInstance } from './katex';\nimport {\n  createStreamingRevealState,\n  markStreamingRevealOffsets,\n  readRenderedComparisonText,\n  updateStreamingRevealRanges,\n  type StreamingRevealRange,\n} from './streamingReveal';\n\nconst STREAMING_REVEAL_RANGE_TTL_MS = 260;\nconst STREAMING_REVEAL_CLEANUP_BUFFER_MS = 16;\nconst EMPTY_MARKDOWN_STYLE = {};\nconst EMPTY_MD4C_FLAGS = {};\n\nfunction prepareAstForRendering(ast: ASTNode): ASTNode {\n  return markStreamingRevealOffsets(markInlineImages(indexTaskItems(ast)));\n}\n\nexport const EnrichedMarkdownText = ({\n  markdown,\n  markdownStyle = EMPTY_MARKDOWN_STYLE,\n  md4cFlags = EMPTY_MD4C_FLAGS,\n  onLinkPress,\n  onLinkLongPress,\n  onTaskListItemPress,\n  allowTrailingMargin = false,\n  containerStyle,\n  selectable = true,\n  streamingAnimation = false,\n  renderRawFallback = true,\n  dir,\n  ...rest\n}: EnrichedMarkdownTextProps) => {\n  const normalizedStyle = useMemo(\n    () => normalizeMarkdownStyle(markdownStyle),\n    [markdownStyle]\n  );\n  const { underline = false, latexMath = true, texMathBackslashDelimiters = false } = md4cFlags;\n  const previousAstRef = useRef<ASTNode | null>(null);\n\n  const syncAst = useMemo(() => {\n    const parsed = parseMarkdownSyncIfReady(markdown, { underline, latexMath, texMathBackslashDelimiters }, previousAstRef.current);\n    return parsed ? prepareAstForRendering(parsed) : null;\n  }, [markdown, underline, latexMath, texMathBackslashDelimiters]);\n  const [ast, setAst] = useState<ASTNode | null>(null);\n  const [katex, setKatex] = useState<KaTeXInstance | null>(null);\n  const [parseError, setParseError] = useState<boolean>(false);\n\n  useEffect(() => {\n    // A warm synchronous AST is already the rendered authority. Only cold or\n    // failed synchronous parsing needs an asynchronous result publication.\n    if (syncAst) return;\n    let cancelled = false;\n    parseMarkdown(markdown, { underline, latexMath, texMathBackslashDelimiters }, previousAstRef.current)\n      .then((result) => {\n        if (!cancelled) {\n          setParseError(false);\n          setAst(prepareAstForRendering(result));\n        }\n      })\n      .catch((error) => {\n        if (!cancelled) {\n          if (__DEV__) {\n            console.error('[EnrichedMarkdownText] Parse failed:', error);\n          }\n\n          setParseError(true);\n          setAst(null);\n        }\n      });\n\n    return () => {\n      cancelled = true;\n    };\n  }, [syncAst, markdown, underline, latexMath, texMathBackslashDelimiters]);\n\n  useEffect(() => {\n    let cancelled = false;\n    if (!latexMath) {\n      setKatex(null);\n      return;\n    }\n    // Optional math readiness is independent of document parsing and streaming.\n    void loadKaTeX().then((instance) => {\n      if (!cancelled) setKatex(instance);\n    });\n    return () => { cancelled = true; };\n  }, [latexMath]);\n\n  const renderedAst = syncAst ?? ast;\n  useLayoutEffect(() => {\n    previousAstRef.current = renderedAst;\n  }, [renderedAst]);\n\n  const callbacks = useMemo<RendererCallbacks>(\n    () => ({ onLinkPress, onLinkLongPress, onTaskListItemPress }),\n    [onLinkPress, onLinkLongPress, onTaskListItemPress]\n  );\n\n  const previousComparisonTextRef = useRef('');\n  const previousSourceLengthRef = useRef(0);\n  const activeRevealRangesRef = useRef<readonly StreamingRevealRange[]>([]);\n  const revealCleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(\n    null\n  );\n  const [revealCleanupRevision, setRevealCleanupRevision] = useState(0);\n  const currentComparisonText = useMemo(\n    () => readRenderedComparisonText(renderedAst),\n    [renderedAst]\n  );\n  const activeRevealRanges = useMemo(\n    () =>\n      streamingAnimation\n        ? updateStreamingRevealRanges({\n            activeRanges: activeRevealRangesRef.current,\n            previousComparisonText: previousComparisonTextRef.current,\n            currentComparisonText,\n            nowMs: Date.now(),\n            ttlMs: STREAMING_REVEAL_RANGE_TTL_MS,\n            previousSourceLength: previousSourceLengthRef.current,\n            currentSourceLength: markdown.length,\n          })\n        : [],\n    [currentComparisonText, markdown, revealCleanupRevision, streamingAnimation]\n  );\n  const streamingReveal = useMemo(() => createStreamingRevealState({\n    enabled: streamingAnimation,\n    activeRanges: activeRevealRanges,\n  }), [streamingAnimation, activeRevealRanges]);\n\n  useLayoutEffect(() => {\n    if (!streamingAnimation) {\n      activeRevealRangesRef.current = [];\n      previousComparisonTextRef.current = currentComparisonText;\n      previousSourceLengthRef.current = markdown.length;\n      return;\n    }\n\n    activeRevealRangesRef.current = activeRevealRanges;\n    previousComparisonTextRef.current = currentComparisonText;\n    previousSourceLengthRef.current = markdown.length;\n  }, [activeRevealRanges, currentComparisonText, markdown, streamingAnimation]);\n\n  useEffect(() => {\n    if (revealCleanupTimerRef.current) {\n      clearTimeout(revealCleanupTimerRef.current);\n      revealCleanupTimerRef.current = null;\n    }\n\n    if (!streamingAnimation || activeRevealRanges.length === 0) return;\n\n    const nowMs = Date.now();\n    const nextExpiryMs = Math.min(\n      ...activeRevealRanges.map((range) => range.expiresAtMs)\n    );\n    const delayMs = Math.max(\n      0,\n      nextExpiryMs - nowMs + STREAMING_REVEAL_CLEANUP_BUFFER_MS\n    );\n\n    revealCleanupTimerRef.current = setTimeout(() => {\n      revealCleanupTimerRef.current = null;\n      setRevealCleanupRevision((revision) => revision + 1);\n    }, delayMs);\n\n    return () => {\n      if (revealCleanupTimerRef.current) {\n        clearTimeout(revealCleanupTimerRef.current);\n        revealCleanupTimerRef.current = null;\n      }\n    };\n  }, [activeRevealRanges, streamingAnimation]);\n\n  const capabilities = useMemo<RenderCapabilities>(\n    () => ({ katex, streamingReveal }),\n    [katex, streamingReveal]\n  );\n\n  const lastChildStyle = useMemo(\n    () =>\n      allowTrailingMargin\n        ? normalizedStyle\n        : zeroTrailingMargins(normalizedStyle),\n    [normalizedStyle, allowTrailingMargin]\n  );\n\n  const styles = useMemo(() => buildStyles(normalizedStyle), [normalizedStyle]);\n\n  const lastChildStyles = useMemo(\n    () => buildStyles(lastChildStyle),\n    [lastChildStyle]\n  );\n\n  const wrapperStyle = useMemo<CSSProperties>(\n    () => ({\n      display: 'flex',\n      flexDirection: 'column',\n      ...(containerStyle as CSSProperties),\n      ...(selectable ? undefined : { userSelect: 'none' }),\n    }),\n    [containerStyle, selectable]\n  );\n\n  if (parseError && !syncAst) {\n    return (\n      <div style={wrapperStyle} dir={dir} {...rest}>\n        <p\n          style={{\n            ...lastChildStyles.paragraph,\n            whiteSpace: 'pre-wrap',\n          }}\n        >\n          {markdown}\n        </p>\n      </div>\n    );\n  }\n\n  if (!renderedAst) {\n    const fallbackParagraphStyle = {\n      ...lastChildStyles.paragraph,\n      whiteSpace: 'pre-wrap',\n      ...(renderRawFallback === 'hidden' ? { visibility: 'hidden' as const } : undefined),\n    };\n\n    if (!renderRawFallback) {\n      return <div style={wrapperStyle} dir={dir} {...rest} />;\n    }\n\n    return (\n      <div style={wrapperStyle} dir={dir} {...rest}>\n        <p style={fallbackParagraphStyle}>\n          {markdown}\n        </p>\n      </div>\n    );\n  }\n\n  const children = renderedAst.children ?? [];\n  const lastIdx = children.length - 1;\n\n  return (\n    <div style={wrapperStyle} dir={dir} {...rest}>\n      {children.map((child, index) => (\n        <RenderNode\n          key={`${child.type}-${index}`}\n          node={child}\n          style={index === lastIdx ? lastChildStyle : normalizedStyle}\n          styles={index === lastIdx ? lastChildStyles : styles}\n          callbacks={callbacks}\n          capabilities={capabilities}\n        />\n      ))}\n    </div>\n  );\n};\n\nexport default EnrichedMarkdownText;\n"],"mappings":"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","ignoreList":[]}
 \ No newline at end of file
 diff --git a/lib/module/web/katex.js b/lib/module/web/katex.js
-index b0dbf6aee9f73208a1a2431aeb3aa7217e7bdf23..6d641c79274f1b6c8ea9f1c3096284bd790dbe8e 100644
+index b0dbf6aee9f73208a1a2431aeb3aa7217e7bdf23..567d9ca928b8d53b23f3bcba1bd7dc958e8df47d 100644
 --- a/lib/module/web/katex.js
 +++ b/lib/module/web/katex.js
-@@ -5,17 +5,13 @@ let katexLoadPromise = null;
+@@ -1,22 +1,31 @@
+ "use strict";
+ 
+ let katexLoadPromise = null;
++// undefined until loading settles; then the instance, or null when KaTeX is unavailable.
++let loadedKaTeX;
+ 
  /** Lazily loads KaTeX. Resolves to null if not installed. */
  export function loadKaTeX() {
    if (!katexLoadPromise) {
@@ -2863,10 +2876,23 @@ index b0dbf6aee9f73208a1a2431aeb3aa7217e7bdf23..6d641c79274f1b6c8ea9f1c3096284bd
 -    }
 -    katexLoadPromise = Promise.resolve(instance);
 +      return null;
++    }).then(instance => {
++      loadedKaTeX = instance;
++      return instance;
 +    });
    }
    return katexLoadPromise;
  }
++
++/**
++ * The settled KaTeX instance (null when not installed), or undefined while it
++ * has not loaded. Lets a block mounted after loading render math in its first commit.
++ */
++export function readLoadedKaTeX() {
++  return loadedKaTeX;
++}
+ //# sourceMappingURL=katex.js.map
+\ No newline at end of file
 diff --git a/lib/module/web/parseMarkdown.js b/lib/module/web/parseMarkdown.js
 index 7604c1373b3fb26b3259cc1e0d529c2219459fff..d186fc484dc4709009c536a651b14b9a4a6a3bb5 100644
 --- a/lib/module/web/parseMarkdown.js
@@ -3886,6 +3912,21 @@ index 0b620239dbb0835552e5db32f454e43fd30aa03e..a264aefa5ae1be656caf8d7a0dbf1ad0
      selectionStart: number;
      selectionEnd: number;
  }
+diff --git a/lib/typescript/src/web/katex.d.ts b/lib/typescript/src/web/katex.d.ts
+index a7e7f4261094f55a5d9e1ee84beda88a3c982cbc..5896b97c3b5cb360d6b5b0cc8252a260f0d616f7 100644
+--- a/lib/typescript/src/web/katex.d.ts
++++ b/lib/typescript/src/web/katex.d.ts
+@@ -8,4 +8,9 @@ export interface KaTeXInstance {
+ }
+ /** Lazily loads KaTeX. Resolves to null if not installed. */
+ export declare function loadKaTeX(): Promise<KaTeXInstance | null>;
++/**
++ * The settled KaTeX instance (null when not installed), or undefined while it
++ * has not loaded. Lets a block mounted after loading render math in its first commit.
++ */
++export declare function readLoadedKaTeX(): KaTeXInstance | null | undefined;
+ //# sourceMappingURL=katex.d.ts.map
+\ No newline at end of file
 diff --git a/lib/typescript/src/web/parseMarkdown.d.ts b/lib/typescript/src/web/parseMarkdown.d.ts
 index 4643d20e7d7d4e8e5f41ab17d4c7ce30319bb046..a65d4ce4fac40879caa47cd164a725238325fd12 100644
 --- a/lib/typescript/src/web/parseMarkdown.d.ts
@@ -4311,7 +4352,7 @@ index 11f876c7737baf9a472b848eda1d1dad997518da..d652cc60471b092f460967f52f81683d
    selectionEnd: number;
  }
 diff --git a/src/web/EnrichedMarkdownText.tsx b/src/web/EnrichedMarkdownText.tsx
-index 70eb3a4..9cabaaa 100644
+index 70eb3a4..e606e67 100644
 --- a/src/web/EnrichedMarkdownText.tsx
 +++ b/src/web/EnrichedMarkdownText.tsx
 @@ -1,28 +1,53 @@
@@ -4337,7 +4378,8 @@ index 70eb3a4..9cabaaa 100644
 +import { RenderNode, selectNodeCapabilities, useSettledCapabilities } from './renderers';
  import type { ASTNode, RendererCallbacks, RenderCapabilities } from './types';
  import { indexTaskItems, markInlineImages } from './utils';
- import { loadKaTeX } from './katex';
+-import { loadKaTeX } from './katex';
++import { loadKaTeX, readLoadedKaTeX } from './katex';
  import type { KaTeXInstance } from './katex';
 +import {
 +  createStreamingRevealState,
@@ -4386,7 +4428,8 @@ index 70eb3a4..9cabaaa 100644
 +    return parsed ? prepareAstForRendering(parsed) : null;
 +  }, [markdown, underline, latexMath, texMathBackslashDelimiters]);
    const [ast, setAst] = useState<ASTNode | null>(null);
-   const [katex, setKatex] = useState<KaTeXInstance | null>(null);
+-  const [katex, setKatex] = useState<KaTeXInstance | null>(null);
++  const [katex, setKatex] = useState<KaTeXInstance | null>(() => (latexMath ? readLoadedKaTeX() ?? null : null));
    const [parseError, setParseError] = useState<boolean>(false);
  
 -  const { underline = false, latexMath = true } = md4cFlags;
@@ -4417,7 +4460,7 @@ index 70eb3a4..9cabaaa 100644
          }
        })
        .catch((error) => {
-@@ -64,21 +86,116 @@ export const EnrichedMarkdownText = ({
+@@ -64,21 +86,122 @@ export const EnrichedMarkdownText = ({
  
            setParseError(true);
            setAst(null);
@@ -4438,6 +4481,12 @@ index 70eb3a4..9cabaaa 100644
 +      return;
 +    }
 +    // Optional math readiness is independent of document parsing and streaming.
++    // Once loading has settled, the mount already holds the instance (equal state, no commit).
++    const loaded = readLoadedKaTeX();
++    if (loaded !== undefined) {
++      setKatex(loaded);
++      return;
++    }
 +    void loadKaTeX().then((instance) => {
 +      if (!cancelled) setKatex(instance);
 +    });
@@ -4537,7 +4586,7 @@ index 70eb3a4..9cabaaa 100644
  
    const lastChildStyle = useMemo(
      () =>
-@@ -105,17 +222,42 @@ export const EnrichedMarkdownText = ({
+@@ -105,17 +228,42 @@ export const EnrichedMarkdownText = ({
      [containerStyle, selectable]
    );
  
@@ -4584,7 +4633,7 @@ index 70eb3a4..9cabaaa 100644
    const lastIdx = children.length - 1;
  
    return (
-@@ -127,7 +269,7 @@ export const EnrichedMarkdownText = ({
+@@ -127,7 +275,7 @@ export const EnrichedMarkdownText = ({
            style={index === lastIdx ? lastChildStyle : normalizedStyle}
            styles={index === lastIdx ? lastChildStyles : styles}
            callbacks={callbacks}
@@ -4594,10 +4643,16 @@ index 70eb3a4..9cabaaa 100644
        ))}
      </div>
 diff --git a/src/web/katex.ts b/src/web/katex.ts
-index 2ab4a06fe1a7ba743f3809f41b4fbe4333c39e1a..3a3dfeb72ac41f2ffcad43765a90ebced0554b77 100644
+index 2ab4a06fe1a7ba743f3809f41b4fbe4333c39e1a..cf1d594ebd6e05e23fef40a9dd7633ef762b41b1 100644
 --- a/src/web/katex.ts
 +++ b/src/web/katex.ts
-@@ -15,17 +15,13 @@ let katexLoadPromise: Promise<KaTeXInstance | null> | null = null;
+@@ -11,21 +11,30 @@ export interface KaTeXInstance {
+ }
+ 
+ let katexLoadPromise: Promise<KaTeXInstance | null> | null = null;
++// undefined until loading settles; then the instance, or null when KaTeX is unavailable.
++let loadedKaTeX: KaTeXInstance | null | undefined;
+ 
  /** Lazily loads KaTeX. Resolves to null if not installed. */
  export function loadKaTeX(): Promise<KaTeXInstance | null> {
    if (!katexLoadPromise) {
@@ -4616,10 +4671,21 @@ index 2ab4a06fe1a7ba743f3809f41b4fbe4333c39e1a..3a3dfeb72ac41f2ffcad43765a90ebce
 -    }
 -    katexLoadPromise = Promise.resolve(instance);
 +      return null;
++    }).then((instance) => {
++      loadedKaTeX = instance;
++      return instance;
 +    });
    }
    return katexLoadPromise;
  }
++
++/**
++ * The settled KaTeX instance (null when not installed), or undefined while it
++ * has not loaded. Lets a block mounted after loading render math in its first commit.
++ */
++export function readLoadedKaTeX(): KaTeXInstance | null | undefined {
++  return loadedKaTeX;
++}
 diff --git a/src/web/parseMarkdown.ts b/src/web/parseMarkdown.ts
 index 911e3f1d670c0d8ce5bf6f0d552af0166b8b8ce7..b0f1f4acd3a017c9a85b00df231d204688094953 100644
 --- a/src/web/parseMarkdown.ts

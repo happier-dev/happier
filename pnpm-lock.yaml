@@ -238,7 +238,7 @@ patchedDependencies:
   metro@0.83.5: 5072426008fee7b6e363d361c85c258c55c443eb473d93deb473e01d64c6c48a
   monaco-editor@0.57.0: 8da161c44266b77841f54ef081271cb1b26ed3d415cce29ae7850a6028a8578e
   react-native-audio-api@0.8.4: 5a718ff0caa33487678b9eca44d8474b523a77d0bfb0142bcc784cbb22e0dff7
-  react-native-enriched-markdown@0.5.0: 522811a6e4c9458838204b749695e3e684f73ff1a7ca1c29cdead52fd13fcfba
+  react-native-enriched-markdown@0.5.0: e2ae2ed37f75cab8a3dee1cc3366fd409758792076742ebfb67c6587ad5e5106
   react-native-reanimated@4.3.0: 03e74b9dbd188a51623480ccf5fe551c2cad7366145e5303f0a83041334cb593
   react-native-unistyles@3.5.3: 1c64b8c7ae1ec9845af3056a4f6b6edb7a91bf946ab7540714a25e4c46ac1aa8
   react-native-web@0.21.2: c22132442ed582f7c2cb3c688b25a9aaee0a90db6693a4b0b1952612e7da1c7c
@@ -1926,7 +1926,7 @@ importers:
         version: 14.1.1(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))
       react-native-enriched-markdown:
         specifier: 0.5.0
-        version: 0.5.0(patch_hash=522811a6e4c9458838204b749695e3e684f73ff1a7ca1c29cdead52fd13fcfba)(@expo/config-plugins@55.0.7(supports-color@8.1.1))(katex@0.16.28)(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)
+        version: 0.5.0(patch_hash=e2ae2ed37f75cab8a3dee1cc3366fd409758792076742ebfb67c6587ad5e5106)(@expo/config-plugins@55.0.7(supports-color@8.1.1))(katex@0.16.28)(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)
       react-native-gesture-handler:
         specifier: ~2.30.0
         version: 2.30.1(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)
@@ -30272,7 +30272,7 @@ snapshots:
       react-native-reanimated: 4.3.0(patch_hash=03e74b9dbd188a51623480ccf5fe551c2cad7366145e5303f0a83041334cb593)(react-native-worklets@0.8.1(patch_hash=d0223ab3ae2d48e12b7d4f3e9ca842785c8fd166abea2ad1b4bc8a791e0657b3)(@babel/core@7.29.0(supports-color@8.1.1))(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)(supports-color@8.1.1))(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0)
       use-latest-callback: 0.2.6(react@19.2.0)
 
-  react-native-enriched-markdown@0.5.0(patch_hash=522811a6e4c9458838204b749695e3e684f73ff1a7ca1c29cdead52fd13fcfba)(@expo/config-plugins@55.0.7(supports-color@8.1.1))(katex@0.16.28)(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0):
+  react-native-enriched-markdown@0.5.0(patch_hash=e2ae2ed37f75cab8a3dee1cc3366fd409758792076742ebfb67c6587ad5e5106)(@expo/config-plugins@55.0.7(supports-color@8.1.1))(katex@0.16.28)(react-native@0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1))(react@19.2.0):
     dependencies:
       react: 19.2.0
       react-native: 0.83.5(patch_hash=5a45238f6b18b21e9affbf51565b68e6a34dfb87088e4b7d2478ebc029de193c)(@babel/core@7.29.0(supports-color@8.1.1))(@types/react@19.2.14)(react@19.2.0)(supports-color@8.1.1)

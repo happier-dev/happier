@@ -27,6 +27,9 @@ function invalidFlowDescendants(container: HTMLElement): Element[] {
 }
 
 async function loadProducer(kind: 'source' | 'emitted') {
+    // KaTeX readiness is module state, and a block mounted after it settled renders math in its
+    // first commit: start each case from fresh modules so its cold phase is really cold.
+    vi.resetModules();
     const file = (name: string, extension = 'ts') => enrichedMarkdownPackageFileUrl(kind === 'source'
         ? `src/web/${name}.${extension}` : `lib/module/web/${name}.js`);
     const parser = await import(/* @vite-ignore */ file('parseMarkdown')) as { preloadMarkdownRuntime(): Promise<void> };
