@@ -18148,7 +18148,7 @@ settingsSession: {
       rekeyBody: "Sostituirlo ora bloccherebbe questi backup. Happier può tenere il nuovo valore come segreto separato per loro, spostarvi ogni backup e poi sostituire questo.",
       rekeyOtherBackups: "Lo usano anche backup che non puoi aprire. I loro proprietari devono ricifrarli prima che questo segreto possa cambiare.",
       rekeyRoleRepository: "Password di backup",
-      rekeyRoleUnknown: "Backup",
+      rekeyRoleUnknown: "Copia di sicurezza",
       rekeyAction: "Ricifra i backup",
       rekeyRetry: "Riprova",
       rekeyWaiting: "In attesa",

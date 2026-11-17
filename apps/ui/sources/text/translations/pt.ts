@@ -18252,7 +18252,7 @@ settingsSession: {
       rekeyBody: "Substituí-lo agora bloquearia estes backups. O Happier pode guardar o novo valor como um segredo separado para eles, mover cada backup para ele e depois substituir este.",
       rekeyOtherBackups: "Backups que você não pode abrir também o usam. Os donos precisam recriptografá-los antes que este segredo possa mudar.",
       rekeyRoleRepository: "Senha do backup",
-      rekeyRoleUnknown: "Backup",
+      rekeyRoleUnknown: "Cópia de segurança",
       rekeyAction: "Recriptografar backups",
       rekeyRetry: "Tentar novamente",
       rekeyWaiting: "Aguardando",

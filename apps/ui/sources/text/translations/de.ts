@@ -17956,7 +17956,7 @@ settingsSession: {
             rekeyBody: "Wenn du es jetzt ersetzt, werden diese Backups gesperrt. Happier kann den neuen Wert als separates Secret für sie behalten, jedes Backup darauf umstellen und dann dieses ersetzen.",
             rekeyOtherBackups: "Auch Backups, die du nicht öffnen kannst, verwenden es. Deren Besitzer müssen sie neu verschlüsseln, bevor sich dieses Secret ändern kann.",
             rekeyRoleRepository: "Backup-Passwort",
-            rekeyRoleUnknown: "Backup",
+            rekeyRoleUnknown: "Sicherung",
             rekeyAction: "Backups neu verschlüsseln",
             rekeyRetry: "Erneut versuchen",
             rekeyWaiting: "Wartet",
