@@ -107,7 +107,8 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
 }>): Promise<unknown> {
     assertContext(params.context);
     const input = ReviewCommentActionInputSchemasV1[params.actionId].parse(params.input);
-    if (params.context.resource ? input.reviewId !== params.context.resource.reviewId : input.reviewId !== undefined) {
+    const reviewId = 'reviewId' in input ? input.reviewId : undefined;
+    if (params.context.resource ? reviewId !== params.context.resource.reviewId : reviewId !== undefined) {
         fail('review_comment_content_binding_mismatch');
     }
     if (params.actionId === 'reviews.comments.get') {
