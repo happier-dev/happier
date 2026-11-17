@@ -54,23 +54,26 @@ it.skipIf(process.platform !== 'linux')('L12.hostAdmission releases a host when 
   let writer: FileHandle | undefined;
   let statePath: string | undefined;
   let originalState: Buffer | undefined;
-  const findHost = async () => {
+  const findHost = async (sessionId: string) => {
     await waitFor(async () => {
-      for (const pid of collectDescendantPids(machine.daemon.state.pid)) {
-        const argv = await readFile(`/proc/${pid}/cmdline`, 'utf8').catch(() => '');
-        if (argv.split('\0').includes('session-host')) { hostPid = pid; return true; }
+      // The launch supervisor carries the same argv. Session metadata names
+      // the actual host, whose descriptors this admission probe must observe.
+      const { hostPid: publishedHostPid } = await owner.readSessionMetadata(sessionId);
+      if (typeof publishedHostPid === 'number' && collectDescendantPids(machine.daemon.state.pid).includes(publishedHostPid)) {
+        hostPid = publishedHostPid;
+        return true;
       }
       return false;
     }, { timeoutMs: 60_000, context: 'real daemon Session host' });
   };
   try {
-    await findHost();
+    await findHost(knownGood.sessionId);
     expect(await owner.execute('session.archive', { sessionId: knownGood.sessionId })).toMatchObject({ ok: true });
     await waitFor(() => !isProcessAlive(hostPid!), { context: 'known-good Session archive releases its host' });
     expect(isProcessAlive(machine.daemon.state.pid)).toBe(true);
     const session = await fixture.assertKnownGoodSessionControl(owner, machine);
     hostPid = undefined;
-    await findHost();
+    await findHost(session.sessionId);
     const existingSockets = new Set((await descriptorLinks(hostPid!)).filter(link => link.startsWith('socket:[')));
     const candidates = resolveDaemonStateCandidatePaths({ serverDir: join(machine.homeDir, 'servers', machine.cliServerId) });
     for (const candidate of candidates) {

@@ -50,10 +50,11 @@ it.each(['claude', 'codex'] as const)('generates comparison outputs with explici
     ui = await connectUiPersonActionClient({ serverUrl: fixture.server.baseUrl, accountSecret: account.auth.accountSigningSeed });
     await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machine.target.machineId), { timeoutMs: 60_000 });
     const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: ui.serverId,
+      executionRunTargetMachineId: machine.target.machineId,
       actionCaller: { kind: 'host' as const }, externalActionTarget: { kind: 'machine' as const,
         machineId: machine.target.machineId, project: { machineId: machine.target.machineId, directory: workspace } } };
     const started = await ui.execute('scm.diffSummary.generate', { cwd: workspace, source: { kind: 'workingTree' },
-      modelSelector: { backendTargetKey: `backend:${agentId}`, modelId: agentId === 'codex' ? 'gpt-5.4' : 'claude-sonnet-4-5',
+      modelSelector: { backendTargetKey: `backend:${agentId}`, modelId: agentId === 'codex' ? 'gpt-5.4' : 'claude-sonnet-4-6',
         sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: { reasoning_effort: { updatedAt: 1, value: 'low' } } } },
       outputs: ['summary', 'walkthrough', 'commitPlan'], cachePolicy: { mode: 'bypass' } }, context);
     expect(started, JSON.stringify(started)).toMatchObject({ ok: true });

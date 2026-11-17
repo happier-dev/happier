@@ -49,6 +49,7 @@ if (argv.includes('--help') || argv.includes('-h')) {
     '  --output-format <format>',
     '  --input-format <format>',
     '  --permission-mode <mode>',
+    '  --effort <level>',
     '',
   ].join('\n'));
   process.exit(0);
