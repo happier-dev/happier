@@ -1278,10 +1278,11 @@ describe('authenticated finite Project Action owner', () => {
         });
         const rowPost = h.post.getMockImplementation()!;
         let revoked = false;
+        let retireOnProjectRowRead = change === 'revoked';
         h.post.mockImplementation(async (url, body, options) => {
             if (!String(url).endsWith('/verify')) {
                 const response = await rowPost(url, body, options);
-                if (actionId === 'projects.inspect' && String(url).includes('/project-rows/') && change !== 'current') {
+                if (actionId === 'projects.inspect' && String(url).includes('/project-rows/') && retireOnProjectRowRead) {
                     if (change === 'revoked') revoked = true;
                     else if (change === 'disconnect') await channel.disconnect();
                     else await channel.push('bob', { mode: 'e2ee', version: 2, updatedAt: 2,
@@ -1388,16 +1389,20 @@ describe('authenticated finite Project Action owner', () => {
                 const read = async () => client.createProjectDefinitionAction('home', await createInspectionIngress())({
                     actionId, input: { workspace: h.address }, context: { serverId: 'home' } });
                 if (change !== 'current' && change !== 'revoked') {
-                    expect(ProjectDefinitionInspectOutputSchema.parse(await read())).toMatchObject({
-                        setupReadiness: { kind: 'unknown' },
-                    });
+                    expect(ProjectDefinitionInspectOutputSchema.parse(await read())).toMatchObject({ setupReadiness: { kind: 'notRequired' } });
+                    retireOnProjectRowRead = true;
+                    const refused = ActionExecuteFailureSchema.parse(await read());
+                    expect(refused).toMatchObject({ ok: false, errorCode: 'project_workspace_unavailable' });
+                    expect(refused).not.toHaveProperty('effectiveDefinition');
                     expect(h.spawned).toEqual([]);
                     return;
                 }
                 if (change === 'revoked') {
                     expect(ProjectDefinitionInspectOutputSchema.parse(await read())).toMatchObject({ setupReadiness: { kind: 'notRequired' } });
                     h.post.mockClear();
-                    expect(ProjectDefinitionInspectOutputSchema.parse(await read())).toMatchObject({ setupReadiness: { kind: 'unknown' } });
+                    const refused = ActionExecuteFailureSchema.parse(await read());
+                    expect(refused).toMatchObject({ ok: false, errorCode: 'project_requester_credentials_unavailable' });
+                    expect(refused).not.toHaveProperty('effectiveDefinition');
                     expect(h.post.mock.calls.filter(([url]) => String(url).endsWith('/verify'))).toHaveLength(1);
                     expect(h.post.mock.calls.some(([url]) => String(url).includes('/project-rows/'))).toBe(false);
                     return;
@@ -1548,7 +1553,11 @@ describe('authenticated finite Project Action owner', () => {
             }
         }
         await admitted.dispose();
-        expect(await inspect()).toMatchObject({ setupReadiness: { kind: 'unknown', code: 'project_requester_credentials_unavailable' } });
+        h.post.mockClear();
+        const refused = ActionExecuteFailureSchema.parse(await inspect());
+        expect(refused).toMatchObject({ ok: false, errorCode: 'project_requester_credentials_unavailable' });
+        expect(refused).not.toHaveProperty('effectiveDefinition');
+        expect(h.post).not.toHaveBeenCalled();
         expect(h.spawned).toEqual([]);
     });
 
