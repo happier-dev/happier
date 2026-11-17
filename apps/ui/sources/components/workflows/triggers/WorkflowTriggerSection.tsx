@@ -50,6 +50,7 @@ import { useWorkflowTriggerEventOptions } from './useWorkflowTriggerEventOptions
 import { readWorkflowEventDraftSeed } from '../events/workflowEventFacts';
 import { describeLegacyTriggerSet } from './sessionTriggerGroups';
 import { WorkflowRunRoles, workflowUsedRoleIds } from '../run/WorkflowRunRoles';
+import type { WorkflowEditorReadable } from '../editor/workflowEditorDraftStore';
 import { useWorkflowRunVisibility } from '../run/useWorkflowRunVisibility';
 import {
     editWorkflowTriggerDraft,
@@ -86,6 +87,9 @@ const styles = StyleSheet.create((theme) => ({
     addNote: { ...Typography.variant('meta'), color: theme.colors.text.tertiary, flexShrink: 1, textAlign: 'right' },
 }));
 
+type WorkflowTriggerRoleDefinition = React.ComponentProps<typeof WorkflowRunRoles>['definition'];
+const subscribeToNoDefinition = () => () => {};
+
 export type WorkflowTriggerSectionProps = Readonly<{
     accountLifetime?: ServerAccountScopeLifetime | null;
     testIDPrefix: string;
@@ -104,7 +108,9 @@ export type WorkflowTriggerSectionProps = Readonly<{
     whereSummary: string | null;
     /** The workflow's declared inputs, each "Same for all triggers" on the set (03 §5.3). */
     inputs: readonly WorkflowInputDefinition[];
-    definition?: React.ComponentProps<typeof WorkflowRunRoles>['definition'];
+    definition?: WorkflowTriggerRoleDefinition;
+    /** The editor's existing draft source, consumed only by the set's Roles controls. */
+    definitionSource?: WorkflowEditorReadable<WorkflowTriggerRoleDefinition>;
     /** `card` (default): the When card's rows. `sentence`: the Sentence view's When clause (round 1116c). */
     presentation?: 'card' | 'sentence';
     /** A resource host ("Automate this…"): its own starts lead every start menu (Q5). */
@@ -515,7 +521,10 @@ function WorkflowTriggerSetRows(props: WorkflowTriggerSectionProps & Readonly<{
     const change = props.onChangeDraft;
     const setContext = (context: WorkflowTriggerSetContextDraft) => change(editWorkflowTriggerDraft(props.draft, { kind: 'setContext', context }));
     const constantInputs: Readonly<Record<string, JsonValue>> = props.draft.context?.inputs ?? props.set?.context?.inputs ?? {};
-    const roleIds = React.useMemo(() => props.definition ? workflowUsedRoleIds(props.definition) : [], [props.definition]);
+    const readDefinition = () => props.definitionSource?.get() ?? props.definition;
+    const definition = React.useSyncExternalStore(props.definitionSource?.subscribe ?? subscribeToNoDefinition,
+        readDefinition, readDefinition);
+    const roleIds = React.useMemo(() => definition ? workflowUsedRoleIds(definition) : [], [definition]);
     const overrides = props.draft.context?.roleOverrides ?? props.set?.context?.roleOverrides ?? [];
     const [rolesOpen, setRolesOpen] = React.useState(false);
     const visibleTeamId = props.draft.context?.visibleTeamId === undefined ? props.set?.context?.visibleTeamId : props.draft.context.visibleTeamId;
@@ -546,13 +555,13 @@ function WorkflowTriggerSetRows(props: WorkflowTriggerSectionProps & Readonly<{
                     }}
                 />
             ))}
-            {roleIds.length > 0 && props.definition ? <>
+            {roleIds.length > 0 && definition ? <>
                 <Item testID={rolesTestID} title={t('workflows.triggers.editor.roles')}
                     subtitle={t('workflows.triggers.editor.sameForAllTriggers')}
                     detail={overrides.length > 0 ? t('workflows.triggers.editor.rolesChanged', { count: overrides.length })
                         : t('workflows.start.rolesYour')}
                     onPress={() => setRolesOpen(open => !open)} />
-                {rolesOpen ? <WorkflowRunRoles definition={props.definition} roleIds={roleIds} overrides={overrides}
+                {rolesOpen ? <WorkflowRunRoles definition={definition} roleIds={roleIds} overrides={overrides}
                     onChange={(roleOverrides) => setContext({ roleOverrides })} pending={false} prefix={rolesTestID}
                     serverId={props.accountLifetime?.scope.serverId} machineId={props.runsOn?.machineId ?? null}
                     directory={props.runsOn?.directory ?? null} /> : null}

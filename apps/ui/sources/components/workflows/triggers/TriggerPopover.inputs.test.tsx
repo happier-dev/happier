@@ -594,10 +594,13 @@ describe('Run a workflow trigger inputs', () => {
             roles: [{ roleId: 'portable_builder', name: 'Builder', instructions: 'Build carefully', runsAs: { kind: 'session' } }],
             inputs: [{ name: 'release', valueType: 'string', required: false }],
         });
+        const { createWorkflowEditorReadable } = await import('../editor/workflowEditorDraftStore');
+        const definitionSource = createWorkflowEditorReadable(definition);
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="roles-workflow" set={null}
             draft={{ adds: [{ clientId: 'daily', trigger: DAILY_TRIGGER }], updates: {}, removes: [] }} onChangeDraft={vi.fn()}
             status="ready" onRetry={vi.fn()}
-            stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={definition.inputs} {...{ definition }} />);
+            stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={definition.inputs}
+            {...(used ? { definitionSource } : { definition })} />);
         const roles = screen.findByTestId('roles-workflow-trigger-roles');
         if (!used) {
             expect(roles).toBeNull();
@@ -610,6 +613,11 @@ describe('Run a workflow trigger inputs', () => {
         await vi.waitFor(() => expect(screen.findByTestId('roles-workflow-trigger-roles-role-portable_builder-target:background_run')).not.toBeNull());
         expect(screen.findByProps({ accessibilityLabel: 'workflows.triggers.popover.at', value: '09:00' })).toBeTruthy();
         expect(screen.findByTestId('roles-workflow-trigger-input-release')).not.toBeNull();
+        await act(async () => { definitionSource.set({ ...definition, defaults: {} }); });
+        expect(screen.findByTestId('roles-workflow-trigger-roles')).toBeNull();
+        expect(screen.findByTestId('roles-workflow-trigger-input-release')).not.toBeNull();
+        await act(async () => { definitionSource.set(definition); });
+        expect(screen.findByTestId('roles-workflow-trigger-roles')).not.toBeNull();
     });
     it('Add a trigger searches built-in starts and the Machine\'s plugin Events; a picked Event shows its own rows', async () => {
         const { DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');

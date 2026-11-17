@@ -221,14 +221,13 @@ const NO_WORKFLOW_INPUTS: WorkflowEditorDraft['inputs'] = [];
 const NO_HIGHLIGHTED_BLOCKS: readonly string[] = [];
 const identityDraft = <T,>(value: T): T => value;
 
-/** Read Roles beside the trigger controls without subscribing the editor host to step typing. */
-function WorkflowEditorTriggerSection(props: React.ComponentProps<typeof WorkflowTriggerSection> & Readonly<{
+/** Only the set's Roles controls subscribe to step edits; the trigger menu keeps its inputs. */
+const WorkflowEditorTriggerSection = React.memo(function WorkflowEditorTriggerSection(props: React.ComponentProps<typeof WorkflowTriggerSection> & Readonly<{
     draftStore: WorkflowEditorDraftStore;
 }>) {
     const { draftStore, ...section } = props;
-    const definition = useWorkflowEditorSelector(draftStore, identityDraft);
-    return <WorkflowTriggerSection {...section} definition={definition} />;
-}
+    return <WorkflowTriggerSection {...section} definitionSource={draftStore} />;
+});
 /** While the Run review is closed it keeps the draft it last showed. */
 const keepShownDraft = (): boolean => true;
 /** Equal content keeps the previous value (and identity). */
@@ -1848,6 +1847,18 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         handleImportJson();
     }, [handleImportJson, props.source]);
 
+    const onTriggerEditSeedApplied = useEventCallback<Parameters<NonNullable<React.ComponentProps<typeof WorkflowTriggerSection>['onEditSeedApplied']>>, void>((trigger, seed) => {
+        const current = snapshotRef.current;
+        if (current) snapshotRef.current = { ...current, triggers: triggers.captureSnapshot(undefined, {
+            triggerId: seed.triggerId, revision: seed.expectedTriggerRevision, trigger,
+        }) };
+    });
+    const onChangeTriggerDraft = useEventCallback((next: React.ComponentProps<typeof WorkflowTriggerSection>['draft']) => {
+        editMountedDraft({ expectedDraftRevision: history.getRevision(), settings: { triggers: triggers.captureSnapshot(next) } }, t('workflows.editor.history.triggers'));
+    });
+    const triggerIncomplete = React.useMemo(() => ({ state: triggers.incomplete, onChange: triggers.updateIncomplete }),
+        [triggers.incomplete, triggers.updateIncomplete]);
+
     // The private seed this editor opened belongs to another Account now. There
     // is no id to re-open it under this one and no honest way to keep showing
     // it, so the editor states that rather than presenting the previous
@@ -2041,30 +2052,22 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                         workflowDefinitionId: saved?.definitionId,
                         set: triggers.set,
                         draft: triggers.draft,
-                        onEditSeedApplied: (trigger: Parameters<NonNullable<React.ComponentProps<typeof WorkflowTriggerSection>['onEditSeedApplied']>>[0],
-                            seed: Parameters<NonNullable<React.ComponentProps<typeof WorkflowTriggerSection>['onEditSeedApplied']>>[1]) => {
-                            const current = snapshotRef.current;
-                            if (current) snapshotRef.current = { ...current, triggers: triggers.captureSnapshot(undefined, {
-                                triggerId: seed.triggerId, revision: seed.expectedTriggerRevision, trigger,
-                            }) };
-                        },
-                        onChangeDraft: (next: React.ComponentProps<typeof WorkflowTriggerSection>['draft']) => {
-                            editMountedDraft({ expectedDraftRevision: history.getRevision(), settings: { triggers: triggers.captureSnapshot(next) } }, t('workflows.editor.history.triggers'));
-                        },
+                        onEditSeedApplied: onTriggerEditSeedApplied,
+                        onChangeDraft: onChangeTriggerDraft,
                         status: triggers.status,
                         onRetry: triggers.retry,
                         whereTarget: projectTarget,
                         whereSummary: formatWorkflowWhereSummary({ target: projectTarget, machineName, machineHomeDir }),
                         inputs: triggerInputs,
                         stepsUnsaved: definitionDraftDirty,
-                        incomplete: { state: triggers.incomplete, onChange: triggers.updateIncomplete },
+                        incomplete: triggerIncomplete,
                     } satisfies React.ComponentProps<typeof WorkflowTriggerSection>;
                     return { onSave: saveFromUi, triggersSummary: triggers.summary,
                         onAddTriggerWhen: (when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => addWorkflowTriggerWhen({ draft: triggers.draft, when, seed,
                             onChangeDraft: section.onChangeDraft, updateIncomplete: triggers.updateIncomplete }),
                         resultDecides: formatTriggerResultDecides(projectWorkflowTriggerRows(triggers.set, triggers.draft).map((row) => row.trigger)),
                         triggersSection: <WorkflowEditorTriggerSection draftStore={bodyDraftStore} {...section} />,
-                        triggersSentence: <WorkflowTriggerSection {...section} presentation="sentence" /> };
+                        triggersSentence: <WorkflowEditorTriggerSection draftStore={bodyDraftStore} {...section} presentation="sentence" /> };
                 })() : {})}
                 savePending={savePending}
                 saveStatus={saveStatus}
