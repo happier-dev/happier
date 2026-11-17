@@ -6919,6 +6919,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           },
           startFailure: {
             title: '無法啟動此工作階段',
+            modelSelectionRequired: "此工作階段需要先選擇模型才能啟動。",
             cause: {
               agent_startup_rpc_rejected: "代理程式的原生 API 拒絕了啟動。",
               agent_startup_transport_failed: "代理程式啟動傳輸失敗。",

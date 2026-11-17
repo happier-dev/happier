@@ -8088,6 +8088,7 @@ export const zhHans: TranslationStructure = {
     startFailure: {
         requestId: ({ id }: { id: string }) => `请求 ID：${id}`,
       title: "无法启动此会话",
+      modelSelectionRequired: "此会话需要先选择模型才能启动。",
       cause: {
         agent_startup_rpc_rejected: "智能体的原生 API 拒绝了启动。",
         agent_startup_transport_failed: "智能体启动传输失败。",

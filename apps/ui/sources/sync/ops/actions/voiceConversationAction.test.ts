@@ -363,7 +363,7 @@ describe('generated OpenAI conversation Actions through the lifecycle owner', ()
             setVoiceSessionSnapshot(deriveLocalVoiceSessionSnapshot('local_conversation', 'local', voiceConversationRuntimeMachine.getSnapshot()));
             const result = await invoke('ui.voice_global.get', {});
             expect(result).toMatchObject({ status: 'completed', voice: { presentation: {
-                surfaceState: 'error', failureMessage: t('newSession.selectModelTitle'),
+                surfaceState: 'error', failureMessage: t('session.startFailure.modelSelectionRequired'),
             } } });
             expect(VoiceConversationActionOutputSchemas['ui.voice_global.get'].safeParse(result).success).toBe(true);
             expect(JSON.stringify(result)).not.toContain('PRIVATE_LAUNCH_BODY');

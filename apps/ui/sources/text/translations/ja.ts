@@ -8707,6 +8707,7 @@ localTailscale: {
     startFailure: {
         requestId: ({ id }: { id: string }) => `リクエスト ID: ${id}`,
       title: "このセッションを開始できませんでした",
+      modelSelectionRequired: "このセッションを開始するにはモデルが必要です。",
       cause: {
         agent_startup_rpc_rejected: "エージェントのネイティブ API が起動を拒否しました。",
         agent_startup_transport_failed: "エージェントの起動トランスポートが失敗しました。",

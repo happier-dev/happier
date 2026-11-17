@@ -8237,6 +8237,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     startFailure: {
         requestId: ({ id }: { id: string }) => `Identyfikator żądania: ${id}`,
       title: "Nie udało się uruchomić tej sesji",
+      modelSelectionRequired: "Ta sesja potrzebuje modelu, zanim będzie mogła się uruchomić.",
       cause: {
         agent_startup_rpc_rejected: "Natywne API agenta odrzuciło uruchomienie.",
         agent_startup_transport_failed: "Transport uruchamiania agenta nie powiódł się.",

@@ -8418,6 +8418,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         startFailure: {
             requestId: ({ id }: { id: string }) => `Anfrage-ID: ${id}`,
           title: 'Diese Session konnte nicht gestartet werden',
+          modelSelectionRequired: "Diese Session braucht ein Modell, bevor sie starten kann.",
           cause: {
             agent_startup_rpc_rejected: "Die native API des Agents hat den Start abgelehnt.",
             agent_startup_transport_failed: "Der Start-Transport des Agents ist fehlgeschlagen.",

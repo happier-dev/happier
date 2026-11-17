@@ -8241,6 +8241,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     startFailure: {
         requestId: ({ id }: { id: string }) => `Identifiant de requête : ${id}`,
       title: "Impossible de démarrer cette session",
+      modelSelectionRequired: "Cette session a besoin d’un modèle pour démarrer.",
       cause: {
         agent_startup_rpc_rejected: "L’API native de l’agent a rejeté le démarrage.",
         agent_startup_transport_failed: "Le transport de démarrage de l’agent a échoué.",

@@ -8626,6 +8626,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     startFailure: {
         requestId: ({ id }: { id: string }) => `ID richiesta: ${id}`,
       title: "Impossibile avviare questa sessione",
+      modelSelectionRequired: "Questa sessione ha bisogno di un modello per avviarsi.",
       cause: {
         agent_startup_rpc_rejected: "L’API nativa dell’agente ha rifiutato l’avvio.",
         agent_startup_transport_failed: "Il trasporto di avvio dell’agente non è riuscito.",

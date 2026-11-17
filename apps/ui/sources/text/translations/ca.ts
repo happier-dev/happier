@@ -7705,6 +7705,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         startFailure: {
           requestId: ({ id }: { id: string }) => `ID de la sol·licitud: ${id}`,
           title: 'No s’ha pogut iniciar aquesta sessió',
+          modelSelectionRequired: "Aquesta sessió necessita un model per poder iniciar-se.",
           cause: {
             agent_startup_rpc_rejected: "L’API nativa de l’agent ha rebutjat l’inici.",
             agent_startup_transport_failed: "El transport d’inici de l’agent ha fallat.",

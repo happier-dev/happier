@@ -108,7 +108,7 @@ function resolveSessionStartupFailureCause(
 ): string | null {
     if (code === 'database_transaction_timeout') return t('session.startFailure.cause.database_transaction_timeout');
     if (code === 'agent_startup_model_reconciliation_failed'
-        && failureCause?.failureReason === 'model_selection_required') return t('newSession.selectModelTitle');
+        && failureCause?.failureReason === 'model_selection_required') return t('session.startFailure.modelSelectionRequired');
     const nativeAuth = presentSessionAgentAuthRequired(issue);
     if (nativeAuth) return nativeAuth.message;
     const agentAvailability = readSessionAgentAvailabilityFailure(code);

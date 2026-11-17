@@ -2301,7 +2301,7 @@ describe('useVoiceAttemptControl capture and caption projection', () => {
   });
 
   it.each([
-    { reason: 'SPAWN_FAILED', copy: 'newSession.selectModelTitle', failureCause: {
+    { reason: 'SPAWN_FAILED', copy: 'session.startFailure.modelSelectionRequired', failureCause: {
       phase: 'client_start', failureReason: 'model_selection_required', code: 'agent_startup_model_reconciliation_failed' } },
     { reason: 'database_transaction_timeout', copy: 'session.startFailure.cause.database_transaction_timeout' },
     { reason: 'provider_response_invalid', copy: 'settingsVoice.local.machineErrors.provider_response_invalid' },

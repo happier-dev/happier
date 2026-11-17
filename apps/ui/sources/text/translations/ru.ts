@@ -8856,6 +8856,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
     startFailure: {
         requestId: ({ id }: { id: string }) => `ID запроса: ${id}`,
       title: "Не удалось запустить эту сессию",
+      modelSelectionRequired: "Этой сессии нужна модель, чтобы запуститься.",
       cause: {
         agent_startup_rpc_rejected: "Нативный API агента отклонил запуск.",
         agent_startup_transport_failed: "Сбой транспорта при запуске агента.",

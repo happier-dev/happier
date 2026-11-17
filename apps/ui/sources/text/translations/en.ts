@@ -9833,6 +9833,7 @@ const enSession = {
   startFailure: {
     requestId: ({ id }: { id: string }) => `Request ID: ${id}`,
     title: 'Couldn’t start this session',
+    modelSelectionRequired: "This session needs a model before it can start.",
     cause: {
       agent_startup_rpc_rejected: 'Agent startup was rejected by its native API.',
       agent_startup_transport_failed: 'Agent startup transport failed.',

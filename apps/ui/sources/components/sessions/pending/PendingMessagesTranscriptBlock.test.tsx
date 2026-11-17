@@ -357,7 +357,7 @@ describe('PendingMessagesTranscriptBlock', () => {
         const screen = await renderScreen(React.createElement(Component, { sessionId: 's1', pendingMessages: [], discardedMessages: [message] }));
         const renderedText = screen.findByTestId('pendingMessages.discarded.message:launch')?.findAll(node => String(node.type) === 'Text').flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
         expect(renderedText).toContain(t('session.pendingMessages.errors.sendFailed'));
-        expect(renderedText).toContain(t('newSession.selectModelTitle'));
+        expect(renderedText).toContain(t('session.startFailure.modelSelectionRequired'));
     });
 
     it.each([undefined, { kind: 'execution_run' as const, runId: 'run-a' }])('keeps main Pending presentation isolated from a Run row for recipient %j', async (recipient) => {

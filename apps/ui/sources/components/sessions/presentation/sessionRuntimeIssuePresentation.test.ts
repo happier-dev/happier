@@ -90,12 +90,14 @@ describe('closed startup-failure recovery copy', () => {
         const code = 'agent_startup_model_reconciliation_failed';
         const failure = issue({ code, source: 'agent_session_error',
             failureCause: { code, phase: 'client_start', failureReason: 'model_selection_required', retryable: false } });
-        expect(presentSessionRuntimeIssue(failure).message).toBe(t('newSession.selectModelTitle'));
+        // The cause says why it stopped; "Choose a model" stays the action's label, never repeated as the message.
+        expect(t('session.startFailure.modelSelectionRequired')).not.toBe(t('newSession.selectModelTitle'));
+        expect(presentSessionRuntimeIssue(failure).message).toBe(t('session.startFailure.modelSelectionRequired'));
         expect(resolveSessionStartFailureNotice({ issue: failure, sessionActive: false }))
-            .toMatchObject({ message: t('newSession.selectModelTitle'), retryable: false });
+            .toMatchObject({ message: t('session.startFailure.modelSelectionRequired'), retryable: false });
         const launch = { type: 'error' as const, code: 'spawn_failed' as const, retryable: false,
             launchError: { kind: 'launch_error' as const, code, message: 'Session launch failed', failureCause: failure.failureCause } };
-        expect(resolveSessionSpawnNewResultFailureMessage(launch)).toContain(t('newSession.selectModelTitle'));
+        expect(resolveSessionSpawnNewResultFailureMessage(launch)).toContain(t('session.startFailure.modelSelectionRequired'));
         expect(presentSessionRuntimeIssue({ ...failure, failureCause: { phase: 'client_start', failureReason: 'unknown' } }).message)
             .toBe(t('session.startFailure.cause.agent_startup_model_reconciliation_failed'));
     });

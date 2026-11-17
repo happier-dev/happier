@@ -8401,6 +8401,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     startFailure: {
         requestId: ({ id }: { id: string }) => `ID de solicitud: ${id}`,
       title: "No se pudo iniciar esta sesión",
+      modelSelectionRequired: "Esta sesión necesita un modelo para poder iniciarse.",
       cause: {
         agent_startup_rpc_rejected: "La API nativa del agente rechazó el inicio.",
         agent_startup_transport_failed: "Falló el transporte de inicio del agente.",
