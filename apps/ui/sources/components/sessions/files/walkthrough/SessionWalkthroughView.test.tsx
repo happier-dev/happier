@@ -442,9 +442,9 @@ describe('SessionWalkthroughView retained offline reading through real Account m
         let input!: Record<string, unknown>;
         let chooseEngine!: (engine: string) => void;
         function ReviewOptions(props: React.ComponentProps<typeof SessionWalkthroughView>) {
-            const [actionInput, setActionInput] = React.useState<Record<string, unknown>>({ reviewers: [{ kind: 'engine', engineId: 'codex' }] });
+            const [actionInput, setActionInput] = React.useState<Record<string, unknown>>({ engineIds: ['codex'] });
             input = actionInput;
-            chooseEngine = engine => setActionInput(previous => ({ ...previous, reviewers: [{ kind: 'engine', engineId: engine }] }));
+            chooseEngine = engine => setActionInput(previous => ({ ...previous, engineIds: [engine] }));
             launcher = useExecutionRunLaunchContext(props.sessionId, props.serverId ?? null);
             const { state } = useMachineCapabilitiesCache({ machineId: launcher.machineId, enabled: Boolean(launcher.machineId),
                 ...(props.serverId ? { serverId: props.serverId } : {}), request: { requests: [{ id: 'tool.executionRuns' }] } });
@@ -489,7 +489,7 @@ describe('SessionWalkthroughView retained offline reading through real Account m
                 : null);
             const modelId = `served-${agentId}`;
             await act(async () => picker().props.onSelect({ agentTargetKey: picker().props.agentTargetKey, providerConnectionId: null, modelId }));
-            expect((input.reviewers as Array<{ modelSelection?: unknown }>)[0]?.modelSelection).toMatchObject({ modelId, agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: agentId }) });
+            expect(input.modelSelection).toMatchObject({ modelId, agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: agentId }) });
             await act(async () => picker().props.onSelect(null));
             expect(input).not.toHaveProperty('modelSelection');
             expect(input).not.toHaveProperty('childSelection');
