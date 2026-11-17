@@ -8,6 +8,8 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 /** Labels for existing local decisions, never credentials or another admission check. */
 export const REQUESTER_CURRENTNESS_REFUSAL_BRANCHES = [
   'local_abort_signal', 'installation_custody', 'observed_account_encryption_currentness', 'currentness_exception',
+  // The admitted carrier declined a purpose it cannot spend.
+  'forwarded_child_purpose', 'native_incumbent_source',
 ] as const;
 export type RequesterCurrentnessRefusalBranch = typeof REQUESTER_CURRENTNESS_REFUSAL_BRANCHES[number];
 const currentnessRefusal = new AsyncLocalStorage<{ branch?: RequesterCurrentnessRefusalBranch }>();

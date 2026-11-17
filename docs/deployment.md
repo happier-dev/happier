@@ -65,7 +65,14 @@ the existing host-reviewed read child. Its signed `environmentId` must match the
 child's Action input digest. The shared preparation scope opens only that
 Environment's metadata, owned content and Machine codec reads while the root
 deployment runs. Source and Artifact access remain with their resource owners;
-the reference does not inherit the root receipt's content custody. Matching
+the reference does not inherit the root receipt's content custody. Member
+activation always runs as a forwarded `member` child (even on the controller's
+own Machine), so the member carrier signs this one reviewed read too: the child
+packet plus the `deployment.reference` proof, effect `deployments.environments.get`
+only. Home admits that pair solely through the same reference-purpose owner; any
+other reviewed child on a deployment child carrier stays refused
+(`deployment_child_http`), and the carrier records `forwarded_child_purpose`
+locally when it declines to sign. Matching
 Protocol, daemon and Home builds are required for this unpublished 0.3 proof
 projection; older strict development peers reject the added optional field.
 

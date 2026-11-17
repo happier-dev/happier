@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import { createPrepareDeploymentBindingsForHost } from '../../../../cli/src/deployments/secrets/prepareDeploymentBindingsForHost';
 import { admitRequesterAccountActionContext } from '../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createRequesterCurrentnessSocketHarness } from '../../../../cli/src/testkit/backends/requesterCurrentnessSocketHarness';
+import { captureRequesterCurrentnessRefusal } from '../../../../cli/src/daemon/sessionEncryption/requesterCurrentness';
 import { readOrCreateInstallationIdentity } from '../../../../cli/src/daemon/identity/store';
 import { openMachineSecretGrant, sealMachineSecretGrant } from '../../../../cli/src/deployments/secrets/machineSecretGrant';
 import { prepareEnvironmentSecretBindingsForLaunch } from '../../../../cli/src/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
@@ -1270,6 +1271,79 @@ describe('deployment children retain their controller Action authority', () => {
                         headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } })).statusCode;
                 } });
             expect(settled).toBe(401);
+        }, { authentication: 'real' });
+    });
+
+    it('admits a member activation saved-reference read over its forwarded child carrier', async () => {
+        // DB-MOVE activate (COR3-170 #170e): every member activation runs as a
+        // forwarded child, so A's runtime binding reads B's export there.
+        const f = await fixture('account', 'account', { readableEnvironment: true });
+        const reference = await db.deploymentEnvironment.create({ data: {
+            projectSourceId: f.environment.projectSourceId, createdByAccountId: f.account.id,
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: f.controller.id,
+            ...await f.content('deployment-environment.v1'),
+        } });
+        const foreign = await fixture('account', 'account', { readableEnvironment: true });
+        const target = f.authorization.binding.target;
+        const packet = f.rpc();
+        const member = await projectExternalActionRequesterHttpAuthorization({ authorization: f.authorization,
+            serverId, serverIdentityId: serverId, serverHttpBaseUrl: 'http://home.test', target,
+            installationId: f.member.installationId, privateKey: f.member.keys.secretKey, rootAdmitted: true,
+            forwardedMove: { credentials: { token: 'unused-member-bearer', encryption: null }, isCurrent: async () => true },
+            forwardedDeploymentChild: f.job, deploymentChildExecution: packet });
+        if (!member?.requesterHttpProjection) throw new Error('Expected the forwarded member HTTP projection');
+        const action = 'deployments.environments.get';
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); machinesRoutes(app); registerAccountEncryptionRoutes(app); }, async app => {
+            const get = (path: string, headers: Readonly<Record<string, string>>) => app.inject({ method: 'GET', url: path,
+                headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers } });
+            const readReference = (environment: { id: string; contentArtifactId: string | null }, childInput = { serverId, environmentId: environment.id }) => invokeHostReviewedChildV1({
+                parent: { actionId: 'deployments.deploy', input: f.input },
+                context: { runtimeAccountId: f.account.id, externalActionTarget: target,
+                    externalActionExecutionAuthorization: member, surface: 'cli' },
+                child: { action, role: 'deployment.reference', input: childInput },
+                admittedReview: { action, role: 'deployment.reference', surface: 'cli' }, environmentId: environment.id,
+                execute: async (_input, context) => {
+                    const responses = [];
+                    for (const path of [`/v1/deployments/environments/${environment.id}?serverId=${serverId}`,
+                        `/v1/artifacts/${environment.contentArtifactId}`, `/v1/machines/${f.controller.id}`,
+                        '/v1/account/encryption/currentness']) {
+                        // createDaemonDeploymentActionDeps signs member storage reads with the child Action.
+                        const headers = await context.externalActionExecutionAuthorization!.requesterHttpProjection!.createRequestHeaders({
+                            effectActionId: f.job.actionId, method: 'GET', path });
+                        if (!headers) throw new Error(`Expected a signed member reference read: ${path}`);
+                        responses.push(await get(path, headers));
+                    }
+                    return responses;
+                } });
+            const own = await readReference(reference);
+            if (!Array.isArray(own)) throw new Error('Expected reference read results');
+            expect(own.map(response => response.statusCode), own.map(response => response.body).join('\n')).toEqual([200, 200, 200, 200]);
+            // Another Account's Environment stays refused by Home's purpose and resource owners.
+            const refused = await readReference(foreign.environment);
+            if (!Array.isArray(refused)) throw new Error('Expected reference read results');
+            for (const response of refused.slice(0, 2)) {
+                expect([401, 403, 404], response.body).toContain(response.statusCode);
+                expect(response.json()).not.toHaveProperty('environment');
+                expect(response.json()).not.toHaveProperty('artifact');
+            }
+            // A child that names one Environment and digests another is refused by the purpose owner.
+            const mismatched = await readReference(reference, { serverId, environmentId: f.environment.id });
+            if (!Array.isArray(mismatched)) throw new Error('Expected reference read results');
+            expect(mismatched[0]!.statusCode).toBe(401);
+            expect(mismatched[0]!.json()).toMatchObject({ authorizationRefusal: 'verification_purpose' });
+            // The reference child spends only the Environment read effect: the
+            // member carrier refuses to sign another effect, and Home refuses it too.
+            const path = `/v1/deployments/environments/${reference.id}?serverId=${serverId}`;
+            const reviewedChild = { actionId: action, role: 'deployment.reference', environmentId: reference.id,
+                inputDigest: computeActionInputApprovalDigestV1(action, { serverId, environmentId: reference.id }) };
+            const forged = await captureRequesterCurrentnessRefusal(() => member.requesterHttpProjection!.createRequestHeaders({
+                effectActionId: f.job.actionId, method: 'GET', path, reviewedChild }));
+            expect(forged).toEqual({ value: null, branch: 'forwarded_child_purpose' });
+            const forgedAtHome = await get(path, createExternalActionAuthorizedRequestHeaders({ authorization: f.authorization,
+                effectActionId: f.job.actionId, target, installationId: f.member.installationId, method: 'GET', path,
+                reviewedChild, deploymentChildExecution: packet, privateKey: f.member.keys.secretKey }));
+            expect(forgedAtHome.statusCode).toBe(401);
+            expect(forgedAtHome.json()).toMatchObject({ authorizationRefusal: 'deployment_child_http' });
         }, { authentication: 'real' });
     });
 

@@ -24,7 +24,8 @@ import { ExternalActionMachineNpmProfileAdmissionResponseV1Schema } from '@happi
 import type { MachineNpmProfileAdmissionResponseV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { observeManagedChildApprovalExecution } from './managedChildApproval';
 import { readDeploymentTargetRetentionMachineIds } from '@/deployments/targetEnablementRetention';
-import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
+  DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import { PROJECT_SETUP_SET_ACTION_ID_V1, readProjectSetupSetChildRpcEffectV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ProjectSetupSetInputV1Schema, isProjectSetupSetChildInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
@@ -1671,23 +1672,35 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
     isCurrent,
     createRequestHeaders: async (request) => {
       if (request.nativeIncumbentSource && (input.forwardedDeploymentChild?.kind !== 'review'
-        || request.method !== 'GET' || request.body !== undefined)) return null;
+        || request.method !== 'GET' || request.body !== undefined)) {
+        recordRequesterCurrentnessRefusal('native_incumbent_source');
+        return null;
+      }
       if (input.forwardedDeploymentChild) {
         const child = input.forwardedDeploymentChild;
         const packet = input.deploymentChildExecution;
         const domainController = child.kind === 'domain' && input.installationId === authorization.binding.installationId;
         const childReceiver = input.forwardedMove && child.installationId === input.installationId;
+        // Member activation renders saved references, so it also signs that one
+        // reviewed Environment read; Home's reference-purpose owner decides it.
+        const reference = request.reviewedChild?.role === DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 ? request.reviewedChild : undefined;
+        const referenceRead = reference !== undefined && child.kind === 'member'
+          && reference.actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 && request.effectActionId === reference.actionId;
         if ((!domainController && !childReceiver) || !packet || child.actionId !== deploymentChildEffectActionIdForRootV1(
           authorization.binding.actionId, authorization.binding.deploymentPreparationAdmission, child.actionId)
-          || request.effectActionId !== child.actionId) return null;
+          || (reference ? !referenceRead : request.effectActionId !== child.actionId)) {
+          recordRequesterCurrentnessRefusal('forwarded_child_purpose');
+          return null;
+        }
         // Home's child-purpose owner admits or refuses this exact address. The
         // backing Account custody is content material only: every scoped root
         // keeps its original grant in the signed child HTTP proof.
         // The retained packet already binds its review; no second root proof is needed.
         return await locallyCurrent(request.signal) ? createExternalActionAuthorizedRequestHeaders({
-          authorization, effectActionId: child.actionId, target: input.target, installationId: input.installationId,
+          authorization, effectActionId: referenceRead ? reference.actionId : child.actionId, target: input.target,
+          installationId: input.installationId,
           privateKey: input.privateKey, method: request.method, path: request.path, body: request.body,
-          deploymentChildExecution: packet,
+          deploymentChildExecution: packet, ...(referenceRead ? { reviewedChild: reference } : {}),
           ...(request.nativeIncumbentSource ? { deploymentNativeIncumbentSource: request.nativeIncumbentSource } : {}),
         }) : null;
       }

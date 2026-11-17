@@ -66,6 +66,7 @@ import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployment
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
 import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
+import { captureRequesterCurrentnessRefusal } from '@/daemon/sessionEncryption/requesterCurrentness';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
 import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { buildAccountIdentitiesChangeV1, type ChangeEntry } from '@happier-dev/protocol/changes';
@@ -103,6 +104,9 @@ it.each(['plain', 'e2ee'] as const)('carries exact native incumbent custody thro
       target: f.root.binding.target, installationId: f.installed.installationId, requestId: f.root.binding.requestId,
       method: 'GET', path, deploymentChildExecution: proof ?? undefined,
       signature: headers?.['x-happier-action-machine-signature'] ?? '', publicKey: f.receiver.publicKey })).toBe(true);
+    // Incumbent custody rides only a bodyless review GET; any other request is a named local refusal.
+    expect(await captureRequesterCurrentnessRefusal(() => projection.createRequestHeaders({ ...request, method: 'POST', body: {} })))
+      .toEqual({ value: null, branch: 'native_incumbent_source' });
     f.setCurrent(false);
     const admittedHeaders = await projection.createRequestHeaders(request);
     expect(decodeDeploymentChildExecutionV1(admittedHeaders?.[EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER] ?? '',

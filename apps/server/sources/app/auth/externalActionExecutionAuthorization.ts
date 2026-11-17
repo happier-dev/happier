@@ -79,7 +79,7 @@ import { isDeploymentDomainDnsActionIdV1, isDeploymentEnvironmentMetadataReadAct
     isDeploymentDomainMetadataReadActionIdV1, isDeploymentReceiptReadActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
     isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
-    DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1,
+    DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1,
     DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema, DeploymentEnvironmentUpdateStorageInputV1Schema,
     DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/deployment-protocol';
@@ -1547,10 +1547,13 @@ async function verifyCommon(
     if (!effectActionId.success || !target) return refuseExternalActionExecutionRequest('proof_shape', proof);
 
     if (proof.deploymentChildExecution) {
-        if (proof.reviewedChild) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
         const packet = proof.deploymentChildExecution;
-        if (packet.externalActionExecution.authorization.token !== proof.authorizationToken) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
         const routing = packet.externalActionExecution.deploymentChildRouting;
+        // A member's activation renders saved references: it may carry only the
+        // reviewed reference read, which readDeploymentReferenceHttpPurpose decides below.
+        if (proof.reviewedChild && (routing?.kind !== 'member' || proof.reviewedChild.role !== DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1
+            || effectActionId.data !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1)) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
+        if (packet.externalActionExecution.authorization.token !== proof.authorizationToken) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
         const admittedReadReceiver = (routing?.kind === 'dataRole' || routing?.kind === 'domainDns') ? await db.machine.findUnique({ where: { id: routing.machineId }, select: {
             accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true } }) : null;
         // The installed receiver spends the source-signed admitted packet. Its
@@ -1580,6 +1583,7 @@ async function verifyCommon(
                 authorizationToken: proof.authorizationToken, effectActionId: effectActionId.data, target, installationId,
                 requestId: verified.binding.requestId, method: proof.method, path: proof.path, body: proof.body,
                 deploymentChildExecution: packet, ...(proof.idempotencyKey === undefined ? {} : { idempotencyKey: proof.idempotencyKey }),
+                ...(proof.reviewedChild ? { reviewedChild: proof.reviewedChild } : {}),
                 publicKey, signature: proof.machineSignature });
         let signer = { machineId: routing.machineId, installationId: routing.installationId, custodianAccountId: receiver.accountId };
         if (!admittedReadContinuation && !verifySignature(routing.installationId, receiver.installationPublicKey)) {
@@ -1605,6 +1609,7 @@ async function verifyCommon(
             }
         }
         const childPurpose = await readSignedChildPurpose(verified.binding, effectActionId.data, target, proof);
+        if (proof.reviewedChild && childPurpose.deploymentReferenceRead !== true) return refuseExternalActionExecutionRequest('verification_purpose', proof);
         const preparationRead = childPurpose.deploymentReferenceRead === null
             ? await readDeploymentPreparationHttpReadPurpose(db, verified.binding, effectActionId.data, proof,
                 actionId => isAccountActionHttpOperation(actionId, proof)) : null;
