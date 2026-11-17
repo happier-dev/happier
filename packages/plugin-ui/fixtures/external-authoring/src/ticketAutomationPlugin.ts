@@ -1,6 +1,6 @@
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginSubjectKindListInputV1Schema, type PluginSubjectKindListInputV1 } from '@happier-dev/plugin-sdk/automations';
-import { admitCheckpointedPluginEventObservationV1 } from '@happier-dev/plugin-sdk/events';
+import { admitCheckpointedPluginEventObservationV1, createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
 import {
   defineProtocolArray,
   defineProtocolLiteral,
@@ -54,6 +54,7 @@ export function createExternalTicketContributions(pluginId: string) {
       'watch-tickets': {
         title: 'Watch tickets', surfaces: ['plugin', 'ui', 'cli'], execution: { target: 'daemon' }, readOnly: true,
         inputSchema: externalTicketIdentitySchema,
+        resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, externalTicketIdentitySchema.jsonSchema),
         run: (input: ProtocolSchemaOutput<typeof externalTicketIdentitySchema>) => ({
           v: 1, sourceInstanceId: 'tickets', sourceContractVersion: 1, sourceConfig: input,
         }),
