@@ -188,7 +188,9 @@ describe('Session MCP Account routing', () => {
   });
 
   it('does not turn an implicit Session workspace into Machine-wide saved inventory authority', async () => {
-    const executor = createSessionAccountActionExecutor({ base: createRestrictedExecutor(), client: {
+    const executor = createSessionAccountActionExecutor({ base: createCliActionExecutor({
+      token: '', sessionId: 'caller-session', mode: 'plain', ctx: null, rawSession: { metadata: {} },
+    }), client: {
       sessionId: 'caller-session', getServerBinding: () => ({ serverId: 'home', serverUrl: 'https://home.test' }),
       rpcHandlerManager: { invokeLocal: async () => null, registerHandler() {} }, updateMetadata() {},
     } });

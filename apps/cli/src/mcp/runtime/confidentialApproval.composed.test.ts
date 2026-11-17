@@ -58,13 +58,6 @@ it.each([
     const text = response.content.find(block => block.type === 'text');
     if (text?.type !== 'text') throw new Error('Missing Action result');
     const result: unknown = JSON.parse(text.text);
-    // The Session MCP transport uses the Agent surface. Standalone MCP is not
-    // eligible for this Action; the fix must preserve catalog admission.
-    if (surface === 'mcp') {
-      expect(result).toMatchObject({ errorCode: 'action_disabled', details: { reason: 'unsupported_surface' } });
-      expect(artifacts.size).toBe(0);
-      return;
-    }
     const proposed = [...artifacts.values()][0];
     const admission = ApprovalRequestV2Schema.safeParse(proposed ? JSON.parse(String(proposed.body)) : null);
     const issues = admission.success ? [] : admission.error.issues.map(issue => ({ path: issue.path, code: issue.code }));

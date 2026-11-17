@@ -82,8 +82,9 @@ it('dispatches the selected custom profile through the existing MCP list/call ow
     const held = client.callTool({ name: 'echo', arguments: { hold: true },
       _meta: { 'happier/tool-source': 'selected' } }, undefined, { onprogress: () => started.resolve() });
     await started.promise;
+    const cancelled = expect(held).rejects.toMatchObject({ code: DOMException.ABORT_ERR });
     lifetime.abort();
-    expect((await held).structuredContent).toMatchObject({ ok: false, errorCode: 'tool_call_failed' });
+    await cancelled;
   } finally {
     await client.close();
     await mcp.close();

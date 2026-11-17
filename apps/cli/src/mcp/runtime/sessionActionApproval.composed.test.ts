@@ -33,6 +33,7 @@ it.each(['bound', 'foreign-owner', 'missing-witness'] as const)(
     // MCP, Action admission, RPC origin, question routing or request custody.
     const session = createMutableApiSessionClientFixture({
       sessionId: binding === 'foreign-owner' ? 'another-worker' : sessionId,
+      metadata: {},
       serverBinding: { serverId: 'c7-home', serverUrl: 'https://c7-home.test' },
       agentState: { requests: {}, completedRequests: {} },
       overrides: { readQuestionSessionSnapshot: async id => ({
@@ -105,6 +106,7 @@ it.each(['approve', 'deny', 'cancel', 'foreign', 'pending-deny'] as const)('sett
   const witness = { turnId: 'actionwait-turn',
     causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' as const } };
   const runtime = createHappierMcpServer({ sessionId, rpcHandlerManager: currentRpc.registrar, updateMetadata() {},
+    getMetadataSnapshot: () => ({}),
     getServerBinding: () => ({ serverId: 'actionwait-home', serverUrl: 'https://actionwait.test' }),
     getWorkDepth: () => 0, getHostTurnWorkDepth: () => 0,
     getActiveTurnPermissionWitness: () => witness,

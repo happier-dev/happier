@@ -44,7 +44,7 @@ const ACCOUNT_ACTIONS = [
 // called by the tool names the Agent sees. Both reach the same Account Action executor.
 const OWN_SESSION_TOOLS = (sessionId: string) => [
   { name: 'change_title', arguments: { title: 'Create teal.txt with blue' } },
-  { name: 'skills_read', arguments: { name: 'happier', sessionId } },
+  { name: 'action_execute', arguments: { actionId: 'skills.read', input: { name: 'happier', sessionId } } },
 ] as const;
 const CALL_COUNT = ACCOUNT_ACTIONS.length + OWN_SESSION_TOOLS('').length;
 
