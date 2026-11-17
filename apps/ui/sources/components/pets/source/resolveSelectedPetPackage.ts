@@ -4,10 +4,11 @@ import type { PetAssetMediaTypeV1} from '@happier-dev/protocol/pets/accountLibra
 import type { PetPackageSourceV1 } from '@happier-dev/protocol/pets/source';
 import type { PetAccountReferenceV1, PetDeviceOverrideV1 } from '@happier-dev/protocol/pets/selection';
 import type { LocalPetDaemonTarget } from '@/sync/domains/pets/localPetSourceTypes';
+import type { PetPackageManifestV1 } from '@happier-dev/protocol/pets/manifest';
 
 type PetEnabledOverride = 'inherit' | 'enabled' | 'disabled';
 
-export type SelectedPetPackageSource =
+export type SelectedPetPackageSource = (
     | Extract<PetPackageSourceV1, { kind: 'builtIn' }>
     | Readonly<{
         kind: 'accountPet';
@@ -29,7 +30,7 @@ export type SelectedPetPackageSource =
         mediaType?: PetAssetMediaTypeV1;
         digest?: string;
         daemonTarget?: LocalPetDaemonTarget;
-    }>;
+    }>) & Readonly<{ spriteVersionNumber?: PetPackageManifestV1['spriteVersionNumber'] }>;
 
 export type ResolveSelectedPetPackageInput = Readonly<{
     companionDecision: Pick<FeatureDecision, 'state'> | null;

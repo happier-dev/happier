@@ -10,7 +10,8 @@ import { storage, usePeripheralFeedDemand } from '@/sync/domains/state/storage';
 export type PetReferencePackageResult =
     | Readonly<{ status: 'pending' }>
     | Readonly<{ status: 'unavailable' }>
-    | Readonly<{ status: 'ready'; source: SelectedPetPackageSource; displayName: string; opaqueBounds: PetCellBoundsV1 | null }>;
+    | Readonly<{ status: 'ready'; source: SelectedPetPackageSource; displayName: string; opaqueBounds: PetCellBoundsV1 | null;
+        spriteVersionNumber: 1 | 2; hasNeutralLookCell: boolean }>;
 
 /** Faces consume feature decisions and library readiness, independent of companion preferences. */
 export function usePetReferencePackage(
@@ -34,6 +35,7 @@ export function usePetReferencePackage(
         const source: SelectedPetPackageSource | null = accountPet ? {
             kind: 'accountPet', accountPetId: accountPet.accountPetId, sourceKey: accountPet.accountPetId,
             mediaType: accountPet.spritesheetAssetRef.mediaType, digest: accountPet.spritesheetAssetRef.digest,
+            spriteVersionNumber: accountPet.manifest.spriteVersionNumber,
         } : null;
         const lookup = resolvePetPackage({
             ref: kind === 'builtIn' && petId ? { kind, petId } : accountPetId ? { kind: 'accountPet', accountPetId } : null,
@@ -45,6 +47,8 @@ export function usePetReferencePackage(
         const builtIn = lookup.source.kind === 'builtIn' ? resolveBuiltInPetPackage(lookup.source.petId) : null;
         return { status: 'ready', source: lookup.source,
             displayName: builtIn?.manifest.displayName ?? accountPet?.manifest.displayName ?? '',
-            opaqueBounds: builtIn?.opaqueBounds ?? accountPet?.opaqueBounds ?? null };
+            opaqueBounds: builtIn?.opaqueBounds ?? accountPet?.opaqueBounds ?? null,
+            spriteVersionNumber: accountPet?.manifest.spriteVersionNumber ?? 1,
+            hasNeutralLookCell: accountPet?.hasNeutralLookCell === true };
     }, [enabled, kind, petId, accountPetId, companionDecision, syncDecision, accountPet, accountPetsStatus]);
 }

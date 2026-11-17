@@ -31,7 +31,7 @@ import { PetCompanionState } from '@/components/pets/render/PetCompanionState';
 import { resolvePetCompanionOverlayMetrics } from '@/components/pets/render/petCompanionDisplayMetrics';
 import { PetSprite } from '@/components/pets/render/PetSprite.native';
 import { usePetAnimatedFrame } from '@/components/pets/render/usePetAnimatedFrame';
-import { usePetSpritesheetSource } from '@/components/pets/render/usePetSpritesheetSource';
+import { usePetSpritesheetSourceResult, type PetSpritesheetSourceResult } from '@/components/pets/render/usePetSpritesheetSource';
 import { useSelectedPetPackage } from '@/components/pets/source/useSelectedPetPackage';
 import { PetCompanionActivityTray } from '@/components/pets/tray/PetCompanionActivityTray';
 import {
@@ -96,7 +96,8 @@ const NativePetCompanionSprite = React.memo(function NativePetCompanionSprite(pr
     state: PetAnimationStateV1;
     reducedMotion: boolean;
     hostViewed: boolean;
-    spritesheetSource: ReturnType<typeof usePetSpritesheetSource>;
+    spritesheetSource: PetSpritesheetSourceResult['source'];
+    spriteVersionNumber?: 1 | 2;
     scale: number;
 }>): React.ReactElement {
     const frame = usePetAnimatedFrame({
@@ -109,6 +110,7 @@ const NativePetCompanionSprite = React.memo(function NativePetCompanionSprite(pr
             testID="pet-app-shell-companion-sprite"
             frame={frame}
             spritesheetSource={props.spritesheetSource}
+            spriteVersionNumber={props.spriteVersionNumber}
             scale={props.scale}
         />
     );
@@ -133,7 +135,7 @@ function NativePetCompanionLayer({
     // on frame 0 for the whole of a cold start.
     const hostViewed = useHostActivelyViewed();
     const noDragRegions = useCompanionNoDragRegions();
-    const spritesheetSource = usePetSpritesheetSource(selectedPetPackage.source, DEFAULT_BUILT_IN_PET_ID);
+    const spritesheet = usePetSpritesheetSourceResult(selectedPetPackage.source, DEFAULT_BUILT_IN_PET_ID);
     const { reactionState, triggerTapReaction } = useTapReactionState();
     const metrics = React.useMemo(
         () => resolvePetCompanionOverlayMetrics(petsCompanionSizeScale),
@@ -274,7 +276,8 @@ function NativePetCompanionLayer({
                             state={effectiveState}
                             reducedMotion={reducedMotion}
                             hostViewed={hostViewed}
-                            spritesheetSource={spritesheetSource}
+                            spritesheetSource={spritesheet.source}
+                            spriteVersionNumber={spritesheet.spriteVersionNumber}
                             scale={metrics.scale}
                         />
                     </Pressable>

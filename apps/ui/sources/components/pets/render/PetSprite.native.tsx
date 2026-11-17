@@ -11,7 +11,7 @@ import {
 } from '@shopify/react-native-skia';
 import type { ImageProps } from 'expo-image';
 
-import { PET_ATLAS_V1 } from '@happier-dev/protocol/pets/constants';
+import { PET_ATLAS_V1, PET_ATLAS_V2 } from '@happier-dev/protocol/pets/constants';
 
 import type { ResolvedPetAnimationFrame } from '@/components/pets/contract/resolvePetAnimationFrame';
 
@@ -25,6 +25,7 @@ type NativeSkiaDataSource = string | number | Uint8Array | null | undefined;
 export type PetSpriteProps = Readonly<{
     frame: ResolvedPetAnimationFrame;
     spritesheetSource?: ImageProps['source'];
+    spriteVersionNumber?: 1 | 2;
     scale?: number;
     testID?: string;
     style?: StyleProp<ViewStyle>;
@@ -50,6 +51,7 @@ function resolveSkiaDataSource(source: ImageProps['source'] | undefined): Native
 }
 
 export function PetSprite(props: PetSpriteProps): React.ReactElement {
+    const atlas = props.spriteVersionNumber === 2 ? PET_ATLAS_V2 : PET_ATLAS_V1;
     const scale = resolveScale(props.scale);
     const width = props.frame.cellWidth * scale;
     const height = props.frame.cellHeight * scale;
@@ -77,8 +79,8 @@ export function PetSprite(props: PetSpriteProps): React.ReactElement {
                             image={image}
                             x={-(props.frame.frame * props.frame.cellWidth * scale)}
                             y={-(props.frame.row * props.frame.cellHeight * scale)}
-                            width={PET_ATLAS_V1.width * scale}
-                            height={PET_ATLAS_V1.height * scale}
+                            width={atlas.width * scale}
+                            height={atlas.height * scale}
                             sampling={NEAREST_NEIGHBOR_SAMPLING}
                         />
                     </Group>

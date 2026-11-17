@@ -1,5 +1,5 @@
 import { inspectPetAtlasRgbaPixelsV1 } from '@happier-dev/protocol/pets/atlasPixelInspection';
-import { PET_ATLAS_V1 } from '@happier-dev/protocol/pets/constants';
+import { getPetAtlasForDimensionsV1 } from '@happier-dev/protocol/pets/constants';
 import type { PetAssetMediaTypeV1, PetPackageValidationIssueV1 } from '@happier-dev/protocol';
 
 export type PetAtlasValidationResult =
@@ -219,7 +219,7 @@ export async function validatePetAtlasBytes(input: Readonly<{
     return { ok: false, issues: [issue('spritesheet_invalid_media_type', 'Spritesheet must be PNG or WebP.')] };
   }
 
-  if (info.width !== PET_ATLAS_V1.width || info.height !== PET_ATLAS_V1.height) {
+  if (!getPetAtlasForDimensionsV1(info.width, info.height)) {
     return { ok: false, issues: [issue('spritesheet_invalid_dimensions', 'Spritesheet dimensions do not match the pet atlas contract.')] };
   }
   if (

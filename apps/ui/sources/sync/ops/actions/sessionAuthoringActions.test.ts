@@ -19,6 +19,11 @@ import {
   retirePresentationNotice,
 } from '@/components/sessions/presentation/presentationNotices';
 import { openSessionAuthoringAction } from './sessionAuthoringActions';
+import { useCreatePetSession } from '@/components/pets/useCreatePetSession';
+import { renderHook } from '@/dev/testkit';
+import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
+import { createNewSessionComposerDocumentOwner } from '@/components/sessions/composer/newSessionComposerDocumentOwner';
 
 const navigation = vi.hoisted(() => ({ push: vi.fn() }));
 // Navigation and the Home's HTTP are the boundaries; the Action front door, its persisted policy and the draft owner run for real.
@@ -68,6 +73,28 @@ const lifetime = () => {
 };
 
 describe('session.authoring.open: one owner reads and presents the result', () => {
+  it('opens Create pet on the last Machine at home with Codex and the included Hatch pet skill', async () => {
+    const machine = createMachineFixture({ id: 'pet-machine',
+      metadata: createMachineMetadataFixture({ platform: 'win32', homeDir: 'C:\\Users\\pet-maker' }) });
+    storage.setState(state => ({ machines: { [machine.id]: machine },
+      authoringMemory: { ...state.authoringMemory, recentMachinePaths: [{ machineId: machine.id, path: 'C:\\repo' }] } }));
+    const hook = await renderHook(() => useCreatePetSession());
+    try {
+      const outcome = await hook.getCurrent()();
+      expect(outcome.kind).toBe('opened');
+      if (outcome.kind !== 'opened') throw new Error(JSON.stringify(outcome));
+      const scope = lifetime().scope;
+      const draft = readNewSessionDraftFromRepository({ scope, draftId: outcome.draftId });
+      expect(draft).toMatchObject({ selectedMachineId: machine.id, selectedPath: 'C:\\Users\\pet-maker',
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        capabilitySelection: { skills: { forceIncludeSkillIds: ['happier:hatch-pet'] } } });
+      const document = createNewSessionComposerDocumentOwner({ scope,
+        ref: { kind: 'newSession', instanceId: outcome.draftId } }).read().document;
+      expect(document.text).toBe('');
+      expect(document.structuredInputMentions).toEqual([]);
+      expect(navigation.push).toHaveBeenCalledOnce();
+    } finally { await hook.unmount(); }
+  });
   it('opens New Session and shows nothing else when the Action is allowed', async () => {
     const outcome = await openSessionAuthoringAction(
       { seed: { prompt: 'Set this up' } },

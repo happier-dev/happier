@@ -1,4 +1,4 @@
-import { PET_ANIMATION_ROWS_V1, PET_ATLAS_V1 } from './constants.js';
+import { PET_ANIMATION_ROWS_V1, PET_ATLAS_V1, PET_ATLAS_V2, PET_LOOK_TRACK_V2, getPetAtlasForDimensionsV1 } from './constants.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
@@ -18,6 +18,7 @@ export type PetAtlasRgbaPixelInspectionV1 = Readonly<{
   hasVisibleUsedCells: boolean;
   hasTransparentUnusedCells: boolean;
   opaqueBounds: PetCellBoundsV1 | null;
+  hasNeutralLookCell?: boolean;
 }>;
 
 function cellKey(row: number, frame: number): string {
@@ -42,10 +43,12 @@ export function inspectPetAtlasRgbaPixelsV1(input: Readonly<{
   let minY: number = PET_ATLAS_V1.cellHeight;
   let maxX = -1;
   let maxY = -1;
+  const atlas = getPetAtlasForDimensionsV1(input.width, input.height);
+  const isV2 = atlas === PET_ATLAS_V2;
+  let hasNeutralLookCell = false;
 
   if (
-    input.width !== PET_ATLAS_V1.width
-    || input.height !== PET_ATLAS_V1.height
+    !atlas
     || input.channels < 4
     || input.data.byteLength < input.width * input.height * input.channels
   ) {
@@ -66,17 +69,20 @@ export function inspectPetAtlasRgbaPixelsV1(input: Readonly<{
       const key = cellKey(row, frame);
       const alpha = input.data[(y * input.width + x) * input.channels + 3] ?? 255;
       const isUsedCell = usedCellKeys.has(key);
+      const isNeutralLookCell = row === PET_LOOK_TRACK_V2.neutral.row && frame === PET_LOOK_TRACK_V2.neutral.frame;
+      const isLookCell = isV2 && (row >= PET_LOOK_TRACK_V2.firstDirectionRow || isNeutralLookCell);
       const localX = x % PET_ATLAS_V1.cellWidth;
       if (isUsedCell && alpha > 0) {
         visibleUsedCells.add(key);
       }
-      if (isUsedCell && alpha > 24) {
+      if (isV2 && isNeutralLookCell && alpha > 0) hasNeutralLookCell = true;
+      if ((isUsedCell || isLookCell) && alpha > 24) {
         minX = Math.min(minX, localX);
         minY = Math.min(minY, localY);
         maxX = Math.max(maxX, localX);
         maxY = Math.max(maxY, localY);
       }
-      if (!isUsedCell && alpha > 0) {
+      if (!isUsedCell && !isLookCell && alpha > 0) {
         hasTransparentUnusedCells = false;
         hasOpaqueBackground = true;
       }
@@ -93,5 +99,6 @@ export function inspectPetAtlasRgbaPixelsV1(input: Readonly<{
     hasVisibleUsedCells: visibleUsedCells.size === usedCellKeys.size,
     hasTransparentUnusedCells,
     opaqueBounds: maxX < 0 ? null : { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 },
+    ...(isV2 ? { hasNeutralLookCell } : {}),
   };
 }

@@ -3,7 +3,7 @@ import { Platform, View, type StyleProp, type ViewProps, type ViewStyle } from '
 import { Image, type ImageProps } from 'expo-image';
 
 import type { ResolvedPetAnimationFrame } from '@/components/pets/animation/resolvePetAnimationTimeline';
-import { PET_ATLAS_V1 } from '@happier-dev/protocol/pets/constants';
+import { PET_ATLAS_V1, PET_ATLAS_V2 } from '@happier-dev/protocol/pets/constants';
 
 type PetSpriteDataProps = ViewProps & Readonly<{
     dataSet: Readonly<{ petState: ResolvedPetAnimationFrame['state'] }>;
@@ -13,12 +13,14 @@ type PetSpriteDataProps = ViewProps & Readonly<{
 export type PetSpriteProps = Readonly<{
     frame: ResolvedPetAnimationFrame;
     spritesheetSource?: ImageProps['source'];
+    spriteVersionNumber?: 1 | 2;
     scale?: number;
     testID?: string;
     style?: StyleProp<ViewStyle>;
 }>;
 
 export function PetSprite(props: PetSpriteProps): React.ReactElement {
+    const atlas = props.spriteVersionNumber === 2 ? PET_ATLAS_V2 : PET_ATLAS_V1;
     const scale = typeof props.scale === 'number' && Number.isFinite(props.scale) && props.scale > 0
         ? props.scale
         : 1;
@@ -38,8 +40,8 @@ export function PetSprite(props: PetSpriteProps): React.ReactElement {
         style: props.style ? [rootStyle, props.style] : rootStyle,
     };
     const imageStyle = {
-        width: PET_ATLAS_V1.width * scale,
-        height: PET_ATLAS_V1.height * scale,
+        width: atlas.width * scale,
+        height: atlas.height * scale,
         backgroundColor: 'transparent',
         transform: [
             { translateX: -(props.frame.frame * props.frame.cellWidth * scale) },

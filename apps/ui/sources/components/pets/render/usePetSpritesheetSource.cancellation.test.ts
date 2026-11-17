@@ -89,7 +89,7 @@ it('shares cold previews across faces and equal sources, cancels only the last b
         await vi.waitFor(() => expect(cancelled).toContain(calls[1]?.requestId));
 
         const recovered = await renderHook(usePetSpritesheetSourceResult, { initialProps: source('pet:first') });
-        await vi.waitFor(() => expect(recovered.getCurrent()).toEqual({ status: 'ready', source: 'data:image/webp;base64,AQID' }));
+        await vi.waitFor(() => expect(recovered.getCurrent()).toEqual({ status: 'ready', source: 'data:image/webp;base64,AQID', spriteVersionNumber: 1 }));
         expect(calls).toHaveLength(3);
         await recovered.unmount();
         const cachedSource = { ...source('pet:first'), digest: 'sha256:recovered-preview' };

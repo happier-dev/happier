@@ -23,6 +23,7 @@ const PET_AMBIENT_ACTION_MAX_DELAY_MS = 18_000;
 export type PetCompanionSurfaceProps = Readonly<{
     state: PetAnimationStateV1;
     spritesheetSource?: ImageProps['source'];
+    spriteVersionNumber?: 1 | 2;
     scale?: number;
     reducedMotion?: boolean;
     active?: boolean;
@@ -169,6 +170,7 @@ export function PetCompanionSurface(props: PetCompanionSurfaceProps): React.Reac
                     testID={props.spriteTestID}
                     frame={frame}
                     spritesheetSource={props.spritesheetSource}
+                    spriteVersionNumber={props.spriteVersionNumber}
                     scale={props.scale}
                 />
             </Pressable>

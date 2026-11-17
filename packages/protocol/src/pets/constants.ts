@@ -16,6 +16,22 @@ export const PET_ATLAS_V1 = Object.freeze({
   height: 1872,
 });
 
+export const PET_ATLAS_V2 = Object.freeze({ ...PET_ATLAS_V1, rows: 11, height: 2288 });
+
+export const PET_LOOK_TRACK_V2 = Object.freeze({
+  neutral: { row: 0, frame: 6 },
+  firstDirectionRow: 9,
+  directionCount: 16,
+});
+
+/** Decoded dimensions, rather than registry metadata, determine the atlas. */
+export function getPetAtlasForDimensionsV1(width: number, height: number) {
+  if (width !== PET_ATLAS_V1.width) return null;
+  if (height === PET_ATLAS_V1.height) return PET_ATLAS_V1;
+  if (height === PET_ATLAS_V2.height) return PET_ATLAS_V2;
+  return null;
+}
+
 export const PET_ANIMATION_STATES_V1 = [
   'idle',
   'running-right',

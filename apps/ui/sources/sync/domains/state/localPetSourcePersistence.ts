@@ -17,6 +17,7 @@ const LocalPetSourceMetadataSchema = z.object({
     displayName: discoveryFields.displayName,
     petId: discoveryFields.petId,
     mediaType: z.optional(discoveryFields.mediaType),
+    spriteVersionNumber: discoveryFields.manifest.shape.spriteVersionNumber,
     digest: z.nullable(discoveryFields.digest),
     sizeBytes: z.nullable(discoveryFields.sizeBytes),
     daemonTarget: z.object({

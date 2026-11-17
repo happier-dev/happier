@@ -322,11 +322,11 @@ function DesktopPetOverlayRouteContent(props: DesktopPetOverlayRouteContentProps
     const trayItemCount = activity.trayItems.length;
     const actions = useDesktopPetOverlayActions();
     const petVisible = selectedPetPackage.enabled && selectedPetPackage.source !== null;
-    const spritesheetSource = usePetSpritesheetSourceResult(
+    const spritesheet = usePetSpritesheetSourceResult(
         selectedPetPackage.source,
         DEFAULT_BUILT_IN_PET_ID,
         { fallbackWhileLoading: false },
-    ).source;
+    );
     // Rust validates drag commands against an active pointer, so preserve IPC order across async Tauri invokes.
     const dragCommandQueueRef = React.useRef<Promise<void>>(Promise.resolve());
     const enqueueDragCommand = React.useCallback((command: () => Promise<void>) => {
@@ -513,7 +513,8 @@ function DesktopPetOverlayRouteContent(props: DesktopPetOverlayRouteContentProps
                     stateStyle={mascotStyle}
                     hitboxTestID="desktop-pet-overlay-hitbox"
                     spriteTestID="desktop-pet-overlay-sprite"
-                    spritesheetSource={spritesheetSource}
+                    spritesheetSource={spritesheet.source}
+                    spriteVersionNumber={spritesheet.spriteVersionNumber}
                     scale={geometry.scale}
                     dragTargetRef={drag.dragTargetRef}
                     pointerHandlers={drag.pointerHandlers}

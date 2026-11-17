@@ -25,6 +25,7 @@ export function PetsAccountLibrarySection(props: PetsAccountLibrarySectionProps)
             source: {
                 kind: 'accountPet',
                 accountPetId: pet.accountPetId,
+                spriteVersionNumber: pet.manifest.spriteVersionNumber,
                 sourceKey: pet.accountPetId,
                 mediaType: pet.spritesheetAssetRef.mediaType,
                 digest: pet.spritesheetAssetRef.digest,

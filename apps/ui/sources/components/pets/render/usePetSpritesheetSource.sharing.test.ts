@@ -39,7 +39,7 @@ it('shares account atlas loads by digest and credentials, ignores equal source o
     const otherHome = createServer(handleRequest);
     const token = (accountId: string) => `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
     const source = (digest = 'sha256:first'): SelectedPetPackageSource => ({
-        kind: 'accountPet', accountPetId: 'pet-shared', sourceKey: 'pet-shared', digest,
+        kind: 'accountPet', accountPetId: 'pet-shared', sourceKey: 'pet-shared', digest, spriteVersionNumber: 2,
     });
     const finish = (index: number, value: number) => {
         assets[index]!.response.setHeader('content-type', 'image/webp');
@@ -54,13 +54,14 @@ it('shares account atlas loads by digest and credentials, ignores equal source o
         await upsertAndActivateServer({ serverUrl: `http://127.0.0.1:${address.port}`, name: 'Pet atlas sharing' });
         const first = await renderHook(usePetSpritesheetSourceResult, { initialProps: source() });
         await vi.waitFor(() => expect(assets).toHaveLength(1));
+        expect(first.getCurrent().spriteVersionNumber).toBe(1); // The delivered loading fallback is a v1 built-in.
         const second = await renderHook(usePetSpritesheetSourceResult, { initialProps: source() });
         const third = await renderHook(usePetSpritesheetSourceResult, { initialProps: source() });
         await first.rerender(source());
         expect(assets).toHaveLength(1);
         await second.unmount();
         finish(0, 1);
-        await vi.waitFor(() => expect(first.getCurrent()).toEqual({ status: 'ready', source: 'data:image/webp;base64,AQ==' }));
+        await vi.waitFor(() => expect(first.getCurrent()).toEqual({ status: 'ready', source: 'data:image/webp;base64,AQ==', spriteVersionNumber: 2 }));
         await vi.waitFor(() => expect(third.getCurrent()).toEqual(first.getCurrent()));
         await first.rerender(source());
         expect(first.getCurrent().status).toBe('ready');
@@ -93,6 +94,11 @@ it('shares account atlas loads by digest and credentials, ignores equal source o
         finish(3, 4);
         finish(4, 5);
         await vi.waitFor(() => expect(otherHomeFace.getCurrent().source).toBe('data:image/webp;base64,BQ=='));
+        await otherHomeFace.rerender(source('sha256:missing'));
+        await vi.waitFor(() => expect(assets).toHaveLength(6));
+        assets[5]!.response.statusCode = 404;
+        assets[5]!.response.end();
+        await vi.waitFor(() => expect(otherHomeFace.getCurrent()).toMatchObject({ status: 'error', spriteVersionNumber: 1 }));
         await homeFace.unmount();
         await otherHomeFace.unmount();
     } finally {

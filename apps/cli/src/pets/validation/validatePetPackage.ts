@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
-import { PET_PACKAGE_FORMAT_CODEX_ATLAS_V1, PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
+import { PET_ATLAS_V2, PET_PACKAGE_FORMAT_CODEX_ATLAS_V1, PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
 import type { PetPackageValidationIssueV1, PetPackageValidationResultV1 } from '@happier-dev/protocol';
 
 import { splitSafePetSpritesheetRelativePath, validatePetManifestBytes } from './validatePetManifest';
@@ -133,7 +133,11 @@ export async function validatePetPackage(input: Readonly<{
   return {
     ok: true,
     packageFormat: PET_PACKAGE_FORMAT_CODEX_ATLAS_V1,
-    manifest: manifest.manifest,
+    manifest: {
+      ...manifest.manifest,
+      ...(atlas.height === PET_ATLAS_V2.height ? { spriteVersionNumber: 2 as const }
+        : manifest.manifest.spriteVersionNumber === undefined ? {} : { spriteVersionNumber: 1 as const }),
+    },
     spritesheetPath: spritesheetRealPath,
     mediaType: atlas.mediaType,
     width: atlas.width,

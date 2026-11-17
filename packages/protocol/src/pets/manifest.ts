@@ -22,6 +22,7 @@ export const PetPackageManifestV1Schema = lazyZodSchema(() => z.looseObject({
     displayName: z.string().check(z.minLength(1), z.maxLength(200)),
     description: z.string().check(z.minLength(1), z.maxLength(2000)),
     spritesheetPath: PetManifestSpritesheetPathV1Schema,
+    spriteVersionNumber: z.optional(z.union([z.literal(1), z.literal(2)])),
   }));
 
 export type PetPackageManifestV1 = z.infer<typeof PetPackageManifestV1Schema>;

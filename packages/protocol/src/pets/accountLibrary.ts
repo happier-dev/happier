@@ -40,6 +40,7 @@ export const AccountPetLibraryEntryV1Schema = lazyZodSchema(() => z.looseObject(
     updatedAt: z.number().check(z.int(), z.minimum(0)),
     origin: AccountPetOriginV1Schema,
     opaqueBounds: z.optional(PetCellBoundsV1Schema),
+    hasNeutralLookCell: z.optional(z.boolean()),
   }).check(z.superRefine((value, ctx) => {
     appendCanonicalPetSpritesheetMediaTypeIssueV1({
       ctx,

@@ -248,6 +248,17 @@ describe('persistence', () => {
     });
 
     describe('local pet sources', () => {
+        it('keeps the measured sprite version through local metadata persistence', () => {
+            saveLocalPetSourcesBySourceKey({
+                'managed:v2': {
+                    sourceKey: 'managed:v2', kind: 'happierManagedLocal', petId: 'v2', displayName: 'V2',
+                    spriteVersionNumber: 2, digest: null, sizeBytes: null,
+                    daemonTarget: { serverId: 'server-pets', machineId: 'machine-pets' },
+                },
+            });
+            expect(loadLocalPetSourcesBySourceKey()['managed:v2']).toMatchObject({ spriteVersionNumber: 2 });
+        });
+
         it('returns an empty object when nothing is persisted', () => {
             expect(loadLocalPetSourcesBySourceKey()).toEqual({});
         });

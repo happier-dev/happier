@@ -155,6 +155,7 @@ function resolveDaemonPreviewSource(
         kind: source.kind,
         sourceKey: source.sourceKey,
         mediaType: previewAsset.mediaType,
+        spriteVersionNumber: previewAsset.spriteVersionNumber,
         digest: previewAsset.digest ?? undefined,
         daemonTarget: previewAsset.target,
     };
@@ -186,6 +187,7 @@ function DaemonPetPreview(props: Readonly<{
                 <PetSprite
                     frame={previewFrame}
                     spritesheetSource={spritesheet.source}
+                    spriteVersionNumber={spritesheet.spriteVersionNumber}
                     scale={props.previewScale}
                 />
             ) : (

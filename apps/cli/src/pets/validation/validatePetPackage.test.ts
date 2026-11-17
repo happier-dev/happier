@@ -23,6 +23,17 @@ afterEach(() => {
 });
 
 describe('validatePetPackage', () => {
+  it('derives the manifest sprite version from the sheet before discovery and import consume it', async () => {
+    const packagePath = join(tempRoot(), 'pet');
+    await mkdir(packagePath, { recursive: true });
+    await writeFile(join(packagePath, 'pet.json'), JSON.stringify({
+      id: 'v2-pet', displayName: 'V2 pet', description: 'Looks around', spritesheetPath: 'spritesheet.png', spriteVersionNumber: 1,
+    }));
+    await writeFile(join(packagePath, 'spritesheet.png'), createPngPetAtlasBytes({ height: 2288 }));
+    const { validatePetPackage } = await import('./validatePetPackage');
+    expect(await validatePetPackage({ packagePath })).toMatchObject({ ok: true, manifest: { spriteVersionNumber: 2 } });
+  });
+
   it('rejects safe child paths that are outside the canonical manifest asset contract', async () => {
     const root = tempRoot();
     const packagePath = join(root, 'codex-home', 'pets', 'blink');

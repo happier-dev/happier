@@ -127,6 +127,7 @@ export function usePetSourceActionRows(params: UsePetSourceActionRowsParams): Re
             previewAsset: {
                 sourceKey: pet.sourceKey,
                 mediaType: pet.mediaType,
+                spriteVersionNumber: pet.manifest.spriteVersionNumber,
                 digest: pet.digest ?? null,
                 sizeBytes: pet.sizeBytes ?? null,
                 target: daemonTarget,

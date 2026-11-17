@@ -15,6 +15,21 @@ function rowTotalDurationMs(state: string): number {
 }
 
 describe('resolvePetAnimationTimeline', () => {
+    it('selects both v2 look rows and holds the requested direction without a clock', () => {
+        for (const [lookDirection, row, frame] of [[0, 9, 0], [7, 9, 7], [8, 10, 0], [15, 10, 7]] as const) {
+            const input = { state: 'idle', elapsedMs: 3000, reducedMotion: false, spriteVersionNumber: 2, lookDirection } as const;
+            expect(resolvePetStatePlayback('idle', input)).toMatchObject({ row, stillFrame: frame });
+            expect(resolvePetAnimationTimeline(input)).toMatchObject({ row, frame });
+        }
+    });
+
+    it('uses a known neutral cell and otherwise returns idle frame zero, while v1 keeps its state pose', () => {
+        const input = { state: 'waving', elapsedMs: 0, reducedMotion: true, spriteVersionNumber: 2, lookDirection: 'neutral' } as const;
+        expect(resolvePetAnimationTimeline({ ...input, hasNeutralLookCell: true })).toMatchObject({ row: 0, frame: 6 });
+        expect(resolvePetAnimationTimeline(input)).toMatchObject({ row: 0, frame: 0 });
+        expect(resolvePetAnimationTimeline({ ...input, spriteVersionNumber: 1 })).toMatchObject({ row: 3, frame: 1 });
+    });
+
     it('applies the idle duration multiplier only to idle playback', () => {
         const idle = PET_ANIMATION_ROWS_V1.find((entry) => entry.state === 'idle');
         const firstIdleDurationMs = idle?.durationsMs[0] ?? 0;

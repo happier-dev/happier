@@ -25,6 +25,7 @@ export function normalizeLocalPetSourceMetadata(
             displayName: pet.displayName,
             petId: pet.petId,
             mediaType: pet.mediaType,
+            spriteVersionNumber: pet.manifest.spriteVersionNumber,
             digest: pet.digest ?? null,
             sizeBytes: pet.sizeBytes ?? null,
             daemonTarget,

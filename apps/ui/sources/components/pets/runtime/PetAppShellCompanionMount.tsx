@@ -22,7 +22,7 @@ import {
     resolvePetCompanionOverlayMetrics,
     type PetCompanionOverlayMetrics,
 } from '@/components/pets/render/petCompanionDisplayMetrics';
-import { usePetSpritesheetSource } from '@/components/pets/render/usePetSpritesheetSource';
+import { usePetSpritesheetSourceResult } from '@/components/pets/render/usePetSpritesheetSource';
 import { useSelectedPetPackage } from '@/components/pets/source/useSelectedPetPackage';
 import { PetCompanionActivityTray } from '@/components/pets/tray/PetCompanionActivityTray';
 import {
@@ -117,7 +117,7 @@ function PetAppShellCompanionRuntime({
 }>): React.ReactElement {
     const { dismissedTrayItemKeys, dismissTrayItem } = usePetCompanionTrayDismissals();
     const activity = usePetCompanionActivityModel({ dismissedTrayItemKeys });
-    const spritesheetSource = usePetSpritesheetSource(selectedPetPackage.source, DEFAULT_BUILT_IN_PET_ID);
+    const spritesheet = usePetSpritesheetSourceResult(selectedPetPackage.source, DEFAULT_BUILT_IN_PET_ID);
     const drag = useAppShellPetDrag();
     // The companion's ambient motion exists only for a user who is looking at it. The native mount
     // already resolved both facts; without them here the web/desktop pet ran its frame ticker and
@@ -201,7 +201,8 @@ function PetAppShellCompanionRuntime({
                 ]}
                 hitboxTestID="pet-app-shell-companion-hitbox"
                 spriteTestID="pet-app-shell-companion-sprite"
-                spritesheetSource={spritesheetSource}
+                spritesheetSource={spritesheet.source}
+                spriteVersionNumber={spritesheet.spriteVersionNumber}
                 scale={drag.metrics.scale}
                 dragTargetRef={drag.dragTargetRef}
                 pointerHandlers={drag.pointerHandlers}

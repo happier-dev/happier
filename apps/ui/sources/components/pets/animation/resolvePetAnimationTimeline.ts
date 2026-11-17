@@ -1,6 +1,8 @@
 import {
     PET_ANIMATION_ROWS_V1,
     PET_ATLAS_V1,
+    PET_ATLAS_V2,
+    PET_LOOK_TRACK_V2,
     type PetAnimationStateV1,
 } from '@happier-dev/protocol/pets/constants';
 
@@ -17,7 +19,16 @@ export type ResolvedPetAnimationFrame = Readonly<{
     cellHeight: number;
 }>;
 
-export type ResolvePetAnimationTimelineInput = Readonly<{
+/** Clockwise from up; the pointer owner selects a sector and decides when looking is eligible. */
+export type PetLookDirection = 'neutral' | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15;
+
+export type PetPoseOptions = Readonly<{
+    spriteVersionNumber?: 1 | 2;
+    lookDirection?: PetLookDirection;
+    hasNeutralLookCell?: boolean;
+}>;
+
+export type ResolvePetAnimationTimelineInput = PetPoseOptions & Readonly<{
     state: PetAnimationStateV1;
     elapsedMs: number;
     reducedMotion: boolean;
@@ -31,7 +42,9 @@ export type PetStatePlayback = Readonly<{
 }>;
 
 /** Row timing and resting poses belong here for both the companion and Bot faces. */
-export function resolvePetStatePlayback(state: PetAnimationStateV1): PetStatePlayback {
+export function resolvePetStatePlayback(state: PetAnimationStateV1, options: PetPoseOptions = {}): PetStatePlayback {
+    const look = resolveLookCell(options);
+    if (look) return { row: look.row, frames: [], stillFrame: look.frame, repeat: 'once' };
     const row = resolveAnimationRow(state);
     return {
         row: row.row,
@@ -40,6 +53,15 @@ export function resolvePetStatePlayback(state: PetAnimationStateV1): PetStatePla
             : row.state === 'failed' ? row.frames - 1 : 0,
         repeat: row.state === 'running' || row.state === 'running-left' || row.state === 'running-right' || row.state === 'waiting'
             ? 'loop' : 'once',
+    };
+}
+
+function resolveLookCell(options: PetPoseOptions): Readonly<{ row: number; frame: number }> | null {
+    if (options.spriteVersionNumber !== 2 || options.lookDirection === undefined) return null;
+    if (options.lookDirection === 'neutral') return options.hasNeutralLookCell === true ? PET_LOOK_TRACK_V2.neutral : { row: 0, frame: 0 };
+    return {
+        row: PET_LOOK_TRACK_V2.firstDirectionRow + Math.floor(options.lookDirection / PET_ATLAS_V2.columns),
+        frame: options.lookDirection % PET_ATLAS_V2.columns,
     };
 }
 
@@ -82,6 +104,8 @@ function withAtlasFrame(state: PetAnimationStateV1, row: number, frame: number):
 }
 
 export function resolvePetAnimationTimeline(input: ResolvePetAnimationTimelineInput): ResolvedPetAnimationFrame {
+    const look = resolveLookCell(input);
+    if (look) return withAtlasFrame(input.state, look.row, look.frame);
     const elapsedMs = normalizeElapsedMs(input.elapsedMs);
     const requestedRow = resolveAnimationRow(input.state);
     if (input.reducedMotion) {

@@ -4,6 +4,7 @@ import {
   createOpaqueWhitePetSpritesheetPng,
   createPngHeaderOnlyPetAtlasBytes,
   createPngPetAtlasBytes,
+  createTransparentPetSpritesheetPng,
 } from '../testkit/petTestImages';
 
 async function loadAtlasModule() {
@@ -15,6 +16,20 @@ async function loadAtlasModule() {
 }
 
 describe('validatePetAtlas', () => {
+  it('accepts v2 sheet dimensions independently of registry metadata', async () => {
+    const mod = await loadAtlasModule();
+    const sharp = (await import('sharp')).default;
+    const bytes = await sharp(createTransparentPetSpritesheetPng())
+      .extend({ bottom: 416, background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png().toBuffer();
+    const result = await mod.validatePetAtlasBytes({
+      bytes,
+      filename: 'spritesheet.png',
+      strict: true,
+    });
+    expect(result).toMatchObject({ ok: true, width: 1536, height: 2288 });
+  });
+
   it('accepts PNG atlases with the exact Codex-compatible dimensions', async () => {
     const mod = await loadAtlasModule();
     const result = await mod.validatePetAtlasBytes({

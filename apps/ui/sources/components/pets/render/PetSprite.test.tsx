@@ -69,7 +69,7 @@ describe('PetSprite', () => {
         ]);
     });
 
-    it('renders a scaled spritesheet frame without changing atlas addressing', async () => {
+    it('renders a scaled v2 spritesheet frame without changing atlas addressing', async () => {
         const { PetSprite } = await import('./PetSprite');
 
         const screen = await renderScreen(
@@ -77,6 +77,7 @@ describe('PetSprite', () => {
                 testID="settings-pets-preview-sprite"
                 frame={{ row: 8, frame: 2, cellWidth: 192, cellHeight: 208, state: 'review' }}
                 spritesheetSource="blink-spritesheet.webp"
+                spriteVersionNumber={2}
                 scale={0.25}
             />,
         );
@@ -92,7 +93,7 @@ describe('PetSprite', () => {
         const image = screen.root.findAllByType('Image')[0];
         expect(image?.props.style).toEqual(expect.objectContaining({
             width: 384,
-            height: 468,
+            height: 572,
             backgroundColor: 'transparent',
         }));
         expect(image?.props.style.transform).toEqual([

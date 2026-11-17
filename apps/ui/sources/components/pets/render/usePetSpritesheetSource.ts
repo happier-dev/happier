@@ -33,6 +33,8 @@ type PetSpritesheetSourceStatus = 'loading' | 'ready' | 'error';
 export type PetSpritesheetSourceResult = Readonly<{
     source: ImageProps['source'] | null;
     status: PetSpritesheetSourceStatus;
+    /** The delivered image's atlas, including a built-in fallback during loading or failure. */
+    spriteVersionNumber: 1 | 2;
 }>;
 
 function spritesheetSourceKey(source: SelectedPetPackageSource): string {
@@ -142,13 +144,16 @@ export function usePetSpritesheetSourceResult(
     const selectedSource = React.useMemo(() => sourceKey === null ? null : source, [sourceKey]);
     const fallbackWhileLoading = options.fallbackWhileLoading !== false;
     const fallbackOnError = options.fallbackOnError !== false;
-    const fallbackSource = React.useMemo(
-        () => resolveBuiltInPetPackage(fallbackPetId).spritesheetSource,
+    const fallbackPackage = React.useMemo(
+        () => resolveBuiltInPetPackage(fallbackPetId),
         [fallbackPetId],
     );
+    const fallbackSource = fallbackPackage.spritesheetSource;
+    const fallbackSpriteVersionNumber = fallbackPackage.manifest.spriteVersionNumber ?? 1;
     const [result, setResult] = React.useState<PetSpritesheetSourceResult>(() => ({
         source: selectedSource && !fallbackWhileLoading ? null : fallbackSource,
         status: selectedSource ? 'loading' : 'ready',
+        spriteVersionNumber: fallbackSpriteVersionNumber,
     }));
 
     React.useEffect(() => {
@@ -157,14 +162,16 @@ export function usePetSpritesheetSourceResult(
         setResult({
             source: source && !fallbackWhileLoading ? null : fallbackSource,
             status: source ? 'loading' : 'ready',
+            spriteVersionNumber: fallbackSpriteVersionNumber,
         });
 
         const apply = async () => {
             if (!source) return;
             try {
                 if (source.kind === 'builtIn') {
-                    const builtIn = resolveBuiltInPetPackage(source.petId).spritesheetSource;
-                    if (!controller.signal.aborted) setResult({ source: builtIn, status: 'ready' });
+                    const builtIn = resolveBuiltInPetPackage(source.petId);
+                    if (!controller.signal.aborted) setResult({ source: builtIn.spritesheetSource, status: 'ready',
+                        spriteVersionNumber: builtIn.manifest.spriteVersionNumber ?? 1 });
                     return;
                 }
                 const localSource = await readSharedPetSpritesheetSource(source, controller.signal);
@@ -172,6 +179,7 @@ export function usePetSpritesheetSourceResult(
                     setResult({
                         source: localSource ?? (fallbackOnError ? fallbackSource : null),
                         status: localSource ? 'ready' : 'error',
+                        spriteVersionNumber: localSource ? source.spriteVersionNumber ?? 1 : fallbackSpriteVersionNumber,
                     });
                 }
             } catch {
@@ -179,6 +187,7 @@ export function usePetSpritesheetSourceResult(
                     setResult({
                         source: fallbackOnError ? fallbackSource : null,
                         status: 'error',
+                        spriteVersionNumber: fallbackSpriteVersionNumber,
                     });
                 }
             }
@@ -188,7 +197,7 @@ export function usePetSpritesheetSourceResult(
         return () => {
             controller.abort();
         };
-    }, [activeLifetime, fallbackOnError, fallbackSource, fallbackWhileLoading, selectedSource]);
+    }, [activeLifetime, fallbackOnError, fallbackSource, fallbackSpriteVersionNumber, fallbackWhileLoading, selectedSource]);
 
     return result;
 }
@@ -208,6 +217,7 @@ export function usePetSpritesheetSource(
                 kind: source.kind,
                 sourceKey: source.sourceKey,
                 mediaType: fallbackPetIdOrPreviewAsset.mediaType,
+                spriteVersionNumber: fallbackPetIdOrPreviewAsset.spriteVersionNumber,
                 digest: fallbackPetIdOrPreviewAsset.digest ?? undefined,
                 daemonTarget: fallbackPetIdOrPreviewAsset.target,
             };

@@ -37,6 +37,7 @@ export function useSelectedPetPackage(): ResolveSelectedPetPackageResult {
                     sourceKey: pet.accountPetId,
                     mediaType: pet.spritesheetAssetRef.mediaType,
                     digest: pet.spritesheetAssetRef.digest,
+                    spriteVersionNumber: pet.manifest.spriteVersionNumber,
                 },
             ]),
         );
@@ -48,6 +49,7 @@ export function useSelectedPetPackage(): ResolveSelectedPetPackageResult {
                 sourceKey: source.sourceKey,
                 mediaType: source.mediaType,
                 digest: source.digest ?? undefined,
+                spriteVersionNumber: source.spriteVersionNumber,
                 daemonTarget: source.daemonTarget,
             };
             if (source.kind === 'detectedCodexHome') {

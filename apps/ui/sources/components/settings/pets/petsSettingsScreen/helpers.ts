@@ -64,6 +64,7 @@ export function metadataToLocalPetRow(source: LocalPetSourceMetadata): LocalDevi
         previewAsset: {
             sourceKey: source.sourceKey,
             mediaType: source.mediaType,
+            spriteVersionNumber: source.spriteVersionNumber,
             digest: source.digest ?? null,
             sizeBytes: source.sizeBytes ?? null,
             target: source.daemonTarget,
@@ -83,6 +84,7 @@ export function managedPetToLocalPetRow(
         previewAsset: {
             sourceKey: pet.sourceKey,
             mediaType: pet.mediaType,
+            spriteVersionNumber: pet.manifest.spriteVersionNumber,
             digest: pet.digest ?? null,
             sizeBytes: pet.sizeBytes ?? null,
             target,

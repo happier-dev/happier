@@ -1,6 +1,7 @@
 import type {
     PetAssetMediaTypeV1} from '@happier-dev/protocol/pets/accountLibrary';
 import type { DiscoveredPetPackageV1 } from '@happier-dev/protocol/pets/daemonRpc';
+import type { PetPackageManifestV1 } from '@happier-dev/protocol/pets/manifest';
 
 export type LocalPetPackageSource = Readonly<{
     kind: Extract<DiscoveredPetPackageV1['kind'], 'detectedCodexHome' | 'happierManagedLocal'>;
@@ -17,6 +18,7 @@ export type LocalPetSourceMetadata = Readonly<Pick<DiscoveredPetPackageV1,
 > & {
     kind: LocalPetPackageSource['kind'];
     mediaType?: PetAssetMediaTypeV1;
+    spriteVersionNumber?: PetPackageManifestV1['spriteVersionNumber'];
     digest?: string | null;
     sizeBytes?: number | null;
     daemonTarget: LocalPetDaemonTarget;
@@ -25,6 +27,7 @@ export type LocalPetSourceMetadata = Readonly<Pick<DiscoveredPetPackageV1,
 export type LocalPetPreviewAsset = Readonly<{
     sourceKey: string;
     mediaType?: PetAssetMediaTypeV1;
+    spriteVersionNumber?: PetPackageManifestV1['spriteVersionNumber'];
     digest: string | null;
     sizeBytes: number | null;
     target: LocalPetDaemonTarget;
