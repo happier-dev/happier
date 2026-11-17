@@ -6,6 +6,8 @@ import { defineContributionProtocol } from '@happier-dev/plugin-sdk/contribution
 import type { InteractionTransientResultV1 } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { ApprovalProfileV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { MachineSetupApplyInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -42,7 +44,7 @@ async function fixture(options: Readonly<{
     nestedInput?: 'scalar' | 'omitted' | 'defaulted';
     nestedTargeted?: boolean;
     requireNestedApproval?: boolean;
-    approvalProfile?: 'qualified-require' | 'default-require' | 'allow';
+    approvalProfile?: 'child-ask' | 'parent-ask' | 'allow';
     approvalTarget?: 'scalar' | 'omitted' | 'defaulted';
 }> = {}) {
     const { abortRequests = false, bindSession = true, nestedInput, nestedTargeted = false, requireNestedApproval = false, approvalProfile,
@@ -52,12 +54,13 @@ async function fixture(options: Readonly<{
     const accountSettings = accountSettingsParse({ actionsSettingsV1: { v: 1, actions: requireNestedApproval ? {
         [formatQualifiedPluginActionId(nestedTargeted ? { pluginId: 'example.parent-consent-source', localId: 'step' }
             : { pluginId: 'example.parent-consent', localId: approvalTarget })]: { approvalRequiredSurfaces: ['plugin'] },
-    } : {}, ...(approvalProfile ? { approvalProfiles: [{ id: 'test:contributed', name: 'Contributed test',
-        defaultMode: approvalProfile === 'default-require' ? 'require' : 'allow',
-        ...(approvalProfile === 'qualified-require' ? { actions: {
-            [formatQualifiedPluginActionId({ pluginId: 'example.parent-consent', localId: 'scalar' })]: 'require',
-        } } : {}),
-    }] } : {}) } });
+    } : {} } });
+    const profile = approvalProfile ? ApprovalProfileV1Schema.parse({ id: 'test:contributed', name: 'Contributed test',
+        actions: approvalProfile === 'allow' ? {} : {
+            [formatQualifiedPluginActionId({ pluginId: 'example.parent-consent',
+                localId: approvalProfile === 'parent-ask' ? 'run' : 'scalar' })]: { approvalRequiredSurfaces: ['cli', 'plugin'] },
+        },
+    }) : null;
     setActiveAccountSettingsSnapshot({ scopeKey: 'parent-consent-test', source: 'network', settingsVersion: 1,
         settings: accountSettings, rawSettings: {}, settingsSecretsReadKeys: [], loadedAtMs: 1,
         promptLibraryCatalog: { status: 'ready', rows: [], tombstones: [], diagnostics: [] } });
@@ -88,6 +91,8 @@ async function fixture(options: Readonly<{
     const stepProtocol = defineContributionProtocol({ id: 'confirmed-steps', version: 1, operations: {
         step: { required: true, input: { kind: 'protocolDefined', schema: stepInput }, resultSchema: defineProtocolLiteral(null),
             action: { surfaces: ['plugin'], dangerLevel: 'safe' } },
+        approvalProfileCatalog: profile ? [{ id: profile.id, profile, access: 'owner',
+            revision: { headerVersion: 1, bodyVersion: 1 } }] : [],
     } });
     const steps = stepProtocol.point();
     const plugin = definePlugin({ id: action.pluginId, version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
@@ -169,7 +174,8 @@ async function fixture(options: Readonly<{
     const context = { surface: 'cli' as const, defaultSessionId: session.sessionId, signal: controller.signal,
         authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
         runtimeAccountId: 'parent-consent-account', serverId: configuration.activeServerId, serverIdentityId: 'srv_parent-consent',
-        ...(approvalProfile ? { approvalProfileId: 'test:contributed' } : {}) };
+        ...(profile ? { approvalProfileId: profile.id, approvalProfile: { profile,
+            resolution: { status: 'available' as const, requestedId: profile.id } } } : {}) };
     const parent = { actionId: 'machines.setup.apply', input: MachineSetupApplyInputV1Schema.parse({
         homeId: configuration.activeServerId, machineId: 'machine',
         targets: [{ homeId: configuration.activeServerId, machineId: 'machine',
@@ -227,7 +233,7 @@ async function fixture(options: Readonly<{
 }
 
 describe('plugin steps of a reviewed parent operation', () => {
-    it.each(['qualified-require', 'default-require'] as const)('applies the %s profile through real contributed dispatch', async approvalProfile => {
+    it.each(['child-ask', 'parent-ask'] as const)('applies the bound %s profile through real contributed dispatch', async approvalProfile => {
         const f = await fixture({ bindSession: false, nestedInput: 'scalar', approvalProfile });
         try {
             await expect(f.invoke(false)).resolves.toMatchObject({ matched: true, result: {
@@ -237,7 +243,7 @@ describe('plugin steps of a reviewed parent operation', () => {
         } finally { await f.dispose(); }
     });
 
-    it.each(['qualified-require', 'default-require', 'allow'] as const)('retains host-issued reviewed consent with the %s profile', async approvalProfile => {
+    it.each(['child-ask', 'parent-ask', 'allow'] as const)('retains host-issued reviewed consent with the bound %s profile', async approvalProfile => {
         const f = await fixture({ bindSession: false, nestedInput: 'scalar', approvalProfile });
         try {
             const result = await f.invoke(true);

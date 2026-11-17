@@ -50,7 +50,7 @@ describe('registered daemon GitHub count Resource', () => {
         let holdNative = false;
         let releaseNative: (() => void) | undefined;
         let latestReadSignal: AbortSignal | undefined;
-        const nativeResponse = () => ({ status: 200, body: { total_count: 1,
+        const nativeResponse = () => ({ status: 200, headers: { 'x-poll-interval': '3' }, body: { total_count: 1,
             workflow_runs: [{ ...initialRun, display_title: title, ...(terminal ? { status: 'completed', conclusion: 'failure' } : {}) }] } });
         const transport = createStubGithubTransport({ nativeMaterialization: { kind: 'httpHeaders', headers: { Authorization: 'Bearer synthetic' } },
             respond: request => !request.url.includes('/actions/runs') ? undefined

@@ -65,6 +65,7 @@ import { readSupervisedPluginProcessIdForHost } from '../exec/processSupervisor'
 import { PROCESS_OWNER_ENV_KEY, parseProcessOwnerTag } from '@/processes/ownerTag';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 type TargetPluginRegistrationApi = ReturnType<typeof createPluginRegistrationScope>['api'];
 
@@ -645,6 +646,8 @@ describe('target activation publication', () => {
 
     async function exerciseSelectedNativeInvocations(holdCapacity: boolean, stopNativePreparation = false, passiveOnly = false,
         fresh?: 'wrapped' | 'direct' | 'retired') {
+        const httpBaseUrl = 'https://native-home.example';
+        return runWithServerHttpBaseUrl(httpBaseUrl, async () => {
         const projectRoot = await mkdtemp(join(tmpdir(), 'happier-native-environment-owner-'));
         const cleanups: Array<() => void | Promise<void>> = [() => rm(projectRoot, { recursive: true, force: true })];
         try {
@@ -792,7 +795,6 @@ describe('target activation publication', () => {
             },
         }); } };
         const workspace = { id: 'native-workspace', serverId: 'native-home', machineId: 'native-machine', rootPath: projectRoot, projectKey: 'native-project', createdAtMs: 1 };
-        const httpBaseUrl = 'https://native-home.example';
         const requesterToken = 'native-requester-token';
         let trust: ProjectTrustContentV1 | null = null;
         // Only requester Home HTTP and PTY IO are simulated. Row opening,
@@ -1048,6 +1050,7 @@ describe('target activation publication', () => {
         } finally {
             for (const cleanup of cleanups.reverse()) await cleanup();
         }
+        });
     }
 
     it('runs a finite native command through the selected environment plugin invocation rather than the command plugin owner', () => exerciseSelectedNativeInvocations(false));

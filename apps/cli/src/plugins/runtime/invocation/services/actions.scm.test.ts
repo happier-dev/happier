@@ -322,7 +322,11 @@ describe('plugin invocation SCM actions', () => {
             error: 'test_stop_after_scm_dispatch',
         }));
         const actionExecutor = createActionExecutor({
-    readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1, ...context.actionsSettings, approvalWaivedSurfaces: {"scm.diffSummary.generate": Object.keys(ActionSurfaceSchema.shape), ...context.actionsSettings?.approvalWaivedSurfaces} }),
+            readActionsSettings: (context: ActionExecutorContext) => ActionsSettingsV1Schema.parse({ v: 1,
+                ...context.actionsSettings, approvalWaivedSurfaces: {
+                    ...Object.fromEntries(SCM_ACTION_INPUTS.map(([actionId]) => [actionId, ['plugin']])),
+                    ...context.actionsSettings?.approvalWaivedSurfaces,
+                } }),
             ...createUnavailableActionTransportDeps(),
             scmActionExecute,
 

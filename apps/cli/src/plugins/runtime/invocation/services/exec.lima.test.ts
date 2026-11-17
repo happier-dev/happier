@@ -31,6 +31,10 @@ describe('Lima declared native process environment', () => {
             // Declaration parsing, dependency probing, Action registration,
             // invocation policy, native environment and process IO stay real.
             const effectsPath = join(root, 'native-effect');
+            const image = 'https://cloud-images.ubuntu.com/releases/noble/release-20260926/ubuntu-24.04-server-cloudimg-amd64.img';
+            const nativeInfo = { hostOS: 'linux', hostArch: 'x86_64', vmTypes: ['qemu'], limaHome: '/home/happier/.lima',
+                defaultTemplate: { cpus: 2, memory: '2GiB', disk: '8GiB',
+                    images: [{ arch: 'x86_64', location: image }] } };
             const nativeScript = `#!${process.execPath}
                 const args = process.argv.slice(2);
                 if (args[0] === '--version') {
@@ -40,7 +44,7 @@ describe('Lima declared native process environment', () => {
                             : 'QEMU emulator version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)');
                 } else if (args[0] === 'info') {
                     if (process.env.HOME !== ${JSON.stringify(root)} || process.env.PATH !== ${JSON.stringify(root)}) process.exit(2);
-                    process.stdout.write(JSON.stringify({hostOS:'linux',hostArch:'x86_64',vmTypes:['qemu']}));
+                    process.stdout.write(JSON.stringify(${JSON.stringify(nativeInfo)}));
                 } else {
                     require('node:fs').writeFileSync(${JSON.stringify(effectsPath)}, args[0]);
                     process.exit(9);
@@ -112,7 +116,7 @@ describe('Lima declared native process environment', () => {
                 if (!localId) throw new Error('Lima has no declared options role');
                 const launchSchema = createPluginJsonSchemaZodValueAdapter(provisioner.launchSchema);
                 const recipe = { store: '/home/happier/.lima',
-                    image: 'https://cloud-images.ubuntu.com/releases/noble/release-20260926/ubuntu-24.04-server-cloudimg-amd64.img',
+                    image,
                     arch: 'x86_64', vmType: 'qemu', cpus: 2, memoryGiB: 2, diskGiB: 8, mounts: [] };
                 const invoke = async (input: unknown) => {
                     const result = await registry.invoke({ pluginId, localId, input, surface: 'cli' });

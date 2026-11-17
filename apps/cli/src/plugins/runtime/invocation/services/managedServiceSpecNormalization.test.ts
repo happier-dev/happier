@@ -77,15 +77,6 @@ describe('managed-service specification normalization', () => {
         ['a transport-owned header name', { 'Proxy-Authorization': 'Basic abc' }],
         ['a host-owned credential header alias', { 'X-Api-Key': 'abc' }],
         ['a control-character value', { 'x-trace': 'one\r\nx-injected: two' }],
-        [
-            'an excessive header count',
-            Object.fromEntries(
-                Array.from({ length: 65 }, (_value, index) => [
-                    `x-probe-${index}`,
-                    'ok',
-                ]),
-            ),
-        ],
     ])('refuses %s in a static health-check header set', (_label, headers) => {
         expect(() => normalizeManagedServiceSpec({
             ...attachedSpec('gateway'),
@@ -100,12 +91,14 @@ describe('managed-service specification normalization', () => {
     });
 
     it('preserves ordinary non-secret health headers in canonical form', () => {
+        const authoredHeaders = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`x-probe-${index}`, 'ready']));
         const normalized = normalizeManagedServiceSpec({
             ...attachedSpec('gateway'),
             healthCheck: {
                 kind: 'http',
                 target: { kind: 'servicePath', path: '/health' },
                 headers: {
+                    ...authoredHeaders,
                     'X-Probe': 'ready',
                     Accept: 'application/json',
                 },
@@ -115,7 +108,7 @@ describe('managed-service specification normalization', () => {
             normalized.healthCheck?.kind === 'http'
                 ? normalized.healthCheck.headers
                 : undefined,
-        ).toEqual({ accept: 'application/json', 'x-probe': 'ready' });
+        ).toEqual({ ...authoredHeaders, accept: 'application/json', 'x-probe': 'ready' });
     });
 
     it('normalizes ordered shaped HTTP health alternatives without changing the shared timeout', () => {

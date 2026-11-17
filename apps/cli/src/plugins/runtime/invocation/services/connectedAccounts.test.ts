@@ -5,7 +5,7 @@ import { logger } from '@/ui/logger';
 import { readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
-import { CRABBOX_PLUGIN } from '../../../../../../../packages/plugins/machine-crabbox/src/manifest';
+import { CRABBOX_PLUGIN, CRABBOX_COORDINATOR_PROVISIONER } from '../../../../../../../packages/plugins/machine-crabbox/src/manifest';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { resolveManifestHostAccessRequests } from '@/plugins/runtime/hostAccess/manifestRequests';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -160,7 +160,9 @@ function createOwner(overrides: Partial<StablePluginConnectedAccountsOwner> = {}
 describe('Crabbox coordinator check through declared host capabilities', () => {
     it('admits a selected coordinator without a local executable or native network effects', async () => {
         const manifest = normalizePluginManifestV2(CRABBOX_PLUGIN.manifest);
-        const check = manifest.contributes.actions.find(action => action.id === 'check')!;
+        const checkId = CRABBOX_COORDINATOR_PROVISIONER.actions.check;
+        const optionsId = CRABBOX_COORDINATOR_PROVISIONER.actions.options;
+        const check = manifest.contributes.actions.find(action => action.id === checkId)!;
         const requests = resolveManifestHostAccessRequests({ manifest, pluginId: manifest.id,
             contribution: { family: 'actions', localId: check.id }, requestIds: check.hostAccess });
         const scopes: PluginConnectedAccountBindingScope[] = requests.flatMap(({ request }) => request.capability === 'connectedAccounts'
@@ -172,7 +174,7 @@ describe('Crabbox coordinator check through declared host capabilities', () => {
             getBinding: async ({ purpose }) => ({ purpose: purpose.purpose, service: account.service, account, target: { kind: 'group', displayName: 'Coordinator' } }),
             materialize: async () => ({ kind: 'environment', env: { CRABBOX_COORDINATOR_URL: 'https://coordinator.example.test/native',
                 CRABBOX_COORDINATOR_TOKEN: 'selected-private-token', CRABBOX_ORG: 'test-org' } }),
-        })).bind({ ...seed, plugin: { id: manifest.id, version: manifest.version }, contribution: { id: 'check', qualifiedId: `${manifest.id}/actions/check` } }, scopes);
+        })).bind({ ...seed, plugin: { id: manifest.id, version: manifest.version }, contribution: { id: checkId, qualifiedId: `${manifest.id}/actions/${checkId}` } }, scopes);
         const handlers = new Map<string, ActionHandler>();
         await CRABBOX_PLUGIN.activate({ actions: { register(id: string, handler: ActionHandler) {
             handlers.set(id, handler); return { dispose() {} };
@@ -181,9 +183,9 @@ describe('Crabbox coordinator check through declared host capabilities', () => {
         const context = { invokedAtMs: 123, signal: seed.signal, services: { connectedAccounts,
             http: { request: network }, managedServices: { dependencies: { status: async () => ({ state: 'missing' }) } },
         } } as unknown as PluginInvocationContext;
-        expect(await handlers.get('check')!({}, context)).toMatchObject({ available: true });
+        expect(await handlers.get(checkId)!({}, context)).toMatchObject({ available: true });
         expect(network).not.toHaveBeenCalled();
-        expect(await handlers.get('options')!({ backendId: 'aws', transport: 'coordinator', namespace: 'test-org', target: 'linux',
+        expect(await handlers.get(optionsId)!({ backendId: 'aws', transport: 'coordinator', namespace: 'test-org', target: 'linux',
             nativeImageId: 'ami-reviewed', nativeSizeId: 'm7i.large', ttlSeconds: 5400, idleTimeoutSeconds: 1800 }, context))
             .toMatchObject({ base: { available: true, launch: { backendId: 'aws', transport: 'coordinator' } } });
     });
@@ -277,6 +279,8 @@ describe('stable plugin Connected Accounts host', () => {
         expect(await actionAccounts.getBinding(selectedPurpose.purpose)).toMatchObject({ account: { accountId: 'ambient-profile' } });
         const capabilityPath = '/synthetic/run/request-auth/capability.json';
         const prepared = await prepareOpenCodeQualifiedConnectedAccounts({
+            configuration: { mode: { value: null, updatedAtMs: 0 }, model: { value: 'openai/gpt-5', updatedAtMs: 1 },
+                permissionIntent: { value: null, updatedAtMs: 0 }, options: {} },
             launchEnvironment: { values: { [OPEN_CODE_REQUEST_AUTH_CAPABILITY_PATH_ENV]: capabilityPath }, unset: [] },
         }, { signal: seed.signal, services: { connectedAccounts } });
         onTestFinished(() => prepared.dispose());

@@ -29,6 +29,7 @@ import { attachDeploymentServiceHealthNotices } from '@/deployments/deploymentSe
 import { createCurrentDomainEdgeObservation } from '@/deployments/healthChecks/currentDomainEdgeObservation';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from '@/deployments/targets/ownServer/paths';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
+import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { finiteHealthCheckResult } from '@/deployments/healthChecks/finiteHealthCheckResult';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { HealthCheckDefinitionV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
@@ -1018,6 +1019,7 @@ describe('managed-services SVC09 owner', () => {
         const remote = vi.spyOn(machineRpcTransport, 'callExactMachineRpc').mockResolvedValue({ kind: 'attempted' });
         const namedMachine = (id: string, displayName: string) => ({
             id, managedMachineRef: null, active: true, revokedAt: null, replacedByMachineId: null,
+            metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
             metadata: createMachineContentCodec({ encryptionMode: 'plain' }).encodeStored({ host: 'prod-host',
                 displayName, platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/production', happyHomeDir: '/home/production/.happier' }),
@@ -1042,6 +1044,13 @@ describe('managed-services SVC09 owner', () => {
         });
         const post = vi.spyOn(axios, 'post').mockImplementation(async (url: string, input: unknown) => {
             const path = new URL(url).pathname;
+            if (path === '/v1/machines/read-batch') {
+                const { machineIds } = MachineReadBatchRequestV1Schema.parse(input);
+                return { status: 200, data: MachineReadBatchResponseV1Schema.parse({ results: machineIds.map(machineId => ({
+                    machineId, status: 'found', machine: namedMachine(machineId,
+                        machineId === 'machine-a' ? 'Production server' : 'Ingress server'),
+                })) }) };
+            }
             if (path === '/v1/artifacts/read') return artifactReadResponse(input, id => stored.get(id) ?? null);
             const mutation = readCarrierMutation(input);
             const id = typeof mutation.id === 'string' ? mutation.id : path.split('/')[3];

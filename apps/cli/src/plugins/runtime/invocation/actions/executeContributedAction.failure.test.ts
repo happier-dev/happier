@@ -1,4 +1,4 @@
-import { definePlugin } from '@happier-dev/plugin-sdk';
+import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol';
@@ -398,81 +398,40 @@ describe('executeContributedAction lazy activation failures', () => {
         });
     });
 
-    it('emits outcome-unknown only when cancellation wins after target handler entry', async () => {
-        const action = {
-            pluginId: 'acme.target',
-            definition: {
-                id: 'commit',
-                surfaces: { cli: true },
-            },
-        } as unknown as ResolvedActionContribution;
-        const targetResults = [
-            {
-                status: 'unavailable' as const,
-                code: 'plugin_action_aborted',
-                message: 'caller cancelled after handler entry',
-            },
-            {
-                status: 'unavailable' as const,
-                code: 'plugin_action_aborted',
-                message: 'caller cancelled before handler entry',
-                actionHandlerInvocation: 'notStarted' as const,
-            },
-            {
-                status: 'failed' as const,
-                code: 'plugin_action_aborted',
-                message: 'target settled a known failure with this code',
-            },
-        ];
-        const registry = {
-            contributes: {
-                actionsById: new Map([['acme.target/commit', action]]),
-            },
-            targetActionInvocations: {
-                expects: () => true,
-                has: () => true,
-                invoke: async () => targetResults.shift(),
-            },
-        } as unknown as ResolvedExecutablePluginRuntimeRegistry;
-
-        await expect(executeContributedAction({
-            runtimeRegistry: registry,
-            actionId: 'acme.target/commit',
-            context: { surface: 'cli' },
-        })).resolves.toEqual({
-            matched: true,
-            result: {
-                ok: false,
-                errorCode: 'plugin_action_outcome_unknown',
-                error: 'caller cancelled after handler entry',
-            },
-        });
-
-        await expect(executeContributedAction({
-            runtimeRegistry: registry,
-            actionId: 'acme.target/commit',
-            context: { surface: 'cli' },
-        })).resolves.toEqual({
-            matched: true,
-            result: {
-                ok: false,
-                errorCode: 'plugin_action_aborted',
-                error: 'caller cancelled before handler entry',
-                actionHandlerInvocation: 'notStarted',
-            },
-        });
-
-        await expect(executeContributedAction({
-            runtimeRegistry: registry,
-            actionId: 'acme.target/commit',
-            context: { surface: 'cli' },
-        })).resolves.toEqual({
-            matched: true,
-            result: {
-                ok: false,
-                errorCode: 'plugin_action_aborted',
-                error: 'target settled a known failure with this code',
-            },
-        });
+    it('retains real handler settlement after cancellation and refuses cancellation before entry', async () => {
+        let entered = Promise.withResolvers<void>();
+        let settlement = Promise.withResolvers<void>();
+        const effects: string[] = [];
+        const plugin = definePlugin({ id: 'example.cancellation-settlement', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
+            actions: { commit: { title: 'Commit', dangerLevel: 'safe', surfaces: ['cli'], scopes: ['global'],
+                inputSchema: { type: 'string' }, run: async input => {
+                    entered.resolve();
+                    await settlement.promise;
+                    if (input === 'fail') throw new PluginError({ code: 'plugin_action_aborted',
+                        message: 'target settled a known failure with this code', retryable: false });
+                    effects.push(String(input));
+                    return { committed: true };
+                } } } });
+        const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{ manifest: plugin.manifest,
+            files: { 'daemon.mjs': 'export function activate() {}' }, instantiateCommittedModule: () => ({ activate: plugin.activate }) }] });
+        const invoke = (input: string, signal: AbortSignal) => executeContributedAction({ runtimeRegistry: fixture.registry,
+            actionId: 'example.cancellation-settlement/commit', input, context: { surface: 'cli', signal } });
+        try {
+            for (const input of ['commit', 'fail']) {
+                entered = Promise.withResolvers<void>();
+                settlement = Promise.withResolvers<void>();
+                const controller = new AbortController();
+                const attempt = invoke(input, controller.signal);
+                await entered.promise;
+                controller.abort();
+                settlement.resolve();
+                expect(await attempt).toMatchObject({ matched: true, result: input === 'commit'
+                    ? { ok: true, result: { committed: true } }
+                    : { ok: false, errorCode: 'plugin_action_aborted', error: 'target settled a known failure with this code' } });
+            }
+            expect(await invoke('never-started', AbortSignal.abort())).toMatchObject({ matched: true,
+                result: { ok: false, errorCode: 'plugin_action_aborted', actionHandlerInvocation: 'notStarted' } });
+            expect(effects).toEqual(['commit']);
+        } finally { settlement.resolve(); await fixture.dispose(); }
     });
 });
