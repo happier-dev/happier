@@ -16540,7 +16540,7 @@ const polish: TeamsTranslationRoot = {
             nameAccountSwitchedUnnamed: 'Zmieniono konto. Wróć na konto, które dołączyło, aby zapisać to imię.',
             alreadyMemberTitle: 'Jesteś już członkiem',
             setUpForTeam: ({ team }: { team: string }) => `Skonfiguruj dla ${team}`,
-            openTeamSetUpLater: ({ team }: { team: string }) => `Otwórz ${team} · skonfiguruj później z ekranu głównego`,
+            setUpLaterFromHome: 'skonfiguruj później z ekranu głównego',
             summary: {
                 title: 'Co otrzymujesz',
                 sessions: ({ count }: { count: number }) => (count === 1 ? `${count} udostępniona sesja` : `${count} udostępnionych sesji`),

@@ -16527,7 +16527,7 @@ const catalan: TeamsTranslationRoot = {
             nameAccountSwitchedUnnamed: 'Has canviat de compte. Torna al compte que s’ha unit per desar aquest nom.',
             alreadyMemberTitle: 'Ja en ets membre',
             setUpForTeam: ({ team }: { team: string }) => `Configura per a ${team}`,
-            openTeamSetUpLater: ({ team }: { team: string }) => `Obre ${team} · configura-ho més tard des de l’Inici`,
+            setUpLaterFromHome: 'configura-ho més tard des de l’Inici',
             summary: {
                 title: 'El que obtens',
                 sessions: ({ count }: { count: number }) => (count === 1 ? `${count} sessió compartida` : `${count} sessions compartides`),

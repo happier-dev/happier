@@ -16451,7 +16451,7 @@ const japanese: TeamsTranslationRoot = {
             nameAccountSwitchedUnnamed: '別のアカウントに切り替わっています。この名前を保存するには、参加したアカウントに戻してください。',
             alreadyMemberTitle: 'すでにメンバーです',
             setUpForTeam: ({ team }: { team: string }) => `${team} のセットアップ`,
-            openTeamSetUpLater: ({ team }: { team: string }) => `${team} を開く · 後でホームから設定`,
+            setUpLaterFromHome: '後でホームから設定',
             summary: {
                 title: '受け取れるもの',
                 sessions: ({ count }: { count: number }) => `共有セッション ${count} 件`,

@@ -16451,7 +16451,7 @@ const spanish: TeamsTranslationRoot = {
             nameAccountSwitchedUnnamed: 'Has cambiado de cuenta. Vuelve a la cuenta que se unió para guardar este nombre.',
             alreadyMemberTitle: 'Ya eres miembro',
             setUpForTeam: ({ team }: { team: string }) => `Configurar para ${team}`,
-            openTeamSetUpLater: ({ team }: { team: string }) => `Abrir ${team} · configurar más tarde desde Inicio`,
+            setUpLaterFromHome: 'configurar más tarde desde Inicio',
             summary: {
                 title: 'Lo que obtienes',
                 sessions: ({ count }: { count: number }) => (count === 1 ? `${count} sesión compartida` : `${count} sesiones compartidas`),

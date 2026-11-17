@@ -778,7 +778,7 @@ export const english = {
             nameAccountSwitchedUnnamed: 'You’ve switched to another account. Switch back to the account that joined to save this name.',
             alreadyMemberTitle: 'You are already a member',
             setUpForTeam: ({ team }: { team: string }) => `Set up for ${team}`,
-            openTeamSetUpLater: ({ team }: { team: string }) => `Open ${team} · set up later from Home`,
+            setUpLaterFromHome: 'set up later from Home',
             summary: {
                 title: 'What you get',
                 sessions: ({ count }: { count: number }) => (count === 1 ? `${count} shared session` : `${count} shared sessions`),

@@ -16499,7 +16499,7 @@ const portuguese: TeamsTranslationRoot = {
             nameAccountSwitchedUnnamed: 'Mudou para outra conta. Volte à conta que aderiu para guardar este nome.',
             alreadyMemberTitle: 'Já é membro',
             setUpForTeam: ({ team }: { team: string }) => `Configurar para ${team}`,
-            openTeamSetUpLater: ({ team }: { team: string }) => `Abrir ${team} · configurar depois pelo Início`,
+            setUpLaterFromHome: 'configurar depois pelo Início',
             summary: {
                 title: 'O que você recebe',
                 sessions: ({ count }: { count: number }) => (count === 1 ? `${count} sessão compartilhada` : `${count} sessões compartilhadas`),

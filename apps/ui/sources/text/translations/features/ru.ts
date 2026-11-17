@@ -16542,7 +16542,7 @@ const russian: TeamsTranslationRoot = {
             nameAccountSwitchedUnnamed: 'Вы перешли в другой аккаунт. Вернитесь в аккаунт, который присоединился, чтобы сохранить это имя.',
             alreadyMemberTitle: 'Вы уже участник',
             setUpForTeam: ({ team }: { team: string }) => `Настроить для ${team}`,
-            openTeamSetUpLater: ({ team }: { team: string }) => `Открыть ${team} · настроить позже на главной`,
+            setUpLaterFromHome: 'настроить позже на главной',
             summary: {
                 title: 'Что вы получаете',
                 sessions: ({ count }: { count: number }) => (count === 1 ? `${count} общая сессия` : `${count} общих сессий`),

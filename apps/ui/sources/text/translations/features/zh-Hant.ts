@@ -16395,7 +16395,7 @@ const traditionalChinese: TeamsTranslationRoot = {
             nameAccountSwitchedUnnamed: '你已切換到另一個帳戶。請切換回加入團隊的帳戶以儲存此名字。',
             alreadyMemberTitle: '你已經是成員',
             setUpForTeam: ({ team }: { team: string }) => `為 ${team} 設定`,
-            openTeamSetUpLater: ({ team }: { team: string }) => `開啟 ${team} · 稍後從首頁設定`,
+            setUpLaterFromHome: '稍後從首頁設定',
             summary: {
                 title: '你將獲得',
                 sessions: ({ count }: { count: number }) => `${count} 個共享工作階段`,

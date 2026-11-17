@@ -16326,7 +16326,7 @@ const german: TeamsTranslationRoot = {
             nameAccountSwitchedUnnamed: 'Du hast das Konto gewechselt. Wechsle zurück zum Konto, das beigetreten ist, um diesen Namen zu speichern.',
             alreadyMemberTitle: 'Du bist bereits Mitglied',
             setUpForTeam: ({ team }: { team: string }) => `Für ${team} einrichten`,
-            openTeamSetUpLater: ({ team }: { team: string }) => `${team} öffnen · später auf der Startseite einrichten`,
+            setUpLaterFromHome: 'später auf der Startseite einrichten',
             summary: {
                 title: 'Das bekommst du',
                 sessions: ({ count }: { count: number }) => (count === 1 ? `${count} geteilte Sitzung` : `${count} geteilte Sitzungen`),

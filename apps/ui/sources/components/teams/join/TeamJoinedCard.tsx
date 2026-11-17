@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HappierDivider, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import type { TeamInvitationAcceptResultV1 } from '@happier-dev/protocol/teams';
 
 import { getCurrentAuth } from '@/auth/context/currentAuth';
@@ -10,6 +11,8 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 import { WelcomeActionList } from '@/components/onboarding/preAuth/WelcomeActionList';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { Text } from '@/components/ui/text/Text';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { setAccountName } from '@/sync/api/account/apiAccountName';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
@@ -120,6 +123,7 @@ export function TeamJoinedCard(
       : null,
     run: async (_actionId: string, action: () => Promise<void> | void) => { await action(); },
   }), [opening, props.setupContinuation]);
+  const { theme } = useUnistyles();
   return (
     <View testID={props.testID} style={styles.body}>
       {asksName ? (
@@ -139,25 +143,35 @@ export function TeamJoinedCard(
         />
       ) : null}
       {props.summary}
+      {props.setupContinuation ? (
+        // What the Team gives ends here; the way on starts below the hairline (lab L1 Joined).
+        <HappierDivider color={theme.colors.border.default} decorative testID={`${props.testID}-divider`} />
+      ) : null}
       <WelcomeActionList admission={admission}>
         <WelcomeActionCard
           testID={`${props.testID}-action`}
           actionId={OPEN_TEAM_ACTION_ID}
           primary
           title={props.setupContinuation?.label ?? t('teams.join.openTeam', { team: props.teamName })}
+          iconName={props.setupContinuation ? 'caret-right' : undefined}
           onPress={openTeam}
         />
-        {props.setupContinuation ? (
-          // Setup is offered, never required: the Team itself is one quiet press away, and Home keeps the offer.
-          <WelcomeActionCard
+      </WelcomeActionList>
+      {props.setupContinuation ? (
+        // Setup is offered, never required: the Team itself is one quiet press away, and Home keeps the offer.
+        <View style={styles.later}>
+          <TextLinkButton
             testID={`${props.testID}-open-team`}
-            actionId={OPEN_TEAM_LATER_ACTION_ID}
-            presentation="link"
-            title={t('teams.join.openTeamSetUpLater', { team: props.teamName })}
+            tone="strong"
+            label={t('teams.join.openTeam', { team: props.teamName })}
+            disabled={opening}
             onPress={() => finishJoined('team')}
           />
-        ) : null}
-      </WelcomeActionList>
+          <Text style={[styles.laterNote, { color: theme.colors.text.secondary }]}>
+            {` · ${t('teams.join.setUpLaterFromHome')}`}
+          </Text>
+        </View>
+      ) : null}
 
     </View>
   );
@@ -169,5 +183,15 @@ const OPEN_TEAM_LATER_ACTION_ID = 'team-joined-open-later';
 const styles = StyleSheet.create((theme) => ({
   body: {
     gap: theme.space.s20,
+  },
+  later: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // The note reads at the link's own step, so the two halves of the line share one baseline.
+  laterNote: {
+    ...happierPageTextMetrics('rowDescription'),
   },
 }));
