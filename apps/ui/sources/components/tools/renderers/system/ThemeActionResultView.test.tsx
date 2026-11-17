@@ -73,6 +73,18 @@ function renderResultInTranscript(input: Props) {
 }
 
 describe('ThemeActionResultView', () => {
+  it('windows device failure records in the transcript without dropping outcomes', async () => {
+    const screen = await renderResultInTranscript(props({ phase: { kind: 'kept' }, distribution: {
+      applied: [], failed: Array.from({ length: 200 }, (_, index) => ({ label: `Failed-device-${index}`, reason: 'failed' as const })),
+    } }));
+    const failures = screen.tree.findAll(node => typeof node.type === 'string'
+      && typeof node.props.children === 'string' && /Failed-device-\d+/.test(node.props.children));
+    expect(failures.length).toBeGreaterThan(0);
+    expect(failures.length).toBeLessThan(200);
+    console.info('[theme-window-cost] device failures', { source: 200, mounted: failures.length });
+    await screen.unmount();
+  });
+
   it('windows a data-sized set of proposed themes without losing selection or the try operation', async () => {
     const input = props({ options: Array.from({ length: 200 }, (_, index) => ({
       key: `choice-${index}`, name: `Choice ${index}`, description: 'Proposal', miniature: MINIATURE,

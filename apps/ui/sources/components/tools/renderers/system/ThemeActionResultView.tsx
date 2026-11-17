@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Collection, type CollectionAnatomy, useHappierCollection } from '@happier-dev/plugin-ui';
 
 import { ThemeMiniaturePreview } from '@/components/settings/appearance/ThemeModePreview';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -9,7 +10,8 @@ import {
   SelectionTiles,
   type SelectionTile,
 } from '@/components/ui/forms/SelectionTiles';
-import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
+import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { WordCrossFade } from '@/components/ui/motion/WordCrossFade';
 import { ThemeDevicePickerPopover } from '@/components/settings/appearance/themeProfiles/ThemeDevicePickerPopover';
 import { Text } from '@/components/ui/text/Text';
@@ -308,19 +310,42 @@ function Facts(props: ThemeActionResultViewProps) {
       </View>,
     );
   }
-  for (const failure of distribution?.failed ?? []) {
+  if (distribution && distribution.failed.length > 0) {
     lines.push(
-      <View key={`failed:${failure.label}`} style={styles.factRow}>
-        <Icon name="warning" size={14} color={theme.colors.state.danger.textForeground} />
-        <Text variant="meta" style={[styles.fact, styles.danger]}>
-          {failure.reason === 'disconnected'
-            ? t('themeCard.deviceDisconnected', { device: failure.label })
-            : t('themeCard.deviceFailed', { device: failure.label })}
-        </Text>
-      </View>,
+      <DeviceFailures key="failed" failures={distribution.failed}
+        testID={props.testID ? `${props.testID}:failed-devices` : undefined} />,
     );
   }
   return lines.length > 0 ? <View style={styles.facts}>{lines}</View> : null;
+}
+
+type DeviceFailure = NonNullable<ThemeActionResultViewProps['distribution']>['failed'][number] & Readonly<{ key: string }>;
+const failureKey = (failure: DeviceFailure) => failure.key;
+const noOpen = () => {};
+const passThroughScroller = (children: React.ReactNode) => children;
+const failureLabel = (failure: DeviceFailure) => failure.reason === 'disconnected'
+  ? t('themeCard.deviceDisconnected', { device: failure.label })
+  : t('themeCard.deviceFailed', { device: failure.label });
+
+function DeviceFailures(props: Readonly<{
+  failures: NonNullable<ThemeActionResultViewProps['distribution']>['failed'];
+  testID?: string;
+}>) {
+  const { theme } = useUnistyles();
+  const rows = React.useMemo(() => props.failures.map((failure, index) => ({ ...failure, key: String(index) })), [props.failures]);
+  const model = useHappierCollection({ items: rows, keyOf: failureKey, openKey: null, onOpenChange: noOpen });
+  const anatomy = React.useMemo<CollectionAnatomy<DeviceFailure>>(() => ({
+    glyph: () => <Icon name="warning" size={ICON_SIZE.xs} color={theme.colors.state.danger.textForeground} />,
+    title: failureLabel,
+    accessibilityLabel: failureLabel,
+    columnTitles: { title: t('settingsAccount.devices') },
+  }), [theme.colors.state.danger.textForeground]);
+  return <CoreCollectionScope renderPageScroller={passThroughScroller}>
+    <Collection model={model} anatomy={anatomy} presentation="list" detail="none" scroll="page"
+      minListWidth={280} minDetailWidth={280} preferredListRatio={1}
+      selection={{ isItemActivatable: () => false }} testID={props.testID}
+      accessibilityLabel={t('settingsAccount.devices')} />
+  </CoreCollectionScope>;
 }
 
 /** One primary at most (Keep while trying, Try again after a failure); the rest are quiet. */
@@ -545,9 +570,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   attention: {
     color: theme.colors.state.attention.textForeground,
-  },
-  danger: {
-    color: theme.colors.state.danger.textForeground,
   },
   webOnly: {
     paddingLeft: theme.space.s20,
