@@ -126,6 +126,12 @@ function createLayoutAnimationBuilderMock(presetName: string): ReanimatedLayoutA
 }
 
 export type ReanimatedModuleMockOptions = Readonly<{
+    /** Browser layout suites keep the platform's real layout hosts beneath the animation boundary. */
+    hostComponents?: Readonly<{
+        View: React.ElementType;
+        ScrollView: React.ElementType;
+        Text: React.ElementType;
+    }>;
     /** Re-evaluate derived values on read to model live SharedValue changes without a native UI thread. */
     reactiveDerivedValues?: boolean;
     /**
@@ -141,9 +147,9 @@ export type ReanimatedModuleMockOptions = Readonly<{
 
 export function createReanimatedModuleMock(options: ReanimatedModuleMockOptions = {}) {
     const Animated = {
-        View: 'Animated.View',
-        ScrollView: 'Animated.ScrollView',
-        Text: 'Animated.Text',
+        View: options.hostComponents?.View ?? 'Animated.View',
+        ScrollView: options.hostComponents?.ScrollView ?? 'Animated.ScrollView',
+        Text: options.hostComponents?.Text ?? 'Animated.Text',
         createAnimatedComponent: (component: unknown) => component,
     } as const;
 
