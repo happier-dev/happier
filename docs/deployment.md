@@ -2511,6 +2511,12 @@ fence, preserving mounted paths, modified application files, shared data and oth
 The latest attempt's operation log remains available for investigation even when
 its failed release's source and images expire. Once another attempt becomes latest,
 the older log follows the existing active and retained-release policy.
+In 0.3 development, failed activation captures the candidate's masked runtime output
+with the native log reader's byte budget before cleanup or predecessor restoration.
+The failed receipt's runtime-log read uses its retained activation range, including
+terminal stderr, rather than requiring the removed candidate or reading the restored
+predecessor. Capture failure leaves the original activation stderr available and does
+not prevent recovery. Previously deleted container output cannot be reconstructed.
 File and symlink removal cannot recurse
 if an application replaces a leaf with a directory.
 

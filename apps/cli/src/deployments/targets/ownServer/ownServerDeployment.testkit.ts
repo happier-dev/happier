@@ -483,7 +483,8 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
                     : Number(String(definition.stop_grace_period).replace(/s$/, '')) },
             HostConfig: { RestartPolicy: { Name: definition.restart || 'no', MaximumRetryCount: 0 },
                 Memory: 0, CpuShares: 0 },
-            State: { Status: args.includes('--no-start') ? 'created' : 'running', ExitCode: 0,
+            State: { Status: state.imageExit?.[image.image.configDigest] ? 'exited' : args.includes('--no-start') ? 'created' : 'running',
+                ExitCode: state.imageExit?.[image.image.configDigest] ?? 0,
                 Health: definition.healthcheck?.disable ? undefined
                     : { Status: state.imageHealth[image.image.configDigest] || state.health[service] || 'healthy' } },
             Mounts: (definition.volumes || []).filter(mount => mount.type === 'volume').map(mount => ({
@@ -514,6 +515,15 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         state.volumes.push({ name: volume.name, project });
     }
     save();
+    for (const row of state.containers) if (row.State.ExitCode) {
+        state.logs ||= {};
+        state.logs[row.Id] = { stdout: '', stderr: 'candidate failed: exit '+row.State.ExitCode+' password=' +
+            row.Config.Env.find(value => value.startsWith('DEPLOY_PASSWORD=')).slice('DEPLOY_PASSWORD='.length)+'\n' };
+    }
+    save();
+    if (state.containers.some(row => row.Config.Labels['com.docker.compose.project'] === project && row.State.ExitCode)) {
+        process.stderr.write('container exited (2)\n'); process.exit(1);
+    }
     if (state.activationCommandFailure === 'afterCreate') {
         process.stderr.write('OCI runtime create failed: exec: /private-missing-entrypoint-sentinel: no such file or directory\n');
         process.exit(1);
@@ -825,6 +835,9 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
 } else if (args[0] === 'logs') {
     const emit = () => {
         const current = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+        if (!current.containers.some(row => row.Id === args.at(-1))) {
+            process.stderr.write('No such container\n'); process.exitCode = 1; return;
+        }
         const output = current.logs && current.logs[args.at(-1)];
         if (output) { process.stdout.write(output.stdout); process.stderr.write(output.stderr); }
         else write('s0 deployment diagnostic\n');
@@ -861,6 +874,7 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         });
     }
     state.containers = state.containers.filter(row => !args.includes(row.Id));
+    for (const id of args.slice(2)) if (state.logs) delete state.logs[id];
     for (const network of state.networks) for (const id of args.slice(2)) delete network.Containers[id];
     save();
 }
@@ -1221,6 +1235,11 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
         async failImageHealth(configDigest: string) {
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { imageHealth: Record<string, string> };
             state.imageHealth[configDigest] = 'unhealthy';
+            await writeState(state);
+        },
+        async exitImage(configDigest: string, exitCode: number) {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as { imageExit?: Record<string, number> };
+            state.imageExit = { ...state.imageExit, [configDigest]: exitCode };
             await writeState(state);
         },
         async readRunningImageConfig(service: string): Promise<string | null> {

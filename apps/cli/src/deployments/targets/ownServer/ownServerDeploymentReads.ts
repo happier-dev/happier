@@ -60,6 +60,20 @@ export function createOwnServerDeploymentReads(host: Pick<OwnServerDeploymentTar
                     || deployment.targetLinkId !== link.id
                     || !link.members.some(member => member.machineId === input.machineId && member.installationId === input.installationId)
                     || input.service.environmentInstanceId !== nativeIdentity.environmentInstanceId) return failure('target_mismatch');
+                if (deployment.state === 'failed') {
+                    // The failed candidate may have been removed by restoration.
+                    // Its protected activation range retains masked runtime output
+                    // and terminal stderr without borrowing the predecessor's logs.
+                    const receipt = await host.readReceipt({ environmentId: input.environmentId,
+                        deploymentId: input.deploymentId, context });
+                    const logs = await readOwnServerDeploymentStageLogs({ deploymentRoot: nativeIdentity.deploymentRoot,
+                        serverId: nativeIdentity.homeServerIdentityId, machineId: host.machineId,
+                        installationId: input.installationId }, receipt, { ref: 'activate', tail: true,
+                        ...(input.cursor ? { cursor: input.cursor } : {}), ...(context.signal ? { signal: context.signal } : {}) });
+                    return DeploymentActionOutputSchemasV1[actionId].parse({ ok: true, environmentId: input.environmentId,
+                        deploymentId: input.deploymentId, targetLinkId: input.targetLinkId, machineId: input.machineId,
+                        installationId: input.installationId, service: input.service, kind: 'runtime', logs });
+                }
                 return await withMachineServiceLogTarget({ request: { serverId: input.serverId, machineId: input.machineId,
                     serviceId: input.service.serviceId }, serverId: host.serverId, machineId: host.machineId,
                     approvalScope: { kind: 'environment', environmentId: environment.id },

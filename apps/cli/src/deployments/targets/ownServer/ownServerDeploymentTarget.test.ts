@@ -320,7 +320,7 @@ describe('own-server target at the Action host boundary', () => {
     for (const { scenario, sourceKind } of [
         ...(['iroh_publication_refused', 'iroh_publication_loopback', 'iroh_publication_host_network', 'private_publication_matching_restore', 'private_publication_refused', 'private_publication_withdrawal_refused', 'private_publication_failed_attempt', 'private_publication_forward_withdrawal'] as const)
             .map(scenario => ({ scenario, sourceKind: 'stored' as const })),
-        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_health', 'runtime_stage', 'cleanup_without_candidate', 'cleanup_source_failure', 'cleanup_native_candidate', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
+        ...(['promote_archive_custody', 'promote_cleanup_refused', 'promote_build_refused', 'promote_source_demoted', 'promote_destination_demoted', 'admitted_placement_changed', 'adopted_origin', 'adopted_origin_changed', 'adopted_generation_changed', 'adopted_generation_admission_changed', 'adopted_installation_changed', 'routing_review', 'review_receipt_scope', 'runtime_reads', 'runtime_failed_logs', 'runtime_health', 'runtime_stage', 'cleanup_without_candidate', 'cleanup_source_failure', 'cleanup_native_candidate', 'transition_provenance_reason', 'transition_log_reason', 'retained_health', 'retained_health_remote', 'retained_health_denied', 'member_cost', 'member_child_cost', 'member_health', 'member_health_changed', 'member_source_environment', 'joining_current', 'joining_current_successor', 'candidate_first_deploy', 'candidate_start_first', 'candidate_start_first_unknown', 'candidate_start_first_restore', 'candidate_start_first_restore_unknown', 'candidate_start_first_restore_candidate', 'candidate_start_first_restore_unhealthy', 'candidate_start_first_restore_join_recovery', 'candidate_pending_check_zero', 'candidate_direct_url', 'candidate_backup_required', 'candidate_backup_configured', 'candidate_backup_configured_failure', 'candidate_backup_configured_native_failure', 'candidate_check_nonzero', 'canonical_home_prepare', 'canonical_home_build', 'public_restore', 'standalone_public_restore', 'standalone_public_restore_upload', 'standalone_public_restore_volume_upload', 'standalone_public_restore_volume', 'standalone_public_restore_snapshot_confirmed', 'standalone_public_restore_stale_input', 'public_copy', 'public_restore_drill', 'public_preview_copy', 'public_preview_copy_failure', 'public_preview_configure_failure', 'public_preview_companion_copy', 'public_preview_companion_create_failure', 'public_preview_companion_main_deleted', 'public_preview_companion_connect_failure', 'native_preview_cleanup', 'native_preview_cleanup_failure', 'native_preview_cleanup_companion', 'native_preview_cleanup_companion_failure', 'public_backup', 'public_backup_restore', 'public_backup_restore_local', 'public_backup_restore_sftp', 'public_backup_retention', 'public_backup_recorded_health', 'public_backup_probe', 'required_project_secret'] as const).map(scenario => ({ scenario, sourceKind: 'repository' as const })),
         ...(['telemetry_delivery', 'telemetry_own_collector', 'telemetry_no_header'] as const)
             .map(scenario => ({ scenario, sourceKind: 'repository' as const })),
         { scenario: 'standalone_public_restore_volume_upload_activation_failure' as const, sourceKind: 'repository' as const },
@@ -344,7 +344,7 @@ describe('own-server target at the Action host boundary', () => {
         const restoreSuperseded = scenario === 'standalone_public_restore_volume_upload_activation_failure_superseded';
         const retainedBackupTransport = scenario === 'public_backup_restore_local' ? 'local'
             : scenario === 'public_backup_restore_sftp' ? 'sftp' : undefined;
-        const runtimeRead = scenario === 'runtime_reads' || scenario === 'runtime_health';
+        const runtimeRead = scenario === 'runtime_reads' || scenario === 'runtime_health' || scenario === 'runtime_failed_logs';
         const promotionScenario = scenario === 'promote_source_demoted' || scenario === 'promote_destination_demoted'
             || scenario === 'promote_build_refused' || scenario === 'promote_archive_custody' || scenario === 'promote_cleanup_refused';
         const startFirst = scenario.startsWith('candidate_start_first');
@@ -4277,13 +4277,56 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                 return;
             }
             expect(stored.size).toBe(0);
-            if (scenario !== 'runtime_stage') caller.abort();
+            if (scenario !== 'runtime_stage' && scenario !== 'runtime_failed_logs') caller.abort();
             if (retainedHealth) expect(await readAcquiredHealthAlertSource?.(createHealthCheckSourceInstanceIdV1({
                 kind: 'environment', environmentId: environment.environment.id,
             })), 'the retained runtime reads Home alert configuration after its caller leaves').toEqual({ kind: 'unconfigured' });
             const service = mounted.registry.projectManagedServices.listProjectServices().find(handle => handle.kind === 'environment');
             if (!service || service.kind !== 'environment') throw new Error('Real target must produce its Environment service');
             expect(incumbentServices.has(service)).toBe(false);
+            if (scenario === 'runtime_failed_logs') {
+                const reads = createDaemonDeploymentActionDeps({ ...host, resolveRequesterIdentity });
+                const logInput = { serverId: 'home', environmentId: environment.environment.id,
+                    targetLinkId: receipt.deployment.targetLinkId, machineId: 'machine-a', installationId: 'installation-a',
+                    service: service.identity!, kind: 'runtime' as const };
+                expect(await reads.deploymentAction('deployments.logs.read', { ...logInput, deploymentId: receipt.deployment.id }, {}))
+                    .toMatchObject({ ok: true, kind: 'runtime', logs: { kind: 'page' } });
+                // The live DB-MOVE failure lost its candidate after recovery
+                // recreated the predecessor under restorations/<failed>/<prior>.
+                serving = structuredClone(receipt);
+                environment.targetLinks[0].targetLink.activeDeploymentId = serving.deployment.id;
+                environment.content.ownServer!.autoRestorePreviousRelease = true;
+                const failedImage = await docker.registerImage('app', 'exit-2');
+                const document = (await readFile(join(repository, 'compose.yaml'), 'utf8'))
+                    .replace(image.registryReference!, failedImage.registryReference!);
+                await writeFile(join(repository, 'compose.yaml'), document);
+                git('add', 'compose.yaml'); git('commit', '--quiet', '-m', 'Exit 2 candidate');
+                receipt.deployment = { ...receipt.deployment, id: 'failed-exit-2', state: 'queued', revision: 1,
+                    actionOperationId: 'failed-exit-2-operation', contentArtifactId: 'failed-exit-2-content' };
+                if (receipt.content.sourceIntent.kind !== 'repository') throw new Error('Expected repository');
+                receipt.content = { ...receipt.content, sourceIntent: { ...receipt.content.sourceIntent, sha: git('rev-parse', 'HEAD') },
+                    ownServer: undefined, machineResults: [], steps: [], images: [failedImage] };
+                request = { ...request, input: { ...request.input, contentArtifactId: receipt.deployment.contentArtifactId },
+                    receipt: { ...request.receipt, deploymentId: receipt.deployment.id, deploymentRevision: 1, state: 'queued' },
+                    context: { ...sourceContext, operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } };
+                const failedReview = await target.review({ actionId: request.actionId, input: request.input,
+                    content: receipt.content, context: request.context });
+                receipt.content.ownServer = { approvedInputBasis: failedReview.inputBasis };
+                await docker.exitImage(failedImage.configDigest, 2);
+                expect(await target.execute(request)).toMatchObject({ ok: false });
+                expect(receipt.deployment.state).toBe('failed');
+                expect(receipt.content.machineResults).toEqual([expect.objectContaining({ restoration: 'succeeded',
+                    currentDeploymentId: serving.deployment.id })]);
+                expect(await docker.readRunningImageConfig('app')).toBe(image.configDigest);
+                const restoration = (await docker.readInvocations()).filter(call => call.args.includes('up')).at(-1)!;
+                expect(restoration.args[restoration.args.indexOf('--project-directory') + 1])
+                    .toContain(`/restorations/${receipt.deployment.id}/${serving.deployment.id}`);
+                const logs = await reads.deploymentAction('deployments.logs.read', { ...logInput, deploymentId: receipt.deployment.id }, {});
+                expect(logs, 'errorCode' in logs ? String(logs.errorCode) : undefined).toMatchObject({ ok: true, kind: 'runtime', logs: { kind: 'page',
+                    page: { text: expect.stringContaining('candidate failed: exit 2') } } });
+                expect(JSON.stringify(logs)).not.toContain('review-secret-value-sentinel');
+                return;
+            }
             if (scenario === 'runtime_stage') {
                 phase('capture-read');
                 expect(receipt.content.ownServer?.referenceAddresses).toEqual([{

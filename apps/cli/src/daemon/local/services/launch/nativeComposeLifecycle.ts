@@ -1,6 +1,7 @@
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { classifyNativeComposeFailure } from './nativeComposeFailure';
 import { readNativeComposeLogsForHost } from './nativeComposeLogs';
+import { MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES } from '@/plugins/runtime/invocation/services/managedServiceNativeLogBudget';
 export { readNativeComposeLogsForHost } from './nativeComposeLogs';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
@@ -1658,6 +1659,42 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                 return activation;
             } catch (error) {
                 try {
+                    // Recovery can recreate the logical project immediately. Capture
+                    // this attempt while its containers and original masking still exist.
+                    if (input.stageOutput && !request.signal?.aborted) {
+                        try {
+                            const snapshot = await generation.snapshot(request.signal);
+                            const candidates = snapshot.rows.filter(row => record(row.Config) && record(row.Config.Labels)
+                                && row.Config.Labels['com.docker.compose.project.working_dir'] === input.source.rootPath
+                                && current.services.includes(String(row.Config.Labels['com.docker.compose.service'])));
+                            for (const row of candidates) {
+                                const service = String(record(row.Config) && record(row.Config.Labels)
+                                    && row.Config.Labels['com.docker.compose.service']);
+                                if (typeof row.Image !== 'string') return nativeRefusal('deployment_generation_unavailable');
+                                await identity.prove(row.Image, pin(service));
+                                if (record(row.State)) input.stageOutput.appendRedacted('stderr',
+                                    Buffer.from(`\n${service}: ${String(row.State.Status)} (exit ${String(row.State.ExitCode)})\n`));
+                            }
+                            if (candidates.length) {
+                                const tuple = authorizedPrefixes.get(launch) ?? nativeRefusal('native_service_admission_required');
+                                const logs = await readNativeComposeLogsForHost({ containerIds: candidates.map(row => row.Id),
+                                    environment: true, redactionLease: launch.secretRedactionLease,
+                                    run: (args, signal, capture) => input.io.run({ command: launch.command,
+                                        args: [...tuple.prefix, ...args], cwd: launch.cwd!, env: tuple.env,
+                                        ...(signal ? { signal } : {}), ...capture }),
+                                }, { kind: 'read', maxBytes: MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES, signal: request.signal });
+                                input.stageOutput.appendRedacted('stderr', Buffer.from(logs.kind === 'page'
+                                    ? `\nFailed activation runtime logs${logs.page.truncated ? ' (truncated)' : ''}:\n${logs.page.text}`
+                                    : '\nFailed activation runtime logs unavailable\n'));
+                            }
+                        } catch (captureError) {
+                            // Log acquisition must not replace the native failure or
+                            // prevent incumbent restoration. Up's stderr is already retained.
+                            input.stageOutput.appendRedacted('stderr', Buffer.from('\nFailed activation runtime logs unavailable\n'));
+                            logger.warnLocalFile('[Native Compose] Failed activation log capture unavailable',
+                                projectActionFailureCauseV1(captureError, 'deployment.logs.capture', { allowUnknownErrorCode: false }));
+                        }
+                    }
                     const details = record(error) && record(error.details) ? error.details : undefined;
                     if (request.cleanupOnFailure && !request.signal?.aborted
                         && ['deployment_activation_failed', 'native_compose_command_failed'].includes(String(details?.reason))) {
