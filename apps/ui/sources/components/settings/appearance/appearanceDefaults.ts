@@ -3,12 +3,11 @@ import { settingsDefaults, type SettingsWriteDelta, type WritableSettingsKey } f
 import type { SettingOperationContext, SettingOperationResult } from '@/components/settings/catalog/settingDeclarations';
 import { DEFAULT_THEME_PROFILE_SELECTION_BY_MODE } from '@/theme/profiles/themeProfilePersistence';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
-import { readReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 /**
  * The preferences the Appearance page shows, split by where each is stored. Theme mode and theme
- * slots are not listed: they change through the theme transition, which also applies them to the
- * running app. Language has its own page.
+ * slots are published with these defaults so the theme runtime observes one selection change.
+ * Language has its own page.
  */
 const APPEARANCE_LOCAL_KEYS = [
     'uiFontScale',
@@ -73,25 +72,13 @@ export function resolveAppearanceDefaults(): Readonly<{
 /** One reversible page operation; Account and device effects share the same admitted invocation. */
 export async function resetAppearanceSettings(context: SettingOperationContext): Promise<SettingOperationResult> {
     if (context.input !== undefined) return { status: 'unavailable', reason: 'invalid_operation_input' };
-    if (!context.isCurrent() || !context.readLocalSettings || !context.writeLocalSettings) {
+    if (!context.isCurrent() || !context.writeLocalSettings) {
         return { status: 'unavailable', reason: 'setting_not_bound' };
     }
     const defaults = resolveAppearanceDefaults();
-    const local = context.readLocalSettings();
-    const { commitThemeSelection } = await import('@/theme/profiles/themeProfileRuntime');
-    await commitThemeSelection({
-        currentPreference: local.themePreference,
-        nextPreference: defaults.themePreference,
-        nextThemeProfiles: { profiles: [], activeProfileIds: DEFAULT_THEME_PROFILE_SELECTION_BY_MODE },
-        reduceMotion: readReducedMotionPreference(),
-        writeLocal: selection => {
-            throwIfAborted(context.signal);
-            if (!context.isCurrent()) throw Object.assign(new Error('setting_not_bound'), { code: 'setting_not_bound' });
-            context.writeLocalSettings?.({ themePreference: selection.themePreference,
-                themeProfileSelection: selection.themeProfiles.activeProfileIds });
-        },
-    });
-    context.writeLocalSettings(defaults.local);
+    throwIfAborted(context.signal);
+    context.writeLocalSettings({ ...defaults.local, themePreference: defaults.themePreference,
+        themeProfileSelection: DEFAULT_THEME_PROFILE_SELECTION_BY_MODE });
     await context.mutateSettings(() => defaults.account);
     return { status: 'completed' };
 }

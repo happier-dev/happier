@@ -28,9 +28,7 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 import { darkTheme, lightTheme, type Theme } from '@/theme';
-import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import {
-    commitThemeSelection,
     applyThemeRuntimeSelection,
     transitionThemeRuntimeSelection,
     resolveEffectiveThemeRuntimeBackground,
@@ -395,74 +393,5 @@ describe('theme profile runtime', () => {
         expect(finalDarkUpdater?.(registeredThemes.dark)).toBe(darkTheme);
     });
 
-    it('commits the resolved selection through the native transition with forced animation', async () => {
-        const writeLocal = vi.fn();
-        const run = vi.fn(async (mutation: () => void) => mutation());
-        onTestFinished(registerNativeThemePreferenceTransitionController({ run }));
 
-        await commitThemeSelection({
-            currentPreference: 'light', nextPreference: 'light', nextThemeProfiles: profileState,
-            forceAnimate: true,
-            reduceMotion: false,
-            systemTheme: 'light',
-            platform: 'ios',
-            writeLocal,
-        });
-
-        expect(run).toHaveBeenCalledOnce();
-        expect(writeLocal).toHaveBeenCalledWith(expect.objectContaining({
-            themeProfiles: expect.objectContaining({
-                activeProfileIds: { light: 'ocean', dark: 'ocean' },
-            }),
-        }));
-    });
-
-    it('commits the latest resolved selection inside the native transition mutation', async () => {
-        let selection: Pick<LocalSettings, 'themePreference' | 'themeProfiles'> = { themePreference: 'light', themeProfiles: profileState };
-        const writeLocal = vi.fn((next: typeof selection) => { selection = next; });
-        const run = vi.fn(async (mutation: () => void) => {
-            selection = { themePreference: 'dark',
-                themeProfiles: { activeProfileIds: { light: null, dark: 'ocean' },
-                    profiles: [...profileState.profiles, ...pairedProfileState.profiles] } };
-            mutation();
-        });
-        onTestFinished(registerNativeThemePreferenceTransitionController({ run }));
-
-        await commitThemeSelection({
-            currentPreference: 'light', nextPreference: 'light', nextThemeProfiles: profileState,
-            forceAnimate: true,
-            reduceMotion: false,
-            systemTheme: 'light',
-            platform: 'ios',
-            resolveSelection: () => selection,
-            writeLocal,
-        });
-
-        expect(writeLocal).toHaveBeenCalledWith(expect.objectContaining({
-            themePreference: 'dark',
-            themeProfiles: expect.objectContaining({
-                activeProfileIds: { light: null, dark: 'ocean' },
-            }),
-        }));
-        expect(selection.themeProfiles.profiles).toHaveLength(3);
-        expect(platformRuntime.setTheme).toHaveBeenLastCalledWith('dark');
-        expect(platformRuntime.setRootViewBackgroundColor).toHaveBeenLastCalledWith('#0a0a0a');
-        expect(platformRuntime.setStatusBarStyle).toHaveBeenLastCalledWith('light', true);
-    });
-
-    it('keeps reduced motion authoritative for a forced selection transition', async () => {
-        const run = vi.fn(async (mutation: () => void) => mutation());
-        onTestFinished(registerNativeThemePreferenceTransitionController({ run }));
-
-        await commitThemeSelection({
-            currentPreference: 'dark', nextPreference: 'dark', nextThemeProfiles: profileState,
-            forceAnimate: true,
-            reduceMotion: true,
-            systemTheme: 'dark',
-            platform: 'ios',
-            writeLocal: vi.fn(),
-        });
-
-        expect(run).not.toHaveBeenCalled();
-    });
 });

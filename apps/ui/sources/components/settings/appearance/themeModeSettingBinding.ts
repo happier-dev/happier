@@ -1,9 +1,7 @@
 import type { SettingStorageBinding } from '@/components/settings/catalog/settingDeclarations';
 import { z } from 'zod/mini';
 import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
-import { readReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
-import { readSelectedThemeProfiles } from '@/sync/store/useThemeProfiles';
 
 export const THEME_MODE_CHOICES = ['adaptive', 'light', 'dark'] as const;
 type ThemeModeChoice = typeof THEME_MODE_CHOICES[number];
@@ -26,20 +24,12 @@ export const themeModeStorageBinding = {
         const parsed = SettingsDeclarationValueV1Schema.safeParse(value);
         return preference !== null && parsed.success ? { success: true, value: parsed.data } : { success: false };
     },
-    commit: async (local, value, writeLocal, context) => {
+    commit: (_local, value, writeLocal, context) => {
         const preference = readThemePreference(value);
         if (preference === null) return;
-        const { commitThemeSelection } = await import('@/theme/profiles/themeProfileRuntime');
-        const initial = readSelectedThemeProfiles(context?.accountScope);
-        await commitThemeSelection({ currentPreference: local.themePreference, nextPreference: preference,
-            nextThemeProfiles: initial, resolveSelection: () => {
-                const themeProfiles = readSelectedThemeProfiles(context?.accountScope);
-                return { themePreference: preference, themeProfiles };
-            }, reduceMotion: readReducedMotionPreference(),
-            writeLocal: delta => {
-                throwIfAborted(context?.signal);
-                if (context?.isCurrent() === false) throw Object.assign(new Error('setting_not_bound'), { code: 'setting_not_bound' });
-                writeLocal({ themePreference: delta.themePreference });
-            } });
+        throwIfAborted(context?.signal);
+        if (context?.isCurrent() === false) throw Object.assign(new Error('setting_not_bound'), { code: 'setting_not_bound' });
+        // The mounted runtime observer owns palette application and its transition for every writer.
+        writeLocal({ themePreference: preference });
     },
 } satisfies SettingStorageBinding;

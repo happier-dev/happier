@@ -1,3 +1,5 @@
+import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 
@@ -46,6 +48,7 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOrigina
 installDisconnectedServerSocketBoundary();
 
 const { useToggleThemeMode, useApplyThemeSelection } = await import('./useApplyThemeSelection');
+const { ThemeProfileRuntimeSync } = await import('@/theme/ThemeProfileRuntimeSync');
 
 const CUSTOM_SELECTION = { light: null, dark: { kind: 'artifact' as const, id: 'unloaded-theme' } };
 
@@ -53,8 +56,10 @@ async function toggleFrom(params: Readonly<{ preference: 'adaptive' | 'light' | 
     storage.getState().applyLocalSettings({ themePreference: params.preference, themeProfileSelection: CUSTOM_SELECTION });
     shared.screenDark = params.screenDark;
     shared.systemScheme = params.systemScheme;
-    const hook = await renderHook(() => useToggleThemeMode());
-    await hook.getCurrent()();
+    const hook = await renderHook(() => useToggleThemeMode(), {
+        wrapper: ({ children }) => React.createElement(React.Fragment, null, React.createElement(ThemeProfileRuntimeSync), children),
+    });
+    await act(async () => { await hook.getCurrent()(); });
     await hook.unmount();
     return storage.getState().localSettings;
 }

@@ -5,9 +5,7 @@ import type { ThemePreference } from '@/components/ui/layout/statusBarStyle';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 
-export { commitThemeSelection } from '@/theme/profiles/themeProfileRuntime';
-
-/** The declared mode owner applies preference storage, transition and runtime. */
+/** The declared mode owner writes preference; the shared runtime observer applies it. */
 export function useApplyThemeSelection(beforeCommit?: () => void): (
     nextThemePreference: ThemePreference,
 ) => Promise<boolean> {

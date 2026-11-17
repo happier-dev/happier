@@ -9,10 +9,8 @@ import type { ThemePreference } from '@/components/ui/layout/statusBarStyle';
 import { resolveStatusBarStyleForThemePreference } from '@/components/ui/layout/statusBarStyle';
 import {
     runThemePreferenceChange as defaultRunThemePreferenceChange,
-    type ThemeTransitionPlatform,
 } from '@/components/settings/appearance/themePreferenceTransition';
 import { loadLocalSettings as defaultLoadLocalSettings } from '@/sync/domains/state/persistence';
-import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { addBreadcrumbIfEnabled } from '@/utils/system/sentry';
 import { findActiveThemeProfileForMode } from './themeProfilePersistence';
@@ -76,21 +74,6 @@ type ResolveThemeRuntimeStartupThemesInput = Readonly<{
 type ThemeRuntimeStartupThemes = Readonly<{
     themes: ThemeRuntimeThemes;
     backgroundColor: string;
-}>;
-
-type ThemeSelection = Pick<LocalSettings, 'themePreference' | 'themeProfiles'>;
-
-type CommitThemeSelectionInput = Readonly<{
-    currentPreference: ThemePreference;
-    nextPreference: ThemePreference;
-    nextThemeProfiles: ThemeProfilesLocalStateV1;
-    reduceMotion: boolean;
-    writeLocal: (delta: ThemeSelection) => void;
-    /** Rebase profile activation on the settings present when the transition actually commits. */
-    resolveSelection?: () => ThemeSelection;
-    forceAnimate?: boolean;
-    systemTheme?: AppThemeName | null;
-    platform?: ThemeTransitionPlatform;
 }>;
 
 const canonicalBaseThemes: ThemeRuntimeThemes = Object.freeze({
@@ -449,33 +432,5 @@ export const transitionThemeRuntimeSelection = (requested: ApplyThemeRuntimeSele
         platform: Platform.OS, reduceMotion: reduceMotion || input.preview?.transition === 'none',
         forceAnimate: visibleChanged,
         mutation: () => { applyPreparedThemeRuntimeSelection(prepared); },
-    });
-};
-
-const applyResolvedThemeRuntimeSelection = (
-    selection: ThemeSelection,
-    systemTheme: AppThemeName,
-): void => {
-    applyThemeRuntimeSelection({ ...selection, systemTheme });
-};
-
-/** The single selection mutation, transition, runtime and status-bar owner. */
-export const commitThemeSelection = (input: CommitThemeSelectionInput): Promise<void> => {
-    const systemTheme = input.systemTheme ?? readSystemTheme();
-    return defaultRunThemePreferenceChange({
-        currentPreference: input.currentPreference,
-        nextPreference: input.nextPreference,
-        platform: input.platform ?? Platform.OS,
-        reduceMotion: input.reduceMotion,
-        forceAnimate: input.reduceMotion ? false : (input.forceAnimate ?? true),
-        systemTheme,
-        mutation: () => {
-            const selection = input.resolveSelection?.() ?? {
-                themePreference: input.nextPreference,
-                themeProfiles: input.nextThemeProfiles,
-            };
-            input.writeLocal(selection);
-            applyResolvedThemeRuntimeSelection(selection, systemTheme);
-        },
     });
 };

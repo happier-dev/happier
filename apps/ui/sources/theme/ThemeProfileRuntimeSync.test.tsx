@@ -59,6 +59,44 @@ async function setup() {
 }
 
 describe('Artifact-backed theme runtime synchronization', () => {
+    it('applies each mode press once when its settings publication flushes synchronously', async () => {
+        const fixture = await setup();
+        const { themeModeStorageBinding } = await import('@/components/settings/appearance/themeModeSettingBinding');
+        let revision = 0;
+        let renders = 0;
+        let commits = 0;
+        const listeners = new Set<() => void>();
+        const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
+        shared.setTheme.mockImplementation(() => { revision++; for (const listener of listeners) listener(); });
+        onTestFinished(() => { shared.setTheme.mockReset(); });
+        function ThemedConsumer() {
+            React.useSyncExternalStore(subscribe, () => revision);
+            renders++;
+            return null;
+        }
+        const screen = await renderScreen(<><ThemeProfileRuntimeSync />
+            <React.Profiler id="theme-consumer" onRender={() => { commits++; }}><ThemedConsumer /></React.Profiler></>);
+        const transition = vi.fn((mutation: () => void) => mutation());
+        const unregister = registerNativeThemePreferenceTransitionController({ run: transition });
+        setReducedMotionPreferenceOverride(false);
+        onTestFinished(() => { unregister(); setReducedMotionPreferenceOverride(null); });
+        for (const preference of ['dark', 'light', 'dark', 'light', 'dark', 'light'] as const) {
+            transition.mockClear();
+            shared.setTheme.mockClear();
+            const before = { renders, commits };
+            await themeModeStorageBinding.commit(storage.getState().localSettings, preference,
+                delta => { act(() => { storage.getState().applyLocalSettings(delta); }); },
+                { accountScope: fixture.scope, isCurrent: () => true });
+            await act(async () => {});
+            expect(storage.getState().localSettings.themePreference).toBe(preference);
+            expect(transition).toHaveBeenCalledTimes(1);
+            expect(shared.setTheme).toHaveBeenCalledTimes(1);
+            expect(shared.setTheme).toHaveBeenLastCalledWith(preference);
+            expect(renders - before.renders).toBe(1);
+            expect(commits - before.commits).toBe(1);
+        }
+        await screen.unmount();
+    });
     it('reveals Apply once, keeps an already-painted preview without repainting, and preserves the mode transition', async () => {
         const { createArtifactInventoryDemandHarness } = await import('@/dev/testkit/harness/artifactInventoryDemandHarness');
         const fixture = await createArtifactInventoryDemandHarness();
