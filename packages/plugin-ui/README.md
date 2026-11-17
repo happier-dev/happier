@@ -330,6 +330,13 @@ In 0.3 development source, `Form.submitDisabled` blocks submission while keeping
 the draft fields and Cancel available. Use it for incomplete or invalid input;
 `Form.disabled` disables the whole form, and `busy` represents an active submission.
 
+`SelectionTiles` in 0.3 development source supports described cards with
+`descriptionPlacement="below"`; a card's `preview` leads its description, and an
+option with `span="row"` occupies the full grid row. Visual tiles can provide
+`renderOptionAccessory` for a quiet menu beside the choice. The callback's
+`revealed` flag follows hover or selection; accessory controls remain outside the
+choice so opening a menu does not select its tile.
+
 ### Project detail navigation (0.3 development source)
 
 Project `appPage` surfaces use the ordinary `defineUiSurface` context and public

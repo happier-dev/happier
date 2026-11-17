@@ -10,6 +10,7 @@ import {
   type HappierSelectionTilesColors,
   type HappierSelectionTilesGlyphRenderer,
   type HappierSelectionTilesTextRenderer,
+  type HappierSingleSelectionTilesProps,
 } from '../presentation/form/SelectionTiles.js';
 import { resolveHappierTextStepStyle } from '../presentation/layout/pageText.js';
 import { HappierText } from '../presentation/text/Text.js';
@@ -39,6 +40,8 @@ export type SelectionTilesOption<T extends string = string> = Readonly<{
    */
   preview?: ReactNode;
   previewEdge?: 'solid' | 'dashed';
+  /** Card tiles: the leading choice can take a full row above the remaining grid. */
+  span?: HappierSelectionTileOption<T, IconName>['span'];
   disabled?: boolean;
 }>;
 
@@ -60,9 +63,13 @@ type SelectionTilesBaseProps<T extends string> = Readonly<{
   maximumColumns?: number;
   minimumTileWidth?: number;
   subtitleLines?: number;
+  /** Card tiles: place a description below the title row, with its preview above. */
+  descriptionPlacement?: HappierSingleSelectionTilesProps<T, IconName>['descriptionPlacement'];
   /** Only action tiles start operations; choice variants do not accept an action callback. */
   onPress?: undefined;
   renderOptionFooter?: (input: Readonly<{ option: SelectionTilesOption<T>; selected: boolean; disabled: boolean }>) => ReactNode;
+  /** Visual tiles: quiet operations beside the choice, revealed on hover or selection. */
+  renderOptionAccessory?: (input: Readonly<{ option: SelectionTilesOption<T>; selected: boolean; revealed: boolean }>) => ReactNode;
   /** The group's accessible name: the setting it chooses. */
   accessibilityLabel: string;
   accessibilityLabelKey?: string;
@@ -179,7 +186,9 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>):
     maximumColumns: props.maximumColumns,
     minimumTileWidth: props.minimumTileWidth,
     subtitleLines: props.subtitleLines,
+    descriptionPlacement: props.descriptionPlacement,
     renderOptionFooter: props.renderOptionFooter,
+    renderOptionAccessory: props.renderOptionAccessory,
     accessibilityLabel: resolveAuthorText(translate, props.accessibilityLabel, props.accessibilityLabelKey) ?? props.accessibilityLabel,
     ...(props.testID === undefined ? {} : { testIdPrefix: props.testID }),
     colors,

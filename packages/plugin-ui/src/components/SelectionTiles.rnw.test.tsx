@@ -83,6 +83,45 @@ async function pressKey(target: HTMLElement, key: string): Promise<void> {
 }
 
 describe('SelectionTiles', () => {
+  it('keeps a visual tile accessory outside the choice so its operation does not select the theme', async () => {
+    const onChange = vi.fn();
+    const onMenu = vi.fn();
+    const mount = mountTiles(<SelectionTiles variant="visual" accessibilityLabel="Theme" value="linen"
+      onChange={onChange} options={[{ id: 'linen', title: 'Linen', preview: <Text>Linen preview</Text> }]}
+      renderOptionAccessory={({ option, revealed }) => revealed
+        ? <button aria-label={`Manage ${option.title}`} onClick={onMenu}>Manage</button> : null} />);
+    try {
+      const accessory = mount.container.querySelector<HTMLElement>('[aria-label="Manage Linen"]');
+      expect(accessory).not.toBeNull();
+      expect(accessory!.closest('[role="radio"]')).toBeNull();
+      await act(async () => { accessory!.click(); });
+      expect(onMenu).toHaveBeenCalledOnce();
+      expect(onChange).not.toHaveBeenCalled();
+    } finally { mount.unmount(); }
+  });
+
+  it('renders theme card previews above their description and lets a leading option span the grid', () => {
+    const mount = mountTiles(<SelectionTiles accessibilityLabel="Theme" value="linen" onChange={() => undefined}
+      descriptionPlacement="below" maximumColumns={2} testID="themes"
+      options={[
+        { id: 'linen', title: 'Linen', subtitle: 'Warm paper', span: 'row', preview: <Text>Linen preview</Text> },
+        { id: 'ink', title: 'Ink', subtitle: 'Deep night', preview: <Text>Ink preview</Text> },
+        { id: 'mist', title: 'Mist', subtitle: 'Quiet grey', preview: <Text>Mist preview</Text> },
+      ]} />);
+    try {
+      expect(mount.container.textContent).toContain('Linen preview');
+      expect(mount.container.querySelector('[data-testid="themes:linen:description"]')?.textContent).toBe('Warm paper');
+      const leading = mount.container.querySelector<HTMLElement>('[data-testid="themes:linen"]')!;
+      const next = mount.container.querySelector<HTMLElement>('[data-testid="themes:ink"]')!;
+      for (let node = leading.parentElement; node && node !== mount.container; node = node.parentElement) {
+        const handler = Reflect.get(node, '__reactLayoutHandler');
+        if (typeof handler === 'function') act(() => handler({ nativeEvent: { layout: { x: 0, y: 0, width: 600, height: 300 } } }));
+      }
+      expect(getComputedStyle(leading).width).toBe('600px');
+      expect(getComputedStyle(next).width).toBe('295px');
+    } finally { mount.unmount(); }
+  });
+
   it('hides visual captions without losing accessible names or keyboard selection', async () => {
     const onChange = vi.fn();
     const mount = mountTiles(<SelectionTiles variant="visual" tileSizing="fill" labels="hidden"
