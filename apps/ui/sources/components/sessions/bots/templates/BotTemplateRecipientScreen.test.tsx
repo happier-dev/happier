@@ -28,7 +28,6 @@ import { createMachineFixture, createMachineReadBatchResponseFixture, createPlai
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { NewSessionEmbeddedHostProvider, type NewSessionEmbeddedHost } from '@/components/sessions/new/navigation/newSessionHost';
 import { NewBotDraftFace } from '@/components/sessions/bots/NewBotDraftHeader';
-import { PortablePetFace } from '@/components/sessions/bots/face/PortablePetFace';
 import { Switch } from '@/components/ui/forms/Switch';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -366,12 +365,13 @@ describe('recipient template page', () => {
         const petSwitch = () => screen.root.find(node => node.type === Switch && node.props.testID === 'bot-template-copy-pet-switch');
         // Selected by default: the copy wears the pet, so "Your copy" shows it rather than the face chooser.
         expect(petSwitch().props.value).toBe(true);
-        expect(screen.root.findAll(node => node.type === PortablePetFace && node.props.testID === 'bot-template-copy-pet-face')).toHaveLength(1);
+        expect(screen.findByTestId('bot-template-copy-pet-face')).not.toBeNull();
         expect(screen.root.findAllByType(NewBotDraftFace)).toHaveLength(0);
         await act(async () => { petSwitch().props.onValueChange(false); });
         expect(petSwitch().props.value).toBe(false);
         expect(screen.getTextContent()).toContain('petShare.copyRowOff');
         expect(screen.root.findAllByType(NewBotDraftFace)).toHaveLength(1);
+        expect(screen.findByTestId('bot-template-copy-pet-face')).toBeNull();
         const copyProps: React.ComponentProps<typeof BotTemplateCopyForm> = screen.findByType<typeof BotTemplateCopyForm>(BotTemplateCopyForm).props;
         expect(copyProps.preview.release.content.pet?.name).toBe('Capy');
         await screen.unmount();
