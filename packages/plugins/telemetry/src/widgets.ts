@@ -7,6 +7,7 @@
 
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import type { UiRenderer, UiView } from '@happier-dev/plugin-sdk/ui';
+import type { InputFieldHint, InputHints } from '@happier-dev/plugin-sdk/actions';
 
 /** The host option source that lists the Home's Environments with telemetry on (protocol `inputs`). */
 export const TELEMETRY_WIDGET_ENVIRONMENT_OPTIONS_SOURCE_ID =
@@ -28,15 +29,15 @@ const environmentSchema = {
   },
 } satisfies PluginJsonSchema;
 
-const environmentField = {
+const environmentField: InputFieldHint = {
   path: 'environment',
   title: 'Environment',
   widget: 'select',
   required: true,
   optionsSourceId: TELEMETRY_WIDGET_ENVIRONMENT_OPTIONS_SOURCE_ID,
-} as const;
+};
 
-const environmentInputs = { fields: [environmentField] };
+const environmentInputs: InputHints = { fields: [environmentField] };
 const environmentInputSchema = {
   type: 'object',
   additionalProperties: false,
@@ -56,7 +57,7 @@ const RANGE_OPTIONS = [
   { value: '7d', label: 'Last 7 days' },
 ];
 
-const metricInputs = {
+const metricInputs: InputHints = {
   fields: [
     environmentField,
     {
