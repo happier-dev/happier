@@ -34,6 +34,52 @@ afterEach(() => {
 });
 
 describe('MCP destination-backed settings hook', () => {
+    it('keeps the server count unknown until a catalog read proves it is empty', async () => {
+        const accountId = 'mcp-count-account';
+        const home = await upsertServerProfileOnly({ serverUrl: 'https://mcp-count.example.test', name: 'MCP' });
+        await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, {
+            token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+        });
+        const scope = { serverId: home.id, accountId };
+        getStorage().setState({ profileScope: scope, settingsScope: scope, settings: settingsParse({}), settingsVersion: 7 });
+        const entered = createDeferred<void>();
+        const release = createDeferred<void>();
+        let failRead = true;
+        // Only HTTP is replaced; the real reader, snapshot and hook decide whether a count is known.
+        setRuntimeFetch(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 7 }));
+            if (path === '/v2/account/settings') return Response.json({ version: 7, content: { t: 'plain', v: {} } });
+            if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json({ status: 'absent' });
+            if (path === '/v1/account/entity-rows/mcp') {
+                entered.resolve();
+                await release.promise;
+                return failRead ? Response.json({ error: 'unavailable' }, { status: 503 })
+                    : Response.json({ status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, servers: [], bindings: [] } } });
+            }
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        const hook = await renderHook(useMcpServersSettings);
+        try {
+            await entered.promise;
+            expect(hook.getCurrent()).toMatchObject({ serverCount: null, loading: true, unavailable: false,
+                snapshot: { status: 'loading', value: null } });
+            await act(async () => { release.resolve(); });
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ serverCount: null, unavailable: true,
+                snapshot: { status: 'unavailable', value: null } }));
+            failRead = false;
+            await act(async () => { await hook.getCurrent().reload(); });
+            expect(hook.getCurrent()).toMatchObject({ serverCount: 0, unavailable: false,
+                snapshot: { status: 'ready', value: { servers: [] } } });
+        } finally {
+            release.resolve();
+            await hook.unmount();
+        }
+    });
+
     it('refuses a requested Account mismatch before reading the selected Home catalog', async () => {
         const home = await upsertServerProfileOnly({ serverUrl: 'https://mcp-account-mismatch.test', name: 'MCP' });
         await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, {
@@ -100,6 +146,7 @@ describe('MCP destination-backed settings hook', () => {
             await act(async () => { release.resolve(); });
             await trailingEntered.promise;
             await vi.waitFor(() => expect(hook.getCurrent().settings.servers.map(server => server.id)).toEqual(['admitted-server']));
+            expect(hook.getCurrent()).toMatchObject({ serverCount: 1, loading: false, unavailable: false });
             expect(hook.getCurrent().snapshot).toMatchObject({ status: 'loading', stale: true, revision: 3 });
             expect(hook.getCurrent().writable).toBeNull();
             // One wake joins the first read and requires exactly one later observation, with no polling.
@@ -128,6 +175,8 @@ describe('MCP destination-backed settings hook', () => {
         let mode: 'plain' | 'e2ee' = 'plain';
         setRuntimeFetch(async url => {
             const path = new URL(String(url)).pathname;
+            if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
             if (path === '/v1/account/encryption') return Response.json({ mode, updatedAt: 0 });
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 7 }));
             if (path === '/v2/account/settings') return Response.json({ version: 7, content: { t: 'plain', v: {} } });
@@ -140,12 +189,14 @@ describe('MCP destination-backed settings hook', () => {
         const hook = await renderHook(useMcpServersSettings);
         try {
             await vi.waitFor(() => expect(hook.getCurrent().settings.servers[0]?.id).toBe('previously-plain'));
+            expect(hook.getCurrent()).toMatchObject({ serverCount: 1 });
             await flushHookEffects();
             mode = 'e2ee';
             await act(async () => { await refreshMcpServerCatalog(scope); });
             expect(hook.getCurrent().snapshot).toMatchObject({ status: 'unavailable',
                 reason: 'encryption-material-unavailable', value: null });
             expect(hook.getCurrent().settings.servers).toEqual([]);
+            expect(hook.getCurrent()).toMatchObject({ serverCount: null });
             expect(hook.getCurrent().writable).toBeNull();
         } finally { await hook.unmount(); }
     });
@@ -175,6 +226,8 @@ describe('MCP destination-backed settings hook', () => {
         let selectedAccountId = 'selected-account';
         setRuntimeFetch(async (url, init) => {
             const parsed = new URL(String(url));
+            if (parsed.pathname === '/health' || parsed.pathname === '/v1/auth/ping') return Response.json({});
+            if (parsed.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
             if (parsed.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 7 }));
             if (parsed.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (parsed.pathname === '/v2/account/settings') return Response.json({ version: 7, content: { t: 'plain', v: {} } });

@@ -169,6 +169,7 @@ let accountSettingsVersion = 1;
 let accountTokenEpoch = 0;
 let accountSettings: Record<string, unknown> = {};
 let catalogReadGate: ReturnType<typeof createDeferred<void>> | null = null;
+let catalogReadFails = false;
 let holdCatalogReadsAfterWrite = false;
 let testResponseGate: ReturnType<typeof createDeferred<void>> | null = null;
 let runtimeMissing = false;
@@ -239,6 +240,7 @@ describe('MCP servers collection and tools', () => {
         detectedByMachine = {};
         accountMachines = [];
         catalogRevision = 1;
+        catalogReadFails = false;
         accountSettingsVersion = 1;
         catalogWrites.length = 0;
         savedSecretRequests.length = 0;
@@ -389,6 +391,7 @@ describe('MCP servers collection and tools', () => {
                     return Response.json({ status: 'updated', revision: catalogRevision, cursor: catalogRevision });
                 }
                 await catalogReadGate?.promise;
+                if (catalogReadFails) return Response.json({ error: 'unavailable' }, { status: 503 });
                 const { strictMode: _strictMode, ...catalog } = settingsState.value;
                 return Response.json({ status: 'present', revision: catalogRevision, content: { t: 'plain', v: catalog } });
             }
@@ -1004,6 +1007,30 @@ describe('MCP servers collection and tools', () => {
         await act(async () => { screen.findByTestId('settings.mcpServers.page.view:found')!.props.onPress(); });
         await vi.waitFor(() => expect(routerPushSpy).toHaveBeenLastCalledWith('/settings/mcp/found'));
         expect(routerReplaceSpy).not.toHaveBeenCalled();
+    });
+
+    it.each(['rail', 'page'] as const)('keeps an unread %s catalog unknown and offers Retry after failure before showing a known empty catalog', async variant => {
+        settingsState.value = { v: 1, strictMode: false, servers: [], bindings: [] };
+        resetMcpServerCatalogSnapshotsForTests();
+        catalogReadGate = createDeferred<void>();
+        catalogReadFails = true;
+        const { CollectionList } = await import('@/components/ui/lists/collection/CollectionList');
+        const { SettingsCollectionPage } = await import('@/components/settings/shell/SettingsCollectionPage');
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const screen = await renderSettingsView(<McpServerCollection variant={variant} />);
+        const count = () => screen.findByType(variant === 'rail' ? CollectionList : SettingsCollectionPage).props.count;
+        expect(count()).toBeNull();
+        await act(async () => { catalogReadGate!.resolve(); });
+        await vi.waitFor(() => expect(screen.findByTestId('settings.mcpServers.loadFailed')).not.toBeNull());
+        expect(count()).toBeNull();
+        expect(screen.findByTestId('settings.mcpServers.empty')).toBeNull();
+        expect(screen.findByTestId('settings.mcpServers.invitation')).toBeNull();
+        catalogReadFails = false;
+        const error = screen.findAllByType(SurfaceStateCard).find(card => card.props.testID === 'settings.mcpServers.loadFailed')!;
+        await act(async () => { await error.props.action.onPress(); });
+        await vi.waitFor(() => expect(count()).toBe(0));
+        expect(screen.findByTestId('settings.mcpServers.loadFailed')).toBeNull();
+        expect(screen.findByTestId(variant === 'rail' ? 'settings.mcpServers.empty' : 'settings.mcpServers.invitation')).not.toBeNull();
     });
 
     it("holds a phone page's list column with placeholder rows while the first read is pending, never the built-in server alone", async () => {

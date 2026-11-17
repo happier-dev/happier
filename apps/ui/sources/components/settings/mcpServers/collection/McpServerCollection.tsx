@@ -6,6 +6,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { SettingsCollectionPage } from '@/components/settings/shell/SettingsCollectionPage';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -73,7 +74,7 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
         const result = runGuardedNavigation(() => (rail ? router.replace(href as never) : router.push(href as never)));
         if (result !== true) fireAndForget(result, { tag: 'McpServerCollection.navigate' });
     }, [rail, router]);
-    const { settings, scope, snapshot } = useMcpServersSettings();
+    const { settings, serverCount, scope, snapshot, loading, unavailable, reload } = useMcpServersSettings();
     const [query, setQuery] = React.useState('');
     const previousRows = React.useRef<readonly McpServerCollectionRow[]>([]);
     const rows = React.useMemo(() => buildMcpServerCollection(settings, query, previousRows.current, snapshot.brandMarks), [query, settings, snapshot.brandMarks]);
@@ -102,8 +103,6 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
             .sort((a, b) => (a.title ?? a.name).localeCompare(b.title ?? b.name));
     }, [pluginItems, query]);
     const total = settings.servers.length;
-    // The first read has not answered: the list keeps its column with placeholder rows, never "Built in" alone.
-    const loading = snapshot.status === 'loading' && total === 0;
 
     // Status and Runs on (P8): held row facts only, read through the MCP adapter's registry.
     const statusOf = React.useCallback((row: McpServerCollectionRow) => statuses.get(row.server.id) ?? null, [statuses]);
@@ -243,7 +242,16 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
         <>
             {draftOpen ? <McpServerDraftRow /> : null}
             {loading && !draftOpen ? <CollectionSkeletonRows count={SKELETON_ROWS} rowRole="catalogRow" /> : null}
-            {total === 0 && !loading && !draftOpen ? (
+            {unavailable && !draftOpen ? (
+                <SurfaceStateCard
+                    testID="settings.mcpServers.loadFailed"
+                    size="page"
+                    kind="error"
+                    title={t('capabilities.mcpHome.loadFailed')}
+                    action={{ label: t('common.retry'), onPress: () => { void reload(); } }}
+                />
+            ) : null}
+            {serverCount === 0 && !loading && !unavailable && !draftOpen ? (
                 rail ? (
                     <EmptyState
                         testID="settings.mcpServers.empty"
@@ -264,7 +272,7 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
             // The rail names itself; a phone's page has its page header above the list.
             {...(rail ? {
                 title: t('settings.mcpServers'),
-                count: total,
+                count: serverCount,
                 // The filter button sits in the search well once the list has a search field (lab `sfcols:mcpFilter`).
                 headerAction: total > 0 && !searchable ? <>{filter.filterButton}{addMenu}</> : addMenu,
             } : {})}
@@ -300,7 +308,7 @@ export const McpServerCollection = React.memo(function McpServerCollection(props
         <SettingsCollectionPage
             testID="settings.mcpServers.page"
             headerTestID="settings.mcpServers.header"
-            count={total}
+            count={serverCount}
             actions={total > 0 ? <>{searchable ? null : filter.filterButton}{addMenu}</> : loading ? addMenu : undefined}
         >
             {total > 0 || loading ? <McpServersHomeSummary /> : null}

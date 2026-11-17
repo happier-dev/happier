@@ -61,6 +61,9 @@ export function useMcpServerCatalogForServer(targetServerId: string | null | und
  */
 export function useMcpServersSettings(): Readonly<{
     settings: McpServersSettingsV1;
+    serverCount: number | null;
+    loading: boolean;
+    unavailable: boolean;
     writable: McpServersSettingsV1 | null;
     snapshot: McpServerCatalogValueSnapshot;
     scope: ReturnType<typeof useAccountSettingsScope>;
@@ -84,6 +87,10 @@ export function useMcpServersSettings(): Readonly<{
     const read = React.useCallback(() => getMcpServerCatalogSnapshot(scope), [scope]);
     const snapshot = React.useSyncExternalStore(subscribeMcpServerCatalogSnapshots, read, read);
     const settings = React.useMemo(() => ({ ...(snapshot.value ?? emptyCatalog), strictMode: strictMode === true }), [snapshot.value, strictMode]);
+    const serverCount = snapshot.value?.servers.length ?? null;
+    const loading = snapshot.status === 'loading' && settings.servers.length === 0;
+    // A failed or partial read with no displayable rows does not prove an empty catalog.
+    const unavailable = (snapshot.status === 'unavailable' || snapshot.status === 'partial') && settings.servers.length === 0;
     const writable = snapshot.status === 'ready' && snapshot.authority === 'active' && !snapshot.stale ? settings : null;
     const mutate: ExecuteMcpCatalogMutation = React.useCallback(async <A extends McpCatalogAuthoringActionId>(actionId: A,
         input: z.input<(typeof MCP_SERVER_ACTION_INPUT_SCHEMAS_V1)[A]>, operation?: UiActionOperation) => {
@@ -95,6 +102,7 @@ export function useMcpServersSettings(): Readonly<{
     const reload = React.useCallback(() => scope ? refreshMcpServerCatalog(scope) : Promise.resolve(), [scope]);
     const executeRules = React.useCallback((input: z.input<typeof McpRulesSetInputV1Schema>) => execution.execute('mcp.rules.set', input), [execution.execute]);
     const approval = settingApproval.approvalPending ? settingApproval : execution.approval;
-    return React.useMemo(() => ({ settings, writable, snapshot, scope, mutate, executeRules, setStrictMode, reload, approval }),
-        [settings, writable, snapshot, scope, mutate, executeRules, setStrictMode, reload, approval]);
+    return React.useMemo(() => ({ settings, serverCount, loading, unavailable,
+        writable, snapshot, scope, mutate, executeRules, setStrictMode, reload, approval }),
+        [settings, serverCount, loading, unavailable, writable, snapshot, scope, mutate, executeRules, setStrictMode, reload, approval]);
 }

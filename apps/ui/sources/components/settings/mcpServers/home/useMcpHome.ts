@@ -16,7 +16,7 @@ import { buildMcpHome, type McpHome } from './mcpHomeModel';
  * suggestions (P4's one rule) and this device's first-visit dismissal, folded by `buildMcpHome`.
  */
 export function useMcpHome() {
-  const { settings, snapshot, scope, reload } = useMcpServersSettings();
+  const { settings, snapshot, scope, loading, unavailable, reload } = useMcpServersSettings();
   const previousRows = React.useRef<readonly McpServerCollectionRow[]>([]);
   const rows = React.useMemo(
     () => buildMcpServerCollection(settings, '', previousRows.current, snapshot.brandMarks),
@@ -60,11 +60,6 @@ export function useMcpHome() {
     () => capabilityDismissalState.set('mcpFirstVisitDismissedAt', Date.now()),
     [],
   );
-  const loading = snapshot.status === 'loading' && settings.servers.length === 0;
-  // A partial read that shows nothing is not "no servers yet": it says it couldn't load, with a retry.
-  const unavailable =
-    (snapshot.status === 'unavailable' || snapshot.status === 'partial') &&
-    settings.servers.length === 0;
   return {
     model,
     suggestions,
