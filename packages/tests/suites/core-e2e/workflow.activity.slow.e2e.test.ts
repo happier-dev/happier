@@ -38,9 +38,9 @@ describe('Workflow activity through the Account Action executor', () => {
     expect(activity.result).toEqual({ retained: retained.result,
       live: { kind: 'unavailable', reason: 'ui_local_only' } });
     expect(await account.execute('workflow.activity.list' as ActionId, { targetSessionId: 'private-selector' }))
-      .toMatchObject({ ok: false, errorCode: 'invalid_input' });
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
 
-    const ui = await connectUiActionClient({ serverUrl: fixture.actionServerApiUrl, credentials: account.uiCredentials });
+    const ui = await connectUiActionClient({ serverUrl: fixture.actionServerApiUrl, addressAnchorUrl: fixture.server.baseUrl, credentials: account.uiCredentials });
     const releases: (() => void)[] = [];
     try {
       await waitFor(() => ui.isAccountReady(), { timeoutMs: 60_000 });
@@ -77,8 +77,8 @@ describe('Workflow activity through the Account Action executor', () => {
         .toEqual([]);
 
       const privateDocument = 'PRIVATE-ACTIVITY-DEFINITION';
-      const authored = await account.execute('workflow.trigger.add', {
-        name: 'Activity fixture', project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
+      const authored = await ui.executeConfirmed('workflow.trigger.add', {
+        project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
         target: { kind: 'inline', definition: { version: 1,
           defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
           blocks: [{ kind: 'step', id: 'observe', document: { text: privateDocument, references: [], attachments: [] },
@@ -86,11 +86,13 @@ describe('Workflow activity through the Account Action executor', () => {
         } },
         trigger: { kind: 'schedule', enabled: true,
           schedule: { kind: 'cron', scheduleExpr: '0 0 1 1 *', everyMs: null, timezone: 'UTC' } },
-      });
-      expect(authored.ok).toBe(true);
+      }, { serverId: ui.serverId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+      expect(authored.ok, JSON.stringify(authored)).toBe(true);
       if (!authored.ok) throw new Error(authored.errorCode);
       const set = WorkflowTriggerWriteResultV1Schema.parse(authored.result).set;
-      expect(await account.execute('workflow.trigger.run_now', { automationId: set.automationId })).toMatchObject({ ok: true });
+      expect(await ui.executeConfirmed('workflow.trigger.run_now', { automationId: set.automationId },
+        { serverId: ui.serverId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
+        .toMatchObject({ ok: true });
       let occurrenceId: string | undefined;
       await waitFor(async () => {
         const read = await source.readPage({ automationId: set.automationId });

@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -32,8 +33,24 @@ export async function connectExternalMcp(params: Readonly<{
   transport: ExternalMcpTransport;
   stderrLines: string[];
 }>> {
-  const sdkClientIndexPath = resolve(repoRootDir(), 'apps/cli/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js');
-  const sdkClientStdioPath = resolve(repoRootDir(), 'apps/cli/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js');
+  return connectStdioMcp({ command: process.execPath,
+    args: [params.cliEntrypoint, 'mcp', 'serve', '--session', params.sessionId],
+    env: { ...process.env, CI: '1', HAPPIER_HOME_DIR: params.cliHome, HAPPIER_SERVER_URL: params.serverBaseUrl } });
+}
+
+/** Connect through the exact MCP launch advertised to the external Agent. */
+export async function connectStdioMcp(params: Readonly<{
+  command: string;
+  args: string[];
+  env: Record<string, string | undefined>;
+}>): Promise<Readonly<{
+  client: ExternalMcpClient;
+  transport: ExternalMcpTransport;
+  stderrLines: string[];
+}>> {
+  const cliRequire = createRequire(resolve(repoRootDir(), 'apps/cli/package.json'));
+  const sdkClientIndexPath = cliRequire.resolve('@modelcontextprotocol/sdk/client/index.js');
+  const sdkClientStdioPath = cliRequire.resolve('@modelcontextprotocol/sdk/client/stdio.js');
   const { Client } = await import(pathToFileURL(sdkClientIndexPath).href) as {
     Client: new (params: { name: string; version: string }) => ExternalMcpClient;
   };
@@ -47,14 +64,7 @@ export async function connectExternalMcp(params: Readonly<{
   };
 
   const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [params.cliEntrypoint, 'mcp', 'serve', '--session', params.sessionId],
-    env: {
-      ...process.env,
-      CI: '1',
-      HAPPIER_HOME_DIR: params.cliHome,
-      HAPPIER_SERVER_URL: params.serverBaseUrl,
-    },
+    ...params,
     stderr: 'pipe',
   });
 

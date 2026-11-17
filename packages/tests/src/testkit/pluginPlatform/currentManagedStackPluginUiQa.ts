@@ -1292,6 +1292,11 @@ async function buildCurrentManagedStackNativePublicSource(params: Readonly<{
   revision: 'v1' | 'v2';
 }>): Promise<void> {
   await stageCurrentSourceNativePublicFixtureSource(params);
+  await buildCurrentSourcePublicPluginFixture(params.root);
+}
+
+/** Ordinary public source-author build, shared by composed plugin fixtures. */
+export async function buildCurrentSourcePublicPluginFixture(root: string): Promise<void> {
   // The same current-source CLI producer ordinary external authors invoke owns
   // dependency preparation, declaration/manifest emission, daemon bundling,
   // and UI artifacts. The QA harness intentionally does not reproduce any of
@@ -1301,7 +1306,7 @@ async function buildCurrentManagedStackNativePublicSource(params: Readonly<{
     'plugins',
     'dev',
     'build',
-    params.root,
+    root,
   ], { cwd: REPOSITORY_ROOT, maxBuffer: 32 * 1024 * 1024 });
 }
 

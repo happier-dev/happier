@@ -1176,6 +1176,11 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { containers: Array<{ Id: string; Config: { Labels: Record<string, string> } }> };
             return state.containers.filter(row => row.Config.Labels['happier.operation']).map(row => row.Id);
         },
+        async setActivationCommandFailure(failure: boolean | 'afterCreate') {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as { activationCommandFailure: boolean | 'afterCreate' };
+            state.activationCommandFailure = failure;
+            await writeState(state);
+        },
         async failImageHealth(configDigest: string) {
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { imageHealth: Record<string, string> };
             state.imageHealth[configDigest] = 'unhealthy';
