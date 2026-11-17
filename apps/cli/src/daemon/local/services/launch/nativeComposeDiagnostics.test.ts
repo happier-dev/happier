@@ -15,6 +15,17 @@ const malformed = '{"PRIVATE_VALUE":"private-container-secret",';
 describe('native Compose local failure diagnostics', () => {
     afterEach(() => vi.restoreAllMocks());
 
+    it('withholds arbitrary native error codes while retaining a safe engine refusal cause', async () => {
+        const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        await expect(readNativeComposeEngine({ command: '/docker', prefix: [], cwd: '/release', env: {}, io: {
+            async run() { throw Object.assign(new Error('private engine text'), { code: 'private_engine_secret' }); },
+        } })).rejects.toMatchObject({ code: 'native_tool_unavailable' });
+        expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+            phase: 'native_compose.engine.read', errorClass: 'Error', errorCode: null, httpStatus: null,
+        }));
+        expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private_engine_secret');
+    });
+
     it('retains the native engine IO cause before projecting its existing prerequisite refusal', async () => {
         const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
         await expect(readNativeComposeEngine({ command: '/docker', prefix: [], cwd: '/release', env: {}, io: {

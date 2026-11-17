@@ -1,5 +1,7 @@
 import { resolveHostedWebAssetRuntime, type HostedWebAssetRuntimeResolutionCode } from '@/plugins/install/ui/hostedWebAssets';
 import type { PluginHostedWebSecurityPolicyV1 } from '@happier-dev/protocol/plugins/ui';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 
 import {
     startHostedWebStaticAssetServer,
@@ -269,7 +271,8 @@ export function createHostedWebStaticAssetLifecycle(
     ): Promise<void> => {
         try {
             await active.handle.stop();
-        } catch {
+        } catch (error) {
+            logger.warnLocalFile('[Local service] Static asset server Stop failed', projectActionFailureCauseV1(error, 'static_assets.stop', { allowUnknownErrorCode: false }));
             diagnostics.push(diagnostic({
                 contribution: active.contribution,
                 code: 'static_asset_server_stop_failed',
@@ -312,7 +315,8 @@ export function createHostedWebStaticAssetLifecycle(
                     digest: desired.digest,
                     handle,
                 }));
-            } catch {
+            } catch (error) {
+                logger.warnLocalFile('[Local service] Static asset server Start failed', projectActionFailureCauseV1(error, 'static_assets.start', { allowUnknownErrorCode: false }));
                 diagnostics.push(diagnostic({
                     contribution: desired.contribution,
                     code: 'static_asset_server_start_failed',

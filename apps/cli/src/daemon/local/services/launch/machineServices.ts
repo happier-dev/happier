@@ -191,7 +191,7 @@ export function createMachineServicesRuntime(input: Readonly<{
                     adoptedHandles.set(watch.watchId, established);
                 } catch (error) {
                     preserveUnconfirmedNativeProcess(error);
-                    logger.warnLocalFile('[Machine service] Establishment failed', projectActionFailureCauseV1(error, 'machine_service.establish'));
+                    logger.warnLocalFile('[Machine service] Establishment failed', projectActionFailureCauseV1(error, 'machine_service.establish', { allowUnknownErrorCode: false }));
                     // Saved intent stays visible as unknown; no failed or healthy native fact is invented.
                 }
             }
@@ -316,7 +316,7 @@ export function createMachineServicesRuntime(input: Readonly<{
             } catch (error) {
                 preserveUnconfirmedNativeProcess(error);
                 signal?.throwIfAborted();
-                logger.warnLocalFile('[Machine service] Discovery failed', projectActionFailureCauseV1(error, 'machine_service.discovery'));
+                logger.warnLocalFile('[Machine service] Discovery failed', projectActionFailureCauseV1(error, 'machine_service.discovery', { allowUnknownErrorCode: false }));
                 failures.push({ adapter: reference, code: 'native_adapter_unavailable' });
             }
         }
@@ -339,7 +339,7 @@ export function createMachineServicesRuntime(input: Readonly<{
             return MachineServiceAccountingV1Schema.parse({ kind: 'sample', samples });
         } catch (error) {
             preserveUnconfirmedNativeProcess(error);
-            if (!signal?.aborted) logger.warnLocalFile('[Machine service] Accounting failed', projectActionFailureCauseV1(error, 'machine_service.accounting'));
+            if (!signal?.aborted) logger.warnLocalFile('[Machine service] Accounting failed', projectActionFailureCauseV1(error, 'machine_service.accounting', { allowUnknownErrorCode: false }));
             return unavailable(signal?.aborted ? 'cancelled' : 'unavailable');
         }
     }
@@ -495,7 +495,7 @@ export function createMachineServicesRuntime(input: Readonly<{
                         const watchInput = parsed.data;
                         let identity: unknown;
                         try { identity = JSON.parse(watchInput.candidateId); } catch (error) {
-                            logger.warnLocalFile('[Machine service] Watch candidate parse failed', projectActionFailureCauseV1(error, 'machine_service.watch.parse'));
+                            logger.warnLocalFile('[Machine service] Watch candidate parse failed', projectActionFailureCauseV1(error, 'machine_service.watch.parse', { allowUnknownErrorCode: false }));
                             return unavailable('unavailable');
                         }
                         if (!Array.isArray(identity) || identity.length !== 3) return unavailable('unavailable');

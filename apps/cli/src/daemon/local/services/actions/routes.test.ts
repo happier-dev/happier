@@ -9,6 +9,7 @@ import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/inv
 import { authorizeResolvedProjectExecLaunchForHost, createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import type { LocalServiceActionExecutionContext } from './executor';
 import { assertActionOutputContract } from '@/testkit/actionOutputContract';
+import { logger } from '@/ui/logger';
 
 const inventorySnapshot: NormalizedLocalServiceInventorySnapshot = {
     v: 1,
@@ -50,6 +51,7 @@ describe('createLocalServiceActionRoutes', () => {
     ] as const)(
         'preserves native Stop %s for requester %s through real service controls',
         async (stopOutcome, requesterAccountId) => {
+            const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
             const owner = createManagedServicesOwner({
                 processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
                 // This Project-only owner admits no Plugin scope/dependency request.
@@ -178,6 +180,9 @@ describe('createLocalServiceActionRoutes', () => {
                 const result = await routes.execute(confirmed, ownExecution);
                 assertActionOutputContract('localServices.actions.stopManaged', result);
                 expect(result).toMatchObject({ status: 'failed', reasonCode });
+                expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+                    errorClass: 'Error', errorCode: reasonCode,
+                }));
                 expect(result.auditEvents.at(-1)).toMatchObject({ result: 'failed', reasonCode });
                 expect(nativeStopped).toBe(false);
                 expect(handle.snapshot()).toMatchObject({ mode: 'native', state: 'running', nativePhase: 'running' });
@@ -196,6 +201,7 @@ describe('createLocalServiceActionRoutes', () => {
             } finally {
                 stoppable = true;
                 await owner.dispose();
+                diagnostic.mockRestore();
             }
         },
     );

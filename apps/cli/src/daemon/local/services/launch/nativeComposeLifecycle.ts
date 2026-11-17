@@ -273,7 +273,7 @@ function nativeAccounting(stdout: string, containers: readonly ProjectNativeCont
                 restartCount: restarts.get(row.ID) ?? null });
         }
     } catch (error) {
-        logger.warnLocalFile('[Native Compose] Accounting parse failed', projectActionFailureCauseV1(error, 'native_compose.accounting.parse'));
+        logger.warnLocalFile('[Native Compose] Accounting parse failed', projectActionFailureCauseV1(error, 'native_compose.accounting.parse', { allowUnknownErrorCode: false }));
         return { kind: 'unavailable', reason: 'unavailable' };
     }
     // Docker omits stopped containers. Absence is unknown usage, never zero.
@@ -323,7 +323,7 @@ function containers(stdout: string, project?: string): readonly Container[] | nu
         }
         return new Set(result.map(item => item.id)).size === result.length ? result : null;
     } catch (error) {
-        logger.warnLocalFile('[Native Compose] Container parse failed', projectActionFailureCauseV1(error, 'native_compose.containers.parse'));
+        logger.warnLocalFile('[Native Compose] Container parse failed', projectActionFailureCauseV1(error, 'native_compose.containers.parse', { allowUnknownErrorCode: false }));
         return null;
     }
 }
@@ -462,7 +462,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
             if (error !== null && typeof error === 'object' && 'code' in error
                 && error.code === 'plugin_exec_termination_incomplete') throw error;
             signal.throwIfAborted();
-            logger.warnLocalFile('[Native Compose] Accounting read failed', projectActionFailureCauseV1(error, 'native_compose.accounting'));
+            logger.warnLocalFile('[Native Compose] Accounting read failed', projectActionFailureCauseV1(error, 'native_compose.accounting', { allowUnknownErrorCode: false }));
             return { kind: 'unavailable', reason: 'unavailable' };
         }
     });
@@ -524,7 +524,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                 prefix, cwd: launch.cwd, env, signal })).id === input.engineId;
         } catch (error) {
             if (signal?.aborted) throw error;
-            logger.warnLocalFile('[Native Compose] Captured engine read failed', projectActionFailureCauseV1(error, 'native_compose.engine.observe'));
+            logger.warnLocalFile('[Native Compose] Captured engine read failed', projectActionFailureCauseV1(error, 'native_compose.engine.observe', { allowUnknownErrorCode: false }));
             return false;
         }
     };
@@ -533,7 +533,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
         try { return await read(signal); }
         catch (error) {
             if (signal?.aborted) throw error;
-            logger.warnLocalFile('[Native Compose] Removal observation failed', projectActionFailureCauseV1(error, 'native_compose.removal.observe'));
+            logger.warnLocalFile('[Native Compose] Removal observation failed', projectActionFailureCauseV1(error, 'native_compose.removal.observe', { allowUnknownErrorCode: false }));
             return null;
         }
     };
@@ -630,7 +630,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                     // when an admitted container has gone. That is not engine loss.
                     try { const value: unknown = JSON.parse(output.stdout); return Array.isArray(value) ? value : null; }
                     catch (error) {
-                        logger.warnLocalFile('[Native Compose] Engine inspection parse failed', projectActionFailureCauseV1(error, 'native_compose.inspect.parse'));
+                        logger.warnLocalFile('[Native Compose] Engine inspection parse failed', projectActionFailureCauseV1(error, 'native_compose.inspect.parse', { allowUnknownErrorCode: false }));
                         return null;
                     }
                 },
@@ -704,7 +704,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                 await subscription.dispose();
             };
             const onAbort = () => { void dispose().catch(error => {
-                logger.warnLocalFile('[Native Compose] Observation disposal failed', projectActionFailureCauseV1(error, 'native_compose.observe.dispose'));
+                logger.warnLocalFile('[Native Compose] Observation disposal failed', projectActionFailureCauseV1(error, 'native_compose.observe.dispose', { allowUnknownErrorCode: false }));
             }); };
             options?.signal?.addEventListener('abort', onAbort, { once: true });
             if (options?.signal?.aborted) { await dispose(); options.signal.throwIfAborted(); }
@@ -726,7 +726,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
             try { return observe(await read(options?.signal)); }
             catch (error) {
                 if (options?.signal?.aborted) throw error;
-                logger.warnLocalFile('[Native Compose] Inspection failed', projectActionFailureCauseV1(error, 'native_compose.inspect'));
+                logger.warnLocalFile('[Native Compose] Inspection failed', projectActionFailureCauseV1(error, 'native_compose.inspect', { allowUnknownErrorCode: false }));
                 return unknown;
             }
         },
@@ -773,7 +773,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                 return { status: (await afterControl(options?.signal)).phase === 'stopped' ? 'stopped' : 'termination_incomplete' };
             } catch (error) {
                 if (options?.signal?.aborted) throw error;
-                logger.warnLocalFile('[Native Compose] Stop failed', projectActionFailureCauseV1(error, 'native_compose.stop'));
+                logger.warnLocalFile('[Native Compose] Stop failed', projectActionFailureCauseV1(error, 'native_compose.stop', { allowUnknownErrorCode: false }));
                 if (observedEmpty && !ids?.length && !starterStarted) { cleared = true; return { status: 'stopped' }; }
                 return { status: 'termination_incomplete' };
             }
@@ -811,7 +811,7 @@ function nativeRefusal(reason: string, step = 'deployment.native', errorCode: st
 function nativeModel(stdout: string): Record<string, unknown> {
     let value: unknown;
     try { value = JSON.parse(stdout); } catch (error) {
-        logger.warnLocalFile('[Native Compose] Configuration parse failed', projectActionFailureCauseV1(error, 'native_compose.configuration.parse'));
+        logger.warnLocalFile('[Native Compose] Configuration parse failed', projectActionFailureCauseV1(error, 'native_compose.configuration.parse', { allowUnknownErrorCode: false }));
         return nativeRefusal('native_compose_configuration_invalid');
     }
     if (!record(value) || !record(value.services)) return nativeRefusal('native_compose_configuration_invalid');

@@ -11,6 +11,7 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 
 import { createHostedWebStaticAssetLifecycle } from './lifecycle';
+import { logger } from '@/ui/logger';
 import {
     createLocalServicePreviewRegistry,
     listLocalServicePreviewResources,
@@ -105,6 +106,27 @@ describe('hosted-web static asset lifecycle', () => {
 
     afterEach(async () => {
         await rm(root, { recursive: true, force: true });
+        vi.restoreAllMocks();
+    });
+
+    it.each(['start', 'stop'] as const)('retains %s publication failure causes while keeping existing lifecycle diagnostics', async phase => {
+        const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const failure = Object.assign(new Error('private preview publication text'), { code: 'ECONNREFUSED' });
+        const lifecycle = createHostedWebStaticAssetLifecycle({
+            // Preview publication/unpublication is a remote server IO boundary.
+            registerPreview: async () => { if (phase === 'start') throw failure; },
+            unregisterPreview: async () => { if (phase === 'stop') throw failure; },
+            verifyArtifact: () => ({ ok: true as const }),
+        });
+        try {
+            await lifecycle.sync([contribution()]);
+            if (phase === 'stop') await lifecycle.stop();
+            expect(lifecycle.snapshot()).toMatchObject({ active: [], diagnostics: [{ code: `static_asset_server_${phase}_failed` }] });
+            expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+                phase: `static_assets.${phase}`, errorClass: 'Error', errorCode: 'ECONNREFUSED', httpStatus: null,
+            }));
+            expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private preview publication text');
+        } finally { await lifecycle.stop(); }
     });
 
     it('starts installed static assets through the daemon preview registry and reuses unchanged servers', async () => {

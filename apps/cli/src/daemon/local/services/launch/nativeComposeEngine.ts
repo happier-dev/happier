@@ -221,7 +221,7 @@ export async function readNativeComposeEngine(input: EngineReadInput): Promise<N
         // Unsettled probe-process custody is not a native prerequisite refusal.
         if (code === 'plugin_exec_termination_incomplete') throw error;
         assertNotCancelled();
-        logger.warnLocalFile('[Native Compose] Engine read failed', projectActionFailureCauseV1(error, 'native_compose.engine.read'));
+        logger.warnLocalFile('[Native Compose] Engine read failed', projectActionFailureCauseV1(error, 'native_compose.engine.read', { allowUnknownErrorCode: false }));
         throw new NativeComposePrerequisiteError(dockerFailureCause('', code));
     }
     assertNotCancelled();

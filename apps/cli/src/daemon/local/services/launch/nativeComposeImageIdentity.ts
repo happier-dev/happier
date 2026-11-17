@@ -139,7 +139,7 @@ function readNativeImageJson(text: string): unknown {
     try { return JSON.parse(text); }
     catch (error) {
         if (!(error instanceof SyntaxError)) throw error;
-        logger.warnLocalFile('[Native Compose] Image parse failed', projectActionFailureCauseV1(error, 'native_compose.image.parse'));
+        logger.warnLocalFile('[Native Compose] Image parse failed', projectActionFailureCauseV1(error, 'native_compose.image.parse', { allowUnknownErrorCode: false }));
         return refuse('deployment_image_identity_unavailable');
     }
 }
@@ -419,7 +419,7 @@ export function createNativeComposeImageIdentity(input: Readonly<{
             const parse = (raw: string): Record<string, unknown> => {
                 let value: unknown;
                 try { value = JSON.parse(raw); } catch (error) {
-                    logger.warnLocalFile('[Native Compose] Image manifest parse failed', projectActionFailureCauseV1(error, 'native_compose.image.manifest.parse'));
+                    logger.warnLocalFile('[Native Compose] Image manifest parse failed', projectActionFailureCauseV1(error, 'native_compose.image.manifest.parse', { allowUnknownErrorCode: false }));
                     return refuse('deployment_image_manifest_mismatch');
                 }
                 if (!record(value) || value.schemaVersion !== 2) return refuse('deployment_image_manifest_mismatch');

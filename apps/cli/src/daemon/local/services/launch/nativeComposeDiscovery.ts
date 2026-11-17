@@ -57,7 +57,7 @@ export async function readColdNativeComposeTargetsForHost(input: Readonly<{
     if (inspected.exitCode !== 0) return null;
     let rows: unknown;
     try { rows = JSON.parse(inspected.stdout); } catch (error) {
-        logger.warnLocalFile('[Native Compose] Discovery parse failed', projectActionFailureCauseV1(error, 'native_compose.discovery.parse'));
+        logger.warnLocalFile('[Native Compose] Discovery parse failed', projectActionFailureCauseV1(error, 'native_compose.discovery.parse', { allowUnknownErrorCode: false }));
         return null;
     }
     if (!Array.isArray(rows)) return null;

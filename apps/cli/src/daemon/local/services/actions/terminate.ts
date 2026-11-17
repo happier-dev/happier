@@ -112,7 +112,7 @@ export function createTerminateDetectedService(
                 ...(config.graceMs === undefined ? {} : { graceMs: config.graceMs }),
             });
         } catch (error) {
-            logger.warnLocalFile('[Local service] Native termination failed', projectActionFailureCauseV1(error, 'local_service.terminate.signal'));
+            logger.warnLocalFile('[Local service] Native termination failed', projectActionFailureCauseV1(error, 'local_service.terminate.signal', { allowUnknownErrorCode: false }));
             return { status: 'failed', reasonCode: 'terminate_signal_failed' };
         }
         const refused = result.outcomes.find(outcome => outcome.outcome === 'refused');

@@ -36,7 +36,7 @@ export async function stopProjectManagedService(handle: ProjectManagedServiceHan
         return stopped.status === 'stopped' ? { status: 'succeeded' }
             : { status: 'denied', reasonCode: 'managed_service_stop_unconfirmed' };
     } catch (error) {
-        logger.warnLocalFile('[Local service] Stop failed', projectActionFailureCauseV1(error, 'local_service.stop'));
+        logger.warnLocalFile('[Local service] Stop failed', projectActionFailureCauseV1(error, 'local_service.stop', { allowUnknownErrorCode: false }));
         return { status: 'failed', reasonCode: error instanceof Error && 'code' in error && typeof error.code === 'string'
             ? error.code : 'managed_service_stop_unconfirmed' };
     }
@@ -102,7 +102,7 @@ export async function executeLocalServiceAction(input: Readonly<{
                     now: input.now,
                 });
             } catch (error) {
-                logger.warnLocalFile('[Local service] Termination failed', projectActionFailureCauseV1(error, 'local_service.terminate.execute'));
+                logger.warnLocalFile('[Local service] Termination failed', projectActionFailureCauseV1(error, 'local_service.terminate.execute', { allowUnknownErrorCode: false }));
                 return { status: 'failed', reasonCode: 'terminate_detected_executor_failed' };
             }
         }
