@@ -75,7 +75,7 @@ describe('app spend in the existing Metric and Key flow owners', () => {
             expect(await f.read()).toMatchObject({ result: { measurements: { value: 30 } }, trend: [{ value: 30 }],
                 usage: { totals: { cost: { apiEquivalentUsd: 30 } } } });
             const failed = await f.check();
-            expect(failed).toMatchObject({ status: 'down', measurements: { value: 30, unit: 'USD' },
+            expect(failed).toMatchObject({ status: 'degraded', measurements: { value: 30, unit: 'USD' },
                 cause: { reason: 'threshold_exceeded' }, evidence: { items: expect.arrayContaining([
                     expect.objectContaining({ text: expect.stringContaining('spend-owner-revision') }),
                 ]) } });

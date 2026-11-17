@@ -20,7 +20,8 @@ export const TelemetryKeyFlowMeasureV1Schema = z.union([
 /** The saved Key flow health-check kind (D32): one named flow, its routes and threshold, checked on the collector. */
 export const TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 = { pluginId: 'happier.telemetry', localId: 'key-flow' } as const;
 const selection = { environmentId: text, serviceName: text, serviceVersion: z.optional(text) };
-export const TelemetryKeyFlowConfigV1Schema = z.strictObject({ ...selection, measure: TelemetryKeyFlowMeasureV1Schema,
+/** The flow's name ("Checkout") names its check on every surface; without one the check is named by its routes. */
+export const TelemetryKeyFlowConfigV1Schema = z.strictObject({ name: z.optional(text), ...selection, measure: TelemetryKeyFlowMeasureV1Schema,
     windowMs: z.number().check(z.int(), z.positive()),
     threshold: z.strictObject({ operator: z.enum(['above', 'below']), value: z.number() }) });
 /** Whole-service HTTP is a demand read; it does not author a saved route check. */

@@ -125,7 +125,7 @@ describe('published selected key-flow reads', () => {
             vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(2000);
             const check = () => host.invokeAction(database.databaseActionLocalIdV1(database.TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1),
                 { sourceInstanceId: 'health:environment:env', checkId: 'flow' }, { chosenMachine: { machineId: 'collector', installationId: 'installed' } });
-            expect(await check()).toMatchObject({ status: 'down', latencyMs: expect.closeTo(91),
+            expect(await check()).toMatchObject({ status: 'degraded', latencyMs: expect.closeTo(91),
                 measurements: { basis: 'metric_points', p95Ms: expect.closeTo(91), window: { since: 1000, until: 2000 } } });
             metricsEnabled = false;
             expect(await check()).toMatchObject({ status: 'unknown', cause: { reason: 'metrics_disabled' } });

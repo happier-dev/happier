@@ -92,7 +92,8 @@ export function evaluateKeyFlow(measurements: KeyFlowMeasurements, threshold: Ke
     const unknown = measurements.completeness === 'unknown' || measurements.value === undefined;
     const failed = !unknown && threshold !== undefined && (threshold.operator === 'above'
         ? measurements.value! > threshold.value : measurements.value! < threshold.value);
-    const status = unknown ? 'unknown' : failed ? 'down' : 'up';
+    // A breached limit is a failing flow (warning), never an unreachable target: 'down' stays for checks that cannot answer (D33).
+    const status = unknown ? 'unknown' : failed ? 'degraded' : 'up';
     const reason = unknown ? measurements.reasons[0] ?? 'measurement_unavailable' : failed ? 'threshold_exceeded' : 'within_threshold';
     return { status, observedAt, measurements,
         ...((measurements.measure === 'p50' || measurements.measure === 'p95') && measurements.value !== undefined

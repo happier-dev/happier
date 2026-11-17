@@ -42,7 +42,7 @@ describe('authored key-flow measured health', () => {
         expect(measured).toMatchObject({ value: 90, unit: 'ms', p50Ms: 10, p95Ms: 90, errorRate: 0.5,
             requestCount: 2, basis: 'sampled_spans', completeness: 'partial', window });
         expect(evaluateKeyFlow(measured, { operator: 'above', value: 50 }, 2000, 'collector')).toMatchObject({
-            status: 'down', latencyMs: 90, measurements: measured,
+            status: 'degraded', latencyMs: 90, measurements: measured,
             cause: { kind: { pluginId: 'happier.telemetry', localId: 'key-flow' }, observerMachineId: 'collector', reason: 'threshold_exceeded' },
         });
         expect(evaluateKeyFlow(measured, { operator: 'above', value: 100 }, 2000, 'collector').status).toBe('up');
