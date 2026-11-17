@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-import { HappierSkeletonRows, type HappierSkeletonRowsProps } from '@happier-dev/plugin-ui/presentation';
+import { HappierSkeletonRows, HappierSkeletonTitle, type HappierSkeletonRowsProps } from '@happier-dev/plugin-ui/presentation';
 
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -25,4 +25,14 @@ export const SkeletonRows = React.memo(function SkeletonRows(props: SkeletonRows
             reducedMotion={reducedMotion}
         />
     );
+});
+
+/**
+ * Core's binding of the shared title placeholder bar (`HappierSkeletonTitle`): a name still arriving holds its title
+ * slot with the loading rows' quiet bar, never the word "Loading…".
+ */
+export const SkeletonTitle = React.memo(function SkeletonTitle(props: Readonly<{ lineHeight: number; testID?: string }>) {
+    const { theme } = useUnistyles();
+    const pluginTheme = usePluginUiTheme(theme);
+    return <HappierSkeletonTitle theme={pluginTheme} lineHeight={props.lineHeight} {...(props.testID === undefined ? {} : { testID: props.testID })} />;
 });

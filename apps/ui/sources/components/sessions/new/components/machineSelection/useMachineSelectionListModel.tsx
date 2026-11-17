@@ -65,7 +65,9 @@ import {
 import { showTemporaryComputerExpiryModal } from './TemporaryComputerExpiryModal';
 import { foldOfflineWorkers, useOfflineWorkerSectionState } from './foldOfflineWorkers';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
-import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { getMachineDisplayName, isMachineDisplayNamePending, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
+import { Typography } from '@/constants/Typography';
 import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import {
     managedMachineSelectionOptionId,
@@ -279,6 +281,9 @@ function poolMemberSummary(
  * The row's truthful current state. A retained row belonging to a loading, signed-out or failed Home
  * must never advertise its cached connection summary as a current observation.
  */
+/** The title slot of a Machine row whose name is still arriving: the loading rows' bar at the row title's line. */
+const MACHINE_NAME_PENDING_TITLE = <SkeletonTitle lineHeight={Typography.variant('body').lineHeight as number} testID="machine-row-name-pending" />;
+
 function poolRowUnavailableText(reason: MachinePoolRowUnavailableReason): string {
     switch (reason) {
         case 'homeSignedOut':
@@ -1014,6 +1019,8 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         id: machine.id,
                         testID: buildOptionTestID(params.testIdPrefix, machine),
                         label: presentation?.title ?? machineNames.get(machine.id) ?? machine.id,
+                        // A name still arriving holds the title slot with the quiet bar (the name owner decides), never "Loading…".
+                        ...(!presentation?.title && isMachineDisplayNamePending(machine) ? { labelContent: MACHINE_NAME_PENDING_TITLE } : {}),
                         labelEllipsizeMode: 'middle',
                         subtitle: machineStatusLine(machine, scopeForServer(group.serverId), availability.reason ?? presentation?.subtitle,
                             machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id], bucket.id === 'shared'),
@@ -1119,6 +1126,8 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         id: `${group.serverId}::${machine.id}`,
                         testID: buildOptionTestID(params.testIdPrefix, machine),
                         label: presentation?.title ?? machineNames.get(machine.id) ?? machine.id,
+                        // A name still arriving holds the title slot with the quiet bar (the name owner decides), never "Loading…".
+                        ...(!presentation?.title && isMachineDisplayNamePending(machine) ? { labelContent: MACHINE_NAME_PENDING_TITLE } : {}),
                         labelEllipsizeMode: 'middle',
                         subtitle: machineStatusLine(
                             machine,

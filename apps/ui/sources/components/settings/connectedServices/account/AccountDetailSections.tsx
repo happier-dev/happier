@@ -36,7 +36,7 @@ import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDi
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineUtils';
-import { isMachineDisplayHydrating } from '@/utils/sessions/machineDisplayNames';
+import { isMachineDisplayNamePending } from '@/utils/sessions/machineDisplayNames';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
@@ -676,7 +676,7 @@ export function projectAccountDetailMachines(
     const rows = machines.map((machine, index) => ({
         id: machine.id,
         name: names.get(machine.id) ?? getMachineDisplayName(namedMachines[index]!),
-        nameLoading: isMachineDisplayHydrating(namedMachines[index]!),
+        nameLoading: isMachineDisplayNamePending(namedMachines[index]!),
         online: isMachineSelectableForFleet(scope, machine, nowMs),
         status: describeMachinePresenceLine(machine, nowMs, undefined, scope).status,
     }));

@@ -180,22 +180,44 @@ function readStoredMachineNameParts(machineId: string): Readonly<{ name: string;
 }
 
 /**
- * The machine's name only once it has been read; `null` while its details are still hydrating. A row that
+ * The machine's name once it has been read (or was read before on this device); `null` while it has none to show yet. A row that
  * names a machine inside a line of facts (a subtitle, a request's source) never prints the
  * "Loading…" placeholder as if it were the name: a machine on another Home or one that is offline may
  * never hydrate, and the placeholder would then sit there for good. The caller falls back to what it
  * knows (the Session's own host) or leaves the machine out.
  */
 export function getSettledMachineDisplayName(machine: MachineNameInput | null | undefined, inventory?: readonly MachineNameSource[]): string | null {
-    if (!machine || (!machine.absence && isMachineDisplayHydrating(machine))) return null;
+    if (!machine || isMachineDisplayNamePending(machine)) return null;
     return getMachineDisplayName(machine, inventory);
 }
+
+/**
+ * The last name each Machine was shown with on this device, by id: a Machine whose details are hydrating again (a
+ * reload, a reconnect, a Home switch) keeps reading as itself instead of a placeholder. A projection of names already
+ * shown, so it holds one short string per Machine seen and needs no invalidation beyond a newer readable name.
+ */
+const lastKnownMachineNames = new Map<string, string>();
 
 function machineBaseDisplayName(machine: MachineNameInput): string {
     if (machine.absence) return t(ABSENT_MACHINE_NAME_KEYS[machine.absence]);
     if (isMachineLocked(machine)) return lockedMachineName();
-    if (isMachineDisplayHydrating(machine)) return t('common.loading');
-    return readMachineName(machine) ?? unnamedMachineName();
+    const name = readMachineName(machine);
+    if (isMachineDisplayHydrating(machine)) {
+        // Still the plain-text fallback (search, the spoken name); a title slot shows the placeholder bar instead
+        // (`isMachineDisplayNamePending`), never this word.
+        return name ?? (machine.id ? lastKnownMachineNames.get(machine.id) : undefined) ?? t('common.loading');
+    }
+    if (name && machine.id && lastKnownMachineNames.get(machine.id) !== name) lastKnownMachineNames.set(machine.id, name);
+    return name ?? unnamedMachineName();
+}
+
+/**
+ * Whether a Machine has no name to show yet: its details are hydrating and this device never knew its name. A title
+ * slot then holds the quiet placeholder bar (`SkeletonTitle`), never the word "Loading…".
+ */
+export function isMachineDisplayNamePending(machine: MachineNameInput | null | undefined): boolean {
+    if (!machine || machine.absence || isMachineLocked(machine) || !isMachineDisplayHydrating(machine)) return false;
+    return !readMachineName(machine) && !(machine.id && lastKnownMachineNames.has(machine.id));
 }
 
 /** Only same-name peers can affect a selected label's inventory qualification. */

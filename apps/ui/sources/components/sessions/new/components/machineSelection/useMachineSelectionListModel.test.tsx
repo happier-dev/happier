@@ -10,6 +10,7 @@ import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionO
 import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded, resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { linkMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { storage } from '@/sync/domains/state/storageStore';
+import { t } from '@/text';
 import { buildMachineDestinationModel as buildScopedMachineDestinationModel } from './buildMachineDestinationModel';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerScopedMachine, ServerScopedMachineGroup } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
@@ -455,6 +456,27 @@ describe('useMachineSelectionListModel', () => {
             expect(handlers.selectSpy).toHaveBeenCalled();
         } finally { await rendered.unmount(); }
     });
+    it('holds a never-named hydrating Machine row title with the placeholder bar, and a named one keeps its name', async () => {
+        const fixture = createFixture();
+        const handlers = makeHandlers();
+        const [named, other] = fixture.machines;
+        // Read once (as a row would have shown it), then both rows lose their details while hydrating again.
+        let groups = fixture.groups;
+        const rendered = await renderHook(() => useMachineSelectionListModel({ ...buildParams(fixture, handlers), groups }));
+        const namedLabel = rendered.getCurrent().rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : [])
+            .find(option => option.id === named!.id || option.id.endsWith(`::${named!.id}`))!.label;
+        const neverNamed = { ...other!, id: 'machine-never-named', metadata: null };
+        groups = fixture.groups.map(group => ({ ...group, machines: [...group.machines.map(machine => machine.id === named!.id
+            ? { ...machine, metadata: null } : machine), neverNamed] }));
+        await act(async () => { await rendered.rerender(); });
+        const options = rendered.getCurrent().rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : []);
+        const find = (id: string) => options.find(option => option.id === id || option.id.endsWith(`::${id}`));
+        expect(find(named!.id)?.label).toBe(namedLabel);
+        expect(find(named!.id)?.labelContent).toBeUndefined();
+        if (find('machine-never-named')) expect(find('machine-never-named')?.labelContent).toBeTruthy();
+        expect(options.some(option => option.label === t('common.loading') && option.labelContent === undefined)).toBe(false);
+    });
+
     it('keeps the option of every unchanged Machine row when one row changes (one list redraw per arrival is one row)', async () => {
         const fixture = createFixture();
         const handlers = makeHandlers();

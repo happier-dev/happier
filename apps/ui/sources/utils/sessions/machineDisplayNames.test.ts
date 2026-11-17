@@ -325,3 +325,18 @@ describe('getMachineDisplayName without a caller inventory', () => {
         }
     });
 });
+
+describe('a machine whose details are still hydrating', () => {
+    it('keeps its last-known name, and says its name is pending only when none was ever known', async () => {
+        const { isMachineDisplayNamePending } = await import('./machineDisplayNames');
+        const named = { id: 'hydrating-known', metadata: { displayName: 'devbox', host: 'devbox.local' } };
+        expect(getMachineDisplayName(named)).toBe('devbox');
+        const rehydrating = { id: 'hydrating-known', metadata: null };
+        expect(getMachineDisplayName(rehydrating)).toBe('devbox');
+        expect(getSettledMachineDisplayName(rehydrating)).toBe('devbox');
+        expect(isMachineDisplayNamePending(rehydrating)).toBe(false);
+        const unknown = { id: 'hydrating-never-named', metadata: null };
+        expect(isMachineDisplayNamePending(unknown)).toBe(true);
+        expect(getSettledMachineDisplayName(unknown)).toBeNull();
+    });
+});

@@ -687,6 +687,7 @@ export {
   HappierSkeletonBlock,
   HappierSkeletonPulse,
   HappierSkeletonRows,
+  HappierSkeletonTitle,
   type HappierSkeletonBlockProps,
   type HappierSkeletonPulseProps,
   type HappierSkeletonRowsProps,

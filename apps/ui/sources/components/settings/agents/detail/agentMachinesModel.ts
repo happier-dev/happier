@@ -1,4 +1,4 @@
-import { getMachineSentenceName, isMachineDisplayHydrating, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { getMachineSentenceName, isMachineDisplayNamePending, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import type { MachineAdministrationTargetPickerRowV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import type { MachineAgent } from '@/agents/machineAgents/machineAgentTypes';
@@ -39,7 +39,7 @@ export function listAgentMachines(
       serverId: row.serverId,
       name,
       sentenceName: getMachineSentenceName(row.machine, name),
-      namePending: isMachineDisplayHydrating(row.machine),
+      namePending: isMachineDisplayNamePending(row.machine),
       os: formatOSPlatform(row.machine.metadata?.platform ?? undefined) || null,
       online: row.candidate.availability === 'online',
       lastSeenAt: row.candidate.observedAt,
