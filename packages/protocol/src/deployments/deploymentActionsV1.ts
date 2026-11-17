@@ -147,7 +147,7 @@ export const DeploymentEnvironmentOwnerV1Schema = lazyZodSchema(() => z.discrimi
   z.strictObject({ kind: z.literal('team'), teamId: DeploymentIdentifierV1Schema }),
 ]));
 export const DeploymentEnvironmentCapabilitiesV1Schema = lazyZodSchema(() => z.strictObject({
-  role: z.enum(['reader', 'deployer', 'manager']), read: z.boolean(), deploy: z.boolean(), manage: z.boolean(),
+  role: z.enum(['reader', 'deployer', 'manager']), read: z.boolean(), deploy: z.boolean(), editData: z.boolean(), manage: z.boolean(),
   manageBindings: z.boolean(), manageTargets: z.boolean(), delete: z.boolean(),
 }));
 /** Preview relation validation is shared by transport headers and opened Environment records. */

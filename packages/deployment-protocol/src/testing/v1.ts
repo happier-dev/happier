@@ -60,7 +60,7 @@ export function createDeploymentEnvironmentV1(overrides: Partial<DeploymentEnvir
         content: { t: 'plain', v: { name: 'Staging', retainPreviousDeployments: 1,
             definition: { kind: 'repository', ref: 'main', compose: { path: 'compose.yaml', profiles: [], services: [], primaryService: 'app' } },
             bindings: [], ownServer: { rollout: 'recreate', autoRestorePreviousRelease: true } } },
-        capabilities: { role: 'manager', read: true, deploy: true, manage: true, manageBindings: true, manageTargets: true, delete: true },
+        capabilities: { role: 'manager', read: true, deploy: true, editData: false, manage: true, manageBindings: true, manageTargets: true, delete: true },
         createdByAccountId: 'account-owner', createdAtMs: 1000, updatedAtMs: 1000, ...overrides,
     });
 }

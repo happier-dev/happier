@@ -26,7 +26,7 @@ import { getDbProviderFromEnv } from '@/storage/prisma';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
 import type { Prisma } from '@prisma/client';
-import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachineInTx, admitDeploymentMachinesInTx, deploymentFailure, canDeployDeploymentEnvironment,
+import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachineInTx, admitDeploymentMachinesInTx, deploymentFailure, canDeployDeploymentEnvironment, canEditDeploymentEnvironmentData,
     admitDeploymentDefinitionMachinesInTx, readDeploymentDefinitionMachinesInTx,
     type DeploymentAuthentication, type DeploymentSourceAdmission, type DeploymentFailure } from './deploymentAdmission';
 import { deploymentContentReference, readPlainDeploymentEnvironmentContentInTx, readPlainDeploymentTargetLinkContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
@@ -103,7 +103,7 @@ export function projectDeploymentEnvironmentHeader(row: DeploymentEnvironmentRow
         ...(row.runtimeTargetLinkId ? { runtimeTargetLinkId: row.runtimeTargetLinkId } : {}),
         ...deploymentContentReference(row),
         capabilities: { role: admission.canManage ? 'manager' : canDeploy ? 'deployer' : 'reader',
-            read: true, deploy: canDeploy, manage: admission.canManage && !row.deletedAt,
+            read: true, deploy: canDeploy, editData: canEditDeploymentEnvironmentData(admission, row), manage: admission.canManage && !row.deletedAt,
             manageBindings: admission.canManage && !row.deletedAt, manageTargets: admission.canManage && !row.deletedAt,
             delete: admission.canManage && !row.deletedAt },
         createdByAccountId: row.createdByAccountId, createdAtMs: row.createdAt.getTime(), updatedAtMs: row.updatedAt.getTime(),

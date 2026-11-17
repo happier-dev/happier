@@ -6253,6 +6253,7 @@ export type DeploymentsActionResultById = {
                     role: 'deployer' | 'manager' | 'reader';
                     read: boolean;
                     deploy: boolean;
+                    editData: boolean;
                     manage: boolean;
                     manageBindings: boolean;
                     manageTargets: boolean;
@@ -6437,6 +6438,7 @@ export type DeploymentsActionResultById = {
                     role: 'deployer' | 'manager' | 'reader';
                     read: boolean;
                     deploy: boolean;
+                    editData: boolean;
                     manage: boolean;
                     manageBindings: boolean;
                     manageTargets: boolean;
@@ -13203,6 +13205,7 @@ export type DeploymentsActionResultById = {
                 role: 'deployer' | 'manager' | 'reader';
                 read: boolean;
                 deploy: boolean;
+                editData: boolean;
                 manage: boolean;
                 manageBindings: boolean;
                 manageTargets: boolean;
@@ -13811,6 +13814,7 @@ export type DeploymentsActionResultById = {
                 role: 'deployer' | 'manager' | 'reader';
                 read: boolean;
                 deploy: boolean;
+                editData: boolean;
                 manage: boolean;
                 manageBindings: boolean;
                 manageTargets: boolean;
@@ -14213,6 +14217,7 @@ export type DeploymentsActionResultById = {
                 role: 'deployer' | 'manager' | 'reader';
                 read: boolean;
                 deploy: boolean;
+                editData: boolean;
                 manage: boolean;
                 manageBindings: boolean;
                 manageTargets: boolean;

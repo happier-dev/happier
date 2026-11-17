@@ -1333,7 +1333,7 @@ describe('current Source deployment authority', () => {
             return loaded.ok && canEditDeploymentEnvironmentData(loaded.admission, loaded.row);
         };
         // G1 control: the Team member is admitted to deploy through the chosen Team before any refusal counts.
-        expect(await projection(member.id)).toMatchObject({ capabilities: { role: 'deployer', deploy: true },
+        expect(await projection(member.id)).toMatchObject({ capabilities: { role: 'deployer', deploy: true, editData: false },
             deployerPrincipals: [teamRef], dataEditorMode: 'off', dataAgentAccess: 'read', dataEditors: [] });
         expect(await canEdit(member.id)).toBe(false);
         expect(await canEdit(owner.id)).toBe(false);
@@ -1349,14 +1349,21 @@ describe('current Source deployment authority', () => {
             .toMatchObject({ ok: true, revision: created.revision + 1 });
         expect((await db.deploymentEnvironmentDeployer.findMany({ where: { environmentId }, orderBy: { purpose: 'asc' } }))
             .map(row => [row.purpose, row.principalKind, row.principalId])).toEqual([['dataEdit', 'team', team.id], ['deploy', 'team', team.id]]);
-        expect(await projection(member.id)).toMatchObject({ dataEditorMode: 'chosen', dataEditors: [teamRef], deployerPrincipals: [teamRef] });
+        expect(await projection(member.id)).toMatchObject({ dataEditorMode: 'chosen', dataEditors: [teamRef], deployerPrincipals: [teamRef],
+            capabilities: { editData: true } });
+        expect(await projection(owner.id)).toMatchObject({ capabilities: { editData: true } });
         expect(await canEdit(member.id)).toBe(true);
+        expect(await update({ dataEditorMode: 'managers' }, created.revision + 1)).toMatchObject({ ok: true, revision: created.revision + 2 });
+        expect(await projection(member.id)).toMatchObject({ capabilities: { editData: false } });
+        expect(await projection(owner.id)).toMatchObject({ capabilities: { editData: true } });
+        expect(await update({ dataEditorMode: 'chosen' }, created.revision + 2)).toMatchObject({ ok: true, revision: created.revision + 3 });
         expect(await projection(outsider.id)).toEqual({ ok: false, error: 'deployment_unavailable' });
         // Membership ends: the next admission refuses both the deploy and the database edit.
         await db.teamMembership.delete({ where: { id: membership.id } });
         expect(await projection(member.id)).toEqual({ ok: false, error: 'deployment_unavailable' });
         expect(await canEdit(member.id)).toBe(false);
-        expect(await update({ dataEditorMode: 'off' }, created.revision + 1)).toMatchObject({ ok: true, revision: created.revision + 2 });
+        expect(await update({ dataEditorMode: 'off' }, created.revision + 3)).toMatchObject({ ok: true, revision: created.revision + 4 });
+        expect(await projection(owner.id)).toMatchObject({ capabilities: { editData: false } });
         expect(await canEdit(owner.id)).toBe(false);
     });
 
