@@ -22,7 +22,7 @@ import type {
 import type { ReleaseAssetDownloadV1 } from './downloads.js';
 import type { ForgeReleaseActionInputByOperationV1 } from '@happier-dev/triage-protocol/releases/v1';
 import type { TriageSessionHandoffSelectionV1 } from '@happier-dev/triage-protocol/v1';
-import { projectGithubReleaseIdentityV1 } from '../../releases/mapping.js';
+import { projectGithubReleaseAssetFactsV1, projectGithubReleaseIdentityV1 } from '../../releases/mapping.js';
 
 /**
  * The release story, shared by the Newest hero, an expanded Earlier row and the phone detail page:
@@ -360,15 +360,6 @@ export function ReleaseHeadline(
   );
 }
 
-function sumDownloads(rows: readonly ForgeReleaseAssetV1[]): number | null {
-  let total = 0;
-  for (const row of rows) {
-    if (row.downloadCount === undefined) return null;
-    total += row.downloadCount;
-  }
-  return total;
-}
-
 /**
  * What a download that did not finish says, in the asset's own row: the receiver's reason is the substance, so it
  * stays its own text. Failed can be tried again (the Download control stays live); unknown never is, because the
@@ -451,11 +442,9 @@ export function ReleaseAssets(
     () => new Intl.NumberFormat(props.locale),
     [props.locale],
   );
-  const total = sumDownloads(rows);
-  const partial =
-    props.release.assets.continuation !== null ||
-    props.release.assets.incomplete !== null;
-  if (rows.length === 0 && !partial) {
+  const { assetCount, downloadCount: total } = projectGithubReleaseAssetFactsV1(props.release.assets);
+  const partial = assetCount === null;
+  if (assetCount === 0) {
     return (
       <Row gap="small" align="center">
         <Text
@@ -481,11 +470,11 @@ export function ReleaseAssets(
             variant="label"
             value={t('plugins.github.releases.assets.title', 'Assets')}
           />
-          <Text
+          {assetCount === null ? null : <Text
             variant="label"
             tone="muted"
-            value={numbers.format(rows.length)}
-          />
+            value={numbers.format(assetCount)}
+          />}
         </Row>
         {!props.compact ? (
           <Text

@@ -7,6 +7,7 @@ import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions'
 import type { PluginUiContextEnrichmentV1, PluginUiPageNavigationV1, RenderContext } from '@happier-dev/plugin-sdk/ui';
 import type { FileDownloadResultV1 } from '@happier-dev/plugin-sdk/protocol';
 import { ForgeReleaseActionInputSchemasV1, type ForgeReleaseAssetPageV1, type ForgeReleaseV1 } from '@happier-dev/triage-protocol/releases/v1';
+import { createForgeReleaseV1Fixture } from '@happier-dev/triage-protocol/releases/testing/v1';
 import {
   createPluginUiTestkit,
   createPluginUiActionControlTestHost,
@@ -116,6 +117,7 @@ async function mountReleases(
     lifetime?: AbortController;
     publish?: (value: PluginUiContextEnrichmentV1 | null) => void;
     exact?: ForgeReleaseV1;
+    latest?: ForgeReleaseV1;
     assetPages?: readonly ForgeReleaseAssetPageV1[];
     readAssetPage?: (page: number) => Promise<ForgeReleaseAssetPageV1>;
     overview?: boolean;
@@ -151,7 +153,7 @@ async function mountReleases(
           }
           // The provider's latest is its own answer: here the stable release, not the newer rc.
           if (localId === GITHUB_RELEASE_ACTION_IDS_V1.readLatestRelease)
-            return { kind: 'value', value: STABLE } as JsonValue;
+            return { kind: 'value', value: options.latest ?? STABLE } as JsonValue;
           if (localId === GITHUB_RELEASE_ACTION_IDS_V1.readRelease)
             return { kind: 'value', value: published ? { ...DRAFT, draft: false, publishedAt: DRAFT.updatedAt } : options.exact ?? DRAFT } as JsonValue;
           if (localId === GITHUB_RELEASE_ACTION_IDS_V1.publishReleaseDraft && options.lostPublish) {
@@ -417,6 +419,32 @@ describe('the Releases Project page', () => {
     expect(calls).not.toContain(GITHUB_RELEASE_ACTION_IDS_V1.listReleases);
     expect(calls).not.toContain(GITHUB_RELEASE_ACTION_IDS_V1.readRelease);
   });
+
+  it.each(['empty', 'incomplete-empty', 'partial', 'unknown-downloads', 'complete'] as const)(
+    'reports asset facts only when the release snapshot establishes them: %s', async (kind) => {
+      const { downloadCount: _downloadCount, ...unknownDownloads } = STABLE.assets.rows[0]!;
+      const assets: ForgeReleaseAssetPageV1 = kind === 'empty' ? emptyPage
+        : kind === 'incomplete-empty' ? { ...emptyPage, incomplete: 'pagination' }
+          : kind === 'partial' ? { ...STABLE.assets, incomplete: 'pagination' }
+            : kind === 'unknown-downloads' ? { ...STABLE.assets, rows: [unknownDownloads] }
+              : STABLE.assets;
+      const release = createForgeReleaseV1Fixture({ ...STABLE, assets });
+      const overview = await mountReleases({ rows: [], calls: [], overview: true, latest: release });
+      await overview.getByText(release.tagName);
+      const count = kind === 'empty' ? '0 assets' : kind === 'incomplete-empty' || kind === 'partial' ? null : '1 assets';
+      if (count !== null) await overview.getByText(`Leeroy Brun · ${count}`);
+      else {
+        expect.soft(await overview.queryByText('Leeroy Brun · 0 assets')).toBeUndefined();
+        expect.soft(await overview.queryByText('Leeroy Brun · 1 assets')).toBeUndefined();
+      }
+      const page = await mountReleases({ rows: [release], calls: [], latest: release });
+      await page.getByText(release.name!);
+      const story = document.querySelector('[data-testid="github-releases-newest"]')?.textContent;
+      expect(story).toBeDefined();
+      expect(story?.includes('No assets, only the source code archives GitHub adds.')).toBe(kind === 'empty');
+      expect(story?.includes('plus source code · 1,284 downloads')).toBe(kind === 'complete');
+    },
+  );
 
   it.each([{ active: false }, { target: { kind: 'app' as const } }])('does not acquire release data for hidden or unqualified Overview demand: %o', async (state) => {
     const calls: string[] = [];

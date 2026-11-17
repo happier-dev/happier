@@ -21,6 +21,7 @@ import {
   Collection,
   CollectionToolbar,
   DetailsPaneOpenAsPageButton,
+  formatHappierAsOfTime,
   Icon,
   Row,
   Select,
@@ -375,20 +376,14 @@ function ActionsBody({
     },
   };
   const status = view === 'workflows' ? workflowsStatus : runsStatus;
-  const hasActive =
-    runs?.rows.some(
-      (run) => run.state.phase !== 'completed' && run.state.phase !== 'unknown',
-    ) ?? false;
   const freshness =
-    status.snapshot === null || status.snapshot.failure !== null
+    status.snapshot?.checkedAtMs == null || status.snapshot.failure !== null
       ? null
       : {
           tone: 'muted' as const,
-          label: hasActive
-            ? translate('plugins.github.actions.live', 'Live')
-            : translate('plugins.github.actions.upToDate', 'Up to date'),
-          indicator: hasActive,
-          pulsing: hasActive && status.snapshot.pending,
+          label: translate('plugins.github.releases.toolbar.asOf', 'As of {time}', {
+            time: formatHappierAsOfTime(status.snapshot.checkedAtMs, Date.now(), surface.locale),
+          }),
         };
   const [runRequest, setRunRequest] = React.useState<string | null>(null);
   const clearRunRequest = React.useCallback(() => setRunRequest(null), []);

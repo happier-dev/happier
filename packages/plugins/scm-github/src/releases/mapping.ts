@@ -77,6 +77,19 @@ export function hasCompleteReleaseAssetsV1(assets: ForgeReleaseAssetPageV1): boo
     return assets.incomplete === null && assets.omittedRowCount === 0 && !assets.projectionTruncated
         && assets.continuation === null && new Set(assets.rows.map(row => row.assetId)).size === assets.rows.length;
 }
+/** Embedded or partially walked assets do not establish release-wide totals. Individual rows remain usable. */
+export function projectGithubReleaseAssetFactsV1(assets: ForgeReleaseAssetPageV1): Readonly<{
+    assetCount: number | null;
+    downloadCount: number | null;
+}> {
+    if (!hasCompleteReleaseAssetsV1(assets)) return { assetCount: null, downloadCount: null };
+    let downloadCount = 0;
+    for (const asset of assets.rows) {
+        if (asset.downloadCount === undefined) return { assetCount: assets.rows.length, downloadCount: null };
+        downloadCount += asset.downloadCount;
+    }
+    return { assetCount: assets.rows.length, downloadCount };
+}
 export function sameReleaseReviewAssetsV1(reviewed: ForgeReleaseAssetPageV1, current: ForgeReleaseAssetPageV1): boolean {
     if (!hasCompleteReleaseAssetsV1(reviewed) || !hasCompleteReleaseAssetsV1(current) || reviewed.rows.length !== current.rows.length) return false;
     const byId = new Map(current.rows.map(row => [row.assetId, row]));

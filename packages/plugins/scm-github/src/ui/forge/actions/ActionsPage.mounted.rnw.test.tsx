@@ -3,7 +3,7 @@ import * as React from 'react';
 import { readFileSync } from 'node:fs';
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { defineUiSurface, Text } from '@happier-dev/plugin-ui';
+import { defineUiSurface, formatHappierAsOfTime, Text } from '@happier-dev/plugin-ui';
 import { useForgeCiQueryV1, useForgeCiQueryValueV1 } from '@happier-dev/forge-ci/ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -46,6 +46,61 @@ function scope(): PluginEphemeralSharedScope {
 }
 
 describe('the mounted Actions page through public Action transport', () => {
+  it.each([['runs', false], ['runs', true], ['workflows', false]] as const)('shows the %s read time without claiming live updates (active: %s)', async (view, active) => {
+    const at = new Date(2026, 10, 16, 10, 42).getTime();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(at);
+    try {
+      const value = active ? { ...page, rows: [{ ...native.run, state: { phase: 'running', outcome: null, outcomeBucket: 'pending', nativeLabel: 'in_progress' } }] } : page;
+      const asOf = (time: number) => `As of ${formatHappierAsOfTime(time, Date.now(), createSurfaceContextFixture().locale)}`;
+      const readId = view === 'runs' ? GITHUB_CI_ACTION_IDS_V1.listRuns : GITHUB_CI_ACTION_IDS_V1.listWorkflows;
+      let settle!: (response: JsonValue) => void;
+      let fixture!: PluginUiTestkit;
+      await act(async () => {
+        fixture = await createPluginUiTestkit({
+          identity: { instanceId: `freshness-${view}`, mountNonce: `freshness-${view}` },
+          authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+          surface: defineUiSurface(context => <GithubActionsPage context={{ ...context, subPath: view === 'workflows' ? 'workflows' : '' }} />),
+          surfaceContext: createSurfaceContextFixture({ mountId: `freshness-${view}`,
+            target: { kind: 'project', projectKey: 'project', repository } }),
+          adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: scope() }),
+          handlers: {
+            watchResource: async () => ({}),
+            executeAction: async ({ action }): Promise<JsonValue> => {
+              const id = typeof action === 'string' ? action : action.localId;
+              return id === readId ? new Promise(resolve => { settle = resolve; }) : { kind: 'value', value: page };
+            },
+          },
+        });
+      });
+      mounted.push(fixture);
+      const expectNoFreshness = async () => {
+        expect(await fixture.queryByText('Up to date')).toBeUndefined();
+        expect(await fixture.queryByText('Live')).toBeUndefined();
+      };
+      // A held provider read has no answer yet; settled empty and active pages both have a read time.
+      await expectNoFreshness();
+      expect(await fixture.queryByText(asOf(at))).toBeUndefined();
+      await act(async () => { settle({ kind: 'value', value }); });
+      await expectNoFreshness();
+      await fixture.getByText(asOf(at));
+      await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Refresh' })); });
+      await expectNoFreshness();
+      await fixture.getByText(asOf(at));
+      await act(async () => { settle({ kind: 'unavailable', failure: { class: 'transient', code: 'ci_read_failed' } }); });
+      await expectNoFreshness();
+      // The existing failure notice owns its As-of clause; the toolbar does not repeat it.
+      expect(await fixture.queryByText(asOf(at))).toBeUndefined();
+      await fixture.getByRole('button', { name: 'Retry' });
+      await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Refresh' })); });
+      await expectNoFreshness();
+      clock.mockReturnValue(at + 60 * 60 * 1000);
+      await act(async () => { settle({ kind: 'value', value }); });
+      await fixture.getByText(asOf(Date.now()));
+      expect(await fixture.queryByText(asOf(at))).toBeUndefined();
+      await expectNoFreshness();
+    } finally { clock.mockRestore(); }
+  });
+
   it('opens a selected failed-job log without replaying navigation or aborting its read', async () => {
     const text = readFileSync('src/ui/forge/actions/ActionsPage.failed-job.fixture.txt', 'utf8');
     const selection = native.job.ref.selection;

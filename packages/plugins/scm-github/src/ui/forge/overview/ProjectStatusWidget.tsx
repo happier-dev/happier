@@ -23,6 +23,7 @@ import { GITHUB_PLUGIN_ID } from '../../../observations/githubProviderContracts.
 import { readGithubOverviewCiContextV1, type GithubOverviewCiContextResultV1 } from '../../actions/overviewContext.js';
 import { useGithubCiBindingV1 } from '../../actions/useGithubCiBinding.js';
 import { useGithubLatestReleaseV1 } from '../../releases/hooks.js';
+import { projectGithubReleaseAssetFactsV1 } from '../../../releases/mapping.js';
 import { GITHUB_ACTIONS_PAGE_ID_V1, GITHUB_RELEASES_PAGE_ID_V1 } from '../surfaceIds.js';
 
 /**
@@ -174,10 +175,10 @@ function GithubLatestReleaseGlance({ context }: Readonly<{ context: RenderContex
   }
   const publishedMs = Date.parse(release.publishedAt ?? release.createdAt);
   const age = Number.isFinite(publishedMs) ? formatTriageTimestampV1(locale, publishedMs, 'relative', Date.now()) : null;
-  const assets = release.assets.rows.length;
+  const { assetCount } = projectGithubReleaseAssetFactsV1(release.assets);
   const fact = [
     release.author ?? null,
-    t('plugins.github.overview.release.assets', '{count} assets', { count: new Intl.NumberFormat(locale).format(assets) }),
+    assetCount === null ? null : t('plugins.github.overview.release.assets', '{count} assets', { count: new Intl.NumberFormat(locale).format(assetCount) }),
   ].filter(Boolean).join(' · ');
   return (
     <WidgetGlanceRow

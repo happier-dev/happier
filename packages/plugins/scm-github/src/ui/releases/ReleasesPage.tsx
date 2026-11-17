@@ -41,7 +41,7 @@ import { reduceReleaseListV1, type ReleaseListStateV1 } from './listState.js';
 import { createReleasePageActionHandlerV1 } from './model.js';
 import { bindReleaseMountedActionsV1 } from './mountedActions.js';
 import { GITHUB_RELEASE_MOUNTED_ACTION_ID_V1 } from '../../releases/contracts.js';
-import { projectGithubReleaseIdentityV1 } from '../../releases/mapping.js';
+import { projectGithubReleaseAssetFactsV1, projectGithubReleaseIdentityV1 } from '../../releases/mapping.js';
 import {
   createReleaseLocationBindingV1,
   parseReleaseLocationV1,
@@ -1164,15 +1164,7 @@ function EarlierRow(
         : (release.publishedAt ?? release.createdAt),
       props.locale,
     ) ?? '';
-  const assets = release.assets.rows.length;
-  const total = release.assets.rows.every(
-    (row) => row.downloadCount !== undefined,
-  )
-    ? release.assets.rows.reduce(
-        (sum, row) => sum + (row.downloadCount ?? 0),
-        0,
-      )
-    : null;
+  const { assetCount: assets, downloadCount: total } = projectGithubReleaseAssetFactsV1(release.assets);
   const mark = release.draft
     ? t('plugins.github.releases.mark.draft', 'Draft')
     : props.latest
@@ -1183,7 +1175,7 @@ function EarlierRow(
   const detail = props.compact
     ? day
     : [
-        assets === 0
+        assets === null ? null : assets === 0
           ? t('plugins.github.releases.row.noAssets', 'No assets')
           : assets === 1
             ? t('plugins.github.releases.row.assetsOne', '{count} asset', {
