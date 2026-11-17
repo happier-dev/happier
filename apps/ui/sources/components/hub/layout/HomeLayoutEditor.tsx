@@ -16,7 +16,9 @@ import { Typography } from '@/constants/Typography';
 import { HomeHubLayoutIntentSchema } from '@happier-dev/protocol/home';
 import { EntityFlatReorderList, EntityFlatReorderRow, settleEntityReorderWrite, entityReorderPreview, entityReorderRefused, type EntityFlatReorderBinding } from '@/components/ui/treeDragDrop/ui/EntityFlatReorder';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
-import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { resolveWidgetInstanceTitle, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { WidgetFrameTitleSkeleton } from '@/components/widgets/frame/widgetFrameTitle';
+import { useAppShellPluginUiProjection, type AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { normalizeWidgetSizeForSurfaceV1, resolveWidgetSizeChoicesV1 } from '@happier-dev/protocol/widgets';
 import { WidgetSizeControl } from '@/components/widgets/frame/WidgetSizeControl';
 import { t } from '@/text';
@@ -29,7 +31,9 @@ import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolve
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { useHomeHubLayoutWritePending, useHomeHubSectionVisibilityPending } from './useHomeHubArtifactLayout';
 
-type EditorRow = Readonly<{ id: string; section: HomeHubSection<WidgetCandidate> }>;
+type EditorRow = Readonly<{ id: string; section: HomeHubSection<WidgetCandidate>; title: string | null }>;
+const selectTitleFacts = (value: AppShellPluginUiProjectionValue) =>
+    ({ pluginUiProjection: value.pluginUiProjection, phase: value.phase });
 
 /**
  * Home's sections as one list: the built-in sections and the widgets plugins offer, each named with
@@ -48,14 +52,22 @@ export const HomeLayoutEditor = React.memo(function HomeLayoutEditor(props: Read
     const layout = useHomeHubLayout();
     const isWriting = useHomeHubLayoutWritePending();
     const scope = useActiveServerAccountScope();
+    const { pluginUiProjection, phase } = useAppShellPluginUiProjection(selectTitleFacts);
+    const projectionPending = phase === 'establishing';
+    const rows: readonly EditorRow[] = React.useMemo(() => layout.sections.map(section => ({
+        id: section.id, section,
+        title: section.kind === 'widget'
+            ? resolveWidgetInstanceTitle(section.instance, section.widget, { pluginUiProjection, projectionPending })
+            : homeHubSectionTitle(section),
+    })), [layout.sections, pluginUiProjection, projectionPending]);
     // A group's name among the groups that share it, the label its rows, chooser and dock all use.
     const placed = React.useMemo(() => {
         const childTitle = homeChildTitle(layout.sections);
-        return layout.sections.map((section) => ({
+        return rows.map(({ section, title }) => ({
             id: section.id,
-            title: section.kind === 'group' ? describeWidgetGroupAmong(layout.items, section.group, childTitle) : homeHubSectionTitle(section),
+            title: section.kind === 'group' ? describeWidgetGroupAmong(layout.items, section.group, childTitle) : title ?? t('common.loading'),
         }));
-    }, [layout.sections, layout.items]);
+    }, [layout.sections, layout.items, rows]);
     const projectMove: NonNullable<EntityFlatReorderBinding['projectMove']> = (sectionId, position) => {
         try { return layout.projectMove(sectionId, position); }
         catch { return null; }
@@ -84,7 +96,6 @@ export const HomeLayoutEditor = React.memo(function HomeLayoutEditor(props: Read
             return settleEntityReorderWrite(() => layout.moveTo(move.sectionId, move.position));
         },
     };
-    const rows: EditorRow[] = layout.sections.map((section) => ({ id: section.id, section }));
 
     // These in-place events keep failures in the mounted queue-owned error/retry controls below.
     const reset = (
@@ -140,6 +151,7 @@ export const HomeLayoutEditor = React.memo(function HomeLayoutEditor(props: Read
                         row={row}
                         copy={groupCopyOf(rows, row)}
                         layout={layout}
+                        projectionPending={projectionPending}
                         showDivider={index < rows.length - 1 || layout.hiddenSetupStepCount > 0}
                     />
                 ))}
@@ -177,12 +189,13 @@ function groupCopyOf(rows: readonly EditorRow[], row: EditorRow): ReturnType<typ
     );
 }
 
-function rowSubtitle(row: EditorRow, copy: ReturnType<typeof groupCopyOf>): string {
+function rowSubtitle(row: EditorRow, copy: ReturnType<typeof groupCopyOf>, projectionPending: boolean): string {
     if (row.section.kind === 'group') {
         const count = row.section.children.length;
         return copy ? t('widgetFrame.groupCopyOf', { count, ...copy }) : t('widgetFrame.groupCount', { count });
     }
-    if (row.section.kind === 'widget') return row.section.widget?.pluginName ?? t('sessionBoard.item.pluginUnavailable.title');
+    if (row.section.kind === 'widget') return row.section.widget?.pluginName
+        ?? t(projectionPending ? 'common.loading' : 'sessionBoard.item.pluginUnavailable.title');
     return findHomeHubBuiltinSection(row.section.id)?.description() ?? t('homeIndex.builtIn');
 }
 
@@ -190,11 +203,12 @@ function EditorRowView(props: Readonly<{
     row: EditorRow;
     copy: ReturnType<typeof groupCopyOf>;
     layout: HomeHubLayout;
+    projectionPending: boolean;
     showDivider: boolean;
 }>) {
     const { theme } = useUnistyles();
     const { row, layout } = props;
-    const title = homeHubSectionTitle(row.section);
+    const title = row.title ?? t('common.loading');
     const alwaysShown = !row.section.hideable;
     // A pressed switch shows its new value at once and its row waits (the reorder owner's treatment) until the
     // Account acknowledges. A press while one is waiting is ignored: the switch always shows the one intent in
@@ -221,8 +235,8 @@ function EditorRowView(props: Readonly<{
                 <View style={styles.item}>
                     <Item
                         testID={`home-layout.${row.id}`}
-                        title={title}
-                        subtitle={rowSubtitle(row, props.copy)}
+                        title={row.title ?? <WidgetFrameTitleSkeleton />}
+                        subtitle={rowSubtitle(row, props.copy, props.projectionPending)}
                         icon={<Icon name={rowIcon(row)} />}
                         showChevron={false}
                         showDivider={props.showDivider && size === null}

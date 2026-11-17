@@ -31,7 +31,7 @@ export function useWidgetFrameTitle(instance: WidgetInstanceV1, candidate: Reado
 }
 
 /** The header's title line while the name is not known yet: it keeps the title's room, so arrival moves nothing. */
-function WidgetFrameTitleSkeleton(): React.ReactElement {
+export function WidgetFrameTitleSkeleton(): React.ReactElement {
     const { theme } = useUnistyles();
     const reducedMotion = useReducedMotionPreference();
     return (

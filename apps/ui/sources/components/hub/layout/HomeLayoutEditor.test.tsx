@@ -15,6 +15,8 @@ import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/act
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { widgetProjectionOf, widgetInstalledPackage } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
+import type { AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 
 installSettingsViewCommonModuleMocks({ storage: 'real' });
 installDisconnectedServerSocketBoundary();
@@ -45,10 +47,10 @@ const initial = storage.getState();
 let restoreGlobals: (() => void) | undefined;
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let restoreActionLoader: (() => void) | undefined;
-function AccountShell({ children }: React.PropsWithChildren) {
+function AccountShell({ children, phase = 'current', pluginUiProjection = EMPTY_PLUGIN_UI_PROJECTION }: React.PropsWithChildren<Partial<Pick<AppShellPluginUiProjectionValue, 'phase' | 'pluginUiProjection'>>>) {
     return <InjectedAuthProvider credentials={connection!.credentials}>
-        <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
-            phase: 'current', interactionEnabled: true, machineId: null, serverId: connection!.home.id, platform: 'web',
+        <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection, pluginBrowserProjection: null,
+            phase, interactionEnabled: phase === 'current', machineId: null, serverId: connection!.home.id, platform: 'web',
             accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
             {children}
         </AppShellPluginUiProjectionValueProvider>
@@ -71,6 +73,37 @@ function storedInstances(artifact: Readonly<{ layout(): { items?: HomeHubLayoutV
 }
 
 describe('Home Customize entity reorder binding', () => {
+    it.each(['available', 'unavailable', 'pending'] as const)('presents a saved installed widget from its descriptor lifecycle: %s', async state => {
+        const artifact = createHomeHubArtifactHttpBoundary('account-a');
+        const definition = { kind: 'installed' as const, surface: { pluginId: 'acme.checks', localId: 'checks' } };
+        artifact.seed({ v: 1, order: [], hidden: [], items: ['copy', 'named-copy'].map(id => ({ kind: 'widget' as const,
+            instance: { v: 1 as const, id, definition, bindings: {}, ...(id === 'named-copy' ? { displayName: 'My checks' } : {}) } })) });
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://home-descriptor-lifecycle.test', accountId: 'account-a', request: artifact.request });
+        const scope = { serverId: connection.home.id, accountId: 'account-a' };
+        storage.setState({ isDataReady: true, profileScope: scope, settingsScope: scope });
+        const projection = state === 'available' ? widgetProjectionOf([
+            { pluginId: 'acme.checks', localId: 'checks', title: 'Checks', target: 'app' },
+        ], { 'acme.checks': widgetInstalledPackage('acme.checks', 'Acme checks') }) : null;
+        const screen = await renderScreen(<AccountShell phase={state === 'pending' ? 'establishing' : 'current'} pluginUiProjection={projection}>
+            <HomeLayoutEditor presentation="popover" />
+        </AccountShell>);
+        await flushHookEffects({ cycles: 3 });
+        const row = (id: string) => screen.root.findAll(node => node.props.testID === `home-layout.${id}` && 'subtitle' in node.props)[0]!;
+        const { t } = await import('@/text');
+        expect(row('named-copy').props.title).toBe('My checks');
+        if (state === 'available') {
+            expect(row('copy').props.title).toBe('Checks');
+            expect(row('copy').props.subtitle).toBe('Acme checks');
+        } else if (state === 'unavailable') {
+            expect(row('copy').props.title).toBe(t('sessionBoard.item.pluginUnavailable.title'));
+            expect(row('copy').props.subtitle).toBe(t('sessionBoard.item.pluginUnavailable.title'));
+        } else {
+            expect(row('copy').props.title).not.toBe(t('sessionBoard.item.pluginUnavailable.title'));
+            expect(row('copy').props.subtitle).not.toBe(t('sessionBoard.item.pluginUnavailable.title'));
+            expect(row('named-copy').props.subtitle).not.toBe(t('sessionBoard.item.pluginUnavailable.title'));
+        }
+        expect(artifact.writes).toHaveLength(0);
+    });
     it.each([false, true])('round-trips every mixed Home section through the mounted Move chooser (concurrent add: %s)', async concurrentAdd => {
         const artifact = createHomeHubArtifactHttpBoundary('account-a');
         const vitals = (id: string, machineId: string) => ({ kind: 'widget' as const, size: 'small' as const,
