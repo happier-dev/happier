@@ -36,6 +36,7 @@ import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { Item } from '@/components/ui/lists/Item';
 import { useBareSectionRowEdge, useListPresentation } from '@/components/ui/lists/listPresentation';
+import { useSectionRowBleedStyle } from '@/components/ui/lists/bareRowBleed';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { WORKER_KIND_GLYPHS } from '@/components/sessions/work/workerKindGlyphs';
 import { resolveSessionRowTitleColorRole, sessionRowTitleInk, type SessionListActiveColorModeV1 } from './sessionRowTitleColorRole';
@@ -146,6 +147,8 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     const uiFontScale = useLocalSetting('uiFontScale');
     const fontScale = typeof uiFontScale === 'number' ? uiFontScale : 1;
     const bareSectionRow = useBareSectionRowEdge();
+    // Among a bare section's rows it reaches out by their bleed, so its mark stands where theirs do.
+    const sectionRowBleed = useSectionRowBleedStyle();
     const pageRow = useListPresentation() === 'page';
     // A page row's status follows the page row rule: it stays beside the name while the name keeps its label
     // column, and moves beneath it on a narrow row (a phone at a large text size). Only page rows measure.
@@ -264,7 +267,7 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
             accessibilityLabel={[name, word, context, starterLabel, editedBy].filter(Boolean).join('. ')}
             onPress={() => router.push(runRoute as never)} />
     );
-    return <View testID={`workflow-run-sheet:${props.runId}`} style={[bareSectionRow ? null : styles.row, depth > 0 ? { paddingLeft: depth * resolveHappierCollectionTreeChildIndentPx() } : null]}>
+    return <View testID={`workflow-run-sheet:${props.runId}`} style={[bareSectionRow ? sectionRowBleed : styles.row, depth > 0 ? { paddingLeft: depth * resolveHappierCollectionTreeChildIndentPx() } : null]}>
         <View style={depth > 0 ? styles.guide : null}>
             <CollectionRowContent density={rowDensity} touchCompact={readablePhone} textScale={fontScale}
                 selected={props.selected} hovered={hovered} style={bareSectionRow ? styles.bareSectionRow : undefined}

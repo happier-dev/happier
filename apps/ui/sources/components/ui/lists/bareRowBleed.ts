@@ -12,9 +12,10 @@ export function useBareRowBleedPx(): number {
 }
 
 /**
- * How far each row of a bare section in a contained scope (a widget body or flow column that owns its padding)
- * reaches past the column on both sides: its own inset, so its mark and title keep the column's edge while its press
- * fill and dividers reach into the padding. Only rows read it (`useSectionRowBleedStyle`); free content in the section (tiles, notes,
+ * How far each row of a bare section reaches past the section's content on both sides. In a contained scope (a widget
+ * body or flow column that owns its padding) it is the row's own inset, so its mark and title keep the column's edge;
+ * on a page it is that inset less the heading's optical inset, so its mark and chevron stand on the edges the section's
+ * tiles, collections and title stand on. Either way the press fill and dividers reach into the margin. Only rows read it (`useSectionRowBleedStyle`); free content in the section (tiles, notes,
  * a Collection) stays inside the column, which may clip at its edge. `ItemGroup` provides it; a new list scope or a
  * Collection starts at 0.
  */

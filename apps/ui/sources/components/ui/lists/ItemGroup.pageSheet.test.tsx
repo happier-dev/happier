@@ -22,6 +22,8 @@ vi.mock('@/sync/store/hooks', async () => {
         useLocalSetting: createUseLocalSettingMock({ values: { uiItemDensity: 'cozy', uiFontScale: 1 } }),
         // No signed-in Account at this boundary: list rows that read the active scope see none.
         useActiveServerAccountScope: () => null,
+        // A row's mounted Action approvals name a known Account actor; none is known here.
+        useUser: () => null,
     };
 });
 
@@ -239,6 +241,34 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
             tiles: leadingOffsetPx(screen, 'tiles'),
             note: leadingOffsetPx(screen, 'note'),
         }).toEqual({ row: -rowInsetPx, contentRow: -rowInsetPx, tiles: 0, note: 0 });
+    });
+
+    it('stands a bare page section\'s rows on its content edge, where its tiles and its heading stand', async () => {
+        const { ItemGroup, Item, ListPresentationProvider, presentation } = await loadModules();
+        const { View } = await import('react-native');
+        const { SectionContentRow } = await import('./SectionContentRow');
+        const { BareSectionLineEdge } = await import('./listPresentation');
+        // Themes: a section of tiles, then a quiet Store row in a sheetless section; the row's glyph and chevron
+        // take the edges the tiles take, its fill reaching into the margin like a flat sheet's rows.
+        const screen = await renderScreen(
+            <ListPresentationProvider value="page">
+                <ItemGroup title="Dark themes" surface="none">
+                    <View testID="tiles" />
+                    <Item testID="row" title="More themes in the Store" />
+                    <SectionContentRow testID="content-row"><View /></SectionContentRow>
+                    <BareSectionLineEdge><View testID="line" /></BareSectionLineEdge>
+                </ItemGroup>
+            </ListPresentationProvider>,
+        );
+        const metrics = presentation.HAPPIER_PAGE_METRICS;
+        const tiles = leadingOffsetPx(screen, 'tiles');
+        // Each row box reaches out by its inset less the heading's optical inset, so its padded content starts on the heading.
+        const rowBleed = metrics.headingOpticalInsetPx - metrics.rowPaddingHorizontalPx;
+        expect({
+            row: leadingOffsetPx(screen, 'row') - tiles,
+            contentRow: leadingOffsetPx(screen, 'content-row') - tiles,
+            line: leadingOffsetPx(screen, 'line') - tiles,
+        }).toEqual({ row: rowBleed, contentRow: rowBleed, line: rowBleed });
     });
 
     it('hands each row its position in the section, so a highlighted first or last row follows the sheet corners', async () => {

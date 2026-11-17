@@ -6,7 +6,7 @@ import type { PageColumn } from '@/components/ui/layout/contentWidthMode';
 import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
 import { ITEM_ROW_PADDING_HORIZONTAL } from '@/components/ui/lists/itemDensityMetrics';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
-import { SectionRowBleedContext } from '@/components/ui/lists/bareRowBleed';
+import { SectionRowBleedContext, useSectionRowBleedStyle } from '@/components/ui/lists/bareRowBleed';
 
 /**
  * How grouped list content is presented.
@@ -163,8 +163,10 @@ const BARE_SECTION_LINE_STYLE = { paddingHorizontal: PAGE_LIST_METRICS.rowPaddin
  */
 export function BareSectionLineEdge(props: Readonly<{ children: React.ReactNode; enabled?: boolean }>): React.ReactElement {
     const bare = useBareSectionRowEdge();
+    // The line takes its section's row bleed, so its glyph stands where the rows' glyphs stand.
+    const bleed = useSectionRowBleedStyle();
     if (!bare || props.enabled === false) return <>{props.children}</>;
-    return <View style={BARE_SECTION_LINE_STYLE}><HappierBodyEdgeContext.Provider value>{props.children}</HappierBodyEdgeContext.Provider></View>;
+    return <View style={bleed ? [BARE_SECTION_LINE_STYLE, bleed] : BARE_SECTION_LINE_STYLE}><HappierBodyEdgeContext.Provider value>{props.children}</HappierBodyEdgeContext.Provider></View>;
 }
 
 export function usePageListInsets(): PageListInsets {

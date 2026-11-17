@@ -2410,15 +2410,16 @@ function ItemRow(props: ItemProps) {
 }
 
 /**
- * A list row. In a bare section of a contained scope (`SectionRowBleedContext`) it reaches past the column by its
- * own inset, so its text keeps the column's edge while its fills and dividers reach into the padding.
+ * A list row. In a bare section (`SectionRowBleedContext`) it reaches past the section's content by its bleed, so its
+ * mark and text keep the section's edge while its fills and dividers reach into the margin.
  */
 export const Item = React.memo<ItemProps>((props) => {
-    const bleedStyle = useSectionRowBleedStyle();
+    const sectionBleed = useSectionRowBleedStyle();
+    // A page directory row draws the same edges on its own fill (`DIRECTORY_ROW_EDGES`): its cells may stand in
+    // columns, where a bleeding box would cross the gap.
+    const directoryRow = React.useContext(PageDirectoryRowsContext);
+    if (!sectionBleed) return <ItemRow {...props} />;
     // Only the section's own rows bleed: a row drawn inside this one (an accessory, an expanded body) does not.
-    return bleedStyle ? (
-        <View style={bleedStyle}>
-            <SectionRowBleedContext.Provider value={0}><ItemRow {...props} /></SectionRowBleedContext.Provider>
-        </View>
-    ) : <ItemRow {...props} />;
+    const row = <SectionRowBleedContext.Provider value={0}><ItemRow {...props} /></SectionRowBleedContext.Provider>;
+    return directoryRow ? row : <View style={sectionBleed}>{row}</View>;
 });

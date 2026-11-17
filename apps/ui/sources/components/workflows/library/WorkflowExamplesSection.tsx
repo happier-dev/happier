@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Collection, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
@@ -15,8 +15,6 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
-import { ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX } from '@/components/ui/lists/itemGroupSpacing';
-import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -107,9 +105,8 @@ export function WorkflowExamplesSection(props: Readonly<{
             ...examples.filter((example) => !workflowStarterRequiresSession(example))];
         return <ListPresentationProvider value="page"><ItemGroup surface="none"
             title={props.hideTitle ? undefined : t('workflows.examples.title')} description={t('workflows.examples.sessionDescription')}
-            // The heading sits on the rows' text edge, and a sheet that already names the picker in its own
-            // header has the description follow it directly.
-            headerStyle={props.hideTitle ? [styles.listHeader, { paddingTop: 0 }] : styles.listHeader}>
+            // A sheet that already names the picker in its own header has the description follow it directly.
+            headerStyle={props.hideTitle ? styles.listHeaderUntitled : undefined}>
             {forSession.map((example) => {
                 const sessionDescriptionKey = SESSION_DESCRIPTION_KEYS[example.key];
                 return <Item key={example.key} testID={`workflow-examples:${example.key}`}
@@ -285,7 +282,7 @@ function ExampleCards(props: Readonly<{
 }
 
 const styles = StyleSheet.create((theme) => ({
-    listHeader: { paddingHorizontal: (Platform.select(ITEM_GROUP_CONTENT_MARGIN_HORIZONTAL_PX) ?? 12) + PAGE_LIST_METRICS.rowPaddingHorizontalPx },
+    listHeaderUntitled: { paddingTop: 0 },
     cards: { marginHorizontal: -HAPPIER_PAGE_METRICS.sheetInsetPx },
     // A short map beside a taller neighbour sits in the middle of the paper it is given, not on top of an
     // empty well (DESIGN-9 P5 "Ask once").

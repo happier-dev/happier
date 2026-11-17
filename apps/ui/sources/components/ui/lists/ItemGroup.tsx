@@ -681,6 +681,11 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     const wantsColumns = (columns ?? 1) > 1;
     // A column grid's cells are cards of their own: their rows stay in their cells.
     const bleedRows = contained && surface === 'none' && !wantsColumns;
+    // A bare page section's rows stand on the section's content edge, where its tiles and collections stand and
+    // (by the heading's optical inset) its title: glyphs and chevrons on those edges, fills reaching into the margin,
+    // as a flat sheet's rows do. The margin is wider than the bleed, so nothing reaches a clipping edge.
+    const rowBleedPx = bleedRows ? rowPaddingPx
+        : isPage && surface === 'none' && !wantsColumns ? rowPaddingPx - PAGE_LIST_METRICS.headingOpticalInsetPx : 0;
     const resolvedContainerStyle = contained ? [styles.containedContent, containerStyle] : containerStyle;
     // A section on a popover, menu or its phone sheet, carded or not: a floating surface draws no card, so
     // both take the menu anatomy and every row there shares the menu's text edge (a flat group kept the
@@ -801,7 +806,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                 <SectionItemDensityProvider value={density}>
                 <BareSectionRowsContext.Provider value={surface === 'none' && !bleedRows}>
                 <BareRowBleedContext.Provider value={0}>
-                <SectionRowBleedContext.Provider value={bleedRows ? rowPaddingPx : 0}>
+                <SectionRowBleedContext.Provider value={rowBleedPx}>
                     <HappierItemGroupBehavior
                         accessibilityRole={accessibilityRole}
                         accessibilityLabel={resolvedAccessibilityLabel}
