@@ -70,6 +70,18 @@ describe('runner entrypoint identity', () => {
     });
   });
 
+  it('roots a checkout that lives under a src or dist directory at its own CLI package', () => {
+    expect(resolveSessionRunnerEntrypointIdentityFromProcessCommand(
+      'node /home/alice/src/happier/apps/cli/src/index.ts daemon start-sync',
+    )).toMatchObject({ status: 'known', comparableId: 'path:/home/alice/src/happier/apps/cli' });
+    expect(resolveSessionRunnerEntrypointIdentityFromProcessCommand(
+      'node C:\\Users\\Alice\\src\\apps\\cli\\src\\index.ts claude',
+    )).toMatchObject({ status: 'known', comparableId: 'path:c:/users/alice/src/apps/cli' });
+    expect(resolveSessionRunnerEntrypointIdentityFromProcessCommand(
+      'node /opt/dist/happier/apps/cli/dist/index.mjs claude',
+    )).toMatchObject({ status: 'known', comparableId: 'path:/opt/dist/happier/apps/cli' });
+  });
+
   it('preserves case for POSIX runtime roots but normalizes Windows runtime roots', () => {
     expect(resolveSessionRunnerEntrypointIdentityFromProcessCommand(
       'node /Work/Happier/apps/cli/src/index.ts daemon start-sync',

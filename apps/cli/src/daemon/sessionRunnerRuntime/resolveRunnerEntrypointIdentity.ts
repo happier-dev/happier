@@ -100,10 +100,9 @@ export function isGenerationAttestedComparableId(comparableId: string): boolean 
 
 function resolveRuntimeRoot(pathLike: string): string | null {
   const normalized = normalizeComparablePath(pathLike);
-  for (const marker of ['/package-dist/', '/dist/', '/src/']) {
-    const index = normalized.indexOf(marker);
-    if (index > 0) return normalized.slice(0, index);
-  }
+  // The marker nearest the entrypoint: a checkout may itself live under a `src` or `dist` directory.
+  const index = Math.max(...['/package-dist/', '/dist/', '/src/'].map(marker => normalized.lastIndexOf(marker)));
+  if (index > 0) return normalized.slice(0, index);
   if (isCliBinaryPath(normalized)) {
     const parts = normalized.split('/');
     parts.pop();
