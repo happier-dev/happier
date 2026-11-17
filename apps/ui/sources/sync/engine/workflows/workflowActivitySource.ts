@@ -1,4 +1,4 @@
-import { WorkflowActionOutputSchemasV1, type WorkflowActivityListRequestV1, type WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowActionOutputSchemasV1, projectWorkflowRunMembershipV1, type WorkflowActivityListRequestV1, type WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -9,13 +9,20 @@ import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { readMachineActivity, readMachinePresenceAnswer } from '@/sync/domains/machines/machineActivity';
 import { ViewDemandSync } from '@/sync/engine/viewDemandSync';
 import { subscribeMachineUpdates } from '@/sync/store/domains/machines';
-import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
+import { isBeyondWorkflowRunListSpan, workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { readWorkflowRunAccountChangeRunId } from '@/sync/runtime/orchestration/changesPlanner';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
-import type { WorkflowActivityLiveFact, WorkflowActivityObserver, WorkflowActivitySource } from '@/sync/domains/workflows/workflowActivityTypes';
+import { workflowActivityRunEventKey, type WorkflowActivityLiveFact, type WorkflowActivityObserver, type WorkflowActivitySource } from '@/sync/domains/workflows/workflowActivityTypes';
 
 const sources = new WeakMap<ServerAccountScopeLifetime, WorkflowActivitySource>();
+
+function compareRuns(left: WorkflowRunSummaryV1, right: WorkflowRunSummaryV1): number {
+    const leftPosition = { id: left.id, createdAt: Date.parse(left.createdAt) };
+    const rightPosition = { id: right.id, createdAt: Date.parse(right.createdAt) };
+    return isBeyondWorkflowRunListSpan(leftPosition, rightPosition) ? 1
+        : isBeyondWorkflowRunListSpan(rightPosition, leftPosition) ? -1 : 0;
+}
 
 function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySource {
     const observers = new Set<WorkflowActivityObserver>();
@@ -37,13 +44,26 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         if (batch.length === 0) return;
         for (const observer of observers) observer.onLive(batch);
     };
+    const publishPage = (retained: WorkflowRunListResultV1, recovered = false) => {
+        const nextPage = retainDeep(page, retained);
+        // Recovery changes freshness even when the retained rows are identical.
+        const recoveredFromFailure = recovered && failed;
+        if (recovered) failed = false;
+        if (nextPage === page && !recoveredFromFailure) return;
+        page = nextPage;
+        for (const observer of observers) observer.onRetained(nextPage);
+    };
+    const mergePage = (retained: WorkflowRunListResultV1): WorkflowRunListResultV1 => {
+        const runs = new Map(page?.runs.map(run => [run.id, run]));
+        for (const run of retained.runs) runs.set(run.id, run);
+        return { ...retained, runs: [...runs.values()].sort(compareRuns) };
+    };
     const close = () => {
         for (const release of detach.splice(0)) release();
         controller?.abort();
         controller = null;
         queue?.stop();
         queue = null;
-        page = undefined;
         failed = false;
         since = null;
     };
@@ -108,11 +128,22 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         detach.push(subscribeHomeAccountChange(event => {
             if (!event.workflowRunsMaterialized) return;
             const batch: WorkflowActivityLiveFact[] = [];
+            const retainedRuns = page ? new Map(page.runs.map(run => [run.id, run])) : null;
+            const frontier = page?.runs.at(-1);
             for (const entityId of event.entityIds ?? []) {
                 const id = readWorkflowRunAccountChangeRunId(entityId);
                 if (!id) continue;
                 const row = storage.getState().workflowRunsById[workflowRunStoreKey(id, lifetime.scope)]?.summary;
-                if (!row) continue;
+                if (!row) {
+                    runs.delete(id);
+                    retainedRuns?.delete(id);
+                    continue;
+                }
+                if (retainedRuns && (retainedRuns.has(id) || !page?.nextCursor || !frontier
+                    || !isBeyondWorkflowRunListSpan({ id, createdAt: Date.parse(row.createdAt) },
+                        { id: frontier.id, createdAt: Date.parse(frontier.createdAt) }))) {
+                    retainedRuns.set(id, projectWorkflowRunMembershipV1(row));
+                }
                 const previous = runs.get(id);
                 runs.set(id, { state: row.state, attentionRequired: row.attentionRequired });
                 const terminalAt = row.finishedAt ? Date.parse(row.finishedAt) : null;
@@ -120,10 +151,13 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
                 if (isTerminalAutomationRunStateV3(row.state) && previous?.state !== row.state
                     && terminalAt !== null && terminalAt >= listeningSince) batch.push({ kind: 'run', runId: id,
                     event: 'terminal', state: row.state, sourceRevision: row.revision, occurredAt: terminalAt,
-                    coverage: 'live', key: serverAccountScopedResourceKey(lifetime.scope, 'run', id, 'terminal', row.finishedAt!) });
+                    coverage: 'live', key: workflowActivityRunEventKey({ kind: 'workflow_run', runId: id }, 'terminal', row.revision) });
                 if (row.attentionRequired && !previous?.attentionRequired && updatedAt >= listeningSince) batch.push({ kind: 'run', runId: id,
                     event: 'needs_attention', state: row.state, sourceRevision: row.revision, occurredAt: updatedAt,
-                    coverage: 'live', key: serverAccountScopedResourceKey(lifetime.scope, 'run', id, 'needs_attention', String(row.revision)) });
+                    coverage: 'live', key: workflowActivityRunEventKey({ kind: 'workflow_run', runId: id }, 'needs_attention', row.revision) });
+            }
+            if (page && retainedRuns) {
+                publishPage({ ...page, runs: [...retainedRuns.values()].sort(compareRuns) });
             }
             publish(batch);
         }, { serverIds: [serverId] }));
@@ -136,16 +170,11 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         queue = new ViewDemandSync(async () => {
             const retained = await readPage();
             if (signal.aborted) return;
-            const nextPage = retainDeep(page, retained);
-            // Recovery changes freshness even when the retained rows are identical.
-            if (nextPage === page && !failed) return;
-            failed = false;
-            page = nextPage;
-            for (const observer of observers) observer.onRetained(nextPage);
+            publishPage(mergePage(retained), true);
         }, { onError: reportError, onRetryFailure: reportError });
-        const retirement = lifetime.onRetire(() => { close(); observers.clear(); });
-        detach.push(() => retirement.dispose());
     };
+    // Requested membership follows the Account across view handoffs; live listeners follow demand.
+    lifetime.onRetire(() => { close(); page = undefined; observers.clear(); });
     return {
         acquire(observer) {
             if (!lifetime.isCurrent()) return () => {};
@@ -163,6 +192,13 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         hasDemand: () => observers.size > 0,
         listeningSince: () => since,
         readPage,
+        loadMore: async () => {
+            const signal = controller?.signal;
+            const cursor = page?.nextCursor;
+            if (!signal || !cursor) return;
+            const retained = await readPage({ cursor });
+            if (!signal.aborted) publishPage(mergePage(retained));
+        },
         retry: async () => { if (queue) await queue.read(); },
     };
 }

@@ -73,6 +73,39 @@ describe('Run lifecycle source admission (retained SQLite owners)', () => {
     expect(await db.automationRun.count({ where: { automationId: f.automationId } })).toBe(1);
   });
 
+  it('retains exact terminal and persistent-attention cause revisions after the source advances', async () => {
+    for (const condition of ['terminal', 'needs_attention'] as const) {
+      const f = await fixture();
+      const firstRevision = condition === 'terminal' ? 2 : 6;
+      const firstAt = new Date('2026-11-17T10:00:00.000Z');
+      const sourceRun = await db.automationRun.create({ data: { accountId: f.accountId, originKind: 'direct', causeKind: null,
+        state: condition === 'terminal' ? 'succeeded' : 'interrupted', scheduledAt: firstAt, dueAt: firstAt,
+        workflowCustodyState: 'pending', workflowAcceptedSnapshotEnvelope: '{}', revision: firstRevision,
+        updatedAt: firstAt, ...(condition === 'terminal' ? { finishedAt: firstAt } : {}) } });
+      if (condition === 'needs_attention') await db.workflowRunInvocation.create({ data: { id: randomUUID(), runId: sourceRun.id,
+        sequence: 1n, parentRecordId: null, memberOrdinal: 0n, attempt: 0n, contentRevision: 1n,
+        lifecycle: 'needs_attention', contentEnvelope: '{}' } });
+      const source = { kind: 'workflow_run' as const, runId: sourceRun.id };
+      const register = () => db.automationTrigger.create({ data: { automationId: f.automationId, kind: 'runLifecycle', enabled: true,
+        sourceRunId: sourceRun.id, remainingOccurrences: 1,
+        runLifecycleConfigurationJson: JSON.stringify({ kind: 'runLifecycle', source, condition }) } });
+      await register();
+      await inTx(tx => catchUpAutomationRunLifecycleSourcesTx(tx, f.automationId));
+      const nextAt = new Date(firstAt.getTime() + 1_000);
+      // A persisted custody update may coalesce the source summary; it does not rewrite the admitted cause.
+      await db.automationRun.update({ where: { id: sourceRun.id }, data: {
+        revision: firstRevision + 1, updatedAt: nextAt, ...(condition === 'terminal' ? { workflowCustodyState: 'settled' } : {}),
+      } });
+      await register();
+      await inTx(tx => catchUpAutomationRunLifecycleSourcesTx(tx, f.automationId));
+      const children = await db.automationRun.findMany({ where: { automationId: f.automationId }, select: automationRunCauseSelect });
+      expect(children.map(row => decodeAutomationRunCause(row))).toEqual(expect.arrayContaining([firstRevision, firstRevision + 1].map(revision =>
+        expect.objectContaining({ kind: 'trigger', triggerKind: 'runLifecycle', occurredAt: revision === firstRevision ? firstAt.getTime() : nextAt.getTime(),
+          evidence: expect.objectContaining({ source, condition, sourceRevision: revision }) }))));
+      expect(children).toHaveLength(2);
+    }
+  });
+
   it('suppresses the originating trigger on its own retained run event before reserving its occurrence', async () => {
     const f = await fixture();
     const run = await db.automationRun.create({ data: { accountId: f.accountId, originKind: 'direct', causeKind: null,

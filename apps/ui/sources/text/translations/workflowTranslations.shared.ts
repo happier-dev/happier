@@ -310,6 +310,7 @@ export const en = {
         machineOffline: ({ machine }: { machine: string }) => `${machine} went offline`,
         runFinished: ({ workflow }: { workflow: string }) => `${workflow} finished`,
         runNeedsYou: ({ workflow }: { workflow: string }) => `${workflow} needs you`,
+        recordedCause: 'Recorded cause',
         carries: 'What it carries',
         startedFromIt: 'Started from it',
         noTrigger: 'Workflows can’t start from this kind of event yet.',

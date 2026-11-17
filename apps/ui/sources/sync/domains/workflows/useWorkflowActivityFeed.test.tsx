@@ -5,6 +5,8 @@ import { initializeRealAppRuntimeForTests } from '@/dev/testkit/harness/realAppR
 import { installWorkflowActionHttpBoundary } from '@/dev/testkit/fixtures/workflowActionHttpBoundary';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/automationRunCause';
+import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 
 // Only the external socket and HTTP transports are substituted.
 vi.mock('socket.io-client', async (importOriginal) =>
@@ -12,12 +14,117 @@ vi.mock('socket.io-client', async (importOriginal) =>
 await initializeRealAppRuntimeForTests();
 afterEach(standardCleanup);
 
+it('projects exact retained Run causes despite coalesced source revisions without inventing live history', async () => {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    await upsertAndActivateServer({ serverUrl: 'https://workflow-activity-causes.test' });
+    const children = [2, 3, 6, 7].map(sourceRevision => {
+        const evidence = { v: 1, kind: 'runLifecycle', source: { kind: 'workflow_run', runId: sourceRevision < 6 ? 'terminal-source' : 'attention-source' },
+            condition: sourceRevision < 6 ? 'terminal' : 'needs_attention', sourceRevision, occurredAt: sourceRevision * 100 } as const;
+        const triggerId = `trigger-${sourceRevision}`;
+        const createdAt = `2026-11-17T10:00:0${[7, 6, 2, 3].indexOf(sourceRevision)}.000Z`;
+        return createWorkflowRunSummaryFixture({ id: `child-${sourceRevision}`, createdAt, origin: { kind: 'automation', automationId: 'a1',
+            cause: AutomationRunCauseSchema.parse({ kind: 'trigger', triggerKind: 'runLifecycle', triggerId, triggerRevision: 1,
+                occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence }), occurredAt: evidence.occurredAt,
+                evidence: { source: evidence.source, condition: evidence.condition, sourceRevision } }) } });
+    });
+    const latestSources = [createWorkflowRunSummaryFixture({ id: 'terminal-source', revision: 3, state: 'succeeded' }),
+        createWorkflowRunSummaryFixture({ id: 'attention-source', revision: 7, attentionRequired: true })];
+    const firstCause = children[0]!.origin.kind === 'automation' ? children[0]!.origin.cause : undefined;
+    if (firstCause?.kind !== 'trigger' || firstCause.triggerKind !== 'runLifecycle') throw new Error('Missing lifecycle fixture');
+    const secondTrigger = createWorkflowRunSummaryFixture({ id: 'child-2-second-trigger', createdAt: '2026-11-17T10:00:01.500Z',
+        origin: { kind: 'automation', automationId: 'a2',
+        cause: AutomationRunCauseSchema.parse({ ...firstCause, triggerId: 'another-trigger', occurrenceKey: deriveAutomationOccurrenceKeyV1({
+            triggerId: 'another-trigger', evidence: { v: 1, kind: 'runLifecycle', occurredAt: firstCause.occurredAt, ...firstCause.evidence },
+        }) }) } });
+    let reads = 0;
+    let refreshed = false;
+    let removedChild = false;
+    const fresh = createWorkflowRunSummaryFixture({ id: 'fresh-member', createdAt: '2026-11-17T10:00:06.000Z', origin: { kind: 'direct' } });
+    const boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'activity-cause-account', fixtureResponse: async (id, input) => {
+        if (id !== 'workflow.run.list') throw new Error(`Unexpected activity read: ${id}`);
+        reads++;
+        return { ok: true, result: { runs: input.cursor ? children.slice(2).filter(run => !removedChild || run.id !== 'child-6')
+            : [...(refreshed ? [fresh] : []), children[1], children[0], secondTrigger],
+            metadataByRunId: {}, projection: 'membership', ...(input.cursor ? {} : { nextCursor: 'attention-causes' }) } };
+    } });
+    try {
+        const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+        await restoreConnectionToActiveServer(boundary.credentials);
+        boundary.prime();
+        expect(await (await import('@/sync/sync')).sync.awaitBootstrapForegroundAcquisition()).toBe(true);
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { workflowRunRowFromSummary } = await import('@/sync/store/domains/workflowRuns');
+        storage.getState().upsertWorkflowRuns(latestSources.map(run => workflowRunRowFromSummary(run, null)), lifetime.scope);
+        const { useWorkflowActivityFeed } = await import('./useWorkflowActivityFeed');
+        const hosts = await renderHook((props: { presented: 'list' | 'detail' }) => ({
+            column: useWorkflowActivityFeed({ lifetime, active: props.presented === 'list' }),
+            companion: useWorkflowActivityFeed({ lifetime, active: props.presented === 'list' }),
+            detail: useWorkflowActivityFeed({ lifetime, active: props.presented === 'detail' }),
+        }), { initialProps: { presented: 'list' } });
+        await vi.waitFor(() => expect(hosts.getCurrent().column.retained).not.toBeNull());
+        await act(async () => { (await import('@/sync/engine/sessions/socketApplyFrame')).socketApplyFrame.flushNow(); });
+        expect(hosts.getCurrent().column.keys).toHaveLength(2);
+        await act(async () => { await hosts.getCurrent().column.loadMore();
+            (await import('@/sync/engine/sessions/socketApplyFrame')).socketApplyFrame.flushNow(); });
+        const feed = hosts.getCurrent().column;
+        expect(feed.keys).toBe(hosts.getCurrent().companion.keys);
+        expect(feed.keys.map(key => feed.getRow(key))).toEqual([7, 6, 3, 2].map(sourceRevision => expect.objectContaining({
+            coverage: 'retained_cause', kind: 'run', sourceRevision, occurredAt: sourceRevision * 100,
+            event: sourceRevision < 6 ? 'terminal' : 'needs_attention',
+        })));
+        const { readWorkflowEventStartedRuns } = await import('@/components/workflows/events/workflowEventFacts');
+        for (const key of feed.keys) {
+            const fact = feed.getRow(key)!;
+            expect(fact).not.toHaveProperty('state');
+            expect(readWorkflowEventStartedRuns(fact, feed.retained!.runs).map(run => run.id)).toEqual(fact.sourceRevision === 2
+                ? ['child-2', 'child-2-second-trigger'] : [`child-${fact.sourceRevision}`]);
+        }
+        const { useWorkflowEventPresentation } = await import('@/components/workflows/events/useWorkflowEventPresentation');
+        const selected = feed.getRow(feed.keys[0]!)!;
+        const detail = await renderHook(() => useWorkflowEventPresentation(selected, lifetime.scope, feed.retained!.runs));
+        expect(detail.getCurrent()?.lines.some(line => line.key === 'result')).toBe(false);
+        expect(detail.getCurrent()?.runsStarted.map(run => run.id)).toEqual(['child-7']);
+        expect(detail.getCurrent()?.subtitle).not.toBeNull();
+        await detail.unmount();
+        const keys = feed.keys;
+        refreshed = true;
+        await act(async () => { await feed.retry();
+            (await import('@/sync/engine/sessions/socketApplyFrame')).socketApplyFrame.flushNow(); });
+        expect(hosts.getCurrent().column.keys).toBe(keys);
+        expect(hosts.getCurrent().column.retained?.runs.map(run => run.id)).toEqual(expect.arrayContaining(['child-6', 'child-7']));
+        expect(readWorkflowEventStartedRuns(selected, hosts.getCurrent().column.retained!.runs).map(run => run.id)).toEqual(['child-7']);
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        removedChild = true;
+        await act(async () => {
+            storage.getState().removeWorkflowRun('child-6', lifetime.scope);
+            publishHomeAccountChange(lifetime.scope.serverId, ['workflow-run:child-6'], { workflowRunsMaterialized: true });
+        });
+        expect(hosts.getCurrent().column.retained?.runs.map(run => run.id)).not.toContain('child-6');
+        expect(readWorkflowEventStartedRuns(selected, hosts.getCurrent().column.retained!.runs).map(run => run.id)).toEqual(['child-7']);
+        expect(hosts.getCurrent().column.getRow(selected.key)).toBe(selected);
+        expect(reads).toBe(3); // Initial page, continuation, explicit retry; pushed removal reads nothing.
+        await act(async () => { await hosts.getCurrent().column.loadMore(); });
+        expect(hosts.getCurrent().column.retained?.runs.map(run => run.id)).not.toContain('child-6');
+        expect(reads).toBe(4); // A refreshed server cursor may traverse already known rows again.
+        await act(async () => { await hosts.getCurrent().column.loadMore(); });
+        expect(reads).toBe(4); // Exhausted paging reads nothing.
+        await hosts.rerender({ presented: 'detail' });
+        await vi.waitFor(() => expect(hosts.getCurrent().detail.retained).not.toBeNull());
+        expect(hosts.getCurrent().detail.getRow(selected.key)).toBe(selected);
+        expect(readWorkflowEventStartedRuns(selected, hosts.getCurrent().detail.retained!.runs).map(run => run.id)).toEqual(['child-7']);
+        expect(hosts.getCurrent().detail.keys.map(key => hosts.getCurrent().detail.getRow(key)?.coverage)).not.toContain('live');
+        await hosts.unmount();
+    } finally { await boundary.dispose(); }
+});
+
 it('shares the source-bound frame across two presented hosts and withdraws the last demand', async () => {
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     await upsertAndActivateServer({ serverUrl: 'https://workflow-activity-hosts.test' });
     let reads = 0;
     let unavailable = false;
-    const first = createWorkflowRunSummaryFixture({ id: 'first-run' });
+    const first = createWorkflowRunSummaryFixture({ id: 'first-run', createdAt: '2026-09-08T10:00:01.000Z' });
     const second = createWorkflowRunSummaryFixture({ id: 'second-run' });
     const boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'activity-host-account',
         fixtureResponse: async (id, input) => {

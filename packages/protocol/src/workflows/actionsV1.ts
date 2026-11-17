@@ -63,6 +63,7 @@ import {
   WorkflowRunOriginV1Schema,
   WorkflowRunStateV1Schema,
   WorkflowRunSummaryV1Schema,
+  type WorkflowRunSummaryV1,
   WorkflowRunLastStartedSummaryV1Schema,
   WorkflowUsageV1Schema,
   WorkflowNotificationConditionV1Schema,
@@ -263,6 +264,15 @@ export const WorkflowRunPrivateMetadataV1Schema = lazyZodSchema(() => z.discrimi
 ]));
 export type WorkflowRunPrivateMetadataV1 = z.infer<typeof WorkflowRunPrivateMetadataV1Schema>;
 export const WorkflowRunCallerAccessV1Schema = lazyZodSchema(() => z.strictObject({ canEdit: z.boolean() }));
+const workflowRunMembershipPrivateFields = ['where', 'startedBy', 'heldStep', 'stepProgress', 'stepProgressCurrentness'] as const satisfies readonly (keyof WorkflowRunSummaryV1)[];
+
+/** Project a trusted, possibly opened Run row to the public membership contract. */
+export function projectWorkflowRunMembershipV1(run: WorkflowRunSummaryV1): Omit<WorkflowRunSummaryV1, typeof workflowRunMembershipPrivateFields[number]> {
+  const membership = { ...run };
+  for (const key of workflowRunMembershipPrivateFields) delete membership[key];
+  return membership;
+}
+
 export const WorkflowRunListResultV1Schema = lazyZodSchema(() => z.strictObject({
   runs: z.array(WorkflowRunSummaryV1Schema),
   /** Absent means the existing complete private list projection, including readable untitled Runs. */
@@ -285,7 +295,7 @@ export const WorkflowRunListResultV1Schema = lazyZodSchema(() => z.strictObject(
       context.addIssue({ code: 'custom', message: 'Membership does not carry private sidecars' });
     }
     for (const [index, run] of value.runs.entries()) {
-      for (const key of ['where', 'startedBy', 'heldStep', 'stepProgress', 'stepProgressCurrentness'] as const) {
+      for (const key of workflowRunMembershipPrivateFields) {
         if (run[key] !== undefined) context.addIssue({ code: 'custom', path: ['runs', index, key], message: 'Membership does not carry opened private facts' });
       }
     }

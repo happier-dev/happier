@@ -19697,6 +19697,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         machineOffline: ({ machine }: { machine: string }) => `${machine} 已离线`,
         runFinished: ({ workflow }: { workflow: string }) => `${workflow} 已完成`,
         runNeedsYou: ({ workflow }: { workflow: string }) => `${workflow} 需要你处理`,
+        recordedCause: '已记录的触发原因',
         carries: '携带的信息',
         startedFromIt: '由此启动',
         noTrigger: '工作流暂时无法从此类事件启动。',

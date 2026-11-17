@@ -6405,25 +6405,30 @@ In 0.3 development source, `workflow.activity.list` reads Account-visible retain
 Run membership through the existing Run list owner. It returns `{ retained, live }`;
 `live` is `{ kind: 'unavailable', reason: 'ui_local_only' }` for Action callers.
 Private Session/provenance selectors are not accepted by this read. Open a selected
-Run with `workflow.run.get` for its authorized frozen cause and evidence.
+Run with `workflow.run.get` for its authorized private content; retained membership
+already carries available immutable admitted trigger causes.
 
 The Events column and editor companion acquire one UI-local source per active
 Home Account. It observes existing Session, Machine and Run sync facts only while
 one host is open, records when listening began, and starts with a baseline rather
-than reconstructing history. Both hosts share the demanded retained page and live
-facts; unchanged updates and closed hosts produce no activity reads. Frame and
-window application belongs to the shared Events projection. `workflow.events.list`
+than reconstructing history. Both hosts share the demanded retained Run window
+and local facts; unchanged updates and closed hosts produce no activity reads.
+The source owns Run membership; the projection owns accumulated facts and frame
+application. `workflow.events.list`
 continues to describe eligible declarations, independently of activity.
 
 The UI adapter `useWorkflowActivityFeed({ lifetime, active })` addresses the mounted
 Account explicitly and shares the source, frame rows and retained continuation
 between presented hosts. An inactive host subscribes to neither stream. Releasing
-the last host releases the source and retained Run window; observed live summaries
-remain UI-local for the Account lifetime, including when opening a selected detail.
+the last host withdraws live subscriptions; already requested Run membership and
+observed facts remain UI-local for the Account lifetime, including selected-detail
+handoff. Account retirement clears both.
 Reopening starts a new producer baseline without reconstructing missed history.
 Offline or failed reads retain visible data. Retry failure and recovery come from
 the acquisition owner, including recovery whose retained rows did not change;
 the adapter does not add a second retry policy or a persisted Event history.
+First-page refresh merges into the requested window and uses the fresh server
+cursor. Load more can traverse already known rows again; rows merge by Run id.
 
 In unreleased 0.3 source, a Run fact seeds the existing `runLifecycle` trigger
 with its exact Run source and observed condition. Events detail's **Automate
@@ -6432,9 +6437,12 @@ Machine presence facts seed the declaration-owned Event setup described above.
 The selected-detail presentation also exposes `runsStarted` from the already
 demanded retained Run page. It compares immutable trigger occurrence keys
 through the canonical occurrence owner, never event proximity. These are known
-positive associations, not an exhaustive history: paging, a later source revision
-coalescing the admitted revision, or a newly admitted Run absent from the retained
-page can omit a match. The data intake does not itself render a Started link or
+positive associations, not an exhaustive history: paging or a newly admitted Run
+absent from the retained page can omit a match. Run lifecycle causes also project
+`retained_cause` Event rows using their exact source tuple, condition and source
+revision. Their receipt time remains available even after source revisions
+coalesce; source history and results are not reconstructed. An exact matching live
+observation keeps its observed state and time. The data intake does not itself render a Started link or
 acquire missing Runs.
 
 Saved Secret MCP sharing is selectively projected for `secrets.shared.promote`

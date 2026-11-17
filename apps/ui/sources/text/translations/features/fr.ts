@@ -19872,6 +19872,7 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         machineOffline: ({ machine }: { machine: string }) => `${machine} est hors ligne`,
         runFinished: ({ workflow }: { workflow: string }) => `${workflow} est terminé`,
         runNeedsYou: ({ workflow }: { workflow: string }) => `${workflow} a besoin de vous`,
+        recordedCause: 'Cause enregistrée',
         carries: 'Ce qu’il transporte',
         startedFromIt: 'Démarré à partir de là',
         noTrigger: 'Aucun flux de travail ne peut encore démarrer sur ce type d’événement.',

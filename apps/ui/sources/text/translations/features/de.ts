@@ -19307,6 +19307,7 @@ const de = translated(workflowValueReferenceTranslations.de, {
         machineOffline: ({ machine }: { machine: string }) => `${machine} ist offline`,
         runFinished: ({ workflow }: { workflow: string }) => `${workflow} ist fertig`,
         runNeedsYou: ({ workflow }: { workflow: string }) => `${workflow} braucht dich`,
+        recordedCause: 'Aufgezeichneter Auslöser',
         carries: 'Was es mitbringt',
         startedFromIt: 'Davon gestartet',
         noTrigger: 'Workflows können bei dieser Art Ereignis noch nicht starten.',

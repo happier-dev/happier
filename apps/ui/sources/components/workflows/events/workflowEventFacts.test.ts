@@ -160,6 +160,14 @@ describe('workflowEventFacts', () => {
     // Session birth is identified by its Session, independently of observation time.
     expect(readWorkflowEventStartedRuns(started, rows)).toEqual([exactStart]);
     expect(readWorkflowEventStartedRuns(machine, rows)).toEqual([]);
+    const executionEvidence = { ...runEvidence, source: { kind: 'execution_run', machineId: 'm1', runId: run.runId } } as const;
+    const executionChild = retained('execution-exact', executionEvidence);
+    const retainedExecution = { key: 'retained-execution', kind: 'run', runId: run.runId, event: 'terminal',
+      occurredAt: executionEvidence.occurredAt, sourceRevision: executionEvidence.sourceRevision,
+      coverage: 'retained_cause', evidence: executionEvidence } as const;
+    expect(readWorkflowEventStartedRuns(retainedExecution, [...rows, executionChild])).toEqual([executionChild]);
+    expect(readWorkflowEventTrigger(retainedExecution)).toEqual({ kind: 'runLifecycle', enabled: true,
+      source: executionEvidence.source, condition: 'terminal' });
   });
 
   it('filters by fact kind', () => {

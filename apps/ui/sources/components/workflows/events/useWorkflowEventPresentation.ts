@@ -14,11 +14,11 @@ import {
 } from '@/sync/store/hooks';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { WorkflowActivityLiveFact } from '@/sync/domains/workflows/workflowActivityTypes';
+import type { WorkflowActivityFact } from '@/sync/domains/workflows/workflowActivityTypes';
 import type { WorkflowActivityProjection } from '@/sync/engine/workflows/workflowActivityProjection';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { readWorkflowEventStartedRuns } from './workflowEventFacts';
-import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { createMachineExecutionRunRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { t } from '@/text';
@@ -32,7 +32,7 @@ export type WorkflowEventFactLine = Readonly<{
 
 /** How one observed fact reads: its sentence title, the thing it is about, its mark, and what it carries. */
 export type WorkflowEventPresentation = Readonly<{
-  fact: WorkflowActivityLiveFact;
+  fact: WorkflowActivityFact;
   title: string;
   subtitle: string | null;
   glyph: IconName;
@@ -49,7 +49,7 @@ const NO_RUNS: readonly WorkflowRunSummaryV1[] = Object.freeze([]);
 export function useWorkflowEventFact(
   projection: WorkflowActivityProjection,
   key: string | null,
-): WorkflowActivityLiveFact | undefined {
+): WorkflowActivityFact | undefined {
   const subscribe = React.useCallback(
     (listener: () => void) =>
       key === null ? () => {} : projection.subscribeRow(key, listener),
@@ -67,7 +67,7 @@ export function useWorkflowEventFact(
  * shared feed stays a list of facts and each row re-renders only for its own subject.
  */
 export function useWorkflowEventPresentation(
-  fact: WorkflowActivityLiveFact | undefined,
+  fact: WorkflowActivityFact | undefined,
   scope: ServerAccountScope | null,
   retainedRuns?: readonly WorkflowRunSummaryV1[],
 ): WorkflowEventPresentation | null {
@@ -97,7 +97,8 @@ export function useWorkflowEventPresentation(
     serverId,
     fact?.kind === 'machine' ? fact.machineId : sessionMachineId,
   );
-  const run = useWorkflowRun(fact?.kind === 'run' ? fact.runId : null, {
+  const executionSource = fact?.coverage === 'retained_cause' && fact.evidence.source.kind === 'execution_run' ? fact.evidence.source : null;
+  const run = useWorkflowRun(fact?.kind === 'run' && executionSource === null ? fact.runId : null, {
     scope,
   });
   const workflowName =
@@ -182,14 +183,17 @@ export function useWorkflowEventPresentation(
         };
       }
       case 'run': {
-        const workflow = workflowName ?? t('workflows.events.someWorkflow');
-        const result = formatWorkflowRunStateLabel(fact.state);
+        const executionSource = fact.coverage === 'retained_cause' && fact.evidence.source.kind === 'execution_run' ? fact.evidence.source : null;
+        const workflow = executionSource === null ? workflowName ?? t('workflows.events.someWorkflow') : fact.runId;
+        const result = fact.coverage === 'live' ? formatWorkflowRunStateLabel(fact.state) : null;
+        const href = executionSource === null ? createWorkflowRunRoute(fact.runId, serverId)
+          : createMachineExecutionRunRoute(serverId ?? '', executionSource.machineId, executionSource.runId);
         return {
           fact,
           runsStarted,
           glyph: 'tree-structure',
           needsYou: fact.event === 'needs_attention',
-          subtitle: result,
+          subtitle: result ?? t('workflows.events.recordedCause'),
           title: t(
             fact.event === 'needs_attention'
               ? 'workflows.events.runNeedsYou'
@@ -199,19 +203,16 @@ export function useWorkflowEventPresentation(
           lines: [
             {
               key: 'workflow',
-              label: t('workflows.events.workflow'),
+              label: executionSource === null ? t('workflows.events.workflow') : t('runPage.menu.run'),
               value: workflow,
             },
-            {
+            ...(result === null ? [] : [{
               key: 'result',
               label: t('workflows.events.result'),
               value: result,
-            },
+            }]),
           ],
-          open: {
-            label: t('workflows.events.openRun'),
-            href: createWorkflowRunRoute(fact.runId, serverId),
-          },
+          open: href === null ? null : { label: t('workflows.events.openRun'), href },
         };
       }
     }

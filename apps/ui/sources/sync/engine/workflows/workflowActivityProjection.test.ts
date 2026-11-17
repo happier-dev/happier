@@ -3,6 +3,10 @@ import { describe, expect, it } from 'vitest';
 import type { WorkflowActivityLiveFact } from '@/sync/domains/workflows/workflowActivityTypes';
 import { createSocketApplyFrameScheduler } from '../sessions/socketApplyFrame';
 import { createWorkflowActivityProjection } from './workflowActivityProjection';
+import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/automationRunCause';
+import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import type { AutomationRunLifecycleOccurrenceEvidenceV1 } from '@happier-dev/protocol/automations/automationRunLifecycle';
 
 // requestAnimationFrame is the platform boundary; the real shared scheduler runs below it.
 function frameBoundary() {
@@ -23,6 +27,42 @@ function session(id: string, occurredAt: number): WorkflowActivityLiveFact {
 }
 
 describe('shared Workflow activity projection', () => {
+    it('keeps retained lifecycle sources exact and merges only a matching observed source occurrence', () => {
+        const frame = frameBoundary();
+        const projection = createWorkflowActivityProjection(frame.scheduler);
+        const evidence = { v: 1, kind: 'runLifecycle', source: { kind: 'workflow_run', runId: 'same-id' },
+            condition: 'terminal', sourceRevision: 2, occurredAt: 100 } as const;
+        const child = (triggerId: string, occurrence: AutomationRunLifecycleOccurrenceEvidenceV1 = evidence) => createWorkflowRunSummaryFixture({ id: triggerId,
+            origin: { kind: 'automation', automationId: 'a1', cause: AutomationRunCauseSchema.parse({ kind: 'trigger',
+                triggerKind: 'runLifecycle', triggerId, triggerRevision: 1, occurredAt: occurrence.occurredAt,
+                occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: occurrence }),
+                evidence: { source: occurrence.source, condition: occurrence.condition, sourceRevision: occurrence.sourceRevision } }) } });
+        const first = child('t1');
+        const duplicate = child('t2');
+        projection.applyRetained([first, duplicate]);
+        frame.frame();
+        expect(projection.getKeys()).toHaveLength(1);
+        const key = projection.getKeys()[0]!;
+        const retained = projection.getRow(key)!;
+        expect(retained).toMatchObject({ coverage: 'retained_cause', sourceRevision: 2, occurredAt: 100 });
+        expect(retained).not.toHaveProperty('state');
+        projection.applyRetained([child('execution', { ...evidence, source: { kind: 'execution_run', machineId: 'machine', runId: 'same-id' } }),
+            child('attention', { ...evidence, condition: 'needs_attention' }), child('revision', { ...evidence, sourceRevision: 3 })]);
+        frame.frame();
+        expect(projection.getKeys()).toHaveLength(4);
+        const live = { key, kind: 'run', runId: 'same-id', event: 'terminal', sourceRevision: 2,
+            state: 'succeeded', coverage: 'live', occurredAt: 90 } as const;
+        projection.apply([live]);
+        projection.applyRetained([first]);
+        frame.frame();
+        expect(projection.getRow(key)).toEqual(live);
+        const keys = projection.getKeys();
+        projection.applyRetained([duplicate]);
+        frame.frame();
+        expect(projection.getKeys()).toBe(keys);
+        expect(projection.getRow(key)).toEqual(live);
+        projection.dispose();
+    });
     it('publishes a burst once per frame for both hosts and preserves unchanged row identities', () => {
         const frame = frameBoundary();
         const projection = createWorkflowActivityProjection(frame.scheduler);

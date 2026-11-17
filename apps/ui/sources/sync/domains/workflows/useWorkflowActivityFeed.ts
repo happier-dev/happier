@@ -59,13 +59,9 @@ function createFeed(lifetime: ServerAccountScopeLifetime, source: WorkflowActivi
         if (close === null || !cursor) return Promise.resolve();
         const opened = close;
         publish({ ...state, loadingMore: true, loadMoreError: null });
-        const pending = source.readPage({ cursor }).then(page => {
+        const pending = source.loadMore().then(() => {
             if (close !== opened) return;
-            const previous = state.retained;
-            const runs = new Map(previous?.runs.map(run => [run.id, run]));
-            for (const run of page.runs) runs.set(run.id, run);
-            publish({ ...state, retained: { ...page, runs: [...runs.values()],
-                metadataByRunId: { ...previous?.metadataByRunId, ...page.metadataByRunId } }, loadingMore: false });
+            publish({ ...state, loadingMore: false });
         }, error => {
             if (close === opened) publish({ ...state, loadingMore: false, loadMoreError: error });
         }).finally(() => { if (continuation === pending) continuation = null; });
@@ -82,7 +78,10 @@ function createFeed(lifetime: ServerAccountScopeLifetime, source: WorkflowActivi
             if (close === null) {
                 const release = source.acquire({
                     onLive: batch => projection.apply(batch),
-                    onRetained: retained => publish({ ...state, retained, status: connectionStatus(), error: null }),
+                    onRetained: retained => {
+                        projection.applyRetained(retained.runs);
+                        publish({ ...state, retained, status: connectionStatus(), error: null });
+                    },
                     onError: error => publish({ ...state, status: 'failed', error }),
                 });
                 // The source owns mounted-Account admission, including retirement

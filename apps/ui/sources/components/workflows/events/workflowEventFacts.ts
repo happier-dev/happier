@@ -2,7 +2,7 @@ import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/aut
 import { deriveAutomationOccurrenceKeyV1, type AutomationTriggerOccurrenceEvidenceV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
-import type { WorkflowActivityLiveFact } from '@/sync/domains/workflows/workflowActivityTypes';
+import type { WorkflowActivityFact } from '@/sync/domains/workflows/workflowActivityTypes';
 import type { WorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import type { WorkflowTriggerEventOption } from '@/components/workflows/triggers/workflowTriggerStarts';
 import {
@@ -21,7 +21,7 @@ export const WORKFLOW_EVENT_FILTERS = [
 export type WorkflowEventFilter = (typeof WORKFLOW_EVENT_FILTERS)[number];
 
 export function matchesWorkflowEventFilter(
-  fact: WorkflowActivityLiveFact,
+  fact: WorkflowActivityFact,
   filter: WorkflowEventFilter,
 ): boolean {
   return filter === 'all' || fact.kind === filter;
@@ -33,10 +33,10 @@ export function matchesWorkflowEventFilter(
  * trigger. Machine facts need declaration-owned setup before they can become a configured trigger.
  */
 export function readWorkflowEventWhen(
-  fact: WorkflowActivityLiveFact,
+  fact: WorkflowActivityFact,
 ): TriggerWhenValue | null {
   if (fact.kind === 'run') return { kind: 'runLifecycle',
-    source: { kind: 'workflow_run', runId: fact.runId }, condition: fact.event };
+    source: fact.coverage === 'retained_cause' ? fact.evidence.source : { kind: 'workflow_run', runId: fact.runId }, condition: fact.event };
   if (fact.kind !== 'session') return null;
   switch (fact.event) {
     case 'started':
@@ -49,7 +49,7 @@ export function readWorkflowEventWhen(
 }
 
 export function readWorkflowEventTrigger(
-  fact: WorkflowActivityLiveFact,
+  fact: WorkflowActivityFact,
 ): AutomationTriggerDefinitionInput | null {
   const when = readWorkflowEventWhen(fact);
   return when === null
@@ -90,7 +90,8 @@ export function readWorkflowEventDraftSeed(
 }
 
 /** The occurrence owner decides identity; timestamps are never proximity joins. */
-function readWorkflowEventOccurrence(fact: WorkflowActivityLiveFact): AutomationTriggerOccurrenceEvidenceV1 | null {
+function readWorkflowEventOccurrence(fact: WorkflowActivityFact): AutomationTriggerOccurrenceEvidenceV1 | null {
+  if (fact.coverage === 'retained_cause') return fact.evidence;
   const base = { v: 1, occurredAt: fact.occurredAt } as const;
   if (fact.kind === 'run') return { ...base, kind: 'runLifecycle',
     source: { kind: 'workflow_run', runId: fact.runId }, condition: fact.event, sourceRevision: fact.sourceRevision };
@@ -105,7 +106,7 @@ function readWorkflowEventOccurrence(fact: WorkflowActivityLiveFact): Automation
 
 /** Selected-detail join over the already demanded Run page; no body reads or feed-wide matching. */
 export function readWorkflowEventStartedRuns<T extends Pick<WorkflowRunSummaryV1, 'origin'>>(
-  fact: WorkflowActivityLiveFact,
+  fact: WorkflowActivityFact,
   runs: readonly T[],
 ): readonly T[] {
   const evidence = readWorkflowEventOccurrence(fact);

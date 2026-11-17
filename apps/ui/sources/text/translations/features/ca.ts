@@ -19829,6 +19829,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         machineOffline: ({ machine }: { machine: string }) => `${machine} s’ha desconnectat`,
         runFinished: ({ workflow }: { workflow: string }) => `${workflow} ha acabat`,
         runNeedsYou: ({ workflow }: { workflow: string }) => `${workflow} et necessita`,
+        recordedCause: 'Causa registrada',
         carries: 'Què porta',
         startedFromIt: 'Iniciat a partir d’aquí',
         noTrigger: 'Els fluxos de treball encara no poden començar amb aquest tipus d’esdeveniment.',

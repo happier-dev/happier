@@ -1,5 +1,6 @@
 import { retainIfEqual, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
-import type { WorkflowActivityLiveBatch, WorkflowActivityLiveFact } from '@/sync/domains/workflows/workflowActivityTypes';
+import { workflowActivityRunEventKey, type WorkflowActivityLiveBatch, type WorkflowActivityFact } from '@/sync/domains/workflows/workflowActivityTypes';
+import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { socketApplyFrame, type SocketApplyFrameScheduler } from '../sessions/socketApplyFrame';
 
 const EMPTY_KEYS: readonly string[] = Object.freeze([]);
@@ -7,8 +8,9 @@ type Listener = () => void;
 
 export type WorkflowActivityProjection = Readonly<{
     apply(batch: WorkflowActivityLiveBatch): void;
+    applyRetained(runs: readonly WorkflowRunSummaryV1[]): void;
     getKeys(): readonly string[];
-    getRow(key: string): WorkflowActivityLiveFact | undefined;
+    getRow(key: string): WorkflowActivityFact | undefined;
     subscribeKeys(listener: Listener): () => void;
     subscribeRow(key: string, listener: Listener): () => void;
     clear(): void;
@@ -23,8 +25,8 @@ export type WorkflowActivityProjection = Readonly<{
 export function createWorkflowActivityProjection(
     scheduler: Pick<SocketApplyFrameScheduler, 'schedule'> = socketApplyFrame,
 ): WorkflowActivityProjection {
-    const rows = new Map<string, WorkflowActivityLiveFact>();
-    const pending = new Map<string, WorkflowActivityLiveFact>();
+    const rows = new Map<string, WorkflowActivityFact>();
+    const pending = new Map<string, WorkflowActivityFact>();
     const keyListeners = new Set<Listener>();
     const rowListeners = new Map<string, Set<Listener>>();
     let keys = EMPTY_KEYS;
@@ -77,21 +79,37 @@ export function createWorkflowActivityProjection(
         if (previousKeys !== keys) for (const listener of keyListeners) listener();
     }
 
+    function apply(batch: readonly WorkflowActivityFact[]): void {
+        if (disposed) return;
+        for (const incoming of batch) {
+            // Retained evidence never replaces an actual observation of this exact source occurrence.
+            if (incoming.coverage === 'retained_cause' && (pending.get(incoming.key) ?? rows.get(incoming.key)) !== undefined) continue;
+            const committed = rows.get(incoming.key);
+            const row = retainIfEqual(committed, incoming);
+            if (row === committed) pending.delete(incoming.key);
+            else pending.set(incoming.key, retainIfEqual(pending.get(incoming.key), row));
+        }
+        if (pending.size === 0) {
+            cancelFrame?.();
+            cancelFrame = null;
+        } else if (cancelFrame === null) {
+            cancelFrame = scheduler.schedule(flush, 0);
+        }
+    }
+
     return {
-        apply(batch) {
-            if (disposed) return;
-            for (const incoming of batch) {
-                const committed = rows.get(incoming.key);
-                const row = retainIfEqual(committed, incoming);
-                if (row === committed) pending.delete(incoming.key);
-                else pending.set(incoming.key, retainIfEqual(pending.get(incoming.key), row));
+        apply,
+        applyRetained(runs) {
+            const facts: WorkflowActivityFact[] = [];
+            for (const run of runs) {
+                const cause = run.origin.kind === 'automation' ? run.origin.cause : undefined;
+                if (cause?.kind !== 'trigger' || cause.triggerKind !== 'runLifecycle') continue;
+                const evidence = { v: 1, kind: 'runLifecycle', ...cause.evidence, occurredAt: cause.occurredAt } as const;
+                facts.push({ key: workflowActivityRunEventKey(evidence.source, evidence.condition, evidence.sourceRevision),
+                    kind: 'run', runId: evidence.source.runId, event: evidence.condition,
+                    sourceRevision: evidence.sourceRevision, occurredAt: evidence.occurredAt, coverage: 'retained_cause', evidence });
             }
-            if (pending.size === 0) {
-                cancelFrame?.();
-                cancelFrame = null;
-            } else if (cancelFrame === null) {
-                cancelFrame = scheduler.schedule(flush, 0);
-            }
+            apply(facts);
         },
         getKeys: () => keys,
         getRow: key => rows.get(key),
