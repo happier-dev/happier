@@ -122,7 +122,7 @@ export const MemoryDocumentScreen = React.memo(function MemoryDocumentScreen(
     : (view?.title ?? t('memoryContext.memory.title'));
   const description = props.topic
     ? (view?.topic?.summary ?? '')
-    : project ? t('memoryContext.memory.projectPageDescription', { project: project.name })
+    : project ? t('memoryContext.memory.projectPageDescription')
     : t('memoryContext.memory.pageDescription');
   // Who can see it and what this reader may do, from the admitted audience.
   const meta = React.useMemo((): PageHeaderMetaFact[] => {

@@ -608,6 +608,19 @@ it('invites a first decision on an empty Memory page and opens the existing draf
   await screen.unmount();
 });
 
+it('does not call a Memory with topics empty: its topics lead, without the first-decision invitation', async () => {
+  await settleInitialArtifactInventory();
+  const ref = await seedDocument({ v: 1, index: [], topics: [{ title: 'deployment', summary: 'How we ship', facts: [fact('ship', 'Deploy on Tuesdays.')] }] });
+  if (!connection) throw new Error('Expected the Memory Home connection fixture');
+  const screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}>
+    <MemoryDocumentScreen artifactId={ref.artifactId} serverId={serverId} />
+  </InjectedAuthProvider>);
+  await settled(() => expect(screen.findByType(MemoryDocumentBody).props.source.status).toBe('ready'));
+  expect(screen.findByTestId('memory-document.topic.deployment')).toBeTruthy();
+  expect(screen.findByTestId('memory-document.empty')).toBeNull();
+  await screen.unmount();
+});
+
 it('explains an unknown audience, keeps saving unavailable and retries the admitted audience read', async () => {
   await settleInitialArtifactInventory();
   const ref = await seedDocument({ v: 1, index: [fact('one', 'Keep this decision.')], topics: [] });

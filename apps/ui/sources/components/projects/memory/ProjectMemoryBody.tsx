@@ -110,9 +110,7 @@ export const ProjectMemoryBody = React.memo(function ProjectMemoryBody(
     <PageHeader
       testID={`${testID}.header`}
       title={t('projects.pages.memory')}
-      description={t('memoryContext.memory.projectPageDescription', {
-        project: projectName,
-      })}
+      description={t('memoryContext.memory.projectPageDescription')}
       meta={[
         {
           key: 'scope',

@@ -32,6 +32,7 @@ import type { SharePrincipalPresentation } from '@/components/sharing/shareSheet
 import { t } from '@/text';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { describeMachineReadinessCause, presentSessionReadiness } from '@/components/sessions/model/sessionReadinessPresentation';
 import { selectHomeQualifiedSession } from '@/sync/domains/session/selectHomeQualifiedSession';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -263,7 +264,11 @@ export function useExecutableParticipantSections(
         <Icon name="cloud-slash" size={ICON_SIZE.md} color={theme.colors.text.tertiary} />,
         noMachineToAnswer
           ? { subtitle: t('addFlows.addMachineDescription'),
-            onSelect: () => router.push(buildMachineAddHref({ serverId }) as never) }
+            onSelect: () => router.push(buildMachineAddHref({ serverId }) as never),
+            // The next step reads as one, as "Find friends" does for people.
+            rightAccessoryOutsidePressable: true,
+            rightAccessory: <TextLinkButton testID="discussion-invite-add-machine" tone="strong" size="meta"
+              label={t('settings.addMachine')} onPress={() => router.push(buildMachineAddHref({ serverId }) as never)} /> }
           : { subtitle: t('session.collaboration.discussion.secondOpinion.nothingCanAnswerBody'), disabled: true },
       ));
     }

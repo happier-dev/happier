@@ -807,7 +807,8 @@ export const MemoryDocumentBody = React.memo(function MemoryDocumentBody(
   );
   const trailing = (
     <>
-      {view && facts.length === 0 && !props.composing ? (
+      {/* An index with topics holds memory: it is not empty, so it never leads with the first-decision invitation. */}
+      {view && facts.length === 0 && !props.composing && !(props.grouped && !topic && topics.length > 0) ? (
         props.renderEmpty ? props.renderEmpty({
           testID: `${testID}.empty`,
           text: topic ? t('memoryContext.memory.topicEmpty') : props.emptyText,

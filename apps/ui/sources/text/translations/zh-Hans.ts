@@ -20293,7 +20293,7 @@ settingsSession: {
         detailIdle: '选择一个事实，查看其原因、来源和历史。',
         youCanEdit: '你可以编辑',
         youCanView: '你可以查看',
-        projectPageDescription: ({ project }: { project: string }) => `智能体在 ${project} 中记住的内容，以及它们遵循的决定。`,
+        projectPageDescription: '智能体在此项目中记住的内容，以及它们遵循的决定。',
         projectScope: ({ project }: { project: string }) => `${project} 项目记忆`,
         sharedWithTeam: ({ team }: { team: string }) => `已与 ${team} 共享`,
         decisionsTitle: '决定',

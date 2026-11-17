@@ -20588,7 +20588,7 @@ settingsSession: {
         detailIdle: '事実を選ぶと、理由・出典・履歴が表示されます。',
         youCanEdit: '編集できます',
         youCanView: '閲覧できます',
-        projectPageDescription: ({ project }: { project: string }) => `${project} でエージェントが覚えていることと、従う決定。`,
+        projectPageDescription: 'このプロジェクトでエージェントが覚えていることと、従う決定。',
         projectScope: ({ project }: { project: string }) => `${project} のプロジェクトメモリー`,
         sharedWithTeam: ({ team }: { team: string }) => `${team} と共有`,
         decisionsTitle: '決定',

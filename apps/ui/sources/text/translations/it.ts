@@ -20680,7 +20680,7 @@ settingsSession: {
         detailIdle: 'Scegli un fatto per vederne motivo, fonte e cronologia.',
         youCanEdit: 'Puoi modificare',
         youCanView: 'Puoi visualizzare',
-        projectPageDescription: ({ project }: { project: string }) => `Cosa ricordano gli agenti in ${project} e le decisioni che seguono.`,
+        projectPageDescription: 'Cosa ricordano gli agenti in questo progetto e le decisioni che seguono.',
         projectScope: ({ project }: { project: string }) => `Memoria del progetto ${project}`,
         sharedWithTeam: ({ team }: { team: string }) => `Condivisa con ${team}`,
         decisionsTitle: 'Decisioni',

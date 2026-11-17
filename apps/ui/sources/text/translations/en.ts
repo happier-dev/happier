@@ -1956,7 +1956,7 @@ const enMemoryContext = {
     detailIdle: 'Choose a fact to see its reason, source and history.',
     youCanEdit: 'You can edit',
     youCanView: 'You can view',
-    projectPageDescription: ({ project }: { project: string }) => `What agents remember in ${project}, and the decisions they follow.`,
+    projectPageDescription: 'What your agents remember for this project, and the decisions they follow.',
     projectScope: ({ project }: { project: string }) => `${project} project memory`,
     sharedWithTeam: ({ team }: { team: string }) => `Shared with ${team}`,
     decisionsTitle: 'Decisions',

@@ -20503,7 +20503,7 @@ settingsSession: {
         detailIdle: 'Wybierz fakt, aby zobaczyć powód, źródło i historię.',
         youCanEdit: 'Możesz edytować',
         youCanView: 'Możesz przeglądać',
-        projectPageDescription: ({ project }: { project: string }) => `Co agenci pamiętają w ${project} i jakich decyzji się trzymają.`,
+        projectPageDescription: 'Co agenci pamiętają w tym projekcie i jakich decyzji się trzymają.',
         projectScope: ({ project }: { project: string }) => `Pamięć projektu ${project}`,
         sharedWithTeam: ({ team }: { team: string }) => `Udostępniona: ${team}`,
         decisionsTitle: 'Decyzje',

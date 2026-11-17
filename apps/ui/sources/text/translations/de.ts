@@ -20784,7 +20784,7 @@ settingsSession: {
         detailIdle: 'Wähle einen Fakt, um Grund, Quelle und Verlauf zu sehen.',
         youCanEdit: 'Du kannst bearbeiten',
         youCanView: 'Du kannst ansehen',
-        projectPageDescription: ({ project }: { project: string }) => `Was Agenten in ${project} behalten und welche Entscheidungen sie befolgen.`,
+        projectPageDescription: 'Was Agenten in diesem Projekt behalten und welche Entscheidungen sie befolgen.',
         projectScope: ({ project }: { project: string }) => `Projektgedächtnis von ${project}`,
         sharedWithTeam: ({ team }: { team: string }) => `Geteilt mit ${team}`,
         decisionsTitle: 'Entscheidungen',

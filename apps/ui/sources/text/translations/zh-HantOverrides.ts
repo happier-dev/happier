@@ -15330,7 +15330,7 @@ settingsSession: {
         detailIdle: '選擇一個事實，查看其原因、來源與歷史。',
         youCanEdit: '你可以編輯',
         youCanView: '你可以檢視',
-        projectPageDescription: ({ project }: { project: string }) => `代理在 ${project} 中記住的內容，以及它們遵循的決定。`,
+        projectPageDescription: '代理在此專案中記住的內容，以及它們遵循的決定。',
         projectScope: ({ project }: { project: string }) => `${project} 專案記憶`,
         sharedWithTeam: ({ team }: { team: string }) => `已與 ${team} 共享`,
         decisionsTitle: '決定',

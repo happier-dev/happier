@@ -20552,7 +20552,7 @@ settingsSession: {
         detailIdle: 'Choisissez un fait pour voir sa raison, sa source et son historique.',
         youCanEdit: 'Vous pouvez modifier',
         youCanView: 'Vous pouvez consulter',
-        projectPageDescription: ({ project }: { project: string }) => `Ce que les agents retiennent dans ${project}, et les décisions qu’ils suivent.`,
+        projectPageDescription: 'Ce que les agents retiennent dans ce projet, et les décisions qu’ils suivent.',
         projectScope: ({ project }: { project: string }) => `Mémoire du projet ${project}`,
         sharedWithTeam: ({ team }: { team: string }) => `Partagée avec ${team}`,
         decisionsTitle: 'Décisions',

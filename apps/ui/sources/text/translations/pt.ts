@@ -20784,7 +20784,7 @@ settingsSession: {
         detailIdle: 'Escolha um fato para ver o motivo, a fonte e o histórico.',
         youCanEdit: 'Você pode editar',
         youCanView: 'Você pode ver',
-        projectPageDescription: ({ project }: { project: string }) => `O que os agentes lembram em ${project} e as decisões que seguem.`,
+        projectPageDescription: 'O que os agentes lembram neste projeto e as decisões que seguem.',
         projectScope: ({ project }: { project: string }) => `Memória do projeto ${project}`,
         sharedWithTeam: ({ team }: { team: string }) => `Partilhada com ${team}`,
         decisionsTitle: 'Decisões',
