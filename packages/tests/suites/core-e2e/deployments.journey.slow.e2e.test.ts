@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, it } from 'vitest';
 import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { runAgentAskDeploymentRegression, runTeamDeploymentTemplateRegression } from '../../src/scenarios/deploymentRegressions.scenario';
+import { prepareOwnServerDeploymentJourney, runOwnServerDeploymentJourney,
+  type PreparedOwnServerDeploymentJourney } from '../../src/scenarios/deploymentOwnServer.scenario';
 import { runFreshDeploymentSourceSmoke } from '../../src/scenarios/deployments.scenario';
 
 describe('deployment journeys through CLI Actions, PostgreSQL Home and native daemon', () => {
@@ -23,6 +25,17 @@ describe('deployment journeys through CLI Actions, PostgreSQL Home and native da
   it('Team template instantiate succeeds or returns its typed next Action', async () => {
     if (!fixture) throw new Error('Deployment journey fixture did not start');
     await runTeamDeploymentTemplateRegression(fixture);
+  });
+  describe('own-server', () => {
+    let prepared: PreparedOwnServerDeploymentJourney;
+    beforeEach(async () => {
+      if (!fixture) throw new Error('Deployment journey fixture did not start');
+      prepared = await prepareOwnServerDeploymentJourney(fixture);
+    });
+    it('own-server deploy settles and teardown retains verification proof', async () => {
+      if (!fixture) throw new Error('Deployment journey fixture did not start');
+      await runOwnServerDeploymentJourney(fixture, prepared);
+    });
   });
   it('fresh Account creates and reads its first Source and enrolls a working daemon', async () => {
     if (!fixture) throw new Error('Deployment journey fixture did not start');
