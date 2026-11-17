@@ -1,3 +1,4 @@
+import { countScopedTeamProjectSourcesInTx } from '@/app/projects/sources/projectSourceQuery';
 import { acquireTeamMutationAccountAdmissionInTx, withTeamSessionAccessEffectsInTx } from "./memberships/sessionAccessEffects";
 import { createHash } from "node:crypto";
 
@@ -469,6 +470,10 @@ async function projectQualifiedTeamContextInTx(
         ? await qualifyTeamProjectionReadAuthenticationInTx(tx, { context, ...authentication })
         : { ok: true as const };
     const counts = await readTeamSummaryCountsInTx(tx, [context.team.id]);
+    const sources = await countScopedTeamProjectSourcesInTx(tx, {
+        actorAccountId: context.actorAccountId, sharedWithTeamId: context.team.id,
+        authentication, admittedTeamActor: context,
+    });
     const managedDefaultsGroupIds = qualification.ok && context.teamCapabilities.viewTeam && context.team.managedDefaults != null
         ? await resolveEffectiveTeamGroupIdsForAccountInTx(tx, { teamId: context.team.id, accountId: context.actorAccountId })
         : [];
@@ -482,6 +487,7 @@ async function projectQualifiedTeamContextInTx(
             team: context.team,
             viewerRole: context.membership?.role ?? null,
             viewerJoinedAt: context.membership?.joinedAt ?? null,
+            hasSetup: sources.ok ? sources.count > 0 : null,
             capabilities: qualification.ok ? context.capabilities : resolveTeamCapabilitiesV1({
                 accountStatus: context.accountStatus,
                 homeAuthority: context.homeAuthority,

@@ -4507,6 +4507,8 @@ export type TeamsActionResultById = {
                 archivedGroups?: null | number | undefined;
             };
             managedDefaultsGroupIds?: string[] | undefined;
+            viewerJoinedAt?: null | number | undefined;
+            hasSetup?: boolean | null | undefined;
             directoryMembership?: null | undefined | {
                 providerDisplayName: string;
                 state: 'healthy' | 'needs_attention' | 'syncing';
@@ -5278,6 +5280,8 @@ export type TeamsActionResultById = {
             archivedGroups?: null | number | undefined;
         };
         managedDefaultsGroupIds?: string[] | undefined;
+        viewerJoinedAt?: null | number | undefined;
+        hasSetup?: boolean | null | undefined;
         directoryMembership?: null | undefined | {
             providerDisplayName: string;
             state: 'healthy' | 'needs_attention' | 'syncing';
@@ -6047,6 +6051,8 @@ export type TeamsActionResultById = {
             archivedGroups?: null | number | undefined;
         };
         managedDefaultsGroupIds?: string[] | undefined;
+        viewerJoinedAt?: null | number | undefined;
+        hasSetup?: boolean | null | undefined;
         directoryMembership?: null | undefined | {
             providerDisplayName: string;
             state: 'healthy' | 'needs_attention' | 'syncing';
@@ -6816,6 +6822,8 @@ export type TeamsActionResultById = {
             archivedGroups?: null | number | undefined;
         };
         managedDefaultsGroupIds?: string[] | undefined;
+        viewerJoinedAt?: null | number | undefined;
+        hasSetup?: boolean | null | undefined;
         directoryMembership?: null | undefined | {
             providerDisplayName: string;
             state: 'healthy' | 'needs_attention' | 'syncing';
@@ -7585,6 +7593,8 @@ export type TeamsActionResultById = {
             archivedGroups?: null | number | undefined;
         };
         managedDefaultsGroupIds?: string[] | undefined;
+        viewerJoinedAt?: null | number | undefined;
+        hasSetup?: boolean | null | undefined;
         directoryMembership?: null | undefined | {
             providerDisplayName: string;
             state: 'healthy' | 'needs_attention' | 'syncing';
@@ -8354,6 +8364,8 @@ export type TeamsActionResultById = {
             archivedGroups?: null | number | undefined;
         };
         managedDefaultsGroupIds?: string[] | undefined;
+        viewerJoinedAt?: null | number | undefined;
+        hasSetup?: boolean | null | undefined;
         directoryMembership?: null | undefined | {
             providerDisplayName: string;
             state: 'healthy' | 'needs_attention' | 'syncing';
@@ -9123,6 +9135,8 @@ export type TeamsActionResultById = {
             archivedGroups?: null | number | undefined;
         };
         managedDefaultsGroupIds?: string[] | undefined;
+        viewerJoinedAt?: null | number | undefined;
+        hasSetup?: boolean | null | undefined;
         directoryMembership?: null | undefined | {
             providerDisplayName: string;
             state: 'healthy' | 'needs_attention' | 'syncing';
@@ -9892,6 +9906,8 @@ export type TeamsActionResultById = {
             archivedGroups?: null | number | undefined;
         };
         managedDefaultsGroupIds?: string[] | undefined;
+        viewerJoinedAt?: null | number | undefined;
+        hasSetup?: boolean | null | undefined;
         directoryMembership?: null | undefined | {
             providerDisplayName: string;
             state: 'healthy' | 'needs_attention' | 'syncing';
@@ -10661,6 +10677,8 @@ export type TeamsActionResultById = {
             archivedGroups?: null | number | undefined;
         };
         managedDefaultsGroupIds?: string[] | undefined;
+        viewerJoinedAt?: null | number | undefined;
+        hasSetup?: boolean | null | undefined;
         directoryMembership?: null | undefined | {
             providerDisplayName: string;
             state: 'healthy' | 'needs_attention' | 'syncing';

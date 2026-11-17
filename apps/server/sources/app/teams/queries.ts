@@ -1,3 +1,4 @@
+import { countScopedTeamProjectSourcesInTx } from '@/app/projects/sources/projectSourceQuery';
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { TEAM_DIRECTORY_PAGE_LIMIT_DEFAULT_V1, decodeTeamDirectoryCursorV1, encodeTeamDirectoryCursorV1, teamDirectoryQueryKeyV1, type TeamsListInputV1, type TeamsPageV1 } from '@happier-dev/protocol/teams/projections';
 
@@ -218,6 +219,10 @@ export async function listTeamsForActorInTx(
         // so the withheld row is recomposed by the same capability owner with
         // the membership removed rather than re-decided here.
         const qualified = qualifications.get(context.team.id)?.ok ?? false;
+        const sources = await countScopedTeamProjectSourcesInTx(tx, {
+            actorAccountId: input.actorAccountId, sharedWithTeamId: context.team.id,
+            authentication: input.authentication, admittedTeamActor: context,
+        });
         items.push(projectTeamSummaryV1({
             counts: counts.get(context.team.id)!,
             managedDefaultsGroupIds: managedDefaultsGroupIds.get(context.team.id) ?? [],
@@ -225,6 +230,7 @@ export async function listTeamsForActorInTx(
             team: context.team,
             viewerRole: context.membership?.role ?? null,
             viewerJoinedAt: context.membership?.joinedAt ?? null,
+            hasSetup: sources.ok ? sources.count > 0 : null,
             capabilities: qualified
                 ? context.capabilities
                 : resolveTeamCapabilitiesV1({

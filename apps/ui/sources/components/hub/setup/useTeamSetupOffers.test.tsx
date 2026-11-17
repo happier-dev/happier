@@ -29,7 +29,7 @@ afterEach(async () => {
     await homes.reset();
 });
 
-it('offers the latest join per Home without setup reads and never reveals older joins on dismissal', async () => {
+it('offers the latest eligible join per Home from hasSetup without setup reads and never reveals older joins on dismissal', async () => {
     const serverUrl = 'https://team-home-offers.test';
     const serverId = await homes.addHome({ name: 'Studio', serverUrl, accountId: 'member', teamsEnabled: true, active: true });
     const otherHome = await homes.addHome({ name: 'Other', serverUrl: 'https://other-team-home.test', accountId: 'member', teamsEnabled: true });
@@ -39,12 +39,13 @@ it('offers the latest join per Home without setup reads and never reveals older 
     // Eleven memberships are the owner's observed Home census. The newest
     // join is deliberately not first in the alphabetically ordered directory.
     homes.answer(serverId, '/v1/teams/list', { body: { items: [
-        ...Array.from({ length: 9 }, (_, index) => teamSummaryFixture({ id: `old-${index}`, name: 'A previous Team', viewerJoinedAt: index, capabilities })),
-        teamSummaryFixture({ id: 'team-a', name: 'Same name', viewerJoinedAt: 100, logo, capabilities }),
+        ...Array.from({ length: 8 }, (_, index) => teamSummaryFixture({ id: `old-${index}`, name: 'A previous Team', viewerJoinedAt: index, hasSetup: true, capabilities })),
+        teamSummaryFixture({ id: 'team-a', name: 'Same name', viewerJoinedAt: 100, hasSetup: true, logo, capabilities }),
+        teamSummaryFixture({ id: 'empty-newest', name: 'New empty Team', viewerJoinedAt: 1000, hasSetup: false, capabilities }),
         teamSummaryFixture({ id: 'unknown-join', name: 'Z legacy Team', capabilities }),
     ], nextCursor: null } });
     homes.answer(otherHome, '/v1/teams/list', { body: { items: [
-        teamSummaryFixture({ id: 'team-a', name: 'Same name', viewerJoinedAt: 200, capabilities }),
+        teamSummaryFixture({ id: 'team-a', name: 'Same name', viewerJoinedAt: 200, hasSetup: true, capabilities }),
     ], nextCursor: null } });
     connection = await restoreServerAccountForTest({ serverUrl, accountId: 'member', request: homes.request });
     installHomeGovernanceBoundaries(homes);

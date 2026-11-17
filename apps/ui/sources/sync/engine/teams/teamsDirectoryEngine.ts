@@ -1,3 +1,4 @@
+import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import {
     TeamsPageV1Schema,
     TeamSummaryV1Schema,
@@ -180,7 +181,8 @@ const loader = createScopedSnapshotLoader<TeamsDirectoryTarget>({
         invalidateTeamsDirectorySnapshot(scope, queryKey);
     },
     matchesWake: (event) => event.entityIds === undefined
-        || event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1),
+        || event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)
+        || event.entityIds.includes(PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1),
 });
 
 type TeamTarget = ScopedLoadTarget & Readonly<{
@@ -235,7 +237,8 @@ const teamLoader = createScopedSnapshotLoader<TeamTarget>({
     },
     // Home defaults are part of teams.get, so the same demanded projection must refresh.
     matchesWake: (event) => isHomeAdministrationAccountChange(event)
-        || event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) === true,
+        || event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) === true
+        || event.entityIds?.includes(PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1) === true,
 });
 
 /**

@@ -10,7 +10,7 @@ import {
 } from '@/testkit/lightSqliteHarness';
 import { HOME_GOVERNANCE_POLICY_ID } from '@/app/home/governance/governancePolicy';
 import type { HomeRole } from '@/storage/enums.generated';
-import { resolveTeamActorContextsInTx, type TeamActorContext } from './actorContext';
+import { qualifyTeamProjectionReadAuthenticationsInTx, resolveTeamActorContextsInTx, type TeamActorContext } from './actorContext';
 
 import { archiveTeamInTx, readTeamSummaryForActorInTx } from './lifecycle';
 import {
@@ -76,6 +76,126 @@ describe('Team directory (SQLite integration)', () => {
       } as Parameters<typeof listTeamsForActorInTx>[1]),
     );
   }
+
+  it('projects hasSetup only for readable Team or own Group Sources, with no empty or preset-only Team offer fact', async () => {
+    const viewer = await account();
+    const author = await account();
+    const [empty, preset, owned, direct, ownGroupTeam, foreignGroupTeam, deleted] = await Promise.all(
+      ['empty', 'preset', 'owned', 'direct', 'own-group', 'foreign-group', 'deleted'].map(name => team(name, [viewer])));
+    await db.team.update({ where: { id: preset.id }, data: { managedDefaults: {
+      team: { placement: { kind: 'preset', homeId: 'home', presetId: 'configured-unavailable-preset' } }, groups: {},
+    } } });
+    const ownMembership = await db.teamMembership.findUniqueOrThrow({ where: { teamId_accountId: { teamId: ownGroupTeam.id, accountId: viewer.id } } });
+    const ownGroup = await db.teamGroup.create({ data: { teamId: ownGroupTeam.id, name: 'Own group' } });
+    const foreignGroup = await db.teamGroup.create({ data: { teamId: foreignGroupTeam.id, name: 'Other group' } });
+    await db.teamGroupMembership.create({ data: { teamId: ownGroupTeam.id, teamGroupId: ownGroup.id,
+      teamMembershipId: ownMembership.id, nativeContribution: true } });
+    const personal = { kind: 'account', accountId: author.id };
+    for (const [selected, owner, principal, deletedAt] of [
+      [owned, { kind: 'team', teamId: owned.id }, null, null],
+      [direct, personal, { kind: 'team', teamId: direct.id }, null],
+      [ownGroupTeam, personal, { kind: 'group', teamId: ownGroupTeam.id, groupId: ownGroup.id }, null],
+      [foreignGroupTeam, personal, { kind: 'group', teamId: foreignGroupTeam.id, groupId: foreignGroup.id }, null],
+      [deleted, { kind: 'team', teamId: deleted.id }, null, new Date()],
+    ] as const) await db.projectSource.create({ data: { id: crypto.randomUUID(), name: selected.name,
+      createdByAccountId: author.id, owner, audience: principal ? [{ principal, level: 'view' }] : [], attachments: [], deletedAt } });
+    const { countScopedTeamProjectSourcesInTx } = await import('../projects/sources/projectSourceQuery');
+    expect(await inTx(tx => countScopedTeamProjectSourcesInTx(tx, {
+      actorAccountId: viewer.id, sharedWithTeamId: owned.id,
+    }))).toEqual({ ok: true, count: 1 });
+    const page = await list(viewer.id);
+    expect(page.ok).toBe(true);
+    if (!page.ok) throw new Error(page.error);
+    expect(page.page.items).toHaveLength(7);
+    expect(Object.fromEntries(page.page.items.map(row => [row.id, row.hasSetup]))).toEqual({
+      [empty.id]: false, [preset.id]: false, [owned.id]: true, [direct.id]: true,
+      [ownGroupTeam.id]: true, [foreignGroupTeam.id]: false, [deleted.id]: false,
+    });
+    expect(await inTx(tx => readTeamSummaryForActorInTx(tx, { actorAccountId: viewer.id, teamId: owned.id })))
+      .toMatchObject({ ok: true, team: { hasSetup: true } });
+    await db.teamGroupMembership.deleteMany({ where: { teamId: ownGroupTeam.id } });
+    const removed = await list(viewer.id);
+    expect(removed).toMatchObject({ ok: true, page: { items: expect.arrayContaining([
+      expect.objectContaining({ id: ownGroupTeam.id, hasSetup: false }),
+    ]) } });
+  });
+
+  it('uses one native Source count per requested Team for the hasSetup projection', async () => {
+    const viewer = await account();
+    const teams = Array.from({ length: 100 }, (_, index) => ({ id: crypto.randomUUID(), name: `Page ${index}` }));
+    await db.team.createMany({ data: teams });
+    await db.teamMembership.createMany({ data: teams.map(row => ({ teamId: row.id, accountId: viewer.id, role: 'member' as const })) });
+    const sourceId = crypto.randomUUID();
+    await db.projectSource.create({ data: { id: sourceId, name: 'Visible source', createdByAccountId: viewer.id,
+      owner: { kind: 'team', teamId: teams[0]!.id }, audience: [], attachments: [] } });
+    try {
+      const { countScopedTeamProjectSourcesInTx } = await import('../projects/sources/projectSourceQuery');
+      expect(await inTx(tx => countScopedTeamProjectSourcesInTx(tx, {
+        actorAccountId: viewer.id, sharedWithTeamId: teams[0]!.id,
+      }))).toEqual({ ok: true, count: 1 });
+      const observe = (limit: number) => inTx(async tx => {
+        let sourceReads = 0;
+        const counted = new Proxy(tx, { get(target, property, receiver) {
+          const value = Reflect.get(target, property, receiver);
+          if (property === '$queryRaw' && typeof value === 'function') return (...args: unknown[]) => {
+            const sql = (args[0] as { strings?: readonly string[] }).strings?.join(' ') ?? '';
+            if (sql.includes('COUNT(*) AS count FROM') && sql.includes('ProjectSource')) sourceReads++;
+            return Reflect.apply(value, target, args);
+          };
+          return typeof value === 'function' ? value.bind(target) : value;
+        } });
+        const started = performance.now();
+        const result = await listTeamsForActorInTx(counted, { actorAccountId: viewer.id, v: 1, scope: 'member', archived: 'active', limit });
+        return { result, sourceReads, elapsedMs: Math.round(performance.now() - started) };
+      });
+      const measurements = [];
+      for (const limit of [1, 11, 100]) {
+        const measured = await observe(limit);
+        expect(measured.result).toMatchObject({ ok: true });
+        if (!measured.result.ok) throw new Error(measured.result.error);
+        expect(measured.result.page.items).toHaveLength(limit);
+        expect(measured.sourceReads).toBe(limit);
+        if (limit === 100) expect(measured.result.page.items.filter(row => row.hasSetup)).toHaveLength(1);
+        measurements.push({ teams: limit, sourceQueries: measured.sourceReads, elapsedMs: measured.elapsedMs });
+      }
+      console.info('hasSetup native count cost', JSON.stringify(measurements));
+    } finally {
+      await db.projectSource.deleteMany({ where: { id: sourceId } });
+      await db.team.deleteMany({ where: { id: { in: teams.map(row => row.id) } } });
+    }
+  });
+
+  it('keeps hasSetup parity when a selected-Team guest reads its Source through another Team outside the page', async () => {
+    const viewer = await account();
+    const guestTeam = await team('A guest Team', [viewer]);
+    const memberTeam = await team('Z other Team', [viewer]);
+    await db.teamMembership.updateMany({ where: { teamId: guestTeam.id, accountId: viewer.id }, data: { role: 'guest' } });
+    await db.projectSource.create({ data: { id: crypto.randomUUID(), name: 'Independently granted source', createdByAccountId: viewer.id,
+      owner: { kind: 'team', teamId: guestTeam.id }, audience: [{ principal: { kind: 'team', teamId: memberTeam.id }, level: 'view' }], attachments: [] } });
+    const { listProjectSourcesInTx } = await import('../projects/sources/projectSourceService');
+    expect(await inTx(tx => listProjectSourcesInTx(tx, viewer.id, { serverId: 'home', sharedWithTeamId: guestTeam.id })))
+      .toMatchObject({ ok: true, sources: [expect.anything()] });
+    expect(await list(viewer.id, { limit: 1 })).toMatchObject({ ok: true, page: { items: [{ id: guestTeam.id, hasSetup: true }] } });
+    expect(await inTx(tx => readTeamSummaryForActorInTx(tx, { actorAccountId: viewer.id, teamId: guestTeam.id })))
+      .toMatchObject({ ok: true, team: { hasSetup: true } });
+  });
+
+  it('withholds the hasSetup Source fact from a repair-readable malformed-policy Team', async () => {
+    const viewer = await account();
+    const selected = await team('Repair-readable Team', [viewer]);
+    await db.projectSource.create({ data: { id: crypto.randomUUID(), name: 'Protected source', createdByAccountId: viewer.id,
+      owner: { kind: 'team', teamId: selected.id }, audience: [], attachments: [] } });
+    const { listProjectSourcesInTx } = await import('../projects/sources/projectSourceService');
+    expect(await inTx(tx => listProjectSourcesInTx(tx, viewer.id, { serverId: 'home', sharedWithTeamId: selected.id })))
+      .toMatchObject({ ok: true, sources: [expect.anything()] });
+    await db.team.update({ where: { id: selected.id }, data: { authenticationPolicy: { malformed: true } } });
+    expect(await inTx(tx => listProjectSourcesInTx(tx, viewer.id, { serverId: 'home', sharedWithTeamId: selected.id })))
+      .toMatchObject({ ok: false, error: 'source_unavailable' });
+    expect(await list(viewer.id)).toMatchObject({ ok: true, page: { items: [{ id: selected.id, hasSetup: null,
+      policy: { authenticationPolicyStatus: 'repair_required' } }] } });
+    expect(await inTx(tx => readTeamSummaryForActorInTx(tx, { actorAccountId: viewer.id, teamId: selected.id })))
+      .toMatchObject({ ok: true, team: { hasSetup: null } });
+  });
 
   it("shows only the viewer's active Teams and hides archived ones from the active page", async () => {
     const viewer = await account();
@@ -252,7 +372,7 @@ describe('Team directory (SQLite integration)', () => {
   });
 
   it.each(['member', 'administered'] as const)(
-    'bounds authentication fact reads for one versus a full %s page of restricted Teams',
+    'batches projection authentication facts for one versus a full %s page of restricted Teams',
     async (scope) => {
       const authenticationPolicy = {
         v: 1,
@@ -277,20 +397,23 @@ describe('Team directory (SQLite integration)', () => {
             role: 'member' as const,
           })),
         });
-        return viewer;
+        return { viewer, teamIds: teams.map(created => created.id) };
       };
       // Sort this bounded page before earlier fixtures, including in the
       // Home-admin scope that intentionally sees other Accounts' Teams.
-      const viewer = await createViewerWithTeams(`!!bounded-${scope}`, 100);
+      const { viewer, teamIds } = await createViewerWithTeams(`!!bounded-${scope}`, 100);
 
       const listWithQueryCount = async (viewerId: string, limit: number) =>
         await inTx(async (tx) => {
+          const contexts = await resolveTeamActorContextsInTx(tx, {
+            teamIds: teamIds.slice(0, limit), actorAccountId: viewerId,
+          });
           let queryCount = 0;
           const observedTx = new Proxy(tx, {
             get(target, property, receiver) {
               const delegate = Reflect.get(target, property, receiver);
-              if (typeof delegate !== 'object' || delegate === null)
-                return delegate;
+              if (typeof delegate === 'function') return delegate.bind(target);
+              if (typeof delegate !== 'object' || delegate === null) return delegate;
               return new Proxy(delegate, {
                 get(delegateTarget, method, delegateReceiver) {
                   const operation = Reflect.get(
@@ -313,34 +436,20 @@ describe('Team directory (SQLite integration)', () => {
               });
             },
           }) as typeof tx;
-          const result = await listTeamsForActorInTx(observedTx, {
-            actorAccountId: viewerId,
-            v: 1,
-            scope,
-            archived: 'active',
-            limit,
-            authentication: {
-              authenticationEvidence: [
-                { kind: 'home_method', methodId: 'key_challenge' },
-              ],
-              authenticationAuthority: 'present_user',
-            },
-          } as Parameters<typeof listTeamsForActorInTx>[1]);
+          const result = await qualifyTeamProjectionReadAuthenticationsInTx(observedTx, {
+            contexts: [...contexts.values()],
+            authenticationEvidence: [{ kind: 'home_method', methodId: 'key_challenge' }],
+            authenticationAuthority: 'present_user',
+          });
           return { result, queryCount };
         });
 
       const one = await listWithQueryCount(viewer.id, 1);
       const many = await listWithQueryCount(viewer.id, 100);
-      expect(one.result.ok).toBe(true);
-      expect(many.result.ok).toBe(true);
-      if (!one.result.ok || !many.result.ok) return;
-      expect(one.result.page.items).toHaveLength(1);
-      expect(many.result.page.items).toHaveLength(100);
-      expect(
-        many.result.page.items.every(
-          (item) => item.viewerRole === 'member' && item.capabilities.viewTeam,
-        ),
-      ).toBe(true);
+      expect(one.result.size).toBe(1);
+      expect(many.result.size).toBe(100);
+      expect([...one.result.values()].every(result => result.ok)).toBe(true);
+      expect([...many.result.values()].every(result => result.ok)).toBe(true);
       expect(one.queryCount).toBeGreaterThan(0);
       expect(many.queryCount).toBe(one.queryCount);
     },

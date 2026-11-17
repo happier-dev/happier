@@ -102,6 +102,8 @@ export const TeamSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   viewerRole: z.nullable(TeamRoleV1Schema),
   /** The viewer's membership lifetime; omission by an older Home is unknown. */
   viewerJoinedAt: z.optional(z.nullable(z.number().check(z.int(), z.minimum(0)))),
+  /** Accessible Source hint; omission/null is unknown. */
+  hasSetup: z.optional(z.nullable(z.boolean())),
   capabilities: TeamCapabilitiesV1Schema,
   admission: TeamAdmissionProjectionV1Schema,
   counts: z.nullable(TeamSummaryCountsV1Schema),

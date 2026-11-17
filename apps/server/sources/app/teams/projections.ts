@@ -169,6 +169,7 @@ export function projectTeamSummaryV1(input: Readonly<{
     team: TeamRecord;
     viewerRole: TeamRole | null;
     viewerJoinedAt?: number | null;
+    hasSetup?: boolean | null;
     capabilities: TeamCapabilitiesV1;
     ownerRequired: boolean;
     homeAuthority: Pick<HomeGovernanceAuthority, "manageAllTeams">;
@@ -213,6 +214,7 @@ export function projectTeamSummaryV1(input: Readonly<{
         } : {}),
         viewerRole: input.viewerRole,
         viewerJoinedAt: input.capabilities.viewTeam ? input.viewerJoinedAt ?? null : null,
+        hasSetup: input.capabilities.viewTeam ? input.hasSetup ?? null : null,
         capabilities: input.capabilities,
         admission: resolveTeamAdmissionProjectionV1(),
         counts: projectTeamSummaryCountsV1({

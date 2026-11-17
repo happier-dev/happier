@@ -48,7 +48,7 @@ export function useTeamSetupOffers(): Readonly<{
         const latestByHome = new Map<string, (typeof directory.rows)[number]>();
         if (hasSnapshot) for (const row of directory.rows) {
             const scope = scopes.get(resolveServerProfileScopeIdForIdentifier(row.address.serverId));
-            if (!scope || row.team.viewerJoinedAt == null) continue;
+            if (!scope || row.team.hasSetup !== true || row.team.viewerJoinedAt == null) continue;
             const latest = latestByHome.get(scope.serverId);
             if (!latest || row.team.viewerJoinedAt > latest.team.viewerJoinedAt!
                 || (row.team.viewerJoinedAt === latest.team.viewerJoinedAt && row.team.id < latest.team.id)) {

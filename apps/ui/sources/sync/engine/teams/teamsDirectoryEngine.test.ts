@@ -1,3 +1,4 @@
+import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -74,6 +75,39 @@ afterEach(async () => {
 });
 
 describe('teamsDirectoryEngine', () => {
+    it('pushes Source-derived hasSetup changes to both observed Team summaries without manual refresh', async () => {
+        const homeA = await addHome('Home A', 'https://home-source-setup.example');
+        await setActiveServerId(homeA, { scope: 'device' });
+        let hasSetup = false;
+        runtimeFetchMock.mockImplementation(async request => {
+            const projection = { ...team('t1'), hasSetup };
+            return request.url.endsWith('/list') ? page([projection], null)
+                : new Response(JSON.stringify(projection), { status: 200 });
+        });
+        const scope = createServerAccountScope(homeA, 'account')!;
+        const address = createTeamAddress(homeA, 't1')!;
+        const releaseDirectory = observeTeamsDirectory(scope, listInput);
+        const releaseTeam = observeTeam(scope, address);
+        try {
+            await waitForHomeGovernance(() => {
+                expect(getTeamsDirectorySnapshot(scope, queryKey)?.data?.[0]?.hasSetup).toBe(false);
+                expect(getTeamSnapshot(scope, address)?.data?.hasSetup).toBe(false);
+            });
+            hasSetup = true;
+            publishHomeAccountChange(homeA, [PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            await waitForHomeGovernance(() => {
+                expect(getTeamsDirectorySnapshot(scope, queryKey)?.data?.[0]?.hasSetup).toBe(true);
+                expect(getTeamSnapshot(scope, address)?.data?.hasSetup).toBe(true);
+            });
+            hasSetup = false;
+            publishHomeAccountChange(homeA, [PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            await waitForHomeGovernance(() => {
+                expect(getTeamsDirectorySnapshot(scope, queryKey)?.data?.[0]?.hasSetup).toBe(false);
+                expect(getTeamSnapshot(scope, address)?.data?.hasSetup).toBe(false);
+            });
+        } finally { releaseDirectory(); releaseTeam(); }
+    });
+
     it.each(['admin', 'member'])('pushes Home defaults clearing to the mounted composer defaults for %s', async (accountId) => {
         const serverId = await addHome('Home', 'https://home-defaults.example', accountId);
         await setActiveServerId(serverId, { scope: 'device' });

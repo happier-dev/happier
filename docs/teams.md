@@ -24,14 +24,14 @@ connections, and directory provisioning.
 
 ## Canonical owners
 
-In 0.3 development source, Home setup offers are selected by
-`useTeamSetupOffers` from the latest known membership join on each viewed Home.
-The Team summary's optional `viewerJoinedAt` comes from that viewer's existing
-membership `createdAt`; missing timestamps do not create unsolicited offers.
-Selection happens before the existing Home Artifact dismissal is applied, so
-dismissing an offer does not reveal older memberships. Manual setup re-entry from
-a Team's Source remains available. Home does not load setup resources, Machines,
-or vault contents to decide which offer to show.
+In 0.3 development source, `useTeamSetupOffers` selects the latest known
+membership join with `hasSetup: true` on each viewed Home. The Team summary's
+optional `viewerJoinedAt` comes from that viewer's membership `createdAt`;
+`hasSetup` comes from the canonical scoped Source count, including its native
+Team/Group access and authentication decisions. Missing or unknown facts do not
+create unsolicited offers. Dismissal happens after selection and does not reveal
+older memberships. Manual setup re-entry from a Team's Source remains available.
+Home does not load Source bodies, setup resources, Machines, or vault material.
 
 | Decision or fact | Owner |
 |---|---|
