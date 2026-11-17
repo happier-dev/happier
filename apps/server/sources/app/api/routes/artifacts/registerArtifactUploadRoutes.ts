@@ -12,6 +12,7 @@ import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encry
 import { createArtifactHttpMutation, updateArtifactHttpMutation } from '@/app/artifacts/artifactMutationHttpResponse';
 import { stageArtifactBlobAccountEncryptionConversion, cancelArtifactBlobAccountEncryptionConversion } from '@/app/artifacts/artifactEncryptionConversionBlobService';
 import { log } from '@/utils/logging/log';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { Fastify } from '../../types';
 
 type ArtifactUploadHttpResult = Readonly<{ statusCode: number; body: unknown }>;
@@ -127,7 +128,9 @@ export function registerArtifactUploadRoutes(app: Fastify): void {
                 });
                 if (!uploadId || canceled) throw new Error('Artifact upload incomplete');
                 const finalized = await lifecycle.finalizeUploadTransferSession({ uploadId });
-                if (!finalized.success) throw new Error('Artifact upload incomplete');
+                // Keep the finalize owner's closed code on the rebuilt error for the host record below.
+                if (!finalized.success) throw Object.assign(new Error('Artifact upload incomplete'),
+                    finalized.errorCode ? { code: finalized.errorCode } : {});
                 const result = finalized.finalized.result;
                 if (!result || typeof result !== 'object' || !('statusCode' in result) || typeof result.statusCode !== 'number'
                     || !('body' in result)) throw new Error('Artifact upload result unavailable');
@@ -138,6 +141,11 @@ export function registerArtifactUploadRoutes(app: Fastify): void {
                     : error instanceof BinaryUploadFrameErrorV1 && error.code === 'metadata_too_large'
                         ? { statusCode: 413, body: { error: 'artifact_upload_metadata_too_large' } }
                         : { statusCode: 400, body: { error: 'artifact_upload_failed' } };
+                // One host record of the closed refusal: phase, class and code only, never content, keys or prose.
+                const refusalCode = refusal.body && typeof refusal.body === 'object' && 'error' in refusal.body
+                    && typeof refusal.body.error === 'string' ? refusal.body.error : undefined;
+                log({ module: 'artifact-upload', level: 'warn', statusCode: refusal.statusCode, error: refusalCode,
+                    failureCause: projectActionFailureCauseV1(error, 'artifact.upload') });
                 return reply.code(refusal.statusCode).send(refusal.body);
             } finally {
                 request.raw.off('aborted', onAbort);

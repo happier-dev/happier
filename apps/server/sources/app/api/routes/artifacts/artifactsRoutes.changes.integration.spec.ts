@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { log } from "@/utils/logging/log";
 
 import { db } from "@/storage/db";
 import {
@@ -599,6 +600,19 @@ describe("artifactsRoutes (AccountChange integration)", () => {
                 payload: Buffer.from(frame) });
             expect(response.statusCode).toBe(400);
             expect(response.json()).toEqual({ error: 'artifact_account_mode_mismatch' });
+            // The host logs the closed refusal once; never content bytes.
+            expect(vi.mocked(log)).toHaveBeenCalledWith(expect.objectContaining({ module: 'artifact-upload',
+                statusCode: 400, error: 'artifact_account_mode_mismatch', failureCause: expect.objectContaining({ phase: 'artifact.upload' }) }));
+            expect(JSON.stringify(vi.mocked(log).mock.calls)).not.toContain('AQ==');
+            vi.mocked(log).mockClear();
+            const truncated = await app.inject({ method: 'POST', url: ARTIFACT_UPLOAD_PATH_V1,
+                headers: { 'x-test-user-id': account.id, 'content-type': ARTIFACT_UPLOAD_CONTENT_TYPE_V1 },
+                payload: Buffer.from('not an upload frame') });
+            expect(truncated.statusCode).toBe(400);
+            expect(truncated.json()).toEqual({ error: 'artifact_upload_failed' });
+            expect(vi.mocked(log)).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(log)).toHaveBeenCalledWith(expect.objectContaining({ module: 'artifact-upload',
+                statusCode: 400, error: 'artifact_upload_failed', failureCause: expect.objectContaining({ phase: 'artifact.upload' }) }));
         });
         await expect(db.artifact.findUnique({ where: { id: artifactId } })).resolves.toBeNull();
         expect(await db.accountChange.count({ where: { accountId: account.id } })).toBe(0);
