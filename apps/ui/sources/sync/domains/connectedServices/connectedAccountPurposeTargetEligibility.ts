@@ -9,6 +9,7 @@ import type { TeamResourceConnectedServiceSelectionV2 } from '@happier-dev/proto
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 
 import { resolveTeamResourceConnectedServiceSelectionV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 
 function sameService(
   left: PluginContributionIdentityV1,
@@ -105,7 +106,7 @@ export function describeConnectedAccountPurposeTargetEligibility(input: TargetEl
 
 /**
  * A Team resource purpose default is usable only while the viewer's entitled
- * Team catalog still offers this exact selection on an available resource of
+ * Team catalog still offers this exact selection on an available delivery of
  * the declared service. Absence (catalog not supplied, resource withdrawn) is
  * never a personal fallback (lane 10 child 02 §11.6).
  */
@@ -118,8 +119,11 @@ export function resolveConnectedAccountPurposeTeamResourceEligibility(input: Rea
   const resource = input.teamResources.find((candidate) => (
     candidate.id === teamResource.selection.resourceId && candidate.teamId === teamResource.teamId
   ));
-  return resource?.readiness.kind === 'available'
-    && resolveTeamResourceConnectedServiceSelectionV1({ resource, ...teamResource, services: [input.service] })
+  if (!resource) return 'unusable';
+  const readiness = readTeamCredentialDeliveryReadinessV1(resource.readiness, teamResource.selection.deliveryMode);
+  // Available delivery requires an offered identity, not an unavailable source's retained diagnosis.
+  return readiness.kind === 'available'
+    && resolveTeamResourceConnectedServiceSelectionV1({ resource: { ...resource, readiness }, ...teamResource, services: [input.service] })
     ? 'usable'
     : 'unusable';
 }

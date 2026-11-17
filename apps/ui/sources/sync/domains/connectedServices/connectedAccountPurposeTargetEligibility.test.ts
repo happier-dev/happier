@@ -12,7 +12,30 @@ import {
 import {
   describeConnectedAccountPurposeTargetEligibility,
   resolveConnectedAccountPurposeTargetEligibility,
+  resolveConnectedAccountPurposeTeamResourceEligibility,
 } from './connectedAccountPurposeTargetEligibility';
+import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
+
+it('keeps an exact Direct purpose default usable when only the broker allowance is exhausted', () => {
+  const service = { pluginId: 'acme.agent', localId: 'account' };
+  const selection = { source: 'team_resource' as const, resourceId: 'resource', deliveryMode: 'direct' as const,
+    disclosedMember: { service, accountId: 'shared-account' } };
+  const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+    id: 'resource', teamId: 'team', displayName: { content: { t: 'plain', v: 'Shared account' }, recipientEnvelope: null },
+    resourceRevision: 1, readiness: { kind: 'limit_reached', metric: 'inference_requests', resetsAtUtc: '2026-11-18T00:00:00Z' },
+    recoveryAction: null, mayBroker: false, mayReceiveDirect: true, directMaterialState: 'current',
+    sessionUsePolicy: 'personal_allowed', providerModels: [], connectedServiceSelections: [selection],
+    sourcePresentation: { kind: 'connected_service', service },
+  });
+  const input = { service, teamResource: { teamId: resource.teamId, selection }, teamResources: [resource] };
+  expect(resolveConnectedAccountPurposeTeamResourceEligibility(input)).toBe('usable');
+  expect(resolveConnectedAccountPurposeTeamResourceEligibility({ ...input,
+    teamResources: [{ ...resource, readiness: { kind: 'source_unavailable' } }] })).toBe('unusable');
+  expect(resolveConnectedAccountPurposeTeamResourceEligibility({ ...input,
+    teamResources: [{ ...resource, connectedServiceSelections: [] }] })).toBe('unusable');
+  expect(resolveConnectedAccountPurposeTeamResourceEligibility({ ...input,
+    teamResource: { ...input.teamResource, selection: { ...selection, disclosedMember: { service, accountId: 'other' } } } })).toBe('unusable');
+});
 
 const service = Object.freeze({
   pluginId: 'acme.managed.provider',

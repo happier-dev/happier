@@ -5,7 +5,7 @@ import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/c
 import type { ConnectedServicesAccountGroupOptionsByServiceId } from '@happier-dev/agents';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
-import type { SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
+import { isSessionModelRefSourceBound, type SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { areTeamResourceConnectedServiceSelectionsEqual } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
 import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { formatConnectedAccountNameInline, presentConnectedAccountName } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
@@ -94,7 +94,7 @@ export function projectMachineAgentForCredential(agent: MachineAgent | null | un
     if (!agent) return null;
     const modelRef = selection.modelRef;
     const unreadRoute = selection.providerRoute == null && modelRef != null
-        && ('source' in modelRef ? modelRef.source !== 'native' : modelRef.providerConnectionId !== null);
+        && isSessionModelRefSourceBound(modelRef);
     if (selection.credentialBindings === undefined && selection.providerRoute == null
         && !unreadRoute && selection.credentialBindingsReady !== false) return agent;
     const suppressedServiceIds = new Set((selection.providerRoute?.ready ? selection.providerRoute.suppressedConnectedServiceIds : [])
