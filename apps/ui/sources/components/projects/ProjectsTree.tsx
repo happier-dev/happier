@@ -363,7 +363,7 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
                         />
                     );
                 }
-                const status = row.attention || row.state ? <ProjectsTreeRowAttention row={row} testID={`${props.testID}-${row.key}`} /> : undefined;
+                const status = row.attention || row.state || (row.kind === 'project' && row.source) ? <ProjectsTreeRowAttention row={row} testID={`${props.testID}-${row.key}`} /> : undefined;
                 return (
                     <CollectionNavigationRow
                         key={row.key}
