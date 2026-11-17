@@ -1149,9 +1149,9 @@ describe('own-server target at the Action host boundary', () => {
                 receipt.content.ownServer = { approvedInputBasis: initial.inputBasis };
                 const result = await target.executeMember({ request, machineId: 'machine-a', installationId: 'installation-a',
                     phase: 'activate', selectedDeploymentId: receipt.deployment.id });
-                expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown',
+                expect(result).toMatchObject({ ok: false, errorCode: 'database_transaction_conflict_exhausted',
                     error: expect.stringContaining('database_transaction_conflict_exhausted'), failureCause: {
-                        phase: 'deployment.transition', errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503,
+                        phase: 'home.database.transaction', errorCode: 'database_transaction_conflict_exhausted', httpStatus: 503,
                     } });
                 return;
             }
