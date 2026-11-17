@@ -88,24 +88,73 @@ it('shares the source-bound frame across two presented hosts and withdraws the l
         });
         expect(column.getCurrent().keys).toBe(hiddenKeys);
         expect(companion.getCurrent().keys).toHaveLength(2);
+        const observedProjection = companion.getCurrent().projection;
+        const observedKeys = observedProjection.getKeys();
         await companion.rerender({ active: false });
         expect(source.hasDemand()).toBe(false);
         expect(column.getCurrent().keys).toEqual([]);
+        expect(observedProjection.getKeys()).toBe(observedKeys);
         const count = reads;
         await act(async () => { await companion.getCurrent().retry(); });
         expect(reads).toBe(count);
         await column.rerender({ active: true });
         await vi.waitFor(() => expect(column.getCurrent().retained).not.toBeNull());
-        expect(column.getCurrent().keys).toEqual([]);
+        expect(column.getCurrent().keys).toBe(observedKeys);
+        expect(column.getCurrent().getRow(keys[0]!)).toMatchObject({ kind: 'session', sessionId: 'arrived' });
         expect(source.hasDemand()).toBe(true);
+        await column.rerender({ active: false });
+        expect(source.hasDemand()).toBe(false);
+        expect(column.getCurrent().retained).toBeNull();
+        const retiredReads = reads;
         await act(async () => {
             const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
             await disconnectActiveServerConnection();
         });
         expect(source.hasDemand()).toBe(false);
+        expect(reads).toBe(retiredReads);
+        expect(observedProjection.getKeys()).toEqual([]);
         expect(column.getCurrent().keys).toEqual([]);
         expect(column.getCurrent().retained).toBeNull();
         await column.unmount();
         await companion.unmount();
+    } finally { await boundary.dispose(); }
+});
+
+it('keeps the selected live Event available when the sole list host hands off to its detail host', async () => {
+    const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
+    await upsertAndActivateServer({ serverUrl: 'https://workflow-activity-handoff.test' });
+    const boundary = await installWorkflowActionHttpBoundary({ accountId: () => 'activity-handoff-account',
+        fixtureResponse: async id => {
+            if (id !== 'workflow.run.list') throw new Error(`Unexpected activity read: ${id}`);
+            return { ok: true, result: { runs: [], metadataByRunId: {}, projection: 'membership' } };
+        } });
+    try {
+        const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+        await restoreConnectionToActiveServer(boundary.credentials);
+        boundary.prime();
+        const { sync } = await import('@/sync/sync');
+        expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+        const { useWorkflowActivityFeed } = await import('./useWorkflowActivityFeed');
+        const hosts = await renderHook((props: { detail: boolean }) => ({
+            list: useWorkflowActivityFeed({ lifetime, active: !props.detail }),
+            detail: useWorkflowActivityFeed({ lifetime, active: props.detail }),
+        }), { initialProps: { detail: false } });
+        await vi.waitFor(() => expect(hosts.getCurrent().list.retained).not.toBeNull());
+        await act(async () => {
+            const now = Date.now();
+            storage.getState().applySessions([createSessionFixture({ id: 'selected-event-session', seq: 2, createdAt: now, updatedAt: now })]);
+            (await import('@/sync/engine/sessions/socketApplyFrame')).socketApplyFrame.flushNow();
+        });
+        const [selectedKey] = hosts.getCurrent().list.keys;
+        expect(selectedKey).toBeDefined();
+        expect(hosts.getCurrent().list.getRow(selectedKey!)).toMatchObject({ kind: 'session', sessionId: 'selected-event-session' });
+
+        await hosts.rerender({ detail: true });
+
+        expect(hosts.getCurrent().detail.getRow(selectedKey!)).toMatchObject({ kind: 'session', sessionId: 'selected-event-session' });
+        await hosts.unmount();
     } finally { await boundary.dispose(); }
 });

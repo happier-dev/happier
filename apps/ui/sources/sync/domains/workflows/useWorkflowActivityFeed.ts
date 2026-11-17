@@ -39,14 +39,14 @@ function createFeed(lifetime: ServerAccountScopeLifetime, source: WorkflowActivi
         const status = storage.getState().socketStatus;
         return status === 'connected' ? 'live' : status === 'connecting' ? 'connecting' : 'offline';
     };
-    const reset = () => {
+    const releaseDemand = () => {
         const release = close;
         close = null;
         release?.();
         continuation = null;
-        projection.clear();
         publish(INITIAL);
     };
+    lifetime.onRetire(() => { demands.clear(); releaseDemand(); projection.clear(); });
     const readPage = async (input?: WorkflowActivityPageInput) => {
         if (close === null) return null;
         const opened = close;
@@ -88,17 +88,16 @@ function createFeed(lifetime: ServerAccountScopeLifetime, source: WorkflowActivi
                 // The source owns mounted-Account admission, including retirement
                 // between render and effect; an unadmitted host adds no observers.
                 if (!source.hasDemand()) { demands.delete(demand); return release; }
-                const retirement = lifetime.onRetire(() => { demands.clear(); reset(); });
                 const unsubscribeConnection = storage.subscribe((next, previous) => {
                     if (next.socketStatus !== previous.socketStatus && state.error === null)
                         publish({ ...state, status: connectionStatus() });
                 });
-                close = () => { release(); unsubscribeConnection(); retirement.dispose(); };
+                close = () => { release(); unsubscribeConnection(); };
                 publish({ ...state, status: connectionStatus(), listeningSince: source.listeningSince() });
             }
             return () => {
                 if (!demands.delete(demand)) return;
-                if (demands.size === 0) reset();
+                if (demands.size === 0) releaseDemand();
             };
         },
         retry: async () => { if (close !== null) await source.retry(); },
@@ -108,8 +107,8 @@ function createFeed(lifetime: ServerAccountScopeLifetime, source: WorkflowActivi
 }
 
 /** Both presented hosts borrow one live source, frame projection and retained Run window.
- * Closed hosts subscribe to neither the source nor the projection. Live observations
- * are discarded on final release; reopening starts at the producer's new baseline. */
+ * Closed hosts subscribe to neither the source nor the projection. Observed rows stay
+ * local to this Account lifetime; reopening starts a new producer baseline. */
 export function useWorkflowActivityFeed(input: Readonly<{ lifetime: ServerAccountScopeLifetime | null; active: boolean }>) {
     const owner = React.useMemo(() => {
         if (!input.active || input.lifetime === null) return null;

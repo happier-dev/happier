@@ -6401,8 +6401,10 @@ continues to describe eligible declarations, independently of activity.
 
 The UI adapter `useWorkflowActivityFeed({ lifetime, active })` addresses the mounted
 Account explicitly and shares the source, frame rows and retained continuation
-between presented hosts. An inactive host subscribes to neither stream; releasing
-the last host clears observations, and reopening starts a new listening baseline.
+between presented hosts. An inactive host subscribes to neither stream. Releasing
+the last host releases the source and retained Run window; observed live summaries
+remain UI-local for the Account lifetime, including when opening a selected detail.
+Reopening starts a new producer baseline without reconstructing missed history.
 Offline or failed reads retain visible data. Retry failure and recovery come from
 the acquisition owner, including recovery whose retained rows did not change;
 the adapter does not add a second retry policy or a persisted Event history.
