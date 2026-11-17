@@ -177,8 +177,8 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
         },
         structure,
         page(location: WorkbenchLocation) {
+            if (!location.relation) throw new Error('Select a relation first');
             const relation = location.relation;
-            if (!relation) throw new Error('Select a relation first');
             return resource(key(['page', location.targetKey, relation, location.conditions, location.sort, location.columns, location.page]), async () => {
                 const detail = structure(location.targetKey, relation);
                 await detail.demand();

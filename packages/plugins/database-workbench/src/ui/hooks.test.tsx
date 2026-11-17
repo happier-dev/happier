@@ -57,7 +57,7 @@ it('exposes only the demanded schema page continuation and reuses held pages whe
         if (input.operation !== 'relations.list') throw new Error('Only the opened schema is read');
         calls.push(input.page.after);
         return { ok: true, operation: 'relations.list',
-            relations: [{ relation: { schema: 'public', name: input.page.after ? 'later_table' : 'first_table' }, kind: 'table', estimatedRows: '9007199254740993', size: { bytes: '1024', tableBytes: '768', indexBytes: '256', measurement: 'exact' } }],
+            relations: [{ relation: { schema: 'public', name: input.page.after ? 'later_table' : 'first_table' }, kind: 'table', estimatedRows: '9007199254740993', size: { bytes: '1024', tableBytes: '768', indexBytes: '256', measurement: 'database_bytes' } }],
             completeness: input.page.after ? { complete: true } : { complete: false, reason: 'page',
                 continuation: { kind: 'catalog', operation: 'relations.list', target: descriptor.target, schema: 'public', after: 'next-page' } } };
     });
