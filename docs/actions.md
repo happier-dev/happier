@@ -1647,6 +1647,12 @@ its catalog-validated output reports a failed effect. The reader projects the ty
 message for the existing failure formatter without rewriting history or exposing opaque result
 details. Machine conflict and plugin review outcomes retain their family-specific interpretation.
 
+In unreleased 0.3 source, failed or cancelled `machines.command.run` approvals retain the
+command result's exit code, stdout, stderr and optional truncation flags for authorized
+approval reads and resumed callers. The strict command-output schema excludes arbitrary
+detail bags. Safe Action Events and before-check refusal summaries carry outcome codes,
+not this private output; finite setup diagnostics keep their metadata-only contract.
+
 For original Account and terminal Session Actions, an outer Machine target selects the daemon
 that opens the encrypted input. The existing input reconciliation then resolves the Session target,
 and the daemon signs that resolved target for Home verification. Issuance, principal currentness and

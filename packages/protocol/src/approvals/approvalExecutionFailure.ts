@@ -6,6 +6,7 @@ import { getActionSpec, resolveActionExecutionPlacementForInput } from '../actio
 import { ActionIdSchema, WorkflowActionIdV1Schema, isPluginDevLoopActionIdV1, type ActionId } from '../actions/actionIds.js';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 import { WorkflowActionFailureV1Schema } from '../workflows/workflowProgressV1.js';
+import { WorkflowMachineCommandOutputV1Schema } from '../workflows/commandOutputV1.js';
 import { isFilesystemActionId } from '../actions/filesystemActionFamily.js';
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '../actions/projectActionFamily.js';
 import {
@@ -98,6 +99,16 @@ function parseStrictApprovalFailure(input: Readonly<{
     const schema = getActionSpec(input.request.actionId).inputSchema;
     const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
     return args.success ? { ...input.failure, details: finiteCommand.data } : null;
+  }
+  if (input.request.actionId === 'machines.command.run'
+    && (input.failure.errorCode === 'command_failed' || input.failure.errorCode === 'command_cancelled')) {
+    // The authorized command result stays in its approval's private custody;
+    // safe Action Event evidence continues to carry only the outcome code.
+    const details = (storedRead ? createStoredReadSchema(WorkflowMachineCommandOutputV1Schema)
+      : WorkflowMachineCommandOutputV1Schema).safeParse(input.failure.details);
+    const schema = getActionSpec(input.request.actionId).inputSchema;
+    const args = (storedRead ? createStoredReadSchema(schema) : schema).safeParse(input.request.actionArgs);
+    return args.success && details.success ? { ...input.failure, details: details.data } : null;
   }
   if (input.request.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
     || WorkflowActionIdV1Schema.safeParse(input.request.actionId).success) {

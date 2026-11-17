@@ -9531,6 +9531,14 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 command approval failures preserve the existing closed command result
+inside the existing execution `details` field. Matching approval readers retain exit
+code, stdout, stderr and optional truncation flags for `command_failed` and
+`command_cancelled`; historical receipts without details remain readable without
+fabricated output. Older readers keep the failure code but omit these details.
+This corrects private result retention without changing safe Event evidence, the
+metadata-only finite-command carrier, wire epoch, or persisted envelope format.
+
 The unreleased 0.3 Machine Agent catalog's closed V2 `externalSessions`
 projection carries optional `writerSafety` from the Agent manifest. The linked
 Session footer uses an explicit `unsupported` declaration to hide takeover.
