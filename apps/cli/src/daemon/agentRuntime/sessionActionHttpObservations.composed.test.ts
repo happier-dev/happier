@@ -761,7 +761,7 @@ it('prepares a public-profile preview through the signed Session Account binding
   } finally { await f.close(); }
 });
 
-it.each([false, true])('retains signed Account authority for the public-profile update follow-on refresh (refreshApproved=%s)', async refreshApproved => {
+it.each([false, true])('retains signed Account authority for atomic public-profile widening without borrowing refresh consent (refreshApproved=%s)', async refreshApproved => {
   const f = await fixture();
   const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, population: 'public_eligible_personal' });
   const policy = { indexable: false, fields: Object.fromEntries(Object.keys(DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields)
@@ -771,7 +771,9 @@ it.each([false, true])('retains signed Account authority for the public-profile 
       page: `${serverHttpBaseUrl}/@qa-profile`, json: `${serverHttpBaseUrl}/@qa-profile/json`,
       badgeBase: `${serverHttpBaseUrl}/@qa-profile/badge`, card: `${serverHttpBaseUrl}/@qa-profile/card.svg`,
       og: `${serverHttpBaseUrl}/@qa-profile/og.png`, report: 'mailto:operator@example.test',
-    } }, record: { state: 'published', policy, metadata: {}, projectSelections: [], query, snapshot: null,
+    } }, record: { state: 'published', policy: { ...policy,
+      fields: Object.fromEntries(Object.keys(DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields).map(field => [field, false])) },
+      metadata: {}, projectSelections: [], query, snapshot: null,
       layout: { v: 1, items: [] }, appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,
       updatedAtMs: 1, publishedAtMs: 1, restriction: null } });
   if (owner.kind !== 'ready') throw new Error('Expected published owner fixture');
@@ -782,26 +784,26 @@ it.each([false, true])('retains signed Account authority for the public-profile 
   });
   for (const [operation, path] of [['update', 'policy'], ['refresh', 'snapshot']] as const) {
     f.app.put(`/v1/account/public-profile/${path}`, { preHandler: f.app.authenticate }, async request => {
-      effects.push(PublicProfilePreparedRequestV1Schema.parse({ operation, body: request.body }));
+      const prepared = PublicProfilePreparedRequestV1Schema.parse({ operation, body: request.body });
+      effects.push(prepared);
+      if (prepared.operation === 'update') owner.record = { ...owner.record, ...prepared.body, updatedAtMs: 2 };
       return { kind: 'updated', record: owner.record };
     });
   }
-  // Explicit fixture policy authorizes both Actions through the existing policy
-  // owner. A follow-on refresh must not borrow consent from the parent update.
-  // This thin executor has no retained refresh approval origin; a child that
-  // still needs approval must fail closed rather than spend the parent's waiver.
-  f.setActionsSettings(normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
+  // The canonical preparation owner includes widened facts in the reviewed
+  // Update. An independently configured Refresh must not become a child effect.
+  f.setActionsSettings(normalizeActionsSettingsV1({ v: 1,
+    actions: { 'account.public_profile.refresh': { approvalRequiredSurfaces: ['agent'] } },
+    approvalWaivedSurfaces: {
     'account.public_profile.update': ['agent'], ...(refreshApproved ? { 'account.public_profile.refresh': ['agent'] } : {}),
   } }));
   try {
     const outcome = await f.execute(f.operation('account.public_profile.update', projectNativeJsonValueForTransport({ policy })),
       { sessionId, isCurrent: async () => true });
     expect(outcome, JSON.stringify({ outcome, observations: f.observations })).toMatchObject({ ok: true,
-      result: { kind: 'updated', ...(refreshApproved ? { refresh: 'complete' }
-        : { refresh: 'failed', refreshReason: 'approval_origin_unavailable' }) } });
-    expect(effects).toMatchObject(refreshApproved
-      ? [{ operation: 'update' }, { operation: 'refresh', body: { snapshot: { facts: { tokens: 12 } } } }]
-      : [{ operation: 'update' }]);
+      result: { kind: 'updated', record: { policy, snapshot: { facts: { tokens: 12 } } } } });
+    expect(effects).toEqual([expect.objectContaining({ operation: 'update',
+      body: expect.objectContaining({ policy, snapshot: expect.objectContaining({ facts: { tokens: 12 } }) }) })]);
     expect(f.observations.filter(row => row.path.startsWith('/v1/account/public-profile') || row.path === '/v2/usage/query')
       .every(row => row.status === 200 && row.signed && !row.bearer)).toBe(true);
   } finally { await f.close(); }
