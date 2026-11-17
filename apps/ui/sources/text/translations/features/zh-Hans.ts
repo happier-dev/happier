@@ -15850,6 +15850,25 @@ const simplifiedChinese: TeamsTranslationRoot = {
             submitting: '正在创建…',
             outcomeUnknown: '无法确认团队是否已创建。请重试以恢复同一请求。',
         },
+        newMembers: {
+            title: '新成员会获得什么',
+            description: '加入此 Team 的人从这些设置开始。每项选择都会立即保存。',
+            repositories: {
+                title: '代码仓库',
+                description: ({ team }: { team: string }) => `与 ${team} 共享的源。已有的检出会按原样使用。`,
+                hasFirstTask: '有建议的第一个任务',
+                emptyTitle: ({ team }: { team: string }) => `尚无与 ${team} 共享的源`,
+                emptyBody: ({ team }: { team: string }) => `将项目的源与 ${team} 共享即可在此提供。`,
+                loadFailed: '无法读取与此 Team 共享的源',
+            },
+            firstTask: {
+                title: '建议的第一个任务',
+                description: '新成员在设置完成后会在输入框中看到它，并可在开始前修改。',
+                attachedTo: ({ source }: { source: string }) => `附加到 ${source}`,
+                emptyTitle: '没有建议的第一个任务',
+                emptyBody: '新成员从空白输入框开始。',
+            },
+        },
         tabs: {
             overview: '概览',
             sessions: '会话',

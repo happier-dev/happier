@@ -15981,6 +15981,25 @@ const catalan: TeamsTranslationRoot = {
             submitting: 'S’està creant…',
             outcomeUnknown: 'No s’ha pogut confirmar si l’equip s’ha creat. Torna-ho a provar per recuperar la mateixa sol·licitud.',
         },
+        newMembers: {
+            title: 'Què reben els membres nous',
+            description: 'Amb què comencen les persones que s’uneixen a aquest Team. Cada elecció es desa en fer-la.',
+            repositories: {
+                title: 'Repositoris',
+                description: ({ team }: { team: string }) => `Fonts compartides amb ${team}. Una còpia local que algú ja té s’utilitza tal com és.`,
+                hasFirstTask: 'té una primera tasca suggerida',
+                emptyTitle: ({ team }: { team: string }) => `Encara no hi ha fonts compartides amb ${team}`,
+                emptyBody: ({ team }: { team: string }) => `Comparteix la font d’un projecte amb ${team} per oferir-la aquí.`,
+                loadFailed: 'No s’han pogut llegir les fonts compartides amb aquest Team',
+            },
+            firstTask: {
+                title: 'Primera tasca suggerida',
+                description: 'Els membres nous la veuen al compositor quan acaba la configuració i la poden canviar abans de començar.',
+                attachedTo: ({ source }: { source: string }) => `Adjuntada a ${source}`,
+                emptyTitle: 'Cap primera tasca suggerida',
+                emptyBody: 'Els membres nous comencen amb el compositor buit.',
+            },
+        },
         tabs: {
             overview: 'Resum',
             sessions: 'Sessions',

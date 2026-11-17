@@ -27,7 +27,7 @@ installSettingsViewCommonModuleMocks({ storage: 'real', text: () => vi.importAct
     (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module });
 const account = createProviderSettingsAccountHarness();
 const declarations = createProviderSettingsHarness();
-const { TeamSettingsScreen } = await import('../TeamSettingsScreen');
+const { TeamNewMembersScreen } = await import('../newMembers/TeamNewMembersScreen');
 const { ModalProvider, Modal } = await import('@/modal');
 const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
@@ -100,9 +100,9 @@ it.each(['native', 'team'] as const)('offers the selected Machine and Team model
     } });
 
     // The real settings root owns Team loading and save/refetch; only the platform modal host is supplied.
-    const screen = await renderScreen(<ModalProvider><TeamSettingsScreen serverId={serverId} teamId="team-1" /></ModalProvider>);
-    const rowId = 'team-settings-member-defaults-agent:codex:model';
-    const agent = () => screen.findAll(node => node.props.testID === 'team-settings-member-defaults-agent:codex'
+    const screen = await renderScreen(<ModalProvider><TeamNewMembersScreen serverId={serverId} teamId="team-1" /></ModalProvider>);
+    const rowId = 'team-new-members-defaults-agent:codex:model';
+    const agent = () => screen.findAll(node => node.props.testID === 'team-new-members-defaults-agent:codex'
         && typeof node.props.onExpandedChange === 'function')[0];
     await waitForHomeGovernance(() => expect(agent()).toBeDefined());
     expect(transport.call.mock.calls.some(([request]) => request.method === RPC_METHODS.CAPABILITIES_INVOKE)).toBe(false);
@@ -152,12 +152,12 @@ it('shows a failed Team model catalog and reloads it without losing native choic
         }
         return healthyTransport(request);
     });
-    const screen = await renderScreen(<ModalProvider><TeamSettingsScreen serverId={serverId} teamId="team-1" /></ModalProvider>);
-    const agent = () => screen.findAll(node => node.props.testID === 'team-settings-member-defaults-agent:codex'
+    const screen = await renderScreen(<ModalProvider><TeamNewMembersScreen serverId={serverId} teamId="team-1" /></ModalProvider>);
+    const agent = () => screen.findAll(node => node.props.testID === 'team-new-members-defaults-agent:codex'
         && typeof node.props.onExpandedChange === 'function')[0];
     await waitForHomeGovernance(() => expect(agent()).toBeDefined());
     await act(async () => { agent()!.props.onExpandedChange(true); });
-    await screen.pressByTestIdAsync('team-settings-member-defaults-agent:codex:model');
+    await screen.pressByTestIdAsync('team-new-members-defaults-agent:codex:model');
     const nativeOptionId = 'model-picker-overlay-option:' + sessionModelSelectionKey(nativeRef);
     await waitForHomeGovernance(() => {
         expect(screen.findByTestId(nativeOptionId)).not.toBeNull();

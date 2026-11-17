@@ -33,7 +33,7 @@ installSettingsViewCommonModuleMocks({ storage: 'real', text: () => vi.importAct
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 vi.doUnmock('@/sync/domains/state/storage');
-const { TeamSettingsScreen } = await import('./TeamSettingsScreen');
+const { TeamNewMembersScreen } = await import('./newMembers/TeamNewMembersScreen');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 let restoreWebGlobals: (() => void) | undefined;
 
@@ -77,21 +77,21 @@ it('selects a pool preset in mounted Team Settings, retains its name, and clears
         return { body: team };
     } });
 
-    const screen = await renderScreen(<TeamSettingsScreen serverId={serverId} teamId="team-1" />);
+    const screen = await renderScreen(<TeamNewMembersScreen serverId={serverId} teamId="team-1" />);
     const { getPermissionModeLabelForAgentType } = await import('@/sync/domains/permissions/permissionModeOptions');
-    const agent = () => screen.findAll(node => node.props.testID === 'team-settings-member-defaults-agent:claude'
+    const agent = () => screen.findAll(node => node.props.testID === 'team-new-members-defaults-agent:claude'
         && typeof node.props.onExpandedChange === 'function')[0];
     await waitForHomeGovernance(() => expect(agent()).toBeDefined());
     await act(async () => { agent()!.props.onExpandedChange(true); });
     const permission = screen.findAllByType(DropdownMenu).find(node =>
-        node.props.itemTrigger?.itemProps?.testID === 'team-settings-member-defaults-agent:claude:permission');
+        node.props.itemTrigger?.itemProps?.testID === 'team-new-members-defaults-agent:claude:permission');
     expect(permission).toBeDefined();
     for (const mode of ['read-only', 'yolo'] as const) {
         expect(permission!.props.items.find((item: { id: string }) => item.id === mode)?.title)
             .toBe(getPermissionModeLabelForAgentType('claude', mode));
     }
     const menu = () => screen.findAllByType(DropdownMenu).find(node =>
-        node.props.itemTrigger?.itemProps?.testID === 'team-settings-member-defaults-machine');
+        node.props.itemTrigger?.itemProps?.testID === 'team-new-members-defaults-machine');
     await waitForHomeGovernance(() => expect(menu()).toBeDefined());
     expect(harness.requestsFor(listPath)).toHaveLength(0);
     await act(async () => menu()!.props.onOpenChange(true));
@@ -145,9 +145,9 @@ it('offers owned and foreign-shared Machines and renders the typed refusal for a
     await publishMachineInventoryForTest({ serverId, accountId: 'admin' }, [createMachineFixture({
         id: shared.id, isShared: true, active: true, activeAt: Date.now(), storageMode: 'plain', access: shared.access,
     }), owned]);
-    const screen = await renderScreen(<TeamSettingsScreen serverId={serverId} teamId="team-1" />);
+    const screen = await renderScreen(<TeamNewMembersScreen serverId={serverId} teamId="team-1" />);
     const menu = () => screen.findAllByType(DropdownMenu).find(node =>
-        node.props.itemTrigger?.itemProps?.testID === 'team-settings-member-defaults-machine');
+        node.props.itemTrigger?.itemProps?.testID === 'team-new-members-defaults-machine');
     await waitForHomeGovernance(() => expect(menu()).toBeDefined());
     await act(async () => menu()!.props.onOpenChange(true));
     await waitForHomeGovernance(() => expect(menu()!.props.items.some((item: { id: string }) => item.id === 'admin-shared-machine')).toBe(true));

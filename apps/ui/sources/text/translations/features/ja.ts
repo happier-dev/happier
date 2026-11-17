@@ -15905,6 +15905,25 @@ const japanese: TeamsTranslationRoot = {
             submitting: '作成中…',
             outcomeUnknown: 'チームが作成されたか確認できませんでした。再試行すると同じリクエストを復旧します。',
         },
+        newMembers: {
+            title: '新しいメンバーが受け取るもの',
+            description: 'この Team に参加した人が最初に使う設定です。選択はすぐに保存されます。',
+            repositories: {
+                title: 'リポジトリ',
+                description: ({ team }: { team: string }) => `${team} と共有しているソース。すでにあるチェックアウトはそのまま使われます。`,
+                hasFirstTask: '最初のタスクの提案あり',
+                emptyTitle: ({ team }: { team: string }) => `${team} と共有しているソースはまだありません`,
+                emptyBody: ({ team }: { team: string }) => `プロジェクトのソースを ${team} と共有すると、ここに表示されます。`,
+                loadFailed: 'この Team と共有しているソースを読み込めませんでした',
+            },
+            firstTask: {
+                title: '最初のタスクの提案',
+                description: '新しいメンバーはセットアップ完了時にコンポーザーで確認でき、始める前に変更できます。',
+                attachedTo: ({ source }: { source: string }) => `${source} に添付`,
+                emptyTitle: '最初のタスクの提案はありません',
+                emptyBody: '新しいメンバーは空のコンポーザーから始めます。',
+            },
+        },
         tabs: {
             overview: '概要',
             sessions: 'セッション',

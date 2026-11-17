@@ -149,6 +149,11 @@ export function teamSetupPath(address: TeamAddress): `/teams/${string}/setup?ser
     return `/teams/${encodeURIComponent(address.teamId)}/setup?serverId=${encodeURIComponent(address.serverId)}`;
 }
 
+/** What new members get: the Team's member defaults and, as they land, the rest of a new member's setup. */
+export function teamNewMembersPath(address: TeamAddress): `/settings/teams/${string}/${string}/new-members` {
+    return `${teamDetailPath(address)}/new-members`;
+}
+
 /**
  * Lane 03 contributes the Authentication destination under the Team's own path
  * rather than adding a second Team root; the path owner still lives here so the

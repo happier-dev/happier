@@ -15994,6 +15994,25 @@ const polish: TeamsTranslationRoot = {
             submitting: 'Tworzenie…',
             outcomeUnknown: 'Nie udało się potwierdzić, czy zespół został utworzony. Spróbuj ponownie, aby odzyskać to samo żądanie.',
         },
+        newMembers: {
+            title: 'Co dostają nowi członkowie',
+            description: 'Z czym zaczynają osoby, które dołączają do tego Teamu. Każdy wybór zapisuje się od razu.',
+            repositories: {
+                title: 'Repozytoria',
+                description: ({ team }: { team: string }) => `Źródła udostępnione zespołowi ${team}. Istniejąca kopia robocza jest używana bez zmian.`,
+                hasFirstTask: 'ma sugerowane pierwsze zadanie',
+                emptyTitle: ({ team }: { team: string }) => `Brak źródeł udostępnionych ${team}`,
+                emptyBody: ({ team }: { team: string }) => `Udostępnij źródło projektu zespołowi ${team}, aby zaoferować je tutaj.`,
+                loadFailed: 'Nie udało się odczytać źródeł udostępnionych temu Team',
+            },
+            firstTask: {
+                title: 'Sugerowane pierwsze zadanie',
+                description: 'Nowi członkowie zobaczą je w kompozytorze po zakończeniu konfiguracji i mogą je zmienić przed rozpoczęciem.',
+                attachedTo: ({ source }: { source: string }) => `Dołączone do ${source}`,
+                emptyTitle: 'Brak sugerowanego pierwszego zadania',
+                emptyBody: 'Nowi członkowie zaczynają z pustym kompozytorem.',
+            },
+        },
         tabs: {
             overview: 'Przegląd',
             sessions: 'Sesje',

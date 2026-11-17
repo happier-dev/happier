@@ -80,6 +80,7 @@ const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilit
 // Collect the real graphs after boundary installation, alongside their reset
 // owners, so cold module loading cannot outlive a case and render into its successor.
 const { TeamSettingsScreen } = await import('./TeamSettingsScreen');
+const { TeamNewMembersScreen } = await import('./newMembers/TeamNewMembersScreen');
 await import('@/sync/ops/actions/defaultActionExecutor');
 
 const TEAM_GET_PATH = '/v1/teams/get';
@@ -94,6 +95,11 @@ const ARTIFACT_CREATE_PATH = '/v1/artifacts';
 
 async function renderSettings(serverId: string) {
     return renderScreen(<TeamSettingsScreen serverId={serverId} teamId="team-1" />);
+}
+
+/** The member-defaults editor lives on What new members get; Team Settings links to it. */
+async function renderNewMembers(serverId: string) {
+    return renderScreen(<TeamNewMembersScreen serverId={serverId} teamId="team-1" />);
 }
 
 async function addHomeWithTeam(
@@ -935,15 +941,15 @@ describe('TeamSettingsScreen defaults for members', () => {
         const serverId = await addHomeWithTeam(team);
         harness.answer(serverId, TEAM_POLICY_PATH, { body: team });
 
-        const screen = await renderSettings(serverId);
-        await waitForTestId(screen, 'team-settings-member-defaults-agent:claude:header');
-        await screen.pressByTestIdAsync('team-settings-member-defaults-agent:claude:header');
-        await waitForTestId(screen, 'team-settings-member-defaults-agent:claude:permission');
+        const screen = await renderNewMembers(serverId);
+        await waitForTestId(screen, 'team-new-members-defaults-agent:claude:header');
+        await screen.pressByTestIdAsync('team-new-members-defaults-agent:claude:header');
+        await waitForTestId(screen, 'team-new-members-defaults-agent:claude:permission');
         // The menu's popover is a web/native overlay this renderer has no window for; choose
         // through the real menu's own selection callback, as a person picking the row does.
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
         const menu = screen.findAllByType(DropdownMenu).find((node) =>
-            node.props.itemTrigger?.itemProps?.testID === 'team-settings-member-defaults-agent:claude:permission');
+            node.props.itemTrigger?.itemProps?.testID === 'team-new-members-defaults-agent:claude:permission');
         expect(menu?.props.items.map((item: { id: string }) => item.id)).toContain('read-only');
         await act(async () => menu?.props.onSelect('read-only'));
 
@@ -955,17 +961,16 @@ describe('TeamSettingsScreen defaults for members', () => {
         });
     });
 
-    it('says once, in the lock banner, that a viewer who changes nothing here cannot change the defaults', async () => {
+    it('explains read-only defaults and leaves unset rows inert', async () => {
         const serverId = await addHomeWithTeam(teamSummaryFixture({
             capabilities: teamCapabilitiesFixture({ manageSettings: false, managePolicy: false }),
         }));
 
-        const screen = await renderSettings(serverId);
-        await waitForTestId(screen, 'team-settings-read-only');
-        await waitForTestId(screen, 'team-settings-member-defaults-agent:claude:header');
-        expect(screen.getTextContent()).not.toContain('teams.settings.memberDefaults.readOnlyTeam');
+        const screen = await renderNewMembers(serverId);
+        await waitForTestId(screen, 'team-new-members-defaults-agent:claude:header');
+        expect(screen.getTextContent()).toContain('teams.settings.memberDefaults.readOnlyTeam');
         // Nothing is set for Claude, so its read-only row is a value that opens nothing.
-        expect(screen.tree.root.findAll((node) => node.props.testID === 'team-settings-member-defaults-agent:claude:header'
+        expect(screen.tree.root.findAll((node) => node.props.testID === 'team-new-members-defaults-agent:claude:header'
             && typeof node.props.onPress === 'function')).toHaveLength(0);
     });
 
@@ -979,13 +984,13 @@ describe('TeamSettingsScreen defaults for members', () => {
             }),
         }));
 
-        const screen = await renderSettings(serverId);
-        await waitForTestId(screen, 'team-settings-member-defaults-agent:claude:header');
+        const screen = await renderNewMembers(serverId);
+        await waitForTestId(screen, 'team-new-members-defaults-agent:claude:header');
         expect(screen.getTextContent()).toContain('teams.settings.memberDefaults.readOnlyTeam');
-        await screen.pressByTestIdAsync('team-settings-member-defaults-agent:claude:header');
-        await waitForTestId(screen, 'team-settings-member-defaults-agent:claude:permission');
+        await screen.pressByTestIdAsync('team-new-members-defaults-agent:claude:header');
+        await waitForTestId(screen, 'team-new-members-defaults-agent:claude:permission');
         const ids = collectRenderedTestIds(screen.tree.toJSON());
-        expect(ids.filter((id) => id.startsWith('team-settings-member-defaults-agent:claude:permission:'))).toEqual([]);
+        expect(ids.filter((id) => id.startsWith('team-new-members-defaults-agent:claude:permission:'))).toEqual([]);
         expect(harness.requestsFor(TEAM_POLICY_PATH)).toHaveLength(0);
     });
 
@@ -998,8 +1003,8 @@ describe('TeamSettingsScreen defaults for members', () => {
             }),
         }));
 
-        const screen = await renderSettings(serverId);
-        await waitForTestId(screen, 'team-settings-member-defaults-machine');
+        const screen = await renderNewMembers(serverId);
+        await waitForTestId(screen, 'team-new-members-defaults-machine');
         expect(screen.getTextContent()).toContain('teams.settings.memberDefaults.conflictTeam');
     });
 });

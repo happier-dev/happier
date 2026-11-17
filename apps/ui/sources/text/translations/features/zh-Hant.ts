@@ -15849,6 +15849,25 @@ const traditionalChinese: TeamsTranslationRoot = {
             submitting: '正在建立…',
             outcomeUnknown: '無法確認團隊是否已建立。請重試以恢復同一請求。',
         },
+        newMembers: {
+            title: '新成員會獲得什麼',
+            description: '加入此 Team 的人從這些設定開始。每項選擇都會立即儲存。',
+            repositories: {
+                title: '程式碼存放庫',
+                description: ({ team }: { team: string }) => `與 ${team} 共享的來源。已有的檢出會依原樣使用。`,
+                hasFirstTask: '有建議的第一個任務',
+                emptyTitle: ({ team }: { team: string }) => `尚無與 ${team} 共享的來源`,
+                emptyBody: ({ team }: { team: string }) => `將專案的來源與 ${team} 共享即可在此提供。`,
+                loadFailed: '無法讀取與此 Team 共享的來源',
+            },
+            firstTask: {
+                title: '建議的第一個任務',
+                description: '新成員在設定完成後會在輸入框中看到它，並可在開始前修改。',
+                attachedTo: ({ source }: { source: string }) => `附加到 ${source}`,
+                emptyTitle: '沒有建議的第一個任務',
+                emptyBody: '新成員從空白輸入框開始。',
+            },
+        },
         tabs: {
             overview: '總覽',
             sessions: '工作階段',

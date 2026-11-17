@@ -34,8 +34,9 @@ import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDra
 import { useTeamManagerNames } from '@/hooks/teams/useTeamManagerNames';
 
 import { askTeamManagersText } from './collection/teamsCreateGuidanceText';
-import { TeamMemberDefaultsSection } from './defaults/TeamMemberDefaultsSection';
-import { memberDefaultsAccess } from './defaults/memberDefaults';
+import { MemberDefaultsSummaryRow } from './defaults/MemberDefaultsSummaryRow';
+import { readMemberDefaults } from './defaults/memberDefaults';
+import { teamNewMembersPath } from './teamsRoutes';
 import { TeamSection } from './TeamSection';
 import { TeamLogoPicker } from './TeamLogoPicker';
 import type { TeamSectionContext } from './teamSectionContext';
@@ -654,6 +655,7 @@ export const TeamSettingsScreen = React.memo(function TeamSettingsScreen(props: 
     serverId: string;
     teamId: string;
 }>) {
+    const router = useRouter();
     return (
         <TeamSection
             serverId={props.serverId}
@@ -680,15 +682,13 @@ export const TeamSettingsScreen = React.memo(function TeamSettingsScreen(props: 
                             ? <TeamIdentitySection context={context} />
                             : <TeamIdentityFacts context={context} />}
                         <TeamPolicySections context={context} />
-                        {/* What members' new sessions start with; an archived Team starts none. */}
+                        {/* What members' new sessions start with; an archived Team starts none. The editor
+                            lives on What new members get, so this page says what is set and links there. */}
                         {context.archived ? null : (
-                            <TeamMemberDefaultsSection
+                            <MemberDefaultsSummaryRow
                                 testID="team-settings-member-defaults"
-                                context={context}
-                                scope={TEAM_DEFAULTS_SCOPE}
-                                access={memberDefaultsAccess(TEAM_DEFAULTS_SCOPE, context.team.capabilities)}
-                                writable={context.canMutate}
-                                readOnlyReasonOnPage={settingsLocked}
+                                defaults={readMemberDefaults(context.team.policy.managedDefaults, TEAM_DEFAULTS_SCOPE)}
+                                onPress={() => router.push(teamNewMembersPath(context.address) as never)}
                             />
                         )}
                         {context.archived ? null : <TeamLifecycleSection context={context} />}

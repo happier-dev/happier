@@ -7,7 +7,6 @@ import {
 } from '@/components/settings/shell/SettingRow';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Switch } from '@/components/ui/forms/Switch';
-import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -23,7 +22,7 @@ import { t } from '@/text';
 
 import type { HomeAdministrationContext } from './homeAdministrationContext';
 import { TeamMemberDefaultsSection } from '@/components/settings/teams/defaults/TeamMemberDefaultsSection';
-import { memberDefaultsSummary } from '@/components/settings/teams/defaults/memberDefaults';
+import { MemberDefaultsSummaryRow } from '@/components/settings/teams/defaults/MemberDefaultsSummaryRow';
 import { homeAdministrationMemberDefaultsPath } from './homeAdministrationRoutes';
 import {
   homeGovernanceFailureNotice,
@@ -295,21 +294,13 @@ export const HomeMemberDefaultsRow = React.memo(function HomeMemberDefaultsRow(
 ) {
   const router = useRouter();
   const serverId = props.context.scope.serverId;
-  const summary = memberDefaultsSummary(props.context.projection.policy.sessionDefaults ?? {});
-  const parts = [
-    summary.machine ? t('teams.settings.memberDefaults.machine') : null,
-    summary.agents > 0 ? t('teams.settings.memberDefaults.summaryAgents', { count: summary.agents }) : null,
-  ].filter((part): part is string => part !== null);
   return (
-    <ItemGroup title={t('teams.settings.sessionDefaultsSection')}>
-      <Item
-        testID="home-session-defaults-open"
-        icon={<Icon name="sliders-horizontal" />}
-        title={t('teams.settings.memberDefaults.title')}
-        subtitle={parts.length > 0 ? parts.join(' · ') : t('teams.settings.memberDefaults.summaryNone')}
-        onPress={() => router.push(homeAdministrationMemberDefaultsPath(serverId) as never)}
-      />
-    </ItemGroup>
+    <MemberDefaultsSummaryRow
+      testID="home-session-defaults-open"
+      sectionTitle={t('teams.settings.sessionDefaultsSection')}
+      defaults={props.context.projection.policy.sessionDefaults ?? {}}
+      onPress={() => router.push(homeAdministrationMemberDefaultsPath(serverId) as never)}
+    />
   );
 });
 

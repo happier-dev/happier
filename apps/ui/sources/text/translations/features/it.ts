@@ -15969,6 +15969,25 @@ const italian: TeamsTranslationRoot = {
             submitting: 'Creazione…',
             outcomeUnknown: 'Non è stato possibile confermare se il team è stato creato. Riprova per recuperare la stessa richiesta.',
         },
+        newMembers: {
+            title: 'Cosa ricevono i nuovi membri',
+            description: 'Con cosa iniziano le persone che entrano in questo Team. Ogni scelta viene salvata subito.',
+            repositories: {
+                title: 'Repository',
+                description: ({ team }: { team: string }) => `Fonti condivise con ${team}. Una copia locale già presente viene usata così com’è.`,
+                hasFirstTask: 'ha un primo compito suggerito',
+                emptyTitle: ({ team }: { team: string }) => `Ancora nessuna fonte condivisa con ${team}`,
+                emptyBody: ({ team }: { team: string }) => `Condividi la fonte di un progetto con ${team} per offrirla qui.`,
+                loadFailed: 'Impossibile leggere le fonti condivise con questo Team',
+            },
+            firstTask: {
+                title: 'Primo compito suggerito',
+                description: 'I nuovi membri lo vedono nel composer al termine della configurazione e possono modificarlo prima di iniziare.',
+                attachedTo: ({ source }: { source: string }) => `Allegato a ${source}`,
+                emptyTitle: 'Nessun primo compito suggerito',
+                emptyBody: 'I nuovi membri iniziano con il composer vuoto.',
+            },
+        },
         tabs: {
             overview: 'Panoramica',
             sessions: 'Sessioni',

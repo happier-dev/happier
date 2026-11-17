@@ -15780,6 +15780,25 @@ const german: TeamsTranslationRoot = {
             submitting: 'Wird erstellt…',
             outcomeUnknown: 'Es konnte nicht bestätigt werden, ob das Team erstellt wurde. Versuche es erneut, um dieselbe Anfrage wiederaufzunehmen.',
         },
+        newMembers: {
+            title: 'Was neue Mitglieder bekommen',
+            description: 'Womit Personen starten, die diesem Team beitreten. Jede Auswahl wird sofort gespeichert.',
+            repositories: {
+                title: 'Repositorys',
+                description: ({ team }: { team: string }) => `Mit ${team} geteilte Quellen. Ein vorhandener Checkout wird so verwendet, wie er ist.`,
+                hasFirstTask: 'hat eine vorgeschlagene erste Aufgabe',
+                emptyTitle: ({ team }: { team: string }) => `Noch keine Quellen mit ${team} geteilt`,
+                emptyBody: ({ team }: { team: string }) => `Teile die Quelle eines Projekts mit ${team}, um sie hier anzubieten.`,
+                loadFailed: 'Die mit diesem Team geteilten Quellen konnten nicht gelesen werden',
+            },
+            firstTask: {
+                title: 'Vorgeschlagene erste Aufgabe',
+                description: 'Neue Mitglieder sehen sie im Composer, sobald ihre Einrichtung fertig ist, und können sie vor dem Start ändern.',
+                attachedTo: ({ source }: { source: string }) => `An ${source} angehängt`,
+                emptyTitle: 'Keine vorgeschlagene erste Aufgabe',
+                emptyBody: 'Neue Mitglieder starten mit einem leeren Composer.',
+            },
+        },
         tabs: {
             overview: 'Überblick',
             sessions: 'Sessions',

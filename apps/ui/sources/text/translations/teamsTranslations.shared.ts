@@ -223,6 +223,25 @@ export const english = {
             submitting: 'Creating…',
             outcomeUnknown: 'We could not confirm whether the Team was created. Try again to recover the same request.',
         },
+        newMembers: {
+            title: 'What new members get',
+            description: 'What people who join this Team start with. Each choice saves as you make it.',
+            repositories: {
+                title: 'Repositories',
+                description: ({ team }: { team: string }) => `Sources shared with ${team}. A checkout someone already has is used as it is.`,
+                hasFirstTask: 'has a suggested first task',
+                emptyTitle: ({ team }: { team: string }) => `No sources shared with ${team} yet`,
+                emptyBody: ({ team }: { team: string }) => `Share a project’s source with ${team} to offer it here.`,
+                loadFailed: 'Couldn’t read the sources shared with this Team',
+            },
+            firstTask: {
+                title: 'Suggested first task',
+                description: 'New members see it in the composer when their setup finishes, and can change it before it starts.',
+                attachedTo: ({ source }: { source: string }) => `Attached to ${source}`,
+                emptyTitle: 'No suggested first task',
+                emptyBody: 'New members start with an empty composer.',
+            },
+        },
         tabs: {
             overview: 'Overview',
             sessions: 'Sessions',
