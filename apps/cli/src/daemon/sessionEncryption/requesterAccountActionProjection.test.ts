@@ -626,8 +626,8 @@ describe('admitted requester Action projection', () => {
         ...(failure === 'authorization' ? {} : { requestId: 'correction' }) });
     expect(failures).toEqual([expected]);
   });
-  it.each(['projects.prepare', 'projects.script.run', 'projects.compute.exec', 'projects.inspect', 'projects.worker.status', 'localServices.launcher.start',
-    'machines.terminal.open', 'machines.terminal.restart', 'execution.run.start', 'execution.run.ensure', 'execution.run.send', 'execution.run.ensure_or_start'] as const)('uses retained requester custody only for private Project preparation reads on %s', async actionId => {
+  it.each(['projects.prepare', 'projects.script.run', 'projects.compute.exec', 'projects.inspect', 'projects.worktree.ports.reassign', 'projects.worker.status', 'localServices.launcher.start',
+    'machines.terminal.open', 'machines.terminal.restart', 'execution.run.start', 'execution.run.ensure', 'execution.run.send', 'execution.run.ensure_or_start'] as const)('keeps private Project preparation reads separate from signed effects on %s', async actionId => {
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'finite-root', binding: {
       accountId: 'bob', custodianAccountId: 'alice', authentication: { kind: 'account', tokenEpoch: 1 },
       accountEncryptionMode: 'plain', serverIdentityId: 'stable-home', machineId: 'machine', installationId: 'installation',
@@ -674,12 +674,17 @@ describe('admitted requester Action projection', () => {
       }
       const headers = (method: string, path: string) => carrier.requesterHttpProjection!.createRequestHeaders({ effectActionId: actionId, method, path });
       const machineRead = await headers('GET', '/v1/machines/source-machine');
-      if (actionId === 'projects.prepare' || actionId === 'projects.inspect'
+      if (actionId === 'projects.prepare' || actionId === 'projects.inspect' || actionId === 'projects.worktree.ports.reassign'
         || actionId === 'machines.terminal.open' || actionId === 'machines.terminal.restart') {
         expect(machineRead).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token });
       } else expect(machineRead).toEqual({ Authorization: 'Bearer bob-preparation' });
       for (const path of ['/v1/account/project-rows/read', '/v1/account/project-rows/list']) {
-        expect(await headers('POST', path)).toEqual({ Authorization: 'Bearer bob-preparation' });
+        const rowHeaders = await headers('POST', path);
+        if (actionId === 'projects.worktree.ports.reassign') {
+          // Reassign uses physical-root activity and ports; it has no private Account-row read.
+          expect(rowHeaders).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token });
+          expect(rowHeaders).not.toHaveProperty('Authorization');
+        } else expect(rowHeaders).toEqual({ Authorization: 'Bearer bob-preparation' });
         expect(await carrier.requesterHttpProjection.createRequestHeaders({ effectActionId: 'projects.open', method: 'POST', path }))
           .toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token });
         expect(await headers('GET', path)).toMatchObject({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token });
