@@ -165,6 +165,10 @@ describe('Muse native model catalog', () => {
       await catalog.refresh();
       expect(catalog.resolveModelSelection('shared')).toEqual({ status: 'unavailable', reason: 'model_unavailable' });
       expect(catalog.resolveModelSelection('second/shared')).toMatchObject({ status: 'selected', providerId: 'second', modelId: 'shared' });
+      catalog.applyCurrentModel({ providerId: 'first', modelId: 'shared' });
+      expect(catalog.resolveModelId('shared')).toBeNull();
+      expect(catalog.resolveModelId('second/shared')).toBe('second/shared');
+      expect(catalog.resolveModelId('unobserved')).toBeNull();
     } finally { await msp.dispose(); }
   });
 

@@ -25,6 +25,7 @@ export type MuseModelSelection =
 export type MuseCatalog = AgentSessionModelsSource & Readonly<{
   refresh(options?: { signal?: AbortSignal; sessionId?: string }): Promise<AgentSessionModelsSnapshot>;
   resolveModelSelection(id?: string): MuseModelSelection;
+  resolveModelId(id: string): string | null;
   applyCurrentModel(model: Readonly<{ providerId: string; modelId: string }>): void;
   applyCurrentReasoningEffort(effort: string): void;
   readCurrentReasoningEffort(): string | undefined;
@@ -93,9 +94,17 @@ function parseCatalog(value: unknown): Readonly<{
   return { models, nativeModels, currentModelId };
 }
 
+function findNativeModel<T extends Pick<MuseNativeModel, 'id' | 'modelId'>>(models: readonly T[], id: string): T | undefined {
+  const exact = models.find(model => model.id === id);
+  if (exact) return exact;
+  const matches = models.filter(model => model.modelId === id);
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 export function createMuseCatalog(client: Pick<PluginJsonRpcClient, 'request'>): MuseCatalog {
   let snapshot: AgentSessionModelsSnapshot = { models: null };
   let nativeModels: readonly MuseNativeModel[] = [];
+  let currentNativeModel: Pick<MuseNativeModel, 'id' | 'modelId'> | undefined;
   // Catalog defaults are offered choices, not evidence of a Session's standing effort.
   let currentReasoningEffort: string | undefined;
   const listeners = new Set<(snapshot: AgentSessionModelsSnapshot) => void>();
@@ -123,6 +132,7 @@ export function createMuseCatalog(client: Pick<PluginJsonRpcClient, 'request'>):
   };
   const applyCurrentModel = (model: Readonly<{ providerId: string; modelId: string }>) => {
     const currentModelId = `${model.providerId}/${model.modelId}`;
+    currentNativeModel = { id: currentModelId, modelId: model.modelId };
     if (currentModelId !== snapshot.currentModelId) {
       currentReasoningEffort = undefined;
       publish({ ...snapshot, currentModelId,
@@ -145,6 +155,7 @@ export function createMuseCatalog(client: Pick<PluginJsonRpcClient, 'request'>):
         options?.sessionId === undefined ? {} : { sessionId: options.sessionId },
         { signal: options?.signal }));
       nativeModels = parsed.nativeModels;
+      if (parsed.currentModelId) currentNativeModel = nativeModels.find(model => model.id === parsed.currentModelId);
       if (parsed.currentModelId && parsed.currentModelId !== snapshot.currentModelId) currentReasoningEffort = undefined;
       const currentModelId = parsed.currentModelId ?? snapshot.currentModelId ?? null;
       const previous = new Map(snapshot.models?.map(model => [model.id, model]));
@@ -168,10 +179,16 @@ export function createMuseCatalog(client: Pick<PluginJsonRpcClient, 'request'>):
         return defaults.length === 1 ? { status: 'selected', ...defaults[0] }
           : { status: 'unavailable', reason: 'default_model_unavailable' };
       }
-      const exact = nativeModels.find(model => model.id === id);
-      const matches = exact ? [exact] : nativeModels.filter(model => model.modelId === id);
-      const selected = matches.length === 1 ? matches[0] : undefined;
+      const selected = findNativeModel(nativeModels, id);
       return selected ? { status: 'selected', ...selected } : { status: 'unavailable', reason: 'model_unavailable' };
+    },
+    resolveModelId(id) {
+      // Native defaults/resumes establish this pair without a model/list RPC.
+      // It is evidence for the matching native id, never for an unknown model.
+      const current = currentNativeModel;
+      const models = current && !nativeModels.some(model => model.id === current.id)
+        ? [...nativeModels, current] : nativeModels;
+      return findNativeModel(models, id)?.id ?? null;
     },
     applyCurrentModel,
     applyCurrentReasoningEffort,

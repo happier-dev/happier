@@ -147,7 +147,9 @@ async function openMuseConversation<SessionId extends string | undefined>(
     for (const waiter of readiness) waiter.reject(error);
     readiness.clear();
   };
+  let catalogSource: MuseCatalog | undefined;
   const projection = createMuseEventProjection({ sessionId,
+    resolveModelId: id => catalogSource?.resolveModelId(id) ?? null,
     async onHostPromptEcho(localId) {
       await sessionServices?.transcripts.markSourceFactConsumed?.({ localId, reason: 'host_prompt_echo' });
     },
@@ -188,7 +190,6 @@ async function openMuseConversation<SessionId extends string | undefined>(
       } });
     },
   });
-  let catalogSource: MuseCatalog | undefined;
   let catalogSessionId: string | undefined;
   const msp: MuseMsp = await openMuseMsp({ exec: context.services.exec,
     // Muse 1.4.15 withholds selected MCP servers in an untrusted stdio host.

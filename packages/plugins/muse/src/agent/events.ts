@@ -22,6 +22,7 @@ type NativeChild = { state?: NativeItem; workflowChild?: NativeRecord; label?: s
 type ChildObservation = AgentSessionSubagentObservation;
 
 export function createMuseEventProjection<SessionId extends string | undefined = undefined>(options: Readonly<{ sessionId?: SessionId;
+  resolveModelId?(id: string): string | null;
   onHostPromptEcho?(localId: string): Promise<void>;
   onActivity?(state: 'active' | 'idle' | 'unknown'): void;
   onChild?(observation: ChildObservation): Promise<void>;
@@ -351,6 +352,7 @@ export function createMuseEventProjection<SessionId extends string | undefined =
     const identity = typeof first.id === 'string' ? first.id : typeof params.viewCursor === 'string' ? params.viewCursor : undefined;
     if (!identity || typeof params.sessionId !== 'string') return;
     const owner = correlation(params.turnId);
+    const modelId = typeof params.modelId === 'string' ? options.resolveModelId?.(params.modelId) ?? null : null;
     if (method === 'session/tokenUsage') {
       const usage = readMuseRecord(params.usage);
       const counted = readMuseUsageTokens(usage, params.promptTokens, params.totalTokens);
@@ -359,12 +361,12 @@ export function createMuseEventProjection<SessionId extends string | undefined =
         source: MUSE_ACCOUNTING_SOURCE_ID, scope: 'turn_delta', ...(owner.turnId ? { turnId: owner.turnId } : {}),
         accounting: { nativeSessionId: params.sessionId, inferenceId: identity,
           inputIncludesCache: true, outputIncludesReasoning: true },
-        ...(typeof params.modelId === 'string' ? { modelId: params.modelId } : {}),
+        ...(modelId ? { modelId } : {}),
         ...(counted ? { tokens: counted } : {}) });
     } else if (typeof params.usedTokens === 'number') {
       publish({ kind: 'usage-observed', observationId: `${params.sessionId}:${method}:${identity}`,
         source: MUSE_ACCOUNTING_SOURCE_ID, scope: 'session_cumulative', accounting: { nativeSessionId: params.sessionId },
-        context: { v: 1, modelId: typeof params.modelId === 'string' ? params.modelId : null,
+        context: { v: 1, modelId,
           usedTokens: params.usedTokens, windowTokens: typeof params.windowTokens === 'number' ? params.windowTokens : null,
           totalProcessedTokens: null, baselineTokens: null, isAutoCompactEnabled: null, categories: null,
           observedAtMs: Date.now(), source: 'provider_live' } });
