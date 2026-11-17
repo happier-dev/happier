@@ -158,6 +158,47 @@ test('the package installer publishes its pnpm diagnostic for later consumers', 
   assert.equal(await withDependencyConsumption(options, () => 'repaired'), 'repaired');
 });
 
+test('later consumers name the real cause of a codeless pnpm 12 installer failure, redacted', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-installer-pnpm12-diagnostic-' });
+  const installer = fixture.path('pnpm.cjs');
+  const secret = 'fixture-secret-value-0123456789';
+  // pnpm 12.14.0 (pacquet) output, verbatim from mac-outer on 2026-11-17: no
+  // ERR_PNPM_* code, a wrapped miette headline and cause chain.
+  const pnpm12Stderr = [
+    'Progress: resolved 1568, reused 1567, downloaded 1, added 0',
+    `npm_config__authToken=${secret}`,
+    `fixture token: ${secret}`,
+    'Error:   × installing dependencies',
+    '  ╰─▶ failed to import "/Users/u/.happier/stacks/s/cli/cache/pnpm/store/v11/files/87/',
+    '      aec4d76127de0ee5eaead6c6c69b0a9086aea431d1b2f51c7242146228ce9de85453917c',
+    '      1ca9a3812f5f2fa05acf665177ce0202adf027b109e7a3713b8960" to "/Users/',
+    '      u/repo/node_modules/@expo/ngrok-bin-darwin-arm64_pacquet-stage_1_2_3/',
+    '      package.json_pacquet-stage_1_4_5": No such file or directory (os error 2)',
+    '',
+  ].join('\n');
+  await writeFile(installer, `
+    if (process.argv.includes('--version')) { console.log('12.14.0'); }
+    else { process.stderr.write(${JSON.stringify(pnpm12Stderr)}); process.exitCode = 1; }
+  `);
+  const options = { installDir: fixture.root, env: { ...process.env,
+    npm_execpath: installer, HAPPIER_STACK_ENV_FILE: '', HAPPIER_FIXTURE_TOKEN: secret,
+    HAPPIER_STACK_HOME_DIR: fixture.root, HAPPIER_STACK_SKIP_REFRESH_DEPS: '0', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' } };
+  await writeFile(fixture.path('package.json'), '{"private":true}');
+  await writeFile(fixture.path('pnpm-lock.yaml'), '# fixture\n');
+  const namesRealCause = error => {
+    assert.equal(error.code, 'HAPPIER_DEPENDENCY_REFRESH_FAILED');
+    assert.equal(error.pnpmErrorCode, null);
+    assert.match(error.message, /installing dependencies: failed to import "\S+\/files\/87\/aec4d761\S+8960" to "\S+\/package\.json_pacquet-stage_1_4_5": No such file or directory \(os error 2\)/u);
+    assert.equal(error.message.includes(secret), false, 'the reported cause is redacted');
+    return true;
+  };
+  await assert.rejects(ensureDepsInstalled(fixture.root, 'fixture', {
+    env: options.env, quiet: true, prepareComponentOutputs: false,
+  }), namesRealCause);
+  // The consumer replays the persisted record, not the writer's live error.
+  await assert.rejects(withDependencyConsumption(options, () => assert.fail('partial bytes admitted')), namesRealCause);
+});
+
 for (const kind of ['pending start', 'running Expo']) test(`refresh retains ${kind} lifecycle ownership and only advises restart`, async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-refresh-advice-' });
   const options = { installDir: fixture.root, env: { ...process.env,

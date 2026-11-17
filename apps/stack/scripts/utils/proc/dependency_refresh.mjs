@@ -13,6 +13,7 @@ import { coerceHappyMonorepoRootFromPath, getHappyStacksHomeDir } from '../paths
 import { isJsonOwnerFileLockActive, readJsonOwnerLockSnapshot, withJsonOwnerFileLock } from './jsonOwnerFileLock.mjs';
 import { collectWorkspacePackageJsonPaths, isYarnWorkspace, readWorkspacePatchPaths } from './workspace_package_manifests.mjs';
 import { prepareDependencyConsumersForRefresh } from './dependency_consumers.mjs';
+import { redactFailureDiagnostic } from './proc.mjs';
 import { inspectUiPostinstallOutputs } from './ui_postinstall.mjs';
 import { inspectPatchHashDrift, relockPatchHashes, validateRegisteredPatches } from './patch_hash_relock.mjs';
 import { createWorkspaceBuildWaitNotifier } from './workspaceBuildWaitNotifier.mjs';
@@ -506,12 +507,53 @@ export async function markDependencyMutation({ installDir, env = process.env, ou
     outputsChanged: [...new Set([...outputsChanged, output])] });
 }
 
+const INSTALLER_OUTPUT_TAIL_LINES = 5;
+
+// The installer's own report, reduced to the reason a reader acts on. pnpm 12
+// (pacquet) prints a miette report: `× headline`, then a `├─▶`/`╰─▶` cause
+// chain wrapped at the terminal width, usually without an ERR_PNPM_* code.
+// Earlier pnpm prints `ERR_PNPM_<CODE>  reason` as its last lines.
+function summarizeInstallerOutput(output) {
+  const lines = redactFailureDiagnostic(output).split(/\r?\n/u);
+  const headline = lines.findLastIndex(line => /^\s*(?:Error:\s*)?×\s/u.test(line));
+  if (headline === -1) {
+    const tail = lines.map(line => line.trim()).filter(Boolean).slice(-INSTALLER_OUTPUT_TAIL_LINES);
+    return tail.length ? tail.join(' | ') : null;
+  }
+  const causes = [lines[headline].replace(/^\s*(?:Error:\s*)?×\s*/u, '').trim()];
+  for (const line of lines.slice(headline + 1)) {
+    if (!/^\s/u.test(line) || !line.trim()) break;
+    const cause = line.match(/^\s*[│ ]*(?:[├╰]─▶\s*|(?=help:))(.*)$/u);
+    if (cause) { causes.push(cause[1].trim()); continue; }
+    const segment = line.replace(/^\s*│?\s*/u, '').trim();
+    const previous = causes.at(-1);
+    // Wrapping drops the space at a word break, but breaks a path after `/`
+    // and a word longer than the width (a digest) anywhere, without one.
+    const unbroken = previous.endsWith('/') || (previous.match(/\S+$/u)?.[0].length ?? 0) >= 40;
+    causes[causes.length - 1] = `${previous}${unbroken ? '' : ' '}${segment}`;
+  }
+  return causes.filter(Boolean).join(': ');
+}
+
+function installerFailureDiagnostic(error) {
+  // A persisted record replays its stored diagnostic; it carries no output.
+  if (error && Object.hasOwn(error, 'diagnostic')) return error.diagnostic ?? null;
+  if (error?.stderr != null || error?.stdout != null) {
+    return summarizeInstallerOutput(String(error.stderr ?? '').trim() ? error.stderr : error.stdout);
+  }
+  // `run()` appends the captured child output (already redacted) to its message.
+  const message = String(error?.message ?? '');
+  const childOutput = message.match(/\n\[stderr\]\n([\s\S]*)$/u)?.[1] ?? message.match(/\n\[stdout\]\n([\s\S]*)$/u)?.[1];
+  return summarizeInstallerOutput(childOutput ?? message);
+}
+
 export function dependencyInstallationFailure(error) {
   if (error?.code === 'HAPPIER_DEPENDENCY_REFRESH_FAILED' || error?.name === 'AbortError') return error;
   const pnpmErrorCode = [error?.pnpmErrorCode, error?.code, error?.stdout, error?.stderr, error?.message]
     .map(value => String(value ?? '').match(/\bERR_PNPM_[A-Z_]+\b/u)?.[0]).find(Boolean) ?? null;
-  return Object.assign(new Error(`Dependency installation failed (${pnpmErrorCode ?? 'installer-error'}); fix the reported pnpm input error and retry.`, { cause: error }),
-    { code: 'HAPPIER_DEPENDENCY_REFRESH_FAILED', pnpmErrorCode });
+  const diagnostic = installerFailureDiagnostic(error);
+  return Object.assign(new Error(`Dependency installation failed (${pnpmErrorCode ?? 'installer-error'})${diagnostic ? `: ${diagnostic}` : ''}; fix the reported pnpm input error and retry.`, { cause: error }),
+    { code: 'HAPPIER_DEPENDENCY_REFRESH_FAILED', pnpmErrorCode, diagnostic });
 }
 
 export async function removeInstalledDependencyQuarantine(installDir) {
@@ -678,7 +720,8 @@ export async function withDependencyRefresh({
         const generationPath = `${context.lockPath}.generation`;
         const publication = await readJsonIfExists(generationPath);
         await writeJsonAtomic(generationPath, { ...publication,
-          installationFailure: { pnpmErrorCode: failure.pnpmErrorCode, inputIdentity: before.installIdentity,
+          installationFailure: { pnpmErrorCode: failure.pnpmErrorCode, diagnostic: failure.diagnostic ?? null,
+            inputIdentity: before.installIdentity,
             ...(published ? {} : { liveTreeIntact: true }) } });
       }
       throw failure;
