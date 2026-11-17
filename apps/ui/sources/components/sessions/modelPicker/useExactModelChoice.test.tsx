@@ -1,61 +1,91 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
-import { createProviderModelProjectionGroupFixture } from '@/dev/testkit/harness/providerSettingsHarness';
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { createProviderModelProjectionGroupFixture, createProviderSettingsAccountHarness,
+    createProviderSettingsHarness, installBundledProviderDeclarationsRpcBoundary,
+    installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
-// The Provider projection and the experimental-confirmation owners are replaced by controllable
-// stores so the one thing under test is visible: the dialog opened from `open` keeps following what
-// they publish, in the real modal host and the real picker.
-const owners = vi.hoisted(() => {
-  const listeners = new Set<() => void>();
-  const state = {
-    projection: { data: null as unknown, status: 'pending', loading: true, error: null, refresh: async () => {}, refreshFailures: [] as unknown[] },
-    confirm: { confirm: async () => false, pending: false, pendingModelName: null as string | null, pendingApproval: null as unknown, error: null, retry: null, clear: () => {} },
-  };
-  return { state, listeners, set(patch: Partial<typeof state>) { Object.assign(state, patch); for (const l of listeners) l(); } };
-});
-const useStore = <T,>(read: () => T): T => React.useSyncExternalStore((l) => { owners.listeners.add(l); return () => { owners.listeners.delete(l); }; }, read, read);
-vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => true }));
-vi.mock('@/providers/hooks/useProviderSettings', () => ({ useProviderSettingsForServer: () => ({ modelVisibilityByRef: {} }) }));
-vi.mock('@/providers/hooks/useProviderModelProjection', () => ({ useProviderModelProjection: () => useStore(() => owners.state.projection) }));
-vi.mock('@/providers/hooks/useConfirmExperimentalProviderModel', () => ({ useConfirmExperimentalProviderModel: () => useStore(() => owners.state.confirm) }));
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module);
+// Substitute only Home HTTP, daemon Socket transport and platform navigation.
+// Projection publication, the Action/approval owners and modal content remain real.
+const rpc = createProviderSettingsHarness();
+installProviderSettingsRpcBoundary(rpc);
+const account = createProviderSettingsAccountHarness();
 const navigation = createExpoRouterMock();
 vi.doMock('expo-router', () => navigation.module);
-
+await loadSyncSingletonForTests();
 const { useExactModelChoice } = await import('./useExactModelChoice');
-const { ModalProvider, Modal } = await import('@/modal');
+const { ModalProvider } = await import('@/modal');
 
 const agentTargetKey = 'agent:happier.agent.codex/codex';
+const machineId = '6a37defb-c9fd-46bd-8b59-5a341cf630a9';
 const ref = { agentTargetKey, providerConnectionId: 'pc_x', modelId: 'v4-flash' } as const;
 const optionTestId = `model-picker-overlay-option:${JSON.stringify([agentTargetKey, ref.providerConnectionId, ref.modelId])}`;
-const group = createProviderModelProjectionGroupFixture({ connectionId: 'pc_x', connectionRevision: 3, providerName: 'DeepSeek', connectionName: 'DeepSeek', rows: [{
-  ref, descriptor: { id: ref.modelId, name: 'V4 Flash' }, confidence: 'account_unverified', loadState: 'unknown', visibility: 'visible',
-  sources: { manual: true, static: false, probe: false }, endpointHealth: 'not_checked', catalog: { stale: false },
-  compatibility: { compatibilityFingerprint: 'compatibility:v1:x', confirmed: false, result: { status: 'experimental' as const, selectedProtocol: 'openai-responses' as const,
-    reasons: ['compatibility_evidence_missing' as const], confirmationScope: { kind: 'model' as const, modelId: ref.modelId } } },
+const catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, connections: [{
+    v: 1, id: ref.providerConnectionId, source: { kind: 'contribution', contributionKey: 'happier.provider.deepseek/deepseek' },
+    role: 'named', displayName: 'DeepSeek', displayNameMode: 'custom', revision: 3, createdAt: 1, updatedAt: 1,
 }] });
+const projection = DaemonProviderModelProjectionResponseV1Schema.parse({ status: 'success', agentTargetKey,
+    groups: [createProviderModelProjectionGroupFixture({ connectionId: ref.providerConnectionId, connectionRevision: 3,
+        providerName: 'DeepSeek', connectionName: 'DeepSeek', rows: [{
+            ref, descriptor: { id: ref.modelId, name: 'V4 Flash' }, confidence: 'account_unverified', loadState: 'unknown', visibility: 'visible',
+            sources: { manual: true, static: false, probe: false }, endpointHealth: 'not_checked', catalog: { stale: false },
+            compatibility: { compatibilityFingerprint: 'compatibility:v1:x', confirmed: false,
+                result: { status: 'experimental', selectedProtocol: 'openai-responses', reasons: ['compatibility_evidence_missing'],
+                    confirmationScope: { kind: 'model', modelId: ref.modelId } } },
+        }] })], currentSelectionRecovery: null });
 
-let open: ((onSelect: (selection: unknown) => void) => void) | null = null;
-function Host() {
-  // This controlled Account-dialog test has no Machine declaration producer.
-  // Exact-Machine discovery is exercised by useExactModelChoice.machineCatalog.test.tsx.
-  open = useExactModelChoice({ agentTargetKey, agentId: null, machineId: null, serverId: 's', selected: null, title: 'Model', fallbackLabel: 'Choose' }).open as typeof open;
-  return null;
-}
+afterEach(async () => { standardCleanup(); await account.reset(); rpc.reset(); });
 
-describe('exact model dialog follows its owners (controlled)', () => {
-  it('shows rows of a projection that settles after the dialog opened, and the approval it waits on, in the same dialog', async () => {
+it('updates the open exact-model dialog from a delayed projection and confirms its experimental selection', async () => {
+    rpc.state.machines.push(createMachineFixture({ id: machineId, activeAt: Date.now() }));
+    installBundledProviderDeclarationsRpcBoundary(rpc);
+    const { serverId } = await account.restore({ catalog, waivedActions: ['providers.models.refresh'] });
+    await account.home.requireUiApproval(serverId, 'providers.models.experimental.confirm');
+    let releaseProjection!: () => void;
+    const projectionReady = new Promise<void>(resolve => { releaseProjection = resolve; });
+    rpc.intercept(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, async () => {
+        await projectionReady;
+        return projection;
+    });
+    const onSelect = vi.fn();
+    let open!: () => void;
+    function Host() {
+        const choice = useExactModelChoice({ agentTargetKey, agentId: null, machineId, serverId,
+            selected: null, title: 'Model', fallbackLabel: 'Choose' });
+        open = () => choice.open(onSelect);
+        return null;
+    }
     const screen = await renderScreen(<ModalProvider><Host /></ModalProvider>);
-    await act(async () => { open!(vi.fn()); });
+    await waitForHomeGovernance(() => expect(rpc.state.requests.some(request =>
+        request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION)).toBe(true));
+    await act(async () => { open(); });
     expect(screen.findByTestId(optionTestId)).toBeNull();
-    await act(async () => { owners.set({ projection: { ...owners.state.projection, data: { status: 'success', groups: [group], currentSelectionRecovery: null }, status: 'success', loading: false } }); });
-    expect(screen.findByTestId(optionTestId)).not.toBeNull();
-    expect(vi.mocked(Modal.show)).toHaveBeenCalledTimes(1);
-    await act(async () => { owners.set({ confirm: { ...owners.state.confirm, pending: true, pendingModelName: 'V4 Flash', pendingApproval: { artifactId: 'a1', href: '/inbox/approvals/a1' } } }); });
-    expect(screen.findByTestId('model-picker-experimental-approval')).not.toBeNull();
-  });
+    await act(async () => { releaseProjection(); });
+    // Control: the same mounted entry consumes a valid real producer response.
+    await waitForHomeGovernance(() => expect(screen.findByTestId(optionTestId)).not.toBeNull());
+    expect(onSelect).not.toHaveBeenCalled();
+    await act(async () => { screen.pressByTestId(optionTestId); });
+    await waitForHomeGovernance(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+    expect(screen.findByTestId('actions.confirmation-review.decision-approve')?.props.disabled).not.toBe(true);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(account.catalogMutations).toHaveLength(0);
+    // Own UI Ask is answered by the Action's native confirmation, not a retained Artifact.
+    await screen.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+    await waitForHomeGovernance(() => expect(onSelect).toHaveBeenCalledWith(ref));
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(account.catalogMutations).toHaveLength(1);
+    expect(account.catalogMutations[0]).toMatchObject({ content: { t: 'plain', v: {
+        experimentalBindingConfirmations: [{ connectionId: ref.providerConnectionId, agentTargetKey,
+            modelId: ref.modelId, compatibilityFingerprint: 'compatibility:v1:x' }],
+    } } });
+    expect(navigation.spies.push).not.toHaveBeenCalled();
 });
