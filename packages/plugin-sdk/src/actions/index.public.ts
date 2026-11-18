@@ -117,6 +117,7 @@ export { readActionInputOptionValue } from './inputHints.js';
 export { resolveEffectiveActionInputFields } from './inputHints.js';
 export { seedInputByFieldHints } from './inputHints.js';
 
-export { databaseActionLocalIdV1, isDatabaseActionIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+export { databaseActionMetadata, databaseActionOperationClass } from './contracts.js';
+export { databaseActionLocalIdV1, isDatabaseActionIdV1 } from './contracts.js';
 
 export { readExecutionRunStartRunCreation } from './service.js';

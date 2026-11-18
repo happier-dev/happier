@@ -19,3 +19,6 @@ export { AutomationResultDeliveryResultV1Schema } from '../automations.js';
 export type { AutomationResultDeliverySourceV1 } from '../automations.js';
 export { AutomationResultDeliverySourceV1JsonSchema } from '../automations.js';
 export { AutomationResultDeliverySourceV1Schema } from '../automations.js';
+
+export { ProtocolAutomationDatabaseSubjectReadV1Schema, readAutomationDatabaseSubjectV1 } from '../automationDatabaseSubject.js';
+export type { AutomationDatabaseSubjectReadV1 } from '../automationDatabaseSubject.js';

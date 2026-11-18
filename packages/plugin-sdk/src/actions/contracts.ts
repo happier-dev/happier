@@ -1,5 +1,7 @@
 import type { CurrentUiContextSnapshotV1, PluginUiTargetedContributionsV1 } from '@happier-dev/protocol/plugins/ui';
 import type { ActionResolvedSessionTargetsV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
+export { databaseActionLocalIdV1, isDatabaseActionIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+export { databaseActionMetadata, databaseActionOperationClass } from '@happier-dev/protocol/actions/databaseActionMetadata';
 export { isDelegatedActionRequesterV1 } from '@happier-dev/protocol/actions/delegatedRequesterV1';
 
 import type {

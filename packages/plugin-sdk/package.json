@@ -89,6 +89,11 @@
       },
       "default": "./dist/contributions/index.js"
     },
+    "./database": {
+      "happier-source": "./src/database/index.ts",
+      "types": "./dist/database/index.d.ts",
+      "default": "./dist/database/index.js"
+    },
     "./errors": {
       "happier-source": "./src/errors/index.ts",
       "types": "./dist/errors/index.d.ts",
@@ -289,6 +294,11 @@
         "default": "./dist/ui/client/index.js"
       },
       "default": "./dist/ui/client/index.js"
+    },
+    "./usage": {
+      "happier-source": "./src/usage/index.ts",
+      "types": "./dist/usage/index.d.ts",
+      "default": "./dist/usage/index.js"
     },
     "./voice": {
       "happier-source": "./src/voice/index.ts",
