@@ -210,7 +210,10 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const [railReportsVacant, setRailVacant] = React.useState(false);
     // The column goes only where the rail's More has another home, so its panels and Customize stay reachable.
     const railVacant = railReportsVacant && railTail?.railMoreHost != null;
-    const panelContainerWidthPx = Math.max(0, hostWidthPx - (props.actionRail != null && !railVacant ? PANE_ACTION_RAIL_WIDTH : 0));
+    const railWidthPx = props.actionRail != null ? PANE_ACTION_RAIL_WIDTH : 0;
+    // An open Details can acquire a companion after it renders. Budget for the rail from
+    // the start so that filling it cannot switch the pane from docked to overlay.
+    const dockContainerWidthPx = Math.max(0, hostWidthPx - (detailsOpen || !railVacant ? railWidthPx : 0));
     const mainMinPx = requestedMainHidden ? 0 : (props.mainMinWidthPx ?? PANE_SIZING_DEFAULTS.mainMinPx);
     // With both side panes docked the canonical main column may run a little narrower; a caller's
     // own minimum is the content's real floor and holds in every layout.
@@ -226,12 +229,12 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         storedPx: detailsPaneWidthPx ?? details.minPx,
         storedDefaultPx: localSettingsDefaults.detailsPaneWidthPx,
         destinationPreferredPx: props.detailsPreferredWidthPx,
-        budgetMaxPx: panelContainerWidthPx - mainMinPx,
+        budgetMaxPx: dockContainerWidthPx - mainMinPx,
     }));
     const storedEffectiveRightDockWidthPx = Math.max(right.minPx, resolveRightDockPreferredPx({
         storedPx: rightPaneWidthPx ?? right.defaultPx,
         storedDefaultPx: localSettingsDefaults.rightPaneWidthPx,
-        containerWidthPx: panelContainerWidthPx,
+        containerWidthPx: dockContainerWidthPx,
         mainReadingWidthPx,
         besidePx: detailsOpen ? storedEffectiveDetailsDockWidthPx : 0,
     }));
@@ -252,10 +255,10 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const singlePaneBudgetMaxPx = React.useMemo(() => {
         const clamp = (value: number, minPx: number, maxPx: number) => Math.min(maxPx, Math.max(minPx, value));
         return {
-            rightMax: clamp(panelContainerWidthPx - mainMinPx, right.minPx, right.maxPx),
-            detailsMax: clamp(panelContainerWidthPx - mainMinPx, details.minPx, details.maxPx),
+            rightMax: clamp(dockContainerWidthPx - mainMinPx, right.minPx, right.maxPx),
+            detailsMax: clamp(dockContainerWidthPx - mainMinPx, details.minPx, details.maxPx),
         };
-    }, [panelContainerWidthPx, details.maxPx, details.minPx, mainMinPx, right.maxPx, right.minPx]);
+    }, [dockContainerWidthPx, details.maxPx, details.minPx, mainMinPx, right.maxPx, right.minPx]);
     const rightPrefersOverlay = right.overlayWhenWiderThanBudget
         && (rightDragWidthPx != null || storedEffectiveRightDockWidthPx > singlePaneBudgetMaxPx.rightMax + 1);
     const detailsPrefersOverlay = details.overlayWhenWiderThanBudget
@@ -264,7 +267,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const paneLayoutInput = {
         arrangement,
         sessionWidthPx: sessionDragWidthPx ?? sessionColumnWidthPx ?? PANE_SIZING_DEFAULTS.session.defaultPx,
-        containerWidthPx: panelContainerWidthPx,
+        containerWidthPx: dockContainerWidthPx,
         deviceType: multiPaneDeviceType,
         multiPaneEnabled,
         rightOpen,
@@ -313,7 +316,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
             reportRailRectValue(width > 0 && height > 0 ? { x, y, width, height } : null);
         });
     }, [reportRailRectValue]);
-    const containerWidthPx = destinationDetailOnly ? Math.max(0, hostWidthPx) : panelContainerWidthPx;
+    const containerWidthPx = destinationDetailOnly || railVacant ? Math.max(0, hostWidthPx) : dockContainerWidthPx;
     const effectiveBottomPresentation = destinationDetailOnly ? 'hidden' : resolvedBottomLayout.presentation;
 
     const bottomStoredMaxHeightPxForSizing =
@@ -344,7 +347,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         arrangement,
         sessionWidthPx: sessionDragWidthPx ?? sessionColumnWidthPx ?? PANE_SIZING_DEFAULTS.session.defaultPx,
         mainDocked: !mainHidden && resolvedLayout.main === 'docked',
-        containerWidthPx,
+        containerWidthPx: destinationDetailOnly ? containerWidthPx : dockContainerWidthPx,
         mainMinPx,
         rightMinPx: right.minPx,
         detailsMinPx: details.minPx,
@@ -503,7 +506,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     detailsDockBudgetRef.current = {
         budgetPx: Math.max(
             details.minPx,
-            containerWidthPx - mainMinPx - (resolvedLayout.right === 'docked' && rightPane ? effectivePaneSizing.rightWidthPx : 0),
+            dockContainerWidthPx - mainMinPx - (resolvedLayout.right === 'docked' && rightPane ? effectivePaneSizing.rightWidthPx : 0),
         ),
         docked: resolvedLayout.details === 'docked',
     };

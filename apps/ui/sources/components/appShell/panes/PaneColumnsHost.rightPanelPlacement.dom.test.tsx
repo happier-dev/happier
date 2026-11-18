@@ -241,6 +241,56 @@ it('gives a vacant rail no column only where its More has a home in the title st
     expect(moreHost).toBeNull();
 });
 
+it.each([
+    { storedWidth: 680, placement: 'overlay' },
+    { storedWidth: 640, placement: 'docked' },
+])('keeps Details $placement when a late companion fills the action rail', async ({ storedWidth, placement }) => {
+    const { container, root } = mountRoot();
+    const { getStorage } = await import('@/sync/domains/state/storage');
+    const { PaneActionRailContext } = await import('./PaneActionRailContext');
+    const { AppShellTitleMoreSlot } = await import('@/components/navigation/shell/appShellTail');
+    const storage = getStorage();
+    const previousSettings = storage.getState().localSettings;
+    storage.setState({ localSettings: { ...previousSettings, detailsPaneWidthPx: storedWidth } });
+    cleanups.push(async () => { storage.setState({ localSettings: previousSettings }); });
+
+    function Rail({ companion }: Readonly<{ companion: boolean }>) {
+        const report = React.useContext(PaneActionRailContext)?.onVacantChange;
+        React.useLayoutEffect(() => { report?.(!companion); }, [report, companion]);
+        return companion ? <button>Session companion</button> : null;
+    }
+    const render = (open: boolean, companion: boolean) => act(async () => root.render(
+        <AppShellMaterialFrame showChrome dragEnabled={false} leftOffsetPx={0} sidebarWidth={320}
+            titleStrip={<AppShellTitleMoreSlot />} rail={null} column={<div />} peek={null}>
+            <PaneColumnsHost testID="details-columns" main={<div />} destinationOwnsDetails
+                detailsPane={open ? <input data-testid="triage-details" /> : null}
+                actionRail={<Rail companion={companion} />} />
+        </AppShellMaterialFrame>,
+    ));
+    const query = (id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+    await render(false, false);
+    // A 1440 px viewport with the sidebar open leaves 1120 px for this host.
+    const host = query('details-columns') as HTMLElement & {
+        __reactLayoutHandler: (event: { nativeEvent: { layout: { width: number; height: number } } }) => void;
+    };
+    await act(async () => host.__reactLayoutHandler({ nativeEvent: { layout: { width: 1120, height: viewport.height } } }));
+    await render(true, false);
+    const rail = document.querySelector<HTMLElement>('[data-testid="pane-action-rail-column"]')!;
+    expect(getComputedStyle(rail).display).toBe('none');
+    const readPlacement = () => query('triage-details')?.closest('[data-testid^="multi-pane-details-"]')?.dataset.testid;
+    const beforeCompanion = readPlacement();
+    const detail = query('triage-details');
+
+    await render(true, true);
+    expect(getComputedStyle(rail).display).not.toBe('none');
+    expect(rail.textContent).toContain('Session companion');
+    expect([beforeCompanion, readPlacement()]).toEqual([
+        `multi-pane-details-${placement}`,
+        `multi-pane-details-${placement}`,
+    ]);
+    expect(query('triage-details')).toBe(detail);
+});
+
 // Owner 2026-11-11 (desktop #25a): the right rail stands on the chrome coat like the app rail, never on a content plate.
 it('backs an in-page action rail with the chrome coat, not a content plate', async () => {
     const { root } = mountRoot();
