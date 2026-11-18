@@ -88,6 +88,15 @@ export function createWorkflowRunMachineTransport(input: Readonly<{
         }
         return await input.transport.machineServiceAction!(request);
       } } : {}),
+      // A Restart step reboots its own Machine at the installed lifecycle owner
+      // with the Run's captured Home admission, as invoke does. Machine RPC would
+      // drop the stamped Run id that excludes this Run's own live work.
+      ...(input.transport.machineReboot ? { machineReboot: async request => {
+        const prepared = await prepare(request.context);
+        if (!prepared) return { kind: 'unavailable' as const, reason: 'admission_unavailable' as const };
+        return await input.transport.machineReboot!({ ...request, context: { ...request.context,
+          machineAdmission: prepared.machineAdmission, verifyMachineAdmissionCurrent: input.isCurrent } });
+      } } : {}),
       invoke: async (method, request, options) => {
         // Startup observation and retained-operation recovery already belong to
         // this captured Run, even when they have no local Action context.

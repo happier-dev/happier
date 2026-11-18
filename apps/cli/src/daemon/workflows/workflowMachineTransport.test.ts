@@ -158,6 +158,7 @@ describe('Workflow Run native Machine admission', () => {
     // The installed receiver: real RPC admission and the real registrars. Native
       // launch is the system boundary below the admission gates under test.
       const finiteAdmissions: unknown[] = [];
+      const reboots: Readonly<Record<string, unknown>>[] = [];
       let runStarts = 0;
       const rpc = new RpcHandlerManager({
         scopePrefix: machineId,
@@ -230,6 +231,12 @@ describe('Workflow Run native Machine admission', () => {
           machineId,
           invoke: (method, request, options) =>
             rpc.invokeLocal(method, request, options),
+          // The installed reboot lifecycle owner (apiMachine.executeMachineRebootAction)
+          // is the receiver; its caller-Run exclusion reads the stamped Run id.
+          machineReboot: async (request) => {
+            reboots.push(request.context);
+            return { kind: 'accepted', bootedAt: 1 };
+          },
         },
       });
       onTestFinished(async () => {
@@ -278,8 +285,21 @@ describe('Workflow Run native Machine admission', () => {
           localActionContext(attempt),
         );
 
+      // REBOOT-RECIPE: a Restart-when-needed step reboots its own Machine through
+      // the installed lifecycle owner, never back over Machine RPC, which drops
+      // the Run identity that excludes this Run's own live work.
+      const rebootStep = (attempt: number, stepRunId = runId) =>
+        workflowTransport.transport.machineReboot!({
+          input: { serverId: homeId, machineId, expectedInstallationId: installationId },
+          context: { ...localActionContext(attempt).localActionContext, executionRunWorkflowRunId: stepRunId },
+        });
+
       onTestFinished(() => { expect(unhandledHttp).toEqual([]); });
+      expect(await rebootStep(90, crypto.randomUUID())).toEqual({ kind: 'unavailable', reason: 'admission_unavailable' });
+      expect(reboots).toEqual([]);
     if (access === 'refused') {
+        expect(await rebootStep(91)).toEqual({ kind: 'unavailable', reason: 'admission_unavailable' });
+        expect(reboots).toEqual([]);
         expect(await finiteStep(0)).toMatchObject({
           ok: false,
           errorCode: 'project_requester_credentials_unavailable',
@@ -312,6 +332,13 @@ describe('Workflow Run native Machine admission', () => {
           errorCode: 'native_launch_boundary',
         });
         expect(runStarts).toBe(1);
+        expect(await rebootStep(3)).toEqual({ kind: 'accepted', bootedAt: 1 });
+        expect(reboots).toEqual([expect.objectContaining({
+          executionRunWorkflowRunId: runId,
+          machineAdmission: expect.objectContaining({ actorAccountId: accountId, custodianAccountId: accountId,
+            machineId, installationId, role: 'manage' }),
+          verifyMachineAdmissionCurrent: expect.any(Function),
+        })]);
       } else {
         // A guest's Run keeps its own requester custody; it never borrows the
         // custodian's Account for the work it starts on the shared Machine.

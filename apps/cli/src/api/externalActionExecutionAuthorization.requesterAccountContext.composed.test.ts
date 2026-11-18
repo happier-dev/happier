@@ -56,6 +56,8 @@ import { createLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV
 import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { AccountSettingsV2HistoryListResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { handleActionsCommand } from '@/cli/commands/actions';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/captureOutput';
 import { listCompiledActionCliCommands } from '@/cli/actions/compiledCommands';
 import { runCompiledActionCliCommand } from '@/cli/actions/executeCommand';
@@ -325,6 +327,24 @@ it('requires installed requester custody for private deployment observation read
   expect(requiresOriginalAccountMachineActionProof('deployments.observation.get', {
     serverId: 'home', environmentId: 'environment', targetLinkId: 'runtime',
   })).toBe(true);
+});
+
+// QUERY: an own-local CLI must not skip Home for a database operation on a deployment target. Only the
+// Home-minted root carries the deployment read admission that the data-role secret launch spends.
+it('routes a deployment database operation through Home admission even on the daemon\'s own Machine', () => {
+  const statement = parseQualifiedPluginActionId(DATABASE_STATEMENT_RUN_ACTION_ID_V1);
+  const targets = parseQualifiedPluginActionId(DATABASE_TARGETS_LIST_ACTION_ID_V1);
+  if (!statement || !targets) throw new Error('Expected canonical database Action identities');
+  const environment = { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' };
+  const target = { kind: 'deployment_service', environment, deploymentId: 'deployment', targetLinkId: 'runtime',
+    serviceId: 'database', database: 'app' };
+  expect(requiresOriginalAccountMachineActionProof('action.invoke', { action: statement, input: {
+    operation: 'statement.run', target, mode: 'read', statement: { sql: 'SELECT 1', parameters: [] } } })).toBe(true);
+  // Listing targets opens no data role; a non-deployment plugin Action keeps its local root.
+  expect(requiresOriginalAccountMachineActionProof('action.invoke', { action: targets, input: {
+    scope: { kind: 'environment', environment } } })).toBe(false);
+  expect(requiresOriginalAccountMachineActionProof('action.invoke', { action: { pluginId: 'happier.example', localId: 'echo' },
+    input: { target } })).toBe(false);
 });
 
 it.each(['cli', 'ui'] as const)('enrolls real failure observers after admitted Link without Project requester authority (%s)', async surface => {

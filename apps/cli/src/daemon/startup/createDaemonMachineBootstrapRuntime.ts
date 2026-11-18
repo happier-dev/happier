@@ -688,6 +688,7 @@ export function createDaemonMachineBootstrapRuntime(
             ...(claim.signal ? { signal: claim.signal } : {}),
             transport: { machineId: runtimeMachineId,
               machineServiceAction: request => automationApiMachine.executeMachineServiceAction(request),
+              machineReboot: request => automationApiMachine.executeMachineRebootAction(request),
               invoke: (method, request, options) => automationApiMachine.invokeLocalMachineAction(method, request, options) },
             runActionOperation: request => automationApiMachine.runActionOperation(request),
           });
@@ -738,6 +739,7 @@ export function createDaemonMachineBootstrapRuntime(
               getObservedServerIdentityId: async () => await params.resolveCurrentServerIdentityId?.() ?? null },
             transport: { machineId: runtimeMachineId,
               machineServiceAction: request => automationApiMachine.executeMachineServiceAction(request),
+              machineReboot: request => automationApiMachine.executeMachineRebootAction(request),
               invoke: (method, request, options) => automationApiMachine.invokeLocalMachineAction(method, request, options) },
           });
           try {
