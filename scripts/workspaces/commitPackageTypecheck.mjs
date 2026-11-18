@@ -374,7 +374,42 @@ function treeTypechecker({ repo, state, env, log, compile = compileScope, bootst
     }
     return rows;
   };
-  return { rowsAt, timings };
+  /** Rows for several trees; with a worker, every tree's missing packages travel in one request (one dispatch, one
+   * admission: about 70 s of dispatch per request on nl1, 2026-11-18, against a 10-30 s Protocol compile). */
+  const rowsAtMany = requests => {
+    if (!remote) return requests.map(({ treeId, packages, side }) => rowsAt(treeId, packages, side));
+    const cached = requests.map(({ treeId, packages, side }) => {
+      const rows = new Map();
+      const missing = [];
+      for (const dir of packages) {
+        try { rows.set(dir, JSON.parse(readFileSync(resultCachePath(state, treeId, dir), 'utf8')).rows); } catch { missing.push(dir); }
+      }
+      return { treeId, side, rows, missing };
+    });
+    const pending = cached.filter(entry => entry.missing.length);
+    if (pending.length) {
+      const started = Date.now();
+      const dirs = [...new Set(pending.flatMap(entry => entry.missing))];
+      const fetched = remote(pending.map(entry => entry.treeId), dirs, pending.map(entry => entry.side));
+      const ms = Date.now() - started;
+      timings.push({ side: pending.map(entry => entry.side).join('+'), step: 'worker', ms });
+      for (const entry of pending) {
+        for (const dir of entry.missing) {
+          const workerRows = fetched?.get(entry.treeId)?.get(dir);
+          log(`[commit-package-typecheck] ${entry.side} ${dir} worker ${(ms / 1000).toFixed(1)}s ${workerRows ? `${workerRows.length} diagnostics` : 'incomplete'}`);
+          entry.rows.set(dir, workerRows);
+          if (workerRows) {
+            const path = resultCachePath(state, entry.treeId, dir);
+            mkdirSync(resolve(path, '..'), { recursive: true });
+            writeFileSync(`${path}.tmp`, JSON.stringify({ tree: entry.treeId, package: dir, rows: workerRows, ms }));
+            renameSync(`${path}.tmp`, path);
+          }
+        }
+      }
+    }
+    return cached.map(entry => entry.rows);
+  };
+  return { rowsAt, rowsAtMany, timings };
 }
 
 /** App baseline: per file and error code. Where the head has more rows than the base, the excess (its
@@ -433,9 +468,9 @@ export async function commitPackageTypecheck({ repo, base, tree, env = process.e
     : await withWorkspaceBundleLock(action, { lockPath: join(state, 'worktree.lock'), timeoutMs: null });
   return await locked(async () => {
     const lockWaitMs = Date.now() - started;
-    const { rowsAt, timings } = treeTypechecker({ repo, state, env, log, remote });
-    const baseRows = rowsAt(trees.base, selection.packages, 'base');
-    const headRows = rowsAt(trees.head, selection.packages, 'head');
+    const { rowsAtMany, timings } = treeTypechecker({ repo, state, env, log, remote });
+    const [baseRows, headRows] = rowsAtMany([{ treeId: trees.base, packages: selection.packages, side: 'base' },
+      { treeId: trees.head, packages: selection.packages, side: 'head' }]);
     const compared = freshBetween(git, trees.base, trees.head, selection.packages, baseRows, headRows);
     const fresh = compared.fresh.map(({ dir, row }) => ({ ...row, package: dir }));
     // A candidate no worker judged (unreachable, no rows) is not the candidate's doing: unavailable, never refused.
@@ -703,8 +738,15 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
   const git = gitAt(repo);
   const commitEnv = { ...gitEnv(), GIT_AUTHOR_NAME: 'rolling-typecheck', GIT_AUTHOR_EMAIL: 'rolling-typecheck@invalid', GIT_AUTHOR_DATE: '1970-01-01T00:00:00Z',
     GIT_COMMITTER_NAME: 'rolling-typecheck', GIT_COMMITTER_EMAIL: 'rolling-typecheck@invalid', GIT_COMMITTER_DATE: '1970-01-01T00:00:00Z' };
+  // `(treeId, dirs, side)` -> Map dir -> rows; `([treeIds], dirs, [sides])` -> Map treeId -> (Map dir -> rows), all trees in
+  // one push and one worker request.
   return (treeId, dirs, side) => {
-    const none = new Map(dirs.map(dir => [dir, undefined]));
+    const many = Array.isArray(treeId);
+    const treeIds = many ? treeId : [treeId];
+    const sides = many ? side : [side];
+    const label = sides.join('+');
+    const unjudged = () => new Map(dirs.map(dir => [dir, undefined]));
+    const none = many ? new Map(treeIds.map(id => [id, unjudged()])) : unjudged();
     for (const worker of workers) {
       const ssh = workerSsh(repo, worker, env);
       if (!ssh) { log(`[rolling-head-typecheck] worker ${worker}: no SSH target in this checkout's execution projection`); continue; }
@@ -723,8 +765,12 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
           { cwd: repo, encoding: 'utf8', env: { ...gitEnv(), GIT_SSH_COMMAND: sshCommand } });
         parent = (listed.status === 0 ? listed.stdout : '').split('\n').map(line => line.split('\t')[0]).find(rev => rev && known(rev)) ?? '';
       }
-      const commit = parent && git(['rev-parse', `${parent}^{tree}`]).trim() === treeId ? parent
-        : git(['commit-tree', treeId, ...(parent ? ['-p', parent] : []), '-m', `rolling typecheck tree ${treeId}`], { env: commitEnv }).trim();
+      // The trees chain in request order, so one push of the last carries them all.
+      let commit = parent;
+      for (const id of treeIds) {
+        commit = commit && git(['rev-parse', `${commit}^{tree}`]).trim() === id ? commit
+          : git(['commit-tree', id, ...(commit ? ['-p', commit] : []), '-m', `rolling typecheck tree ${id}`], { env: commitEnv }).trim();
+      }
       // A push may replace the ref with an unrelated chain (another controller state). A worker whose system git sets
       // core.sharedRepository makes init write receive.denyNonFastForwards=true, which rejected every push
       // after the first (nl3, 2026-11-17 14:18Z onward: ~60 s lost per tree before falling back to nl1).
@@ -732,18 +778,19 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
       const push = init.status === 0 && spawnSync('git', ['push', '--quiet', '--force', `${ssh.alias}:${remoteRepo}`, `${commit}:refs/heads/${ref}`],
         { cwd: repo, encoding: 'utf8', env: { ...gitEnv(), GIT_SSH_COMMAND: sshCommand } });
       if (!push || push.status !== 0) {
-        log(`[rolling-head-typecheck] worker ${worker} unreachable for ${side}: ${((init.status === 0 ? push?.stderr : init.stderr) || '').trim().split('\n').at(-1) ?? ''}`);
+        log(`[rolling-head-typecheck] worker ${worker} unreachable for ${label}: ${((init.status === 0 ? push?.stderr : init.stderr) || '').trim().split('\n').at(-1) ?? ''}`);
         continue;
       }
       writeFileSync(`${tipPath}.${process.pid}`, commit);
       renameSync(`${tipPath}.${process.pid}`, tipPath);
       const run = spawnSync(join(repo, 'apps/stack/bin/hstack-exec'), [`--target=${worker}`, '--', 'node', entry,
-        '--worker-rows', `--slug=${slug}`, ...(lane ? [`--lane=${lane}`] : []), `--ref=${ref}`, `--scope=${scope}`, `--tree=${treeId}`, `--packages=${dirs.join(',')}`, `--side=${side}`],
+        '--worker-rows', `--slug=${slug}`, ...(lane ? [`--lane=${lane}`] : []), `--ref=${ref}`, `--scope=${scope}`, `--tree=${treeIds.join(',')}`, `--packages=${dirs.join(',')}`, `--side=${sides.join(',')}`],
       { cwd: repo, encoding: 'utf8', maxBuffer: 2 ** 31 - 1, stdio: ['ignore', 'pipe', 'inherit'] });
       const line = (run.stdout ?? '').split('\n').find(entry => entry.startsWith(WORKER_ROWS));
-      if (!line) { log(`[rolling-head-typecheck] worker ${worker} returned no rows for ${side} (exit ${run.status ?? run.signal})`); return none; }
+      if (!line) { log(`[rolling-head-typecheck] worker ${worker} returned no rows for ${label} (exit ${run.status ?? run.signal})`); return none; }
       const fetched = JSON.parse(line.slice(WORKER_ROWS.length));
-      return new Map(dirs.map(dir => [dir, Array.isArray(fetched[dir]) ? fetched[dir] : null]));
+      const byTree = new Map(treeIds.map(id => [id, new Map(dirs.map(dir => [dir, Array.isArray(fetched[id]?.[dir]) ? fetched[id][dir] : null]))]));
+      return many ? byTree : byTree.get(treeId);
     }
     return none;
   };
@@ -760,9 +807,10 @@ async function workerRows(argv, entry) {
   const slugState = join(homedir(), WORKER_STATE, option('slug'));
   if (option('lane') && !/^[a-z]+$/u.test(option('lane'))) { console.error('[rolling-head-typecheck] --lane must be lowercase letters'); return 2; }
   const state = option('lane') ? join(slugState, `lane-${option('lane')}`) : slugState;
-  const request = { tree: option('tree'), packages: option('packages').split(',').filter(Boolean), side: option('side'), repo: join(slugState, 'repo.git'), ref: option('ref') || 'rolling' };
+  const request = { trees: option('tree').split(',').filter(Boolean), packages: option('packages').split(',').filter(Boolean),
+    sides: option('side').split(','), repo: join(slugState, 'repo.git'), ref: option('ref') || 'rolling' };
   const scope = option('scope') || 'packages';
-  if (!option('slug') || !request.tree || !request.packages.length) { console.error('[rolling-head-typecheck] --worker-rows needs --slug, --tree and --packages'); return 2; }
+  if (!option('slug') || !request.trees.length || !request.packages.length) { console.error('[rolling-head-typecheck] --worker-rows needs --slug, --tree and --packages'); return 2; }
   const payload = [process.execPath, ...process.execArgv, entry, '--compiler-admitted'];
   mkdirSync(state, { recursive: true });
   return await withWorkspaceBundleLock(async () => {
@@ -902,13 +950,14 @@ export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(imp
   for (const name of ['GIT_INDEX_FILE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR']) delete process.env[name];
   if (argv.includes('--worker-rows')) return await workerRows(argv, entry);
   if (argv.includes('--compiler-admitted') && process.env.HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST) {
-    // Admitted on the worker: rows for one shipped tree, compiled in the worker's warm worktree.
+    // Admitted on the worker: rows for the shipped trees, compiled in turn in the worker's warm worktree.
     const state = process.env.HAPPIER_COMMIT_TYPECHECK_DIR;
     const request = JSON.parse(process.env.HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST);
     const { rowsAt } = treeTypechecker({ repo: request.repo ?? join(state, 'repo.git'), state, env: process.env,
       log: message => process.stderr.write(`${message}\n`), worktreeRev: request.ref ?? 'rolling' });
-    const rows = rowsAt(request.tree, request.packages, request.side);
-    process.stdout.write(`${WORKER_ROWS}${JSON.stringify(Object.fromEntries(rows))}\n`);
+    const byTree = Object.fromEntries(request.trees.map((tree, index) =>
+      [tree, Object.fromEntries(rowsAt(tree, request.packages, request.sides[index] || tree.slice(0, 10)))]));
+    process.stdout.write(`${WORKER_ROWS}${JSON.stringify(byTree)}\n`);
     return 0;
   }
   if (argv.includes('--compiler-admitted') && process.env.HAPPIER_COMMIT_TYPECHECK_ROLLING === '1') {

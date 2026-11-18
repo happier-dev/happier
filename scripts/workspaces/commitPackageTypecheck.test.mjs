@@ -435,9 +435,10 @@ test('the commit gate refuses only diagnostics the packet adds over its parent; 
   const rowsByTree = new Map();
   const requests = [];
   let reachable = true;
-  const remote = (treeId, dirs) => {
-    requests.push(treeId);
-    return new Map(dirs.map(dir => [dir, reachable ? rowsByTree.get(treeId) ?? [] : undefined]));
+  // Several trees travel in one request: the answer is then keyed by tree.
+  const remote = (treeIds, dirs) => {
+    requests.push(treeIds);
+    return new Map(treeIds.map(treeId => [treeId, new Map(dirs.map(dir => [dir, reachable ? rowsByTree.get(treeId) ?? [] : undefined]))]));
   };
   const known = { file: 'packages/plugins/codex/src/index.ts', line: 1, column: 1, code: 2339, text: 'known at the base' };
   const base = await commit('packages/plugins/codex/src/index.ts', 'export const value = 11;\n');
@@ -453,8 +454,9 @@ test('the commit gate refuses only diagnostics the packet adds over its parent; 
   rowsByTree.set(git('rev-parse', `${moved}^{tree}`), [{ ...known, line: 2 }]);
   assert.equal(commitPackageTypecheckRefuses(await commitGateTypecheck({ repo, base: `${moved}^`, tree: moved, env, remote, log: () => {} })), false);
   // The parent's rows come from the result cache when this host judged that tree before.
-  const cachedBase = requests.filter(tree => tree === git('rev-parse', `${broken}^{tree}`)).length;
-  assert.equal(cachedBase, 1, 'a tree is fetched from the worker once');
+  assert.ok(requests.every(trees => trees.length >= 1), 'one worker request per check');
+  assert.deepEqual(requests[0].length, 2, 'base and head travel in one request');
+  assert.equal(requests.flat().filter(tree => tree === git('rev-parse', `${broken}^{tree}`)).length, 1, 'a tree is fetched from the worker once');
   // No worker could judge: unavailable, printed, not refused (the rolling owner still covers it).
   reachable = false;
   const later = await commit('packages/plugins/codex/src/index.ts', '// moved\nexport const value = 12;\n');
