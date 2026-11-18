@@ -21,6 +21,7 @@ import {
 } from '@happier-dev/protocol/inputs/usageQuery';
 import {
   allocateUsageOutcomes,
+  summarizeUsageMergedOutcomes,
   UsageWorkProjectionSchema,
   type UsageWorkContribution,
   type UsageWorkEvidence,
@@ -1163,7 +1164,7 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.getTextContent()).toContain('2493');
   });
 
-  it('skips monetary work for 3800 no-PR contributions while retaining the caption, retry and Session commands', async () => {
+  it('keeps unread PR evidence unknown in both styles without reading money or losing Session commands', async () => {
     const navigation = vi.spyOn(router, 'push');
     try {
     const bare = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
@@ -1176,20 +1177,19 @@ describe('Work and Coach widget bodies', () => {
     });
     const refresh = vi.fn(async () => {});
     const caption = vi.fn();
+    const unread = { ...slice, work: bare, sources: [{ source: 'work', status: 'error' }] } satisfies UsageQueryResultSlice;
     const reader = React.createRef<ReturnType<typeof useOptionalCurrentUiContextReader>>();
     function Outcomes() {
       reader.current = useOptionalCurrentUiContextReader();
-      return <UsageOutcomesWidget {...props} model={{ refresh }} slice={{ ...slice, work: bare,
-        sources: [{ source: 'work', status: 'error' }] }} id="usage_outcomes" testID="outcomes" />;
+      return <UsageOutcomesWidget {...props} model={{ refresh }} slice={unread} id="usage_outcomes" testID="outcomes" />;
     }
     const screen = await renderScreen(<WidgetFrameBodyCaptionContext.Provider value={caption}>
       <Outcomes />
     </WidgetFrameBodyCaptionContext.Provider>);
     expect(screen.findByTestId('outcomes.funnel')).toBeFalsy();
-    expect(screen.findByTestId('outcomes.noPrs')).toBeTruthy();
-    // A measured zero beside its "0 pull requests" caption is one quiet line, never a page-size empty state (USAGE-ACCEPT #5).
-    expect(screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'outcomes.noPrs')?.props.size).toBe('line');
-    expect(caption).toHaveBeenLastCalledWith(t('usage.board.work.outcomesCaption', { count: 0 }));
+    expect(screen.findByTestId('outcomes.noPrs')).toBeFalsy();
+    expect(screen.findByTestId('outcomes.workUnavailable')).toBeTruthy();
+    expect(caption).not.toHaveBeenLastCalledWith(t('usage.board.work.outcomesCaption', { count: 0 }));
     await act(async () => { await screen.findByType(SurfaceFreshnessLine).props.action.onPress(); });
     expect(refresh).toHaveBeenCalledOnce();
     const commands = reader.current!.readCurrentUiContext()!.commands.filter(row => row.title.startsWith(`${t('common.open')}: `));
@@ -1203,7 +1203,26 @@ describe('Work and Coach widget bodies', () => {
       routes.push(new URL(String(navigation.mock.calls.at(-1)?.[0]), 'https://usage.test').pathname);
     }
     expect(routes.sort()).toEqual(['/session/s1/usage', '/session/s2/usage']);
-    expect(moneyReads, 'the no-PR presentation has no monetary consumer').toBe(0);
+    const shipped = await renderScreen(<UsageOutcomesWidget {...props} slice={unread}
+      presentation={{ style: 'shipped' }} id="usage_outcomes" testID="shipped" />);
+    expect(shipped.findByTestId('shipped.unavailable')).toBeTruthy();
+    expect(shipped.findByTestId('shipped.empty')).toBeFalsy();
+    const workRead = { ...unread, sources: slice.sources };
+    await shipped.update(<UsageOutcomesWidget {...props} slice={workRead}
+      presentation={{ style: 'shipped' }} id="usage_outcomes" testID="shipped" />);
+    expect(shipped.findByTestId('shipped.unavailable')).toBeTruthy();
+    expect(shipped.findByTestId('shipped.empty')).toBeFalsy();
+    const mergedOutcomes = summarizeUsageMergedOutcomes({
+      work: bare, period: { startMs: 0, endMs: 1000 }, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes,
+    });
+    await shipped.update(<UsageOutcomesWidget {...props} slice={{ ...workRead, mergedOutcomes }}
+      presentation={{ style: 'shipped' }} id="usage_outcomes" testID="shipped" />);
+    expect(shipped.findByTestId('shipped.empty')).toBeTruthy();
+    const measured = await renderScreen(<UsageOutcomesWidget {...props} slice={workRead}
+      id="usage_outcomes" testID="measured" />);
+    expect(measured.findByTestId('measured.noPrs')).toBeTruthy();
+    expect(measured.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'measured.noPrs')?.props.size).toBe('line');
+    expect(moneyReads, 'neither unavailable nor measured-empty Outcomes reads money').toBe(0);
     } finally { navigation.mockRestore(); }
   });
 

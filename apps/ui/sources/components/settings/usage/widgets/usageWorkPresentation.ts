@@ -3,6 +3,7 @@ import type { UsageAnalyticsTokens } from '@happier-dev/protocol/usage/usageAnal
 import { resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFacts';
 import type { RepositoryCheckpointCommitEvidence } from '@happier-dev/protocol/sessions/changes/types';
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm';
 import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 import type {
@@ -121,14 +122,26 @@ function sessionIdentity(sessionId: string, row: SessionIdentityAccumulator): Us
 }
 
 type UsageWorkOutcomesPresentation = Readonly<{ kind: 'ready' }> | Readonly<{
-  kind: 'unavailable' | 'empty' | 'noPrs';
+  kind: 'reading' | 'unavailable' | 'empty' | 'noPrs';
   sessions: readonly UsageWorkSessionIdentity[];
   machineIds: readonly string[];
 }>;
 
+export function readUsageWorkOutcomesEvidence(
+  slice: UsageQueryResultSlice, projection: 'work' | 'mergedOutcomes',
+): 'observed' | 'reading' | 'unavailable' {
+  const status = slice.sources.find(source => source.source === 'work')?.status;
+  // A settled Work read alone cannot answer a style whose exact projection is absent.
+  if (slice[projection] && (slice.mergedOutcomes || slice.workSummary
+    || status === 'available' || status === 'partial' || status === 'stale')) return 'observed';
+  return status === 'pending' || status === 'not_loaded' ? 'reading' : 'unavailable';
+}
+
 /** Empty Outcomes consumes identities and evidence, never monetary or Project detail. */
-export function readUsageWorkOutcomesPresentation(work: UsageWorkProjection | undefined): UsageWorkOutcomesPresentation {
-  if (!work) return { kind: 'unavailable', sessions: [], machineIds: [] };
+export function readUsageWorkOutcomesPresentation(slice: UsageQueryResultSlice): UsageWorkOutcomesPresentation {
+  const { work } = slice;
+  const evidence = readUsageWorkOutcomesEvidence(slice, 'work');
+  if (!work) return { kind: evidence === 'observed' ? 'unavailable' : evidence, sessions: [], machineIds: [] };
   const sessions = new Map<string, SessionIdentityAccumulator>();
   const machineIds = new Set<string>();
   let allocatedOutcome = false;
@@ -143,9 +156,9 @@ export function readUsageWorkOutcomesPresentation(work: UsageWorkProjection | un
       witnessed ||= row.evidence.length > 0;
     }
     allocatedOutcome ||= row.reason === 'allocated' && !!row.outcome;
-    if (sessions.size > 0 && (allocatedOutcome || witnessed)) return { kind: 'ready' };
+    if (evidence === 'observed' && sessions.size > 0 && (allocatedOutcome || witnessed)) return { kind: 'ready' };
   }
-  return { kind: sessions.size === 0 ? 'empty' : 'noPrs',
+  return { kind: evidence !== 'observed' ? evidence : sessions.size === 0 ? 'empty' : 'noPrs',
     // Empty presentations have no monetary ordering; retain first-observed Session identity order.
     sessions: [...sessions].map(([id, identity]) => sessionIdentity(id, identity)), machineIds: [...machineIds] };
 }

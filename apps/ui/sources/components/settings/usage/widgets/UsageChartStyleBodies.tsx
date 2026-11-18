@@ -26,6 +26,7 @@ import {
   projectUsageRecordFacts, projectUsagePortraitModel, projectUsageWeekHours, resolveUsageChartDay, resolveUsageChartMetric,
 } from './usageChartModels';
 import { readUsageChartSources } from './usageSourceSelection';
+import { readUsageWorkOutcomesEvidence } from './usageWorkPresentation';
 
 export type UsageChartStyleBodyProps = UsageBodyProps;
 
@@ -289,9 +290,9 @@ export function UsageShippedStyleBody(props: UsageChartStyleBodyProps) {
   const agents = React.useMemo(() => [...new Set(model?.mode === 'weeks' ? model.weeks.flatMap((week) => week.spines.filter((spine) => spine !== 'mixed')) : [])].map(host.agent),
     [model, host.agent]);
   if (!model || model.total === 0) {
-    if (isUsageReadOutstanding(props.slice, ['work'])) return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: ['work'] }} />;
-    // "None merged" is only true when pull requests were read; the page header already says why they weren't.
-    if (!props.slice.sources.some((source) => source.source === 'work' && ['available', 'partial', 'stale'].includes(source.status)))
+    const evidence = readUsageWorkOutcomesEvidence(props.slice, 'mergedOutcomes');
+    if (evidence === 'reading') return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: ['work'] }} />;
+    if (evidence === 'unavailable')
       return <UsageBodyInsufficient testID={`${props.testID}.unavailable`} title={t('usage.board.charts.shippedUnavailableTitle')} />;
     return <UsageBodyInsufficient testID={`${props.testID}.empty`} title={t('usage.board.charts.shippedEmptyTitle')} reason={t('usage.board.charts.shippedEmptyReason')} />;
   }

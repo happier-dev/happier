@@ -8,6 +8,7 @@ import { t } from '@/text';
 import { usageSeriesColor } from '../usageAccent';
 import {
   UsageBodyInsufficient,
+  UsageBodyReading,
   UsageCoverageLine,
   usagePeriodPhrase,
   useUsagePluginTheme,
@@ -48,7 +49,7 @@ export function UsageOutcomesWidget(props: UsageBodyProps) {
 
 /** Sessions → merged PRs, and the exact amount each linked PR consumed. A PR opens into its Sessions. */
 function UsageOutcomesWidgetOriginal(props: UsageBodyProps) {
-  const presentation = readUsageWorkOutcomesPresentation(props.slice.work);
+  const presentation = readUsageWorkOutcomesPresentation(props.slice);
   return presentation.kind === 'ready'
     ? <UsageOutcomesFacts {...props} />
     : <UsageOutcomesEmpty {...props} presentation={presentation} />;
@@ -59,8 +60,10 @@ function UsageOutcomesEmpty(props: UsageBodyProps & Readonly<{
 }>) {
   const { presentation } = props;
   useUsageWorkSessionNavigation(presentation.sessions, props.query, props.serverId, presentation.machineIds);
-  useWidgetFrameBodyCaption(presentation.kind === 'unavailable' ? usagePeriodPhrase(props.query)
+  useWidgetFrameBodyCaption(presentation.kind === 'unavailable' || presentation.kind === 'reading' ? usagePeriodPhrase(props.query)
     : t('usage.board.work.outcomesCaption', { count: 0 }));
+  if (presentation.kind === 'reading')
+    return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: ['work'] }} />;
   if (presentation.kind === 'unavailable')
     return (
       <View style={styles.body}>
