@@ -343,6 +343,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     stepAside();
     router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', machine: props.machine ?? null }) as never);
   };
+  // Every starter, where the catalog lists them: the Store's starter kind (journey-deploy jdF-src "All starters").
+  const browseStarters = () => {
+    stepAside();
+    router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'starter', machine: props.machine ?? null }) as never);
+  };
 
   const connectGithub = React.useCallback(() => {
     void (async () => {
@@ -718,7 +723,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             ~40 s on #136 before its sources settled as unreachable). The states share the tiles' group and inset. */}
         <View>
         {search && starterCatalog.hasValue && !starterCatalog.loading && starters.length === 0 ? null : (
-        <ItemGroup surface="none" title={t('newApp.startNew')} titleRole="label">
+        <ItemGroup surface="none" title={t('newApp.startNew')} titleRole="label"
+          action={<TextLinkButton testID="newApp.allStarters" size="meta" label={t('newApp.allStarters')} onPress={browseStarters} />}>
         {/* Describe your app sits a tile gap above the starters (lab .jd-descopt), not flush against them. */}
         <View style={styles.startNewStack}>
         {/* Describe your app: one full-width choice above the starters (lab src DESCRIBE_ENTRY), chosen like the rest. */}

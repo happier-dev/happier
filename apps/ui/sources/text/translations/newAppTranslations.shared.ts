@@ -10,6 +10,8 @@ type Copy = Readonly<{
   yourCode: string;
   startNew: string;
   noStarters: string;
+  /** Start something new's way to every starter in the Store (journey-deploy jdF-src). */
+  allStarters: string;
   codeSubtitle: (p: Readonly<{ repository: string; provider: string }>) => string;
   startPick: string;
   haveCode: string;
@@ -225,6 +227,7 @@ export const newAppTranslations: Readonly<
     yourCode: 'Your code',
     startNew: 'Start something new',
     noStarters: "No starters in your Store yet.",
+    allStarters: "All starters",
     codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Already have code?',
     alreadyBuilt: 'Already built',
@@ -424,6 +427,7 @@ export const newAppTranslations: Readonly<
     yourCode: 'El teu codi',
     startNew: 'Comença una cosa nova',
     noStarters: "Encara no hi ha plantilles a la teva Store.",
+    allStarters: "Totes les plantilles",
     codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Ja tens codi?',
     alreadyBuilt: 'Ja construït',
@@ -623,6 +627,7 @@ export const newAppTranslations: Readonly<
     yourCode: 'Dein Code',
     startNew: 'Etwas Neues beginnen',
     noStarters: "Noch keine Vorlagen in deinem Store.",
+    allStarters: "Alle Vorlagen",
     codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Schon Code vorhanden?',
     alreadyBuilt: 'Bereits gebaut',
@@ -822,6 +827,7 @@ export const newAppTranslations: Readonly<
     yourCode: 'Tu código',
     startNew: 'Empezar algo nuevo',
     noStarters: "Todavía no hay plantillas en tu Store.",
+    allStarters: "Todas las plantillas",
     codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: '¿Ya tienes código?',
     alreadyBuilt: 'Ya construido',
@@ -1021,6 +1027,7 @@ export const newAppTranslations: Readonly<
     yourCode: 'Votre code',
     startNew: 'Commencer quelque chose de nouveau',
     noStarters: "Pas encore de modèle dans votre Store.",
+    allStarters: "Tous les modèles",
     codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Vous avez déjà du code ?',
     alreadyBuilt: 'Déjà construit',
@@ -1220,6 +1227,7 @@ export const newAppTranslations: Readonly<
     yourCode: 'Il tuo codice',
     startNew: 'Inizia qualcosa di nuovo',
     noStarters: "Ancora nessun modello nel tuo Store.",
+    allStarters: "Tutti i modelli",
     codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Hai già del codice?',
     alreadyBuilt: 'Già pronto',
@@ -1419,6 +1427,7 @@ export const newAppTranslations: Readonly<
     yourCode: '自分のコード',
     startNew: '新しく始める',
     noStarters: "Store にはまだスターターがありません。",
+    allStarters: "すべてのスターター",
     codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'すでにコードがありますか？',
     alreadyBuilt: 'ビルド済み',
@@ -1618,6 +1627,7 @@ export const newAppTranslations: Readonly<
     yourCode: 'Twój kod',
     startNew: 'Zacznij coś nowego',
     noStarters: "W twoim Store nie ma jeszcze szablonów.",
+    allStarters: "Wszystkie szablony",
     codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Masz już kod?',
     alreadyBuilt: 'Już zbudowane',
@@ -1817,6 +1827,7 @@ export const newAppTranslations: Readonly<
     yourCode: 'Seu código',
     startNew: 'Começar algo novo',
     noStarters: "Ainda não há modelos na sua Store.",
+    allStarters: "Todos os modelos",
     codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Já tem código?',
     alreadyBuilt: 'Já construído',
@@ -2016,6 +2027,7 @@ export const newAppTranslations: Readonly<
     yourCode: 'Ваш код',
     startNew: 'Начать новое',
     noStarters: "В вашем Store пока нет шаблонов.",
+    allStarters: "Все шаблоны",
     codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: 'Уже есть код?',
     alreadyBuilt: 'Уже собрано',
@@ -2215,6 +2227,7 @@ export const newAppTranslations: Readonly<
     yourCode: '你的代码',
     startNew: '开始新项目',
     noStarters: "你的 Store 中还没有模板。",
+    allStarters: "全部模板",
     codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: '已经有代码了？',
     alreadyBuilt: '已构建',
@@ -2410,6 +2423,7 @@ export const newAppTranslations: Readonly<
     yourCode: '你的程式碼',
     startNew: '開始新專案',
     noStarters: "你的 Store 中還沒有範本。",
+    allStarters: "全部範本",
     codeSubtitle: ({ repository, provider }) => `${repository} · ${provider}`,
     haveCode: '已經有程式碼了？',
     alreadyBuilt: '已建置',
