@@ -7,6 +7,7 @@ import {
   projectSharedSetupChangeRowsV1,
   type ProjectSharedSetupChangeRowV1,
 } from '@happier-dev/protocol/projects/projectSetupChangeV1';
+import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { Modal } from '@/modal';
@@ -100,9 +101,8 @@ export function openProjectSharedSetupUpdate(
 
 /** The Project row a setup choice is written to: this checkout's Project and that row's revision. */
 function useProjectSetupRow(workspace: WorkspaceAddressV1) {
-  const projectKey =
-    useProjectAccountWorkspaceRef(workspace.workspaceId, workspace.serverId)
-      ?.projectKey ?? null;
+  const workspaceRef = useProjectAccountWorkspaceRef(workspace.workspaceId, workspace.serverId);
+  const projectKey = workspaceRef ? projectWorkspaceRefV1(workspaceRef).projectKey : null;
   const revision = useProjectAccountRows(
     (rows): ProjectSharedSetupUpdateRequest['expectedRevision'] | null =>
       projectKey

@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readProjectManifestDocument } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import {
   createSessionFixture,
@@ -374,8 +375,11 @@ async function render(
     authoredSession?: Readonly<{ id: string; response: Promise<Response>; reads: string[]; writes?: string[] }>;
     onOpenScripts?: () => void;
     onOpenServices?: () => void;
+    workspaceRefs?: readonly WorkspaceRefV1[];
   }> = {},
 ) {
+  const workspaceRefs = host.workspaceRefs ?? [{ id: workspace.workspaceId, serverId: workspace.serverId,
+    machineId: workspace.machineId, rootPath: workspace.rootPath, createdAtMs: 1, projectKey: workspace.workspaceId }];
   const authoredMetadata = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
   // This Home serves embedded terminals; each case chooses whether its host mounts one.
   const fixtureSettings = { actionsSettingsV1: { v: 1 as const, actions: shared.actionSettings },
@@ -466,8 +470,7 @@ async function render(
       if (path === '/v1/account/project-rows/list')
         return Response.json(createPlainProjectAccountRowListFixture({
           organizations: shared.organizations,
-          workspaceRefs: [{ id: 'w1', serverId: workspace.serverId, machineId: 'm1',
-            rootPath: '/repo', createdAtMs: 1, projectKey: 'w1' }],
+          workspaceRefs,
         }));
       if (path === '/v1/account/project-rows/mutate') {
         const request = ProjectAccountRowMutationRequestV1Schema.parse(JSON.parse(String(init?.body)));
@@ -501,16 +504,7 @@ async function render(
       scope: { serverId: workspace.serverId, accountId: 'account-1' },
       status: 'ready',
       coverage: 'complete',
-      workspaceRefs: [
-        {
-          id: 'w1',
-          serverId: workspace.serverId,
-          machineId: 'm1',
-          rootPath: '/repo',
-          createdAtMs: 1,
-          projectKey: 'w1',
-        },
-      ],
+      workspaceRefs,
       relationships: [],
       organizations: shared.organizations,
       revisionsByPhysicalKey: {},
@@ -2632,22 +2626,37 @@ describe('Project setup layers on the Scripts page (plan A L6)', () => {
     expect(textOf(screen, 'scripts.script:lint.status')).toContain('projects.scripts.origin.personal');
     expect(screen.getTextContent()).toContain('projects.scripts.layers.personal');
   });
-  it('offers the shared setup update check only when a shared setup is attached, and reads nothing upstream before it', async () => {
-    const { Modal } = await import('@/modal');
-    const show = vi.spyOn(Modal, 'show').mockImplementation(() => 'shared-setup-update');
-    onTestFinished(() => { show.mockRestore(); });
+  it('omits the shared setup update check when no shared setup is attached', async () => {
     const origins = [{ path: ['scripts', 'test'], layer: 'repository', overridden: false }];
     shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [],
       effectiveDefinition: { effectiveManifest: declared, origins } };
-    const plain = await render('page', 'scripts.script:test');
-    expect(plain.findAllHostsByTestId('scripts.more')).toHaveLength(0);
-    await plain.unmount();
+    const screen = await render('page', 'scripts.script:test');
+    expect(screen.findAllHostsByTestId('scripts.more')).toHaveLength(0);
+  });
+  it.each([
+    { checkout: 'explicitly associated Project', ref: { projectKey: 'parent-project' }, projectKey: 'parent-project', outcome: 'current' },
+    { checkout: 'self Project', ref: {}, projectKey: 'w1', outcome: 'current' },
+    { checkout: 'unknown checkout', ref: { id: 'other-checkout' }, outcome: 'unavailable' },
+    { checkout: 'same checkout id on another Home', ref: { serverId: 'srv_foreign', projectKey: 'parent-project' }, outcome: 'unavailable' },
+  ])('settles the shared setup review for $checkout as $outcome', async ({ ref, projectKey, outcome }) => {
+    isolateManifestDrafts();
+    const { Modal } = await import('@/modal');
+    const show = vi.mocked(Modal.show);
+    show.mockClear();
+    const source = { sourceId: 'src-acme-web', contentRevision: { headerVersion: 1, bodyVersion: 3 }, digest: hash };
+    if (projectKey) shared.organizations = [{ key: { kind: 'project-organization', serverId: workspace.serverId, projectKey },
+      revision: 1, value: { hidden: false, setupSelection: source } }];
+    const origins = [{ path: ['scripts', 'test'], layer: 'repository', overridden: false }];
     shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [],
-      effectiveDefinition: { effectiveManifest: declared, origins,
-        sharedBasis: { sourceId: 'src-acme-web', contentRevision: { headerVersion: 1, bodyVersion: 3 }, digest: hash } } };
-    const screen = await render('page', 'scripts.more');
-    expect(shared.calls.some(call => call.actionId === 'projects.inspect'
-      && (call.input as { reviewSharedSetup?: unknown }).reviewSharedSetup !== undefined)).toBe(false);
+      effectiveDefinition: { effectiveManifest: declared, origins, sharedBasis: source },
+      sharedSetupChange: { kind: 'current', selection: source } };
+    const screen = await render('page', 'scripts.more', { workspaceRefs: [{
+      id: workspace.workspaceId, serverId: workspace.serverId, machineId: workspace.machineId,
+      rootPath: workspace.rootPath, createdAtMs: 1, ...ref,
+    }] });
+    const requestedReviews = () => shared.calls.filter(call => call.actionId === 'projects.inspect'
+      && (call.input as { reviewSharedSetup?: unknown }).reviewSharedSetup !== undefined);
+    expect(requestedReviews()).toHaveLength(0);
     await act(async () => { await screen.pressByTestIdAsync('scripts.more'); });
     const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
     const menu = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'scripts.more:menu')!;
@@ -2656,6 +2665,12 @@ describe('Project setup layers on the Scripts page (plan A L6)', () => {
     expect(show).toHaveBeenCalledWith(expect.objectContaining({
       props: expect.objectContaining({ sourceId: 'src-acme-web' }),
       chrome: expect.objectContaining({ testID: 'project-shared-setup-update' }) }));
+    const [dialog] = show.mock.lastCall!;
+    const review = await renderScreen(<dialog.component {...dialog.props} onClose={() => {}} />);
+    await vi.waitFor(() => {
+      expect(review.findByTestId(`project-shared-setup-update.${outcome}`), review.getTextContent()).not.toBeNull();
+    });
+    expect(requestedReviews()).toHaveLength(outcome === 'current' ? 1 : 0);
   });
   it('offers a shared setup this checkout has not taken as a Setup row whose Review opens it for first use (lab L6 hint)', async () => {
     const { Modal } = await import('@/modal');
