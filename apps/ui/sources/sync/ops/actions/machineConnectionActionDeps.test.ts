@@ -683,6 +683,28 @@ describe('UI machine connection Actions', () => {
         }, { surface: 'ui', authority: 'present_user', serverId });
         expect(result).toMatchObject({ ok: false, errorCode: 'home_not_guest_reachable' });
     });
+    it.each([
+        { method: 'another_computer', os: 'linux', serverUrl: 'http://source-home.localhost:3039' },
+        { method: 'ssh', os: 'linux', serverUrl: 'http://source-home.localhost:3039' },
+        { method: 'another_computer', os: 'windows', serverUrl: 'https://source-home.example' },
+    ] as const)('explains the unavailable Home archive at the public $method command entry on $os', async ({ method, os, serverUrl }) => {
+        const serverIdentityId = 'srv_source_home';
+        const serverId = await harness.addHome({ name: 'Source Home', serverUrl, serverIdentityId, accountId: 'alice' });
+        const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
+        await adoptHomeProfile({ source: 'manual', descriptor: { v: 1, homeServerIdentityId: serverIdentityId, canonicalServerUrl: serverUrl,
+            revision: 1, endpoints: [{ kind: 'https', url: serverUrl }, { kind: 'iroh', endpointId: 'a'.repeat(64) }] } });
+        const features = createRootLayoutFeaturesResponse({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'publicdev',
+            payloads: [{ target: { os: 'linux', arch: 'x64' }, sha256: '4b'.repeat(32), url: '/v1/runtime/guest-cli/payloads/linux/x64' }] } } });
+        const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+        harness.answer(serverId, '/v1/features', { body: features });
+        harness.answer(serverId, '/v1/features/authenticated', { body: features });
+        const result = await makeExecutor().execute('machines.add.command', {
+            serverId, os, ...(method === 'ssh' ? { method, host: 'nl1' } : { method }),
+        }, { surface: 'ui', authority: 'present_user', serverId });
+        expect(result).toMatchObject({ ok: false, errorCode: 'guest_payload_missing',
+            error: 'This Home serves its CLI only over an HTTPS address other machines can reach. Add one to this Home, or install this machine over SSH from a connected controller.' });
+    });
     it('prepares reviewed dedicated SSH administrator identity through the public command Action', async () => {
         const serverId = await harness.addHome({ name: 'Home', serverUrl: 'https://setup.example', accountId: 'alice' });
         const { ManagedMachineEnrollmentIdentityV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');

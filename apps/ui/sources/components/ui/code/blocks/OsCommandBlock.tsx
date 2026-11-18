@@ -23,6 +23,7 @@ export const COMMAND_OS_ORDER: readonly CommandOs[] = ['macos', 'linux', 'window
 export const OsCommandBlock = React.memo(function OsCommandBlock(props: Readonly<{
     testID: string;
     commands: Readonly<Record<CommandOs, string | null>>;
+    unavailableContent?: React.ReactNode;
     os?: CommandOs;
     onOsChange?: (os: CommandOs) => void;
     detectedOs?: CommandOs | null;
@@ -60,7 +61,7 @@ export const OsCommandBlock = React.memo(function OsCommandBlock(props: Readonly
     const command = props.commands[os];
     return (
         <View testID={props.testID}>
-            {command === null ? <>{header}<Text>{t('common.unavailable')}</Text></> : <CodeBlockView
+            {command === null ? <>{header}{props.unavailableContent ?? <Text>{t('common.unavailable')}</Text>}</> : <CodeBlockView
                 code={command}
                 language={os === 'windows' ? 'powershell' : 'bash'}
                 showHeaderRow

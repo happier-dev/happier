@@ -3,7 +3,7 @@ import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/m
 import { resolveRemoteHomeApplicationCarrier } from '@happier-dev/cli-common/homeEnrollment';
 import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
 import type { GuestCliIdentityV1 } from '@happier-dev/protocol/features';
-import { MANAGED_GUEST_CLI_REMOTE_PAYLOAD_CAPABILITIES, buildManagedGuestCliPayloadInstallAndRunCommand } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
+import { MANAGED_GUEST_CLI_REMOTE_PAYLOAD_CAPABILITIES, prepareManagedGuestCliPayloadInstallAndRunCommand } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import type { SshCredentialsDraft } from '@/components/ssh/SshCredentialsFields';
 import { config } from '@/config';
 import { resolveAppVariant } from '@/sync/runtime/appVariant';
@@ -15,10 +15,11 @@ import {
 
 export const MACHINE_ADD_COMMAND_OS = ['macos', 'linux', 'windows'] as const;
 export type MachineAddCommandOs = typeof MACHINE_ADD_COMMAND_OS[number];
-export type WebDesktopSetupHandoffTarget =
-    | Readonly<{ kind: 'https'; homeUrl: string }>
+type AvailableSetupHandoffTarget =
+    | Readonly<{ kind: 'https'; homeUrl: string; renderPayloadCommand?: (runCommand: string) => string }>
     | Readonly<{ kind: 'account_service' }>
-    | Readonly<{ kind: 'descriptor_file_required' }>
+    | Readonly<{ kind: 'descriptor_file_required' }>;
+export type WebDesktopSetupHandoffTarget = AvailableSetupHandoffTarget
     | Readonly<{ kind: 'unavailable'; code: 'guest_payload_missing'; message: string }>
     | Readonly<{ kind: 'unavailable'; code: 'guest_cli_identity_unavailable' }>
     | Readonly<{ kind: 'unavailable'; code: 'home_not_guest_reachable' }>;
@@ -30,8 +31,8 @@ export type MachineAddHomeTarget = Readonly<{
     remote?: boolean;
 }>;
 
-/** A descriptor without HTTPS needs a file; the installer's stdin cannot carry it. */
-export function resolveWebDesktopSetupHandoffTarget(params: MachineAddHomeTarget): WebDesktopSetupHandoffTarget {
+/** Resolve the carrier and the installer for the selected operating system. */
+export function resolveWebDesktopSetupHandoffTarget(params: MachineAddHomeTarget & Readonly<{ os: MachineAddCommandOs }>): WebDesktopSetupHandoffTarget {
     const delivery = readMachineProvisionerHostAvailability({ host: 'browser', guestCli: params.guestCli,
         ...MANAGED_GUEST_CLI_REMOTE_PAYLOAD_CAPABILITIES });
     if (!delivery.available && delivery.code === 'guest_cli_identity_unavailable') return {
@@ -41,19 +42,32 @@ export function resolveWebDesktopSetupHandoffTarget(params: MachineAddHomeTarget
         kind: 'unavailable', code: 'guest_payload_missing',
         message: 'This Home does not export its CLI payload to this app. Choose a connected controller to install this machine, then retry.',
     };
+    let target: AvailableSetupHandoffTarget;
     if (params.remote) {
         const remote = resolveRemoteHomeApplicationCarrier(params.descriptor ?? {
             endpoints: params.fallbackHomeUrl ? [{ kind: 'https', url: params.fallbackHomeUrl }] : [],
         });
-        return remote.kind === 'iroh' ? { kind: 'descriptor_file_required' }
-            : remote.kind === 'https' ? { kind: 'https', homeUrl: remote.url } : remote;
-    }
-    if (params.descriptor) {
+        if (remote.kind === 'unavailable') return remote;
+        target = remote.kind === 'https' ? { kind: 'https', homeUrl: remote.url } : { kind: 'descriptor_file_required' };
+    } else if (params.descriptor) {
         const https = params.descriptor.endpoints.find((endpoint) => endpoint.kind === 'https');
-        return https ? { kind: 'https', homeUrl: https.url } : { kind: 'descriptor_file_required' };
+        target = https ? { kind: 'https', homeUrl: https.url } : { kind: 'descriptor_file_required' };
+    } else {
+        const url = String(params.fallbackHomeUrl ?? '').trim();
+        target = url ? { kind: 'https', homeUrl: url } : { kind: 'account_service' };
     }
-    const url = String(params.fallbackHomeUrl ?? '').trim();
-    return url ? { kind: 'https', homeUrl: url } : { kind: 'account_service' };
+    if (params.guestCli?.source !== 'home-payload') return target;
+    if (target.kind !== 'https' || params.os === 'windows') return {
+        kind: 'unavailable', code: 'guest_payload_missing',
+        message: 'This Home serves its CLI only over an HTTPS address other machines can reach. Add one to this Home, or install this machine over SSH from a connected controller.',
+    };
+    const renderPayloadCommand = prepareManagedGuestCliPayloadInstallAndRunCommand({
+        homeUrl: target.homeUrl, guestCli: params.guestCli, os: params.os === 'macos' ? 'darwin' : 'linux',
+    });
+    return renderPayloadCommand ? { ...target, renderPayloadCommand } : {
+        kind: 'unavailable', code: 'guest_payload_missing',
+        message: 'This Home does not export a CLI archive for the selected setup target.',
+    };
 }
 
 export function detectClientCommandOs(userAgent: string | null = typeof navigator === 'undefined' ? null : navigator.userAgent): MachineAddCommandOs | null {
@@ -74,7 +88,8 @@ function quoteShellValue(value: string, os: MachineAddCommandOs): string {
     return os === 'windows' ? `'${value.replace(/'/g, "''")}'` : `'${value.replace(/'/g, "'\"'\"'")}'`;
 }
 
-export function buildMachineAddCommand(input: MachineAddCommandInput, target?: WebDesktopSetupHandoffTarget): string | null;
+export function buildMachineAddCommand(input: MachineAddCommandInput, target: AvailableSetupHandoffTarget): string;
+export function buildMachineAddCommand(input: MachineAddCommandInput): string | null;
 export function buildMachineAddCommand(input: MachineAddCommandInput, target = resolveWebDesktopSetupHandoffTarget(input)): string | null {
     if (target.kind === 'unavailable') return null;
     const args = target.kind === 'https' ? ['--home-url', target.homeUrl]
@@ -99,26 +114,16 @@ export function buildMachineAddCommand(input: MachineAddCommandInput, target = r
         }
         args.push('--yes');
     }
-    const options = {
-        appVariant: resolveAppVariant({ appVariant: config.variant, envAppEnv: process.env.APP_ENV, envExpoPublicAppEnv: process.env.EXPO_PUBLIC_APP_ENV }) ?? 'production',
-        distTagOverride: config.cliNpmDistTag,
-        publicReleaseRingOverride: resolvePreferredPublicReleaseRingIdForCurrentApp(),
-    };
     const descriptorJson = target.kind === 'descriptor_file_required' && input.descriptor ? JSON.stringify(input.descriptor) : null;
     const descriptorPath = input.os === 'windows' ? '$happierHomeDescriptor' : '"$happier_home_descriptor"';
     const action = input.kind === 'joinHome' ? 'setup' : 'machine-enroll';
     const quotedArgs = args.map((arg, index) => descriptorJson && index === 1 ? descriptorPath : quoteShellValue(arg, input.os));
-    // Source archives use the same admitted-pin download, verification and promotion as managed acquire.
-    // A relative export needs an HTTP carrier before the CLI can use an Iroh descriptor.
-    const command = input.guestCli?.source === 'home-payload'
-        ? input.os === 'windows' || target.kind !== 'https' ? null : buildManagedGuestCliPayloadInstallAndRunCommand({
-            homeUrl: target.homeUrl, guestCli: input.guestCli, os: input.os === 'macos' ? 'darwin' : 'linux',
-            runCommand: [action, ...quotedArgs].join(' '),
-        })
-        : (input.os === 'windows' ? buildHappierCliInstallAndRunPowershellCommand : buildHappierCliInstallAndRunCommand)(options, {
-            action, args: quotedArgs,
-        });
-    if (!command) return null;
+    if (target.kind === 'https' && target.renderPayloadCommand) return target.renderPayloadCommand([action, ...quotedArgs].join(' '));
+    const command = (input.os === 'windows' ? buildHappierCliInstallAndRunPowershellCommand : buildHappierCliInstallAndRunCommand)({
+        appVariant: resolveAppVariant({ appVariant: config.variant, envAppEnv: process.env.APP_ENV, envExpoPublicAppEnv: process.env.EXPO_PUBLIC_APP_ENV }) ?? 'production',
+        distTagOverride: config.cliNpmDistTag,
+        publicReleaseRingOverride: resolvePreferredPublicReleaseRingIdForCurrentApp(),
+    }, { action, args: quotedArgs });
     if (!descriptorJson) return command;
     // The installer consumes stdin; provision the public descriptor before invoking
     // the existing --home-descriptor-file grammar on either supported shell.

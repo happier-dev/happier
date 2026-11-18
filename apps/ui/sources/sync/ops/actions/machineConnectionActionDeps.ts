@@ -166,16 +166,15 @@ export function createMachineConnectionActionDeps(options: Readonly<{ runner?: S
             }
             const homeTarget = await readMachineAddHomeTargetForServerId(input.serverId, context.signal);
             if (!homeTarget) return { ok: false, errorCode: 'target_unavailable', error: 'Home not found' };
-            const target = { ...homeTarget, remote: true };
+            const target = { ...homeTarget, remote: true, os: input.os };
             const handoff = resolveWebDesktopSetupHandoffTarget(target);
             if (handoff.kind === 'unavailable') return { ok: false, errorCode: handoff.code, error: 'message' in handoff ? handoff.message
                 : handoff.code === 'guest_cli_identity_unavailable' ? 'This Home does not advertise its guest CLI identity.'
                     : 'This Home is not reachable from other machines. Add a public HTTPS, tailnet, or Iroh endpoint.' };
-            const command = buildMachineAddCommand({ ...target, os: input.os, ...(input.method === 'ssh' ? {
+            const command = buildMachineAddCommand({ ...target, ...(input.method === 'ssh' ? {
                 kind: 'sshMachine', enrollmentIdentity: input.enrollmentIdentity, sshDraft: { ...createDefaultSshCredentialsDraft(input.authMode), host: input.host,
                     username: input.username ?? '', port: input.port === undefined ? '' : String(input.port), identityFilePath: input.identityFilePath ?? '' },
             } : { kind: 'joinHome' }) }, handoff);
-            if (!command) return { ok: false, errorCode: 'guest_payload_missing', error: 'This Home does not export a CLI archive for the selected setup target.' };
             return { command, descriptorFileRequired: handoff.kind === 'descriptor_file_required' };
         },
         machinePairingCreate: async (input, context) => {

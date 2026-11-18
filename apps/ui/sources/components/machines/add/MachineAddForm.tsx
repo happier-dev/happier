@@ -313,11 +313,14 @@ function MachineAddPane(props: Readonly<{
         );
     }
     if (!path) return null;
-    if (flow.remoteHomeUnavailable && !flow.run) {
+    const commandUnavailable = <AttentionBanner testID={`${testID}.homeUnavailable`} tone="warning"
+        title={flow.commandUnavailableMessage ?? t('managedMachines.creation.homeNotGuestReachable')}
+        details={flow.commandUnavailableDetails} />;
+    // A Home archive refusal applies to the terminal command. Pairing has its own carrier.
+    const keepsPairing = pathId === 'anotherComputer' && flow.commandUnavailableDetails?.[0] === 'guest_payload_missing';
+    if (flow.remoteHomeUnavailable && !flow.run && !keepsPairing) {
         return <PaneSection onPage={onPage}>
-            <AttentionBanner testID={`${testID}.homeUnavailable`} tone="warning"
-                title={flow.commandUnavailableMessage ?? t('managedMachines.creation.homeNotGuestReachable')}
-                details={flow.commandUnavailableDetails} />
+            {commandUnavailable}
         </PaneSection>;
     }
 
@@ -356,6 +359,7 @@ function MachineAddPane(props: Readonly<{
                             <OsCommandBlock
                                 testID={`${testID}.command`}
                                 commands={flow.commands}
+                                unavailableContent={commandUnavailable}
                                 os={flow.os}
                                 onOsChange={flow.setOs}
                                 detectedOs={flow.detectedOs}
@@ -472,6 +476,7 @@ function MachineAddPane(props: Readonly<{
                 <OsCommandBlock
                     testID={`${testID}.command`}
                     commands={flow.commands}
+                    unavailableContent={commandUnavailable}
                     os={flow.os}
                     onOsChange={flow.setOs}
                     detectedOs={flow.detectedOs}
@@ -562,10 +567,10 @@ function MachineAddPane(props: Readonly<{
                         {!host ? <Text testID={`${testID}.startReason`} style={styles.note}>{t('addFlows.sshNeedsAddress')}</Text>
                             : <Text style={styles.note}>{t('addFlows.sshSavedNote')}</Text>}
                         {approvalNotice}
-                        {runYourself && command ? (
+                        {runYourself && (command || flow.commandUnavailableDetails) ? (
                             <>
                                 <Text style={styles.note}>{t('addFlows.sshRunItYourselfLead', { home: flow.homeName })}</Text>
-                                {command}
+                                {command ?? commandUnavailable}
                                 {watching}
                             </>
                         ) : null}
@@ -599,12 +604,13 @@ function MachineAddPane(props: Readonly<{
                             expanded={showTerminal}
                         />
                     </View>
-                    {showTerminal && flow.commands ? (
-                        <>
+                    {showTerminal && (
+                        flow.commands ? <>
                             <Text style={styles.note}>{t('addFlows.anotherLead', { home: flow.homeName })}</Text>
-                            <OsCommandBlock testID={`${testID}.command`} commands={flow.commands} os={flow.os} onOsChange={flow.setOs} />
-                        </>
-                    ) : null}
+                            <OsCommandBlock testID={`${testID}.command`} commands={flow.commands} unavailableContent={commandUnavailable}
+                                os={flow.os} onOsChange={flow.setOs} />
+                        </> : commandUnavailable
+                    )}
                     {watching}
                 </PaneSection>
                 </>

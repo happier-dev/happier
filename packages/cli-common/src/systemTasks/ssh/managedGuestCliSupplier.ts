@@ -202,14 +202,12 @@ function buildManagedGuestCliPayloadInstallPlan(input: Readonly<{
   };
 }
 
-/** The copied request freezes server-supplied pins; target probing never refreshes them. */
-export function buildManagedGuestCliPayloadInstallAndRunCommand(input: Readonly<{
+/** Prepare the pinned installer before the caller supplies its shell-quoted CLI arguments. */
+export function prepareManagedGuestCliPayloadInstallAndRunCommand(input: Readonly<{
   homeUrl: string;
   guestCli: GuestCliIdentityV1;
   os: 'linux' | 'darwin';
-  /** Existing CLI grammar, already shell-quoted by its command owner. */
-  runCommand: string;
-}>): string | null {
+}>): ((runCommand: string) => string) | null {
   const payloads = input.guestCli.payloads?.filter(payload => payload.target.os === input.os) ?? [];
   if (!payloads.length) return null;
   const branches = payloads.map(payload => {
@@ -218,9 +216,9 @@ export function buildManagedGuestCliPayloadInstallAndRunCommand(input: Readonly<
     const architecture = REMOTE_RELEASE_ARCHITECTURES.find(target => target.arch === payload.target.arch)!;
     const pattern = architecture.aliases.map(alias => `*${input.os}*/${alias}`).join('|');
     // The install subshell settles its staging cleanup before invoking personal setup.
-    return `${pattern}) (${plan.command}) && exec ${quoteRemotePathWithHomeExpansion(plan.binaryPath)} ${input.runCommand} ;;`;
+    return `${pattern}) (${plan.command}) && exec ${quoteRemotePathWithHomeExpansion(plan.binaryPath)}`;
   });
-  return `(case "$(uname -s | tr '[:upper:]' '[:lower:]')/$(uname -m | tr '[:upper:]' '[:lower:]')" in ${branches.join(' ')} *) printf '%s\\n' guest_payload_missing >&2; exit 1 ;; esac)`;
+  return runCommand => `(case "$(uname -s | tr '[:upper:]' '[:lower:]')/$(uname -m | tr '[:upper:]' '[:lower:]')" in ${branches.map(branch => `${branch} ${runCommand} ;;`).join(' ')} *) printf '%s\\n' guest_payload_missing >&2; exit 1 ;; esac)`;
 }
 
 /** The invoking host fetches admitted Home archives; the guest verifies before promotion. */

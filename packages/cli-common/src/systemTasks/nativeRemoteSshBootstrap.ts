@@ -59,6 +59,6 @@ export { buildUserManagerGroupRefreshStep } from '../machineSetup/userManagerGro
 
 export { resolveManagedGuestCliSource, installManagedGuestCliViaRemoteDownload, prepareManagedGuestCliBuildInput, resolveManagedGuestCliBuildIdentity,
   readManagedGuestCliIdentity, selectManagedGuestCliPayload, MANAGED_GUEST_CLI_REMOTE_PAYLOAD_CAPABILITIES,
-  buildManagedGuestCliPayloadInstallAndRunCommand,
+  prepareManagedGuestCliPayloadInstallAndRunCommand,
   type ManagedGuestCliSourceRequest, type ManagedGuestCliBuildInput, type ManagedGuestCliBuildTarget,
   type ManagedGuestCliLocalBuildPayload, type ManagedGuestCliLocalBuildMetadata } from './ssh/managedGuestCliSupplier.js';

@@ -92,8 +92,11 @@ describe('Over SSH', () => {
       <MachineAddForm layout="page" initialPath={initialPath} testID="form"
         onClose={() => {}} onStartSession={() => {}} />
     </InjectedAuthProvider>);
-    await waitForHomeGovernance(() => expect(byId(screen, `${PANE}.homeUnavailable`).length).toBeGreaterThan(0));
-    expect(byId(screen, `${PANE}.homeUnavailable`)[0]?.props.details).toEqual(['guest_payload_missing']);
+    if (initialPath === 'anotherComputer') {
+      await waitForHomeGovernance(() => expect(byId(screen, `${PANE}.terminal`).length).toBeGreaterThan(0));
+      await act(async () => screen.pressByTestId(`${PANE}.terminal`));
+    }
+    await waitForHomeGovernance(() => expect(byId(screen, `${PANE}.homeUnavailable`)[0]?.props.details).toEqual(['guest_payload_missing']));
     expect(byId(screen, `${PANE}.command`)).toHaveLength(0);
     await screen.unmount();
   });
@@ -109,7 +112,37 @@ describe('Over SSH', () => {
     await waitForHomeGovernance(() => expect(byId(screen, `${PANE}.homeUnavailable`).length).toBeGreaterThan(0));
     expect(byId(screen, `${PANE}.command`)).toHaveLength(0);
     expect(byId(screen, `${PANE}.start`)).toHaveLength(0);
-    expect(byId(screen, `${PANE}.pairing`)).toHaveLength(0);
+    expect(byId(screen, `${PANE}.pairing-steps`)).toHaveLength(0);
+    await screen.unmount();
+  });
+  it.each(['anotherComputer', 'ssh'] as const)('explains the missing remote archive route in the %s journey', async initialPath => {
+    const serverUrl = 'http://source-home.localhost:3039';
+    const serverIdentityId = 'srv_source_home';
+    const serverId = await harness.addHome({ name: 'Source Home', serverUrl, serverIdentityId, accountId: 'owner' });
+    const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
+    await adoptHomeProfile({ source: 'manual', descriptor: { v: 1, homeServerIdentityId: serverIdentityId, canonicalServerUrl: serverUrl,
+      revision: 1, endpoints: [{ kind: 'https', url: serverUrl }, { kind: 'iroh', endpointId: 'a'.repeat(64) }] } });
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    const features = createRootLayoutFeaturesResponse({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'publicdev',
+      payloads: [{ target: { os: 'linux', arch: 'x64' }, sha256: '4b'.repeat(32), url: '/v1/runtime/guest-cli/payloads/linux/x64' }] } } });
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+    harness.answer(serverId, '/v1/features', { body: features });
+    harness.answer(serverId, '/v1/features/authenticated', { body: features });
+    const { MachineAddForm } = await import('./MachineAddForm');
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+      <MachineAddForm layout="page" initialPath={initialPath} testID="form" onClose={() => {}} onStartSession={() => {}} />
+    </InjectedAuthProvider>);
+    if (initialPath === 'anotherComputer') {
+      await waitForHomeGovernance(() => expect(byId(screen, `${PANE}.terminal`).length).toBeGreaterThan(0));
+      expect(byId(screen, `${PANE}.pairing-steps`).length).toBeGreaterThan(0);
+      await act(async () => screen.pressByTestId(`${PANE}.terminal`));
+    }
+    await waitForHomeGovernance(() => expect(byId(screen, `${PANE}.homeUnavailable`)[0]?.props.title)
+      .toBe('This Home serves its CLI only over an HTTPS address other machines can reach. Add one to this Home, or install this machine over SSH from a connected controller.'));
+    expect(byId(screen, `${PANE}.homeUnavailable`)[0]?.props.details).toEqual(['guest_payload_missing']);
+    expect(byId(screen, `${PANE}.command`)).toHaveLength(0);
     await screen.unmount();
   });
   it('in the app, connects and installs directly, names where it connects from and what runs on the server, and keeps the command as a fallback', async () => {

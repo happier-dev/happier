@@ -178,10 +178,11 @@ export async function createMachineClientEnrollmentOutputFixture(options: Machin
         ['machines.cli.update', () => ({ target: { kind: 'local' } })],
         ['machines.add.command', async () => {
             const homeTarget = await readMachineAddHomeTargetForServerId(options.serverId, lifetime.signal);
-            if (!homeTarget || resolveWebDesktopSetupHandoffTarget({ ...homeTarget, remote: true }).kind === 'unavailable') {
+            const input = { serverId: options.serverId, os: 'linux', method: 'another_computer' } as const;
+            if (!homeTarget || resolveWebDesktopSetupHandoffTarget({ ...homeTarget, remote: true, os: input.os }).kind === 'unavailable') {
                 throw new Error('Command output requires its Home-advertised guest CLI and reachable route');
             }
-            return { serverId: options.serverId, os: 'linux', method: 'another_computer' };
+            return input;
         }],
         ['machines.pairing.create', () => {
             if (!requirePublicHome()) throw new Error('Pairing output requires the actual Home-published connection descriptor');
