@@ -45,26 +45,6 @@ describe('automationTemplateCodec', () => {
         expect(decodeAutomationTemplate(JSON.stringify({ directory: '' }))).toBeNull();
     });
 
-    it('roundtrips provider-bound model selection identity', () => {
-        const modelSelection = SessionModelSelectionV1Schema.parse({
-            v: 1,
-            updatedAt: 123,
-            ref: {
-                agentTargetKey: 'agent:happier.agent.codex/codex',
-                providerConnectionId: 'pc_01J00000000000000000000000',
-                modelId: 'openai/gpt-5.5',
-            },
-        });
-
-        const decoded = decodeAutomationTemplate(encodeAutomationTemplate({
-            directory: '/tmp/project',
-            backendTarget: { kind: 'backend', backendId: 'codex' },
-            modelSelection,
-        }));
-
-        expect(decoded?.modelSelection).toEqual(modelSelection);
-    });
-
     it('writes only the canonical selection when legacy model fields are also present', () => {
         const modelSelection = SessionModelSelectionV1Schema.parse({
             v: 1,

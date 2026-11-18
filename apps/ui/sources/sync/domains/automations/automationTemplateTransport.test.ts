@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/selection/v1';
 import { AUTOMATION_TEMPLATE_V02_EXISTING_PLAIN, AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED }
     from '../../../../../../packages/protocol/src/automations/automationTemplateV02.testFixtures';
 import { decodeAutomationTemplate } from './automationTemplateCodec';
@@ -50,8 +51,17 @@ describe('automationTemplateTransport', () => {
         );
     });
 
-    it('encodes templates into plaintext envelope payloads for plain accounts', async () => {
+    it('roundtrips provider-bound model identity through plaintext envelope payloads for plain accounts', async () => {
         const encryptRaw = vi.fn(async () => 'ciphertext-base64');
+        const modelSelection = SessionModelSelectionV1Schema.parse({
+            v: 1,
+            updatedAt: 123,
+            ref: {
+                agentTargetKey: 'agent:happier.agent.codex/codex',
+                providerConnectionId: 'pc_01J00000000000000000000000',
+                modelId: 'openai/gpt-5.5',
+            },
+        });
 
         const payload = await encodeAutomationTemplateForTransport({
             accountMode: 'plain',
@@ -60,6 +70,8 @@ describe('automationTemplateTransport', () => {
                 prompt: 'Run maintenance',
                 transcriptStorage: 'direct',
                 existingSessionId: 'session-1',
+                backendTarget: { kind: 'backend', backendId: 'codex' },
+                modelSelection,
             },
             encryptRaw,
         });
@@ -67,6 +79,7 @@ describe('automationTemplateTransport', () => {
         const envelope = JSON.parse(payload);
         expect(envelope.kind).toBe('happier_automation_template_plain_v1');
         expect(envelope.payload).toEqual(expect.objectContaining({ directory: '/tmp/project', prompt: 'Run maintenance', transcriptStorage: 'direct', existingSessionId: 'session-1' }));
+        expect(decodeAutomationTemplate(JSON.stringify(envelope.payload))?.modelSelection).toEqual(modelSelection);
         expect(envelope).not.toHaveProperty('existingSessionId');
         expect(encryptRaw).not.toHaveBeenCalled();
     });
