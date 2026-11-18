@@ -39,20 +39,24 @@ describe('InboxSection', () => {
         expect(selected).not.toBe('transparent');
     });
 
-    it('lays a phone page section flat on the page, with no sheet around its rows (DESIGN: browse flat)', async () => {
-        const { ItemGroup } = await import('@/components/ui/lists/ItemGroup');
+    it('lays a phone page section flat on the page: the page sheet without its card, rows still ruled', async () => {
+        const { HappierPageSheet } = await import('@happier-dev/plugin-ui/presentation');
+        const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
         const render = async (surface: 'page' | 'pageFlat') => {
             const screen = await renderScreen(
-                <InboxSection testID="group" title="Today" surface={surface}>
-                    <InboxRow testID="row" selected={false} />
-                </InboxSection>,
+                <ListPresentationProvider value="page">
+                    <InboxSection testID="group" title="Today" surface={surface}>
+                        <InboxRow testID="row-1" selected={false} />
+                        <InboxRow testID="row-2" selected={false} />
+                    </InboxSection>
+                </ListPresentationProvider>,
             );
-            const group = screen.tree.findAllByType(ItemGroup)[0];
-            const sheet = group?.props.surface ?? 'sheet';
+            const sheet = screen.tree.findAllByType(HappierPageSheet)[0];
+            const shape = sheet ? (sheet.props.surface ?? 'card') : 'no sheet';
             await screen.unmount();
-            return sheet;
+            return shape;
         };
         expect(await render('pageFlat')).toBe('none');
-        expect(await render('page')).toBe('sheet');
+        expect(await render('page')).toBe('card');
     });
 });

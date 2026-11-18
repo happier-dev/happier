@@ -3,7 +3,7 @@ import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { SelectionListSectionHeader } from '@/components/ui/selectionList/SelectionListSectionHeader';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemGroup, ItemGroupDefaultSurfaceProvider } from '@/components/ui/lists/ItemGroup';
 
 /**
  * One section owner for the Inbox and Updates, in two host-selected shapes:
@@ -30,7 +30,7 @@ export const InboxSection = React.memo(function InboxSection(props: Readonly<{
     children: React.ReactNode;
 }>) {
     if (props.surface === 'page' || props.surface === 'pageFlat') {
-        return (
+        const section = (
             <View testID={props.testID}>
                 <ItemGroup
                     title={props.title}
@@ -42,12 +42,15 @@ export const InboxSection = React.memo(function InboxSection(props: Readonly<{
                     titleLeading={props.leading}
                     titleAccessory={props.meta}
                     virtualizedSegment={props.virtualizedSegment}
-                    {...(props.surface === 'pageFlat' ? { surface: 'none' as const } : {})}
                 >
                     {props.children}
                 </ItemGroup>
             </View>
         );
+        // The page sheet's flat mode keeps its rows and hairlines and drops only the card.
+        return props.surface === 'pageFlat'
+            ? <ItemGroupDefaultSurfaceProvider value="flat">{section}</ItemGroupDefaultSurfaceProvider>
+            : section;
     }
 
     return (
