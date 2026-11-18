@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
 import { createPluginHttpFixture } from "@happier-dev/plugin-sdk/testing";
@@ -48,10 +49,13 @@ import {
     HealthCheckTransitionV1ProtocolSchema,
 } from "@happier-dev/protocol/deployments/healthCheckSourceV1";
 import { createHealthCheckSourceInstanceIdV1 } from "@happier-dev/protocol/deployments/healthCheckSubjectV1";
+import { DEPLOYMENT_RECEIPT_EVENT_REFS_V1, DeploymentReceiptEventSourceConfigV1Schema } from "@happier-dev/protocol/deployments/deploymentReceiptEventsV1";
 import type { AutomationSubjectV1, AutomationSubjectContextV1 } from "@happier-dev/protocol/automations/automationSubjectV1";
 
 import { eventRouter } from "@/app/events/eventRouter";
+import { readStoredPluginManifestV2 } from "@/app/plugins/availability/currentDeclaration";
 import { registerAutomationEventRoutes } from "@/app/api/routes/automations/registerAutomationEventRoutes";
+import { registerAutomationV3Routes } from "@/app/api/routes/automations/registerAutomationV3Routes";
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { validateCurrentPluginWebhookInvocationReferenceTxV1 } from "@/app/plugins/webhooks/claimStore";
@@ -70,7 +74,7 @@ import {
 } from "./automationEventAdmissionService";
 import { claimAutomationRun } from "./automationClaimService";
 import { decodeAutomationRunCause } from "./automationRunCauseCodec";
-import { setAutomationEnabled } from "./automationCrudService";
+import { createAutomation, setAutomationEnabled } from "./automationCrudService";
 import { startAutomationRun } from "./automationRunService";
 
 const ACCOUNT_ID = "account-automation-event-admission";
@@ -3628,6 +3632,56 @@ describe("Automation Event admission", () => {
             },
         })).resolves.toEqual({ results: [{ kind: "skipped", reason: "occurrenceRejected", checkpointSafe: true }] });
         expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(0);
+    });
+
+    it("saves an exact Environment deployment listener through the real trigger validator", async () => {
+        await seed({ healthObservation: true });
+        const eventRef = DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed;
+        const setupId = `${eventRef.localId}/setup`;
+        const base = releaseFacts({ healthObservation: true });
+        const manifest = readStoredPluginManifestV2(JSON.parse(readFileSync(new URL(
+            "../../../../cli/assets/bundled-plugin-manifests/machine-services.json", import.meta.url,
+        ), "utf8")), eventRef.pluginId);
+        if (!manifest) throw new Error("Expected the generated Machine services manifest");
+        const release = normalizePluginReleaseFactsV1({ ...base, normalizedManifest: {
+            ...base.normalizedManifest, contributes: {
+                actions: manifest.contributes.actions?.filter(action => action.id === setupId),
+                events: manifest.contributes.events?.filter(event => event.id === eventRef.localId),
+            },
+        } });
+        await db.accountPluginRelease.update({
+            where: { accountId_pluginId_version: { accountId: ACCOUNT_ID, pluginId: eventRef.pluginId, version: PLUGIN_VERSION } },
+            data: { normalizedManifest: release.normalizedManifest },
+        });
+        const automation = await createAutomation({ accountId: ACCOUNT_ID, input: {
+            automationId: randomUUID(), name: "Selected deployment", enabled: true, triggers: [], assignments: [],
+            observationOnly: { kind: "observationOnly", templateVersion: 1 },
+        } });
+        const subject = { kind: "environment" as const, serverId: SERVER_IDENTITY_ID, environmentId: "selected-environment" };
+        const trigger = { kind: "pluginEvent", enabled: true, eventRef,
+            sourceInstanceId: "deployment:selected-environment", sourceContractVersion: 1,
+            sourceConfig: DeploymentReceiptEventSourceConfigV1Schema.parse({ v: 1, serverId: subject.serverId,
+                environmentId: subject.environmentId, observingSince: 1_794_503_170_000 }),
+            displayLabel: "Selected Environment", filter: null, maximumObservationAgeMs: null,
+            observationTransport: { kind: "checkpointedPull", watcherMaterializationRef: {
+                machineId: MACHINE_ID, materializationId: MATERIALIZATION_ID, pluginId: eventRef.pluginId,
+            } },
+        };
+        const app = createAuthenticatedTestApp();
+        registerAutomationV3Routes(app);
+        try {
+            const create = (selected?: typeof subject) => app.inject({ method: "POST",
+                url: `/v3/automations/${automation.id}/triggers`, headers: { "x-test-user-id": ACCOUNT_ID },
+                payload: { triggerId: randomUUID(), trigger: { ...trigger, ...(selected ? { subject: selected } : {}) } },
+            });
+            const any = await create();
+            expect(any.statusCode, any.body).toBe(200);
+            const exact = await create(subject);
+            expect(exact.statusCode, exact.body).toBe(200);
+            const retained = await db.automationTrigger.findFirstOrThrow({ where: { automationId: automation.id,
+                eventLocalId: eventRef.localId, subjectKind: "environment" } });
+            expect(JSON.parse(retained.definitionEnvelope!)).toMatchObject({ t: "plain", v: { definition: { subject } } });
+        } finally { await app.close(); }
     });
 
     it("rejects a payload outside the current Event schema before creating a Run", async () => {

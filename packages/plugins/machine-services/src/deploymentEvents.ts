@@ -83,6 +83,7 @@ const event = (id: EventId) => {
     kind: 'event' as const, title: { key: `machineServices.events.${key}.title`, fallback: title }, payloadSchema: payloadSchema.jsonSchema,
     description: { key: `machineServices.events.${key}.description`, fallback: description },
     automation: { v: 1 as const, eligible: true as const,
+        subjectKinds: ['environment' as const, 'app' as const, 'machine' as const],
         ...(completesActionIds ? { completesActionIds: [...completesActionIds], completionOutcome: outcomes[id].state! } : {}), source: { sourceContractVersion: 1,
         supportedObservationTransports: ['checkpointedPull' as const], sourceConfigSchema: configSchema.jsonSchema,
         setupActionRef: { pluginId, localId: `${id}/setup` } } },
