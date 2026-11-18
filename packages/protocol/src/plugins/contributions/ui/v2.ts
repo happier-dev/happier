@@ -870,7 +870,16 @@ export const PluginCollectionListExtensionV1Schema = lazyZodSchema(() => z.stric
 }));
 export type PluginCollectionListExtensionV1 = z.infer<typeof PluginCollectionListExtensionV1Schema>;
 
-export const PluginUiContributionsV2Schema = lazyZodSchema(() => z._default(z.strictObject({
+type PluginUiContributionsV2Shape = {
+  views: z.ZodMiniDefault<z.ZodMiniArray<typeof PluginUiViewV2Schema>>;
+  renderers: z.ZodMiniDefault<z.ZodMiniArray<typeof PluginUiRendererV2Schema>>;
+  settingsGroups: z.ZodMiniDefault<z.ZodMiniArray<typeof PluginUiSettingsGroupV1Schema>>;
+  settingsPages: z.ZodMiniDefault<z.ZodMiniArray<typeof PluginUiSettingsPageV1Schema>>;
+  listExtensions: z.ZodMiniOptional<z.ZodMiniArray<typeof PluginCollectionListExtensionV1Schema>>;
+  translations: z.ZodMiniDefault<z.ZodMiniArray<typeof PluginUiTranslationBundleV2Schema>>;
+};
+
+export const PluginUiContributionsV2Schema: z.ZodMiniDefault<ReturnType<typeof z.strictObject<PluginUiContributionsV2Shape>>> = lazyZodSchema(() => z._default(z.strictObject({
   views: z._default(z.array(PluginUiViewV2Schema), []),
   renderers: z._default(z.array(PluginUiRendererV2Schema), []),
   settingsGroups: z._default(z.array(PluginUiSettingsGroupV1Schema), []),
