@@ -537,19 +537,19 @@ export const WorkflowInvocationRetryResultV1Schema = lazyZodSchema(() => z.stric
   run: WorkflowRunSummaryV1Schema, invocation: WorkflowRunInvocationIndexV1Schema,
   disposition: z.enum(['accepted', 'ineligible', 'conflict']),
 }));
-const WorkflowReviewTargetV1Shape = {
+const workflowReviewTargetV1Shape = () => ({
   runId: WorkflowRunIdV1Schema,
   invocation: WorkflowInvocationRefV1Schema,
   expectedContentRevision: WorkflowDecimalV1Schema,
-};
+});
 export const WorkflowInvocationPublishDraftRequestV1Schema = lazyZodSchema(() => z.strictObject({
-  ...WorkflowReviewTargetV1Shape, value: StrictJsonValueSchema,
+  ...workflowReviewTargetV1Shape(), value: StrictJsonValueSchema,
 }));
 export const WorkflowInvocationPublishDraftResultV1Schema = WorkflowInvocationGetResultV1Schema;
 export const WorkflowInvocationCompleteReviewRequestV1Schema = lazyZodSchema(() => z.discriminatedUnion('mode', [
-  z.strictObject({ ...WorkflowReviewTargetV1Shape, mode: z.literal('use_result'),
+  z.strictObject({ ...workflowReviewTargetV1Shape(), mode: z.literal('use_result'),
     value: zMini.optional(StrictJsonValueSchema), followUp: zMini.optional(WorkflowReviewFollowUpV1Schema) }),
-  z.strictObject({ ...WorkflowReviewTargetV1Shape, mode: z.literal('generate'),
+  z.strictObject({ ...workflowReviewTargetV1Shape(), mode: z.literal('generate'),
     acknowledgeUncertainPriorEffects: z.optional(z.literal(true)) }),
 ]));
 export const WorkflowInvocationCompleteReviewResultV1Schema = lazyZodSchema(() => z.strictObject({
