@@ -78,10 +78,12 @@ function installHome(purposeTarget: 'account' | 'group' | 'empty' | 'unavailable
   return { serviceKey: `${service.pluginId}/${service.localId}`, get };
 }
 
-function prepare(connectedServices?: unknown, operationContext?: SavedSecretOperationContextV1, accountSettings?: Record<string, unknown>) {
+function prepare(connectedServices?: unknown, operationContext?: SavedSecretOperationContextV1, accountSettings?: Record<string, unknown>,
+  teamCredentialBindings?: SpawnSessionOptions['teamCredentialBindings']) {
   // Exercise the exact daemon ingress schema, including released V1 native bindings.
   const options = SpawnDaemonSessionRequestSchema.parse({ directory: configuration.happyHomeDir, agentTarget,
-    ...(connectedServices === undefined ? {} : { connectedServices }) });
+    ...(connectedServices === undefined ? {} : { connectedServices }),
+    ...(teamCredentialBindings === undefined ? {} : { teamCredentialBindings }) });
   return runWithServerHttpBaseUrl(serverHttpBaseUrl, () => prepareExecuteSpawnSessionRequest({
     request: { options, credentials, ...(operationContext ? { operationContext } : {}), ...(accountSettings ? { accountSettings } : {}) }, validateEnvVarRecordStrict,
   }));
@@ -108,6 +110,22 @@ describe('fresh daemon spawn Account purpose defaults', () => {
       providerDefaultModelSelectionsByAgentTargetKeyV1: { [modelSelection.ref.agentTargetKey]: modelSelection },
     });
     expect(result).toMatchObject({ modelSelection });
+  });
+
+  it.each(['bound', 'cleared'] as const)('keeps a %s Team model slot ahead of the Account default', async form => {
+    installHome('unavailable');
+    const agentTargetKey = 'agent:happier.agent.codex/codex';
+    const slot = { kind: 'provider_model' as const };
+    const teamCredentialBindings: SpawnSessionOptions['teamCredentialBindings'] = form === 'bound'
+      ? [{ v: 1, slot, resourceId: 'team-provider', teamId: 'team', expectedResourceRevision: 1, deliveryMode: 'brokered',
+          providerModelSelection: { agentTargetKey, modelId: 'team-model' } }]
+      : [{ v: 1, slot, resourceId: null }];
+    const result = await prepare({ v: 2, bindingsByServiceId: {} }, undefined, {
+      providerDefaultModelSelectionsByAgentTargetKeyV1: { [agentTargetKey]: { v: 1, updatedAt: 7,
+        ref: { providerConnectionId: null, agentTargetKey, modelId: 'account-default' } } },
+    }, teamCredentialBindings);
+    expect(result).not.toHaveProperty('type');
+    expect(result).toMatchObject({ teamCredentialBindings, modelSelection: undefined });
   });
 
   it.each(['account', 'group'] as const)('admits the saved %s when a Voice/Action spawn omits its choice', async target => {

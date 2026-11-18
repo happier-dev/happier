@@ -65,6 +65,19 @@ describe('resolveSpawnLaunchProfileDefaults', () => {
     });
   });
 
+  it('uses other Profile defaults while the Team binding owns model selection', () => {
+    const teamCredentialBindings: SpawnSessionOptions['teamCredentialBindings'] = [{
+      v: 1, slot: { kind: 'provider_model' }, resourceId: 'team-provider', teamId: 'team', expectedResourceRevision: 1,
+      deliveryMode: 'brokered', providerModelSelection: { agentTargetKey: profile.preferredAgentTargetKey, modelId: 'team-model' },
+    }];
+    const result = resolveSpawnLaunchProfileDefaults({
+      options: { ...baseOptions, teamCredentialBindings },
+      effectiveBackendTarget: baseOptions.backendTarget!, rawSettings: { profiles: [profile] },
+    });
+    expect(result).toMatchObject({ ok: true, options: { teamCredentialBindings, permissionMode: 'acceptEdits' } });
+    expect(result).not.toHaveProperty('options.modelSelection');
+  });
+
   it('preserves every explicit sparse spawn override', () => {
     const explicit: SpawnSessionOptions = {
       ...baseOptions,

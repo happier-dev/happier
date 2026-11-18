@@ -33,6 +33,7 @@ import { resolvePreparedSessionDirectory } from './resolvePreparedSessionDirecto
 import { resolveSessionMemoryCeilingBytes } from '../platform/linux/sessionMemoryCeiling';
 import { resolveSessionRuntimeSnapshot } from '../sessions/runtimeSnapshot/resolveSessionRuntimeSnapshot';
 import { projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { readSessionSpawnModelChoice } from '@/session/creation/readSessionSpawnModelChoice';
 import { readAgentDefaultModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import {
     ConnectedServicesDefaultUnavailableError,
@@ -337,7 +338,8 @@ export async function prepareExecuteSpawnSessionRequest(
             acceptedTeamCredentialBinding: attachSnapshot?.acceptedTeamCredentialBinding,
         }).spawnOptions
         : options;
-    const accountDefaultModelSelection = !normalizedExistingSessionId && !effectiveResume && runtimeOptions.modelSelection === undefined
+    const accountDefaultModelSelection = !normalizedExistingSessionId && !effectiveResume
+        && readSessionSpawnModelChoice(runtimeOptions, effectiveBackendTargetV2) === undefined
         ? readAgentDefaultModelSelectionV1(
             params.request.accountSettings?.providerDefaultModelSelectionsByAgentTargetKeyV1,
             effectiveBackendTargetV2,

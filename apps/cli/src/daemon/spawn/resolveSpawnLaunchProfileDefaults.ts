@@ -5,6 +5,7 @@ import type { BackendTargetRefV2, ArtifactSharingResourceV1 } from '@happier-dev
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
 import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 
+import { readSessionSpawnModelChoice } from '@/session/creation/readSessionSpawnModelChoice';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { resolveCanonicalSpawnProfile } from '@/settings/profiles/validateSpawnProfile';
@@ -104,7 +105,7 @@ export function resolveSpawnLaunchProfileDefaults(input: Readonly<{
     ...(input.options.transcriptStorage === undefined && transcriptStorage !== undefined
       ? { transcriptStorage }
       : {}),
-    ...(input.options.modelSelection === undefined && preferredModelSelection !== undefined
+    ...(preferredModelSelection !== undefined && readSessionSpawnModelChoice(input.options, input.effectiveBackendTarget) === undefined
       ? { modelSelection: preferredModelSelection }
       : {}),
   };

@@ -1,4 +1,4 @@
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildBackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { readAuthoredSessionModelSelection } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -6,7 +6,7 @@ import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/crea
 /** An omitted choice can inherit. Automatic and an authored model slot both occupy the model facet. */
 export function readSessionSpawnModelChoice(
   input: Pick<SessionSpawnNewInputV2, 'modelSelection' | 'configuration' | 'teamCredentialBindings'>,
-  agentTarget: SessionSpawnNewInputV2['agentTarget'],
+  agentTarget: PersistedBackendTargetRefV2,
 ): SessionModelSelection | null | undefined {
   const selection = readAuthoredSessionModelSelection({ ...input, agentTarget });
   if (selection) return selection;
