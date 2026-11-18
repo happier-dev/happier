@@ -21,7 +21,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
 import { t } from '@/text';
-import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
+import { formatRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { DeploymentEnvironmentMark, DeploymentEnvironmentStateMark, type DeploymentPlatformIdentity } from './rows/DeploymentEnvironmentRow';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -279,12 +279,12 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
           : environment.purpose === 'preview' && liveAddress
             ? [platform ?? machine, formatDeploymentLiveAddress(liveAddress)].filter(Boolean).join(' · ') : where,
       leading: latest ? { state: latest, testID: `${testIDPrefix}.${environment.id}.state` } : null,
-      detail: formatRelativeTimeShort(environment.updatedAtMs, nowMs),
+      detail: formatRelativeTime(environment.updatedAtMs, nowMs),
       // Last deploy (Services → Apps): when the latest deploy happened; an Environment never deployed has none, whatever
       // its own edits (QA-WAVE-1115).
       // Lab envRow "ver · age": which version went live, then when (owner D4).
       lastDeploy: currentDeployment ? [currentDeployment.source ? deploymentRevisionLabel(currentDeployment.source) : null,
-        formatRelativeTimeShort(deploymentReceiptAtMs(currentDeployment), nowMs)].filter(Boolean).join(' · ') : null,
+        formatRelativeTime(deploymentReceiptAtMs(currentDeployment), nowMs)].filter(Boolean).join(' · ') : null,
     };
   });
   type Fact = typeof incoming[number];

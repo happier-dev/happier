@@ -39,7 +39,7 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { DEFAULT_DEPLOYMENT_ON_FAILURE_V1, type DeploymentOnFailureV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-import { buildSessionListDateGroups, formatDayGroupedAgeShort } from '@/sync/domains/session/listing/sessionListDateGroups';
+import { buildSessionListDateGroups } from '@/sync/domains/session/listing/sessionListDateGroups';
 import { useCollectionConditionHeader } from '@/components/ui/lists/collection/useCollectionConditionHeader';
 import {
   createDeploymentHistoryFilterRegistry,
@@ -1654,7 +1654,7 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
   const { receipt } = props;
   const duration = deploymentDurationMs(receipt);
   // The same calendar-day boundary as History's day groups, so a row never disagrees with its heading.
-  const age = formatDayGroupedAgeShort(deploymentReceiptAtMs(receipt), Date.now());
+  const age = formatRelativeTime(deploymentReceiptAtMs(receipt), Date.now());
   // A settled success says nothing; trouble and work in progress lead the facts line in their tone.
   const lead = receipt.title ? deploymentHistoryLead(receipt, receipt.failure) : null;
   const facts = props.byYou ? [t('projects.deployments.byYou')] : [];
