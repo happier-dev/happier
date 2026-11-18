@@ -1,15 +1,34 @@
 import * as z from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { ProjectSetupSelectionV1Schema, projectSetupSelectionV1, type ProjectAcceptedSharedSetupV1 } from '../../projects/projectSetupV1.js';
+import { ProjectSetupSelectionV1Schema, projectSetupSelectionV1, type ProjectAcceptedSharedSetupV1, type ProjectSetupSelectionV1 } from '../../projects/projectSetupV1.js';
 import { ProjectManifestV1Schema, type ProjectManifestV1 } from './projectManifestV1.js';
 
 export const ProjectDefinitionOriginV1Schema = z.strictObject({
   path: z.array(z.string()), layer: z.enum(['repository', 'shared', 'personal']), overridden: z.boolean(),
 });
 export type ProjectDefinitionOriginV1 = z.infer<typeof ProjectDefinitionOriginV1Schema>;
+const ProjectSetupSummaryKindV1Schema = z.enum([
+  'toolchain', 'devcontainer', 'worktreePorts', 'environmentVariables',
+  'workspaceSetup', 'workspaceTeardown', 'workspaceInputs', 'scripts', 'services',
+]);
+const ProjectSetupSummaryEntryV1Schema = z.strictObject({
+  kind: ProjectSetupSummaryKindV1Schema, count: z.number().check(z.int(), z.nonnegative()),
+});
+export const ProjectSetupSummaryV1Schema = z.array(ProjectSetupSummaryEntryV1Schema);
+export type ProjectSetupSummaryV1 = z.infer<typeof ProjectSetupSummaryV1Schema>;
+const ProjectPendingSharedSetupSourceV1Schema = z.strictObject({
+  id: z.string().check(z.trim(), z.minLength(1)), name: z.string().check(z.trim(), z.minLength(1)),
+});
+const ProjectPendingSharedSetupV1Schema = z.strictObject({
+  source: ProjectPendingSharedSetupSourceV1Schema,
+  setup: ProjectSetupSelectionV1Schema,
+  summary: ProjectSetupSummaryV1Schema,
+});
+export type ProjectPendingSharedSetupV1 = z.infer<typeof ProjectPendingSharedSetupV1Schema>;
 export const ProjectEffectiveDefinitionV1Schema = lazyZodSchema(() => z.strictObject({
   effectiveManifest: z.nullable(ProjectManifestV1Schema), origins: z.array(ProjectDefinitionOriginV1Schema),
   sharedBasis: z.optional(ProjectSetupSelectionV1Schema),
+  pendingSharedSetup: z.optional(ProjectPendingSharedSetupV1Schema),
 }));
 export type ProjectEffectiveDefinitionV1 = z.infer<typeof ProjectEffectiveDefinitionV1Schema>;
 
@@ -29,11 +48,33 @@ export function createProjectDefinitionOriginLookupV1(definition: Pick<ProjectEf
   };
 }
 
+function summarizeProjectManifestV1(manifest: ProjectManifestV1): ProjectSetupSummaryV1 {
+  const summary: ProjectSetupSummaryV1 = [];
+  const add = (kind: ProjectSetupSummaryV1[number]['kind'], count: number) => {
+    if (count > 0) summary.push({ kind, count });
+  };
+  add('toolchain', manifest.toolchain ? 1 : 0);
+  add('devcontainer', manifest.devcontainer ? 1 : 0);
+  add('worktreePorts', manifest.worktreePorts ? 1 : 0);
+  add('environmentVariables', manifest.environmentVariables?.length ?? 0);
+  add('workspaceSetup', manifest.workspace?.setup?.length ?? 0);
+  add('workspaceTeardown', manifest.workspace?.teardown?.length ?? 0);
+  add('workspaceInputs', manifest.workspace?.setupInputs?.length ?? 0);
+  add('scripts', Object.keys(manifest.scripts ?? {}).length);
+  add('services', Object.keys(manifest.services ?? {}).length);
+  return summary;
+}
+
 /** Ordered authored layers, never execution placement, private bindings or runtime assignments. */
 export function resolveProjectDefinitionV1(input: Readonly<{
   repositoryManifest: ProjectManifestV1 | null;
   acceptedSharedSetup?: ProjectAcceptedSharedSetupV1;
   setupOverrides?: ProjectManifestV1;
+  pendingSharedSetup?: Readonly<{
+    source: Readonly<{ id: string; name: string }>;
+    setup: ProjectSetupSelectionV1;
+    manifest: ProjectManifestV1;
+  }>;
 }>): ProjectEffectiveDefinitionV1 {
   let effectiveManifest: ProjectManifestV1 | null = null;
   const origins: ProjectDefinitionOriginV1[] = [];
@@ -86,7 +127,12 @@ export function resolveProjectDefinitionV1(input: Readonly<{
   if (effectiveManifest && !ProjectManifestV1Schema.safeParse(effectiveManifest).success) {
     throw Object.assign(new Error('invalid_manifest'), { code: 'invalid_manifest' });
   }
-  if (!input.acceptedSharedSetup) return { effectiveManifest, origins };
+  const pendingSharedSetup = input.pendingSharedSetup ? {
+    source: { id: input.pendingSharedSetup.source.id, name: input.pendingSharedSetup.source.name },
+    setup: projectSetupSelectionV1(input.pendingSharedSetup.setup),
+    summary: summarizeProjectManifestV1(input.pendingSharedSetup.manifest),
+  } : undefined;
+  if (!input.acceptedSharedSetup) return pendingSharedSetup ? { effectiveManifest, origins, pendingSharedSetup } : { effectiveManifest, origins };
   const sharedBasis = projectSetupSelectionV1(input.acceptedSharedSetup);
-  return { effectiveManifest, origins, sharedBasis };
+  return pendingSharedSetup ? { effectiveManifest, origins, sharedBasis, pendingSharedSetup } : { effectiveManifest, origins, sharedBasis };
 }

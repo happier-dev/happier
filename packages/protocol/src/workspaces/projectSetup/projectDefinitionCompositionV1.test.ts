@@ -54,4 +54,34 @@ describe('effective Project definition', () => {
     expect(() => resolveProjectDefinitionV1({ repositoryManifest, acceptedSharedSetup }))
       .toThrow(expect.objectContaining({ code: 'invalid_manifest' }));
   });
+  it('projects an unaccepted Source setup without exposing its authored values', () => {
+    const result = resolveProjectDefinitionV1({ repositoryManifest: null,
+      pendingSharedSetup: {
+        source: { id: 'source', name: 'Acme dev setup' },
+        setup: { ...sharedBasis },
+        manifest: { version: 1, toolchain: { kind: 'toolchain', tool: 'mise', configPath: '.mise.toml' },
+          environmentVariables: [{ name: 'PRIVATE_TOKEN', kind: 'secret', required: true }],
+          scripts: { lint: { source: command('secret-value must not escape') } },
+          services: { web: { source: command('web') } },
+          workspace: { setup: [command('bootstrap')], teardown: [command('cleanup')], setupInputs: ['setup.sh'] },
+        },
+      },
+    });
+    expect(result.pendingSharedSetup).toEqual({
+      source: { id: 'source', name: 'Acme dev setup' },
+      setup: sharedBasis,
+      summary: [
+        { kind: 'toolchain', count: 1 },
+        { kind: 'environmentVariables', count: 1 },
+        { kind: 'workspaceSetup', count: 1 },
+        { kind: 'workspaceTeardown', count: 1 },
+        { kind: 'workspaceInputs', count: 1 },
+        { kind: 'scripts', count: 1 },
+        { kind: 'services', count: 1 },
+      ],
+    });
+    expect(JSON.stringify(result.pendingSharedSetup)).not.toContain('secret-value');
+    expect(JSON.stringify(result.pendingSharedSetup)).not.toContain('PRIVATE_TOKEN');
+  });
+
 });
