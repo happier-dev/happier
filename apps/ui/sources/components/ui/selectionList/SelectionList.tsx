@@ -312,7 +312,6 @@ function sectionPlanRendersOptions(sectionPlan: SectionRenderPlan): boolean {
  * own unit tests.
  */
 export function SelectionList(props: SelectionListProps): React.ReactElement {
-    const themeSurfaceEnabled = useHappierThemeSurfaceOverridesEnabled();
     const selection = props.selection ?? {
         kind: 'single' as const,
         selectedId: props.selectedOptionId ?? null,
@@ -327,6 +326,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     ) {
         throw new Error('SelectionList multiple selection cannot be combined with expandedContent');
     }
+    const themeSurfaceEnabled = useHappierThemeSurfaceOverridesEnabled();
     const containingSurface = useContainingGlassSurfaceGroup();
     const surface = props.surface ?? (containingSurface === 'floating' ? 'none' : 'base');
     // A list on a page takes the page's material (glass when glass is on), from the same owner as `ItemList`.
