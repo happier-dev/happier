@@ -3200,6 +3200,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
         });
         if (includeContent !== true) return result;
+        // An empty authorized page has no private content to open.
+        if (result.invocations.length === 0) return { ...result, invocationDetails: [] };
         const census = WorkflowRunRecipientCensusResponseV1Schema.parse(page.keyCensus);
         if (census.runId !== input.runId) throw workflowError('content_unavailable');
         const resolved = resolveWorkflowRunDataKeyV1({ encryption: await encryption(args.context.signal), census });

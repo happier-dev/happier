@@ -2294,7 +2294,7 @@ describe('shared Account workflow run owner', () => {
     expect(admitted).toBe(false);
   });
 
-  it.each(['plain', 'e2ee'] as const)('lists admitted %s Runs before the daemon seals their snapshot', async mode => {
+  it.each(['plain', 'e2ee'] as const)('lists admitted %s Runs and empty invocation content before the daemon seals their snapshot', async mode => {
     const snapshot = runSnapshot();
     const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
       material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } });
@@ -2302,12 +2302,20 @@ describe('shared Account workflow run owner', () => {
       ? { kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }
       : { kind: 'available', material, witness: { mode: 'e2ee', version: 1, contentKeyFingerprint: material.contentPublicKeyFingerprint } };
     const census = { ...snapshot.keyCensus, encryptionMode: mode, ownerAccountCurrentness: encryption.witness };
-    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async () => ({
-      runs: [snapshot.run], acceptedEnvelopesByRunId: {}, keyCensusByRunId: { [runId]: census },
-    }) }), resolveEncryption: async () => encryption });
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+      if (operation.operation === 'list') return {
+        runs: [snapshot.run], acceptedEnvelopesByRunId: {}, keyCensusByRunId: { [runId]: census },
+      };
+      if (operation.operation === 'invocations.list') return { invocations: [], parentRevision: 0,
+        keyCensus: census, progressEnvelopesByInvocationId: {} };
+      throw new Error(`unexpected_storage_operation:${String(operation.operation)}`);
+    } }), resolveEncryption: async () => encryption });
     const result = await owner.execute({ actionId: 'workflow.run.list', input: {}, context: {} });
     expect(result).toMatchObject({ runs: [{ id: runId, state: 'queued' }] });
     expect(result).not.toHaveProperty(`metadataByRunId.${runId}`);
+    await expect(owner.execute({ actionId: 'workflow.run.invocations.list',
+      input: { runId, includeContent: true }, context: {} }))
+      .resolves.toEqual({ invocations: [], parentRevision: 0, invocationDetails: [] });
   });
 
   it.each(['history_not_readable', 'encryption_setup_required', 'waiting_for_keys'] as const)(
@@ -2329,7 +2337,9 @@ describe('shared Account workflow run owner', () => {
         if (operation.operation === 'list') return { runs: [snapshot.run],
           acceptedEnvelopesByRunId: { [runId]: snapshot.acceptedEnvelope },
           keyCensusByRunId: { [runId]: snapshot.keyCensus } };
-        if (operation.operation === 'invocations.list') return { invocations: [], parentRevision: 0,
+        if (operation.operation === 'invocations.list') return { invocations: [{ id: 'held', runId,
+          sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0', contentRevision: '1',
+          lifecycle: 'running', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }], parentRevision: 0,
           keyCensus: snapshot.keyCensus, progressEnvelopesByInvocationId: {} };
         if (operation.operation === 'wait') return { observation: 'terminal', run: { ...snapshot.run, state: 'succeeded' },
           resultEnvelope: 'unopened-result', keyCensus: snapshot.keyCensus };

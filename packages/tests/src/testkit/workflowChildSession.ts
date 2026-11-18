@@ -5,7 +5,7 @@ import { buildAccountStoredContentCompatibilityHttpHeadersV1,
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import { fetchJson } from './http';
 
-/** Observe the ordinary Workflow's public child reference, after snapshot sealing.
+/** Observe the ordinary Workflow's public child reference through invocation history.
  * Callers keep their existing wait; refusals and invalid content must fail it fast. */
 export async function readWorkflowChildSession(params: Readonly<{
   execute: (actionId: 'workflow.run.invocations.list', input: Readonly<{
@@ -16,9 +16,6 @@ export async function readWorkflowChildSession(params: Readonly<{
   runId: string;
   blockId: string;
 }>) {
-  const indexed = await params.execute('workflow.run.invocations.list', { runId: params.runId });
-  if (!indexed.ok) throw new Error(`Workflow invocation index read refused (${indexed.errorCode})`);
-  if (WorkflowInvocationListResultV1Schema.parse(indexed.result).invocations.length === 0) return null;
   const listed = await params.execute('workflow.run.invocations.list', { runId: params.runId, includeContent: true });
   if (!listed.ok) throw new Error(`Workflow child read refused (${listed.errorCode})`);
   const execution = WorkflowInvocationListResultV1Schema.parse(listed.result).invocationDetails

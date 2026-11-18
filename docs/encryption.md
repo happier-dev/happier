@@ -3955,6 +3955,11 @@ they open the existing recipient envelope instead of generating a new per-run
 key or re-reading the live definition. Signed claim receipts retain no private
 accepted-snapshot copy: replay re-reads it from the transition-owned Run row.
 
+An authenticated invocation page with no rows has no private content to open.
+The current-development content-list Action returns empty details before root
+initialization without requiring a Run key. Pages containing invocation content
+still use the same per-Run key and envelope checks.
+
 The server-visible Workflow structure is the same in plain and E2EE mode:
 
 - Invocation lifecycle `waiting_for_review` discloses a human-held step. Parent

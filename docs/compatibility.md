@@ -8384,6 +8384,10 @@ an unavailable storage boundary (`storage_unavailable`). Recognized database
 failures at Workflow storage HTTP admission return 503 with the latter code;
 unexpected application exceptions remain with the global error owner. A failed
 read never establishes mutation currentness or an empty successful result.
+An authorized empty invocation page does return empty details without resolving
+private-content keys, including before the daemon seals the first snapshot.
+This development correction preserves the existing response shape and all
+key refusals for pages containing invocation content.
 The review UI keeps a fieldless Wait's card and disabled Continue visible while
 its exact evidence is pending or unavailable, and offers reason-specific recovery.
 Only successfully read exact evidence can enable mutation. This is development
