@@ -19,8 +19,14 @@ const { SelectionListFilterChip } = await import('@/components/ui/selectionList'
 const registryChooser = (screen: { findByType: (type: never) => { props: { filter: { renderPopoverContent: (context: { close: () => void; maxHeight: number }) => { props: { rootStep: { sections: ReadonlyArray<{ options: ReadonlyArray<{ id: string; label: string }> }> }; selectedOptionId: string; onSelect: (id: string) => void } } } } } }) =>
     screen.findByType(SelectionListFilterChip as never).props.filter.renderPopoverContent({ close() {}, maxHeight: 400 }).props;
 const { useRegistrySources } = await import('./useRegistrySources');
+const { registryFormatIcon, registryFormatLabel } = await import('./registrySourcePresentation');
 
 describe('RegistrySourceSelect through the Account source owner', () => {
+    it('presents the Open VSX theme registry with a mark and its format name', () => {
+        expect(registryFormatIcon({ id: 'builtin:open-vsx', format: 'open-vsx' })).toBe('palette');
+        expect(registryFormatLabel('open-vsx')).toBe('Open VSX');
+    });
+
     it('leads with available picks and opens Add and Manage with distinct intent without changing selection', async () => {
         const { sourceId } = await createRegistrySourcesUiHome('select-picks', { picks: true });
         const onChange = vi.fn();

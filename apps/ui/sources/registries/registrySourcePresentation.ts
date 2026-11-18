@@ -33,6 +33,8 @@ export function registryFormatIcon(
       return 'stack';
     case 'chrome-web-store':
       return 'globe';
+    case 'open-vsx':
+      return 'palette';
   }
 }
 
@@ -58,6 +60,8 @@ export function registryFormatLabel(format: RegistryFormatV1): string {
       return t('capabilities.registries.format.composeTomlCatalog');
     case 'chrome-web-store':
       return t('capabilities.registries.format.chromeWebStore');
+    case 'open-vsx':
+      return 'Open VSX';
   }
 }
 
