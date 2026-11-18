@@ -59,6 +59,7 @@ import {
 } from './buildSessionModelPickerSections';
 import { useGatewaySlotTitle } from './useGatewaySlotTitle';
 import { SessionModelSourceUsage } from './SessionModelSourceUsage';
+import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import { providerConnectionDetailRoute } from '@/components/settings/providers/collection/providerCollectionModel';
 import {
     SessionModelHiddenSources,
@@ -214,7 +215,9 @@ export type SessionModelPickerProps = Readonly<{
     headerAccessory?: React.ReactNode;
     favoriteEntries?: readonly SessionModelPickerFavoriteEntry[];
     favoriteKeys?: ReadonlySet<string>;
-    onToggleFavorite?: (ref: ProviderBoundModelRef) => void;
+    favoriteReasoningEffortByKey?: ReadonlyMap<string, string | undefined>;
+    onToggleFavorite?: (ref: ProviderBoundModelRef, reasoningEffort?: string) => void;
+    onUpdateFavoriteModelReasoningEffort?: (ref: ProviderBoundModelRef, reasoningEffort: string) => void;
     selectedOptionControls?: ReadonlyArray<SessionConfigOptionControl>;
     /** Draft/session intent, applied to the selected source's own descriptors. */
     modelOptionOverrides?: Readonly<Record<string, string>>;
@@ -384,7 +387,9 @@ function SessionModelSourceBrowse(props: Readonly<{
             selected={picker.selected}
             reportedModel={picker.reportedModel}
             favoriteKeys={picker.favoriteKeys}
+            favoriteReasoningEffortByKey={picker.favoriteReasoningEffortByKey}
             onToggleFavorite={picker.onToggleFavorite}
+            onUpdateFavoriteModelReasoningEffort={picker.onUpdateFavoriteModelReasoningEffort}
             favoriteActionVisibility={picker.favoriteActionVisibility}
             notes={notes}
             // One refresh for the whole source: its models and its balance.
@@ -638,10 +643,15 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             values: props.favoriteKeys,
             isFavoritable: (option) => option.value !== null && !isTeamCredentialProviderModelPickerValue(option.value),
             onToggle: (option) => {
-                if (option.value && !isTeamCredentialProviderModelPickerValue(option.value)) props.onToggleFavorite?.(option.value);
+                if (!option.value || isTeamCredentialProviderModelPickerValue(option.value)) return;
+                const effort = sessionModelSelectionKey(option.value) === selectedKey
+                    ? selectedOptionControls?.find(control => control.option.id === PROVIDER_REASONING_EFFORT_OPTION_ID)?.effectiveValue
+                    : undefined;
+                if (typeof effort === 'string') props.onToggleFavorite?.(option.value, effort);
+                else props.onToggleFavorite?.(option.value);
             },
         };
-    }, [props.favoriteKeys, props.onToggleFavorite]);
+    }, [props.favoriteKeys, props.onToggleFavorite, selectedKey, selectedOptionControls]);
     const customTarget = React.useMemo(() => {
         if (props.canEnterCustomValue === false) return null;
         const selectedConnectionId = props.selected?.providerConnectionId ?? null;

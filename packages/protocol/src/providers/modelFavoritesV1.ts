@@ -1,4 +1,5 @@
 import { z } from '../zodRuntimePolicy.js';
+import { AgentModelOptionValueIdSchema } from '../models/descriptor.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { ProviderConnectionDisplaySnapshotV1Schema } from './sessions/bindingMetadataV1.js';
 import { SessionModelSelectionV1Schema } from './selection/v1.js';
@@ -11,6 +12,7 @@ const CanonicalFavoriteModelSelectionV1Schema = z.strictObject({
     configuredBackendId: z.optional(z.nullable(z.string())),
     backendLabel: z.optional(z.string()),
     modelLabel: z.optional(z.string()),
+    reasoningEffort: z.optional(AgentModelOptionValueIdSchema),
     providerDisplaySnapshot: z.optional(ProviderConnectionDisplaySnapshotV1Schema),
     addedAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
 }).check(z.superRefine((value, context) => {
@@ -33,6 +35,7 @@ const LegacyFavoriteModelSelectionV1Keys = new Set([
     'configuredBackendId',
     'backendLabel',
     'modelLabel',
+    'reasoningEffort',
     'providerDisplaySnapshot',
     'addedAtMs',
 ]);
@@ -61,6 +64,7 @@ function copyLegacyFavoritePresentation(
         ...(record.configuredBackendId !== undefined ? { configuredBackendId: record.configuredBackendId } : {}),
         ...(record.backendLabel !== undefined ? { backendLabel: record.backendLabel } : {}),
         ...(record.modelLabel !== undefined ? { modelLabel: record.modelLabel } : {}),
+        ...(record.reasoningEffort !== undefined ? { reasoningEffort: record.reasoningEffort } : {}),
         ...(record.providerDisplaySnapshot !== undefined
             ? { providerDisplaySnapshot: record.providerDisplaySnapshot }
             : {}),
@@ -106,17 +110,29 @@ export type RetainedFavoriteModelSelectionsV1 = AccountSettingsDefaults['favorit
 export const ModelFavoriteMutationV1Schema = z.strictObject({ selection: CanonicalFavoriteModelSelectionV1Schema, favorite: z.boolean() });
 export type ModelFavoriteMutationV1 = z.infer<typeof ModelFavoriteMutationV1Schema>;
 
-/** Exact-tuple membership intent; unrelated and unreadable retained entries stay untouched. */
+/** Exact-tuple favorite intent with an optional chosen effort; unrelated and unreadable retained entries stay untouched. */
 export function setModelFavoriteV1(raw: Readonly<Record<string, unknown>>, input: ModelFavoriteMutationV1): Record<string, unknown> {
     const intent = ModelFavoriteMutationV1Schema.parse(input);
     const rawFavorites: RetainedFavoriteModelSelectionsV1 = Array.isArray(raw.favoriteModelSelectionsV1) ? raw.favoriteModelSelectionsV1 : [];
-    const currentFavorites = rawFavorites.flatMap(value => {
+    const parsedFavorites = rawFavorites.flatMap((value, index) => {
         const parsed = StoredFavoriteModelSelectionV1Schema.safeParse(value);
         return parsed.success ? [parsed.data] : [];
     });
     const identity = favoriteSelectionIdentityKey(intent.selection);
-    const present = currentFavorites.some(value => favoriteSelectionIdentityKey(value) === identity);
-    if (present === intent.favorite) return { ...raw };
+    const existing = parsedFavorites.find(({ favorite }) => favoriteSelectionIdentityKey(favorite) === identity);
+    if (intent.favorite && existing) {
+        const { reasoningEffort } = intent.selection;
+        if (reasoningEffort === undefined || reasoningEffort === existing.favorite.reasoningEffort) return { ...raw };
+        const nextFavorites = [...rawFavorites];
+        const stored = rawFavorites[existing.index];
+        nextFavorites[existing.index] = {
+            ...(stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : existing.favorite),
+            reasoningEffort,
+        };
+        return { ...raw, favoriteModelSelectionsV1: nextFavorites };
+    }
+    if (!intent.favorite && !existing) return { ...raw };
+    const currentFavorites = parsedFavorites.map(({ favorite }) => favorite);
     const nextFavorites = intent.favorite ? [...currentFavorites, intent.selection]
         : currentFavorites.filter(value => favoriteSelectionIdentityKey(value) !== identity);
     const retained = mergeCurrentFavoriteModelSelectionsIntoRaw({ rawFavorites, currentFavorites, nextFavorites });

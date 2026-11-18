@@ -54,6 +54,7 @@ type SessionAgentPickerDetailContentParams = Readonly<{
     selection: SessionAgentPickerSelection;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
     onToggleFavoriteModel?: (model: FavoriteModelTogglePayload) => void;
+    onUpdateFavoriteModelReasoningEffort?: NewSessionEngineOptionDetailProps['onUpdateFavoriteModelReasoningEffort'];
     favoriteEngine?: Readonly<{
         favorite: boolean;
         onToggle: () => void;
@@ -116,6 +117,7 @@ function SessionAgentPickerDetailContent(params: SessionAgentPickerDetailContent
             selectedConfigOverrides={params.selection.configOverrides}
             favoriteModelSelections={params.favoriteModelSelections ?? []}
             onToggleFavoriteModel={params.onToggleFavoriteModel}
+            onUpdateFavoriteModelReasoningEffort={params.onUpdateFavoriteModelReasoningEffort}
             favoriteEngine={params.favoriteEngine}
             {...(params.providerProjection ? { providerProjection: params.providerProjection } : {})}
             teamModels={params.teamModels}

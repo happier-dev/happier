@@ -25,6 +25,7 @@ export type FavoriteModelAvailabilityMode = 'dynamic' | 'static-only';
 
 export type AvailableFavoriteModel = Readonly<{
     modelSelection: FavoriteModelSelectionV1['selection'];
+    reasoningEffort?: FavoriteModelSelectionV1['reasoningEffort'];
     modelId: string;
     modelLabel: string;
     modelDescription: string;
@@ -163,6 +164,7 @@ export function resolveAvailableFavoriteModelsForBackend(params: Readonly<{
         seen.add(identityKey);
         out.push({
             modelSelection: favorite.selection,
+            ...(favorite.reasoningEffort === undefined ? {} : { reasoningEffort: favorite.reasoningEffort }),
             modelId,
             modelLabel: available.modelLabel || favorite.modelLabel || modelId,
             modelDescription: available.modelDescription,
@@ -173,6 +175,21 @@ export function resolveAvailableFavoriteModelsForBackend(params: Readonly<{
     return out;
 }
 
+export function rememberFavoriteModelReasoningEffort(
+    favorites: readonly FavoriteModelSelectionV1[],
+    ref: ProviderBoundModelRef,
+    reasoningEffort: string,
+): FavoriteModelSelectionV1[] | null {
+    const target = favorites.find(favorite => {
+        const current = getFavoriteModelRef(favorite);
+        return current.agentTargetKey === ref.agentTargetKey
+            && current.providerConnectionId === ref.providerConnectionId
+            && normalizeFavoriteModelId(current.modelId) === normalizeFavoriteModelId(ref.modelId);
+    });
+    if (!target || target.reasoningEffort === reasoningEffort) return null;
+    return favorites.map(favorite => favorite === target ? { ...favorite, reasoningEffort } : favorite);
+}
+
 export function toggleFavoriteModelSelection(params: Readonly<{
     favorites: readonly FavoriteModelSelectionV1[];
     backend: FavoriteModelBackendIdentity;
@@ -180,6 +197,7 @@ export function toggleFavoriteModelSelection(params: Readonly<{
     modelLabel?: string | null;
     backendLabel?: string | null;
     providerDisplaySnapshot?: FavoriteProviderDisplaySnapshot | null;
+    reasoningEffort?: FavoriteModelSelectionV1['reasoningEffort'];
     addedAtMs?: number;
 }>): FavoriteModelSelectionV1[] {
     const modelRef = ProviderBoundModelRefSchema.parse(params.modelRef);
@@ -203,6 +221,7 @@ export function toggleFavoriteModelSelection(params: Readonly<{
     const configuredBackendId = normalizeOptionalString(params.backend.configuredBackendId);
     const backendLabel = normalizeOptionalString(params.backendLabel);
     const modelLabel = normalizeOptionalString(params.modelLabel);
+    const reasoningEffort = normalizeOptionalString(params.reasoningEffort);
     const providerDisplaySnapshot = modelRef.providerConnectionId !== null
         && params.providerDisplaySnapshot
         ? ProviderConnectionDisplaySnapshotV1Schema.parse(params.providerDisplaySnapshot)
@@ -223,6 +242,7 @@ export function toggleFavoriteModelSelection(params: Readonly<{
             ...(configuredBackendId ? { configuredBackendId } : {}),
             ...(backendLabel ? { backendLabel } : {}),
             ...(modelLabel ? { modelLabel } : {}),
+            ...(reasoningEffort ? { reasoningEffort } : {}),
             ...(providerDisplaySnapshot ? { providerDisplaySnapshot } : {}),
             ...(typeof params.addedAtMs === 'number' && Number.isFinite(params.addedAtMs)
                 ? { addedAtMs: Math.trunc(params.addedAtMs) }

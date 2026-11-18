@@ -419,7 +419,11 @@ describe('NewSessionFavoriteModelsDetail', () => {
         expect(screen.findByType(SelectionList).props.rootStep).toBe(rootStepBefore);
     });
 
-    it('keeps an eligible Provider favorite selectable by its exact connection-bound ref', async () => {
+    it.each([
+        [undefined, {}],
+        ['high', { reasoning_effort: 'high' }],
+        ['unsupported', {}],
+    ] as const)('selects an exact Provider favorite with saved effort %s when supported', async (reasoningEffort, expectedOverrides) => {
         const machine = await prepareFavoriteMachine();
         await machine.load();
         const agentTargetKey = buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex', sourceKind: 'built_in' });
@@ -429,6 +433,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
                 ref: { agentTargetKey, providerConnectionId: 'pc_work', modelId: 'shared-model' },
             },
             modelLabel: 'Provider shared model', backendLabel: 'Codex', catalogAgentId: 'codex', builtInAgentId: 'codex',
+            reasoningEffort,
         });
         providerGroupsByTargetKey[agentTargetKey] = [{
             connectionId: providerFavorite.selection.ref.providerConnectionId,
@@ -437,7 +442,10 @@ describe('NewSessionFavoriteModelsDetail', () => {
             suppressedConnectedServiceIds: [], modelLoadAction: 'descriptor_absent',
             rows: [{
                 ref: providerFavorite.selection.ref,
-                descriptor: { id: 'shared-model', name: 'Provider shared model', description: 'From Work' },
+                descriptor: { id: 'shared-model', name: 'Provider shared model', description: 'From Work', modelOptions: [{
+                    id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'low',
+                    options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }],
+                }] },
                 sources: { manual: false, static: true, probe: false }, confidence: 'verified_static',
                 compatibility: { result: { status: 'verified' }, compatibilityFingerprint: 'compatibility:v1:work', confirmed: true },
                 endpointHealth: 'available', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible',
@@ -470,7 +478,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
         expect(onSelectFavoriteModel).toHaveBeenCalledWith(
             codexEntry,
             expect.objectContaining({ ref: providerFavorite.selection.ref }),
-            {},
+            expectedOverrides,
         );
     });
 

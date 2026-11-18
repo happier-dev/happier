@@ -23,6 +23,7 @@ type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
     refreshProbe?: OptionPickerProbeState | null;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
     onToggleFavoriteModel?: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
+    onUpdateFavoriteModelReasoningEffort?: NewSessionEngineOptionDetailProps['onUpdateFavoriteModelReasoningEffort'];
     favoriteEngine?: Readonly<{
         favorite: boolean;
         onToggle: () => void;
@@ -98,6 +99,7 @@ export function buildNewSessionAgentPickerOptionInteractions(
                 onToggleFavoriteModel: params.onToggleFavoriteModel
                     ? (model) => params.onToggleFavoriteModel?.(params.entry, model)
                     : undefined,
+                onUpdateFavoriteModelReasoningEffort: params.onUpdateFavoriteModelReasoningEffort,
                 favoriteEngine: params.favoriteEngine,
                 ...(params.providerProjection ? { providerProjection: params.providerProjection } : {}),
                 teamModels: params.teamModels,

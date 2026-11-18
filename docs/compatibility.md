@@ -10577,6 +10577,18 @@ Incomplete facts remain visible through the existing accounting coverage
 projection. New migrations preserve
 existing measured values; they do not reinterpret historical zeros as unknown.
 
+Unreleased 0.3 Provider catalog descriptors and native model snapshots can carry
+optional `upstreamRef` (`vendor`, `vendorModelId`). Older snapshots omit it
+and remain selectable by their existing route reference. An authorized hidden
+source can also report exact upstream identities and endpoint health for its
+withheld rows.
+Matching development Protocol, daemon, SDK and UI readers reload together for
+the additive fields in the strict catalog response.
+
+The optional `reasoningEffort` field in Account favorite rows uses the existing
+favorite selection format and mutation. Retained rows omit the field and retain
+their selection.
+
 Unreleased 0.3 native Agent model snapshots and ACP model controls add optional
 `catalogConfidence`, using the existing Provider catalog confidence vocabulary.
 The shared publication owner consumes this presentation provenance to withhold

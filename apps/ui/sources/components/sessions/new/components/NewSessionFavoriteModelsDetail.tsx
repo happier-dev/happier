@@ -13,10 +13,13 @@ import {
     type OptionPickerProbeState,
 } from '@/components/sessions/pickers/OptionPickerOverlay';
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
+import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import type { FavoriteModelTogglePayload } from '@/components/sessions/new/hooks/screenModel/newSessionFavoriteModelsPickerOption';
 import { sanitizeNewSessionConfigOverridesForModelSelection } from '@/components/sessions/new/modules/newSessionConfigOptionOverrideSanitization';
 import {
     buildSessionModelPickerSections,
     hiddenModelVisibilityKeys,
+    resolveSessionModelSourceDescriptor,
 } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import {
@@ -65,11 +68,6 @@ import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributi
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { PROVIDER_DECLARATION_CONTEXT_SECTIONS } from '@/providers/catalog/accountProviderDeclarations';
 
-type FavoriteModelTogglePayload = Readonly<{
-    modelId: string;
-    modelLabel: string;
-}>;
-
 type FavoriteModelOption = Readonly<{
     value: string;
     label: string;
@@ -89,6 +87,7 @@ type FavoriteModelSnapshot = Readonly<{
     modelByValue: ReadonlyMap<string, FavoriteModelTogglePayload & {
         modelId: string;
         modelSelection: SessionModelSelectionV1;
+        modelConfigOptions?: Parameters<typeof sanitizeNewSessionConfigOverridesForModelSelection>[0]['selectedModelConfigOptions'];
     }>;
     selectedOptionControls: readonly SessionConfigOptionControl[] | null;
     selectedValue: string;
@@ -124,6 +123,7 @@ export type NewSessionFavoriteModelsDetailProps = Readonly<{
         valueId: SessionConfigOptionValueId,
     ) => void;
     onToggleFavoriteModel: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
+    onUpdateFavoriteModelReasoningEffort?: (ref: SessionModelSelectionV1['ref'], reasoningEffort: string) => void;
     onRemoveFavoriteModelSelection?: (favorite: FavoriteModelSelectionV1) => void;
 }>;
 
@@ -147,7 +147,8 @@ function areFavoriteModelMapsEqual(
     for (const [value, left] of a.entries()) {
         const right = b.get(value);
         if (!right) return false;
-        if (left.modelId !== right.modelId || left.modelLabel !== right.modelLabel) return false;
+        if (left.modelId !== right.modelId || left.modelLabel !== right.modelLabel
+            || left.reasoningEffort !== right.reasoningEffort || left.modelConfigOptions !== right.modelConfigOptions) return false;
     }
     return true;
 }
@@ -388,6 +389,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
             seen.add(modelId);
             out.push({
                 modelSelection: favorite.selection,
+                reasoningEffort: favorite.reasoningEffort,
                 modelId,
                 modelLabel: favorite.modelLabel || modelId,
                 modelDescription: '',
@@ -484,14 +486,21 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         const modelId = normalizeFavoriteModelId(getFavoriteModelRef(favorite).modelId);
         return [buildFavoriteOptionValue(favorite.selection), favorite] as const;
     })), [props.entry, staleFavorites]);
-    const modelByValue = React.useMemo(() => new Map(selectableFavorites.map((model) => [
-        buildFavoriteOptionValue(model.modelSelection),
-        {
+    const providerGroups = providersFeatureEnabled ? providerProjection.data?.groups : undefined;
+    const modelByValue = React.useMemo(() => new Map(selectableFavorites.map((model) => {
+        const ref = model.modelSelection.ref;
+        const descriptor = ref.providerConnectionId === null ? null : resolveSessionModelSourceDescriptor({
+            selected: ref,
+            providerGroups: providerGroups ?? [],
+        });
+        return [buildFavoriteOptionValue(model.modelSelection), {
             modelSelection: model.modelSelection,
             modelId: model.modelId,
             modelLabel: model.modelLabel,
-        },
-    ] as const)), [props.entry, selectableFavorites]);
+            reasoningEffort: model.reasoningEffort,
+            modelConfigOptions: descriptor?.modelOptions,
+        }] as const;
+    })), [providerGroups, selectableFavorites]);
     const modelOptionByValue = React.useMemo(() => new Map(selectableFavorites.flatMap((model) => {
         const option = findModelOptionForEffectiveModelId(modelOptions, model.modelId);
         return option ? [[buildFavoriteOptionValue(model.modelSelection), option] as const] : [];
@@ -518,13 +527,17 @@ function FavoriteBackendModelsCollector(props: Readonly<{
     const selectedOption = options.find((option) => option.value === selectedValue) ?? null;
     const selectedModelOption = modelOptionByValue.get(selectedValue) ?? null;
     const selectedOptionControls = React.useMemo(() => {
-        const baseControls = selectedModelOption?.modelOptions?.length
+        const modelConfigOptions = selectedValue
+            && selectedModelSelection?.ref.providerConnectionId
+            ? modelByValue.get(selectedValue)?.modelConfigOptions
+            : selectedModelOption?.modelOptions;
+        const baseControls = modelConfigOptions?.length
             ? [...(computeAcpConfigOptionControlsForProvider({
                 providerId: resolveNewSessionOperationalProviderId({
                     backendTarget: props.entry.backendTarget,
                     runtimeCarrierAgentId: props.entry.agentId,
                 }),
-                configOptions: selectedModelOption.modelOptions,
+                configOptions: modelConfigOptions,
                 overrides: Object.fromEntries(
                     Object.entries(props.selectedConfigOverrides ?? {}).map(([optionId, value]) => [optionId, { value }]),
                 ),
@@ -539,8 +552,11 @@ function FavoriteBackendModelsCollector(props: Readonly<{
     }, [
         props.entry,
         props.selectedConfigOverrides,
+        modelByValue,
         selectedModelOption,
         selectedModelSelection?.ref.modelId,
+        selectedModelSelection?.ref.providerConnectionId,
+        selectedValue,
     ]);
     const unifiedProbe = React.useMemo(() => mergeOptionPickerProbes([
         modelProbe ?? null,
@@ -780,7 +796,14 @@ export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDe
                                 configOptions: null,
                                 modelOptions: snapshot.modelOptions,
                                 selectedModelId: model.modelId,
-                                selectedConfigOverrides: props.selectedConfigOverrides ?? {},
+                                selectedModelConfigOptions: model.modelSelection.ref.providerConnectionId === null
+                                    ? undefined : model.modelConfigOptions ?? [],
+                                selectedConfigOverrides: model.reasoningEffort === undefined
+                                    ? props.selectedConfigOverrides
+                                    : {
+                                        ...props.selectedConfigOverrides,
+                                        [PROVIDER_REASONING_EFFORT_OPTION_ID]: model.reasoningEffort,
+                                    },
                             }),
                         );
                     }}

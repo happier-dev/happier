@@ -227,7 +227,7 @@ export function requireUpdatedProfileOperation(result: ProfileOperationResult | 
 
 /**
  * Apply a typed Favorite replacement against the explicitly observed Account
- * Settings scope. Each changed membership enters the canonical favorite
+ * Settings scope. A membership or chosen effort change enters the canonical favorite
  * Action, whose Account CAS preserves opaque and unrelated favorites.
  */
 export function useApplyFavoriteModelSelectionReplacementIntent(): (
@@ -240,13 +240,15 @@ export function useApplyFavoriteModelSelectionReplacementIntent(): (
   const { execute } = useMountedActionExecution(scope);
   return React.useCallback(async (input) => {
     const key = (value: typeof input.base[number]) => JSON.stringify(value.selection.ref);
-    const before = new Set(input.base.map(key));
+    const before = new Map(input.base.map(selection => [key(selection), selection]));
     const after = new Set(input.proposed.map(key));
     for (const selection of input.base.filter(value => !after.has(key(value)))) {
       const result = await execute('models.favorite.set', ModelFavoriteMutationV1Schema.parse({ selection, favorite: false }));
       if (!result.ok) throw createActionExecuteFailureError(result);
     }
-    for (const selection of input.proposed.filter(value => !before.has(key(value)))) {
+    for (const selection of input.proposed) {
+      const previous = before.get(key(selection));
+      if (previous && (selection.reasoningEffort === undefined || previous.reasoningEffort === selection.reasoningEffort)) continue;
       const result = await execute('models.favorite.set', ModelFavoriteMutationV1Schema.parse({ selection, favorite: true }));
       if (!result.ok) throw createActionExecuteFailureError(result);
     }

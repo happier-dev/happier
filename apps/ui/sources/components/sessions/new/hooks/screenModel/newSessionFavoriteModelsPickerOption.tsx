@@ -25,6 +25,7 @@ export type FavoriteModelTogglePayload = Readonly<{
     modelLabel: string;
     modelSelection?: SessionModelSelectionV1;
     providerDisplaySnapshot?: FavoriteProviderDisplaySnapshot;
+    reasoningEffort?: FavoriteModelSelectionV1['reasoningEffort'];
 }>;
 
 function NewSessionFavoriteModelsPickerDetail(props: Omit<NewSessionFavoriteModelsDetailProps, 'settings'>) {
@@ -71,6 +72,7 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
         valueId: string,
     ) => void;
     onToggleFavoriteModel: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
+    onUpdateFavoriteModelReasoningEffort?: NewSessionFavoriteModelsDetailProps['onUpdateFavoriteModelReasoningEffort'];
     onRemoveFavoriteModelSelection?: (favorite: FavoriteModelSelectionV1) => void;
     onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
 }>): AgentInputChipPickerOption | null {
@@ -125,6 +127,7 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
                     deferAgentInputPopoverClose(onRequestClose);
                 }}
                 onSelectFavoriteModelOptionValue={params.onSelectFavoriteModelOptionValue}
+                onUpdateFavoriteModelReasoningEffort={params.onUpdateFavoriteModelReasoningEffort}
                 onToggleFavoriteModel={params.onToggleFavoriteModel}
                 onRemoveFavoriteModelSelection={params.onRemoveFavoriteModelSelection}
             />

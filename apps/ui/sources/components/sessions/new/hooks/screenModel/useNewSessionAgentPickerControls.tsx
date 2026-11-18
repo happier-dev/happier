@@ -17,6 +17,7 @@ import {
     favoriteModelSelectionMatchesBackend,
     getFavoriteModelRef,
     normalizeFavoriteModelId,
+    rememberFavoriteModelReasoningEffort,
     toggleFavoriteModelSelection,
     type FavoriteModelSelectionV1,
 } from '@/sync/domains/models/favoriteModelSelections';
@@ -157,6 +158,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
             modelLabel: model.modelLabel,
             backendLabel: entry.title,
             providerDisplaySnapshot: model.providerDisplaySnapshot,
+            reasoningEffort: model.reasoningEffort,
             addedAtMs: Date.now(),
         }));
     }, [
@@ -196,7 +198,19 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
                 [configId]: valueId,
             },
         });
-    }, [getEngineSelectionForTargetKey, params.teamModels, selectEngineSelection]);
+    }, [
+        getEngineSelectionForTargetKey,
+        params.teamModels,
+        selectEngineSelection,
+    ]);
+
+    const handleUpdateFavoriteModelReasoningEffort = React.useCallback((
+        ref: SessionModelSelectionV1['ref'],
+        reasoningEffort: string,
+    ) => {
+        const nextFavorites = rememberFavoriteModelReasoningEffort(params.favoriteModelSelections ?? [], ref, reasoningEffort);
+        if (nextFavorites) params.setFavoriteModelSelections?.(nextFavorites);
+    }, [params.favoriteModelSelections, params.setFavoriteModelSelections]);
 
     const handleRemoveFavoriteModelSelection = React.useCallback((favorite: FavoriteModelSelectionV1) => {
         if (!params.setFavoriteModelSelections) return;
@@ -239,6 +253,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         onSelectFavoriteModel: handleSelectFavoriteModel,
         selectedConfigOverrides: getEngineSelectionForTargetKey(selectedBackendTargetKey).configOverrides,
         onSelectFavoriteModelOptionValue: handleSelectFavoriteModelOptionValue,
+        onUpdateFavoriteModelReasoningEffort: params.setFavoriteModelSelections ? handleUpdateFavoriteModelReasoningEffort : undefined,
         onToggleFavoriteModel: handleToggleFavoriteModel,
         onToggleFavoriteBackendTarget: params.setFavoriteBackendTargetKeys ? handleToggleFavoriteBackendTarget : undefined,
         onRemoveFavoriteModelSelection: handleRemoveFavoriteModelSelection,
@@ -271,6 +286,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         runMachineAgentAction,
         getEngineSelectionForTargetKey,
         handleSelectFavoriteModelOptionValue,
+        handleUpdateFavoriteModelReasoningEffort,
         params.capabilityServerId,
         params.favoriteBackendTargetKeys,
         params.favoriteModelSelections,
@@ -291,6 +307,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         params.selectedPath,
         params.selectedProfileId,
         params.setFavoriteBackendTargetKeys,
+        params.setFavoriteModelSelections,
         selectedBackendTargetKey,
         params.useProfiles,
         rememberAgentPickerView,

@@ -65,6 +65,7 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
         valueId: string,
     ) => void;
     onToggleFavoriteModel?: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
+    onUpdateFavoriteModelReasoningEffort?: NewSessionEngineOptionDetailProps['onUpdateFavoriteModelReasoningEffort'];
     onToggleFavoriteBackendTarget?: (targetKey: string) => void;
     onRemoveFavoriteModelSelection?: (favorite: FavoriteModelSelectionV1) => void;
     onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
@@ -197,6 +198,7 @@ export function buildNewSessionAgentPickerOptions(
                 refreshProbe: params.refreshProbe,
             onSelectFavoriteModel: params.onSelectFavoriteModel,
             onSelectFavoriteModelOptionValue: params.onSelectFavoriteModelOptionValue,
+            onUpdateFavoriteModelReasoningEffort: params.onUpdateFavoriteModelReasoningEffort,
             onToggleFavoriteModel: params.onToggleFavoriteModel,
             onRemoveFavoriteModelSelection: params.onRemoveFavoriteModelSelection,
             onRememberAgentPickerView: params.onRememberAgentPickerView,
@@ -264,6 +266,7 @@ export function buildNewSessionAgentPickerOptions(
                         refreshProbe: params.refreshProbe,
                 favoriteModelSelections: params.favoriteModelSelections ?? [],
                 onToggleFavoriteModel: params.onToggleFavoriteModel,
+                onUpdateFavoriteModelReasoningEffort: params.onUpdateFavoriteModelReasoningEffort,
                 favoriteEngine: params.onToggleFavoriteBackendTarget ? {
                     favorite,
                     onToggle: () => {

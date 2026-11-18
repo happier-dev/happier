@@ -4,12 +4,33 @@ import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/sel
 import {
     buildFavoriteModelAvailabilityById,
     FavoriteModelSelectionV1Schema,
+    StoredFavoriteModelSelectionV1Schema,
     favoriteModelSelectionMatchesBackend,
     resolveAvailableFavoriteModelsForBackend,
     toggleFavoriteModelSelection,
 } from './favoriteModelSelections';
 
 describe('favorite model selections', () => {
+    it('round trips the chosen effort through the Account favorite and availability projection', () => {
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const backend = { backendTargetKey: agentTargetKey };
+        const modelRef = { agentTargetKey, providerConnectionId: null, modelId: 'gpt-5' };
+        const [favorite] = toggleFavoriteModelSelection({
+            favorites: [], backend, modelRef, reasoningEffort: 'high',
+        });
+        const stored = StoredFavoriteModelSelectionV1Schema.parse(JSON.parse(JSON.stringify(favorite)));
+        expect(stored.reasoningEffort).toBe('high');
+        const available = resolveAvailableFavoriteModelsForBackend({
+            favorites: [stored], backend,
+            availabilityById: buildFavoriteModelAvailabilityById({
+                mode: 'static-only', modelOptions: [{ value: 'gpt-5', label: 'GPT-5' }], preflightModels: null,
+            }),
+        });
+        expect(available[0]?.reasoningEffort).toBe('high');
+        const previous = FavoriteModelSelectionV1Schema.parse({ selection: favorite.selection });
+        expect(previous.reasoningEffort).toBeUndefined();
+    });
+
     it('fails closed when a current favorite carries an unknown field', () => {
         const raw = {
             selection: {

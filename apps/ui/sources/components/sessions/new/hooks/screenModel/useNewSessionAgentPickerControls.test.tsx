@@ -549,6 +549,7 @@ describe('useNewSessionAgentPickerControls', () => {
     });
 
     it.each(['model', 'control'] as const)('retires Team source before publishing an explicit favorite %s choice', async (choice) => {
+        const setFavoriteModelSelections = vi.fn();
         const codex = createBuiltInBackendEntry('codex', 'Codex', null);
         const claude = createBuiltInBackendEntry('claude', 'Claude', null);
         const nativeSelection = SessionModelSelectionV1Schema.parse({ v: 1, updatedAt: 1,
@@ -579,7 +580,8 @@ describe('useNewSessionAgentPickerControls', () => {
                 canRetainModelSelection: () => source.current === null,
                 onRememberEngineSelection: (_target, selection) => setRemembered(selection.modelSelection),
                 selectedMachineId: 'machine-1', capabilityServerId: 'server-1', selectedPath: '/repo',
-                favoriteModelSelections: [{ selection: nativeSelection }],
+                favoriteModelSelections: [{ selection: nativeSelection, reasoningEffort: 'high' }],
+                setFavoriteModelSelections,
                 teamModels: { selectedTeamCredentialModel: selectedTeam, onSelectOtherModel: () => {
                     source.current = null;
                     setSelectedTeam(null);
@@ -599,7 +601,14 @@ describe('useNewSessionAgentPickerControls', () => {
             expect(hook.getCurrent().selectedTeam).toBeNull();
             expect(hook.getCurrent().authoring.modelSelection?.ref).toEqual(nativeSelection.ref);
             expect(hook.getCurrent().remembered?.ref).toEqual(nativeSelection.ref);
-            if (choice === 'control') expect(hook.getCurrent().authoring.sessionConfigOptionOverrides?.overrides.reasoning_effort?.value).toBe('low');
+            expect(setFavoriteModelSelections).not.toHaveBeenCalled();
+            if (choice === 'control') {
+                expect(hook.getCurrent().authoring.sessionConfigOptionOverrides?.overrides.reasoning_effort?.value).toBe('low');
+                await act(async () => detail.props.onUpdateFavoriteModelReasoningEffort?.(nativeSelection.ref, 'low'));
+                expect(setFavoriteModelSelections).toHaveBeenCalledExactlyOnceWith([
+                    { selection: nativeSelection, reasoningEffort: 'low' },
+                ]);
+            }
         } finally { await hook.unmount(); }
     });
 

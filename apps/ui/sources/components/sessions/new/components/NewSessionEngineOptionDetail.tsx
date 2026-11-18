@@ -23,7 +23,6 @@ import { sanitizeNewSessionConfigOverridesForModelSelection } from '@/components
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
 import {
     getFavoriteModelRef,
-    type FavoriteProviderDisplaySnapshot,
     type FavoriteModelSelectionV1,
 } from '@/sync/domains/models/favoriteModelSelections';
 import { buildFavoriteBackendIdentity } from '@/sync/domains/models/favoriteModelBackendIdentity';
@@ -44,6 +43,8 @@ import { sessionModelSelectionKey, sessionModelPickerValueFromRef, isTeamCredent
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { OPTION_PICKER_HEADER_ACTION_METRICS } from '@/components/sessions/pickers/OptionPickerOverlay';
+
+import type { FavoriteModelTogglePayload } from '@/components/sessions/new/hooks/screenModel/newSessionFavoriteModelsPickerOption';
 
 export type NewSessionEngineOptionDetailProps = Readonly<{
     backendTarget: PersistedBackendTargetRefV2;
@@ -68,12 +69,8 @@ export type NewSessionEngineOptionDetailProps = Readonly<{
     selectedSessionModeId?: string | null;
     selectedConfigOverrides?: Readonly<Record<string, string>>;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
-    onToggleFavoriteModel?: (model: Readonly<{
-        modelId: string;
-        modelLabel: string;
-        modelSelection?: SessionModelSelectionV1;
-        providerDisplaySnapshot?: FavoriteProviderDisplaySnapshot;
-    }>) => void;
+    onToggleFavoriteModel?: (model: FavoriteModelTogglePayload) => void;
+    onUpdateFavoriteModelReasoningEffort?: SessionModelPickerProps['onUpdateFavoriteModelReasoningEffort'];
     favoriteEngine?: Readonly<{
         favorite: boolean;
         onToggle: () => void;
@@ -443,12 +440,14 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         providersFeatureEnabled,
     ]);
 
-    const providerFavoriteKeys = React.useMemo(() => new Set(
+    const favoritesByKey = React.useMemo(() => new Map(
         (props.favoriteModelSelections ?? [])
-            .map((favorite) => getFavoriteModelRef(favorite))
-            .filter((ref) => ref.agentTargetKey === agentTargetKey)
-            .map(sessionModelSelectionKey),
+            .flatMap((favorite) => {
+                const ref = getFavoriteModelRef(favorite);
+                return ref.agentTargetKey === agentTargetKey ? [[sessionModelSelectionKey(ref), favorite.reasoningEffort] as const] : [];
+            }),
     ), [agentTargetKey, props.favoriteModelSelections]);
+    const providerFavoriteKeys = React.useMemo(() => new Set(favoritesByKey.keys()), [favoritesByKey]);
     const providerGroups = providersFeatureEnabled ? (providerProjection.data?.groups ?? []) : [];
     const providerSourceBrowse = React.useMemo(() => ({
         machineId: props.selectedMachineId,
@@ -494,6 +493,8 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             probe={unifiedProbe}
             headerAccessory={modelHeaderAccessory}
             favoriteKeys={props.onToggleFavoriteModel ? providerFavoriteKeys : undefined}
+            favoriteReasoningEffortByKey={favoritesByKey}
+            onUpdateFavoriteModelReasoningEffort={props.onUpdateFavoriteModelReasoningEffort}
             selectedOptionControls={selectedModelOptionControls ?? undefined}
             modelOptionOverrides={selectedConfigOverrides}
             onSelectOptionControlValue={(configId, valueId) => {
@@ -506,7 +507,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                 });
             }}
             experimentalConfirmation={props.experimentalConfirmation}
-            onToggleFavorite={props.onToggleFavoriteModel ? (ref) => {
+            onToggleFavorite={props.onToggleFavoriteModel ? (ref, reasoningEffort) => {
                 const group = providerGroups.find((candidate) => candidate.rows.some((row) => (
                     sessionModelSelectionKey(row.ref) === sessionModelSelectionKey(ref)
                 )));
@@ -515,6 +516,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                 ));
                 props.onToggleFavoriteModel?.({
                     modelId: ref.modelId,
+                    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
                     modelLabel: row?.descriptor.name ?? ref.modelId,
                     modelSelection: { v: 1, updatedAt: Date.now(), ref },
                     ...(group ? {

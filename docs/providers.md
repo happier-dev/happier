@@ -3258,6 +3258,21 @@ The canonical model catalog merges sources in this order:
 4. live probe observations;
 5. unknown metadata, which remains unknown rather than guessed.
 
+In 0.3 development, a catalog model may carry an upstream reference with
+`vendor` and `vendorModelId` when the source establishes both. The picker can
+group exact matches while keeping each route independently selectable, with
+usage from that route's connection. Models without a reference keep separate
+entries regardless of their display names. Compatible hidden sources with an
+exact match count as connected when the source can serve the model. Known
+signed-out routes and routes that need a new key appear in the source menu and
+are excluded from the count. A connection's usage summary shows the measured
+window with the lowest remaining percentage when one is available.
+
+New Session favorites use the existing Account preference. Starring a model can
+save its current Thinking level and restore it when the route still supports
+it. Changing Thinking changes the session. Updating the favorite saves the
+new level to the Account. Favorites saved without Thinking still select the model.
+
 The merger preserves provenance. A model that disappears from a current probe leaves normal picker results but remains renderable when referenced by a favorite, draft, or historical session. Missing definitions and tombstoned connections produce explicit stale states and actionable errors; they never trigger a native fallback.
 
 In 0.3 development, both regional MiniMax contributions list M3.1 Flash first,

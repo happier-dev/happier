@@ -932,6 +932,11 @@ describe('SessionModelPicker', () => {
                     JSON.stringify([available.agentTargetKey, available.providerConnectionId, available.modelId]),
                     JSON.stringify([unavailable.agentTargetKey, unavailable.providerConnectionId, unavailable.modelId]),
                 ])}
+                selectedOptionControls={[{
+                    option: { id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'high' },
+                    effectiveValue: 'high',
+                    isPending: false,
+                }]}
                 onToggleFavorite={onToggleFavorite}
                 favoriteActionVisibility="all"
                 onSelect={() => {}}
@@ -955,6 +960,14 @@ describe('SessionModelPicker', () => {
             ])}`,
         );
         expect(onToggleFavorite).toHaveBeenCalledWith(unavailable);
+        await screen.pressByTestIdAsync(
+            `model-picker-overlay-option-favorite:${JSON.stringify([
+                available.agentTargetKey,
+                available.providerConnectionId,
+                available.modelId,
+            ])}`,
+        );
+        expect(onToggleFavorite).toHaveBeenLastCalledWith(available, 'high');
     });
 
     it('preserves the list scope when only experimental-confirmation state changes', async () => {
