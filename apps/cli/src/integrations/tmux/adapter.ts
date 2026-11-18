@@ -196,6 +196,7 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
 
   return {
     kind: 'tmux',
+    interruptSendsEscape: true,
     async createOrAttachHost(opts) {
       // requireNewSession below never attaches to an existing native process.
       if (opts.prepareLaunch) opts = { ...opts, ...await opts.prepareLaunch() };

@@ -1831,7 +1831,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     onPendingInputInterruptAndRunLocalIdChange: (localId) => {
       const handle = state.handle;
       steerCapabilityPublisher.publishPendingInputInterruptAndRunLocalId(
-        handle && isClaudeUnifiedPendingInputInterruptAndRunEnabled(handle.kind) ? localId : null,
+        handle && isClaudeUnifiedPendingInputInterruptAndRunEnabled(params.ctx.agentRuntime.terminalHost, handle) ? localId : null,
       );
     },
     resolvePromptTerminalRejection: resolveProviderUnavailablePromptTerminalRejection,
@@ -3820,7 +3820,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       if (state.disposed || !handle) {
         return { ok: false as const, status: 'no_live_terminal' as const, ...base, error: 'no_live_terminal' };
       }
-      if (!isClaudeUnifiedPendingInputInterruptAndRunEnabled(handle.kind)) {
+      if (!isClaudeUnifiedPendingInputInterruptAndRunEnabled(params.ctx.agentRuntime.terminalHost, handle)) {
         return { ok: false as const, status: 'unsupported' as const, ...base, error: 'host_not_verified' };
       }
       if (

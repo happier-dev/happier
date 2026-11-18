@@ -225,6 +225,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
   return {
     kind: 'pty',
     nativePreambleTransport: 'pty',
+    interruptSendsEscape: true,
     async createOrAttachHost(opts) {
       const existing = sessions.get(opts.sessionName);
       if (existing && !existing.ended) {

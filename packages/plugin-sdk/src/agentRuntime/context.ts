@@ -423,6 +423,12 @@ export type AgentTerminalHostService = Readonly<{
   adoptExistingHost?(): Promise<TerminalHostHandle | null>;
   injectUserPrompt(handle: TerminalHostHandle, input: TerminalPromptInput): Promise<TerminalInputInjectionResult>;
   interruptTurn(handle: TerminalHostHandle): Promise<void>;
+  /**
+   * Whether this host's `interruptTurn` delivers exactly one Escape key to the live Agent.
+   * Agent features built on that native key (such as interrupting to run a queued input) read
+   * this declaration, never the host kind; false keeps the feature unavailable.
+   */
+  interruptSendsEscape(handle: TerminalHostHandle): boolean;
   evaluateLiveness(handle: TerminalHostHandle): Promise<TerminalHostLivenessV1>;
   /** Observe the owned child once it exits; null means this host has no exit source.
    * Wrapper exit alone does not prove native provider closure. */

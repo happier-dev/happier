@@ -24,6 +24,8 @@ export type TerminalHostProcessObservation = Readonly<{ pid: number; argv: reado
 export type TerminalHostAdapter = Omit<AgentTerminalHostAdapter, 'createOrAttachHost'> & Readonly<{
   /** Host transport declaration, not an SDK capability or another authorization. */
   nativePreambleTransport?: 'pty';
+  /** `interruptTurn` writes exactly one Escape key to the live Agent (verified for this host). */
+  interruptSendsEscape?: true;
   /** Positive observations only: missing processes never prove native exit. */
   captureProcessObservations?(handle: TerminalHostHandle): Promise<readonly TerminalHostProcessObservation[] | null>;
   createOrAttachHost(opts: Parameters<AgentTerminalHostAdapter['createOrAttachHost']>[0] & Readonly<{

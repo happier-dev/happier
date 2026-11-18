@@ -128,6 +128,8 @@ export function createTerminalHostFixture(): Readonly<{
       paneId: handle.paneId,
     })),
     interruptTurn: vi.fn(async () => undefined),
+    // A verified host: its interrupt is Claude's exact Escape key.
+    interruptSendsEscape: vi.fn(() => true),
     evaluateLiveness: vi.fn(async () => ({
       paneAlive: true,
       observedAt: 100,

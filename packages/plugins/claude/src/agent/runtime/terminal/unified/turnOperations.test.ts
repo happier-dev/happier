@@ -4389,7 +4389,7 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     }
   });
 
-  it('interrupts a current native queued input only on a real-proof tmux host', async () => {
+  it('interrupts a current native queued input on a tmux host that declares an Escape interrupt', async () => {
     vi.useFakeTimers();
     const terminalHost = createTerminalHostFixture();
     Object.assign(terminalHost.handle, { kind: 'tmux' as const });
@@ -4591,6 +4591,147 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       await runtime.resetOrDisposeRuntime().catch(() => undefined);
     }
     await steer;
+  it('interrupts a current native queued input on a holder PTY that declares an Escape interrupt', async () => {
+    vi.useFakeTimers();
+    const terminalHost = createTerminalHostFixture();
+    Object.assign(terminalHost.handle, { kind: 'pty' as const });
+    const events = createEventsFixture();
+    const ctx = createPluginContextFixture(terminalHost.service, events.service);
+    const envelope = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
+      ctx,
+      directory: '/tmp/claude-project',
+      happierSessionId: 'happy-session-interrupt-and-run-pty',
+      hostPreference: 'windows_console',
+      launchEnv: {},
+      permissionMode: 'default',
+    }));
+    const nativeRuntime = envelope.nativeRuntime as unknown as Readonly<{
+      interruptPendingInputAndRun(request: Readonly<{ localId: string }>): Promise<unknown>;
+    }>;
+
+    try {
+      await envelope.operations.sendTurnPrompt('first prompt');
+      await envelope.nativeRuntime.observeTerminalLifecycle({
+        agentId: 'claude',
+        type: 'prompt_submitted',
+        promptText: 'first prompt',
+        observedAtMs: 123,
+        source: 'hook',
+      });
+
+      let captureCount = 0;
+      terminalHost.service.captureInputState = vi.fn(async () => {
+        captureCount += 1;
+        return {
+          stable: true,
+          currentInput: captureCount === 1
+            ? '✻ Pondering… (esc to interrupt)\n│ > │'
+            : [
+              '✻ Pondering… (esc to interrupt)',
+              'Press up to edit queued messages',
+              '│ > │',
+            ].join('\n'),
+          observedAt: 200,
+        };
+      });
+
+      const queued = envelope.nativeRuntime.send(
+        { v: 1, text: 'run this next' },
+        {
+          deliverAs: 'steer',
+          localInputId: 'local-interrupt-and-run',
+          localInputIds: ['local-interrupt-and-run'],
+          userMessageSeq: 42,
+        },
+      );
+      void queued.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(400);
+
+      await expect(nativeRuntime.interruptPendingInputAndRun({
+        localId: 'local-interrupt-and-run',
+      })).resolves.toMatchObject({
+        ok: true,
+        status: 'interrupted',
+        localId: 'local-interrupt-and-run',
+      });
+      expect(terminalHost.service.interruptTurn).toHaveBeenCalledTimes(1);
+    } finally {
+      await envelope.operations.resetOrDisposeRuntime().catch(() => undefined);
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps interrupt-and-run closed on a host that does not declare an Escape interrupt', async () => {
+    vi.useFakeTimers();
+    const terminalHost = createTerminalHostFixture();
+    Object.assign(terminalHost.handle, { kind: 'tmux' as const });
+    Object.assign(terminalHost.service, { interruptSendsEscape: () => false });
+    const events = createEventsFixture();
+    const ctx = createPluginContextFixture(terminalHost.service, events.service);
+    const envelope = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
+      ctx,
+      directory: '/tmp/claude-project',
+      happierSessionId: 'happy-session-interrupt-and-run-undeclared',
+      hostPreference: 'tmux',
+      launchEnv: {},
+      permissionMode: 'default',
+    }));
+    const nativeRuntime = envelope.nativeRuntime as unknown as Readonly<{
+      interruptPendingInputAndRun(request: Readonly<{ localId: string }>): Promise<unknown>;
+    }>;
+
+    try {
+      await envelope.operations.sendTurnPrompt('first prompt');
+      await envelope.nativeRuntime.observeTerminalLifecycle({
+        agentId: 'claude',
+        type: 'prompt_submitted',
+        promptText: 'first prompt',
+        observedAtMs: 123,
+        source: 'hook',
+      });
+
+      let captureCount = 0;
+      terminalHost.service.captureInputState = vi.fn(async () => {
+        captureCount += 1;
+        return {
+          stable: true,
+          currentInput: captureCount === 1
+            ? '✻ Pondering… (esc to interrupt)\n│ > │'
+            : [
+              '✻ Pondering… (esc to interrupt)',
+              'Press up to edit queued messages',
+              '│ > │',
+            ].join('\n'),
+          observedAt: 200,
+        };
+      });
+
+      const queued = envelope.nativeRuntime.send(
+        { v: 1, text: 'run this next' },
+        {
+          deliverAs: 'steer',
+          localInputId: 'local-interrupt-and-run',
+          localInputIds: ['local-interrupt-and-run'],
+          userMessageSeq: 42,
+        },
+      );
+      void queued.catch(() => undefined);
+      await vi.advanceTimersByTimeAsync(400);
+
+      await expect(nativeRuntime.interruptPendingInputAndRun({
+        localId: 'local-interrupt-and-run',
+      })).resolves.toMatchObject({
+        ok: false,
+        status: 'unsupported',
+        localId: 'local-interrupt-and-run',
+      });
+      expect(terminalHost.service.interruptTurn).not.toHaveBeenCalled();
+    } finally {
+      await envelope.operations.resetOrDisposeRuntime().catch(() => undefined);
+      vi.useRealTimers();
+    }
+  });
+
 
     expect(steerSettled).toHaveBeenCalledTimes(1);
   });

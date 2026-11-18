@@ -497,6 +497,12 @@ function createNativeAgentTerminalHostScope(params: Readonly<{
             assertOwnedHandle(handle);
             return await params.owner.interruptTurn(handle);
         },
+        interruptSendsEscape(handle) {
+            // A capability read: a handle outside this Session's live scope has no live interrupt.
+            try { assertScopeAvailable(); assertOwnedHandle(handle); }
+            catch { return false; }
+            return params.owner.interruptSendsEscape(handle);
+        },
         ...(params.owner.subscribeExit ? {
             async subscribeExit(
                 handle: Parameters<NonNullable<AgentTerminalHostService['subscribeExit']>>[0],
@@ -589,6 +595,9 @@ function createPublicNativeAgentSessionTerminalHostService(
             return await invokeNativeAgentSessionPublicService(
                 async () => await owner.interruptTurn(handle),
             );
+        },
+        interruptSendsEscape(handle) {
+            return owner.interruptSendsEscape(handle);
         },
         ...(owner.subscribeExit ? {
             async subscribeExit(

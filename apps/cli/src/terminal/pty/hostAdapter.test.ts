@@ -7,6 +7,7 @@ import { TERMINAL_SHIFT_TAB_SEQUENCE } from '@/integrations/terminalHost/control
 import { createPtyTerminalHostAdapter } from './hostAdapter';
 import { createTerminalScreen, loadTerminalScreenModel } from './terminalScreen';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { createPluginTerminalHostService } from '@/plugins/runtime/context/terminalHost';
 
 class FakePtyProcess implements PtyProcess {
   readonly pid = 4321;
@@ -681,6 +682,65 @@ describe('createPtyTerminalHostAdapter', () => {
       paneDead: false,
     });
     expect(fake.processes[0]?.writes).toEqual([prompt, '\r']);
+  });
+
+  it('declares its Escape interrupt to Agents and delivers exactly that key', async () => {
+    const fake = createFakeProvider();
+    const adapter = createPtyTerminalHostAdapter({ ptyProvider: fake.provider, inputStabilityDelayMs: 0 });
+    const service = createPluginTerminalHostService({
+      hasCapability: (capability) => capability === 'terminalHost',
+      resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'windows_console_forced' }),
+      resolveAgentCliLaunch: () => ({ command: 'claude', args: [] }),
+      disposeHost: async () => undefined,
+    });
+    const handle = await service.createOrAttachHost({
+      preference: 'windows_console',
+      sessionName: 'happier-claude-interrupt',
+      workingDirectory: 'C:\\repo',
+      launch: { kind: 'agent-cli', agentId: 'claude' },
+      isolatedEnv: true,
+    });
+
+    expect(service.interruptSendsEscape(handle)).toBe(true);
+    await service.interruptTurn(handle);
+    expect(fake.processes[0]?.writes).toEqual(['\u001b']);
+  });
+
+  it('ends a staged prompt whose Enter the exiting PTY could not take', async () => {
+    const prompt = 'Prompt staged before the Agent exits.';
+    const fake = createFakeProviderWithProcess(() => new FakePtyProcess((process, data) => {
+      if (data === prompt) process.emitData(`\u001b[2J\u001b[H> ${prompt}`);
+      if (data === '\r') queueMicrotask(() => process.emitExit({ exitCode: 1 }));
+    }));
+    const adapter = createPtyTerminalHostAdapter({
+      ptyProvider: fake.provider,
+      inputStabilityDelayMs: 0,
+      postWriteLivenessDelayMs: 0,
+      promptSubmitVerification: {
+        shouldVerifyAfterSubmit: () => true,
+        verifyAfterSubmit: ({ screenText }) => screenText.includes(prompt),
+      },
+    });
+    const handle = await adapter.createOrAttachHost({
+      sessionName: 'happier-claude-windows',
+      workingDirectory: 'C:\\repo',
+      spawnArgv: ['node.exe'],
+      spawnEnv: {},
+      isolatedEnv: true,
+    });
+
+    await expect(adapter.injectUserPrompt(handle, {
+      text: prompt,
+      multiline: false,
+      origin: { kind: 'ui_pending', nonce: 'n-enter-exit' },
+      scheduling: { timeoutMs: 1_000 },
+    })).resolves.toMatchObject({
+      status: 'failed',
+      reason: 'submit_failed',
+      phase: 'after_enter_unknown',
+      duplicateRisk: 'possible',
+      recoverable: false,
+    });
   });
 
   it('does not report a prompt as injected when the PTY closes immediately after the write', async () => {

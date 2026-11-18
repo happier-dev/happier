@@ -459,6 +459,7 @@ export function createZellijTerminalHostAdapter(params: Readonly<{
 
   return {
     kind: 'zellij',
+    interruptSendsEscape: true,
     async createOrAttachHost(opts) {
       // This path always runs a new command pane, even in an existing server.
       if (opts.prepareLaunch) opts = { ...opts, ...await opts.prepareLaunch() };

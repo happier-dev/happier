@@ -1,12 +1,12 @@
-import type { TerminalHostKind } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentTerminalHostService, TerminalHostHandle } from '@happier-dev/plugin-sdk/agents/runtime';
 
 /**
- * Claude owns the native queued-input Escape semantics. Supported terminal-host adapters own
- * transport of that exact key to their live pane; Windows remains closed until its distinct
- * console transport is proven.
+ * Claude owns the native queued-input Escape semantics. The terminal host declares whether its
+ * interrupt delivers that exact key to the live Agent; Claude never decides by host kind.
  */
 export function isClaudeUnifiedPendingInputInterruptAndRunEnabled(
-  hostKind: TerminalHostKind,
+  terminalHost: Pick<AgentTerminalHostService, 'interruptSendsEscape'>,
+  handle: TerminalHostHandle,
 ): boolean {
-  return hostKind === 'tmux' || hostKind === 'zellij';
+  return terminalHost.interruptSendsEscape(handle);
 }

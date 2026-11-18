@@ -598,6 +598,9 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
             const active = resolveActiveHost(activeHosts, handle);
             await active.adapter.interruptTurn(active.handle);
         },
+        interruptSendsEscape(handle: Parameters<AgentTerminalHostService['interruptSendsEscape']>[0]) {
+            return activeHosts.get(handle)?.adapter.interruptSendsEscape === true;
+        },
         async evaluateLiveness(handle: Parameters<AgentTerminalHostService['evaluateLiveness']>[0]) {
             const active = resolveActiveHost(activeHosts, handle);
             if (active.currentHostProcess && active.exitState?.exited) {
