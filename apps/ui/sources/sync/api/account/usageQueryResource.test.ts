@@ -2272,6 +2272,42 @@ describe('usage query captured Resource adapter', () => {
     expect.soft(reads(), 'Explicit message demand survives the weaker insights projection').toBe(4);
   });
 
+  it('selects Tokens from admitted Rhythm accounting without reacquiring or exposing its private membership', async () => {
+    const posted: Array<ReturnType<typeof UsageAnalyticsQueryBatchRequestSchema.parse>> = [];
+    const captured = await context(request => {
+      if (request.path !== '/v2/usage/query-batch') return undefined;
+      const body = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+      posted.push(body);
+      const members = new Set(body.sessionQueries?.map(getUsageAnalyticsQueryRequestKey));
+      return Response.json({ v: 1, results: body.queries.map(query => ({ query, value: { ...value,
+        activity: { calendarDays: [{ date: '1970-01-01', eventCount: 1 }], weekdayHourBuckets: [] },
+        ...(members.has(getUsageAnalyticsQueryRequestKey(query)) ? { sessionIds: ['rhythm-session'],
+          sessionMembership: { turns: [{ sessionId: 'rhythm-session', turnId: 'turn', executions: ['happier'] }] } } : {}),
+      } })) });
+    });
+    const tokens = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeActivity: true,
+      includeCoach: false, includeComparison: false, includeQuota: false, includeQuotaHistory: false, includeSessionEvidence: false,
+      includeTranscriptEvidence: false, includeWorkEvidence: false });
+    const busy = normalizeUsageQuery({ ...tokens, metric: 'busy', includeSessionEvidence: true });
+    const read = async (query: typeof tokens) => (await readUiUsageQueryBatch(captured, { queries: [query] })).results[0]!;
+    const first = await read(busy);
+    expect(first.accounting?.totals).toEqual(value.totals);
+    expect(posted[0]?.sessionQueries).toHaveLength(1);
+    const switched = await read(tokens);
+    expect(switched.requestedQuery.metric).toBe('tokens');
+    expect(switched.accounting?.totals).toEqual(first.accounting?.totals);
+    expect(switched.accounting?.activity).toEqual(first.accounting?.activity);
+    expect(switched.accounting?.sessionIds).toBeUndefined();
+    expect(switched.accounting?.sessionMembership).toBeUndefined();
+    expect.soft(posted, 'Dropping private membership needs zero new accounting batches').toHaveLength(1);
+
+    await read(normalizeUsageQuery({ ...tokens, agents: ['codex'] }));
+    const beforeMembership = posted.length;
+    await read(normalizeUsageQuery({ ...busy, agents: ['codex'] }));
+    expect(posted).toHaveLength(beforeMembership + 1);
+    expect(posted.at(-1)?.sessionQueries).toHaveLength(1);
+  });
+
   it('reuses refreshed Overview inventory for an exact Costs Agent subset, and reacquires ambiguous truncated rankings', async () => {
     let revision = 1;
     let incompleteMachineRanking = false;

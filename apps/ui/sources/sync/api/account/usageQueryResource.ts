@@ -2014,13 +2014,18 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             const answered = admitted?.answers.get(key);
             if (answered) return answered;
             if (admitted) for (const [candidateKey, answer] of admitted.answers) {
-                // Keys were serialized by this owner. Private detail and Session
-                // membership remain exact even when displayed output is narrower.
+                // A summary can drop Session membership from an admitted answer.
+                // Missing membership and different detail still need their own read.
                 const [queryKey, detail, sessions, compactWork = false] = JSON.parse(candidateKey) as [string, boolean, boolean, boolean?];
-                if (detail !== includeContributions || sessions !== includeSessionIds || compactWork && !workOnly) continue;
+                if (detail !== includeContributions || includeSessionIds && !sessions || compactWork && !workOnly) continue;
                 const projected = projectUsageAnalyticsResponseDemand(answer.value, JSON.parse(queryKey) as UsageAnalyticsQueryRequest, request);
                 if (!projected) continue;
-                const projectedAnswer = { value: projected };
+                let selected = projected;
+                if (sessions && !includeSessionIds) {
+                    const { sessionIds: _sessions, sessionMembership: _turns, ...summary } = projected;
+                    selected = summary;
+                }
+                const projectedAnswer = { value: selected };
                 admitted.answers.set(key, projectedAnswer);
                 return projectedAnswer;
             }
