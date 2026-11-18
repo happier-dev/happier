@@ -10,6 +10,17 @@ import type { AgentIsolationEffectDependencies } from './agentIsolationProvision
 
 type UnavailableStatus = Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>;
 type RequiredFactPrerequisite = Extract<NonNullable<UnavailableStatus['prerequisite']>, { reason: 'required_fact_unavailable' }>;
+type WorkspaceFailure = NonNullable<Extract<import('@happier-dev/protocol').MachineAgentIsolationPreviewResultV1,
+  { kind: 'unavailable' }>['workspaceFailure']>;
+class WorkspaceAccessError extends Error {
+  constructor(readonly failure: WorkspaceFailure) { super(failure.code); }
+}
+function workspaceAccessError(root: Readonly<{ rootId: string; path: string }>, error: unknown) {
+  if (error instanceof WorkspaceAccessError) return error;
+  const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+    ? error.code : 'action_failed';
+  return new WorkspaceAccessError({ workspaceId: root.rootId, path: root.path, code });
+}
 function unavailable(requiredFact: RequiredFactPrerequisite['requiredFact'], remedy: string): Extract<import('@happier-dev/protocol').MachineAgentIsolationPreviewResultV1, { kind: 'unavailable' }> {
   return { kind: 'unavailable' as const, status: { kind: 'unavailable', code: 'provisioning_unavailable',
     prerequisite: { reason: 'required_fact_unavailable', requiredFact, remedy } } satisfies UnavailableStatus };
@@ -47,9 +58,13 @@ export async function resolveAgentIsolationEffectIntentResult(enabled: boolean, 
   // census is unknown; a known empty census still needs account/RunAs setup.
   if (!admitted) return unavailable('workspace_census',
     'Restore the Machine project/workspace subscription on its Home, then review isolation.');
-  const workspace = await readWorkspaceAccess(effects, admitted).catch(() => null);
-  if (!workspace) return unavailable('workspace_paths',
-    'Check that admitted Workspace directories exist, are accessible to the daemon, and are outside protected roots.');
+  let workspace: Awaited<ReturnType<typeof readWorkspaceAccess>>;
+  try { workspace = await readWorkspaceAccess(effects, admitted); }
+  catch (error) {
+    const result = unavailable('workspace_paths',
+      'Restore access to the admitted Workspace, or forget its reference if it is no longer needed, then review isolation again.');
+    return error instanceof WorkspaceAccessError ? { ...result, workspaceFailure: error.failure } : result;
+  }
   const { roots, ancestorAcls } = workspace;
   const provisioningSteps = buildAgentIsolationProvisioningSteps({ daemonUsername: daemon.daemonUsername,
     daemonPrimaryGroup: daemon.daemonPrimaryGroup, binaryPath: effects.installedCli, legacyPluginCodeRoot: effects.legacyPluginCodeRoot });
@@ -73,19 +88,28 @@ async function readWorkspaceAccess(effects: AgentIsolationEffectDependencies,
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return path; throw error; }
   }));
   const roots = await Promise.all(admitted.map(async root => {
-    if (!isAbsolute(root.path) || !root.rootId) throw new Error('workspace_not_ready');
-    const path = await realpath(root.path);
-    if (path === dirname(path) || !(await lstat(path)).isDirectory()
-      || protectedRoots.some(protectedRoot => isCanonicalAbsolutePathInsideRoot(protectedRoot, path)
-        || isCanonicalAbsolutePathInsideRoot(path, protectedRoot))) throw new Error('workspace_not_ready');
-    return { rootId: root.rootId, path };
+    if (!root.rootId || !root.path) throw new Error('workspace_path_invalid');
+    try {
+      if (!isAbsolute(root.path)) throw new WorkspaceAccessError({
+        workspaceId: root.rootId, path: root.path, code: 'workspace_path_invalid' });
+      const path = await realpath(root.path);
+      if (path === dirname(path) || protectedRoots.some(protectedRoot => isCanonicalAbsolutePathInsideRoot(protectedRoot, path)
+        || isCanonicalAbsolutePathInsideRoot(path, protectedRoot))) throw new WorkspaceAccessError({
+          workspaceId: root.rootId, path: root.path, code: 'workspace_path_protected' });
+      if (!(await lstat(path)).isDirectory()) throw new WorkspaceAccessError({
+        workspaceId: root.rootId, path: root.path, code: 'workspace_not_directory' });
+      return { rootId: root.rootId, path };
+    } catch (error) { throw workspaceAccessError(root, error); }
   }));
   roots.sort((left, right) => left.rootId.localeCompare(right.rootId) || left.path.localeCompare(right.path));
   const ancestors = new Set<string>();
   for (const root of roots) for (let path = dirname(root.path); path !== dirname(path); path = dirname(path)) {
-    const stat = await lstat(path);
-    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('workspace_not_ready');
-    if (!(stat.mode & 0o001)) ancestors.add(path);
+    try {
+      const stat = await lstat(path);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) throw new WorkspaceAccessError({
+        workspaceId: root.rootId, path: root.path, code: 'workspace_ancestor_invalid' });
+      if (!(stat.mode & 0o001)) ancestors.add(path);
+    } catch (error) { throw workspaceAccessError(root, error); }
   }
   const ancestorAcls = [...ancestors].sort().map(path => ({ path, add: 'x' as const }));
   return { roots, ancestorAcls };

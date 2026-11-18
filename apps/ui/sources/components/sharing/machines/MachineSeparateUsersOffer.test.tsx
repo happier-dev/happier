@@ -29,6 +29,41 @@ vi.mock('react-native', async () => {
 });
 
 describe('separate users reviewed setup', () => {
+    it('names the unavailable workspace and forgets only its reference through confirmed Action admission', async () => {
+        const path = '/tmp/Q94-BROWSER-NAV-r95';
+        const forgotten: unknown[] = [];
+        let confirmed = false;
+        const execute = createFrontDoorActionExecute(createActionExecutor({
+            presentUserActionConfirmation: async () => confirmed,
+            machineAgentIsolationAction: async () => ({ kind: 'unavailable',
+                status: { kind: 'unavailable', code: 'provisioning_unavailable', prerequisite: {
+                    reason: 'required_fact_unavailable', requiredFact: 'workspace_paths',
+                    remedy: 'Restore this folder or forget the workspace, then review isolation again.' } },
+                workspaceFailure: { workspaceId: 'missing-workspace', path, code: 'ENOENT' } }),
+            projectsWorkspaceForget: async input => { forgotten.push(input); return { ok: true, workspaceId: input.workspaceId }; },
+        }));
+        let change!: ReturnType<typeof useSeparateUsersChange>;
+        function Surface() {
+            const guestExecution = useMachineGuestExecution({ machineId: 'machine', scope: { serverId: 'home', accountId: 'owner' },
+                canManage: true, execute });
+            change = useSeparateUsersChange({ machine: 'Devbox', guestExecution, target: 'member' });
+            return <SeparateUsersChangeStep change={change} machine="Devbox" testID="machine-security-separate-users" />;
+        }
+        const screen = await renderScreen(<Surface />);
+        try {
+            await act(async () => { await change.review(); });
+            expect(screen.getTextContent()).toContain(path);
+            expect(screen.findAllByTestId('machine-security-separate-users-confirm')).toHaveLength(0);
+            expect(forgotten).toEqual([]);
+            await screen.pressByTestIdAsync('machine-security-separate-users-result-secondary-action');
+            expect(forgotten).toEqual([]);
+            expect(screen.getTextContent()).toContain(path);
+            confirmed = true;
+            await screen.pressByTestIdAsync('machine-security-separate-users-result-secondary-action');
+            expect(forgotten).toEqual([{ serverId: 'home', workspaceId: 'missing-workspace' }]);
+            expect(change.phase).toMatchObject({ kind: 'offer' });
+        } finally { await screen.unmount(); }
+    });
     it.each(['preview', 'apply'] as const)('preserves a Machine admission refusal through the mounted $0', async (stage) => {
         const preview = { kind: 'ready', policy: { enabled: false }, metadataVersion: 1, status: { kind: 'disabled' },
             plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0, requiresAdmin: true, planDigest: 'reviewed' } } as const;

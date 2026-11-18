@@ -31,7 +31,7 @@ it.skipIf(process.platform !== 'linux').each([
   const native = createAgentIsolationEffectsBoundary({ installationId: target.installationId,
     installedCli: '/opt/happier/cli/current/happier',
     readRoots: () => requiredFact === 'workspace_census' ? null : requiredFact === 'workspace_paths'
-      ? [{ rootId: 'missing', path: join(directory, 'PRIVATE_MISSING_WORKSPACE') }] : [],
+      ? [{ rootId: 'existing', path: directory }, { rootId: 'missing', path: join(directory, 'Q94-BROWSER-NAV-r95') }] : [],
     readSessionsToReplace: () => requiredFact === 'session_inventory' ? NaN : 0,
     publishStatus: status => client.publishAgentIsolationStatus(status) });
   const handlers: RpcHandlerMap = new Map();
@@ -51,7 +51,7 @@ it.skipIf(process.platform !== 'linux').each([
       installationId: target.installationId, role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
   try {
     const preview = MachineAgentIsolationPreviewResultV1Schema.parse(await handlers.get('machines.agentIsolation.preview')!(
-      { machineId: machine.id, enabled: true }, context));
+      { machineId: machine.id, enabled: true, memberProvisioning: 'linuxUsersV1' }, context));
     if (requiredFact === 'known_empty_census') {
       expect(preview.kind).toBe('ready');
       expect(publications).toBe(0);
@@ -63,7 +63,12 @@ it.skipIf(process.platform !== 'linux').each([
       expect(preview.status).toHaveProperty('prerequisite.remedy', expect.stringMatching(/\S/));
       expect(client.getAgentIsolationSnapshot().status).toEqual(preview.status);
       expect(publications).toBe(1);
-      expect(JSON.stringify(preview)).not.toContain('PRIVATE_MISSING_WORKSPACE');
+      if (requiredFact === 'workspace_paths') {
+        expect(preview).toMatchObject({ workspaceFailure: { workspaceId: 'missing',
+          path: join(directory, 'Q94-BROWSER-NAV-r95'), code: 'ENOENT' } });
+        // Recovery detail belongs to the admitted preview, never the shared Machine status.
+        expect(JSON.stringify(client.getAgentIsolationSnapshot())).not.toContain('Q94-BROWSER-NAV-r95');
+      }
     }
     expect(native.mutations).toEqual([]);
     expect(machine.metadata).not.toHaveProperty('agentIsolation');

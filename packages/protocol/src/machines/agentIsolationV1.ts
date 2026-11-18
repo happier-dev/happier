@@ -145,6 +145,8 @@ export const MachineAgentIsolationReadyPreviewV1Schema = lazyZodSchema(() => z.s
 export const MachineAgentIsolationPreviewResultV1Schema = lazyZodSchema(() => z.union([
   MachineAgentIsolationReadyPreviewV1Schema,
   z.strictObject({ kind: z.literal('unavailable'), status: MachineAgentIsolationUnavailableStatusV1Schema,
+    // Private manager preview only: never published in Machine status or own-status.
+    workspaceFailure: z.optional(z.strictObject({ workspaceId: id, path: id, code: id })),
     setup: z.optional(MachineElevatedNotAppliedResultV1Schema) }),
 ]));
 export type MachineAgentIsolationPreviewResultV1 = z.infer<typeof MachineAgentIsolationPreviewResultV1Schema>;

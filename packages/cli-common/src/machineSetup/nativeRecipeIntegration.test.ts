@@ -35,6 +35,36 @@ const basis = { kind: 'bootstrap' as const, managedId: 'fixture', operationId: '
 const initStep: MachineRecipeStepV1 = { id: 'linux', kind: 'command', executable: 'native-tool', args: ['apply'],
     requiredFacts: [{ kind: 'init', system: 'systemd' }], check: { executable: 'native-tool', args: ['check'], unsatisfiedExitCodes: [1] } };
 
+it.skipIf(process.platform === 'win32').each(['provided', 'missing', 'late', 'preserved', 'marked'] as const)(
+    'reviews an existing directory whose group is established earlier (%s)', async scenario => {
+    const root = await mkdtemp(join(process.env.TMPDIR || '/tmp', 'setup-planned-group-'));
+    roots.push(root);
+    const path = join(root, 'workspace');
+    await mkdir(path, { mode: 0o755 });
+    let groupExists = false;
+    const uid = process.getuid!(), gid = process.getgid!();
+    const backend = createMachineSetupNativeBackend({ platform: 'linux', run: async command => {
+        if (command.executable === 'getent') return command.args.includes('passwd')
+            ? { code: 0, stdout: `fixture:x:${uid}:${gid}::/tmp:/bin/sh\n`, stderr: '' }
+            : { code: groupExists ? 0 : 2, stdout: groupExists ? `workspace:x:${gid}:\n` : '', stderr: '' };
+        if (command.executable === 'groupadd') { groupExists = true; return { code: 0, stdout: '', stderr: '' }; }
+        throw new Error(`Unexpected OS command ${command.executable}`);
+    } });
+    const group: MachineRecipeStepV1 = { id: 'group', kind: 'group', name: 'workspace', members: [] };
+    const directory: MachineRecipeStepV1 = { id: 'workspace', kind: 'directory', path,
+        owner: 'fixture', group: 'workspace', mode: 0o700,
+        ...(scenario === 'preserved' ? { preserveExistingOwnership: true } : {}),
+        ...(scenario === 'marked' ? { ownershipMarker: 'owned' } : {}) };
+    const steps = scenario === 'missing' ? [directory] : scenario === 'late' ? [directory, group] : [group, directory];
+    const plan = await checkMachineSetupEffectPlan({ basis, steps, backend });
+    expect(plan.nativeFacts.find(fact => fact.stepId === 'workspace')).toMatchObject({ status: 'unavailable',
+        facts: { missingIdentity: ['workspace'] } });
+    expect(findMachineSetupBlockingObservationV1(plan)?.stepId).toBe(scenario === 'provided' ? undefined : 'workspace');
+    const result = await applyMachineSetupEffectPlan({ plan, backend });
+    expect(result.status).toBe(scenario === 'provided' ? 'applied' : 'unavailable');
+    expect((await lstat(path)).mode & 0o777).toBe(scenario === 'provided' ? 0o700 : 0o755);
+});
+
 it.each(['darwin', 'win32'] as const)('refuses Linux init prerequisites on %s before native work', async platform => {
     let reads = 0;
     const commands: MachineSetupNativeCommand[] = [];

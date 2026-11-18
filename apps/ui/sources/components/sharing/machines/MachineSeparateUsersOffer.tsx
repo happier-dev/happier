@@ -8,6 +8,7 @@ import {
   type MachineAgentIsolationPreviewResultV1,
 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ProjectWorkspaceForgetOutputV1Schema } from '@happier-dev/protocol/projects/projectWorkspaceActionsV1';
 import type { MachineElevatedNotAppliedResultV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 
 import {
@@ -24,6 +25,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { MachineAgentRunAs, useMachineGuestExecution } from '@/hooks/machine/useMachineGuestExecution';
 import { t } from '@/text';
+import { resolveActionTitle } from '@/text/actionTitles';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
@@ -57,6 +59,9 @@ type Phase = Readonly<
       tone: 'success' | 'warning' | 'error' | 'unavailable';
       message: string;
       reviewAgain?: boolean;
+      workspaceFailure?: Extract<MachineAgentIsolationPreviewResultV1, { kind: 'unavailable' }>['workspaceFailure'];
+      forgettingWorkspace?: boolean;
+      recoveryError?: string;
     }
   | { kind: 'approval'; artifactId: string }
 >;
@@ -113,10 +118,13 @@ export function useSeparateUsersChange(
     if (preview?.success && preview.data.kind === 'ready')
       setPhase({ kind: 'review', preview: preview.data });
     else if (preview?.success && preview.data.kind === 'unavailable') {
-      const { status, setup } = preview.data;
+      const { status, setup, workspaceFailure } = preview.data;
       const fallback = t(`machines.sharing.fallback.prerequisites.${status.code}`);
-      const message = setupFailureMessage(setup, fallback);
-      setPhase({ kind: 'settled', tone: 'unavailable', message });
+      const message = workspaceFailure
+        ? t(workspaceFailure.code === 'ENOENT' ? 'errors.machineIsolationWorkspaceMissing' : 'errors.machineIsolationWorkspaceUnavailable',
+            { path: workspaceFailure.path })
+        : setupFailureMessage(setup, fallback);
+      setPhase({ kind: 'settled', tone: 'unavailable', message, workspaceFailure });
     } else
       setPhase({
         kind: 'settled',
@@ -208,7 +216,22 @@ export function useSeparateUsersChange(
     lifetime.current?.abort();
     setPhase({ kind: 'offer' });
   }, []);
-  return { phase, target, enabled: target !== 'daemon', review, apply, reset };
+  const forgetWorkspace = React.useCallback(async () => {
+    if (phase.kind !== 'settled' || phase.tone === 'loading' || !phase.workspaceFailure || phase.forgettingWorkspace) return;
+    const previous = phase;
+    setPhase({ ...previous, forgettingWorkspace: true });
+    const result = await guestExecution.forgetWorkspace(phase.workspaceFailure.workspaceId).catch(() => null);
+    const approval = result?.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.result) : null;
+    if (approval?.success) {
+      setPhase({ kind: 'approval', artifactId: approval.data.artifactId });
+      return;
+    }
+    const forgotten = result?.ok ? ProjectWorkspaceForgetOutputV1Schema.safeParse(result.result) : null;
+    if (forgotten?.success && forgotten.data.ok) reset();
+    else setPhase({ ...previous, forgettingWorkspace: false,
+      recoveryError: resolveActionExecutionErrorMessage(result?.ok ? result.result : result, t('errors.operationFailed')) });
+  }, [guestExecution, phase, reset]);
+  return { phase, target, enabled: target !== 'daemon', review, apply, reset, forgetWorkspace };
 }
 
 export type SeparateUsersChange = ReturnType<typeof useSeparateUsersChange>;
@@ -305,18 +328,23 @@ export function SeparateUsersChangeStep(
           : {})}
       />,
     );
+  const recovery = phase.tone === 'loading' ? null : phase;
   return wrap(
     <SurfaceStateCard
       kind={phase.tone}
       size="line"
       testID={`${testID}-result`}
       title={phase.message}
+      {...(recovery?.recoveryError ? { detail: recovery.recoveryError } : {})}
+      {...(recovery?.workspaceFailure
+        ? { reason: t('errors.machineIsolationWorkspaceRecovery') } : {})}
       accessibilitySemantics="status"
       {...(phase.reviewAgain ||
       phase.tone === 'error' ||
       phase.tone === 'unavailable'
         ? {
             action: {
+              disabled: recovery?.forgettingWorkspace,
               label: phase.reviewAgain
                 ? t('machines.sharing.fallback.reviewAgain')
                 : t('common.retry'),
@@ -327,7 +355,10 @@ export function SeparateUsersChangeStep(
           }
         : {})}
       {...(phase.reviewAgain || phase.tone === 'success' || phase.tone === 'unavailable' || phase.tone === 'error'
-        ? { secondaryAction: { label: t('common.close'), onPress: change.reset } }
+        ? { secondaryAction: recovery?.workspaceFailure
+            ? { label: resolveActionTitle('projects.workspace.forget', null), onPress: change.forgetWorkspace,
+                busy: recovery.forgettingWorkspace }
+            : { label: t('common.close'), onPress: change.reset } }
         : {})}
     />,
   );

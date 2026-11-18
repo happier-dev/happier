@@ -1,4 +1,4 @@
-import { createMachineSetupEffectPlan, applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend, readMachineSetupObservationFailureV1, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
+import { createMachineSetupEffectPlan, applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend, readMachineSetupObservationFailureV1, findMachineSetupBlockingObservationV1, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
 import { resolveMachineAgentExecutionPlacementV1, readMachineAgentIsolationPolicyV1, type AgentIsolationEffectPlanV1, type MachineAgentIsolationPolicyV1, type MachineAgentIsolationPreviewResultV1, type MachineAgentIsolationStatusV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import type { MachineElevatedResultV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
@@ -118,7 +118,7 @@ export async function prepareAgentIsolationEffectsResult(input: Readonly<{
     setupPlan = createMachineSetupEffectPlan({ basis, steps: setupPlan.steps.filter(step => removals.has(step.id)),
       nativeFacts: setupPlan.nativeFacts.filter(fact => removals.has(fact.stepId)) });
   }
-  const nativeFailure = setupPlan.nativeFacts.find(fact => fact.status === 'unavailable' || fact.status === 'unsupported');
+  const nativeFailure = findMachineSetupBlockingObservationV1(setupPlan);
   if (nativeFailure) {
     const reasonCode = nativeFailure.status === 'unsupported' ? 'native_check_unsupported' : 'native_check_unavailable';
     return { ...unavailable(), setup: { outcome: 'not_applied', reasonCode,

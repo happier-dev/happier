@@ -154,9 +154,19 @@ export function isMachineSetupPackageManagerUnavailableV1(step: MachineRecipeSte
  * Missing tools stay unavailable until re-observed after the earlier install. */
 function stepsAwaitingEarlierEffects(plan: Pick<MachineSetupEffectPlanV1, 'steps' | 'nativeFacts'>): ReadonlySet<string> {
     const sources = new Set<string>(), awaiting = new Set<string>();
+    const groups = new Set<string>();
     let installingPackage = false;
     for (const [index, fact] of plan.nativeFacts.entries()) {
         const step = plan.steps[index];
+        // An existing, explicitly mutable directory can be reviewed before its
+        // declared group exists. APPLY resolves that identity again after groupadd.
+        if (step?.kind === 'directory' && !step.preserveExistingOwnership && !step.ownershipMarker
+            && fact.status === 'unavailable' && fact.reason === 'required_fact_unavailable'
+            && step.owner !== step.group && Array.isArray(fact.facts.missingIdentity)
+            && fact.facts.missingIdentity.length === 1 && fact.facts.missingIdentity[0] === step.group
+            && groups.has(step.group)) awaiting.add(step.id);
+        if (step?.kind === 'group' && step.state !== 'absent' && !step.existingOnly
+            && fact.status === 'drifted' && fact.facts.present === false) groups.add(step.name);
         if (step?.kind === 'packageSource' && fact.status === 'drifted') sources.add(step.manager);
         if (step?.kind === 'package' && sources.has(step.manager) && isMachineSetupPackageUnavailableV1(step, fact)) awaiting.add(step.id);
         if (installingPackage && (fact.status === 'unsupported' || fact.status === 'unavailable')

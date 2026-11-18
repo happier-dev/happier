@@ -50,11 +50,17 @@ export function useMachineGuestExecution(input: Readonly<{
         { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: accountId, signal })
         : Promise.resolve(UNBOUND),
     [execute, serverId, accountId, machineId]);
+    // Recovery retires only the named reference through the existing confirmed Action.
+    const forgetWorkspace = React.useCallback((workspaceId: string, signal?: AbortSignal) => serverId && accountId
+        ? execute('projects.workspace.forget', { serverId, workspaceId },
+            { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: accountId, signal })
+        : Promise.resolve(UNBOUND),
+    [execute, serverId, accountId]);
     const bound = scope !== null && input.canManage;
     return { machineId, serverId, placement, availability: separateUsers.availability, isolation: readiness,
         canEnableSeparateUsers: bound && separateUsers.availability.kind === 'can_turn_on',
         /** The Machine's current policy, readable on a supported Machine; the owner changes it through the review. */
         runAs: separateUsers.availability.kind === 'unavailable' ? null : placement,
         canChooseRunAs: bound && separateUsers.availability.kind !== 'unavailable',
-        previewSeparateUsers, applySeparateUsers };
+        previewSeparateUsers, applySeparateUsers, forgetWorkspace };
 }
