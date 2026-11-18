@@ -194,7 +194,7 @@ const WORKFLOW_NOTES_BY_ACTION_ID: Readonly<Record<string, readonly VoiceGuidanc
     text: 'Use approval_request_decide with the discovered artifactId for an Account request. For a native Session permission request, use session_permission_respond with its sessionId and requestId. The person’s spoken request confirms the decision when Voice approvals are enabled; read back the request before deciding. When disabled, explain that a tap in the request UI is required. The canonical permission policy still applies',
     requiresActionIds: ['approval.request.list', 'approval.request.get', 'approval.request.decide', 'session.permission.respond'],
   }],
-  'review.start': [{ text: 'Use listReviewEngines before guessing engineIds from engine names', requiresActionIds: ['review.engines.list'] }],
+  'review.start': [{ text: 'Use listReviewEngines before choosing engineId for engine entries in reviewers', requiresActionIds: ['review.engines.list'] }],
   'subagents.plan.start': [{ text: 'Use listAgentBackends before choosing provider/backend targets in backendTargetKeys internally', requiresActionIds: ['agents.backends.list'] }],
   'subagents.delegate.start': [{ text: 'Use listAgentBackends before choosing provider/backend targets in backendTargetKeys internally', requiresActionIds: ['agents.backends.list'] }],
   'voice_agent.start': [{ text: 'Use listAgentBackends before choosing provider/backend targets in backendTargetKeys internally', requiresActionIds: ['agents.backends.list'] }],
