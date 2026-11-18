@@ -145,11 +145,10 @@ function childCpuMs() {
  * not, takes part: a packet that needs another lane's uncommitted producer fails, and another lane's
  * unfinished edit never fails an unrelated packet (owner ruling 2026-11-18).
  *
- * Returns `{ findings, results, selected, timings }`; throws when the check cannot judge (extraction,
+ * Returns `{ findings, preexisting, results, selected, timings }` (`findings` are the failures the packet adds); throws when the check cannot judge (extraction,
  * derivation or harness failure), which callers report as unavailable, never as a refusal.
  */
 export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo, root = defaultRoot(), env = process.env, signal, graphIds }) {
-  const git = gitAt(repo);
   const started = performance.now();
   const cpuBefore = process.cpuUsage();
   const childBefore = childCpuMs();
@@ -162,7 +161,22 @@ export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo
     return { ...result, selected, graphs: selection.graphs.length, timings: { ...timings, totalMs: Math.round(performance.now() - started),
       cpuMs: Math.round((cpu.user + cpu.system) / 1000) + (children !== null && childBefore !== null ? children - childBefore : 0) } };
   };
-  if (!selected.length) return finish({ findings: [], results: [] });
+  if (!selected.length) return finish({ findings: [], preexisting: [], results: [] });
+  const candidate = await loadTreeGraphs({ repo, tree, ids: selected, installDir, root, env, signal, timings });
+  // Like every other gate check, only failures the packet adds refuse it: the failing graphs load again from the
+  // base tree (paid only when the candidate fails), and a failure the base already has is reported, not blamed.
+  const failing = [...new Set(candidate.failures.map(failure => failure.graph))];
+  const baseFindings = failing.length
+    ? new Set((await loadTreeGraphs({ repo, tree: base, ids: failing, installDir, root, env, signal, timings: {} })).failures.map(failure => failure.finding))
+    : new Set();
+  const findings = candidate.failures.map(failure => failure.finding);
+  return finish({ findings: findings.filter(finding => !baseFindings.has(finding)), preexisting: findings.filter(finding => baseFindings.has(finding)),
+    results: candidate.results });
+}
+
+/** One tree: extract, derive its generated inputs, mount the installation, load the graphs. */
+async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, timings }) {
+  const git = gitAt(repo);
   await mkdir(join(root, 'trees'), { recursive: true });
   const dir = await mkdtemp(join(root, 'trees', 'tree-'));
   const mark = (name, from) => { timings[name] = Math.round(performance.now() - from); return performance.now(); };
@@ -182,16 +196,16 @@ export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo
       const workspaceDirs = [...(await readWorkspacePackages(dir)).values()].map(workspace => relative(dir, workspace.root)).filter(Boolean);
       await mountCapturedWorkspaceDependencies({ sourceDir: installDir, captureDir: dir, workspaceDirs });
       at = mark('mountMs', at);
-      const output = await runTreeHarness({ dir, selected, env, signal });
+      const output = await runTreeHarness({ dir, selected: ids, env, signal });
       mark('loadsMs', at);
       return output;
     });
-    const findings = results.filter(result => result.status !== 'passed').map(result => {
+    const failures = results.filter(result => result.status !== 'passed').map(result => {
       const module = result.firstFailingModule ? relative(dir, resolve(dir, result.firstFailingModule)) : result.entry;
       const message = String(result.loadError?.message ?? 'failed').split('\n')[0].replaceAll(`${dir}/`, '').slice(0, 300);
-      return `${result.graph}: ${module}: ${message}`;
+      return { graph: result.graph, finding: `${result.graph}: ${module}: ${message}` };
     });
-    return finish({ findings, results: results.map(({ graph, status, elapsedMs }) => ({ graph, status, elapsedMs: Math.round(elapsedMs) })) });
+    return { failures, results: results.map(({ graph, status, elapsedMs }) => ({ graph, status, elapsedMs: Math.round(elapsedMs) })) };
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -267,8 +281,9 @@ if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(self)) {
   try {
     const result = await commitTreeEntryLoads({ repo, base, tree, installDir: resolve(option('install-dir') ?? repo) });
     for (const finding of result.findings) console.error(`tree entry load: ${finding}`);
+    for (const finding of result.preexisting) console.error(`tree entry load (also fails at the base): ${finding}`);
     console.log(`commit tree entry loads: ${result.selected.length}/${result.graphs} graph(s), ${result.findings.length} failure(s), ${JSON.stringify(result.timings)}`);
-    record({ verdict: result.findings.length ? 'would-refuse' : 'pass', selected: result.selected, findings: result.findings, results: result.results, timings: result.timings });
+    record({ verdict: result.findings.length ? 'would-refuse' : 'pass', selected: result.selected, findings: result.findings, preexisting: result.preexisting, results: result.results, timings: result.timings });
     process.exitCode = result.findings.length ? 1 : 0;
   } catch (error) {
     console.error(`commit tree entry loads unavailable: ${String(error?.stack ?? error).slice(0, 800)}`);

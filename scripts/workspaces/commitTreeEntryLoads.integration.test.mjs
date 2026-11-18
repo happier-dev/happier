@@ -37,11 +37,11 @@ async function sharedCheckout(t) {
   const read = name => fs.readFileSync(path.join(dir, name), 'utf8');
   const write = (name, value) => fs.writeFileSync(path.join(dir, name), value);
   // A lane's packet: its own working-tree edits, committed from HEAD in a private index (no worktree).
-  const packet = files => {
+  const packet = (files, from = head) => {
     for (const [name, value] of Object.entries(files)) write(name, value);
     const index = path.join(dir, '.git', `packet-${process.hrtime.bigint()}`);
     const penv = { ...env, GIT_INDEX_FILE: index };
-    execFileSync('git', ['read-tree', head], { cwd: dir, env: penv });
+    execFileSync('git', ['read-tree', from], { cwd: dir, env: penv });
     for (const [name, value] of Object.entries(files)) {
       const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: dir, input: value, encoding: 'utf8' }).trim();
       execFileSync('git', ['update-index', '--cacheinfo', `100644,${blob},${name}`], { cwd: dir, env: penv });
@@ -76,6 +76,16 @@ test('accepts a packet unrelated to a broken uncommitted edit elsewhere in the s
     graphIds: ['protocol-managed-credential-delivery', 'protocol-service-placement-actions'] });
   assert.deepEqual(result.findings, [], JSON.stringify(result));
   assert.deepEqual(result.results.map(r => r.status), ['passed', 'passed']);
+});
+
+test('does not blame a packet for an entry graph its base already fails', { timeout: 900_000 }, async (t) => {
+  const c = await sharedCheckout(t);
+  const brokenBase = c.git(['commit-tree', c.packet({ [BROKEN]: `${c.read(BROKEN)}\nexport const = ;\n` }), '-p', c.head, '-m', 'broken base']).trim();
+  const tree = c.packet({ [ENTRY]: `${c.read(ENTRY)}\n// An unrelated packet on a broken HEAD.\n` }, brokenBase);
+  const result = await commitTreeEntryLoads({ repo: c.dir, base: brokenBase, tree, installDir: c.dir, graphIds: ['protocol-managed-credential-delivery'] });
+  assert.deepEqual(result.findings, [], JSON.stringify(result));
+  assert.equal(result.preexisting.length, 1, JSON.stringify(result));
+  assert.match(result.preexisting[0], /^protocol-managed-credential-delivery: /);
 });
 
 test('selects only the entry graphs whose workspace closure owns a changed path', async () => {
