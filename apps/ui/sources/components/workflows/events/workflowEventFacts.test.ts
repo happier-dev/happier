@@ -19,6 +19,7 @@ const {
   readWorkflowEventWhen,
   readWorkflowEventStartedRuns,
   readWorkflowEventDraftSeed,
+  readWorkflowEventDraftIntent,
 } = await import('./workflowEventFacts');
 const { readWorkflowTriggerStartId } =
   await import('../triggers/workflowTriggerStarts');
@@ -89,6 +90,24 @@ describe('workflowEventFacts', () => {
 
   it('offers no configured trigger when a Machine fact lacks its declaration-owned setup seed', () => {
     expect(readWorkflowEventTrigger(machine)).toBeNull();
+  });
+
+  it("places a Machine fact's draft on that same Machine, even offline and when another one is more recent", () => {
+    const listed = (id: string, active: boolean) =>
+      ({ id, active, activeAt: 1, seq: 1, metadata: { host: id, homeDir: `/home/${id}` } }) as never;
+    const machines = [listed('m0', true), listed('m1', false)];
+    // The event's Machine: its own recent folder, else its home.
+    expect(readWorkflowEventDraftIntent(machine, { machines,
+      recentMachinePaths: [{ machineId: 'm0', path: '/work/other' }, { machineId: 'm1', path: '/work/repo' }] }))
+      .toEqual({ nativeEvent: machine, project: { machineId: 'm1', directory: '/work/repo' } });
+    expect(readWorkflowEventDraftIntent(machine, { machines, recentMachinePaths: [{ machineId: 'm0', path: '/work/other' }] }))
+      .toEqual({ nativeEvent: machine, project: { machineId: 'm1', directory: '~' } });
+    // A Machine this client cannot list has no place to start from: the draft stays unplaced, never on another one.
+    expect(readWorkflowEventDraftIntent(machine, { machines: [listed('m0', true)], recentMachinePaths: [] }))
+      .toEqual({ nativeEvent: machine });
+    // Session facts carry their own trigger and no place.
+    expect(readWorkflowEventDraftIntent(started, { machines, recentMachinePaths: [] }))
+      .toEqual({ trigger: readWorkflowEventTrigger(started) });
   });
 
   it('seeds observed presence from its real declaration and leaves retained revision and source identity to setup', async () => {

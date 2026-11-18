@@ -15,6 +15,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { WorkflowSentenceBuilder } from '@/components/workflows/sentence/WorkflowSentenceBuilder';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { getStorage } from '@/sync/domains/state/storageStore';
+import { resolveVisibleMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { t } from '@/text';
@@ -78,15 +80,23 @@ export function useWorkflowEventAutomate(
     intent: WorkflowSentenceEditorIntent;
   }> | null>(null);
   const keyRef = React.useRef(0);
-  const seed = !active || presentation === null ? null : readWorkflowEventDraftIntent(presentation.fact);
+  const fact = !active || presentation === null ? null : presentation.fact;
+  const automatable = fact !== null && readWorkflowEventDraftIntent(fact) !== null;
   const title = presentation?.title ?? '';
   const open = React.useCallback(() => {
     const lifetime = captureActiveServerAccountScopeLifetime();
-    if (lifetime === null || seed === null) return;
+    if (lifetime === null || fact === null) return;
+    // Read on the person's press: placing the draft on the event's Machine needs no live Machine/history subscription.
+    const state = getStorage().getState();
+    const seed = readWorkflowEventDraftIntent(fact, {
+      machines: resolveVisibleMachinesForActiveServerFromState(state),
+      recentMachinePaths: state.authoringMemory.recentMachinePaths,
+    });
+    if (seed === null) return;
     keyRef.current += 1;
     const intent: WorkflowSentenceEditorIntent = { name: title, ...seed };
     setOpening({ lifetime, key: keyRef.current, intent });
-  }, [seed, title]);
+  }, [fact, title]);
   const builder =
     opening === null ? null : (
       <WorkflowSentenceBuilder
@@ -99,7 +109,7 @@ export function useWorkflowEventAutomate(
         onRequestClose={() => setOpening(null)}
       />
     );
-  return { anchorRef, open: seed === null ? null : open, builder };
+  return { anchorRef, open: automatable ? open : null, builder };
 }
 
 /**

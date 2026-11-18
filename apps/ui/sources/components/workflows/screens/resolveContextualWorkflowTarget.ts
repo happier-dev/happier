@@ -41,7 +41,20 @@ export function resolveContextualWorkflowProjectTarget(params: Readonly<{
         ? undefined
         : params.machines.find((candidate) => candidate.id === machineId);
     if (!machineId || machine === undefined) return null;
+    return resolveWorkflowProjectTargetOnMachine({ ...params, machineId });
+}
 
+/**
+ * A named Machine's starting place (an event's own Machine): that exact Machine, online or not, with its
+ * folder from the same default-directory policy. `null` when this client cannot list it or knows no folder.
+ */
+export function resolveWorkflowProjectTargetOnMachine(params: Readonly<{
+    machineId: string;
+    machines: readonly Machine[];
+    recentMachinePaths: readonly RecentMachinePath[];
+}>): WorkflowProjectTargetV1 | null {
+    const { machineId } = params;
+    if (!params.machines.some((candidate) => candidate.id === machineId)) return null;
     // Where a Machine starts is the shared default-directory policy New
     // Session uses, not a second "recent path, else home" rule kept here.
     const directory = resolveDefaultDirectoryForMachine({

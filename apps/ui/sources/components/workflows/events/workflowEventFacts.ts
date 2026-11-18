@@ -5,6 +5,7 @@ import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workf
 import type { WorkflowActivityFact } from '@/sync/domains/workflows/workflowActivityTypes';
 import type { WorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import type { WorkflowTriggerEventOption } from '@/components/workflows/triggers/workflowTriggerStarts';
+import { resolveWorkflowProjectTargetOnMachine } from '@/components/workflows/screens/resolveContextualWorkflowTarget';
 import {
   buildTriggerDefinition,
   createDefaultWhen,
@@ -69,11 +70,20 @@ export function readWorkflowEventTrigger(
     : buildTriggerDefinition({ when, enabled: true, sessionId: null });
 }
 
-/** Native facts stay unconfigured until the editor's Runs-on catalog can identify their Event. */
+/**
+ * Native facts stay unconfigured until the editor's Runs-on catalog can identify their Event. With `placement`
+ * (read on the person's press), a Machine fact's draft starts on that same Machine, so its catalog names the
+ * pending When; the place stays editable. Without a listed Machine and folder the draft stays unplaced.
+ */
 export function readWorkflowEventDraftIntent(
   fact: Parameters<typeof readWorkflowEventTrigger>[0],
-): Pick<WorkflowDefinitionDraftSeed, 'trigger' | 'nativeEvent'> | null {
-  if (fact.kind === 'machine') return { nativeEvent: fact };
+  placement?: Omit<Parameters<typeof resolveWorkflowProjectTargetOnMachine>[0], 'machineId'>,
+): Pick<WorkflowDefinitionDraftSeed, 'trigger' | 'nativeEvent' | 'project'> | null {
+  if (fact.kind === 'machine') {
+    const project = placement === undefined ? null
+      : resolveWorkflowProjectTargetOnMachine({ ...placement, machineId: fact.machineId });
+    return project === null ? { nativeEvent: fact } : { nativeEvent: fact, project };
+  }
   const trigger = readWorkflowEventTrigger(fact);
   return trigger === null ? null : { trigger };
 }
