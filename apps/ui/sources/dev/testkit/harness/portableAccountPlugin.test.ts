@@ -1,0 +1,74 @@
+import { afterEach, expect, it, vi } from 'vitest';
+import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
+import type { PluginAccountApi } from '@happier-dev/plugin-sdk';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { createHomeHubArtifactHttpBoundary } from './homeHubArtifactHttpBoundary';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from './serverAccountConnectionHarness';
+import { installPortableAccountPluginReleaseForTest } from './portableAccountPlugin';
+
+vi.mock('socket.io-client', async importOriginal => (
+    await import('./serverAccountConnectionHarness')
+).createSocketIoClientBoundary(importOriginal));
+
+installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+afterEach(async () => { await connection?.dispose(); connection = undefined; });
+
+function portablePlugin(id: string) {
+    const parsed = parsePluginManifest({ schemaVersion: 2, id, version: '1.0.0', displayName: id,
+        runtime: { apiVersion: 1 }, contributes: { actions: [{ id: 'read', title: 'Read',
+            scopes: ['global'], surfaces: ['ui', 'plugin'], dangerLevel: 'safe', readOnly: true, placementBindings: [],
+            execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } },
+        }] } });
+    if (!parsed.ok) throw new Error(`Invalid portable fixture: ${JSON.stringify(parsed)}`);
+    return { manifest: parsed.manifest, activate(api: PluginAccountApi) {
+        api.actions.register('read', async () => ({ pluginId: id }));
+    } };
+}
+
+it('admits and keeps both portable Account executables in one published action set', async () => {
+    const accountId = 'portable-plugins-account';
+    connection = await restoreServerAccountForTest({ serverUrl: 'http://portable-plugins.test', accountId,
+        request: createHomeHubArtifactHttpBoundary(accountId).request });
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    if (!accountLifetime) throw new Error('Expected restored Account lifetime');
+    const first = portablePlugin('example.portable-first');
+    const second = portablePlugin('example.portable-second');
+    const installed = await installPortableAccountPluginReleaseForTest({ ...first, additionalPlugins: [second],
+        accountLifetime, publishProjection: true });
+    try {
+        const { readPluginAccountAvailability } = await import('@/sync/domains/plugins/availability/projection');
+        const admitted = readPluginAccountAvailability(accountLifetime.scope).readAccountUiProjection();
+        const { resolvePluginUiClientActionRegistration } = await import('@/components/plugins/reactNative/clientExecutableContributions');
+        const { resolvePluginUiClientExecutablePlatform } = await import('@/sync/domains/plugins/ui/projection');
+        for (const plugin of [first, second, first]) {
+            const action = installed.projection.actionsById[`${plugin.manifest.id}/read`];
+            expect(action, `Expected the complete portable set to contain ${plugin.manifest.id}`).toBeDefined();
+            expect(admitted?.actionsById[`${plugin.manifest.id}/read`]?.available).toBe(true);
+            const registered = resolvePluginUiClientActionRegistration({ action: action!, platform: resolvePluginUiClientExecutablePlatform() });
+            expect(registered).not.toBeNull();
+            const handler = registered?.handler;
+            if (typeof handler !== 'function') throw new Error('Expected authored Account handler');
+            expect(await Reflect.apply(handler, undefined, [{}])).toEqual({ pluginId: plugin.manifest.id });
+        }
+    } finally { await installed.dispose(); }
+});
+
+it('places an Account Action locally through the shared native HTTP adapter until test cleanup', async () => {
+    const nativeTransfer = await import('@/utils/platform/tauri/transferFetch');
+    const originalAdapter = nativeTransfer.resolveTauriRuntimeFetch;
+    const { installNativeRuntimeFetchBoundaryForTest } = await import('./nativeRuntimeFetch');
+    const { standardCleanup } = await import('../cleanup/standardCleanup');
+    const { executeAccountActionAtRuntimeHost } = await import('@/components/plugins/surfaces/accountActionPlacement');
+    installNativeRuntimeFetchBoundaryForTest();
+    installNativeRuntimeFetchBoundaryForTest();
+    try {
+        const result = await executeAccountActionAtRuntimeHost({ accountScope: { serverId: 'native-fixture', accountId: 'account' },
+            action: { pluginId: 'example.native-fixture', localId: 'read' },
+            execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } },
+            input: {}, context: { surface: 'ui' }, signal: new AbortController().signal,
+            executeLocal: () => ({ placement: 'native-ui' }) });
+        expect(result).toEqual({ placement: 'native-ui' });
+    } finally { standardCleanup(); }
+    expect(nativeTransfer.resolveTauriRuntimeFetch).toBe(originalAdapter);
+});

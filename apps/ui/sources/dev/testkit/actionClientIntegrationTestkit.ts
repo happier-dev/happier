@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 import { Modal } from '@/modal';
 import { createModalModuleMock } from './mocks/modal';
-import * as nativeTransfer from '@/utils/platform/tauri/transferFetch';
+import { installNativeRuntimeFetchBoundary } from './harness/nativeRuntimeFetch';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { RegistryKindV1 } from '@happier-dev/protocol/registries';
 import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
@@ -38,10 +38,8 @@ export type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaratio
 export function installPersonTransientConfirmationBoundary(): () => void {
     const boundary = createModalModuleMock({ confirmResult: true });
     const show = vi.spyOn(Modal, 'show').mockImplementation(boundary.module.Modal.show);
-    const transfer = vi.spyOn(nativeTransfer, 'resolveTauriRuntimeFetch').mockResolvedValue(
-        (input, init) => globalThis.fetch(input, init),
-    );
-    return () => { transfer.mockRestore(); show.mockRestore(); };
+    const restoreTransfer = installNativeRuntimeFetchBoundary();
+    return () => { restoreTransfer(); show.mockRestore(); };
 }
 
 /** Mount the actual managed detail surface after restoring the journey's Account. */

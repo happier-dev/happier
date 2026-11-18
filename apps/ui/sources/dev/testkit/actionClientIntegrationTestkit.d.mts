@@ -66,15 +66,20 @@ export function connectUiActionClient(params: Readonly<{
     close(): Promise<void>;
 }>>;
 
-export function connectUiTriageActionClient(params: Readonly<{
-    serverUrl: string;
-    accountSecret: Uint8Array;
-}>): ReturnType<typeof connectUiPersonActionClient>;
-
 export function connectUiPersonActionClient(params: Readonly<{
     serverUrl: string;
     addressAnchorUrl?: string;
     accountSecret: Uint8Array;
+    withAppShellActions?: boolean;
+    withCurrentUiActionPort?: boolean;
+    withAccountLifecycle?: boolean;
+}>): ReturnType<typeof connectUiActionClient>;
+
+export function connectUiTriageActionClient(params: Parameters<typeof connectUiPersonActionClient>[0] & Readonly<{
+    additionalPlugins?: readonly Readonly<{
+        manifest: import('@happier-dev/plugin-sdk/manifest').PluginManifest;
+        activate(api: import('@happier-dev/plugin-sdk').PluginAccountApi): void | Promise<void>;
+    }>[];
 }>): ReturnType<typeof connectUiActionClient>;
 
 export function connectFreshVercelThroughDeploymentUi(params: Readonly<{

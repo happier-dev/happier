@@ -1,14 +1,17 @@
 import { connectUiPersonActionClient } from './actionClientIntegrationTestkit';
+import type { PortableAccountPluginFixture } from './harness/portableAccountPlugin';
+import { installNativeRuntimeFetchBoundaryForTest } from './harness/nativeRuntimeFetch';
 
-/** A journey's physical Account executable loader, with real Triage activation and services. */
+/** A native UI Account runtime with real Triage activation and services at physical loader/HTTP boundaries. */
 export async function connectUiTriageActionClient(
-    params: Parameters<typeof connectUiPersonActionClient>[0],
+    params: Parameters<typeof connectUiPersonActionClient>[0] & Readonly<{ additionalPlugins?: readonly PortableAccountPluginFixture[] }>,
 ): ReturnType<typeof connectUiPersonActionClient> {
+    installNativeRuntimeFetchBoundaryForTest();
     const client = await connectUiPersonActionClient({ ...params, withAppShellActions: false, withCurrentUiActionPort: false,
         withAccountLifecycle: false });
     let disposeAccount: (() => void) | undefined;
     try {
-        const [{ captureLazyActionAccountContext }, { installPortableAccountPluginReleaseForTest },
+        const [{ captureLazyActionAccountContext }, { installPortableAccountPluginReleasesForTest },
             { PLUGIN_MANIFEST }, { activate }] = await Promise.all([
             import('@/sync/ops/actions/actionAccountContext'), import('./harness/portableAccountPlugin'),
             import('../../../../../packages/plugins/triage/src/manifest'),
@@ -16,7 +19,8 @@ export async function connectUiTriageActionClient(
         ]);
         const account = await captureLazyActionAccountContext(client.serverId);
         disposeAccount = account.dispose;
-        const installed = await installPortableAccountPluginReleaseForTest({ manifest: PLUGIN_MANIFEST, activate,
+        const installed = await installPortableAccountPluginReleasesForTest({
+            plugins: [{ manifest: PLUGIN_MANIFEST, activate }, ...(params.additionalPlugins ?? [])],
             accountLifetime: account.accountLifetime, publishProjection: true });
         return { ...client, async close() {
             try { await installed.dispose(); } finally {
