@@ -129,6 +129,52 @@ describe('session list drag commit outcomes', () => {
         await hook.unmount();
     });
 
+    it('serializes the initial drag measurement with subsequent layout refreshes', async () => {
+        const { hook, pointer } = await geometryHarness('a');
+        await act(async () => { hook.getCurrent().handleDragCancel({ sessionKey: 'server-a:a', groupKey: 'pinned-v1', dataIndex: 1 }); });
+        const held: Array<() => void> = [];
+        let y = 40;
+        const rowB = { measureInWindow: vi.fn((callback: (x: number, y: number, w: number, h: number) => void) => {
+            const measuredY = y;
+            held.push(() => callback(0, measuredY, 300, 40));
+        }) };
+        hook.getCurrent().registerTreeRowBounds('session:server-a:b', rowB);
+        await act(async () => { hook.getCurrent().handleDragStart('server-a:a'); });
+        expect(rowB.measureInWindow).toHaveBeenCalledTimes(1);
+        y = 200;
+        await act(async () => { hook.getCurrent().handleTreeContentSizeChange(300, 500); });
+        // Initial and trailing passes share the same native measurement budget.
+        expect(rowB.measureInWindow).toHaveBeenCalledTimes(1);
+        await act(async () => { held.splice(0).forEach(release => release()); });
+        expect(rowB.measureInWindow).toHaveBeenCalledTimes(2);
+        await act(async () => { held.splice(0).forEach(release => release()); });
+        expect(hook.getCurrent().resolveDropResult(pointer(205)).geometry).toMatchObject({ targetId: 'session:server-a:b' });
+        await hook.unmount();
+    });
+
+    it('refreshes a new drag while an ended drag has a pending native measurement', async () => {
+        const { hook, pointer } = await geometryHarness('a');
+        const held: Array<() => void> = [];
+        let y = 40;
+        const rowB = { measureInWindow: (callback: (x: number, y: number, w: number, h: number) => void) => {
+            const measuredY = y;
+            held.push(() => callback(0, measuredY, 300, 40));
+        } };
+        await act(async () => { hook.getCurrent().registerTreeRowBounds('session:server-a:b', rowB); });
+        await act(async () => { hook.getCurrent().handleTreeContentSizeChange(300, 500); });
+        await act(async () => {
+            hook.getCurrent().handleDragCancel({ sessionKey: 'server-a:a', groupKey: 'pinned-v1', dataIndex: 1 });
+            hook.getCurrent().handleDragStart('server-a:a');
+        });
+        // Let the ended drag and the new drag's initial reads finish.
+        await act(async () => { held.splice(0).forEach(release => release()); });
+        y = 200;
+        await act(async () => { hook.getCurrent().handleTreeContentSizeChange(300, 600); });
+        await act(async () => { held.splice(0).forEach(release => release()); });
+        expect(hook.getCurrent().resolveDropResult(pointer(205)).geometry).toMatchObject({ targetId: 'session:server-a:b' });
+        await hook.unmount();
+    });
+
     it('resolves and commits consecutive pointer drags from different pinned rows', async () => {
         const hook = await renderHook(() => {
             const [order, setOrder] = useState<Record<string, string[]>>({ 'pinned-v1': ['server-a:a', 'server-a:b', 'server-a:c'] });
