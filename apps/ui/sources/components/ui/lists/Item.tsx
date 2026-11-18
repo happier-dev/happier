@@ -1239,18 +1239,30 @@ function ItemRow(props: ItemProps & Readonly<{
     // in a narrow pane instead of stacking beside 160px of empty label column.
     const [detailWidthPx, setDetailWidthPx] = React.useState<number | null>(null);
     const [titleNaturalWidthPx, setTitleNaturalWidthPx] = React.useState<number | null>(null);
-    // A qualified title holds min(its natural width, the title floor) before its qualifier ellipsizes; layout reports
-    // whole pixels, so the name needs one pixel more than its measured width not to clip.
-    const [qualifiedTitleFloorPx, setQualifiedTitleFloorPx] = React.useState<number | null>(null);
-    const handleQualifiedTitleMeasureLayout = React.useCallback((event: LayoutChangeEvent) => {
+    // A title holds min(its natural width, the title floor) before its qualifier or a quiet end fact ellipsizes
+    // (owner choice "floor", UI refinements 2026-11-18 14:58Z); layout reports whole pixels, so the name needs one pixel
+    // more than its measured width not to clip.
+    const [titleFloorPx, setTitleFloorPx] = React.useState<number | null>(null);
+    // A repeated layout of the same name (a recycled row, a resize) publishes nothing: an unchanged floor never sets state.
+    const titleFloorRef = React.useRef<number | null>(null);
+    const handleTitleFloorMeasureLayout = React.useCallback((event: LayoutChangeEvent) => {
         const widthPx = event.nativeEvent.layout.width;
         if (!Number.isFinite(widthPx) || widthPx <= 0) return;
         const floorPx = Math.min(Math.ceil(widthPx) + 1, ITEM_TITLE_META_TITLE_MIN_PX);
-        setQualifiedTitleFloorPx((current) => (current === floorPx ? current : floorPx));
+        if (titleFloorRef.current === floorPx) return;
+        titleFloorRef.current = floorPx;
+        setTitleFloorPx(floorPx);
     }, []);
-    const qualifiedTitleFloorStyle = React.useMemo(
-        () => (qualifiedTitleFloorPx === null ? null : { minWidth: qualifiedTitleFloorPx }),
-        [qualifiedTitleFloorPx],
+    const titleFloorStyle = React.useMemo(
+        () => (titleFloorPx === null ? null : { minWidth: titleFloorPx }),
+        [titleFloorPx],
+    );
+    // A passive end (facts that only draw: a folded Project's "2 environments", a state word) gives way to the name:
+    // the content column holds the title floor, so the end facts ellipsize first. Controls never yield this way.
+    const passiveFactsFloor = rightElementPassive && rightElement != null && (typeof title === 'string' || typeof title === 'number');
+    const centerContentStyle = React.useMemo(
+        () => (passiveFactsFloor && titleFloorStyle !== null ? [styles.centerContent, titleFloorStyle] : styles.centerContent),
+        [passiveFactsFloor, styles.centerContent, titleFloorStyle],
     );
     const measuresDetail = isPageRow && Boolean(detail) && isNarrowRow;
     // A field beside a short name needs only that name's room (see `resolveHappierPageRowFieldMaxWidth`).
@@ -1771,7 +1783,7 @@ function ItemRow(props: ItemProps & Readonly<{
 
             {/* Center Section */}
             <View
-                style={styles.centerContent}
+                style={centerContentStyle}
                 {...(titleMetaCell === null && !rightElementYields ? {} : { onLayout: (event: LayoutChangeEvent) => {
                     const widthPx = event.nativeEvent.layout.width;
                     if (titleMetaCell !== null) placeTitleMeta({ row: widthPx });
@@ -1813,7 +1825,7 @@ function ItemRow(props: ItemProps & Readonly<{
                     </>
                 ) : (typeof title === 'string' || typeof title === 'number') && titleTrailing ? (
                     <View style={styles.inlineMarkRow}>
-                        <View style={[styles.inlineMarkText, titleQualifier && qualifiedTitleLines === 1 ? qualifiedTitleFloorStyle : null]}>
+                        <View style={[styles.inlineMarkText, titleQualifier && qualifiedTitleLines === 1 ? titleFloorStyle : null]}>
                             {renderPrimitiveText({
                                 value: title,
                                 ref: titleRef,
@@ -1996,9 +2008,9 @@ function ItemRow(props: ItemProps & Readonly<{
                 <Text style={[styles.title, titleSizeStyle, titleStyle, styles.detailMeasure]} numberOfLines={1} onLayout={handleTitleMeasureLayout}
                     aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{title as string | number}</Text>
             ) : null}
-            {titleQualifier && (typeof title === 'string' || typeof title === 'number') ? (
+            {(titleQualifier || passiveFactsFloor) && (typeof title === 'string' || typeof title === 'number') ? (
                 <Text style={[styles.title, titleSizeStyle, titleStyle, styles.detailMeasure]} numberOfLines={1}
-                    onLayout={handleQualifiedTitleMeasureLayout}
+                    onLayout={handleTitleFloorMeasureLayout}
                     aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{title}</Text>
             ) : null}
             {rightElementYields && (typeof title === 'string' || typeof title === 'number') ? (
@@ -2061,8 +2073,10 @@ function ItemRow(props: ItemProps & Readonly<{
         titleAccessory,
         inlineQualifier,
         qualifiedTitleLines,
-        qualifiedTitleFloorStyle,
-        handleQualifiedTitleMeasureLayout,
+        titleFloorStyle,
+        handleTitleFloorMeasureLayout,
+        passiveFactsFloor,
+        centerContentStyle,
         subtitleEllipsizeMode,
         subtitleLines,
         subtitleSizeStyle,
