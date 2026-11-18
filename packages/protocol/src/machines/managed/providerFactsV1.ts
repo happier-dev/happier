@@ -11,6 +11,7 @@ import { ActionInputIssueSchema } from '../../actions/executor/actionInputValida
 import { MachineSetupSourceApplyV1Schema } from '../setup/machineSetupSourcesV1.js';
 import { HomeEnrollmentCarrierFailureV1Schema } from '../../ssh/commandFailure.js';
 import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
+import { providerAmountFieldsV1 } from '../../common/providerAmountV1.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
 const instant = () => z.number().check(z.gte(0));
@@ -36,8 +37,7 @@ export const ManagedLocalResourceFactsV1Schema = lazyDefinition(() => z.strictOb
 }));
 export const ProviderPriceV1Schema = lazyDefinition(() => z.strictObject({
   label: z.optional(PluginLocalizedStringV2Schema),
-  amount: z.string().check(z.regex(/^-?[0-9]+(?:\.[0-9]+)?$/)),
-  currency: id(), unit: id(), source: id(), observedAt: instant(),
+  ...providerAmountFieldsV1(), source: id(), observedAt: instant(),
 }));
 export const MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1 = ['cpuCores', 'memoryBytes', 'diskBytes'] as const;
 export type MachineProvisionerSizeDimensionV1 = typeof MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1[number];

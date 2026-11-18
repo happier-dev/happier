@@ -1,5 +1,6 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { ProviderAmountV1Schema } from '../../common/providerAmountV1.js';
 import { deploymentTargetFitFieldsV1 } from '../../deployments/deployShapeV1.js';
 import { WorkflowActionFieldBindingV1Schema } from '../../workflows/workflowLeafV1.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
@@ -63,9 +64,10 @@ export function createDeploymentTargetDataV1Schema<TAction extends z.ZodMiniType
     });
 }
 
-/** Dated display facts, not executable billing rules or live price quotes. */
+/** Dated display facts, not executable billing rules or live price quotes. The price is data the shared cost presenter prints. */
 export const DeploymentTargetPlanV1Schema = lazyZodSchema(() => z.strictObject({
     id: local(), title: z.string(),
+    price: z.optional(ProviderAmountV1Schema),
     facts: z.array(z.strictObject({ label: z.string(), value: z.string() })),
     included: z.optional(z.array(z.string())),
     source: z.strictObject({ url: z.url(), checkedAt: z.iso.date() }),
