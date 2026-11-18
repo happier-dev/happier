@@ -11,8 +11,8 @@ import { suggestDeploySetup } from './suggestDeploySetup';
 
 const catalog: DeploySuggestionCatalogV1 = {
     starters: [{ id: 'website', title: 'Website', deploy: { framework: 'html', output: 'static' } }],
-    apps: [], stores: [],
-    targets: [{ id: 'own', title: 'Own server', targetClass: 'ownServer', availability: 'available', accepts: ['static'], needs: [] }],
+    apps: [], stores: [], forges: [{ providerKind: 'github', title: 'GitHub' }],
+    targets: [{ id: 'own', title: 'Own server', targetClass: 'ownServer', availability: 'available', accepts: ['static'], needs: [], sources: { gitIntegration: ['github'], upload: false } }],
     machines: [
         { machineId: 'offline', label: 'Offline', online: false, readiness: 'unknown', homeDir: '/home/offline' },
         { machineId: 'signed-out', label: 'Signed out', online: true, readiness: 'unknown', homeDir: '/home/alice' },
@@ -75,6 +75,7 @@ it('reads one catalog for a question round and reuses it for the answered run', 
             source: { completeness: 'complete', observedAtMs: 1 } }),
         machinesList: async () => ({ items: [{ machineId: 'ready', label: 'Dev box', active: true, homeDir: '/home/alice' }] }),
         deploymentSuggestionTargets: async () => ({ targets: catalog.targets, stores: [] }),
+        deploymentSuggestionForges: async () => catalog.forges,
         machineSetupPlan: async () => ({ targets: [] }),
         agentsModelsList: async () => ({ llmTaskRunner: { ok: true, source: 'auto', runner, title: 'Claude' } }),
         executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'ready' }),
