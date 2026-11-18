@@ -3,7 +3,7 @@ import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { ScmRepositoryCloneInputSchema } from '@happier-dev/protocol';
 import type { WorkspaceManifest } from '@happier-dev/protocol';
-import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
+import type { ResolvedSessionProjectFilesV1 as SessionProjectFilesV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import type { ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse, ScmHostingRepositoryPublishRequest, ScmHostingRepositoryPublishResponse, ScmRepositoryCloneInput, ScmRepositoryCloneOutput, ScmRepositoryInitRequest, ScmRepositoryInitResponse, ScmRepositoryRemoveIndexLockRequest, ScmRepositoryRemoveIndexLockResponse } from '@happier-dev/protocol';

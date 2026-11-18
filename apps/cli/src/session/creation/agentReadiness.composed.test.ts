@@ -7,7 +7,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
-import { SessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, SessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { io } from 'socket.io-client';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
@@ -22,11 +22,14 @@ import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
 import { buildDetectContext } from '@/capabilities/context/buildDetectContext';
 import type { CapabilityDetectRequest } from '@/capabilities/types';
 import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
+import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 
 vi.mock('socket.io-client', () => ({ io: vi.fn() }));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); resetServerFeaturesClientForTests(); });
 
 it.each([
+  { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, remoteFiles: true },
+  { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, remoteFiles: true, deferredClone: true },
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, hostPath: true },
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, hostPath: true, metadataProbeForbidden: true },
   { role: 'use', installed: true, outdated: false, acquireAllowed: false, refusal: null, hostPath: true, capabilityUnknown: true },
@@ -45,8 +48,10 @@ it.each([
   { role: 'manage', installed: false, outdated: false, acquireAllowed: true, refusal: 'agent_cli_not_ready', terminalFailed: true },
   { role: 'manage', installed: true, outdated: true, acquireAllowed: true, refusal: 'agent_cli_not_ready', terminalFailed: true, dependencyMissing: true },
   { role: 'manage', installed: true, outdated: false, acquireAllowed: true, refusal: 'agent_cli_not_ready', dependencyMissing: true },
-] as const)('admits Agent readiness before Session birth ($role, installed=$installed, outdated=$outdated, hostPath=$hostPath, metadataProbeForbidden=$metadataProbeForbidden, capabilityUnknown=$capabilityUnknown, inventoryFailure=$inventoryFailure)', async testCase => {
+] as const)('admits Agent readiness before Session birth ($role, installed=$installed, outdated=$outdated, hostPath=$hostPath, metadataProbeForbidden=$metadataProbeForbidden, capabilityUnknown=$capabilityUnknown, inventoryFailure=$inventoryFailure, remoteFiles=$remoteFiles, deferredClone=$deferredClone)', async testCase => {
   const { installed, outdated, acquireAllowed, refusal } = testCase;
+  const remoteFiles = 'remoteFiles' in testCase && testCase.remoteFiles;
+  const deferredClone = 'deferredClone' in testCase && testCase.deferredClone;
   const terminalFailed = 'terminalFailed' in testCase && testCase.terminalFailed;
   const updateInUse = 'updateInUse' in testCase && testCase.updateInUse;
   const updatePending = 'updatePending' in testCase && testCase.updatePending;
@@ -87,6 +92,11 @@ it.each([
   const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
   const credentials = { token, encryption: null };
   const events: string[] = [];
+  const sourceWorkspace = { serverId: 'home-a', machineId: 'source-machine', workspaceId: 'source-project', rootPath: '/source/dirty-project' };
+  const targetWorkspace = { serverId: 'home-a', machineId, workspaceId: 'target-project', rootPath: '/remote/managed-project' };
+  const clonedDirectory = `${targetWorkspace.rootPath}/repository`;
+  const cloneSource = { source: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+    repository: { nameWithOwner: 'owner/original' }, protocol: 'https' }, branch: 'feature/original' };
   const acquisitionRequests: string[] = [];
   let bornSession: Record<string, unknown> | undefined;
   let machineBound = false;
@@ -206,6 +216,16 @@ it.each([
     actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'machines.agents.install': ['cli'] } },
   });
   const executor = createCliActionExecutor({ credentials, token, sessionId: '', mode: 'plain', ctx: null,
+    // This port is the host-to-Machine Action transport. Source declarations,
+    // exact child admission and the native Session producer remain real.
+    routeHostChildAction: async ({ actionId, input }) => {
+      if (actionId !== 'projects.open') return null;
+      const request = OpenProjectInputV1Schema.parse(input);
+      const workspace = request.machineId === sourceWorkspace.machineId ? sourceWorkspace : targetWorkspace;
+      events.push(request.machineId === sourceWorkspace.machineId ? 'source-open' : 'target-copy');
+      return { ok: true, result: { kind: 'opened', workspace, directory: request.materialization.kind === 'clone' ? clonedDirectory : workspace.rootPath,
+        setup: 'notRequired', ...(request.cloneSource ? { cloneSource } : {}) } };
+    },
     serverId: 'home-a', serverIdentityId: 'home-a', serverHttpBaseUrl: 'https://home-a.example.test',
     actionsSettingsProvider: createActionSettingsProvider({ accountSettings: settings }),
     savedSecretOperationContext: createInvocationSavedSecretOperationContextV1({ credentials: { token, encryption: null },
@@ -214,10 +234,25 @@ it.each([
         scopeKey: resolveAccountSettingsScopeKeyForToken(token), whenRefreshed: null,
         connectedPurposeCatalog: { status: 'ready', revision: 1, record: { key: 'purposes',
           value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: [] }) } } } }),
-    sessionSpawnDirectTargetTransport: { machineId, prepare: async () => ({ ok: true, directory: '/remote/project',
-      directoryKind: 'path', directoryCreationRequired: false, checkout: null }), spawnedSession: {
+    sessionSpawnDirectTargetTransport: { machineId, readMachineMetadataSnapshot: () => ({ status: 'ready', metadata: {} }), prepare: async request => {
+      if (remoteFiles) expect(request.directory).toEqual({ kind: 'managed' });
+      return { ok: true, directory: remoteFiles ? targetWorkspace.rootPath : '/remote/project',
+      directoryKind: remoteFiles ? 'managed' : 'path', directoryCreationRequired: false, checkout: null };
+    }, spawnedSession: {
       // The native process boundary performs birth and launch together.
-      spawn: async () => {
+      spawn: async request => {
+        if (remoteFiles) expect(request).toMatchObject({ directory: deferredClone ? clonedDirectory : targetWorkspace.rootPath,
+          sessionCreationCorrespondence: { recipe: deferredClone ? { projectFiles: { kind: 'git_clone', ...cloneSource } }
+            : { projectFilesOrigin: { sourceWorkspace, targetWorkspace } } } });
+        const ownerView = createSessionOwnerMetadataV1({ metadata: {
+          machineId, path: request.directory, hostPid: 1, sessionCreationCorrespondenceV1: request.sessionCreationCorrespondence,
+        } });
+        if (!ownerView.ok) throw new Error(`invalid native birth fixture: ${ownerView.unsupportedFields.join(',')}`);
+        if (remoteFiles) bornSession = { id: sessionId, seq: 0, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+          archivedAt: null, metadataVersion: 1, metadataLayoutVersion: 1,
+          metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata: {} })),
+          ownerMetadata: SessionOwnerMetadataEnvelopeV1Schema.parse({ t: 'plain', v: ownerView.ownerMetadata }),
+          encryptionMode: 'plain', agentState: null, agentStateVersion: 0, dataEncryptionKey: null, share: null };
         if (hostPath) expect(resolveAgentCliLaunchSpec('codex')).toMatchObject({ source: 'system', resolvedPath: hostExecutablePath });
         if (metadataProbeForbidden) {
           const probes = await readFile(metadataProbeLog!, 'utf8').catch(error => {
@@ -235,7 +270,10 @@ it.each([
     } },
   });
   const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'readiness-birth',
-    executionTarget: { serverId: 'home-a', machineId }, directory: { kind: 'path', path: '/remote/project' },
+    executionTarget: { serverId: 'home-a', machineId }, directory: { kind: 'path', path: remoteFiles ? sourceWorkspace.rootPath : '/remote/project' },
+    ...(remoteFiles ? { sessionPlacement: { kind: 'machine', target: { serverId: 'home-a', machineId },
+      projectFilesSource: { target: { serverId: 'home-a', machineId: sourceWorkspace.machineId }, directory: sourceWorkspace.rootPath },
+      ...(deferredClone ? { projectFiles: { kind: 'git_clone' } } : {}) } } : {}),
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
     connectedServices: { v: 2, bindingsByServiceId: {} }, memoryEnabled: false });
   const result = await executor.execute('session.spawn_new', input, { surface: 'cli', authority: 'present_user',
@@ -258,7 +296,21 @@ it.each([
     if (installed && outdated) {
       expect(result).toMatchObject({ result: { agentUpdate: { agentId: 'codex', status: 'pending', requestId } } });
     }
-    expect(events).toEqual(['inventory', ...(!installed || dependencyMissing
+    expect(events).toEqual(['inventory', ...(remoteFiles ? ['source-open', 'target-copy'] : []), ...(!installed || dependencyMissing
       ? [outdated ? 'update' : 'install', ...(updateInUse ? [] : ['terminal'])] : []), 'birth', 'spawn']);
+    if (remoteFiles) {
+      const beforeRetry = events.length;
+      const retried = await executor.execute('session.spawn_new', input, { surface: 'cli', authority: 'present_user',
+        actionCaller: { kind: 'host' }, serverId: 'home-a', actionRequestId: requestId, bypassApprovals: true });
+      expect(retried, JSON.stringify(retried)).toMatchObject({ ok: true, result: { type: 'success', sessionId } });
+      expect(events.slice(beforeRetry)).toEqual(['inventory']);
+      if (deferredClone) {
+        const conflicting = await executor.execute('session.spawn_new', { ...input, sessionPlacement: {
+          ...input.sessionPlacement!, projectFiles: { kind: 'git_clone', branch: 'different-branch' },
+        } }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+          serverId: 'home-a', actionRequestId: `${requestId}-changed`, bypassApprovals: true });
+        expect(conflicting).toMatchObject({ ok: false, errorCode: 'creation_conflict' });
+      }
+    }
   }
 });

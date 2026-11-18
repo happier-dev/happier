@@ -13587,3 +13587,21 @@ action available to authorized administrators. This does not certify upstream
 or local deletion. Matching development Protocol, server and UI readers must
 reload together; an older strict reader rejects this outcome. No persistence
 format, migration, retry worker or released wire epoch changes.
+
+
+Current 0.3 development Session Project files authoring allows absent Git clone
+`source` and `branch`: each omitted operand is resolved from the captured original
+folder. The closed `projects.open` request adds opt-in `cloneSource: true` for
+attachment only; its closed opened result adds the optional finite credential-free
+`{source, branch}` projection (unavailable facts are null). The reviewed Session
+source child admits the exact attach request and, when needed, the exact facts
+request; it does not widen the source path or Machine. Lowered managed placement
+and retained immutable recipes still require concrete clone operands. Same-key
+rejoin fills authored omissions from that authenticated retained recipe; explicit
+operands still bind the immutable comparison. Matching development producers and consumers must reload together; older strict development
+readers reject the new request field. This unpublished contract adds no wire epoch,
+runtime ABI, compatibility adapter or persisted store. The scoped `../0.2` frontier
+at `9d13311c372a320c3fb82ea83981612cf1fa0102` has none of these three owners
+(`machines/machineIsolationV1.ts`, `projects/openProjectV1.ts`,
+`sessions/creation/sessionProjectFilesOpenV1.ts`), and no scoped dirty changes,
+so it supplies no predecessor reader for this unreleased choice.

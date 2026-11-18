@@ -9,17 +9,37 @@ import { ScmBranchSourceRefSchema } from '../scm/remoteNormalization.js';
 import { WorkspaceContentPolicyV1Schema, WorkspaceSyncPersistentModeV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import { QualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
 
-/** Project content intent; credentials are acquired by SCM, never retained here. */
+const ProjectFilesCopyOnceV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('copy_once'), contentPolicy: z.optional(WorkspaceContentPolicyV1Schema),
+}));
+const ProjectFilesSyncV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('sync'), mode: z.enum(WorkspaceSyncPersistentModeV1Schema.options.filter(mode => mode !== 'mirror_exactly')),
+  contentPolicy: z.optional(WorkspaceContentPolicyV1Schema),
+}));
+const ProjectFilesConcreteCloneV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('git_clone'), source: ScmCredentialFreeRepositorySelectorV1Schema,
+  branch: ScmBranchSourceRefSchema, gitAccount: z.optional(asProtocolZod(QualifiedConnectedAccountRefSchema)),
+}));
+
+/** Omitted clone repository/branch mean the selected source folder's current facts. */
 export const SessionProjectFilesV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('copy_once'), contentPolicy: z.optional(WorkspaceContentPolicyV1Schema) }),
-  z.strictObject({ kind: z.literal('git_clone'), source: ScmCredentialFreeRepositorySelectorV1Schema,
-    branch: ScmBranchSourceRefSchema, gitAccount: z.optional(asProtocolZod(QualifiedConnectedAccountRefSchema)) }),
-  // Project files offers Replica and Editable copy, not exact-mirror deletion.
-  z.strictObject({ kind: z.literal('sync'), mode: z.enum(
-    WorkspaceSyncPersistentModeV1Schema.options.filter(mode => mode !== 'mirror_exactly'),
-  ), contentPolicy: z.optional(WorkspaceContentPolicyV1Schema) }),
+  ProjectFilesCopyOnceV1Schema,
+  z.strictObject({ ...ProjectFilesConcreteCloneV1Schema.shape,
+    source: z.optional(ScmCredentialFreeRepositorySelectorV1Schema), branch: z.optional(ScmBranchSourceRefSchema) }),
+  ProjectFilesSyncV1Schema,
 ]));
 export type SessionProjectFilesV1 = z.infer<typeof SessionProjectFilesV1Schema>;
+
+/** Lowered execution and retained recipes contain concrete clone inputs only. */
+export const ResolvedSessionProjectFilesV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  ProjectFilesCopyOnceV1Schema, ProjectFilesConcreteCloneV1Schema, ProjectFilesSyncV1Schema,
+]));
+export type ResolvedSessionProjectFilesV1 = z.infer<typeof ResolvedSessionProjectFilesV1Schema>;
+
+/** Fresh authoring may defer clone operands; execution and retained recipes cannot. */
+export function isResolvedSessionProjectFilesV1(choice: SessionProjectFilesV1): choice is ResolvedSessionProjectFilesV1 {
+  return choice.kind !== 'git_clone' || choice.source !== undefined && choice.branch !== undefined;
+}
 
 /** Provider-authored creation provenance, recorded once on the enrolled Machine. */
 export const MachineIsolationV1Schema = z.strictObject({

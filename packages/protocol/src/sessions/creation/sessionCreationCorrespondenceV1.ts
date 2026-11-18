@@ -20,7 +20,7 @@ import { ManagedControllerV1Schema } from '../../machines/managed/managedMachine
 import { SessionDiscussionParticipantV1Schema } from './sessionDiscussionParticipantV1.js';
 import { SessionAuthoringSelectionFieldsV1 } from '../authoring/selectionFieldsV1.js';
 import { WorkspaceAddressV1Schema, WorkspaceAddressV2Schema } from '../../workspaces/workspaceRefV1.js';
-import { SessionProjectFilesV1Schema } from '../../machines/machineIsolationV1.js';
+import { ResolvedSessionProjectFilesV1Schema } from '../../machines/machineIsolationV1.js';
 import { SessionProjectFilesSourceV1Schema } from './sessionProjectFilesSourceV1.js';
 import { WorkspaceManifestSchema } from '../../workspaces/manifestSchema.js';
 import { WorkspaceContentPolicyV1Schema } from '../control/handoff/workspaceSyncSchemas.js';
@@ -59,7 +59,7 @@ const createSessionCreationImmutableRecipeSchema = () => z.strictObject({
   memoryEnabled: z.optional(z.boolean()),
   promptStack: z.optional(SessionPromptStackV1Schema),
   managedCreation: z.optional(SessionManagedCreationV1Schema),
-  projectFiles: z.optional(SessionProjectFilesV1Schema),
+  projectFiles: z.optional(ResolvedSessionProjectFilesV1Schema),
   projectFilesSource: z.optional(SessionProjectFilesSourceV1Schema),
   projectFilesOrigin: z.optional(SessionProjectFilesOriginV1Schema),
   /** Internal derivation only; public spawn input cannot author this provenance. */

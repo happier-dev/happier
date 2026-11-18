@@ -1,6 +1,6 @@
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { createActionExecuteFailureError, isActionExecuteFailure, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
+import { isResolvedSessionProjectFilesV1, readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 import { sameStrictJsonValue, projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isManagedPresetAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -13,7 +13,7 @@ import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actio
 import type { CliActionDepsParams } from '../actions/cliActionDeps/types';
 import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import { prepareSessionAgentReadiness } from './prepareSessionAgentReadiness';
-import { prepareEnrolledSessionProjectFiles } from './prepareEnrolledSessionProjectFiles';
+import { prepareEnrolledSessionProjectFiles, resolveSessionProjectFiles } from './prepareEnrolledSessionProjectFiles';
 import { needsEnrolledSessionProjectFilesOpenV1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
 import { prepareSessionProjectFilesSource } from './prepareEnrolledSessionProjectFiles';
 import { incompatibleSessionSpawnTarget, projectSessionInitialAccessEnvelopeHostErrorResult } from '../actions/cliActionDeps/sessionSpawnErrors';
@@ -984,7 +984,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             approvalProfileTeamOrGroupDerived: selectedApprovalProfileTeamOrGroupDerived ?? false } : {}),
           ...(promptStack !== undefined ? { promptStack } : {}),
           ...(managedCreation ? { managedCreation } : {}),
-          ...(effectiveProjectFiles ? { projectFiles: effectiveProjectFiles } : {}),
+          ...(effectiveProjectFiles && isResolvedSessionProjectFilesV1(effectiveProjectFiles) ? { projectFiles: effectiveProjectFiles } : {}),
           ...(sessionPlacement?.projectFilesSource ? { projectFilesSource: sessionPlacement.projectFilesSource } : {}),
           ...(discussionParticipant ? { discussionParticipant } : {}),
           ...(secretReferenceOverlay ? { secretReferenceOverlay } : {}),
@@ -1006,7 +1006,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         if (!isolationDecision.ok) throw isolationDecision.error;
         const isolation = isolationDecision.value;
         const sandboxChoice = isolation?.choice.kind === 'sandbox' ? isolation.choice : undefined;
-        const projectFiles = !sandboxChoice && prepareProjectFiles
+        const presetAcquisition = context?.sessionCreationDefaults?.managedPresetAcquisition;
+        const projectFiles = !sandboxChoice && !presetAcquisition && prepareProjectFiles
           ? await prepareEnrolledSessionProjectFiles({ placement: sessionPlacement,
             projectFiles: effectiveProjectFiles, executionTarget,
             targetDirectory: normalizedDirectory, invokeReviewedChild: context?.hostReviewedChild?.invoke, signal }) : undefined;
@@ -1032,7 +1033,6 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           return agentSandbox.value;
         };
         let acquired: Awaited<ReturnType<NonNullable<typeof params.acquireSessionIsolationSandbox>>> | undefined;
-        const presetAcquisition = context?.sessionCreationDefaults?.managedPresetAcquisition;
         if (presetAcquisition) {
           if (!isManagedPresetAcquireInputV1(presetAcquisition) || !context || !params.acquireSessionIsolationSandbox
             || !input.admittedInput || !input.executeSessionIsolationAcquire) {
@@ -1062,8 +1062,15 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             context, ...(signal ? { signal } : {}),
           });
         }
+        const projectFilesChoice = acquired?.projectFiles ?? projectFiles?.projectFiles ?? effectiveProjectFiles;
+        const resolvedProjectFiles = projectFilesChoice ? await resolveSessionProjectFiles({
+          projectFiles: projectFilesChoice, placement: sessionPlacement,
+          invokeReviewedChild: context?.hostReviewedChild?.invoke, ...(signal ? { signal } : {}),
+        }) : undefined;
+        if (resolvedProjectFiles && !resolvedProjectFiles.ok) throw createActionExecuteFailureError(resolvedProjectFiles);
+        const concreteProjectFiles = resolvedProjectFiles?.projectFiles;
         const projectFilesSource = sessionPlacement?.projectFilesSource;
-        const openedSource = acquired && sessionPlacement && projectFilesSource && acquired.projectFiles?.kind !== 'git_clone'
+        const openedSource = acquired && sessionPlacement && projectFilesSource && concreteProjectFiles?.kind !== 'git_clone'
           ? await prepareSessionProjectFilesSource({ placement: sessionPlacement,
               invokeReviewedChild: context?.hostReviewedChild?.invoke, ...(signal ? { signal } : {}) })
           : undefined;
@@ -1076,7 +1083,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             ...(projectFiles?.projectFilesOrigin ? { projectFilesOrigin: projectFiles.projectFilesOrigin } : {}),
             ...(acquired ? { managedCreation: acquired.managedCreation,
               managedCreationOrigin: presetAcquisition ? 'session_defaults' as const : 'machine_policy' as const } : {}),
-            ...(acquired?.projectFiles ? { projectFiles: acquired.projectFiles } : {}),
+            ...(concreteProjectFiles ? { projectFiles: concreteProjectFiles } : {}),
             ...(nativeSandbox !== undefined && requestedConfigurationSnapshot?.nativeSandbox === undefined
               && (acquired || machineIsolation) ? {
                 nativeSandboxOrigin: presetAcquisition ? 'session_defaults' as const : 'machine_policy' as const } : {}),
@@ -1086,7 +1093,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             managedId: acquired.managedCreation.managedId, workspaceRoot: normalizedDirectory,
             ...(projectFilesSource ? { projectFilesSource } : {}),
             ...(openedSource?.ok ? { projectFilesSourceWorkspace: openedSource.sourceWorkspace } : {}),
-            ...(acquired.projectFiles ? { projectFiles: acquired.projectFiles } : {}) } } : {}),
+            ...(concreteProjectFiles ? { projectFiles: concreteProjectFiles } : {}) } } : {}),
           ...(nativeSandbox !== undefined ? { nativeSandbox } : {}),
         };
       };
@@ -1211,6 +1218,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           approvedNewDirectoryCreation: preparedTarget.directoryCreationRequired,
           ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
           sessionCreationCorrespondence: correspondence,
+          ...(effectiveProjectFiles ? { authoredProjectFiles: effectiveProjectFiles } : {}),
           ...(requestedConfigurationSnapshot?.nativeSandbox !== undefined
             ? { authoredNativeSandbox: requestedConfigurationSnapshot.nativeSandbox } : {}),
           prepareSessionIsolation,

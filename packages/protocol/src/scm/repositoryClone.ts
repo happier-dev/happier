@@ -5,7 +5,7 @@ import { ScmCommitOidSchema } from './commitPublication.js';
 import { ScmBranchSourceRefSchema } from './remoteNormalization.js';
 
 import {
-  ScmWorkingSnapshotSchema,
+  ScmWorkingSnapshotSchema, type ScmWorkingSnapshot,
 } from './workingSnapshot.js';
 import { ScmOperationErrorCodeSchema } from './operationError.js';
 import {
@@ -78,6 +78,23 @@ export const ScmCredentialFreeRepositorySelectorV1Schema = lazyZodSchema(() => z
   protocol: SourceControlCloneProtocolSchema,
 }));
 export type ScmCredentialFreeRepositorySelectorV1 = z.infer<typeof ScmCredentialFreeRepositorySelectorV1Schema>;
+
+/** Finite source-folder projection; raw remote URLs and auth material never cross this seam. */
+export const ScmRepositoryCloneSourceV1Schema = lazyZodSchema(() => z.strictObject({
+  source: z.nullable(ScmCredentialFreeRepositorySelectorV1Schema),
+  branch: z.nullable(ScmBranchSourceRefSchema),
+}));
+export type ScmRepositoryCloneSourceV1 = z.infer<typeof ScmRepositoryCloneSourceV1Schema>;
+
+export function projectScmRepositoryCloneSourceV1(snapshot: ScmWorkingSnapshot): ScmRepositoryCloneSourceV1 {
+  const provider = snapshot.repo.isRepo ? snapshot.hostingProvider : null;
+  const source = provider?.nameWithOwner ? ScmCredentialFreeRepositorySelectorV1Schema.safeParse({
+    provider: { id: provider.id, kind: provider.kind, displayName: provider.displayName, baseUrl: provider.baseUrl },
+    repository: { nameWithOwner: provider.nameWithOwner }, protocol: 'https',
+  }) : null;
+  const branch = snapshot.repo.isRepo && !snapshot.branch.detached ? ScmBranchSourceRefSchema.safeParse(snapshot.branch.head) : null;
+  return { source: source?.success ? source.data : null, branch: branch?.success ? branch.data : null };
+}
 
 export const ScmHostingRepositoryGetRequestV1Schema = lazyZodSchema(() => z.strictObject({
   selector: ScmCredentialFreeRepositorySelectorV1Schema,

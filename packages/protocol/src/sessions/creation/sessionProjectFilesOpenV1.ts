@@ -40,10 +40,16 @@ export function buildSessionProjectFilesSourceOpenInputV1(placement: SessionPlac
 /** Source attachment has its own Machine admission; destination spawn grants no source reads. */
 export function sessionProjectFilesOpenChildrenV1(input: Pick<SessionSpawnNewInputV2,
   'sessionPlacement' | 'executionTarget'> & Readonly<{ projectFiles?: SessionProjectFilesV1 }>): HostReviewedChildrenPlanV1['children'] {
-  const source = (input.sessionPlacement?.projectFiles ?? input.projectFiles)?.kind !== 'git_clone' && input.sessionPlacement
+  const choice = input.sessionPlacement?.projectFiles ?? input.projectFiles;
+  const source = (choice?.kind !== 'git_clone' || !choice.source || !choice.branch) && input.sessionPlacement
     ? buildSessionProjectFilesSourceOpenInputV1(input.sessionPlacement) : null;
   return [
-    ...(source ? [{ ...SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.source, input: projectNativeJsonValueForTransport(source) }] : []),
+    ...(source ? [
+      ...(choice?.kind !== 'git_clone' ? [{ ...SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.source,
+        input: projectNativeJsonValueForTransport(source) }] : []),
+      ...(choice === undefined || choice.kind === 'git_clone' ? [{ ...SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.source,
+        input: projectNativeJsonValueForTransport({ ...source, cloneSource: true }) }] : []),
+    ] : []),
     ...(sessionProjectFilesConsumeRequesterAccountContentV1(input)
       ? [{ ...SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target, scopeInput: { ...input.executionTarget } }] : []),
   ];

@@ -1,3 +1,4 @@
+import { readProjectCloneSource } from './readProjectCloneSource';
 import { selectHostRequesterExecutionIdentity, isHostRequesterUnrestrictedOwner } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { readRequesterAccountActionContext, type RetainedRequesterAccountCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { configuration } from '@/configuration';
@@ -440,6 +441,9 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         selector, ref, subdir, registry: runtime.registry, signal: context.signal, sync,
         onEffectsIssued: () => { effectsIssued = true; },
       });
+      const cloneSource = input.cloneSource ? privateCheckout ? checkout.cloneSource : await readProjectCloneSource({
+        directory: checkout.directory, registry: runtime.registry, signal: context.signal,
+      }) : undefined;
       if (checkout.repositoryIdentity) facts = { ...facts, repositoryIdentity: checkout.repositoryIdentity };
       let parentRootPath: string | undefined;
       if (!privateCheckout && !parentWorkspace
@@ -524,6 +528,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       }
       context.signal.throwIfAborted();
       return { kind: 'opened', workspace, directory: checkout.directory, setup,
+        ...(cloneSource ? { cloneSource } : {}),
         ...((copyOnceBaseline ?? checkout.copyOnceBaseline) ? { copyOnceBaseline: copyOnceBaseline ?? checkout.copyOnceBaseline } : {}),
         ...((copyOnceExcludedPaths ?? checkout.copyOnceExcludedPaths) ? { copyOnceExcludedPaths: copyOnceExcludedPaths ?? checkout.copyOnceExcludedPaths } : {}),
         facts: { projectKey: acceptedRef.ref.projectKey ?? acceptedRef.ref.id,

@@ -139,6 +139,14 @@ vi.mock('node:child_process', async original => {
   Object.defineProperties(execFileBoundary, Object.getOwnPropertyDescriptors(actual.execFile));
   return { ...actual,
     spawn: (command: string, args: readonly string[], options: import('node:child_process').SpawnOptions) => {
+      if ((command === 'git' || command.endsWith('/git')) && workspaceCheckoutNativeBoundary.privateRoot
+        && String(options.cwd).startsWith(workspaceCheckoutNativeBoundary.privateRoot)) {
+        expect(workspaceCheckoutNativeBoundary.identity.getStore()).toBe('member');
+        workspaceCheckoutNativeBoundary.runAsUsers.push('git-member');
+        const mount = workspaceCheckoutNativeBoundary.mounts.find(entry => String(options.cwd).startsWith(`${entry.path}/`));
+        if (!mount) throw new Error('Missing native Git filesystem boundary');
+        return actual.spawn(command, args, { ...options, cwd: `${mount.backing}${String(options.cwd).slice(mount.path.length)}` });
+      }
       if (workspaceCheckoutNativeBoundary.launch && (command === '/fixture-engine/agent' || args.includes('/fixture-engine/agent'))) {
         expect(workspaceCheckoutNativeBoundary.identity.getStore()).toBe('member');
         const root = args.at(-1);
@@ -923,6 +931,7 @@ describe('Project Open RPC', () => {
   it.skipIf(process.platform !== 'linux').each([
     { mode: 'plain', action: 'attach', fault: 'none' }, { mode: 'e2ee', action: 'attach', fault: 'none' },
     { mode: 'plain', action: 'attach', fault: 'folder_attach' },
+    { mode: 'plain', action: 'attach', fault: 'clone_source' },
     { mode: 'plain', action: 'copy_once', fault: 'none' }, { mode: 'plain', action: 'create_relationship', fault: 'none' },
     { mode: 'plain', action: 'create_relationship', fault: 'endpoint_write_failure' },
     { mode: 'plain', action: 'create_relationship', fault: 'enabled_graph_ack' },
@@ -936,6 +945,7 @@ describe('Project Open RPC', () => {
     { mode: 'plain', action: 'create_relationship', fault: 'nonempty_target' },
   ] as const)('keeps a scoped Use requester Source on member execution without custodian credentials ($mode/$action/$fault)', async ({ mode, action, fault }) => {
     const syncing = action !== 'attach';
+    const cloneSource = fault === 'clone_source';
     socketIo.mockImplementation((await vi.importActual<typeof import('socket.io-client')>('socket.io-client')).io);
     let memberPreparation: ReturnType<typeof createAgentIsolationMemberPreparationBoundary> | undefined;
     const installed = await createInstalledFilesystemMachineFixture({ agentIsolation: {
@@ -1116,7 +1126,7 @@ describe('Project Open RPC', () => {
       privateCheckout: { prepareNativeOperation: input => installed.machine.prepareNativeOperation(input) },
       readCredentials: async () => { throw new Error('Bob must not use custodian credentials'); } };
     const targetRoot = syncing ? join(member.workspaceRoot, 'bob-sync') : root;
-    nativeBoundary.privateRoot = syncing ? targetRoot : '';
+    nativeBoundary.privateRoot = syncing || cloneSource ? targetRoot : '';
     nativeBoundary.privateRoots = syncing ? [root] : [];
     nativeSyncFiles.source = syncing ? root : '';
     const policyFields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
@@ -1141,7 +1151,7 @@ describe('Project Open RPC', () => {
     const productionSync = syncing ? await createProductionDaemonWorkspaceSyncRuntime(productionSyncInput, nativeSyncBoundary.factories) : null;
     let recoveredSync: Awaited<ReturnType<typeof createProductionDaemonWorkspaceSyncRuntime>> | undefined;
     if (productionSync) { runtime = { ...runtime, workspaceSyncAdapter: productionSync.handoffAdapter }; onTestFinished(() => productionSync.stop()); }
-    const input = { serverId: homeId, machineId: 'machine', source: fault === 'folder_attach' ? { kind: 'folder' as const, path: root } : { kind: 'source' as const, id: source.id, revision: 1, selector: source.repository,
+    const input = { serverId: homeId, machineId: 'machine', ...(cloneSource ? { cloneSource: true as const } : {}), source: fault === 'folder_attach' ? { kind: 'folder' as const, path: root } : { kind: 'source' as const, id: source.id, revision: 1, selector: source.repository,
       checkout: { serverId: homeId, workspaceId: key.id, machineId: workspace.machineId, rootPath: root } }, materialization: action === 'attach'
       ? { kind: 'attach' as const }
       : { kind: 'sync' as const, targetPath: targetRoot, workspaceAction: action === 'copy_once'
@@ -1225,12 +1235,21 @@ describe('Project Open RPC', () => {
     // Existing-checkout attachment needs the daemon-applied runtime lifetime,
     // but no plugin contributions. Publish it through the real runtime owner.
     const pluginRuntime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: installed.directory,
-      controller: pluginReloadController, runtimeOptions: { pluginIds: [], contributes: createResolvedContributionRegistry({}) } });
+      controller: pluginReloadController, runtimeOptions: cloneSource
+        ? { pluginIds: ['happier.scm.backend.git', 'happier.scm.forge.github'] }
+        : { pluginIds: [], contributes: createResolvedContributionRegistry({}) } });
     onTestFinished(() => pluginRuntime.dispose());
     try {
       await mkdir(join(root, '.happier'), { recursive: true });
       await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setup: [{ kind: 'command', command: 'touch not-executed' }] } }));
       await writeFile(join(root, 'payload.txt'), 'member seed');
+      if (cloneSource) {
+        const git = promisify(execFile);
+        const cwd = join(backingWorkspace, 'bob-checkout');
+        await git('git', ['init', '-b', 'feature/private'], { cwd });
+        await git('git', ['-c', 'user.name=Private Source', '-c', 'user.email=source@example.test', 'commit', '--allow-empty', '-m', 'source'], { cwd });
+        await git('git', ['remote', 'add', 'origin', 'https://github.com/owner/private-source.git'], { cwd });
+      }
       post.mockClear();
       const foreignHomeAuthorization = { ...authorization,
         binding: { ...authorization.binding, serverIdentityId: 'foreign-home' } };
@@ -1244,7 +1263,7 @@ describe('Project Open RPC', () => {
         .toMatchObject({ kind: 'refused', code: 'requester_authority_unavailable', effectAttempted: false });
       expect(post).not.toHaveBeenCalled();
       expect(nativeBoundary.runAsUsers).toEqual([]);
-      if (!syncing && mode === 'plain') {
+      if (!syncing && mode === 'plain' && !cloneSource) {
         const sharedSource = { ...source, createdByAccountId: 'requester', audience: [{ principal: { kind: 'team' as const, teamId: 'team-source' }, level: 'view' as const }] };
         vi.mocked(axios.request).mockImplementation(async request => {
           assertBobHeaders(request.headers);
@@ -1404,6 +1423,13 @@ describe('Project Open RPC', () => {
         nativePhases: nativeBoundary.phases, workerFrames: workerFrames.slice(-4) })).toMatchObject({ kind: 'opened', directory: targetRoot, setup: 'approvalRequired',
         workspace: { serverId: homeId, machineId: 'machine', rootPath: targetRoot },
         ...(fault === 'folder_attach' ? {} : { facts: { source: { sourceId: source.id, revision: 1 } } }) });
+      if (cloneSource) {
+        expect(opened).toMatchObject({ kind: 'opened', cloneSource: {
+          source: { repository: { nameWithOwner: 'owner/private-source' }, protocol: 'https' }, branch: 'feature/private',
+        } });
+        expect(nativeBoundary.runAsUsers).toContain('git-member');
+        expect(nativeBoundary.phases).not.toContain('daemon_private_readback_denied');
+      }
       if (syncing) expect(machineReads() - initialMachineReads).toBe(0);
       expect(nativeBoundary.childFailure).toBeUndefined();
       expect(nativeBoundary.runAsUsers[0]).toBe(member.username);
@@ -1479,7 +1505,8 @@ describe('Project Open RPC', () => {
             expect(nativeBoundary.runAsUsers).toHaveLength(launches);
           }
         }
-      } else expect(nativeBoundary.runAsUsers).toEqual([member.username]);
+      } else expect(cloneSource ? nativeBoundary.runAsUsers.filter(user => user !== 'git-member')
+        : nativeBoundary.runAsUsers).toEqual([member.username]);
       // Home binding is proved by the real projection/installed-ingress tests;
       // this consumer receives host-private ports only after that admission.
       current = false;

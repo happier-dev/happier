@@ -3,7 +3,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import type { ActionExecuteFailure } from '../actions/executor/types.js';
-import { ScmRepositoryCloneInputSchema, ScmRepositoryContainedSubdirV1Schema } from '../scm/repositoryClone.js';
+import { ScmRepositoryCloneSourceV1Schema, ScmRepositoryCloneInputSchema, ScmRepositoryContainedSubdirV1Schema } from '../scm/repositoryClone.js';
 import { QualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
 import { SessionAuthoringCheckoutCreationDraftV1Schema } from '../sessions/authoring/creationFieldsV1.js';
 import { HandoffWorkspaceActionV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
@@ -56,7 +56,12 @@ export const OpenProjectInputV1Schema = lazyZodSchema(() => z.strictObject({
   ref: z.optional(IdSchema),
   subdir: z.optional(ScmRepositoryContainedSubdirV1Schema),
   materialization: WorkspaceActivationRequestV1Schema,
+  /** Opt-in facts from the admitted attached folder, before destination clone effects. */
+  cloneSource: z.optional(z.literal(true)),
 }).check(z.superRefine((input, context) => {
+  if (input.cloneSource && input.materialization.kind !== 'attach') {
+    context.addIssue({ code: 'custom', path: ['cloneSource'], message: 'Clone source facts require attachment' });
+  }
   if (input.materialization.kind === 'sync' && input.materialization.targetManaged
     && input.materialization.targetManaged.controller.machineId !== input.machineId) {
     context.addIssue({ code: "custom", path: ['materialization', 'targetManaged'], message: 'Native sync destination must match its controller Machine' });
@@ -89,6 +94,7 @@ export const OpenProjectResultV1Schema = lazyZodSchema(() => z.discriminatedUnio
     kind: z.literal('opened'), workspace: WorkspaceAddressV2Schema, directory: PathSchema,
     setup: z.enum(['notRequired', 'approvalRequired', 'prepared', 'failed']),
     facts: z.optional(WorkspaceProjectFactsV1Schema),
+    cloneSource: z.optional(ScmRepositoryCloneSourceV1Schema),
     copyOnceBaseline: z.optional(WorkspaceManifestSchema),
     copyOnceExcludedPaths: z.optional(z.readonly(z.array(WorkspaceManifestRelativePathSchema))),
   }),

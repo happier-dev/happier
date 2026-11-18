@@ -4331,8 +4331,22 @@ Shared Docker state has no automatic Remove.
 `machineProvisioners` family. Its acquire role runs Devcontainer `up`; native
 Docker inspection and child execution then establish the actual container id,
 OS user, workspace root and named volumes. Placed containers use their own
-filesystem; Project files delivers Copy once, Git clone or explicit sync. The
-image path creates a per-Machine workspace volume. Advanced configurations use
+filesystem; Project files delivers Copy once, Git clone or explicit sync.
+In current 0.3 development, Git clone can omit the repository and branch to use
+“From the folder” and “The folder’s current branch”. Session preparation resolves
+those facts through the captured original Source’s admitted `projects.open`
+attachment (`cloneSource: true`), using SCM’s `detail: facts` hosting/upstream
+selection and named branch. Only a credential-free repository selector and branch
+cross that seam; raw remote URLs and credentials do not. Missing repository facts,
+a detached branch when inherited, or an unsupported managed Source refuse before
+destination cloning. An explicit repository or branch keeps its selected value.
+Enrolled and native destinations consume the same concrete resolution before
+materialization and Git Account credential selection; SCM’s host-side
+`repositoryTransport` remains the credential owner. Private Source facts are read
+in the captured requester checkout child; its finite result never causes a
+controller traversal. An unchanged creation-key retry reuses its authenticated
+retained repository and branch without reopening Source or cloning again. Explicit
+operands remain part of the immutable creation comparison. The image path creates a per-Machine workspace volume. Advanced configurations use
 a generated native override beside the authored configuration, retaining its
 relative build paths while replacing the default workspace bind with a volume.
 Native effect review refuses resolved host binds and returns typed unavailable

@@ -1,3 +1,4 @@
+import { ResolvedSessionProjectFilesV1Schema } from '../../machines/machineIsolationV1.js';
 import * as zMini from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -28,7 +29,8 @@ import { SessionSectionPlacementV1Schema } from './sessionSpawnNewResultV1.js';
 import { PluginUiNewSessionSeedOriginV1Schema } from '../../plugins/ui/newSessionSeedOrigin.js';
 import { MachineSetupPlanInputV1Schema } from '../../machines/managed/actionsV1.js';
 import { AgentInstallJobConsentSchema } from '../../daemon/agentInstallJobs.js';
-import { SessionPlacementSelectionV1Schema } from './sessionPlacementSelectionV1.js';
+import { SessionPlacementSelectionV1Schema, SessionProjectFilesSourceV1Schema } from './sessionPlacementSelectionV1.js';
+import { WorkspaceAddressV1Schema } from '../../workspaces/workspaceRefV1.js';
 import type { SessionExecutionTargetV1 } from './sessionExecutionTargetV1.js';
 import { ConnectedServicesLaunchAuthIntentV1Schema } from '../../connect/connectedServicesLaunchAuthIntentV1.js';
 export { SessionAttestedContextV1Schema, type SessionAttestedContextV1 } from './sessionAttestedContextV1.js';
@@ -59,6 +61,10 @@ export type SessionSpawnNewInitialInputV1 = z.infer<typeof SessionSpawnNewInitia
 export const SessionManagedTargetPlacementV1Schema = lazyZodSchema(() => z.strictObject({
   managedId: z.string().check(z.trim(), z.minLength(1)),
   workspaceRoot: z.string().check(z.trim(), z.minLength(1)),
+  projectFiles: z.optional(ResolvedSessionProjectFilesV1Schema),
+  projectFilesSource: z.optional(SessionProjectFilesSourceV1Schema),
+  /** Source locator opened by the parent Action's reviewed Project admission. */
+  projectFilesSourceWorkspace: z.optional(WorkspaceAddressV1Schema),
 }));
 export type SessionManagedTargetPlacementV1 = z.infer<typeof SessionManagedTargetPlacementV1Schema>;
 

@@ -4,6 +4,7 @@ import { readConnectedServiceMaterializationIdentityV1FromMetadata } from '@happ
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { buildSpawnedFirstTurnLocalId, buildSessionSpawnInitialInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
 import { SessionCreationCorrespondenceV1ReadSchema, sessionCreationCorrespondenceMatchesV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { isResolvedSessionProjectFilesV1, type SessionProjectFilesV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 import { withSessionNativeSandbox } from '@/session/shared/sessionCreationCorrespondence';
 import { commitPreparedSessionBirthV1 } from '@happier-dev/protocol/sessions/creation/sessionPreparedBirthV1';
 import { migrateRetainedSessionWorkContextV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
@@ -149,6 +150,8 @@ export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol'
   sessionCreationCorrespondence?: SessionCreationCorrespondenceV1;
   /** Distinguishes an explicit native choice from the receiver's derived default. */
   authoredNativeSandbox?: 'on' | 'off';
+  /** Host-only authored operands; retained creation fills only deferred clone facts. */
+  authoredProjectFiles?: SessionProjectFilesV1;
   /** Host policy placement resolves only after the existing creation owner finds no retained Session. */
   prepareSessionIsolation?: () => Promise<Readonly<{
     sessionCreationCorrespondence: SessionCreationCorrespondenceV1;
@@ -1137,12 +1140,18 @@ export async function createSpawnedSession(
           && recipe.managedCreation === undefined && retained.data.recipe.managedCreation !== undefined;
         const restoreNativeSandbox = retained.data.recipe.nativeSandboxOrigin !== undefined
           && params.authoredNativeSandbox === undefined;
-        if (restorePlacement || restoreNativeSandbox) {
+        const authoredProjectFiles = params.authoredProjectFiles;
+        const retainedProjectFiles = retained.data.recipe.projectFiles;
+        const inheritedProjectFiles = authoredProjectFiles?.kind === 'git_clone'
+          && !isResolvedSessionProjectFilesV1(authoredProjectFiles) && retainedProjectFiles?.kind === 'git_clone'
+          ? { ...authoredProjectFiles, source: authoredProjectFiles.source ?? retainedProjectFiles.source,
+            branch: authoredProjectFiles.branch ?? retainedProjectFiles.branch } : undefined;
+        if (restorePlacement || restoreNativeSandbox || inheritedProjectFiles) {
           const managedCreation = retained.data.recipe.managedCreation;
           const nativeSandbox = retained.data.recipe.configuration?.nativeSandbox;
           const projectFilesSource = recipe.projectFilesSource ?? retained.data.recipe.projectFilesSource;
           const projectFilesOrigin = retained.data.recipe.projectFilesOrigin;
-          const projectFiles = recipe.projectFiles ?? retained.data.recipe.projectFiles;
+          const projectFiles = inheritedProjectFiles ?? recipe.projectFiles ?? retained.data.recipe.projectFiles;
           applyIsolation({
             sessionCreationCorrespondence: { ...params.sessionCreationCorrespondence, recipe: {
               ...recipe,
@@ -1150,6 +1159,7 @@ export async function createSpawnedSession(
                 ...(projectFilesSource ? { projectFilesSource } : {}),
                 ...(projectFilesOrigin ? { projectFilesOrigin } : {}),
                 ...(projectFiles ? { projectFiles } : {}) } : {}),
+              ...(inheritedProjectFiles ? { projectFiles: inheritedProjectFiles } : {}),
               ...(restoreNativeSandbox ? { nativeSandboxOrigin: retained.data.recipe.nativeSandboxOrigin,
                 configuration: withSessionNativeSandbox(recipe.configuration, nativeSandbox) ?? null } : {}),
             } },

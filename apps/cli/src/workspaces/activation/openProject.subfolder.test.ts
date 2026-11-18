@@ -81,6 +81,43 @@ describe('openProject with a subfolder the repository lacks', () => {
     );
   });
 
+
+  it.each(['named', 'detached', 'no-remote', 'credentialed'] as const)('projects credential-free clone facts from the admitted source folder: %s', async state => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-open-clone-source-'));
+    temporaryRoots.push(directory);
+    runGit(directory, ['init', '-b', 'feature/source']);
+    runGit(directory, ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-m', 'source']);
+    if (state !== 'no-remote') runGit(directory, ['remote', 'add', 'origin', state === 'credentialed' ? 'https://x-access-token:secret@github.com/owner/source.git' : 'https://github.com/owner/source.git']);
+    if (state === 'detached') runGit(directory, ['checkout', '--detach']);
+    const registration = createGitScmBackendRuntimeRegistration();
+    if (!registration.runtime) throw new Error('Git SCM test runtime is unavailable');
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+      definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+      executableDefinition: registration.runtime, registration,
+      hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(makeProviderRegistry(makeCloneTargetDescription(directory))),
+    })]);
+    const rows: unknown[] = [];
+    vi.spyOn(axios, 'get').mockImplementation(plainAccountRead);
+    vi.spyOn(axios, 'post').mockImplementation(createProjectAccountRowsHttpBoundary(rows));
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
+    const result = await runWithRealGitScmRuntime(() => openProject({
+      serverId: 'srv_test_home', machineId: 'machine', source: { kind: 'folder', path: directory },
+      materialization: { kind: 'attach' }, cloneSource: true,
+    }, { serverId: 'srv_test_home', serverHttpBaseUrl: 'https://home.example', machineId: 'machine', accountId: 'account',
+      registry, readCredentials: async () => ({ token, encryption: null }) }, {
+      signal: new AbortController().signal, callerAuthority: 'present_user',
+      machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account', machineId: 'machine',
+        installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+      verifyMachineAdmissionCurrent: async () => true,
+    }));
+    expect(result).toMatchObject({ kind: 'opened', cloneSource: {
+      source: state === 'no-remote' || state === 'credentialed' ? null : { repository: { nameWithOwner: 'owner/source' }, protocol: 'https' },
+      branch: state === 'detached' ? null : 'feature/source',
+    } });
+    expect(JSON.stringify(result)).not.toContain('secret');
+    OpenProjectResultV1Schema.parse(result);
+  });
+
   it.each(['clone-failed', 'native-auth-refused', 'subfolder-missing'] as const)('writes no Project for %s and retains only completed clones', async failure => {
     const parent = await mkdtemp(join(tmpdir(), 'happier-open-subfolder-'));
     temporaryRoots.push(parent);

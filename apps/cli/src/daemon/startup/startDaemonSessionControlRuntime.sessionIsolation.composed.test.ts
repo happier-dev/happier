@@ -62,13 +62,13 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
     projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable,
 }) });
 
-    it.each(['supported', 'failed', 'approved-own-account', 'approved-admitted-own-account'] as const)(
+    it.each(['supported', 'deferred-clone', 'failed', 'approved-own-account', 'approved-admitted-own-account'] as const)(
       'joins primary daemon Session isolation acquisition before Session birth (%s)', async nativeSandbox => {
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 0,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const accountCredentials = { token, encryption: null };
         const settings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1,
-            approvalWaivedSurfaces: { 'session.spawn_new': ['cli'], 'machines.managed.acquire': ['cli'] } } });
+            approvalWaivedSurfaces: { 'session.spawn_new': ['cli'], 'machines.managed.acquire': ['cli'], 'projects.open': ['cli'] } } });
         const actionsSettingsProvider = createActionSettingsProvider({ accountSettings: settings });
         setActiveAccountSettingsSnapshot({ source: 'network', settings, rawSettings: {}, settingsVersion: 1,
             loadedAtMs: Date.now(), settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(accountCredentials) });
@@ -79,7 +79,7 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
         const serverId = 'primary-isolation';
         const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Local sandbox', choices: {} };
         const content = sealManagedMachinePresetContentV1({ presetId: 'isolation-preset', mode: 'plain',
-            content: { v: 1, name: launch.name, launch } });
+            content: { v: 1, name: launch.name, launch, ...(nativeSandbox === 'deferred-clone' ? { projectFiles: { kind: 'git_clone' as const } } : {}) } });
         const preset = { id: 'isolation-preset', homeId: 'srv_home', revision: 1, owner: { kind: 'account', accountId: 'account' },
             controller, contentEncryptionMode: 'plain', ...content };
         let machine = ManagedMachineV1Schema.parse({ id: 'isolation-resource', homeId: 'srv_home', custodianAccountId: 'account',
@@ -263,7 +263,17 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
                     return { type: 'success', sessionId: 'created',
                     sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } }; },
                     resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) } },
-            machineActionDirectTargetTransport: { machineId: 'controller', invoke: nativeRpc },
+            machineActionDirectTargetTransport: { machineId: 'controller', invoke: nativeRpc,
+                // Installed Project service is the physical Source boundary; admission and lowering remain real.
+                openProject: async input => {
+                    expect(input).toMatchObject({ machineId: 'controller', source: { kind: 'folder', path: '/chosen/source' },
+                        materialization: { kind: 'attach' }, cloneSource: true });
+                    return { kind: 'opened', workspace: { serverId: 'srv_home', machineId: 'controller',
+                        workspaceId: 'source-project', rootPath: '/chosen/source' }, directory: '/chosen/source', setup: 'notRequired',
+                        cloneSource: { source: { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                            repository: { nameWithOwner: 'owner/original' }, protocol: 'https' }, branch: 'feature/original' } };
+                },
+            },
         });
         let approval: ApprovalRequest | undefined;
         let executor: ReturnType<typeof createActionExecutor>;
@@ -305,6 +315,9 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
             runActionOperation: request => operations.runActionOperation(request) });
         const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'isolation-spawn',
             executionTarget: { serverId: configuration.activeServerId, machineId: 'controller' }, directory: { kind: 'path', path: '/tmp' },
+            ...(nativeSandbox === 'deferred-clone' ? { sessionPlacement: { kind: 'machine',
+                target: { serverId: configuration.activeServerId, machineId: 'controller' },
+                projectFilesSource: { target: { serverId: configuration.activeServerId, machineId: 'controller' }, directory: '/chosen/source' } } } : {}),
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, memoryEnabled: false,
             configuration: { mode: { value: null, updatedAtMs: 1 },
                 model: { value: null, updatedAtMs: 1, selectionSource: 'inherited' },
@@ -407,4 +420,8 @@ const authority = createManagedProviderOperationAuthority({ purposeBindingOwner:
         expect(machine.enrolledMachineId).toBeUndefined();
         expect(launched).toHaveLength(1);
         expect(launched[0]).toMatchObject({ nativeSandbox: 'on' });
+        if (nativeSandbox === 'deferred-clone') expect(launched[0]).toMatchObject({
+            managedTargetPlacement: { projectFiles: { kind: 'git_clone', branch: 'feature/original', source: { repository: { nameWithOwner: 'owner/original' } } } },
+            sessionCreationCorrespondence: { recipe: { projectFiles: { kind: 'git_clone', branch: 'feature/original', source: { repository: { nameWithOwner: 'owner/original' } } } } },
+        });
     });

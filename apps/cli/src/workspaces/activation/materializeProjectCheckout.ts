@@ -18,6 +18,8 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
 
 export type MaterializedProjectCheckout = Readonly<{
+  /** Finite facts produced in the captured native checkout process, never a controller readback. */
+  cloneSource?: import('@happier-dev/protocol/scm/repositoryClone').ScmRepositoryCloneSourceV1;
   rootPath: string;
   directory: string;
   created?: boolean;

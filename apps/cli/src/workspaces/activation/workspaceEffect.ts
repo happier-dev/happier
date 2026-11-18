@@ -12,6 +12,7 @@ import { createScmBackendRegistry } from '@/scm/registry';
 import { activateScmRuntimeContributionsOnDemand } from '@/scm/scmBackendCatalog';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { materializeProjectCheckout, type MaterializedProjectCheckout } from './materializeProjectCheckout';
+import { readProjectCloneSource } from './readProjectCloneSource';
 import { privateProjectCheckoutRefusal } from './privateProjectCheckout';
 
 export type WorkspaceCheckoutEffect = Readonly<{
@@ -42,11 +43,13 @@ export async function prepareWorkspaceCheckoutEffect(input: Readonly<{
   existingRootPath?: string;
   registry: ResolvedExecutablePluginRuntimeRegistry;
 }>): Promise<Readonly<{ effect: WorkspaceCheckoutEffect; assertCurrent(): void }>> {
-  if (input.request.materialization.kind === 'attach' && input.existingRootPath) return {
-    effect: { request: input.request, workspaceRefId: input.workspaceRefId, workspaceRoot: input.workspaceRoot,
-      existingRootPath: input.existingRootPath, generation: input.registry.generation, plugins: [], contributions: {} },
-    assertCurrent() {},
-  };
+  if (input.request.materialization.kind === 'attach' && input.existingRootPath) {
+    const admitted = input.request.cloneSource ? await prepareAdmittedScmEffect({ registry: input.registry }) : {
+      effect: { generation: input.registry.generation, plugins: [], contributions: {} }, assertCurrent() {},
+    };
+    return { effect: { request: input.request, workspaceRefId: input.workspaceRefId, workspaceRoot: input.workspaceRoot,
+      existingRootPath: input.existingRootPath, ...admitted.effect }, assertCurrent: admitted.assertCurrent };
+  }
   if (input.request.source.kind !== 'repository' && input.request.materialization.kind !== 'sync') throw privateProjectCheckoutRefusal('workspace_private_checkout_review_required');
   const admitted = await prepareAdmittedScmEffect({ registry: input.registry,
     ...(input.request.source.kind === 'repository' ? { providerId: input.request.source.selector.provider.id } : {}),
@@ -66,7 +69,7 @@ export async function prepareAdmittedScmEffect(input: Readonly<{
   await activateScmRuntimeContributionsOnDemand(input.registry);
   const contributes = input.registry.contributes;
   const providerId = input.providerId;
-  const scmHostingProviders = (contributes.scmHostingProviders ?? []).filter(entry => `${entry.pluginId}/${entry.definition.id}` === providerId);
+  const scmHostingProviders = (contributes.scmHostingProviders ?? []).filter(entry => providerId === undefined || `${entry.pluginId}/${entry.definition.id}` === providerId);
   const admittedBackendPlugins = new Set([...(input.registry.scmBackendsById?.values() ?? [])].map(entry => entry.pluginId));
   const scmBackends = (contributes.scmBackends ?? []).filter(entry => entry.pluginId && admittedBackendPlugins.has(entry.pluginId));
   const pluginIds = [...new Set([...scmBackends, ...scmHostingProviders].flatMap(entry => entry.pluginId ? [entry.pluginId] : []))];
@@ -135,8 +138,14 @@ export async function executeWorkspaceCheckoutEffect(input: WorkspaceCheckoutEff
       || await lstat(join(gitPath, 'commondir')).then(() => true, error => {
         if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return false; throw error;
       }))) throw privateProjectCheckoutRefusal('workspace_git_metadata_shared');
-    return verified(await materializeProjectCheckout({ materialization: { kind: 'attach' }, sourceDirectory: expectedRoot,
+    const checkout = await verified(await materializeProjectCheckout({ materialization: { kind: 'attach' }, sourceDirectory: expectedRoot,
       sourceRootPath: expectedRoot, subdir: request.subdir, signal: context.signal }));
+    if (!request.cloneSource) return checkout;
+    const registry = await createWorkspaceEffectScmRegistry(input, context);
+    try {
+      return { ...checkout, cloneSource: await readProjectCloneSource({ directory: checkout.directory,
+        registry: registry.registry, signal: context.signal }) };
+    } finally { await registry.dispose(); }
   }
   const registry = await createWorkspaceEffectScmRegistry(input, context);
   try {
