@@ -10,6 +10,29 @@ import { Typography } from '@/constants/Typography';
 /** A path or command has no spaces to break at; on web it wraps anywhere instead of running past the row. Native text already breaks long words. */
 const WRAP_LONG_TOKENS: TextStyle = Platform.OS === 'web' ? ({ overflowWrap: 'anywhere' } as TextStyle) : {};
 
+/**
+ * On web a path breaks after its separators, never inside a name: `<wbr>` adds the break chance without changing the
+ * copied text, and `overflowWrap` stays the last resort for a token with no separator. Native text breaks on its own.
+ */
+function withSeparatorBreaks(value: string): React.ReactNode {
+  if (Platform.OS !== 'web') return value;
+  const segments: string[] = [];
+  let start = 0;
+  for (let index = 0; index < value.length - 1; index += 1) {
+    if (value[index] !== '/' && value[index] !== '\\') continue;
+    segments.push(value.slice(start, index + 1));
+    start = index + 1;
+  }
+  if (segments.length === 0) return value;
+  segments.push(value.slice(start));
+  return segments.map((segment, index) => (
+    <React.Fragment key={index}>
+      {index > 0 ? React.createElement('wbr') : null}
+      {segment}
+    </React.Fragment>
+  ));
+}
+
 /** The label column: wide enough for a short phrase ("Before it starts"), so every value shares one edge. */
 const FIELD_LABEL_WIDTH_PX = 128;
 
@@ -58,7 +81,7 @@ export function FieldValue(
         </View>
       ) : (
         <Text style={props.code ? styles.codeValueText : styles.valueText}>
-          {props.value}
+          {withSeparatorBreaks(props.value)}
         </Text>
       )}
       {props.note ? <Text style={styles.noteText}>{props.note}</Text> : null}

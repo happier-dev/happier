@@ -90,4 +90,17 @@ describe('approval preparation for a pressed contributed Action', () => {
     expect(shown).toEqual([['Task', 'LIN-482'], ['New status', 'done']]);
     expect(technical).toEqual(expect.arrayContaining(['action.pluginId', 'action.localId']));
   });
+
+  it('reads undeclared input by its own keys, never ids or raw JSON at rest, when the receiver cannot read the contribution', () => {
+    const configPath = '/home/reviewer/.happier/workspaces/harbor-ledger/packages/deploy/environments/production/fly.toml';
+    const input = { action: { pluginId: 'happier.deploy.fly', localId: 'deploy' },
+      input: { serverId: 'srv-1', app: 'harbor-ledger', region: 'ams', configPath, release: { strategy: 'rolling' } } };
+
+    const { rows } = describeApprovalActionFields({ actionId: 'action.invoke', actionArgs: input, preview: {} });
+    const shown = rows.flatMap(row => row.kind === 'value' && !row.technical ? [[row.title, row.value]] : []);
+    const technical = rows.flatMap(row => row.kind === 'value' && row.technical ? [row.path] : []);
+    expect(shown).toEqual([['App', 'harbor-ledger'], ['Region', 'ams'], ['Config path', configPath],
+      ['Release strategy', 'rolling']]);
+    expect(technical).toEqual(['input.serverId', 'action.pluginId', 'action.localId', 'input']);
+  });
 });

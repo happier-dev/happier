@@ -900,19 +900,32 @@ function describeNativePermissionChoice(input: Readonly<{
 function describeContributedActionInvocation(actionArgs: unknown, preview: unknown): ApprovalActionFieldsPresentation | null {
   const review = readContributedActionReviewV1(preview);
   const invocation = ActionInvokeInputSchema.safeParse(actionArgs);
-  if (!review || !invocation.success) return null;
+  if (!invocation.success) return null;
   const declared = invocation.data.input;
-  const rows: ApprovalActionFieldRow[] = review.fields.flatMap(field => {
+  const rows: ApprovalActionFieldRow[] = review ? review.fields.flatMap(field => {
     const value = field.path.split('.').reduce<unknown>((at, key) => isRecord(at) ? at[key] : undefined, declared);
     return value === undefined || value === null ? [] : [{ kind: 'value' as const, path: `input.${field.path}`,
       title: field.title, value: typeof value === 'string' ? value : JSON.stringify(value) }];
-  });
+  }) : describeUndeclaredContributedInput(declared);
   rows.push(
     { kind: 'value', path: 'action.pluginId', title: 'Plugin id', value: invocation.data.action.pluginId, technical: true },
     { kind: 'value', path: 'action.localId', title: 'Action id', value: invocation.data.action.localId, technical: true },
     { kind: 'value', path: 'input', title: 'Declared Action input', value: JSON.stringify(declared ?? null), technical: true },
   );
   return { rows, unrepresentable: null };
+}
+
+/**
+ * Without the contribution's declaration (the receiver could not read its catalog), its input reads by its own keys
+ * in words, one row per value. Keys that name an identifier only route the press, so they stay under Technical details.
+ */
+function describeUndeclaredContributedInput(value: unknown, path: readonly string[] = []): ApprovalActionFieldRow[] {
+  if (isRecord(value)) return Object.entries(value).flatMap(([key, entry]) => describeUndeclaredContributedInput(entry, [...path, key]));
+  // A list of records has no one-line reading; the raw input under Technical details carries it.
+  if (value === undefined || value === null || path.length === 0 || (Array.isArray(value) && value.some(isRecord))) return [];
+  const key = path[path.length - 1]!;
+  return [{ kind: 'value', path: `input.${path.join('.')}`, title: humanizeApprovalKey(path.join('_')),
+    value: formatApprovalScalar(value), ...(/(^id|Ids?)$/.test(key) ? { technical: true as const } : {}) }];
 }
 
 export function describeApprovalActionFields(input: Readonly<{

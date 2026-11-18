@@ -38,7 +38,7 @@ afterEach(async () => {
 });
 
 describe('a page fact with a long value', () => {
-  it('keeps a path without spaces whole and lets it wrap inside the value column', async () => {
+  it('wraps a path without spaces at its separators inside the value column', async () => {
     const path =
       '/home/reviewer/.happier/workspaces/harbor-ledger/packages/deploy/src/environments/production/secrets.json';
     container = document.createElement('div');
@@ -53,9 +53,13 @@ describe('a page fact with a long value', () => {
     });
 
     const value = [...container.querySelectorAll('*')].find(
-      (node) => node.textContent === path && node.children.length === 0,
+      (node) => node.textContent === path && [...node.children].every((child) => child.tagName === 'WBR'),
     );
     expect(value).toBeTruthy();
     expect(getComputedStyle(value!).overflowWrap).toBe('anywhere');
+    // It breaks after a separator, never inside a name; the copied text stays the path.
+    const segments = value!.innerHTML.split('<wbr>');
+    expect(segments.length).toBeGreaterThan(1);
+    expect(segments.slice(0, -1).every((segment) => segment.endsWith('/'))).toBe(true);
   });
 });
