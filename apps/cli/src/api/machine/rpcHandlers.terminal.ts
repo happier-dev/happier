@@ -214,6 +214,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   const resolveRequesterIdentity = async (context?: RpcHandlerContext): Promise<Readonly<{
     identity: HostRequesterExecutionIdentity;
     homeServerIdentityId: string | null;
+    cause?: unknown;
   }>> => {
     try {
       const signedHome = context?.callerInputAuthorization?.binding.serverIdentityId;
@@ -221,10 +222,11 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         ? await params.deps.resolveHostHomeServerIdentityId(context?.signal)
         : signedHome ?? (params.deps?.serverId ? await resolveServerProfileHomeIdentityId(params.deps.serverId) : null);
       return { identity: selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: home }), homeServerIdentityId: home };
-    } catch { return { identity: { kind: 'unknown', reason: 'requester_authority_unavailable' }, homeServerIdentityId: null }; }
+    } catch (cause) { return { identity: { kind: 'unknown', reason: 'requester_authority_unavailable' }, homeServerIdentityId: null, cause }; }
   };
 
-  const unavailableIdentityTransport = () => ({ ...err('terminal_unavailable'), error: 'agent_isolation_unavailable' });
+  const unavailableIdentityTransport = (cause?: unknown) => ({ ...err('terminal_unavailable'), error: 'agent_isolation_unavailable',
+    ...(cause === undefined ? {} : { failureCause: normalizeActionExecutorThrownError(cause, 'terminal.machine_shell').failureCause }) });
 
   // A custodian's own terminal needs no requester separation. Agent provenance
   // remains intact; other Accounts retain their configured native placement.
@@ -245,8 +247,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     selectedIdentity?: HostRequesterExecutionIdentity): Promise<DaemonTerminalShellAvailabilityV1> => {
     const admission = context?.machineAdmission;
     if (!context || !admission || context.signal.aborted || params.deps?.requiredSessionId) return err('terminal_forbidden');
-    const identity = selectedIdentity ?? (await resolveRequesterIdentity(context)).identity;
-    if (identity.kind === 'unknown') return unavailableIdentityTransport();
+    const resolvedRequester = selectedIdentity ? { identity: selectedIdentity } : await resolveRequesterIdentity(context);
+    const identity = resolvedRequester.identity;
+    if (identity.kind === 'unknown') return unavailableIdentityTransport(resolvedRequester.cause);
     const memberRequester = resolveHostRequesterAgentExecutionIdentity(identity);
     const placement = resolveTerminalPlacement(identity, context);
     if (admission.role !== 'manage') {
@@ -262,7 +265,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
         });
         const cwd = resolveCwd(member.workspaceRoot);
         return cwd.ok ? { ...cwd, ...(member.preparation ? { preparation: member.preparation } : {}) } : cwd;
-      } catch { return unavailableIdentityTransport(); }
+      } catch (cause) { return unavailableIdentityTransport(cause); }
     }
     return resolveCwd(undefined);
   };
@@ -741,9 +744,10 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       const cwd = resolveCwd(parsed.data.cwd);
       return cwd.ok ? await runPackageScript(cwd.cwd, parsed.data.launch.runTargetId, context) : cwd;
     }
-    const { identity: requesterIdentity, homeServerIdentityId } = await resolveRequesterIdentity(context);
+    const resolvedRequester = await resolveRequesterIdentity(context);
+    const { identity: requesterIdentity, homeServerIdentityId } = resolvedRequester;
     const placement = resolveTerminalPlacement(requesterIdentity, context);
-    if (requesterIdentity.kind === 'unknown') return unavailableIdentityTransport();
+    if (requesterIdentity.kind === 'unknown') return unavailableIdentityTransport(resolvedRequester.cause);
     if (parsed.data.launch?.kind === 'service_shell') {
       // Service-native admission owns the shell's execution identity. A Session
       // acting for another Account cannot borrow that identity for separation.
@@ -931,9 +935,10 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       const cwd = resolveCwd(parsed.data.cwd);
       return cwd.ok ? await runPackageScript(cwd.cwd, parsed.data.launch.runTargetId, context) : cwd;
     }
-    const { identity: requesterIdentity, homeServerIdentityId } = await resolveRequesterIdentity(context);
+    const resolvedRequester = await resolveRequesterIdentity(context);
+    const { identity: requesterIdentity, homeServerIdentityId } = resolvedRequester;
     const placement = resolveTerminalPlacement(requesterIdentity, context);
-    if (requesterIdentity.kind === 'unknown') return unavailableIdentityTransport();
+    if (requesterIdentity.kind === 'unknown') return unavailableIdentityTransport(resolvedRequester.cause);
     if (parsed.data.launch?.kind === 'service_shell') {
       if (requesterIdentity.kind === 'isolated' && requesterIdentity.separationRequired) return unavailableIdentityTransport();
       return await runServiceShell({ ...parsed.data, launch: parsed.data.launch }, context, 'machines.terminal.restart', homeServerIdentityId);

@@ -319,7 +319,8 @@ function MachineServicePresent(props: Readonly<{
           title={serviceActions.outcome.kind === 'unwatched' ? t('machineServices.actions.unwatched')
             : serviceActions.outcome.kind === 'conflict' ? t('machineServices.actions.unwatchConflict')
               : t('machineServices.actions.unwatchFailed')}
-          diagnosticCode={serviceActions.outcome.kind === 'failed' ? serviceActions.outcome.code : undefined}
+          diagnosticCode={serviceActions.outcome.kind === 'failed'
+            ? serviceActions.outcome.failure?.failureCause?.errorCode ?? serviceActions.outcome.code : undefined}
         /> : null}
         {portOpen?.reason ? (
           <Text variant="meta" testID="machine-service-open-reason" style={[styles.outcome, { color: theme.colors.text.secondary }]}>

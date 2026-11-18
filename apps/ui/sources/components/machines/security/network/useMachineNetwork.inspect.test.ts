@@ -8,6 +8,7 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createMachineFixture, createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 const homes = createHomeGovernanceHarness();
@@ -57,6 +58,17 @@ beforeEach(async () => {
 afterEach(async () => { standardCleanup(); await homes.reset(); storage.setState(baseline, true); });
 
 describe('Network inspect result ownership', () => {
+  it('keeps a typed transport cause when the inspect Action throws', async () => {
+    execution = Promise.reject(new PluginError({ code: 'network_probe_denied', message: 'probe denied',
+      failureCause: { phase: 'native.network.inspect', errorClass: 'Error', errorCode: 'network_probe_denied', httpStatus: 403 } }));
+    void (execution as Promise<unknown>).catch(() => undefined);
+    const hook = await renderHook(() => useMachineNetwork({ serverId, machineId: 'network-machine', enabled: true, reachable: true, needsManage: false }));
+    await vi.waitFor(() => expect(hook.getCurrent().read.kind).toBe('failed'));
+    expect(hook.getCurrent().failure).toMatchObject({ errorCode: 'outcome_unknown',
+      failureCause: { phase: 'native.network.inspect', errorCode: 'network_probe_denied', httpStatus: 403 } });
+    await hook.unmount();
+  });
+
   it('shows the successful connected-owner inspect on a cold Network reader before a push arrives', async () => {
     // #78 public CLI response: preserve every native fact, including nativeFirewall.
     const inspected = MachineReachabilityInspectResultV1Schema.parse(capturedInspect);

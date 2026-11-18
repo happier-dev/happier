@@ -1,6 +1,8 @@
 import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import * as React from 'react';
 import { MachineServiceWatchMutationResultV1Schema, type MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/machine/services';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { showMachineTerminalSheet } from '@/components/machines/terminal/MachineTerminalSheet';
@@ -9,7 +11,8 @@ import { useServerScopedMachine } from '@/sync/store/hooks';
 /** A project-level watch's own Compose members, only when there is a choice to make; one member needs no selector. */
 const NO_MEMBERS: readonly string[] = Object.freeze([]);
 
-type UnwatchOutcome = Readonly<{ kind: 'unwatched' | 'conflict' }> | Readonly<{ kind: 'failed'; code: string }>;
+type UnwatchOutcome = Readonly<{ kind: 'unwatched' | 'conflict' }>
+  | Readonly<{ kind: 'failed'; code: string; failure?: ActionExecuteFailure }>;
 
 
 /**
@@ -54,15 +57,16 @@ export function useMachineServiceActions(input: Readonly<{
       const result = await execution.execute('machines.services.unwatch', {
         serverId: input.serverId, machineId: input.machineId, watchId, expectedRevision: watchRevision,
       }, { confirmed: true });
-      if (!result.ok) outcome = { kind: 'failed', code: result.errorCode };
+      if (!result.ok) outcome = { kind: 'failed', code: result.errorCode, failure: result };
       else {
         const parsed = MachineServiceWatchMutationResultV1Schema.safeParse(result.result);
         outcome = !parsed.success ? { kind: 'failed', code: 'action_invalid_output' }
           : parsed.data.kind === 'unavailable' ? { kind: 'failed', code: parsed.data.reason }
             : parsed.data.kind === 'conflict' ? { kind: 'conflict' } : { kind: 'unwatched' };
       }
-    } catch {
-      outcome = { kind: 'failed', code: 'action_failed' };
+    } catch (error: unknown) {
+      const failure = normalizeActionExecutorThrownError(error, 'machines.services.unwatch');
+      outcome = { kind: 'failed', code: failure.errorCode, failure };
     } finally {
       if (flight.current === key) flight.current = null;
     }

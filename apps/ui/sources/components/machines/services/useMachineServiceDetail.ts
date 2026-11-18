@@ -2,12 +2,13 @@ import * as React from 'react';
 import { MachineServiceControlResultV1Schema, MachineServicesDetailResultV1Schema, type MachineServiceAccountingV1, type MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/machine/services';
 import { type MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 const execute = createFrontDoorActionExecute();
-const settle = (promise: Promise<ActionExecuteResult>) => promise.catch((error: unknown): ActionExecuteResult => ({
-  ok: false, errorCode: 'action_failed', error: error instanceof Error ? error.message : String(error),
+const settle = (promise: Promise<ActionExecuteResult>, phase: string) => promise.catch((error: unknown): ActionExecuteResult => ({
+  ok: false, ...normalizeActionExecutorThrownError(error, phase),
 }));
 
 export type MachineServiceDetailFacts = Readonly<{
@@ -38,7 +39,7 @@ export function useMachineServiceDetail(input: Readonly<{
     const retirement = lifetime.onRetire(() => controller.abort());
     void settle(execute('machines.services.detail', {
       serverId: input.serverId, machineId: input.machineId, serviceId: input.serviceId, expectedGeneration: input.generation,
-    }, { serverId: input.serverId, surface: 'ui', expectedAccountId: lifetime.scope.accountId, signal: controller.signal }))
+    }, { serverId: input.serverId, surface: 'ui', expectedAccountId: lifetime.scope.accountId, signal: controller.signal }), 'machines.services.detail')
       .then((result) => {
         if (controller.signal.aborted) return;
         setSettled(round);
@@ -85,7 +86,7 @@ export function useMachineServiceControl(input: Readonly<{
     void settle(execute('machines.services.control', {
       serverId: input.serverId, machineId: input.machineId, serviceId: input.service.serviceId,
       expectedGeneration: generation, operation,
-    }, { serverId: input.serverId, surface: 'ui', expectedAccountId: lifetime.scope.accountId }))
+    }, { serverId: input.serverId, surface: 'ui', expectedAccountId: lifetime.scope.accountId }), 'machines.services.control')
       .then((result) => {
         let outcome: MachineServiceControlOutcome | null = result.ok
           ? { kind: 'failed', errorCode: 'action_failed' }

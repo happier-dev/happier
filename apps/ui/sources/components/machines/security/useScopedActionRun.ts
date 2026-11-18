@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 import {
@@ -54,11 +55,7 @@ export function useScopedActionRun(serverId: string) {
           },
         });
       } catch (error: unknown) {
-        result = {
-          ok: false,
-          errorCode: 'action_failed',
-          error: error instanceof Error ? error.message : String(error),
-        };
+        result = { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
       } finally {
         retirement.dispose();
         if (flight.current === controller) flight.current = null;

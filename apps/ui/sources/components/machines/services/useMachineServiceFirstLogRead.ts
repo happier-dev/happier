@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { ManagedServiceNativeLogResultV1Schema, type ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol/local/services/nativeLogsV1';
-import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
-type ReadError = Readonly<{ code: string; message: string; details?: unknown }>;
+type ReadError = Readonly<{ code: string; message: string; details?: unknown; failureCause?: ActionFailureCauseV1 }>;
 export type MachineServiceFirstLogRead =
   | Readonly<{ kind: 'idle' }>
   | Readonly<{ kind: 'reading' }>
@@ -14,7 +15,7 @@ export type MachineServiceFirstLogRead =
 
 const execute = createFrontDoorActionExecute();
 function failure(result: Extract<ActionExecuteResult, { ok: false }>): ReadError {
-  return { code: result.errorCode, message: result.error, details: result.details };
+  return { code: result.errorCode, message: result.error, details: result.details, failureCause: result.failureCause };
 }
 
 /** The original logs Action acquires the first page for this retained native generation. */
@@ -61,8 +62,8 @@ export function useMachineServiceFirstLogRead(input: Readonly<{
         serverId: input.serverId, machineId: input.machineId, serviceId: input.serviceId,
       }, { serverId: input.serverId, surface: 'ui', expectedAccountId: lifetime.scope.accountId,
         signal: controller.signal, machineServiceLogsResource: { expectedGeneration: input.expectedGeneration },
-      }).catch((error: unknown): ActionExecuteResult => ({ ok: false, errorCode: 'action_failed',
-        error: error instanceof Error ? error.message : String(error) }));
+      }).catch((error: unknown): ActionExecuteResult => ({ ok: false,
+        ...normalizeActionExecutorThrownError(error, 'machines.services.logs.read') }));
       if (controller.signal.aborted || current !== generation.current || !lifetime.isCurrent()) return;
       let state: MachineServiceFirstLogRead;
       if (!result.ok) state = { kind: 'failed', error: failure(result) };

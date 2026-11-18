@@ -1,14 +1,15 @@
 import * as React from 'react';
 import { MachineServiceWatchMutationResultV1Schema, MachineServicesDiscoveryResultV1Schema, type MachineServiceDiscoveryCandidateV1 } from '@happier-dev/protocol/actions/specs/machine/services';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 import type { MachineServiceWatchChoice } from './machineServicesPresentation';
 
 const execute = createFrontDoorActionExecute();
-const settle = (promise: Promise<ActionExecuteResult>) => promise.catch((error: unknown): ActionExecuteResult => ({
-  ok: false, errorCode: 'action_failed', error: error instanceof Error ? error.message : String(error),
+const settle = (promise: Promise<ActionExecuteResult>, phase: string) => promise.catch((error: unknown): ActionExecuteResult => ({
+  ok: false, ...normalizeActionExecutorThrownError(error, phase),
 }));
 
 export type MachineServiceDiscovery =
@@ -31,7 +32,7 @@ export function useMachineServiceWatch(input: Readonly<{ serverId: string; machi
     setDiscovery(previous => previous.kind === 'listed' ? previous : { kind: 'reading' });
     setOutcome(null);
     void settle(execute('machines.services.discovery', { serverId: input.serverId, machineId: input.machineId },
-      { serverId: input.serverId, surface: 'ui', expectedAccountId: lifetime.scope.accountId }))
+      { serverId: input.serverId, surface: 'ui', expectedAccountId: lifetime.scope.accountId }), 'machines.services.discovery')
       .then((result) => {
         const parsed = result.ok ? MachineServicesDiscoveryResultV1Schema.safeParse(result.result) : null;
         setDiscovery(parsed?.success && parsed.data.kind === 'snapshot'
@@ -48,7 +49,7 @@ export function useMachineServiceWatch(input: Readonly<{ serverId: string; machi
       const result = await settle(execute('machines.services.watch', {
         serverId: input.serverId, machineId: input.machineId, candidateId: choice.candidateId,
         expectedRevision: choice.revision, lifecyclePurpose: 'development',
-      }, { serverId: input.serverId, surface: 'ui', expectedAccountId: lifetime.scope.accountId }));
+      }, { serverId: input.serverId, surface: 'ui', expectedAccountId: lifetime.scope.accountId }), 'machines.services.watch');
       const parsed = result.ok ? MachineServiceWatchMutationResultV1Schema.safeParse(result.result) : null;
       if (parsed?.success && (parsed.data.kind === 'applied' || parsed.data.kind === 'unchanged')) continue;
       if (result.ok && ActionApprovalRequestCreatedResultSchema.safeParse(result.result).success) { approval = true; continue; }

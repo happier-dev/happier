@@ -31,6 +31,7 @@ import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { registerMachineTerminalRpcHandlers as registerUnadmittedMachineTerminalRpcHandlers } from './rpcHandlers.terminal';
 import { authorizeMachineRpcRequest } from './machineRpcAuthorization';
 import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { registerMachineRpcHandlers } from './rpcHandlers';
 import * as ptyBoundary from '@/terminal/pty/provider';
 import * as processBoundary from '@happier-dev/cli-common/process';
@@ -612,6 +613,26 @@ describe('registerMachineTerminalRpcHandlers', () => {
         { ...h.ingress, machineAdmission: undefined })).resolves.toMatchObject({
         ok: false, errorCode: 'terminal_unavailable', error: 'agent_isolation_unavailable',
       });
+    } finally { registration.dispose(); await h.dispose(); }
+  });
+
+  it('retains a typed requester identity cause at the terminal boundary', async () => {
+    const h = await finiteHarness();
+    const handlers = new Map<string, RpcHandler>();
+    const cause = new PluginError({ code: 'member_binding_corrupt', message: 'member binding is corrupt',
+      failureCause: { phase: 'agent_isolation.member.read', errorClass: 'Error', errorCode: 'member_binding_corrupt', httpStatus: null } });
+    const registration = registerMachineTerminalRpcHandlers({
+      rpcHandlerManager: { registerHandler(method, handler) { handlers.set(method, handler); } },
+      deps: { serverId: 'home', env: {}, workingDirectory: h.root, sessionManager: h.sessionManager,
+        resolveHostHomeServerIdentityId: async () => { throw cause; },
+        projectFiniteRuntime: async () => h.runtime, accountReadRuntime: async () => h.runtime },
+    });
+    try {
+      const context: RpcHandlerContext = { ...h.ingress,
+        machineAdmission: { ...h.ingress.machineAdmission!, custodianAccountId: 'custodian', role: 'use' } };
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_ENSURE)!({ terminalKey: 'cause', cwd: h.root }, context))
+        .resolves.toMatchObject({ ok: false, errorCode: 'terminal_unavailable', error: 'agent_isolation_unavailable',
+          failureCause: { phase: 'agent_isolation.member.read', errorCode: 'member_binding_corrupt' } });
     } finally { registration.dispose(); await h.dispose(); }
   });
 
