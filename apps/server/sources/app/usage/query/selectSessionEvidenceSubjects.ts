@@ -1,6 +1,7 @@
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsageQueryPeriod } from '@happier-dev/protocol/inputs/usageQuery';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
+import { resolveSessionAccessDecisionsForSessionsInTx } from '@/app/session/access/sessionAccess';
 import { buildSessionAccessWhere } from '@/app/session/access/sessionAccessWhere';
 import type { Tx } from '@/storage/inTx';
 import { prismaRuntime } from '@/storage/prisma';
@@ -11,10 +12,19 @@ import { sessionEvidenceSql } from './sessionEvidenceSql';
 export async function readSessionEvidenceCandidateIdsInTx(tx: Tx, input: Readonly<{
     accountId: string; authentication: SessionAccessAuthentication; candidateIds?: readonly string[];
 }>): Promise<string[]> {
+    if (input.candidateIds !== undefined) {
+        // Named wakes already carry exact targets. The Session access owner reads
+        // those headers in its bounded batches and handles recipient admission.
+        const decisions = await resolveSessionAccessDecisionsForSessionsInTx(tx, {
+            accountId: input.accountId, authentication: input.authentication,
+            capability: 'readTranscript', sessionIds: input.candidateIds,
+        });
+        return [...decisions].flatMap(([id, decision]) => decision.status === 'allowed' ? [id] : []);
+    }
     const where = await buildSessionAccessWhere({ tx, accountId: input.accountId,
         authentication: input.authentication, capability: 'readTranscript', mode: 'effective_access_v1' });
     return (await tx.session.findMany({
-        where: input.candidateIds === undefined ? where : { AND: [where, { id: { in: [...new Set(input.candidateIds)] } }] },
+        where,
         select: { id: true },
     })).map(row => row.id);
 }

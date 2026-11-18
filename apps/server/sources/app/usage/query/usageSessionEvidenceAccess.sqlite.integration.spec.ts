@@ -21,33 +21,41 @@ describe('Usage evidence component admission', () => {
         initAuth: true, initEncrypt: true, env: { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' } }); }, 120_000);
     afterAll(async () => { await harness?.close(); });
 
-    it('selects only changed candidate Sessions through the same window and access owner', async () => {
+    it('selects only admitted changed Sessions when the candidate list exceeds SQLite bindings', async () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const foreign = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const make = (accountId: string, createdAt: number) => db.session.create({ data: { accountId,
             tag: randomUUID(), encryptionMode: 'plain', metadata: '{}', originKind: 'session',
             createdAt: new Date(createdAt), updatedAt: new Date(createdAt), lastActiveAt: new Date(createdAt),
             usageTimingV1: { v: 1, metadata: { v: 1, minMs: null, maxMs: null }, agentState: { v: 1, minMs: null, maxMs: null } } } });
-        const [inside, unrelated, outside, denied] = await Promise.all([
-            make(owner.id, 250), make(owner.id, 250), make(owner.id, 10), make(foreign.id, 250),
+        const [inside, unrelated, outside, denied, shared] = await Promise.all([
+            make(owner.id, 250), make(owner.id, 250), make(owner.id, 10), make(foreign.id, 250), make(foreign.id, 250),
         ]);
-        let candidateRows = 0;
-        const stop = observeSqliteRequests({ after(request, result) {
-            if (request.model !== 'Session' || request.action !== 'findMany' || !Array.isArray(result)) return;
-            if (result.every(row => row && typeof row === 'object' && Object.keys(row).length === 1 && 'id' in row))
-                candidateRows += result.length;
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: shared.id,
+            accountId: owner.id, createdByAccountId: foreign.id, accessLevel: 'view' } });
+        const absent = Array.from({ length: 1_200 }, () => randomUUID());
+        const timingQueries: string[] = [];
+        const stop = observeSqliteRequests({ before(request) {
+            if (request.action !== 'queryRaw') return;
+            const args = JSON.stringify(request.args);
+            if (args.includes('usage_subjects')) timingQueries.push(args);
         } });
         try { await withAuthenticatedTestApp(registerAccountUsageRoutes, async app => {
             const response = await app.inject({ method: 'POST', url: '/v2/usage/session-evidence',
                 headers: { 'x-test-user-id': owner.id, ...currentAccountStoredContentCompatibilityHeaders },
                 payload: { nowMs: 400, requests: [{ query: normalizeUsageQuery({ period: { startMs: 200, endMs: 400 },
                     includeWorkEvidence: false, includeTranscriptEvidence: false }),
-                    candidateSessionIds: [inside.id, outside.id, denied.id] }] } });
-            expect(response.statusCode).toBe(200);
-            expect(response.json().requests[0].sessionIds).toEqual([inside.id]);
-            expect(response.json().results.map((row: { sessionId: string }) => row.sessionId)).toEqual([inside.id]);
-            expect(response.json().results.some((row: { sessionId: string }) => row.sessionId === unrelated.id)).toBe(false);
-            expect(candidateRows, 'Named candidates must not read the unrelated accessible Session census').toBe(2);
+                    candidateSessionIds: [inside.id, outside.id, ...absent, denied.id, shared.id, inside.id] }] } });
+            const expected = [inside.id, shared.id].sort();
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json().requests[0].sessionIds.sort()).toEqual(expected);
+            expect(response.json().results.map((row: { sessionId: string }) => row.sessionId).sort()).toEqual(expected);
+            expect(timingQueries).toHaveLength(1);
+            expect(timingQueries[0]).toContain(inside.id);
+            expect(timingQueries[0]).toContain(outside.id);
+            expect(timingQueries[0]).toContain(shared.id);
+            expect(timingQueries[0]).not.toContain(denied.id);
+            expect(timingQueries[0]).not.toContain(unrelated.id);
         }); } finally { stop(); }
     });
 
