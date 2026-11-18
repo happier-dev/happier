@@ -18,6 +18,7 @@ import { useArtifacts } from '@/sync/domains/state/storage';
 import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { PromptDocSelectionGroup } from '@/components/settings/prompts/shared/PromptDocSelectionGroup';
 import { usePromptEditorDraftField } from '@/components/settings/prompts/shared/usePromptEditorDraftField';
@@ -27,6 +28,10 @@ import { promptCollectionItemHref, promptCollectionRoot } from '@/components/set
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
 
 type TemplateBehavior = 'insert' | 'insert_on_send' | 'insert_and_send';
+
+function alertTemplateMutationFailure(error: unknown): void {
+  Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('promptLibrary.saveError')));
+}
 
 /**
  * A slash template's editor in the Templates collection: a saved template (`invocationId`) or the
@@ -38,7 +43,7 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
   const isNew = props.invocationId === null;
   const artifacts = useArtifacts('promptLibrary');
   const scope = useAccountSettingsScope();
-  const { execute: executeAction, isCurrent: isActionCurrent, ready: actionReady } = useMountedActionExecution(scope);
+  const { executeForPresentation: executeAction, isCurrent: isActionCurrent, ready: actionReady } = useMountedActionExecution(scope);
   const { value: invocations, revision, status, stale } = usePromptLibraryCatalogValue('invocations', scope);
   const hasInvocations = invocations !== null;
   const canWriteInvocations = actionReady && hasInvocations && status === 'ready' && !stale;
@@ -191,9 +196,10 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
       const result = props.invocationId
         ? await executeAction('prompts.invocation.update', { ...fields, invocationId: props.invocationId, expectedRevision: revision })
         : await executeAction('prompts.invocation.create', fields);
+      if (!result) return false;
       if (!result.ok) {
-        if (isActionApprovalDeclinedErrorCode(result.errorCode)) return false;
-        throw new Error(result.errorCode);
+        if (!isActionApprovalDeclinedErrorCode(result.errorCode)) alertTemplateMutationFailure(result);
+        return false;
       }
       const receipt = (props.invocationId ? PromptInvocationUpdateOutputSchema : PromptInvocationCreateOutputSchema).parse(result.result);
       if (receipt.status !== 'updated') throw new Error(receipt.status);
@@ -205,8 +211,8 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
       setPristineAllowArgs(fields.allowArgs);
       if (!props.invocationId) setPendingHref(promptCollectionItemHref('template', receipt.invocationId));
       return true;
-    } catch {
-      if (isActionCurrent()) Modal.alert(t('common.error'), t('promptLibrary.saveError'));
+    } catch (error) {
+      if (isActionCurrent()) alertTemplateMutationFailure(error);
       return false;
     } finally {
       setSaving(false);
@@ -240,17 +246,18 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
     if (!props.invocationId || !canWriteInvocations || !invocations) return;
     try {
       const result = await executeAction('prompts.invocation.delete', { invocationId: props.invocationId, expectedRevision: revision });
+      if (!result) return;
       if (!result.ok) {
-        if (isActionApprovalDeclinedErrorCode(result.errorCode)) return;
-        throw new Error(result.errorCode);
+        if (!isActionApprovalDeclinedErrorCode(result.errorCode)) alertTemplateMutationFailure(result);
+        return;
       }
       const receipt = PromptInvocationDeleteOutputSchema.parse(result.result);
       if (receipt.status !== 'updated') throw new Error(receipt.status);
       if (!isActionCurrent()) return;
       discard();
       leave();
-    } catch {
-      if (isActionCurrent()) Modal.alert(t('common.error'), t('promptLibrary.saveError'));
+    } catch (error) {
+      if (isActionCurrent()) alertTemplateMutationFailure(error);
     }
   }, [canWriteInvocations, discard, executeAction, invocations, isActionCurrent, leave, props.invocationId, revision]);
 

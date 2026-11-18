@@ -241,7 +241,7 @@ describe('PromptTemplateEditorScreen', () => {
         await chooseTarget(screen, 'doc-1');
         await act(async () => { await screen.findByTestId('promptTemplate.save')?.props.onPress(); });
         // A raw catalog writer would persist despite the disabled Action.
-        await vi.waitFor(() => expect(promptTemplatesRouterReplaceSpy.mock.calls.length + vi.mocked(Modal.alert).mock.calls.length).toBeGreaterThan(0));
+        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage'));
         expect(catalog.mutations).toEqual([]);
         expect(preventRemoveState.last).toBe(true);
         expect(promptTemplatesRouterReplaceSpy).not.toHaveBeenCalled();
