@@ -15,7 +15,8 @@ vi.mock('@/api/client/loopbackUrl', () => ({
 vi.mock('@/auth/terminalAuthEnrollmentRuntime', () => ({
   acquireTerminalAuthEnrollmentRuntime: descriptorRuntimeMock.acquire,
 }));
-vi.mock('@/auth/terminalAuthEnrollmentClient', () => ({
+vi.mock('@/auth/terminalAuthEnrollmentClient', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/auth/terminalAuthEnrollmentClient')>(),
   verifyTerminalAuthEnrollmentRuntime: descriptorRuntimeMock.verify,
 }));
 vi.mock('@/server/homeTarget', () => ({
@@ -60,8 +61,21 @@ describe('validateStoredAuthTokenAgainstActiveServer', () => {
     await expect(validateStoredAuthTokenAgainstActiveServer('token-123')).resolves.toEqual({
       state: 'invalid',
       httpStatus: 403,
-      reasonCode: 'forbidden',
+      reasonCode: 'not_authenticated',
     });
+  });
+
+  it.each([
+    [403, 'invalid', 'not_authenticated'],
+    [500, 'unknown', 'http_error'],
+  ] as const)('never forwards a Home-supplied code string (HTTP %i)', async (status, state, reasonCode) => {
+    global.fetch = vi.fn(async () => new Response(JSON.stringify({ code: 'Bearer leaked-home-text' }), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    })) as typeof fetch;
+
+    const { validateStoredAuthTokenAgainstActiveServer } = await import('./validateStoredAuthTokenAgainstActiveServer');
+    await expect(validateStoredAuthTokenAgainstActiveServer('token-123')).resolves.toEqual({ state, httpStatus: status, reasonCode });
   });
 
   it('returns unknown for transport failures instead of forcing invalid auth', async () => {
@@ -73,7 +87,7 @@ describe('validateStoredAuthTokenAgainstActiveServer', () => {
     await expect(validateStoredAuthTokenAgainstActiveServer('token-123')).resolves.toEqual({
       state: 'unknown',
       httpStatus: null,
-      reasonCode: 'TypeError',
+      reasonCode: 'request_error',
     });
   });
 
@@ -216,8 +230,9 @@ describe('validateStoredAuthTokenAgainstActiveServer', () => {
       runtime: { runtimeOrigin: 'http://127.0.0.1:49123', carrier: 'iroh', authenticatedCredentialDestination: { kind: 'iroh', endpointId: 'e'.repeat(64) } },
       close,
     });
+    const { TerminalAuthEnrollmentVerificationError } = await import('@/auth/terminalAuthEnrollmentClient');
     descriptorRuntimeMock.verify.mockImplementation(() => {
-      throw Object.assign(new Error('The acquired enrollment runtime does not match the resolved Home authority'), { code: 'HOME_AUTHORITY_MISMATCH' });
+      throw new TerminalAuthEnrollmentVerificationError('HOME_AUTHORITY_MISMATCH', 'The acquired enrollment runtime does not match the resolved Home authority');
     });
     global.fetch = vi.fn(async () => new Response(JSON.stringify({ features: {} }), {
       status: 200,
@@ -245,7 +260,7 @@ describe('validateStoredAuthTokenAgainstActiveServer', () => {
     try {
       const { validateStoredAuthTokenAgainstServer } = await import('./validateStoredAuthTokenAgainstActiveServer');
       await expect(validateStoredAuthTokenAgainstServer({ token: 'token-stalled-body', baseUrl, timeoutMs: 1_000 }))
-        .resolves.toMatchObject({ state: 'unknown', reasonCode: 'AbortError' });
+        .resolves.toMatchObject({ state: 'unknown', reasonCode: 'timeout' });
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));

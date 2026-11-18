@@ -1,6 +1,6 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -359,6 +359,85 @@ describe('happier auth status --json', () => {
       });
     } finally {
       extendedScope.restore();
+      reloadConfiguration();
+      process.exitCode = prevExitCode;
+    }
+  });
+
+  it('never forwards a Home-supplied error string into the JSON reply', async () => {
+    const prevExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await withTempDir('happier-auth-status-json-closed-reason-', async (home) => {
+        const output = captureConsoleText();
+        try {
+          envScope.patch({ HAPPIER_HOME_DIR: home });
+          reloadConfiguration();
+          vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ code: 'Bearer leaked-home-text' }), {
+            status: 500,
+            headers: { 'content-type': 'application/json' },
+          })));
+          await writeCredentialsTokenOnly({ token: 'token_closed_reason' });
+
+          await handleAuthCommand(['status', '--json']);
+
+          const raw = output.text().trim();
+          expect(JSON.parse(raw)).toMatchObject({
+            ok: false,
+            kind: 'auth_status',
+            error: { code: 'auth_status_unavailable', reason: 'http_error' },
+          });
+          expect(raw).not.toContain('leaked-home-text');
+          expect(process.exitCode).toBe(1);
+        } finally {
+          output.restore();
+        }
+      });
+    } finally {
+      envScope.restore();
+      envScope = createEnvKeyScope(envKeys);
+      reloadConfiguration();
+      process.exitCode = prevExitCode;
+    }
+  });
+
+  it('prints a typed re-login reply for an obsolete stored bearer and leaves the key file unchanged', async () => {
+    const prevExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await withTempDir('happier-auth-status-json-relogin-', async (home) => {
+        const output = captureConsoleText();
+        try {
+          envScope.patch({ HAPPIER_HOME_DIR: home });
+          reloadConfiguration();
+          const fetchMock = vi.fn();
+          vi.stubGlobal('fetch', fetchMock);
+          const payload = Buffer.from(JSON.stringify({ sub: 'account-a', provenance: {
+            v: 1, kind: 'account', authority: 'present_user',
+          } })).toString('base64url');
+          mkdirSync(dirname(configuration.privateKeyFile), { recursive: true });
+          const stored = JSON.stringify({ secret: Buffer.alloc(32, 7).toString('base64'), token: `hdr.${payload}.sig` });
+          writeFileSync(configuration.privateKeyFile, stored, 'utf8');
+
+          await handleAuthCommand(['status', '--json']);
+
+          const raw = output.text().trim();
+          expect(JSON.parse(raw)).toMatchObject({
+            ok: false,
+            kind: 'auth_status',
+            error: { code: 'not_authenticated', reason: 'cli_relogin_required' },
+          });
+          expect(raw).not.toContain(payload);
+          expect(readFileSync(configuration.privateKeyFile, 'utf8')).toBe(stored);
+          expect(fetchMock).not.toHaveBeenCalled();
+          expect(process.exitCode).toBe(1);
+        } finally {
+          output.restore();
+        }
+      });
+    } finally {
+      envScope.restore();
+      envScope = createEnvKeyScope(envKeys);
       reloadConfiguration();
       process.exitCode = prevExitCode;
     }

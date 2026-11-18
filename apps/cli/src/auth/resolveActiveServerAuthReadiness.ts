@@ -12,6 +12,7 @@
  */
 
 import {
+  CliReloginRequiredError,
   readSettings,
   readStoredCredentials,
   type StoredCredentials,
@@ -20,6 +21,7 @@ import {
 import {
   validateStoredAuthTokenAgainstActiveServer,
   type ActiveServerStoredTokenValidationResult,
+  type StoredTokenValidationReason,
 } from './validateStoredAuthTokenAgainstActiveServer';
 
 export type ActiveServerAuthUnusableReason = 'no-credentials' | 'credentials-rejected';
@@ -31,8 +33,8 @@ export type ActiveServerAuthReadiness = Readonly<{
   credentialState: CredentialReadinessState;
   authenticated: boolean;
   unusableReason: ActiveServerAuthUnusableReason | null;
-  /** The validator's typed, non-secret reason when the credential is not valid (for example `identity_mismatch`). */
-  credentialReason: string | null;
+  /** Closed, content-free reason when the credential is missing-by-refusal or not valid (for example `identity_mismatch`). */
+  credentialReason: StoredTokenValidationReason | CliReloginRequiredError['code'] | null;
   /** Readable label of the account the relay validated (from the same profile read); null when unknown. */
   accountLabel: string | null;
   machineId: string | null;
@@ -54,8 +56,15 @@ export async function resolveActiveServerAuthReadiness(
   const readCredentialsFn = deps.readCredentialsFn ?? readStoredCredentials;
   const readSettingsFn = deps.readSettingsFn ?? readSettings;
   const validateTokenFn = deps.validateTokenFn ?? validateStoredAuthTokenAgainstActiveServer;
+  // An obsolete stored bearer reads as signed out with its typed reason, so
+  // status reports it and login proceeds to replace the file.
+  let credentialReadReason: CliReloginRequiredError['code'] | null = null;
   const [credentials, settings] = await Promise.all([
-    readCredentialsFn(),
+    readCredentialsFn().catch((error: unknown) => {
+      if (!(error instanceof CliReloginRequiredError)) throw error;
+      credentialReadReason = error.code;
+      return null;
+    }),
     readSettingsFn(),
   ]);
   deps.signal?.throwIfAborted();
@@ -80,7 +89,7 @@ export async function resolveActiveServerAuthReadiness(
       credentialState: 'missing',
       authenticated: false,
       unusableReason: 'no-credentials',
-      credentialReason: null,
+      credentialReason: credentialReadReason,
       accountLabel: null,
       machineId,
       machineRegistrationState,

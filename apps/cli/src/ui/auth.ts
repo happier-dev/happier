@@ -6,6 +6,7 @@ import tweetnacl from 'tweetnacl';
 import { displayQRCode } from "./qrcode";
 import { delay, delayUnrefAbortable } from "@/utils/time";
 import {
+    CliReloginRequiredError,
     readStoredCredentials,
     readStoredCredentialsForServerId,
     readSettings,
@@ -1059,7 +1060,11 @@ async function authAndPrepareMachineIfNeeded(
     logger.debug('[AUTH] Starting auth and machine setup...');
 
     // Step 1: Handle authentication
-    let credentials: StoredCredentials | null = await readStoredCredentials();
+    // An obsolete stored bearer means signing in again; this flow's login replaces it.
+    let credentials: StoredCredentials | null = await readStoredCredentials().catch((error: unknown) => {
+        if (error instanceof CliReloginRequiredError) return null;
+        throw error;
+    });
     let machineSetup: Readonly<{ machineId: string }> | null = null;
     let accountMaterialRecoveryRequired = false;
 

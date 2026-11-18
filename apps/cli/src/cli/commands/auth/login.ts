@@ -1,7 +1,7 @@
 import os from 'node:os';
 
 import { resolveActiveServerAuthReadiness } from '@/auth/resolveActiveServerAuthReadiness';
-import { clearCredentials, clearMachineId, readStoredCredentials } from '@/persistence';
+import { CliReloginRequiredError, clearCredentials, clearMachineId, readStoredCredentials } from '@/persistence';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { isDaemonStopIncompleteError, stopDaemon } from '@/daemon/controlClient';
 import { logger } from '@/ui/logger';
@@ -62,7 +62,11 @@ export async function handleAuthLogin(args: string[], signal?: AbortSignal): Pro
   }
 
   if (forceAuth) {
-    const replacementCredentials = await readStoredCredentials();
+    // An obsolete stored bearer is exactly what this login replaces.
+    const replacementCredentials = await readStoredCredentials().catch((error: unknown) => {
+      if (error instanceof CliReloginRequiredError) return null;
+      throw error;
+    });
     const replacementAccountId = replacementCredentials ? readAccountIdFromToken(replacementCredentials.token) : null;
     const out = createOutputBuilder();
     out.line(warn('Force authentication requested.'));

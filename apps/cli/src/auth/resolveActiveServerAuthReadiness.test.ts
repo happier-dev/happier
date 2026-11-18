@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('axios');
 
-import { SUPPORTED_SCHEMA_VERSION, type Settings } from '@/persistence';
+import { CliReloginRequiredError, SUPPORTED_SCHEMA_VERSION, type Settings } from '@/persistence';
 
 import { resolveActiveServerAuthReadiness } from './resolveActiveServerAuthReadiness';
 
@@ -148,5 +148,23 @@ describe('resolveActiveServerAuthReadiness', () => {
       machineRegistrationState: 'server-confirmed',
       machineRegistered: true,
     });
+  });
+
+  it('reports an obsolete stored bearer as a typed re-login reason so login can replace it', async () => {
+    const validateTokenFn = vi.fn();
+    const readiness = await resolveActiveServerAuthReadiness({
+      readCredentialsFn: async () => { throw new CliReloginRequiredError(); },
+      readSettingsFn: async () => createSettings(),
+      validateTokenFn,
+    });
+
+    expect(readiness).toMatchObject({
+      credentials: null,
+      credentialState: 'missing',
+      authenticated: false,
+      unusableReason: 'no-credentials',
+      credentialReason: 'cli_relogin_required',
+    });
+    expect(validateTokenFn).not.toHaveBeenCalled();
   });
 });

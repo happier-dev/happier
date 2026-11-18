@@ -951,23 +951,21 @@ export async function readStoredCredentials(
     !existsSync(primaryPath);
 
   const path = existsSync(primaryPath) ? primaryPath : canUseLegacy ? legacyPath : null;
-  return path ? await readStoredCredentialsFile(path, { invalidateAccountBearer: true }) : null;
+  return path ? await readStoredCredentialsFile(path, { refuseAccountBearer: true }) : null;
 }
 
-async function readStoredCredentialsFile(path: string, options?: Readonly<{ invalidateAccountBearer: boolean }>): Promise<StoredCredentials | null> {
+async function readStoredCredentialsFile(path: string, options?: Readonly<{ refuseAccountBearer: boolean }>): Promise<StoredCredentials | null> {
   try {
     const keyBase64 = (await readFile(path, 'utf8'));
     const credentials = credentialsSchema.parse(JSON.parse(keyBase64));
     if (!credentials.token) return null;
-    // This unsigned marker is used only to remove an obsolete bearer. The Home
-    // still verifies every credential; this read never grants authority.
+    // This unsigned marker only refuses an obsolete bearer. The Home still
+    // verifies every credential; this read never grants authority. A read never
+    // rewrites the key file: the next deliberate login replaces it.
     const payload = decodeJwtPayload(credentials.token);
     const provenance = payload && typeof payload.sub === 'string' && payload.sub.trim()
       ? readAuthTokenProvenance(payload, { allowLegacyHome: true }) : null;
-    if (options?.invalidateAccountBearer && provenance?.provenance.kind === 'account') {
-      const { token: _obsoleteBearer, ...retainedMaterial } = credentials;
-      await writeFile(path, JSON.stringify(retainedMaterial, null, 2), { mode: 0o600 });
-      await bestEffortChmod(path, 0o600);
+    if (options?.refuseAccountBearer && provenance?.provenance.kind === 'account') {
       throw new CliReloginRequiredError();
     }
     return decodeStoredCredentials(credentials);

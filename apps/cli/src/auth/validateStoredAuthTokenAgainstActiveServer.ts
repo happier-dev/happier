@@ -6,14 +6,35 @@ import { withAbortTimeout } from '@/diagnostics/httpClient';
 import { observeServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { resolveCurrentCliHomeTarget } from '@/server/homeTarget';
 
-import { verifyTerminalAuthEnrollmentRuntime } from './terminalAuthEnrollmentClient';
+import type { HomeEnrollmentCarrierFailure } from '@happier-dev/protocol/ssh/commandFailure';
+
+import {
+  TerminalAuthEnrollmentVerificationError,
+  verifyTerminalAuthEnrollmentRuntime,
+  type TerminalAuthEnrollmentVerificationErrorCode,
+} from './terminalAuthEnrollmentClient';
 import { acquireTerminalAuthEnrollmentRuntime } from './terminalAuthEnrollmentRuntime';
+
+/**
+ * Closed, content-free validation reasons. Nothing from a response body or an
+ * error's text passes through: an unrecognized cause maps to a fixed value.
+ */
+export type StoredTokenValidationReason =
+  | HomeEnrollmentCarrierFailure['reason']
+  | TerminalAuthEnrollmentVerificationErrorCode
+  | 'missing-token'
+  | 'missing-server-url'
+  | 'invalid-profile-response'
+  | 'not_authenticated'
+  | 'http_error'
+  | 'timeout'
+  | 'request_error';
 
 export type ActiveServerStoredTokenValidationResult = Readonly<
   /** `accountLabel`: a readable name for the validated account (username, else display name), never an email. */
   | { state: 'valid'; httpStatus: number; accountLabel?: string | null }
-  | { state: 'invalid'; httpStatus: number; reasonCode: string }
-  | { state: 'unknown'; httpStatus: number | null; reasonCode: string }
+  | { state: 'invalid'; httpStatus: number; reasonCode: StoredTokenValidationReason }
+  | { state: 'unknown'; httpStatus: number | null; reasonCode: StoredTokenValidationReason }
 >;
 
 type StoredAuthTokenValidationParams = Readonly<{
@@ -23,12 +44,6 @@ type StoredAuthTokenValidationParams = Readonly<{
   timeoutMs?: number;
   signal?: AbortSignal;
 }>;
-
-function readResponseCode(body: unknown, fallback: string): string {
-  return typeof (body as { code?: unknown })?.code === 'string' && (body as { code: string }).code.trim()
-    ? (body as { code: string }).code.trim()
-    : fallback;
-}
 
 function readTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -45,10 +60,8 @@ function readAccountProfileLabel(body: unknown): string | null {
   return displayName || null;
 }
 
-/** A verification refusal's own typed code, such as `HOME_AUTHORITY_MISMATCH`. */
-function readTypedErrorCode(error: unknown): string | null {
-  const code = error && typeof error === 'object' && 'code' in error ? error.code : null;
-  return typeof code === 'string' && code.trim() ? code : null;
+function readRequestFailureReason(error: unknown): StoredTokenValidationReason {
+  return error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError') ? 'timeout' : 'request_error';
 }
 
 async function readJsonBody(response: Response): Promise<unknown> {
@@ -104,25 +117,17 @@ export async function validateStoredAuthTokenAgainstServer(
     }
 
     if (isAuthenticationStatus(response.status)) {
-      return {
-        state: 'invalid',
-        httpStatus: response.status,
-        reasonCode: readResponseCode(body, 'not_authenticated'),
-      };
+      return { state: 'invalid', httpStatus: response.status, reasonCode: 'not_authenticated' };
     }
 
-    return {
-      state: 'unknown',
-      httpStatus: response.status,
-      reasonCode: readResponseCode(body, `http-${response.status}`),
-    };
+    return { state: 'unknown', httpStatus: response.status, reasonCode: 'http_error' };
   } catch (error) {
     params.signal?.throwIfAborted();
     if (error instanceof CredentialRequestRedirectError) throw error;
     return {
       state: 'unknown',
       httpStatus: null,
-      reasonCode: error instanceof Error ? error.name : 'request-error',
+      reasonCode: readRequestFailureReason(error),
     };
   }
 }
@@ -173,7 +178,8 @@ export async function validateStoredAuthTokenAgainstActiveServer(
     return {
       state: 'unknown',
       httpStatus: null,
-      reasonCode: readTypedErrorCode(error) ?? (error instanceof Error ? error.name : 'home-carrier-verification-failed'),
+      // A verification refusal carries its own typed code, such as `HOME_AUTHORITY_MISMATCH`.
+      reasonCode: error instanceof TerminalAuthEnrollmentVerificationError ? error.code : readRequestFailureReason(error),
     };
   } finally {
     await acquired.close().catch(() => undefined);

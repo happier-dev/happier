@@ -51,9 +51,10 @@ describe('readStoredCredentials API Token selection', () => {
       const bearer = (extras: object) => `hdr.${Buffer.from(JSON.stringify({ sub: 'account-a', extras })).toString('base64url')}.sig`;
       await writeStoredToken(bearer({ session: 'terminal-session' }));
       await expect(readStoredCredentials()).resolves.toMatchObject({ token: bearer({ session: 'terminal-session' }) });
-      await writeStoredToken(bearer({}));
+      const obsoleteBytes = await writeStoredToken(bearer({}));
       await expect(readStoredCredentials()).rejects.toMatchObject({ code: 'cli_relogin_required' });
-      expect(JSON.parse(await readFile(configuration.privateKeyFile, 'utf8'))).toEqual({});
+      // A read never rewrites the key file; the next deliberate login replaces it.
+      await expect(readFile(configuration.privateKeyFile, 'utf8')).resolves.toBe(obsoleteBytes);
     });
   });
   it('reports an unreadable stored credential file instead of reading it silently as signed out', async () => {
@@ -73,7 +74,7 @@ describe('readStoredCredentials API Token selection', () => {
       expect(warn.mock.calls.length).toBe(2);
     });
   });
-  it('invalidates an account bearer while preserving encryption material and other profile state', async () => {
+  it('refuses an account bearer as re-login required without rewriting any profile key file', async () => {
     await withTempDir('happier-cli-relogin-', async (homeDir) => {
       envScope.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_TOKEN: undefined, HAPPIER_ACTIVE_SERVER_ID: undefined });
       reloadConfiguration();
@@ -82,7 +83,8 @@ describe('readStoredCredentials API Token selection', () => {
       } })).toString('base64url');
       await mkdir(dirname(configuration.privateKeyFile), { recursive: true });
       const material = { secret: Buffer.alloc(32, 7).toString('base64') };
-      await writeFile(configuration.privateKeyFile, JSON.stringify({ ...material, token: `hdr.${payload}.sig` }));
+      const activeCredential = JSON.stringify({ ...material, token: `hdr.${payload}.sig` });
+      await writeFile(configuration.privateKeyFile, activeCredential);
       const otherProfilePath = join(configuration.serversDir, 'other-profile', 'access.key');
       await mkdir(dirname(otherProfilePath), { recursive: true });
       const otherProfileCredential = JSON.stringify({ token: `hdr.${payload}.sig` });
@@ -92,8 +94,8 @@ describe('readStoredCredentials API Token selection', () => {
       await expect(readStoredCredentialsForServerId('other-profile')).resolves.toMatchObject({ token: `hdr.${payload}.sig` });
       await expect(readFile(otherProfilePath, 'utf8')).resolves.toBe(otherProfileCredential);
       await expect(readStoredCredentials()).rejects.toMatchObject({ code: 'cli_relogin_required' });
-      expect(JSON.parse(await readFile(configuration.privateKeyFile, 'utf8'))).toEqual(material);
-      await expect(readStoredCredentials()).resolves.toBeNull();
+      await expect(readStoredCredentials()).rejects.toMatchObject({ code: 'cli_relogin_required' });
+      await expect(readFile(configuration.privateKeyFile, 'utf8')).resolves.toBe(activeCredential);
     });
   });
 
@@ -170,9 +172,10 @@ describe('readStoredCredentials API Token selection', () => {
         v: 1, kind: 'account', authority: 'present_user',
       } })).toString('base64url');
       const material = { secret: Buffer.alloc(32, 7).toString('base64') };
-      await writeFile(selectedPath, JSON.stringify({ ...material, token: `hdr.${payload}.sig` }));
+      const selectedCredential = JSON.stringify({ ...material, token: `hdr.${payload}.sig` });
+      await writeFile(selectedPath, selectedCredential);
       await expect(readStoredCredentials({ serverId: 'selected-home' })).rejects.toMatchObject({ code: 'cli_relogin_required' });
-      expect(JSON.parse(await readFile(selectedPath, 'utf8'))).toEqual(material);
+      await expect(readFile(selectedPath, 'utf8')).resolves.toBe(selectedCredential);
       await expect(readFile(configuration.privateKeyFile, 'utf8')).resolves.toBe(currentBytes);
       expect(configuration).toBe(originalConfiguration);
     });
