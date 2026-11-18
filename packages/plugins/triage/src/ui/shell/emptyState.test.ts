@@ -202,6 +202,18 @@ describe('the empty PRs & Issues list', () => {
         expect(`${resolved.title} ${resolved.description}`).not.toMatch(/answered/u);
     });
 
+    it.each([
+        { narrowing: SEARCH_NARROWED, step: 'clearSearch' },
+        { narrowing: FACET_NARROWED, step: 'clearFilters' },
+    ] as const)('keeps the way out of the reader\'s own narrowing beside a failing source ($step)', ({ narrowing, step }) => {
+        // The failure still leads (the reader must not conclude their narrowing matched nothing), but a query or
+        // filter that emptied what was read is never stranded without the press that undoes it.
+        const resolved = resolveTriageListEmptyState({ coverage: 'complete', failure: BROKEN_SOURCE, refreshing: false, narrowing });
+
+        expect(resolved.kind).toBe('sourceFailure');
+        expect(resolved.next).toEqual([step]);
+    });
+
     it('never claims every source answered while the walk is still bounded', () => {
         const resolved = resolveTriageListEmptyState({
             coverage: 'partial',

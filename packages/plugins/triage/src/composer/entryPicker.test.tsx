@@ -785,7 +785,11 @@ describe('the mounted Composer entry picker', () => {
         // replacing it. `resolveState` puts freshness ahead of source health for
         // exactly this reason, and the ordering is why the `sourcesUnavailable`
         // arm below cannot fire: a lane that failed also makes the window stale.
-        expect((await picker.getByRole('alert')).name).toContain('example/repository');
+        // One quiet line on the list's edge, in the page's own words for the same failure; never an alert card.
+        const statusLines = [...document.querySelectorAll('[role="status"]')].map(node => node.textContent ?? '');
+        expect(statusLines.some(line => line.includes('example/repository') && line.includes('could not be')),
+            JSON.stringify(statusLines)).toBe(true);
+        expect(await picker.queryByRole('alert')).toBeUndefined();
         expect(await picker.queryByText('No source could be read')).toBeUndefined();
         // The only connection stated its own retry deadline, so the press this
         // control offers is already refused by the one pacing owner. An enabled

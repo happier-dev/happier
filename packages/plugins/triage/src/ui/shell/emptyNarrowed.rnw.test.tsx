@@ -35,7 +35,9 @@ const INSTANCE = '11111111-1111-4111-8111-111111111111';
 const ASSEMBLED_AT_MS = 1_760_000_100_000;
 const SEARCH_THAT_MATCHES_NOTHING = 'zzqxnomatch';
 
-function listResult(): JsonValue {
+type LaneHealth = Readonly<{ kind: 'walkFinished' }> | Readonly<{ kind: 'failed'; failure: Readonly<{ class: 'authentication'; code: string; detail: string }> }>;
+
+function listResult(health: LaneHealth = { kind: 'walkFinished' }): JsonValue {
     return TriageListEntriesResultV1Schema.parse({
         v: 1,
         configuredSources: [{ sourceInstanceId: INSTANCE, configurationRowId: INSTANCE, source: SOURCE, displayLabel: 'Example account', available: true }],
@@ -61,7 +63,7 @@ function listResult(): JsonValue {
                 otherObservations: [],
                 observedByCount: 1,
             }],
-            lanes: [{ sourceInstanceId: INSTANCE, source: SOURCE, health: { kind: 'walkFinished' }, exhausted: true }],
+            lanes: [{ sourceInstanceId: INSTANCE, source: SOURCE, health, exhausted: health.kind === 'walkFinished' }],
             coverage: 'complete',
             assembledAtMs: ASSEMBLED_AT_MS,
         },
@@ -70,7 +72,7 @@ function listResult(): JsonValue {
 
 const mounted: PluginUiTestkit[] = [];
 
-async function mountSearched(): Promise<Readonly<{ shell: PluginUiTestkit; locations: string[] }>> {
+async function mountSearched(health?: LaneHealth): Promise<Readonly<{ shell: PluginUiTestkit; locations: string[] }>> {
     const locations: string[] = [];
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let shell!: PluginUiTestkit;
@@ -91,7 +93,7 @@ async function mountSearched(): Promise<Readonly<{ shell: PluginUiTestkit; locat
             handlers: {
                 publishCurrentUiContext: () => undefined,
                 executeAction: async ({ action }) => {
-                    if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) return listResult();
+                    if (action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) return listResult(health);
                     if (action === TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1) return { v: 1, pins: [] };
                     if (action === TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1) {
                         return { v: 1, availability: 'absent', views: [], revision: 'revision-1' };
@@ -130,5 +132,14 @@ describe('a list the reader’s own search emptied', () => {
         // LIST-R2 publishes the opening view; Clear search must settle a new route.
         expect(locations.length).toBeGreaterThan(0);
         expect(parseTriageRouteSubPathV1(locations.at(-1)).query).toBe('');
+    });
+
+    it('keeps Clear search and names the failing connection when a source could not be read', async () => {
+        const { shell } = await mountSearched({ kind: 'failed',
+            failure: { class: 'authentication', code: 'credential_reconnect_required', detail: 'Reconnect the account.' } });
+
+        await expect(shell.getByRole('button', { name: 'Clear search' })).resolves.toBeDefined();
+        const statusLines = [...document.querySelectorAll('[role="status"]')].map(node => node.textContent ?? '');
+        expect(statusLines.some(line => line.includes('could not be read')), JSON.stringify(statusLines)).toBe(true);
     });
 });

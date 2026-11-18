@@ -71,6 +71,8 @@ export type TriageListEmptyStateV1 = Readonly<{
 export type TriageListEmptyNextStepV1 = 'loadMore' | 'clearSearch' | 'clearFilters';
 
 const NO_NEXT_STEPS: readonly TriageListEmptyNextStepV1[] = Object.freeze([]);
+const CLEAR_FILTERS_NEXT: readonly TriageListEmptyNextStepV1[] = Object.freeze(['clearFilters'] as const);
+const CLEAR_SEARCH_NEXT: readonly TriageListEmptyNextStepV1[] = Object.freeze(['clearSearch'] as const);
 
 const HEALTHY: TriageListEmptyStateV1 = Object.freeze({
     kind: 'healthy',
@@ -257,11 +259,13 @@ export function resolveTriageListEmptyState(input: Readonly<{
 }>, text: TriageTextResolverV1 = ENGLISH_TEXT): TriageListEmptyStateV1 {
     if (input.failure !== null) {
         // The one failure notice, so the empty slot and the banner beside a
-        // non-empty list cannot end up naming different things.
+        // non-empty list cannot end up naming different things. It still
+        // offers the way out of the reader's own narrowing: the failure is why
+        // the answer is unfinished, not a reason to strand the query or filter.
         return Object.freeze({
             kind: 'sourceFailure',
             ...readTriageListFailureNotice(input.failure, text, input.locale),
-            next: NO_NEXT_STEPS,
+            next: input.narrowing.facets ? CLEAR_FILTERS_NEXT : input.narrowing.search ? CLEAR_SEARCH_NEXT : NO_NEXT_STEPS,
         });
     }
     if (input.narrowing.facets) {

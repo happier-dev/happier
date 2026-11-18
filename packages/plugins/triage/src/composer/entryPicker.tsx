@@ -2,7 +2,6 @@ import * as React from 'react';
 import type { PluginUiHostApi, RenderContext, RenderSurface } from '@happier-dev/plugin-sdk/ui';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import {
-    Banner,
     Button,
     EmptyState,
     ErrorState,
@@ -11,6 +10,7 @@ import {
     List,
     Row,
     Stack,
+    Status,
     TextField,
     defineUiSurface,
     usePluginTheme,
@@ -54,6 +54,7 @@ import { bindTriageMountedUiActions } from '../ui/mountedActions.js';
 import { useTriageCurrentUiContextPublication } from '../ui/currentContextPublication.js';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../actions/mountedUiProtocol.js';
 import { TriageSourceMark } from '../ui/list/sourceMark.js';
+import { projectTriageSourceHealthFailureV1, readTriageListFailureLine } from '../ui/shell/windowState.js';
 
 /**
  * The Composer entry picker.
@@ -330,6 +331,7 @@ function TriageComposerPickerRow(props: Readonly<{
 
 export function TriageEntryPicker(context: RenderContext): React.ReactElement {
     const text = usePluginTranslation();
+    const surface = useSurfaceContext();
     // The host's list shell hands this surface its whole width and leaves insets to the content (the
     // rows below carry their own), so the controls above the list take the page gutter themselves.
     const { spacing } = usePluginTheme();
@@ -516,12 +518,11 @@ export function TriageEntryPicker(context: RenderContext): React.ReactElement {
                     <FreshnessLine reason={resolvePickerStateLabel(text, view.state.kind)} busy />
                 ) : null)}
 
+                {/* A list says its condition in one quiet line on the rows' edge, in the same words as the page's own
+                    line; the head's Refresh is its recovery. */}
                 {view.health.length === 0 ? null : (
-                    <Banner
-                        tone="warning"
-                        title={text('plugins.triage.surface.failure.some', 'Some sources could not be read')}
-                        description={view.health.map((entry) => entry.displayName).join(', ')}
-                    />
+                    <Status tone="warning" label={readTriageListFailureLine({ kind: 'sources',
+                        sources: view.health.map(projectTriageSourceHealthFailureV1) }, text, surface.locale).label} />
                 )}
             </TriagePickerHead>
 

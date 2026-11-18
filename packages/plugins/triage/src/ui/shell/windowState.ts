@@ -15,6 +15,7 @@ import {
   projectTriageViewSourceHealthV1,
   type TriageListBodyStateV1,
   type TriageOutsideSourcesAttentionV1,
+  type TriageSourceHealthV1,
 } from '../../projection/sourceHealth.js';
 import {
   isTriageRefreshPacingBlockActiveV1,
@@ -175,22 +176,29 @@ export type TriageListShellStateV1 =
  * survives for the failure it was written for: the aggregate list read itself
  * failing, which no single source owns.
  */
+/**
+ * One failed connection as every Triage surface names it: the page's line and the Composer picker read the same
+ * projection, so the two cannot describe one failure differently.
+ */
+export function projectTriageSourceHealthFailureV1(entry: TriageSourceHealthV1): TriageListSourceFailureV1 {
+  const { failure } = entry;
+  return Object.freeze({
+    sourceInstanceId: entry.sourceInstance.sourceInstanceId, displayName: entry.displayName,
+    reason: listReadFailureMessage(failure.code, failure.detail ?? SOURCE_FAILURE_COPY_V1[failure.class]),
+    code: failure.code,
+    ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
+    ...(failure.detail === undefined ? {} : { lineReason: listReadFailureMessage(failure.code, SOURCE_FAILURE_COPY_V1[failure.class]) }),
+    needsConnectionChange: failure.class === 'authentication' || failure.class === 'permission',
+  });
+}
+
 function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShellFailureV1 | null {
   const unavailableSourceIds = new Set(snapshot.configuredSources
     .filter((source) => !source.available).map((source) => source.sourceInstanceId));
   // Every distinct connection is kept. A reader with three broken ones needs
   // all three names, not the first.
-  const projectFailure = (sourceInstanceId: string, displayName: string,
-    failure: TriageSourceFailureV1): TriageListSourceFailureV1 => Object.freeze({
-      sourceInstanceId, displayName,
-      reason: listReadFailureMessage(failure.code, failure.detail ?? SOURCE_FAILURE_COPY_V1[failure.class]),
-      code: failure.code,
-      ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
-      ...(failure.detail === undefined ? {} : { lineReason: listReadFailureMessage(failure.code, SOURCE_FAILURE_COPY_V1[failure.class]) }),
-      needsConnectionChange: failure.class === 'authentication' || failure.class === 'permission',
-    });
   const sources: TriageListSourceFailureV1[] = projectTriageFailedSourceHealth(snapshot)
-    .map(entry => projectFailure(entry.sourceInstance.sourceInstanceId, entry.displayName, entry.failure));
+    .map(projectTriageSourceHealthFailureV1);
   // A connection the pass could not read at all is the same kind of fact as one
   // that failed with provider evidence — one named connection the reader can go
   // and look at. Only the reason differs, and neither is the aggregate read.
@@ -229,8 +237,8 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
     const existingIndex = failureIndexBySource.get(configured.sourceInstanceId);
     const existing = configured.availabilityFailure === undefined
       ? existingIndex === undefined ? undefined : sources[existingIndex]
-      : projectFailure(configured.sourceInstanceId, readTriageSourceDisplayName(snapshot, sourceInstance),
-        configured.availabilityFailure);
+      : projectTriageSourceHealthFailureV1({ sourceInstance, displayName: readTriageSourceDisplayName(snapshot, sourceInstance),
+        failure: configured.availabilityFailure });
     if (existing !== undefined) {
       const unavailable = Object.freeze({ ...existing,
         lineReason: SOURCE_UNAVAILABLE_COPY_V1, needsConnectionChange: true });

@@ -2602,6 +2602,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       retry={<TriageFailureLineAction label={retryLabel}
         busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={refreshPage} />} />
   );
+  // A failure in the list's own place keeps the reader's way out of their search or filter beneath its line.
+  const failureSlot = primaryNext === undefined ? listFailureStatus
+    : <Stack gap="small" align="flex-start">{listFailureStatus}{primaryNext}</Stack>;
 
   return (
     <Screen safeArea style={TRIAGE_FILL_STYLE_V1}>
@@ -3007,7 +3010,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           // lens, Refresh and Run on) leads, and the failure is said in words in the list's own place. The host's code
           // is a diagnostic behind Details, and a retry is offered only when the host says one can succeed.
           {...(emptyBelowPins === null ? {} : { afterRows: (
-            emptyBelowPins.kind === 'sourceFailure' && (listFailureStatus !== null || hostSpeaksForOutage) ? listFailureStatus : <EmptyState
+            emptyBelowPins.kind === 'sourceFailure' && (listFailureStatus !== null || hostSpeaksForOutage) ? failureSlot : <EmptyState
               title={text(readTriageListEmptyStateKeys(emptyBelowPins.kind).title, emptyBelowPins.title)}
               description={text(readTriageListEmptyStateKeys(emptyBelowPins.kind).description, emptyBelowPins.description)}
               {...emptyNextControls}
@@ -3049,7 +3052,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
               not be read, what that means for the list, and its one recovery (`readTriageListFailureLine`). The
               header's Refresh stays the page's refresh; each connection's code waits in Manage sources.
             */
-            listFailureStatus
+            failureSlot
           ) : (
             <EmptyState
               scene={readTriageListEmptyScene(empty.kind)}
