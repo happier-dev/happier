@@ -115,8 +115,9 @@ duplicate stays in the library.
 An agent can also propose a theme or several options. Its result card tries
 the draft here before saving it. Choose an option to preview it, then **Keep**
 the one you want or undo the preview. After Keep, the card offers the same
-connected-device picker. Agents proposing CSS through try-on or save request
-approval under the normal Action policy.
+connected-device picker. In 0.3 development, Agent and MCP requests to try on,
+save or import a theme ask for approval by default when the theme carries CSS.
+Applying a theme already in your library is direct by default.
 
 Theme choices repaint the app with a reveal transition where supported. With
 reduced motion enabled, the theme changes without that animation.
@@ -137,6 +138,8 @@ originals for retry.
 
 Export a theme to JSON and import it on another device, or share it. The export
 is versioned, so a file made today keeps working as the token set grows.
+In 0.3 development, the import screen asks you to confirm before adding a theme
+that carries CSS to your library. A colour-only file imports directly.
 
 Import also accepts **VS Code themes**, which is usually the fastest way to make
 Happier match the editor you already stare at all day. Imports are validated

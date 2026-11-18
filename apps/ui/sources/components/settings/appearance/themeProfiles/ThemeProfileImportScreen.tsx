@@ -14,7 +14,7 @@ import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1
 import { isActionApprovalDeclinedErrorCode, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
-import { getSupportedThemeProfileImportFormats, importThemeProfileFromJson } from '@/theme/profiles/themeProfileImportExport';
+import { exportThemeProfileToJson, getSupportedThemeProfileImportFormats, importThemeProfileFromJson } from '@/theme/profiles/themeProfileImportExport';
 import { nativePickFiles, type NativePickedFile } from '@/utils/files/nativePickFiles';
 import { nowThemeProfileTimestamp } from './themeProfileScreenUtils';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -68,8 +68,13 @@ export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportSc
             return;
         }
         setError(null);
-        try { await executeTheme(THEME_ACTION_IDS.save, { document: result.document }); }
-        catch (error) {
+        const name = pickedFile?.kind === 'web' ? pickedFile.file.name : pickedFile?.name;
+        try {
+            // Carry the resolved document so the Action can import it without access to local include files.
+            await executeTheme(THEME_ACTION_IDS.import, {
+                file: { name: name ?? 'happier-theme.json', text: exportThemeProfileToJson(result.document) },
+            });
+        } catch (error) {
             if (!isActionApprovalDeclinedErrorCode(readActionErrorCodeV1(error)))
                 setError(resolveActionExecutionErrorMessage(error, t('common.requestFailed')));
             return;

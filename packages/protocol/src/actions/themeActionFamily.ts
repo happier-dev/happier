@@ -5,6 +5,8 @@ import { readRecord } from '../inputs/inputRecords.js';
 import { THEME_ACTION_IDS, THEME_ACTION_ID_LIST, type ThemeActionId } from './themeActionIdsV1.js';
 import { ThemeProfileSourceSchema, ThemeReferenceSchema, ThemeMiniatureDataSchema,
   parseThemeProfileDocument, type ThemeProfileDocument } from '../account/settings/themeProfiles.js';
+import { ThemeProfileFileEnvelopeSchema } from '../account/settings/themeProfileFile.js';
+import { parseThemeImportJsonLikeText } from '../account/settings/themeProfileExternalThemeImportVsCode.js';
 import { RegistryItemPointerV1Schema } from '../registries/registryContentRefV1.js';
 import { RegistryItemSummaryV1Schema, RegistryProvenanceV1Schema } from '../registries/registryItemsV1.js';
 import { RegistryThemeListingV1Schema } from '../registries/registryThemeV1.js';
@@ -183,11 +185,23 @@ function themeSharePluginReviewedChildren(input: unknown): HostReviewedChildrenP
     { action: 'plugins.pack', role: THEME_SHARE_PLUGIN_CHILD_ROLES.pack, input: children.pack },
   ];
 }
-function hasThemeAuthorCss(input: unknown): boolean {
-  const document = readRecord(readRecord(input).document);
-  const css = readRecord(document.profile).css;
+function hasThemeAuthorCss(profile: unknown): boolean {
+  const css = readRecord(profile).css;
   return typeof css === 'string' && css.length > 0;
 }
+
+function themeDocumentCarriesCss(input: unknown): boolean {
+  return hasThemeAuthorCss(readRecord(readRecord(input).document).profile);
+}
+
+function themeImportCarriesCss(input: unknown): boolean {
+  const text = readRecord(readRecord(input).file).text;
+  if (typeof text !== 'string') return false;
+  const envelope = ThemeProfileFileEnvelopeSchema.safeParse(parseThemeImportJsonLikeText(text));
+  // Native files supply CSS before the importer assigns the copy's identity and dates.
+  return envelope.success && hasThemeAuthorCss(envelope.data.profile);
+}
+
 function createThemeActionSpecs() {
   return THEME_ACTION_ID_LIST.map((id): Omit<PreNormalizedActionSpec, 'id'> & { id: ThemeActionId } => ({
     id, title: titles[id], description: 'Use the answering client’s shared theme library and temporary preview owner. Try on before Keep; immutable themes must be duplicated before editing. Connected client routing never queues offline effects.',
@@ -198,7 +212,9 @@ function createThemeActionSpecs() {
         ? { uiConfirmation: 'direct' }
         : { uiConfirmation: 'direct',
           ...(id === THEME_ACTION_IDS.tryOn || id === THEME_ACTION_IDS.save
-            ? { agentDefaultForInput: hasThemeAuthorCss } : {}) },
+            ? { agentDefaultForInput: themeDocumentCarriesCss } : {}),
+          ...(id === THEME_ACTION_IDS.import
+            ? { agentDefaultForInput: themeImportCarriesCss, uiConfirmationForInput: themeImportCarriesCss } : {}) },
     safety: 'safe',
     ...(id === THEME_ACTION_IDS.sharePlugin ? { hostReviewedChildren: themeSharePluginReviewedChildren } : {}),
     sideEffectClass: id === THEME_ACTION_IDS.list || id === THEME_ACTION_IDS.get || id === THEME_ACTION_IDS.storeGet || id === THEME_ACTION_IDS.export ? 'read' : 'write',

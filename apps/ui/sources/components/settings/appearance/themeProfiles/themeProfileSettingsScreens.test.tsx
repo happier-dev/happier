@@ -142,8 +142,8 @@ vi.mock('expo-router', async () => {
 });
 
 vi.mock('@/modal', async () => {
-    const mock = (await import('@/dev/testkit/mocks/modal')).createModalModuleMock();
-    return { ...mock.module, Modal: { ...mock.module.Modal, confirm: shared.modalConfirm } };
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ spies: { confirm: (...args) => shared.modalConfirm(...args) } }).module;
 });
 
 vi.mock('react-native-unistyles', async () => {
@@ -1273,6 +1273,25 @@ describe('Theme profile editor', () => {
 });
 
 describe('Theme profile import and export screens', () => {
+    it('asks before saving imported CSS to the library', async () => {
+        const profile = { ...baseProfile('css-import'), css: '[data-surface="sidebar"] { border-radius: 12px; }' };
+        shared.modalConfirm.mockImplementationOnce(async () => {
+            expect(storage.getState().artifacts).toEqual({});
+            return true;
+        });
+        const screen = await renderImportScreen();
+        await act(async () => {
+            screen.changeTextByTestId('settings-theme-profile-import-json', exportThemeProfileToJson(profile));
+        });
+        await submitImport(screen);
+        expect(shared.modalConfirm).toHaveBeenCalledOnce();
+        const saved = Object.values(storage.getState().artifacts).flatMap(artifact => {
+            const document = readThemeProfileArtifactDocument(artifact, account.scope)?.document;
+            return document ? [document.profile] : [];
+        });
+        expect(saved).toMatchObject([{ name: profile.name, css: profile.css }]);
+    });
+
     it('imports a copy without overwriting the Artifact identified in its file', async () => {
         const original = baseProfile('9d43780a-16c8-4ebf-84e3-a2ef782ad06f');
         setThemeProfiles({ profiles: [original], activeProfileIds: { light: null, dark: null } });
@@ -1284,6 +1303,7 @@ describe('Theme profile import and export screens', () => {
             }));
         });
         await submitImport(screen);
+        expect(shared.modalConfirm).not.toHaveBeenCalled();
         const saved = getThemeProfiles().profiles;
         expect(saved).toHaveLength(2);
         expect(saved.find(profile => profile.id === original.id)?.name).toBe(original.name);

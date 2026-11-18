@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { createActionExecutor } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
+import { createThemeProfileFile } from '../account/settings/themeProfileFile.js';
 import { parseThemeProfileDocument } from '../account/settings/themeProfiles.js';
 import { THEME_ACTION_IDS, THEME_ACTION_ID_LIST, ThemeActionInputSchemas, ThemeActionOutputSchemas, ThemeSurfacePaintDescriptorSchema } from './themeActionFamily.js';
 import { actionInputValidationFailure } from './executor/actionInputValidation.js';
@@ -56,6 +57,26 @@ it('asks Agent and MCP for author CSS while colour-only and trusted user/plugin 
   expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
     input: { ref: { kind: 'artifact', id: 'previously-saved-css' }, mode: 'dark' },
     context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(false);
+});
+
+it.each([
+  { css: undefined, ask: false },
+  { css: '', ask: false },
+  { css: '[data-surface="card"] { display: none }', ask: true },
+])('decides theme file import approval with CSS $css', ({ css, ask }) => {
+  const actionId = THEME_ACTION_IDS.import;
+  const spec = getActionSpec(actionId);
+  const profile = { schemaVersion: 1, name: 'Imported theme',
+    base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} }, css };
+  const text = `/* Theme export */\n${JSON.stringify(createThemeProfileFile(profile))}`;
+  const input = spec.inputSchema.parse({ file: { name: 'theme.json', text } });
+  for (const surface of ['agent', 'mcp', 'ui', 'plugin'] as const) {
+    const routing = resolveActionApprovalRouting({ actionId, spec, input,
+      context: { surface, authority: 'present_user', actionCaller: surface === 'plugin'
+        ? { kind: 'plugin', pluginId: 'trusted.theme-tools' } : { kind: 'host' } } });
+    expect(routing.required, surface).toBe(ask && (surface === 'agent' || surface === 'mcp'));
+    expect(routing.uiConfirmationRequired ?? false, surface).toBe(ask && surface === 'ui');
+  }
 });
 
 it('keeps deletion and plugin authoring on the declared static Agent Ask default', () => {

@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, vi } from 'vitest';
 import { ThemeProfileV1Schema } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { createThemeProfileFile } from '@happier-dev/protocol/account/settings/themeProfileFile';
+import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { RegistryProvenanceV1Schema } from '@happier-dev/protocol/registries/registryItemsV1';
 import type { RegistryUpdateCheckResultV1 } from '@happier-dev/protocol/registries/registryUpstreamV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -277,10 +279,10 @@ async function connectAdditionalAppClients() {
     } catch (error) { close(); throw error; }
 }
 
-async function daemonAction(id: string, input: unknown) {
+async function daemonAction(id: string, input: unknown, surface?: 'mcp') {
     const response = await daemonControlPostJson<unknown>({ port: daemon!.state.httpPort,
         controlToken: daemon!.state.controlToken, path: '/actions/root/execute',
-        body: { actionId: `appearance.themes.${id}`, target: { kind: 'machine', machineId }, input } });
+        body: { actionId: `appearance.themes.${id}`, target: { kind: 'machine', machineId }, input, surface } });
     expect(response.status).toBe(200);
     return response.data;
 }
@@ -488,6 +490,17 @@ export async function runF1() {
     expect(await selection()).toEqual(beforeApply);
     expect(artifactWrites()).toHaveLength(0);
     expect(accountSettingsWrites()).toHaveLength(0);
+    const importFile = (name: string, css?: string) => ({ file: {
+        name: 'theme.json', text: JSON.stringify(createThemeProfileFile(document(name, css).raw)),
+    } });
+    expect(await daemonAction('import', importFile('Colour-only import'), 'mcp'))
+        .toMatchObject({ ok: true, result: { entry: { name: 'Colour-only import' } } });
+    expect(await daemonAction('import', importFile('CSS import', '[data-surface="sidebar"] { border-radius: 12px; }'), 'mcp'))
+        .toMatchObject({ ok: true, result: { kind: 'approval_request_created',
+            actionId: THEME_ACTION_IDS.import, artifactId: expect.any(String) } });
+    const afterAsk = await theme<{ themes: Entry[] }>('list', {});
+    expect(afterAsk.themes.map(entry => entry.name)).not.toContain('CSS import');
+
     // Ask must settle before the destructive effect; explicit user confirmation
     // is tested separately from the unconfirmed ingress.
     const refused = await daemonAction('delete', { ref: sibling.entry.reference });
