@@ -1,6 +1,6 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { ProviderAmountV1Schema } from '../../common/providerAmountV1.js';
+import { containsPriceTextV1, ProviderAmountV1Schema } from '../../common/providerAmountV1.js';
 import { deploymentTargetFitFieldsV1 } from '../../deployments/deployShapeV1.js';
 import { WorkflowActionFieldBindingV1Schema } from '../../workflows/workflowLeafV1.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../actions/internalProtocolZodAdapter.js';
@@ -72,7 +72,7 @@ export const DeploymentTargetPlanV1Schema = lazyZodSchema(() => z.strictObject({
     price: z.optional(ProviderAmountV1Schema),
     // A fact states a price only as a ProviderAmountV1 `price`, which the shared cost presenter prints.
     facts: z.array(z.union([
-        z.strictObject({ label: planFactLabel(), value: z.string() }),
+        z.strictObject({ label: planFactLabel(), value: z.string().check(z.refine(value => !containsPriceTextV1(value), 'Declare a price as `price`.')) }),
         z.strictObject({ label: planFactLabel(), price: ProviderAmountV1Schema }),
     ])),
     included: z.optional(z.array(z.string())),

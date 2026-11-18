@@ -73,12 +73,20 @@ export const plugin = definePlugin({
             "value": "1 deploying seat included"
           },
           {
-            "label": "Additional seats",
-            "value": "$20 a month per deploying seat"
+            "label": "Each extra deploying seat",
+            "price": {
+              "amount": "20",
+              "currency": "USD",
+              "unit": "month"
+            }
           },
           {
-            "label": "Credit",
-            "value": "$20 a month"
+            "label": "Usage credit included",
+            "price": {
+              "amount": "20",
+              "currency": "USD",
+              "unit": "month"
+            }
           },
           {
             "label": "Transfer",

@@ -67,7 +67,7 @@ const deploymentTargets = { workers: { statusIntervalMs: 1000, role: 'runtime', 
     description: 'Code that runs on Cloudflare’s network',
     plans: [
       {
-        "id": "free",
+        "id": "workers-free",
         "title": "Free",
         "price": {
           "amount": "0",
@@ -93,7 +93,7 @@ const deploymentTargets = { workers: { statusIntervalMs: 1000, role: 'runtime', 
         }
       },
       {
-        "id": "paid",
+        "id": "workers-paid",
         "title": "Paid",
         "price": {
           "amount": "5",
@@ -111,11 +111,19 @@ const deploymentTargets = { workers: { statusIntervalMs: 1000, role: 'runtime', 
           },
           {
             "label": "Extra requests",
-            "value": "$0.30 per 1M"
+            "price": {
+              "amount": "0.30",
+              "currency": "USD",
+              "unit": "1M requests"
+            }
           },
           {
             "label": "Extra CPU time",
-            "value": "$0.02 per 1M ms"
+            "price": {
+              "amount": "0.02",
+              "currency": "USD",
+              "unit": "1M CPU ms"
+            }
           }
         ],
         "included": [

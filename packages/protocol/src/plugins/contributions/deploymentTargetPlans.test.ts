@@ -27,6 +27,9 @@ it('rejects unknown plan fields and malformed source provenance', () => {
         // One price shape (O-DEPLOY, owner ruling A1): a price written as a text fact beside it is refused.
         { ...plan, facts: [{ label: 'Price', value: '$0 a month' }] },
         { ...plan, facts: [{ label: 'price', value: 'Free' }] },
+        // Any price written as text, under any label, is refused: it belongs in a priced fact.
+        { ...plan, facts: [{ label: 'Extra requests', value: '$0.30 per 1M' }] },
+        { ...plan, facts: [{ label: 'Credit', value: '20 USD a month' }] },
         { ...plan, facts: [{ label: 'Extra requests', value: '0.30', price: { amount: '0.30', currency: 'USD', unit: '1M requests' } }] },
         { ...plan, facts: [{ label: 'Extra requests', price: { amount: 'free', currency: 'USD', unit: '1M requests' } }] },
         { ...plan, facts: [{ ...plan.facts[0], currency: 'USD' }] },

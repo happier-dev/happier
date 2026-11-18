@@ -58,11 +58,14 @@ not require this checkout step. Deploy itself never opens a checkout internally.
 
 The optional `deploymentTargets[].plans` contribution carries provider-authored
 plan facts: `id`, `title`, an optional structured `price: { amount, currency,
-unit }`, `facts: { label, value }[]`, optional `included: string[]`, and
-`source: { url, checkedAt }`. `checkedAt` is an ISO calendar date. `price` uses
-the shared `ProviderAmountV1` shape (`packages/protocol/src/common/providerAmountV1.ts`),
-which Machine provider prices also use. The schema refuses a `Price` text fact, so
-a plan states its price only through `price`.
+unit }`, `facts: ({ label, value } | { label, price })[]`, optional
+`included: string[]`, and `source: { url, checkedAt }`. `checkedAt` is an ISO
+calendar date. Every `price` uses the shared `ProviderAmountV1` shape
+(`packages/protocol/src/common/providerAmountV1.ts`), which Machine provider
+prices also use. The schema refuses a fact labelled `Price` and any text fact
+whose value writes money ("$0.30 per 1M"), so a manifest states every price as
+data. A starting price with usage on top is the plan `price` plus priced usage
+facts.
 The contribution schema owns this closed shape; the normalized target consumes
 the same schema. Omission leaves existing targets unchanged. These are dated
 public facts, not a quote, live pricing feed or price calculator. Render only
@@ -106,15 +109,17 @@ pairs, then returns the validated recommendations, dropped reasons, and any
 questions. Cards are rendered from that checked result and the catalog facts.
 No model-written price is displayed.
 
-Target plugins declare dated plans with a public source URL. The catalog copies
-each target's declared `plans` unchanged, and the setup cards, Where it runs and
-Review render them through one plans component: the shared cost presenter prints
-each structured price and the checked date, and the other facts print as
-declared. Review alone adds a `Your plan` line, because the connected account is
+Target plugins declare dated plans with a public source URL. The catalog carries
+each target's declared `plans` for the model to read. Setup cards in both hosts
+take a target's plans from the Account's own deployment-target declarations, by
+the recommendation's target id, never from the catalog a Session agent passes back
+in its check call. Cards, Where it runs and Review render them through one plans
+component: the shared cost presenter prints every structured price and the
+checked date, and the other facts print as declared. Review alone adds a `Your plan` line, because the connected account is
 chosen after Where it runs. When the selected Vercel or Cloudflare account exposes
 a provider plan through its existing `quota()` read, the UI matches that name to a
-declared plan by id or title, or by title named with the platform's product
-(Cloudflare reports `Workers Paid`, which never matches the Pages plan). An absent
+declared plan by id or title, ignoring case and separators. Cloudflare reports
+`Workers Paid`, which matches only the Workers plan id `workers-paid`. An absent
 or unmapped plan leaves the declared facts visible without that line. The plugin
 plan-id mappings are exact and are confirmed against live responses only at the
 release check for account plan lines.
