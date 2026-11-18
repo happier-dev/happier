@@ -100,29 +100,8 @@
     "scripts/serverConfig/**/*"
   ],
   "exclude": [
+    // Use .composed. for fixtures importing another workspace's source. Vitest resolves them with their owning projects.
     "**/*.composed.*",
-    // This actively maintained composition fixture also imports CLI source.
-    "sources/app/api/routes/actions/externalActionExecutionAuthorization.sqlite.integration.spec.ts",
-    // The owner tuple compatibility seam exercises the real CLI producer through the server route.
-    "sources/app/session/sessionOwnerOpenAttestationTuple.sqlite.integration.spec.ts",
-    "sources/app/discussions/sessionDiscussions.sqlite.integration.spec.ts",
-    // Approved Discussion replay drives the real CLI workflow publisher through the Machine socket.
-    "sources/app/api/socket/machineUpdateHandler.discussionReplay.sqlite.integration.spec.ts",
-    // These specs drive real CLI producers; the test-only project (tsconfig.vitest.json) still resolves them.
-    "sources/app/api/routes/actions/discussionExecutionAuthorization.sqlite.integration.spec.ts",
-    "sources/app/api/routes/session/accountRunFollowDelivery.sqlite.integration.spec.ts",
-    "sources/app/deployments/environmentSecretLaunchAdmission.sqlite.integration.spec.ts",
-    "sources/app/api/routes/session/sessionFollowPersonalProgress.sqlite.integration.spec.ts",
-    "sources/app/api/routes/session/sessionFollowRoutes.sqlite.integration.spec.ts",
-    "sources/app/api/socket/sessionUpdateHandler.sqlite.integration.spec.ts",
-    "sources/app/artifacts/artifactCreateRecovery.sqlite.integration.spec.ts",
-    "sources/app/changes/accountPublicationContention.postgres.dbcontract.spec.ts",
-    "sources/app/machines/managed/managedAcquire.integration.spec.ts",
-    "sources/app/machines/managed/managedFiniteWake.sqlite.integration.spec.ts",
-    "sources/app/session/follow/accountFollowRuleService.sqlite.integration.spec.ts",
-    // These Home search specs share the packages/tests performance fixture ids.
-    "sources/app/search/homeSearchStartApi.sqlite.integration.spec.ts",
-    "sources/app/search/readHomeSearchVisibleSessionConstraints.postgres.dbcontract.spec.ts",
     // Browser code and its unit fixture are checked by tsconfig.publicViewer.json.
     "sources/app/api/routes/share/artifactHtmlViewer.ts",
     "sources/app/api/routes/share/publicDeclarativeViewer.ts",

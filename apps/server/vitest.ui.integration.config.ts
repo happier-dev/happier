@@ -32,7 +32,7 @@ export default defineConfig({
             'sources/app/api/routes/actions/sessionOrganizationAppearance.sqlite.composed.integration.spec.ts',
             'sources/app/api/routes/account/accountEncryptionAbsentSettings.sqlite.composed.integration.spec.ts',
             'sources/app/session/organization/sessionOrganizationReseal.sqlite.composed.integration.spec.ts',
-            'sources/app/session/sessionOwnerOpenAttestationTuple.sqlite.integration.spec.ts',
+            'sources/app/session/sessionOwnerOpenAttestationTuple.sqlite.composed.integration.spec.ts',
             'sources/app/artifacts/artifactInventoryPublications.composed.integration.spec.ts',
             'sources/app/api/routes/connect/qualifiedConnectedAccounts/usagePageProjection.composed.integration.spec.ts',
             'sources/app/session/sessionSharedActionConfirmation.sqlite.composed.integration.spec.ts',
