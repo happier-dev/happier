@@ -48,6 +48,7 @@ const SESSION_SUMMARY_KEYS: ReadonlySet<string> = new Set(['title', 'label', 'na
 const CURRENT_UI_CONTEXT_READ_TOOL_NAME = String(
   getActionSpec('ui.current_context.read').bindings?.voiceClientToolName ?? '',
 ).trim();
+const SETTINGS_LIST_TOOL_NAME = String(getActionSpec('settings.list').bindings?.voiceClientToolName ?? '').trim();
 const DECLARATION_LABEL_TOOL_NAMES: ReadonlySet<string> = new Set(
   (['agents.backends.list', 'agents.models.list', 'settings.list'] as const).flatMap(id => [
     id, getActionSpec(id).bindings?.voiceClientToolName ?? '',
@@ -209,6 +210,7 @@ function redactVoiceToolResultValueWithClassification(
   prefs: VoiceToolResultRedactionPrefs,
   preservePresentationLabels: boolean,
   preserveSchemaFieldPaths = false,
+  preserveSettingsDeclarationMetadata = false,
 ): unknown {
   const resolvedPrefs: VoiceToolResultRedactionPrefs = {
     shareFilePaths: prefs?.shareFilePaths === true,
@@ -216,7 +218,9 @@ function redactVoiceToolResultValueWithClassification(
     sharePermissionRequests: prefs?.sharePermissionRequests === true,
   };
   const stripped = stripGatedKeys(value, resolvedPrefs, 0, preservePresentationLabels);
-  return resolvedPrefs.shareFilePaths ? stripped : redactVoicePathLikeData(stripped, { preserveSchemaFieldPaths });
+  return resolvedPrefs.shareFilePaths ? stripped : redactVoicePathLikeData(stripped, {
+    preserveSchemaFieldPaths, preserveSettingsDeclarationMetadata,
+  });
 }
 
 function projectActionResultForProvider(value: unknown): Readonly<{ ok: true }> | Readonly<{
@@ -293,6 +297,7 @@ export function redactVoiceToolResultForProvider(
     toolName === CURRENT_UI_CONTEXT_READ_TOOL_NAME || DECLARATION_LABEL_TOOL_NAMES.has(toolName)
       || ACTION_CATALOG_TOOL_NAMES.has(toolName) || ACCOUNT_REQUEST_READ_TOOL_NAMES.has(toolName),
     ACTION_CATALOG_TOOL_NAMES.has(toolName),
+    toolName === SETTINGS_LIST_TOOL_NAME || toolName === 'settings.list',
   );
 }
 

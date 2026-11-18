@@ -3,6 +3,15 @@ import { SETTINGS_DECLARATION_ACTION_IDS_V1, SettingsDeclarationActionInputSchem
 import { getActionSpec, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import { normalizeSessionListFilterV1 } from '../sessions/listFilter/sessionListFilterV1.js';
 
+describe('settings discovery delivery', () => {
+  it('admits an explicit result byte budget and continuation without changing the ordinary request', () => {
+    const schema = SettingsDeclarationActionInputSchemasV1['settings.list'];
+    expect(schema.parse({})).toEqual({});
+    expect(schema.parse({ pageId: 'homeAdministration', maxBytes: 65536, cursor: 10 }))
+      .toEqual({ pageId: 'homeAdministration', maxBytes: 65536, cursor: 10 });
+  });
+});
+
 describe('collection space intent admission', () => {
   it('accepts entity-bound intents while rejecting authority, foreign filters and unknown mutation fields', () => {
     const schema = SettingsDeclarationActionInputSchemasV1['settings.invoke'];

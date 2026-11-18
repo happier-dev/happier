@@ -7,6 +7,8 @@ import type { ExtensionSelectionV1, QualifiedAudienceSelection, UpdatedSelection
 export type SettingsDeclarationsActionInputById = {
     readonly "settings.list": {
         pageId?: string | undefined;
+        maxBytes?: number | undefined;
+        cursor?: number | undefined;
     };
     readonly "settings.get": {
         anchor: string;
@@ -894,6 +896,8 @@ export type SettingsDeclarationsActionResultById = {
             };
             unavailableReason?: 'feature_disabled' | 'not_bound' | 'read_only' | 'sensitive' | 'unsupported_host' | undefined;
         }[];
+        total?: number | undefined;
+        nextCursor?: number | undefined;
     };
     readonly "settings.get": {
         anchor: string;

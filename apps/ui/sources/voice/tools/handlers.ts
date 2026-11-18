@@ -45,7 +45,7 @@ import {
   isCurrentUiContextVoiceAction,
   isVoiceActionAvailableInState,
 } from './resolveDisabledVoiceActionIds';
-import { jsonError, jsonOk, serializeVoiceActionExecuteResult } from './voiceActionResult';
+import { jsonError, jsonOk, serializeVoiceActionExecuteResult, voiceToolDiscoveryResultByteBudget } from './voiceActionResult';
 import { executeSpokenAction, type SpokenActionTurnOrigin } from './executeSpokenAction';
 import { bindVoiceSessionSpawnInput } from './actionImpl/bindSessionSpawnInput';
 import { readVoiceSpawnAlternative } from './actionImpl/sessionSpawnAlternative';
@@ -413,6 +413,11 @@ export function createVoiceToolHandlers(
       : useAwareness ? { ...input, view: 'awareness' } : parameters;
     if (useAwareness && actionInput && typeof actionInput === 'object') {
       Reflect.deleteProperty(actionInput, 'includeLastMessagePreview');
+    }
+    if (actionId === 'settings.list' && input) {
+      const budget = voiceToolDiscoveryResultByteBudget(ctx?.callId);
+      actionInput = { ...input, maxBytes: input.maxBytes === undefined ? budget
+        : typeof input.maxBytes === 'number' ? Math.min(input.maxBytes, budget) : input.maxBytes };
     }
     if (actionId === 'agents.backends.list' && input && input.machineId === undefined
       && deps.currentExecutionTarget && serverId

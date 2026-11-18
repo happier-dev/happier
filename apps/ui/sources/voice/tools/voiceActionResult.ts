@@ -1,12 +1,25 @@
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isSessionSpawnNewActionIdV1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isRecord } from '@happier-dev/protocol/common/records';
+import { utf8ByteLength } from '@happier-dev/protocol/bugs/reports/utf8';
 import { normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
 import { SessionMessageReplyMutationResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { readSessionSpawnNewFailure, resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import type { VoiceSpawnAlternative } from './actionImpl/sessionSpawnAlternative';
+
+/**
+ * LiveKit reliable data packets admit 64 KiB. The SDK JSON-encodes the serialized
+ * callback output, at most doubling its UTF-8 size by escaping quotes/backslashes.
+ * Reserve the actual call-id envelope and the larger generic Action success wrapper.
+ */
+export function voiceToolDiscoveryResultByteBudget(callId = ''): number {
+  const packetBytes = utf8ByteLength(JSON.stringify({ type: 'client_tool_result', tool_call_id: callId,
+    result: '', is_error: false }));
+  const successWrapperBytes = utf8ByteLength(JSON.stringify({ ok: true, result: null })) - 'null'.length;
+  return Math.floor((64 * 1024 - packetBytes) / 2) - successWrapperBytes;
+}
 
 export function jsonOk(payload?: Record<string, unknown>): string {
   return JSON.stringify({ ok: true, ...(payload ?? {}) });

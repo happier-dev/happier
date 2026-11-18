@@ -133,7 +133,9 @@ const SettingReversalInputSchema = lazyZodSchema(() => z.union([
 ]));
 
 export const SettingsDeclarationActionInputSchemasV1 = {
-  'settings.list': z.strictObject({ pageId: z.optional(z.string().check(z.trim(), z.minLength(1))) }),
+  'settings.list': z.strictObject({ pageId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    maxBytes: z.optional(z.number().check(z.int(), z.positive())),
+    cursor: z.optional(z.number().check(z.int(), z.nonnegative())) }),
   'settings.get': z.strictObject({ anchor: AnchorSchema, key: z.optional(SettingKeySchema), target: z.optional(SettingsDeclarationTargetV1Schema), includeVersion: z.optional(z.literal(true)) }),
   'settings.set': z.strictObject({ anchor: AnchorSchema, key: z.optional(SettingKeySchema), value: SettingsDeclarationValueV1Schema, target: z.optional(SettingsDeclarationTargetV1Schema),
     expectedSettingsVersion: z.optional(SettingsVersionSchema), reversal: z.optional(SettingReversalInputSchema) }),
@@ -142,7 +144,9 @@ export const SettingsDeclarationActionInputSchemasV1 = {
   'settings.invoke': z.strictObject({ anchor: AnchorSchema, input: z.optional(SettingsDeclarationOperationInputV1Schema), target: z.optional(SettingsDeclarationTargetV1Schema) }),
 } as const;
 export const SettingsDeclarationActionOutputSchemasV1 = {
-  'settings.list': z.strictObject({ items: z.array(SettingsDeclarationDescriptorV1Schema) }),
+  'settings.list': z.strictObject({ items: z.array(SettingsDeclarationDescriptorV1Schema),
+    total: z.optional(z.number().check(z.int(), z.nonnegative())),
+    nextCursor: z.optional(z.number().check(z.int(), z.nonnegative())) }),
   'settings.get': z.union([lazyZodSchema(() => z.extend(ValueResultSchema, { settingsVersion: z.optional(SettingsVersionSchema) })),
     lazyZodSchema(() => z.extend(UnsetResultSchema, { settingsVersion: z.optional(SettingsVersionSchema) }))]),
   'settings.set': z.union([

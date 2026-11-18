@@ -74,7 +74,10 @@ export const SETTINGS_ADMINISTRATION_ACTION_SPECS: ActionSpecArrayConcat<readonl
       ? [{ path: 'pageId', title: 'Settings page', widget: 'text',
         description: 'Optional exact page id from settings discovery, not a display name. Omit to list all settings and discover their page ids, displayed titles, anchors and allowed values. Built-in page ids: '
           + [...new Set(BUILT_IN_SETTINGS_DECLARATIONS_V1.map(setting => setting.pageId))].join(', '),
-      }]
+      }, { path: 'maxBytes', title: 'Result byte budget', widget: 'number',
+        description: 'Optional UTF-8 JSON result budget supplied by the delivery caller. Full declarations are paged, never truncated. Omit for the complete catalog.' },
+      { path: 'cursor', title: 'Discovery continuation', widget: 'number',
+        description: 'Continue with nextCursor from the previous result, keeping the same pageId and byte budget. total counts all matching declarations; absent nextCursor means discovery is complete.' }]
       : [
         { path: 'anchor', title: 'Setting', widget: 'text', required: true },
         { path: 'target', title: 'Settings target', widget: 'json',

@@ -56,10 +56,14 @@ function replaceAbsolutePathPatterns(value: string): string {
     return ABSOLUTE_PATH_PATTERNS.reduce((current, pattern) => current.replace(pattern, REDACTED_PATH_TOKEN), value);
 }
 
-function redactPathLikeTokens(value: string): string {
+function redactPathLikeTokens(value: string, preserveCatalogRelativePaths = false): string {
     return value.replace(CANDIDATE_PATH_TOKEN_PATTERN, (candidate) => {
         const trimmed = stripWrappingPunctuation(candidate);
         if (!trimmed) return candidate;
+        if (preserveCatalogRelativePaths) {
+            return /^(?:\/|~[\\/]|\.{1,2}[\\/])/.test(trimmed)
+                ? candidate.replace(trimmed, REDACTED_PATH_TOKEN) : candidate;
+        }
         if (!looksLikeRelativePathLike(trimmed)) return candidate;
         return candidate.replace(trimmed, REDACTED_PATH_TOKEN);
     });
@@ -76,10 +80,14 @@ export function redactVoicePathLikeString(value: string): string {
     return redactPathLikeTokens(replaceAbsolutePathPatterns(value));
 }
 
-export function redactVoicePathLikeData(input: unknown, options?: Readonly<{ preserveSchemaFieldPaths?: boolean }>): unknown {
+export function redactVoicePathLikeData(input: unknown, options?: Readonly<{
+    preserveSchemaFieldPaths?: boolean;
+    preserveSettingsDeclarationMetadata?: boolean;
+}>): unknown {
     const seen = new Set<object>();
 
-    const walk = (value: unknown, depth: number, parentKey: string | null, schemaSectionField = false): unknown => {
+    const walk = (value: unknown, depth: number, parentKey: string | null, schemaSectionField = false,
+        settingsDeclarationMetadata = false): unknown => {
         // Provider-bound redaction must fail closed at the traversal guard. An
         // untouched deep subtree could otherwise carry paths beyond the limit.
         if (depth > 20) return null;
@@ -93,20 +101,26 @@ export function redactVoicePathLikeData(input: unknown, options?: Readonly<{ pre
                 && !(options?.preserveSchemaFieldPaths && parentKey === 'path')) {
                 return REDACTED_PATH_TOKEN;
             }
-            return redactVoicePathLikeString(value);
+            // Settings list items contain declarations, never the person's stored
+            // values. Slashes in catalog identifiers, choices and prose are not
+            // filesystem paths; actual absolute paths remain private.
+            return settingsDeclarationMetadata
+                ? redactPathLikeTokens(replaceAbsolutePathPatterns(value), true)
+                : redactVoicePathLikeString(value);
         }
         if (!value || typeof value !== 'object') return value;
         if (seen.has(value as object)) return null;
         seen.add(value as object);
 
         if (Array.isArray(value)) {
-            return value.map((entry) => walk(entry, depth + 1, parentKey));
+            return value.map((entry) => walk(entry, depth + 1, parentKey, false,
+                settingsDeclarationMetadata || (options?.preserveSettingsDeclarationMetadata === true && parentKey === 'items')));
         }
 
         const output: Record<string, unknown> = {};
         for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
             output[key] = walk(entry, depth + 1, key,
-                parentKey === 'schemaSections' || parentKey === 'schemaSection');
+                parentKey === 'schemaSections' || parentKey === 'schemaSection', settingsDeclarationMetadata);
         }
         return output;
     };

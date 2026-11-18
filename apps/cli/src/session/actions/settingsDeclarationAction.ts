@@ -1,4 +1,5 @@
 import { getSettingsDeclarationCatalogV1, readSettingsCatalogDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarationCatalog';
+import { projectSettingsDeclarationDiscoveryV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarationDiscovery';
 import { ACCOUNT_SETTING_DEFINITIONS, accountSettingsParse, type AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import { ActionPolicyInputSchemas, isActionPolicyActionId, type ActionPolicySetResult } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
 import { readActionAudiencePolicy, applyActionPolicyMutation } from '@happier-dev/protocol/actions/actionAudiencePolicy';
@@ -150,7 +151,7 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
               ...(item.operation.kind === 'invoke' ? { requiresApproval: item.operation.requiresApproval !== false } : {}) } } : {}),
           };
         });
-      return { items };
+      return projectSettingsDeclarationDiscoveryV1(items, requested);
     }
     const parsed = SettingsDeclarationActionInputSchemasV1[actionId].parse(input);
     const declaration = readSettingsCatalogDeclarationV1(declarations, parsed.anchor);

@@ -5,6 +5,7 @@ import type { ReadableApprovalProfileV1 } from '@happier-dev/protocol/actions/ap
 import type { ApprovalProfileArtifactChangeV1, executeApprovalProfileArtifactChangeV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { SettingsDeclarationActionInputSchemasV1, SettingsDeclarationActionOutputSchemasV1, SettingsDeclarationValueV1Schema, SettingsDeclarationMutationReversalV1Schema, SettingsDeclarationCapturedMutationV1Schema, type SettingsDeclarationActionIdV1, type SettingsDeclarationDescriptorV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import { projectSettingsDeclarationDiscoveryV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarationDiscovery';
 import { AccountSettingMutationV1Schema, applyAccountSettingMutationV1 } from '@happier-dev/protocol/account/settings/accountSettingMutationV1';
 import { captureSettingMutationV1, restoreSettingMutationV1 } from '@happier-dev/protocol/actions/settings/settingMutationReversal';
 import { ACCOUNT_SETTING_DEFINITIONS } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -285,7 +286,7 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
                     description: administrationTarget.description, readable: Boolean(owner.accountScope), writable: Boolean(owner.accountScope),
                     sensitive: false, storageScope: 'local', ...(!owner.accountScope ? { unavailableReason: 'not_bound' as const } : {}) });
             }
-            return { items };
+            return projectSettingsDeclarationDiscoveryV1(items, parsed);
         }
         const parsed = SettingsDeclarationActionInputSchemasV1[actionId].parse(input);
         if (parsed.anchor === 'machines.administrationTarget') {

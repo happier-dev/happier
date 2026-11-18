@@ -172,7 +172,7 @@ const FIELD_GUIDANCE_BY_ACTION_ID: Readonly<Record<string, Readonly<Record<strin
 
 const WORKFLOW_NOTES_BY_ACTION_ID: Readonly<Record<string, readonly VoiceGuidanceNote[]>> = Object.freeze({
   'settings.list': [{
-    text: 'For Happier preferences, use settings_list to discover the displayed setting and its exact anchor, then settings_get to read it. Use settings_set for a writable value or settings_invoke for a declared operation. Perform these through Happier tools rather than forwarding the request to a coding session',
+    text: 'For Happier preferences, use settings_list to discover the displayed setting and its exact anchor, then settings_get to read it. Discovery returns full declarations in delivery-sized pages: continue with cursor equal to nextCursor and the same pageId until nextCursor is absent, or narrow by an exact pageId. Use settings_set for a writable value or settings_invoke for a declared operation. Perform these through Happier tools rather than forwarding the request to a coding session',
     requiresActionIds: ['settings.list', 'settings.get', 'settings.set', 'settings.invoke'],
   }],
   [VOICE_BRIEF_REQUEST_ACTION_ID_V1]: [{

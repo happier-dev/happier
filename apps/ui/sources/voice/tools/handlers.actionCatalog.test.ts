@@ -55,6 +55,50 @@ const { createDefaultActionExecutor } = await import('@/sync/ops/actions/default
 describe('Voice Action reference catalog', () => {
   beforeEach(async () => { await home.reset(); });
   afterEach(async () => { await home.reset(); });
+  it.each(['direct', 'generic', 'page-filtered'] as const)('delivers the complete settings catalog through transport-sized Voice discovery pages (%s)', async transport => {
+    const serverId = await home.addHome({ name: 'Settings discovery', serverUrl: 'https://settings-discovery.test',
+      accountId: 'alice', currentAccount: true });
+    home.answer(serverId, 'GET /v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {} } } });
+    const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: serverId });
+    const { createRealtimeToolBarrierForVoiceHandlers } = await import('./defaultRealtimeToolBarrier');
+    const barrier = createRealtimeToolBarrierForVoiceHandlers({ handlers,
+      readRedactionPrefs: () => ({ shareFilePaths: false, shareSessionSummary: false, sharePermissionRequests: false }),
+      submitResults: async () => {}, continueResponse: async () => {},
+    });
+    const filter = transport === 'page-filtered' ? { pageId: 'homeAdministration' } : {};
+    const complete = await createDefaultActionExecutor().execute('settings.list', filter, {
+      surface: 'voice', authority: 'account_automation', serverId,
+    });
+    expect(complete.ok).toBe(true);
+    if (!complete.ok) throw new Error('Discovery failed');
+    const expected = SettingsDeclarationActionOutputSchemasV1['settings.list'].parse(complete.result);
+    expect(new TextEncoder().encode(JSON.stringify(expected)).length).toBeGreaterThan(64 * 1024);
+    const items = [];
+    let cursor: number | undefined;
+    try {
+      do {
+        const input = { ...filter, maxBytes: Number.MAX_SAFE_INTEGER, ...(cursor ? { cursor } : {}) };
+        const callId = `settings-discovery-call-${cursor ?? 0}`;
+        const responseId = `settings-discovery-response-${cursor ?? 0}`;
+        const outcome = await barrier.run({ responseId, calls: [{ v: 1, responseId, callId, order: 0,
+          toolName: transport === 'generic' ? 'action_execute' : 'settings_list',
+          arguments: transport === 'generic' ? { actionId: 'settings.list', input } : input,
+        }] });
+        expect(outcome.results[0]?.status).toBe('success');
+        const serialized = JSON.stringify(outcome.results[0]?.output);
+        const raw = JSON.parse(serialized);
+        expect(raw.ok).toBe(true);
+        const page = transport === 'generic' ? raw.result : raw;
+        // The Eleven SDK serializes the callback output inside its reliable LiveKit packet.
+        expect(new TextEncoder().encode(JSON.stringify({ type: 'client_tool_result',
+          tool_call_id: callId, result: serialized, is_error: false })).length).toBeLessThanOrEqual(64 * 1024);
+        expect(page.total).toBe(expected.items.length);
+        items.push(...page.items);
+        cursor = page.nextCursor;
+      } while (cursor);
+    } finally { barrier.dispose(); }
+    expect(items).toEqual(expected.items);
+  });
   it('registers declared Project and administrator Voice entry points through the shared catalog', () => {
     const handlers = createVoiceToolHandlers({ resolveSessionId: () => null });
     const control = { actionId: 'projects.list', input: {} };

@@ -7307,7 +7307,14 @@ Account or other devices.
 
 In 0.3 development, `settings.list` reaches the answering client's complete
 declaration registry, including contributed settings. It does not substitute a
-partial headless catalog. The Delegation anchors and Create-session Action policy
+partial headless catalog. Ordinary calls return the complete catalog. Callers may
+provide `maxBytes` to page full declarations within a UTF-8 JSON result budget;
+`total` reports the matching count and `nextCursor` identifies the next offset.
+Continue with that `cursor` and the same `pageId` filter until `nextCursor` is
+absent. Voice supplies a budget derived from its encoded reliable transport
+envelope. A budget too small for one declaration returns
+`settings_discovery_budget_too_small` with `minimumBytes`; descriptors and their
+allowed values are never truncated. The Delegation anchors and Create-session Action policy
 fields share their Account bindings in
 `packages/protocol/src/actions/accountSettingDeclarations.ts`; shared Account
 bindings can be read and written without an answering app. CLI writes use the

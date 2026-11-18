@@ -2,10 +2,28 @@ import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createCliSettingsDeclarationActionFixture as createCliSettingsDeclarationAction } from './settingsDeclarationAction.test-support';
 import { API_TOKEN_FULL_GRANT_V1, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol';
+import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('headless settings conditional writes', () => {
+    it('delivers every full declaration through byte-budgeted discovery without changing unbudgeted discovery', async () => {
+        const action = createCliSettingsDeclarationAction({});
+        const complete = SettingsDeclarationActionOutputSchemasV1['settings.list'].parse(
+            await action({ actionId: 'settings.list', input: {}, context: { surface: 'cli' } }));
+        const items = [];
+        let cursor: number | undefined;
+        do {
+            const page = SettingsDeclarationActionOutputSchemasV1['settings.list'].parse(
+                await action({ actionId: 'settings.list', input: { maxBytes: 64 * 1024, ...(cursor ? { cursor } : {}) }, context: { surface: 'cli' } }));
+            expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(64 * 1024);
+            expect(page).toMatchObject({ total: complete.items.length });
+            items.push(...page.items);
+            cursor = page.nextCursor;
+        } while (cursor);
+        expect(items).toEqual(complete.items);
+        expect(complete).toEqual({ items: complete.items });
+    });
     it('omits the mounted Voice edit from discovery without hiding present-user scalar settings', async () => {
         const action = createCliSettingsDeclarationAction({});
         const discovery = await action({ actionId: 'settings.list', input: { pageId: 'voiceConversations' }, context: { surface: 'cli' } });

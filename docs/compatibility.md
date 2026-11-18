@@ -9583,6 +9583,15 @@ unpublished direct cut; earlier strict development readers reject the binding.
 Existing overrides without bindings remain readable; no migration or adapter
 is introduced.
 
+Unreleased 0.3 `settings.list` keeps ordinary `{items}` discovery unchanged and
+adds optional `maxBytes`/`cursor` delivery inputs with `total`/`nextCursor` output
+metadata. Settings discovery input, output and descriptor envelopes remain
+closed. A requested budget is enforced by the shared discovery projector, never
+ignored; Voice and its matching UI/CLI readers update together. The inspected
+`../0.2` frontier at `9d13311c372a320c3fb82ea83981612cf1fa0102` has no corresponding
+Settings declaration Action family. This changes no persisted format or wire
+epoch and adds no mixed-development adapter under the unpublished direct cut.
+
 Unreleased 0.3 command approval failures preserve the existing closed command result
 inside the existing execution `details` field. Matching approval readers retain exit
 code, stdout, stderr and optional truncation flags for `command_failed` and
