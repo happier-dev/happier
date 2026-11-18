@@ -49,6 +49,41 @@ describe('findTrustedExternalSessionOwners', () => {
         expect(matches[0]?.pid).toBe(4242);
     });
 
+    it('matches the Agent declared by a managed marker despite a stale legacy flavor', () => {
+        const matches = findTrustedExternalSessionOwners({
+            markers: [{
+                pid: 4244,
+                trackingKey: legacyPidSessionTrackingKey(4244),
+                happySessionId: 'happy-other-declared',
+                happyHomeDir: '/tmp/happy-home',
+                createdAt: 1,
+                updatedAt: 2,
+                flavor: 'pi',
+                metadata: {
+                    flavor: 'pi',
+                    runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: {} },
+                    piSessionId: 'pi-session-with-legacy-flavor',
+                },
+            }, {
+                pid: 4243,
+                trackingKey: legacyPidSessionTrackingKey(4243),
+                happySessionId: 'happy-pi-declared',
+                happyHomeDir: '/tmp/happy-home',
+                createdAt: 1,
+                updatedAt: 2,
+                metadata: {
+                    flavor: 'codex',
+                    runtimeDescriptorV1: { v: 1, agentId: 'pi', agent: {} },
+                    piSessionId: 'pi-session-with-legacy-flavor',
+                },
+            }],
+            agentId: 'pi',
+            remoteSessionId: 'pi-session-with-legacy-flavor',
+        });
+
+        expect(matches.map(marker => marker.happySessionId)).toEqual(['happy-pi-declared']);
+    });
+
     it('matches the exact provider-minted bytes the marker persisted', () => {
         // The Agent minted this id; the marker stores it verbatim through the
         // canonical vendor resume-id reader. Surrounding whitespace, the
