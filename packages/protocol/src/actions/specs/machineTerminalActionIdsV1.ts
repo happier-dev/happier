@@ -9,3 +9,10 @@ export const MACHINE_TERMINAL_ACTION_IDS = [
 export function isMachineTerminalOpenOrRestartActionIdV1(value: string): value is 'machines.terminal.open' | 'machines.terminal.restart' {
   return value === 'machines.terminal.open' || value === 'machines.terminal.restart';
 }
+
+export type MachineTerminalStreamActionIdV1 = 'machines.terminal.read' | 'machines.terminal.write';
+
+/** Stream I/O on an already admitted PTY: read and write carry no review of their own. */
+export function isMachineTerminalStreamActionIdV1(value: string): value is MachineTerminalStreamActionIdV1 {
+  return value === 'machines.terminal.read' || value === 'machines.terminal.write';
+}

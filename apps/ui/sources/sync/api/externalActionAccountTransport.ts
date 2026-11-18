@@ -1,4 +1,5 @@
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isMachineTerminalStreamActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { projectExternalActionMachineRuntimeDemandV1, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
@@ -385,7 +386,7 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     // Stream I/O on an admitted PTY carries no review; Home re-admits each own-Machine RPC.
     // Open/restart/close/list keep their requester invocation's Home custody.
     const ownTargetIncumbent = params.foreignTargetOnly === true
-        && (params.actionId === 'machines.terminal.read' || params.actionId === 'machines.terminal.write');
+        && isMachineTerminalStreamActionIdV1(params.actionId);
     const reviewedInvocation = params.invocation !== undefined && !ownTargetIncumbent;
     const currentOwnRow = !scopedController && !finite && !runtimeDemand && !reviewedInvocation && !retainedResource
         ? readCurrentOwnActionMachine(account, params.machineId) : null;

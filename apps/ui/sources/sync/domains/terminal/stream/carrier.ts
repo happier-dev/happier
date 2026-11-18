@@ -1,6 +1,7 @@
 import { isTerminalLegacyClientFallbackAllowed } from '@happier-dev/protocol/terminal/compatibility';
 import { terminalInputEventToPtyAction } from '@happier-dev/protocol/terminal/inputEncoding';
 import type { TerminalInputEvent as ProtocolTerminalInputEvent } from '@happier-dev/protocol/terminal/input';
+import type { MachineTerminalStreamActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
 import Constants from 'expo-constants';
 import uiPackage from '../../../../../package.json';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
@@ -195,7 +196,7 @@ export function createMachineRpcTerminalStreamCarrier(
     // custody or borrows the custodian's private Project/Session catalog.
     const accountBound = Boolean(options.accountId);
     let execute: FrontDoorActionExecute | null = null;
-    const executeStreamAction = async (actionId: 'machines.terminal.read' | 'machines.terminal.write', input: unknown, signal = options.signal) => {
+    const executeStreamAction = async (actionId: MachineTerminalStreamActionIdV1, input: unknown, signal = options.signal) => {
         if (!options.accountId || !options.serverId) throw Object.assign(new Error('terminal_access_denied'), { code: 'terminal_access_denied' });
         if (!execute) {
             const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
