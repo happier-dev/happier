@@ -1,8 +1,36 @@
 import { describe, expect, it } from 'vitest';
 import { getActionSpec } from '../actionSpecs.js';
 import { readActionApprovalScopeAdmissionV1 } from './approvalScope.js';
+import { createActionAutomationPortV1 } from './actionAutomationAdmission.js';
+import { automationSubjectKeyV1 } from '../../automations/automationSubjectV1.js';
 
 describe('declared Action operands', () => {
+  it.each([
+    { actionId: 'projects.sources.update', input: { patch: { name: 'QA-C resumed resource App' } } },
+    { actionId: 'projects.sources.delete', input: {} },
+    { actionId: 'projects.sources.moveToTeam', input: { teamId: 'team', requestKey: 'move-source' } },
+  ] as const)('matches exact App and any App checks for $actionId', async ({ actionId, input }) => {
+    const subject = { kind: 'app' as const, serverId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN',
+      projectSourceId: 'cmwl4o0x2000kpnm2cardo97i' };
+    const spec = getActionSpec(actionId);
+    const context = { surface: 'cli' as const, serverId: subject.serverId, defaultSessionMachineId: 'machine' };
+    const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [
+      { automationId: 'checks', triggerId: 'exact', triggerRevision: 0, workflowId: 'workflow', workflowRevision: 1,
+        ownerAccountId: 'actor', actionIds: [actionId], phase: 'after', subjectKind: 'app', subjectKey: automationSubjectKeyV1(subject) },
+      { automationId: 'checks', triggerId: 'any', triggerRevision: 0, workflowId: 'workflow', workflowRevision: 1,
+        ownerAccountId: 'actor', actionIds: [actionId], phase: 'after' },
+    ] }), settle: async () => {} });
+    const select = async (sourceId: string) => {
+      const request = { serverId: subject.serverId, sourceId, expectedRevision: 1, ...input };
+      const admission = await readActionApprovalScopeAdmissionV1({ actionId, spec, input: request, context,
+        deps: {}, phase: 'prepare', isSameHome: (left, right) => left === right });
+      if ('ok' in admission) throw new Error(admission.errorCode);
+      return port.select({ actionId, input: request, context, subjects: admission.automationSubjects });
+    };
+    expect((await select(subject.projectSourceId)).after.map(row => row.triggerId)).toEqual(['exact', 'any']);
+    expect((await select('another-source')).after.map(row => row.triggerId)).toEqual(['any']);
+  });
+
   it('projects the exact qualified Project without interpreting incidental ids', async () => {
     const spec = getActionSpec('projects.visibility.set');
     const result = await readActionApprovalScopeAdmissionV1({

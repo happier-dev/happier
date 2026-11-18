@@ -62,6 +62,11 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
   },
   {
     ...common, id: 'projects.sources.moveToTeam', executionPlacement: 'client', approval: { result: 'required' },
+    automationPrimarySubject: { kind: 'app', field: 'sourceId' },
+    approvalScope: { subjectKinds: ['app'], project: (input) => {
+      const target = ProjectSourcesMoveToTeamInputV1Schema.parse(input);
+      return { subjects: [{ kind: 'app', serverId: target.serverId, projectSourceId: target.sourceId }] };
+    } },
     title: 'Move Source to Team',
     description: 'Move a personal Source through one signed-in client review covering Machine access, used secrets, bindings, Source ownership, CI tokens, trigger approvals and previews. Unknown or partial steps must settle before personal access is withdrawn.',
     safety: 'danger', sideEffectClass: 'write', permissionChanging: true,
@@ -114,6 +119,11 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
   },
   {
     ...common, id: 'projects.sources.update', approval: {result: 'required'}, title: 'Update repository source',
+    automationPrimarySubject: { kind: 'app', field: 'sourceId' },
+    approvalScope: { subjectKinds: ['app'], project: (input) => {
+      const target = ProjectSourcesUpdateInputV1Schema.parse(input);
+      return { subjects: [{ kind: 'app', serverId: target.serverId, projectSourceId: target.sourceId }] };
+    } },
     description: 'Edit Source metadata or one exact context/dashboard attachment under the current Source revision. Artifact content and grants are independent.',
     safety: 'danger', sideEffectClass: 'write',
     bindings: { mcpToolName: 'projects_sources_update', voiceClientToolName: 'updateProjectSource' },
@@ -125,6 +135,11 @@ export const PROJECT_SOURCE_ACTION_SPECS_V1: readonly ProjectSourceActionSpec[] 
   },
   {
     ...common, id: 'projects.sources.delete', approval: {result: 'required'}, title: 'Delete repository source',
+    automationPrimarySubject: { kind: 'app', field: 'sourceId' },
+    approvalScope: { subjectKinds: ['app'], project: (input) => {
+      const target = ProjectSourcesDeleteInputV1Schema.parse(input);
+      return { subjects: [{ kind: 'app', serverId: target.serverId, projectSourceId: target.sourceId }] };
+    } },
     irreversible: true,
     description: 'Delete the Source metadata for its audience under the current revision. Checkout files, Artifact bytes and Artifact grants stay.',
     safety: 'danger', sideEffectClass: 'write',
