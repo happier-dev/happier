@@ -886,7 +886,9 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
         volumes?: readonly string[]; registryReferences?: readonly string[];
     }>): Promise<DeploymentImageV1> {
         const imageDirectory = join(directory, `image-${service}-${revision}`);
-        await mkdir(imageDirectory);
+        // Composed journeys may register the same service/revision more than once
+        // while sharing a Docker boundary; keep the fixture registration idempotent.
+        await mkdir(imageDirectory, { recursive: true });
         const config = Buffer.from(JSON.stringify({ architecture: 'amd64', os: 'linux',
             config: { Labels: { 's0.revision': revision, 's0.service': service },
                 ...(options?.volumes ? { Volumes: Object.fromEntries(options.volumes.map(target => [target, {}])) } : {}) },
