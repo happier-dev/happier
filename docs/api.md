@@ -1516,7 +1516,8 @@ row with its exact record row. With the Account stored-content V4 declaration,
 the feed keeps that pair together across page boundaries and uses `full` to
 signal continuation. A request with `limit=1` can return both rows of a pair.
 Requests without V4 retain the released `{changes, nextCursor}` response and
-ordinary row-count paging. A paired hint can certify one
+count only visible rows toward the page limit. A short or empty legacy page
+advances through the captured Account cursor. A paired hint can certify one
 changed UTC day for readers that already admitted history through the hint's
 starting cursor. If it also identifies a changed accepted-history suffix, its
 lower bound uses the server's stored observation timestamp. Missing hints or

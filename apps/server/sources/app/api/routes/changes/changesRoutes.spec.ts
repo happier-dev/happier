@@ -355,21 +355,12 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
         expect(sessionFindMany).toHaveBeenCalledTimes(1);
     });
 
-    it("filters pluginDomain rows for V1/V2 clients while advancing across the raw page", async () => {
-        accountFindUnique.mockResolvedValue({ seq: 100, changesFloor: 0 });
-        accountChangeFindMany.mockResolvedValue([
-            {
-                cursor: 11,
-                kind: "pluginDomain",
-                entityId: "pluginDomain/example.tasks/availability",
-                changedAt: new Date(1),
-                hint: {
-                    pluginDomain: "availability",
-                    pluginId: "example.tasks",
-                },
-            },
-            { cursor: 12, kind: "session", entityId: "s1", changedAt: new Date(2), hint: null },
-        ]);
+    it("excludes pluginDomain rows from the V2 storage query and includes them for V3", async () => {
+        accountFindUnique.mockResolvedValue({ seq: 12, changesFloor: 0 });
+        const session = { cursor: 12, kind: "session", entityId: "s1", changedAt: new Date(2), hint: null };
+        const plugin = { cursor: 11, kind: "pluginDomain", entityId: "pluginDomain/example.tasks/availability",
+            changedAt: new Date(1), hint: { pluginDomain: "availability", pluginId: "example.tasks" } };
+        accountChangeFindMany.mockResolvedValueOnce([session]).mockResolvedValueOnce([plugin, session]);
 
         const route = createRouteTestBuilder({
             method: "GET",
@@ -399,6 +390,9 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
                 nextCursor: 12,
             },
         });
+        expect(accountChangeFindMany).toHaveBeenNthCalledWith(1, expect.objectContaining({ where: expect.objectContaining({
+            cursor: { gt: 10, lte: 12 }, kind: { notIn: expect.arrayContaining(['pluginDomain']) },
+        }) }));
         const legacyResponse = await route.invoke({
             accountStoredContentCompatibility: {
                 supportsCurrentProtocol: true,
@@ -427,13 +421,17 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
             ],
             nextCursor: 12,
         });
+        expect(accountChangeFindMany).toHaveBeenNthCalledWith(2, expect.objectContaining({ where: expect.objectContaining({
+            kind: { notIn: expect.not.arrayContaining(['pluginDomain']) },
+        }) }));
         expect(legacyResponse.response).not.toHaveProperty("sessionAccessWitness");
     });
 
-    it("filters machinePool rows for pre-V4 clients while advancing across the raw page", async () => {
-        accountFindUnique.mockResolvedValue({ seq: 100, changesFloor: 0 });
-        accountChangeFindMany.mockResolvedValue([
-            { cursor: 11, kind: "machine", entityId: "m1", changedAt: new Date(1), hint: null },
+    it("excludes machinePool rows from the pre-V4 storage query and includes them for V4", async () => {
+        accountFindUnique.mockResolvedValue({ seq: 12, changesFloor: 0 });
+        const machine = { cursor: 11, kind: "machine", entityId: "m1", changedAt: new Date(1), hint: null };
+        accountChangeFindMany.mockResolvedValueOnce([machine]).mockResolvedValueOnce([
+            machine,
             { cursor: 12, kind: "machinePool", entityId: "pool-1", changedAt: new Date(2), hint: null },
         ]);
 
@@ -467,6 +465,9 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
                 nextCursor: 12,
             },
         });
+        expect(accountChangeFindMany).toHaveBeenNthCalledWith(1, expect.objectContaining({ where: expect.objectContaining({
+            kind: { notIn: expect.arrayContaining(['machinePool']) },
+        }) }));
 
         const currentResponse = await route.invoke({
             accountStoredContentCompatibility: {
@@ -489,10 +490,11 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
         });
     });
 
-    it("filters savedSecretResource rows for pre-V4 clients while advancing across the raw page", async () => {
-        accountFindUnique.mockResolvedValue({ seq: 100, changesFloor: 0 });
-        accountChangeFindMany.mockResolvedValue([
-            { cursor: 11, kind: "machine", entityId: "m1", changedAt: new Date(1), hint: null },
+    it("excludes savedSecretResource rows from the pre-V4 storage query and includes them for V4", async () => {
+        accountFindUnique.mockResolvedValue({ seq: 12, changesFloor: 0 });
+        const machine = { cursor: 11, kind: "machine", entityId: "m1", changedAt: new Date(1), hint: null };
+        accountChangeFindMany.mockResolvedValueOnce([machine]).mockResolvedValueOnce([
+            machine,
             { cursor: 12, kind: "savedSecretResource", entityId: "resource-1", changedAt: new Date(2), hint: null },
         ]);
 
@@ -522,6 +524,9 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
                 nextCursor: 12,
             },
         });
+        expect(accountChangeFindMany).toHaveBeenNthCalledWith(1, expect.objectContaining({ where: expect.objectContaining({
+            kind: { notIn: expect.arrayContaining(['savedSecretResource']) },
+        }) }));
 
         await expect(route.invoke({
             accountStoredContentCompatibility: currentSessionAccessWitnessCompatibility,

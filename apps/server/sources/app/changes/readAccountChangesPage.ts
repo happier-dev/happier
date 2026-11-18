@@ -4,7 +4,7 @@ import type { AccountStoredContentCompatibilityEvaluation } from "@/app/clientCo
 import { resolveSessionHostReferencesForAuthenticationInTx } from "@/app/session/pluginCollectionHostReferenceAdapter";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { listQueuedExecutionRunPendingTargetsForSessions } from "@/app/session/pending/pendingMessageService";
-import { readAuthoritativeSessionDeletionChangeV1, type ChangesResponse } from '@happier-dev/protocol/changes';
+import { ChangeKindSchema, readAuthoritativeSessionDeletionChangeV1, type ChangesResponse } from '@happier-dev/protocol/changes';
 import { isPairedProviderAccountUsageChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 
 function isPendingStateChangeHint(value: unknown): value is Record<string, unknown> {
@@ -190,10 +190,16 @@ export async function readAccountChangesPage(input: Readonly<{
 }>): Promise<AccountChangesPageRead> {
     const { accountId: userId, after, limit, sessionId, compatibility } = input;
     const selectedKinds = input.kinds;
-    const hasSelection = selectedKinds !== undefined;
     // The same V4 declaration admits the additive change-feed response fields.
     // Released readers reject those fields and drain by the requested row count.
     const supportsFull = compatibility.supportsSessionAccessWitnessProtocol;
+    const readThroughSnapshot = selectedKinds !== undefined || !supportsFull;
+    // Fill a legacy page with visible rows so its length still signals exhaustion.
+    const hiddenKinds = supportsFull ? [] : ChangeKindSchema.options.filter(kind => !isAccountChangeRowVisibleToCompatibility({ kind }, compatibility));
+    const kindFilter = selectedKinds === undefined && hiddenKinds.length === 0 ? {} : { kind: {
+        ...(selectedKinds === undefined ? {} : { in: [...selectedKinds] }),
+        ...(hiddenKinds.length === 0 ? {} : { notIn: hiddenKinds }),
+    } };
 
     const readPage = async (read: <T>(operation: (tx: Tx) => Promise<T>, singleStatement?: boolean) => Promise<T>) => {
         const account = await read(tx => tx.account.findUnique({
@@ -207,9 +213,9 @@ export async function readAccountChangesPage(input: Readonly<{
         const readRows = await read(tx => tx.accountChange.findMany({
             where: {
                 accountId: userId,
-                cursor: { gt: after, ...(hasSelection ? { lte: account.seq } : {}) },
+                cursor: { gt: after, ...(readThroughSnapshot ? { lte: account.seq } : {}) },
                 ...(sessionId === undefined ? {} : { entityId: sessionId }),
-                ...(selectedKinds === undefined ? {} : { kind: { in: [...selectedKinds] } }),
+                ...kindFilter,
             },
             orderBy: [{ cursor: 'asc' }, { kind: 'asc' }, { entityId: 'asc' }],
             take: supportsFull ? limit + 1 : limit,
@@ -232,7 +238,7 @@ export async function readAccountChangesPage(input: Readonly<{
         if (currentAccount && after < currentAccount.changesFloor) {
             return { status: 'cursor-gone', account: currentAccount, reason: 'cursor-behind-floor-after-rows' } as const;
         }
-        const visibleRows = rows.filter(row => isAccountChangeRowVisibleToCompatibility(row, compatibility));
+        const visibleRows = supportsFull ? rows.filter(row => isAccountChangeRowVisibleToCompatibility(row, compatibility)) : rows;
         const pendingRunIdsBySessionId = await read(tx => readAccountChangeRowsPendingRunIds(tx, userId, visibleRows), true);
         const sessionAccessResolutions = compatibility.supportsSessionAccessWitnessProtocol
             ? await read(tx => readAccountChangeRowsSessionAccess(tx, userId, visibleRows, input.readAuthentication))
@@ -246,15 +252,11 @@ export async function readAccountChangesPage(input: Readonly<{
     }
     const { account, rows, full } = page;
 
-    // `full` is judged on the stored rows the page read, before the compatibility filter: a page
-    // the filter shortened still has more rows after `nextCursor`, and its reader must read on.
-    // A selected read only materializes the requested AccountChange kinds
-    // and/or exact Session. Once that result is shorter than the requested
-    // page, the Account snapshot proves every cursor through `account.seq`
-    // was examined; advance directly instead of paging unrelated activity.
-    // A full page retains its last row cursor so the next page cannot skip
-    // another selected change.
-    const nextCursor = hasSelection && !full
+    // V4 can continue after a short projected page using `full`. Legacy reads
+    // and selected reads cover a captured Account snapshot. Once their read
+    // exhausts matching rows, it can acknowledge through that snapshot, even
+    // with a hidden tail. A full page acknowledges only its last returned row.
+    const nextCursor = readThroughSnapshot && !full
         ? account.seq
         : rows.length > 0 ? rows[rows.length - 1]!.cursor : after;
     return projectAccountChangesPage({ visibleRows: page.visibleRows, nextCursor, ...(supportsFull ? { full } : {}),
