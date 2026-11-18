@@ -1,8 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
-import { compileReviewLauncherInput, updateReviewLauncherEngineConfiguration } from './reviewLauncherSelection';
+import { compileReviewLauncherInput, updateReviewLauncherEngineConfiguration, updateReviewLauncherStepInput } from './reviewLauncherSelection';
 
 describe('review launcher submission', () => {
+    it('edits the chosen later-step configuration while retaining repeated engines and the scalar first roster', () => {
+        const first = { kind: 'engine', engineId: 'claude', modelId: 'first-model' };
+        const input = { reviewers: [first], steps: [
+            { kind: 'review', reviewers: [first], instructions: 'Security' },
+            { kind: 'verify', reviewers: [{ kind: 'engine', engineId: 'claude', modelId: 'second-model' },
+                { kind: 'person', principal: { kind: 'account', accountId: 'alice' }, required: true }], instructions: 'Check fixes' },
+        ] };
+        const updated = updateReviewLauncherStepInput(input, 1, step => updateReviewLauncherEngineConfiguration(step,
+            previous => ({ ...previous, modelId: 'third-model', roleId: 'reviewer' })));
+        const parsed = ReviewStartInputSchema.parse(compileReviewLauncherInput(updated, 'Inspect', null));
+        expect(parsed.reviewers).toEqual([first]);
+        expect(parsed.steps![1]!.reviewers).toEqual([
+            { kind: 'engine', engineId: 'claude', modelId: 'third-model', roleId: 'reviewer' },
+            { kind: 'person', principal: { kind: 'account', accountId: 'alice' }, required: true },
+        ]);
+        expect(parsed.steps!.map(step => step.instructions)).toEqual(['Security', 'Check fixes']);
+    });
     it('submits authored steps with their own reviewers and focus through the canonical start schema', () => {
         const input = compileReviewLauncherInput({ reviewers: [], steps: [
             { kind: 'review', reviewers: [{ kind: 'engine', engineId: 'claude', includeSessionTranscript: true }], instructions: 'Security' },

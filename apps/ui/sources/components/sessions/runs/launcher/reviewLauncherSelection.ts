@@ -96,6 +96,20 @@ export function readReviewLauncherSteps(input: Record<string, unknown>): readonl
         : [{ kind: 'review', reviewers: readReviewLauncherReviewers(input), instructions: '' }];
 }
 
+/** Existing launch controls receive only the roster of the step they edit. */
+export function updateReviewLauncherStepInput(input: Record<string, unknown>, stepIndex: number,
+    update: React.SetStateAction<Record<string, unknown>>): Record<string, unknown> {
+    const steps = readReviewLauncherSteps(input);
+    const step = steps[stepIndex];
+    if (!step) return input;
+    const { steps: _steps, ...shared } = input;
+    const current = { ...shared, reviewers: step.reviewers };
+    const updated = typeof update === 'function' ? update(current) : update;
+    const next = steps.map((value, index) => index === stepIndex
+        ? { ...value, reviewers: readReviewLauncherReviewers(updated) } : value);
+    return { ...input, steps: next, reviewers: next[0]?.reviewers ?? [] };
+}
+
 export function compileReviewLauncherInput(input: Record<string, unknown>, instructions: string,
     sourceSession: Readonly<{ serverId: string; sessionId: string }> | null): Record<string, unknown> {
     const { steps: _steps, outputs, ...rest } = input;
