@@ -142,7 +142,6 @@ patchedDependencies:
   "@prisma/client@7.10.1": patches/@prisma__client@7.10.1.patch
   "@expo/metro-config@55.0.13": patches/@expo__metro-config@55.0.13.patch
   "@legendapp/list@3.3.3": patches/@legendapp__list@3.3.3.patch
-  "@tauri-apps/plugin-http@2.5.2": patches/@tauri-apps__plugin-http@2.5.2.patch
   "@pierre/diffs@1.5.2": patches/@pierre__diffs@1.5.2.patch
   "@react-native/gradle-plugin@0.83.5": patches/@react-native__gradle-plugin@0.83.5.patch
   "@react-navigation/core@7.21.5": patches/@react-navigation__core@7.21.5.patch

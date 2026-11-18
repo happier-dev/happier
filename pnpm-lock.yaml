@@ -221,7 +221,6 @@ patchedDependencies:
   '@react-navigation/elements@2.9.17': 1cd97c4827a1579bcffdf4714a5f7167735482938524b4c9d5f918414a896d40
   '@sentry/react-native@7.11.0': a0750e7934a6b09bb3e29d3d5802d58b1bf751182a3c0a70a0182dc14f362a1d
   '@socket.io/redis-streams-adapter@0.3.1': 3f43e186d5a6ea68f11acb84b85b8d592540b5d431183964560cf55421cc1467
-  '@tauri-apps/plugin-http@2.5.2': de73f2f9ebe973276c793be01015c53cfc7becbcb93356be23987a9d756c3a64
   expo-crypto@55.0.12: e38a87b4c4c7be4f007034850901d7ef8f4723685ad1ab89a2ed6054da68070e
   expo-modules-core@55.0.20: a05c6fd24b1582d04b3285434d4214f90aa4aa343daefa671c732bb2e5da7c51
   expo-notifications@55.0.16: 9b0f9f0fa885c5151147f01624e5299bb7b6b05138f06bddf715a3efcde3a9e1
@@ -1699,9 +1698,6 @@ importers:
       '@tauri-apps/cli':
         specifier: ~2.12.1
         version: 2.12.1
-      '@tauri-apps/plugin-http':
-        specifier: 2.5.2
-        version: 2.5.2(patch_hash=de73f2f9ebe973276c793be01015c53cfc7becbcb93356be23987a9d756c3a64)
       '@tauri-apps/plugin-notification':
         specifier: ^2.3.1
         version: 2.3.3
@@ -10028,9 +10024,6 @@ packages:
     resolution: {integrity: sha512-kEDEiGzG+yAc5FeLxtXpES/VN+F2C8H0r4gDVtfRLKxT9np9101d9REG/Kgo2lr0hKi0IpDsODiHnU3+naOmLg==}
     engines: {node: '>= 10'}
     hasBin: true
-
-  '@tauri-apps/plugin-http@2.5.2':
-    resolution: {integrity: sha512-x1mQKHSLDk4mS2S938OTeyk8L7QyLpCrKZCZcjkljGsvTvRMojCvI9SeJ1kaxc7t8xSilkC7WdId8xER9TIGLg==}
 
   '@tauri-apps/plugin-notification@2.3.3':
     resolution: {integrity: sha512-Zw+ZH18RJb41G4NrfHgIuofJiymusqN+q8fGUIIV7vyCH+5sSn5coqRv/MWB9qETsUs97vmU045q7OyseCV3Qg==}
@@ -23330,10 +23323,6 @@ snapshots:
       '@tauri-apps/cli-win32-arm64-msvc': 2.12.1
       '@tauri-apps/cli-win32-ia32-msvc': 2.12.1
       '@tauri-apps/cli-win32-x64-msvc': 2.12.1
-
-  '@tauri-apps/plugin-http@2.5.2(patch_hash=de73f2f9ebe973276c793be01015c53cfc7becbcb93356be23987a9d756c3a64)':
-    dependencies:
-      '@tauri-apps/api': 2.12.1
 
   '@tauri-apps/plugin-notification@2.3.3':
     dependencies:

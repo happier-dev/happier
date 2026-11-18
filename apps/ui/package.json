@@ -260,7 +260,6 @@
     "@shopify/react-native-skia": "2.4.18",
     "@tauri-apps/api": "~2.12.1",
     "@tauri-apps/cli": "~2.12.1",
-    "@tauri-apps/plugin-http": "2.5.2",
     "@tauri-apps/plugin-notification": "^2.3.1",
     "@tiptap/core": "^3.23.6",
     "@tiptap/extension-link": "^3.23.6",

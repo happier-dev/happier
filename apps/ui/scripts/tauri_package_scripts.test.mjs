@@ -223,22 +223,3 @@ test('apps/ui default Tauri capability allows dialog open for SSH identity selec
   assert.equal(permissions.includes('core:window:allow-set-badge-count'), true);
   assert.equal(permissions.includes('core:window:allow-set-badge-label'), true);
 });
-
-test('apps/ui pins tauri plugin-http to one exact version across package, Cargo.toml, and Cargo.lock', async () => {
-  const scriptsDir = dirname(fileURLToPath(import.meta.url));
-  const packageRoot = dirname(scriptsDir);
-
-  const packageJson = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf-8'));
-  const cargoToml = await readFile(join(packageRoot, 'src-tauri', 'Cargo.toml'), 'utf-8');
-  const cargoLock = await readFile(join(packageRoot, 'src-tauri', 'Cargo.lock'), 'utf-8');
-
-  const jsVersion = packageJson?.dependencies?.['@tauri-apps/plugin-http'];
-  const cargoTomlVersion = cargoToml.match(/tauri-plugin-http = "([^"]+)"/)?.[1];
-  const cargoLockVersion = cargoLock.match(/name = "tauri-plugin-http"\nversion = "([^"]+)"/)?.[1];
-
-  assert.equal(typeof jsVersion, 'string');
-  assert.equal(jsVersion.startsWith('^'), false);
-  assert.equal(jsVersion.startsWith('~'), false);
-  assert.equal(cargoTomlVersion, `=${jsVersion}`);
-  assert.equal(jsVersion, cargoLockVersion);
-});
