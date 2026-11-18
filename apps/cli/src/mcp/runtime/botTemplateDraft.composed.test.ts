@@ -2,6 +2,7 @@ import axios from 'axios';
 import nacl from 'tweetnacl';
 import { createExternalActionHomeProcessForTests } from '../../../../server/sources/testkit/externalActionExecution.testkit.mjs';
 import { prepareExternalActionRequesterAccountAuthorizationWithEnvelope } from '@/api/externalActionExecutionAuthorization';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { afterEach, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
@@ -79,6 +80,14 @@ it.each(['credentialed_host', 'installed_daemon', 'requester_daemon', 'requester
   const homeObservation: { mintStatus?: number; verifyStatus?: number; patchStatus?: number; requestError?: string } = {};
   // Only Home HTTP and OS process identity are substituted; the Session tool,
   // capability transport, daemon admission and credentialed Action host are real.
+  vi.spyOn(axios, 'request').mockImplementation(async config => {
+    const path = new URL(String(config.url)).pathname;
+    if (config.method?.toUpperCase() !== 'GET' || path !== AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+      throw new Error(`Unexpected automation HTTP request: ${config.method} ${path}`);
+    }
+    expect(config.headers?.Authorization).toBe(`Bearer ${token}`);
+    return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+  });
   vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
     if (!home) expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
     const path = new URL(String(url)).pathname;
