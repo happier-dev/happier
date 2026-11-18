@@ -995,6 +995,12 @@ describe('WorkflowRunContent', () => {
     expect(phone.findByTestId('workflow-run-view-switch')).toBeNull();
     // WAVE-ACCEPT-1117C: the Run's headline says "Failed"; the failed row says it by its glyph, not a second word.
     expect(phone.findByTestId('workflow-run-invocations-word-failed')).toBeNull();
+    // The Map's failed node too: its rose mark, with the word kept for readers.
+    viewport.window = { width: 1440, height: 900 };
+    const map = await renderContent({ ...offline, selectedInvocationId: null, view: 'flow' });
+    expect(map.findAllByType(WorkflowLifecycleStatus).find(node => node.props.testID === 'workflow-run-flow-node-analyze-state')
+      ?.props.markerOnly).toBe(true);
+    viewport.window = { width: 390, height: 844 };
     // A phone list has no step open beside it, so the opening selection does not rest on a row.
     const phoneSelected = await renderContent({ ...offline, selectedInvocationId: invocation.id, selectedInvocationProgress: progress });
     expect(phoneSelected.findByTestId('workflow-run-invocations-row-failed')).not.toBeNull();

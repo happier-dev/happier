@@ -287,16 +287,18 @@ function createNodeSlots(props: FlowNodeInputs) {
                     ) : runState !== undefined ? (
                         <View style={styles.statusRow}>
                             {elapsed === null ? null : <Text style={styles.metaTabular}>{elapsed}</Text>}
-                            {/* Healthy finished work is quiet: its mark alone; the node's name says the word. Lanes
-                                that are still going speak for themselves, so their group adds no word of its own
-                                (DESIGN-17 R7; lab run-A shows none). */}
+                            {/* Healthy finished work is quiet: its mark alone; the node's name says the word. A failed
+                                step is its rose mark too, since the Run's outcome already says "Failed" (once per surface,
+                                WAVE-ACCEPT-1117C). Lanes that are still going speak for themselves, so their group adds no
+                                word of its own (DESIGN-17 R7; lab run-A shows none). */}
                             {node.kind === 'parallel' && !PARALLEL_SETTLED_LIFECYCLES.has(runState.lifecycle) ? null : <WorkflowLifecycleStatus
                                 testID={`${testIDPrefix}-node-${node.nodeId}-state`}
                                 lifecycle={runState.lifecycle}
                                 blockKind={node.kind}
                                 context={props.invocationStatusContext}
                                 chrome="plain"
-                                markerOnly={runState.lifecycle === 'completed' || workflowLifecycleAwaitsDecision(runState.lifecycle)}
+                                markerOnly={runState.lifecycle === 'completed' || runState.lifecycle === 'failed'
+                                    || workflowLifecycleAwaitsDecision(runState.lifecycle)}
                             />}
                         </View>
                     ) : stateLabel === null ? (props.notStartedLabel !== undefined && props.hasRunStates && FLOW_MARKED_KINDS.has(node.kind) && !node.observed && occurrences.length === 0
