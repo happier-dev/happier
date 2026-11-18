@@ -566,7 +566,8 @@ export function createReviewCommentAccountEncryptionMigrationPersistenceInTx(
                 SELECT ${Prisma.raw(EVENT_MIGRATION_SELECT_COLUMNS)}
                 FROM review_comment_events
                 WHERE account_id = ${accountId}
-                        ORDER BY comment_id ASC, server_revision ASC, event_id ASC
+                    AND comment_id IN (SELECT id FROM review_comments WHERE review_id IS NULL)
+                ORDER BY comment_id ASC, server_revision ASC, event_id ASC
             `);
             return buildReviewCommentAccountEncryptionMigrationInventory({
                 accountId,
