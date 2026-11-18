@@ -165,11 +165,10 @@ export function createProjectAccountRowsSync(options: Readonly<{
             materializationWaiters.add(observeMaterialization);
             signal?.addEventListener('abort', abort, { once: true });
             observeMaterialization();
-            // The Open producer commits the row before returning its ACK, but a reconnect can
-            // advance the Account cursor past that hint before this consumer attaches. Recover
-            // an already committed row through the existing exact-read owner; an absent row
-            // still waits for the normal pushed hint. Register the waiter first so a read
-            // failure remains observable through the existing materialization path.
+            // The Open producer commits the row before returning its ACK, but its pushed hint
+            // can remain queued behind reconnect resume. Recover the committed row through
+            // the existing exact-read owner; an absent or unavailable read retains the normal
+            // pushed materialization waiter registered above.
             void options.transport.read(key, { signal }).then(committed => {
                 if (committed.status !== 'present') return;
                 try {
