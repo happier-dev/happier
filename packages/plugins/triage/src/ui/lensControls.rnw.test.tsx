@@ -176,6 +176,48 @@ afterEach(async () => {
     for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
 
+describe('the page view under a slow host location write', () => {
+    it('settles the last view chosen while an earlier view write is still in flight (QB-82)', async () => {
+        // Live c3e5a241bcda: Tasks, PRs & Issues, Tasks, PRs & Issues 60 ms apart left the page on Tasks in 2 of 5
+        // runs. A choice equal to the last settled location wrote nothing while the opposite write was still queued,
+        // so the queued older choice landed after it.
+        const harness = createHarness();
+        const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
+        const writes: Array<Readonly<{ subPath: string; settle: () => void }>> = [];
+        const landed: string[] = [];
+        let fixture!: PluginUiTestkit;
+        await act(async () => {
+            fixture = await createPluginUiTestkit({
+                identity: { instanceId: 'fixture-instance-182', mountNonce: 'fixture-mount-182' },
+                authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+                surface: renderShellSurface,
+                surfaceContext: createSurfaceContextFixture(),
+                adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, overlays: true }),
+                handlers: {
+                    publishCurrentUiContext: () => undefined,
+                    executeAction: async ({ action, input }) => await harness.executeAction({ action, input }),
+                    replacePageLocation: ({ subPath }) => new Promise<string>((resolve) => {
+                        writes.push({ subPath, settle: () => { landed.push(subPath); resolve(subPath); } });
+                    }),
+                },
+            });
+        });
+        mounted.push(fixture);
+        await act(async () => {
+            await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
+        });
+        const choose = async (name: string) => {
+            await act(async () => { await fixture.press(await fixture.getByRole('radio', { name })); });
+        };
+        for (const name of ['Tasks', 'PRs & Issues', 'Tasks', 'PRs & Issues']) await choose(name);
+        for (let step = 0; step < 8 && writes.length > 0; step += 1) {
+            await act(async () => { writes.shift()!.settle(); await Promise.resolve(); });
+        }
+        expect(landed.at(-1)).not.toMatch(/^tasks,/);
+        await expect(fixture.getByRole('radio', { name: 'PRs & Issues', state: { checked: true } })).resolves.toBeTruthy();
+    });
+});
+
 describe('the PRs & Issues lens controls', () => {
     it('publishes the cold Tasks route and view once without rewriting on re-render', async () => {
         const subPath = 'tasks,mine/q,normalizer';

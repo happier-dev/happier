@@ -459,6 +459,8 @@ export type TriageRouteWriteQueueV1 = Readonly<{
   ) => void;
   /** Retire pending intent on external navigation; true for an older self-publication. */
   adoptHostLocation: (subPath: string) => boolean;
+  /** No write is in flight or queued, so the host's last settled location is also where it is heading. */
+  idle: () => boolean;
   /** Test/coordination seam: resolves once the in-flight write and latest queued intent settle. */
   whenSettled: () => Promise<void>;
   dispose: () => void;
@@ -550,6 +552,7 @@ export function createTriageRouteWriteQueueV1(
       supersedePending(null);
       return false;
     },
+    idle: () => !running && pending === null,
     whenSettled() {
       if (!running && pending === null) return Promise.resolve();
       return new Promise<void>((resolve) => { settlers.push(resolve); });

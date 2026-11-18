@@ -2244,12 +2244,22 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         { value: 'tasks', label: text('plugins.triage.tasks.title', 'Tasks') },
         { value: 'prs', label: TRIAGE_DISPLAY_NAME },
       ]}
-      // The page applies the operation itself, through the same local handler its published Action dispatches into:
-      // switching views is a lens change and needs no Action round trip (nor a Machine to run one).
+      // Switching views is a lens change and needs no Action round trip (nor a Machine to run one). The page's own
+      // press applies it optimistically; the agent's command settles the same lens through the mounted operation.
       onChange={(value) => {
         const operation = value === 'tasks' && taskAudience === undefined ? pageViewOperations.tasks
           : value === 'prs' && taskAudience !== undefined ? pageViewOperations.prs : null;
-        if (operation !== null) void runMountedOperation(operation, new AbortController().signal);
+        if (operation === null) return;
+        // The old Tasks page leaves for the PRs & Issues page through the mounted operation.
+        if (props.tasksPage && operation.filters.tasks === undefined) {
+          void runMountedOperation(operation, new AbortController().signal);
+          return;
+        }
+        // The page's own switch is a reader lens edit like any other: it shows the chosen view at once and the
+        // route follows, so a quick second choice is never pressed on a view that has not rendered yet (QB-82).
+        applyLensEdit({ kind: 'savedViewApplied', viewId: surface.selectedViewId, query: operation.query,
+          filters: operation.filters, order: operation.order, ...(operation.sort === undefined ? {} : { sort: operation.sort }),
+          smartPolicy: surface.smartPolicy }, 'lens');
       }}
     />
   );
@@ -3134,7 +3144,9 @@ function useTriageRouteBinding(input: Readonly<{
     // That intermediate reducer state is not a local navigation intent: writing
     // its empty selection would replace the very route we are adopting.
     if (requestedSubPath !== latestRouteIntent.current.subPath) return undefined;
-    if (requestedSubPath === settledRoute.current.subPath) {
+    // Back on the settled location needs no write only while nothing else is heading to the host: with another
+    // choice still in flight or queued, this one must be written after it or the older choice lands last (QB-82).
+    if (requestedSubPath === settledRoute.current.subPath && queue.idle()) {
       settledRoute.current = { subPath: requestedSubPath, state: surface };
       return undefined;
     }
