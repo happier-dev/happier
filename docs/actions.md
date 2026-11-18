@@ -3222,6 +3222,11 @@ preflight remains retryable. The existing `launchError` detail carries
 `project_requester_home_unavailable` and guidance to retry when Home is available;
 it does not report a provider credential failure or request profile reconnection.
 
+In 0.3 development, a typed provider refusal during Session startup carries the
+existing `providerError` result, including its recovery action and any retry
+delay. Session creation and Workflow starts receive the same provider cause
+from the shared launch projection.
+
 Hands-off (`workspaceWrites: deny`) is a role ceiling at both native-tool and
 workspace-writing Action admission. Agent invocations can tighten it; relaxation
 requires present-user authority. It is not a permission-mode override. Reviewer's

@@ -286,17 +286,18 @@ describe('Session launch cause transport', () => {
         serviceId: 'acme.agent/account', profileId: 'revoked', retryable: false },
     } });
   });
-  it.each(['provider_connection_invalid', 'model_selection_required'] as const)('preserves the typed %s refusal through daemon control and public launch projection', async code => {
-    const failure = buildProviderSpawnErrorResult(createProviderErrorV1(code, {
+  it.each(['provider_connection_invalid', 'model_selection_required', 'provider_endpoint_rate_limited'] as const)('preserves the typed %s refusal through daemon control and public launch projection', async code => {
+    const providerError = createProviderErrorV1(code, {
       connectionId: 'pc_gateway', machineId: 'machine-a',
-    }));
+      ...(code === 'provider_endpoint_rate_limited' ? { retryAfterMs: 3000 } : {}),
+    });
+    const failure = buildProviderSpawnErrorResult(providerError);
     const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(failure));
     expect(response.errorDetail).toEqual(failure.errorDetail);
     expect(normalizeSpawnSessionErrorDetail(response.errorDetail)).toEqual(failure.errorDetail);
     expect(SessionSpawnNewResultV1Schema.parse(projectSessionSpawnFailure({
       errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
-    }))).toMatchObject({ type: 'error', code: 'spawn_failed', retryable: false,
-      launchError: { kind: 'launch_error', code } });
+    }))).toMatchObject({ type: 'error', code: 'spawn_failed', retryable: providerError.retryable, providerError });
     expect(SpawnSessionControlErrorResponseSchema.safeParse({
       ...response,
       errorDetail: { ...failure.errorDetail, secret: 'must-not-cross-control-transport' },

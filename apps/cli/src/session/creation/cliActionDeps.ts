@@ -1474,11 +1474,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             return { type: 'error', code: 'update_required', retryable: false, details: detail };
           }
           if (detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.PROVIDER_ERROR) {
-            return {
-              type: 'error', code: 'spawn_failed',
-              retryable: detail.providerError.retryable,
-              providerError: detail.providerError,
-            };
+            return projectSessionSpawnFailure({ errorCode: code, errorMessage: detail.providerError.code, errorDetail: detail });
           }
         }
         return projectSessionSpawnFailure({
