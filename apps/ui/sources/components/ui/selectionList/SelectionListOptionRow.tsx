@@ -603,6 +603,8 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
           subtitleEllipsizeMode={props.option.subtitleEllipsizeMode}
           icon={icon}
           rightElement={itemRightElement}
+          accessoryMaxWidth="row"
+          accessoryLayout={!isCard && rightAccessory !== undefined ? 'adaptive' : undefined}
           rightElementOutsidePressable={
             !isCard && rightAccessoryOutsidePressable
           }
@@ -699,8 +701,11 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
         subtitleEllipsizeMode={props.option.subtitleEllipsizeMode}
         icon={icon}
         rightElement={itemRightElement}
-        // A row's trailing facts and its selected check are never cut; the label gives way instead.
+        // A row's trailing facts and its selected check are never cut; the label gives way instead, until they
+        // would take more than their share of the row (a phone): then they move beneath the label (the shared row
+        // rule), so the name and its facts keep their lines.
         accessoryMaxWidth="row"
+        accessoryLayout={!isCard && rightAccessory !== undefined ? 'adaptive' : undefined}
         rightElementOutsidePressable={
           !isCard && rightAccessoryOutsidePressable
         }

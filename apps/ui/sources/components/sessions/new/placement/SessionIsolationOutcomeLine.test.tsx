@@ -94,6 +94,12 @@ describe('session isolation outcome line', () => {
             .find(menu => menu.props.testID === 'session-isolation-outcome.project-files')!;
         const copy = await renderLine();
         expect(textOf(copy)).toContain('machineDetailPage.projectFiles.intoFresh');
+        // After its verb phrase the sentence keeps one line beside the link (lab phone: two lines in all), and a
+        // shortened sentence is still read whole.
+        const sentence = copy.findAllByType(Text as never)
+            .find(node => String(node.props.children).includes('machineDetailPage.projectFiles.intoFresh'))!;
+        expect(sentence.props.numberOfLines).toBe(1);
+        expect(sentence.props.accessibilityLabel).toBe(String(sentence.props.children));
         expect(textOf(copy)).not.toContain('machineDetailPage.isolation.outcome.fresh');
         // An unset preset copies once; Run directly stays beside it.
         expect(menuOf(copy).props.selectedId).toBe('copy_once');

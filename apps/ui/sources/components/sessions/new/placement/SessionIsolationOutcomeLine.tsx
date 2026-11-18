@@ -226,7 +226,10 @@ function OutcomeRow(
       <View style={styles.body}>
         <View style={styles.sentence}>
           {props.lead}
-          <Text style={props.warning ? styles.warning : styles.text}>
+          {/* Two lines in all (lab sbx-outcome phone): after a verb phrase the sentence keeps one line, alone two;
+              a shortened sentence is still read whole. */}
+          <Text style={props.warning ? styles.warning : styles.text} numberOfLines={props.lead ? 1 : 2}
+            {...(typeof props.text === 'string' ? { accessibilityLabel: props.text } : {})}>
             {props.text}
           </Text>
         </View>
