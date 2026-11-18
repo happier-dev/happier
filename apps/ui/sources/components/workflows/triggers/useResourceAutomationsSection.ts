@@ -13,6 +13,7 @@ import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { addWorkflowTrigger, WorkflowTriggerWriteResult } from '@/sync/domains/workflows/workflowTriggerActions';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
@@ -80,6 +81,7 @@ export type ResourceAutomationsSectionRead = SelectedAutomationsSectionRead & Re
         issue: ReturnType<typeof useDocumentShareController>['issue'];
         loading: boolean;
         retryReview(): void;
+        retryWhen(): void;
         submit(decision: 'accept' | 'decline'): Promise<ResourceAutomationLinkResult>;
     }>;
 }>;
@@ -198,6 +200,11 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
         ? buildResourceWorkflowTriggerStartOptions({ subject, actions: actionCatalog.specs,
             events: eventCatalog.events, machineId: actionCatalog.machineId }) : EMPTY_WHEN_OPTIONS,
     [whenStatus, subject, actionCatalog.specs, eventCatalog.events, actionCatalog.machineId]);
+    const retryWhen = useEventCallback(() => {
+        if (whenStatus !== 'unavailable') return;
+        if (actionCatalog.phase === 'error' || actionCatalog.phase === 'unsupported') actionCatalog.retry();
+        if (eventCatalog.status === 'unavailable') eventCatalog.retry();
+    });
     const [linkDraft, setLinkDraft] = React.useState<ResourceAutomationLinkDraft | null>(null);
     const setDraft = React.useCallback((draft: ResourceAutomationLinkDraft | null) => {
         // This flow links an Automation to the selected resource. Source setup supplies
@@ -242,7 +249,7 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
     const retryReview = sourceSharing?.issue ? sourceSharing.retryContent : review.retryContent;
     const link = React.useMemo<ResourceAutomationsSectionRead['link']>(() => ({ whenOptions, whenStatus, draft: linkDraft, setDraft,
         missingAudience, issue: reviewIssue, loading: reviewLoading,
-        retryReview, submit: submitLink }),
-    [whenOptions, whenStatus, linkDraft, setDraft, missingAudience, reviewIssue, reviewLoading, retryReview, submitLink]);
+        retryReview, retryWhen, submit: submitLink }),
+    [whenOptions, whenStatus, linkDraft, setDraft, missingAudience, reviewIssue, reviewLoading, retryReview, retryWhen, submitLink]);
     return { accountLifetime, read, editor, rows, also, skippedNotSharedCount, project, audience, session, link };
 }

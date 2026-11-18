@@ -73,6 +73,7 @@ function linkFor(missingAudience: readonly PrincipalRefV1[]) {
     missingAudience,
     issue: null,
     loading: false,
+    retryWhen: vi.fn(),
     retryReview: vi.fn(),
     submit: vi.fn(async (decision: 'accept' | 'decline') =>
       decision === 'decline'
@@ -93,6 +94,29 @@ function linkFor(missingAudience: readonly PrincipalRefV1[]) {
 
 // 05 S5 Link + D8: Workflow, When from the resource's starts, the before wait policy, and the same-step share question.
 describe('Link a workflow to a resource', () => {
+  it('recovers the When choices through the visible unavailable-state Retry', async () => {
+    function Fixture() {
+      const [recovered, setRecovered] = React.useState(false);
+      return <ResourceLinkWorkflowSheet anchorRef={React.createRef<never>()}
+        resourceName="Production" link={{ ...linkFor([]),
+          whenStatus: recovered ? 'ready' : 'unavailable', whenOptions: recovered ? [option] : [],
+          retryWhen: () => setRecovered(true),
+        }} serverId={null} machineId={null} accountLifetime={null}
+        onRequestClose={() => undefined} onLinked={() => undefined} />;
+    }
+    const screen = await renderScreen(<Fixture />);
+    try {
+      await pickWorkflow(screen, 'builtin:review-and-converge');
+      const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+      const unavailable = screen.findAllByType(SurfaceStateCard).find(card => card.props.testID === 'resource-link-starts-unavailable');
+      expect(unavailable).toBeDefined();
+      await act(async () => unavailable!.props.action.onPress());
+      expect(screen.findByTestId('resource-link-starts-unavailable')).toBeNull();
+      const when = screen.findAllByType(ValueFieldSelect).find(field => field.props.testID === 'resource-link-when');
+      expect(when!.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: option.id })]));
+    } finally { await screen.unmount(); }
+  });
+
   it('retains configured Event input when choosing another Workflow', async () => {
     const eventRef = { pluginId: 'acme.deploy', localId: 'released' };
     const eventOption = {

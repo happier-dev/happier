@@ -271,11 +271,17 @@ describe('useWorkflowActionCatalog', () => {
         const hook = await renderHook((enabled: boolean) => useWorkflowTriggerEventOptions({ machineId: 'machine-1', serverId, enabled }),
             { initialProps: false });
         try {
-            expect(hook.getCurrent()).toEqual({ status: 'idle', events: [] });
+            expect(hook.getCurrent()).toMatchObject({ status: 'idle', events: [] });
             expect(sectionsRead.size).toBe(0);
             await hook.rerender(true);
             await vi.waitFor(() => expect(['ready', 'unavailable']).toContain(hook.getCurrent().status));
-            expect(hook.getCurrent()).toEqual({ status: 'unavailable', events: [] });
+            expect(hook.getCurrent()).toMatchObject({ status: 'unavailable', events: [] });
+            await act(async () => storage.getState().applySettingsForScope({ serverId, accountId: 'account-a' }, settingsParse({}), 3));
+            await act(async () => hook.getCurrent().retry());
+            await vi.waitFor(() => expect(hook.getCurrent().status).toBe('ready'));
+            expect(hook.getCurrent().events).toEqual(expect.arrayContaining([
+                expect.objectContaining({ eventRef: { pluginId: 'acme.deploy', localId: 'released' } }),
+            ]));
         } finally { await hook.unmount(); }
     });
 
@@ -294,6 +300,56 @@ describe('useWorkflowActionCatalog', () => {
             }]);
             expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
                 && request.payload !== null && typeof request.payload === 'object' && !('sectionRead' in request.payload))).toHaveLength(1);
+        } finally { await hook.unmount(); }
+    });
+
+    it('recovers unreadable resource starts on retry while another reader retains the refused Account catalog', async () => {
+        const { useResourceAutomationsSection } = await import('../triggers/useResourceAutomationsSection');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const physicalAccount = captureActiveServerAccountScopeLifetime();
+        if (!physicalAccount) throw new Error('Expected the admitted physical Account');
+        const subject = { kind: 'environment' as const, serverId, environmentId: 'production' };
+        const httpPaths: string[] = [];
+        network.setHttpResponder(async input => {
+            const path = new URL(String(input)).pathname;
+            httpPaths.push(path);
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v3/automations/query') return Response.json({ automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 });
+            return null;
+        });
+        const scope = { serverId, accountId: physicalAccount.scope.accountId };
+        const refused = ActionsSettingsV1Schema.parse({ v: 1, actions: { 'action.spec.search': { enabled: false } } });
+        storage.getState().applySettingsForScope(scope, settingsParse({ actionsSettingsV1: refused }), 2);
+        let presented = true;
+        const hook = await renderHook(() => {
+            const section = useResourceAutomationsSection({ subject, accountLifetime: physicalAccount });
+            const other = useWorkflowActionCatalog({ kind: 'machine', machineId: null, serverId }, 'automation',
+                { accountLifetime: physicalAccount });
+            return { ...section, other };
+        }, { wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active={presented}>{children}</PluginSurfaceFocusEligibilityProvider> });
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().link.whenStatus).toBe('unavailable'));
+            expect(hook.getCurrent().other.phase).toBe('error');
+            expect(hook.getCurrent().link.whenOptions).toEqual([]);
+            const retry = hook.getCurrent().link.retryWhen;
+            presented = false;
+            await hook.rerender();
+            expect(hook.getCurrent().link.whenStatus).toBe('idle');
+            const reads = httpPaths.length;
+            await act(async () => retry());
+            expect(httpPaths).toHaveLength(reads);
+            expect(network.requests).toEqual([]);
+            presented = true;
+            await hook.rerender();
+            await act(async () => storage.getState().applySettingsForScope(scope, settingsParse({}), 3));
+            await act(async () => hook.getCurrent().link.retryWhen());
+            await vi.waitFor(() => expect(hook.getCurrent().link.whenStatus).toBe('ready'));
+            expect(hook.getCurrent().link.whenOptions).toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: 'action:before:deployments.deploy', subject }),
+            ]));
+            expect(hook.getCurrent().accountLifetime).toBe(physicalAccount);
+            expect(network.requests).toEqual([]);
         } finally { await hook.unmount(); }
     });
 

@@ -6191,6 +6191,9 @@ choice carries a setup-required seed for the existing Event editor, rather than
 a fabricated configured source. The resource Link controller binds the selected
 subject to the completed Action or Event trigger before writing, while the
 ordinary trigger owner validates execution Project or Session lifetime.
+Failed catalog reads expose Retry in the section and the open Link form. Both
+retry the demanded reads on the mounted Account lifetime; a retained failed
+reader does not prevent a new read after admission or transport recovers.
 
 An Event-triggered Workflow can bind `trigger_event` references to scalar leaves
 of its declared Event payload. Save validates paths with the Event filter's

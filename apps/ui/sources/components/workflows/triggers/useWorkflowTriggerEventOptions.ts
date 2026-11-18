@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { acquireDaemonMergedWorkflowEventCatalog, readCachedDaemonMergedProjectionCacheEntry, readObservedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
@@ -31,12 +32,15 @@ export function useWorkflowTriggerEventOptions(
 ): Readonly<{
   status: 'idle' | 'loading' | 'ready' | 'unavailable';
   events: readonly WorkflowTriggerEventOption[];
+  retry(): void;
 }> {
+  const [refreshKey, setRefreshKey] = React.useState(0);
   const projection = useDaemonMergedProjectionInputs({
     machineId: params.machineId,
     accountLifetime: params.accountLifetime,
     serverId: params.serverId,
     enabled: params.enabled && params.machineId !== null,
+    refreshKey,
     sections: PLUGIN_EVENT_AUTOMATION_SECTIONS,
   });
   const ready = projection.phase === 'ready' ? projection.inputs : null;
@@ -62,7 +66,12 @@ export function useWorkflowTriggerEventOptions(
       if (mounted) setCatalog({ target, status: 'unavailable', events: [] });
     });
     return () => { mounted = false; read.release(); };
-  }, [target, params.machineId]);
+  }, [target, params.machineId, refreshKey]);
+  const retry = useEventCallback(() => {
+    if (!params.enabled || params.machineId === null) return;
+    setCatalog(null);
+    setRefreshKey(value => value + 1);
+  });
   const admitted = catalog?.target === target ? catalog : null;
   const localize = usePluginLocalizedTextResolver({
     projection: ready?.pluginUiProjection ?? null,
@@ -92,5 +101,5 @@ export function useWorkflowTriggerEventOptions(
         : projection.phase === 'loading' || projection.phase === 'idle'
           ? 'loading'
           : 'unavailable';
-  return { status, events };
+  return { status, events, retry };
 }

@@ -326,6 +326,11 @@ export function ResourceLinkWorkflowSheet(
                     draftFor(workflow, when);
                   }}
                 />
+                {link.whenStatus === 'unavailable' ? (
+                  <SurfaceStateCard testID="resource-link-starts-unavailable" size="line" kind="unavailable"
+                    title={t('workflows.triggers.section.startsUnavailable')}
+                    action={{ label: t('common.retry'), onPress: link.retryWhen }} />
+                ) : null}
               </View>
             </TrackRow>
             {when?.kind === 'action' && when.phase === 'before' ? (

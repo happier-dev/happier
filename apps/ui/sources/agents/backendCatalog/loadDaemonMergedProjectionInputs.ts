@@ -150,6 +150,8 @@ function acquireProjectionCatalogRead<T>(
         };
         holding.current = created;
         retirement = entry.accountCurrentness?.onRetire(created.dispose);
+        // A retained failed reader must not pin the refusal for fresh demand.
+        void promise.catch(() => created.dispose());
         read = created;
     }
     read.readers++;

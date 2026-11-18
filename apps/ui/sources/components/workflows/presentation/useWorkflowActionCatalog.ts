@@ -12,6 +12,7 @@ import { acquireDaemonMergedWorkflowActionCatalog, acquireWorkflowAccountActionC
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { useServerCredentialAccountScopeStates } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
 const EMPTY_ACTIONS: readonly ActionDiscoveryDefinitionSummaryV1[] = Object.freeze([]);
 
@@ -25,9 +26,10 @@ export function useWorkflowActionCatalog(scope?: AuthoringComposerScope, purpose
     const sessionMachineId = getStorage()(React.useCallback((state) => sessionId === null ? null
         : resolveMachineControlTargetForSessionFromState(state, serverId ? { sessionId, serverId } : sessionId)?.machineId ?? null, [sessionId, serverId]));
     const machineId = scope?.kind === 'machine' ? scope.machineId : sessionMachineId;
+    const [refreshKey, setRefreshKey] = React.useState(0);
     // The step picker reads plugin Actions and their presentation: the plugin UI sections, never the whole catalogue.
     const projection = useDaemonMergedProjectionInputs({ machineId, serverId, enabled, accountLifetime: options.accountLifetime,
-        retainInputsAcrossScopeChange: false, sections: PLUGIN_UI_SECTIONS });
+        retainInputsAcrossScopeChange: false, refreshKey, sections: PLUGIN_UI_SECTIONS });
     const entry = React.useMemo(() => enabled && projection.phase === 'ready'
         ? options.accountLifetime === undefined
             ? readCachedDaemonMergedProjectionCacheEntry({ machineId, serverId, sections: PLUGIN_UI_SECTIONS })
@@ -57,7 +59,12 @@ export function useWorkflowActionCatalog(scope?: AuthoringComposerScope, purpose
             if (mounted) setDiscovery({ target, phase: 'error', specs: EMPTY_ACTIONS });
         });
         return () => { mounted = false; read.release(); };
-    }, [target]);
+    }, [target, refreshKey]);
+    const retry = useEventCallback(() => {
+        if (!enabled) return;
+        setDiscovery(null);
+        setRefreshKey(value => value + 1);
+    });
     const currentDiscovery = discovery?.target === target ? discovery : null;
     const offered = currentDiscovery?.phase === 'ready' ? currentDiscovery.specs : EMPTY_ACTIONS;
     // The merged-projection lifecycle already subscribes this leaf to language changes.
@@ -67,5 +74,5 @@ export function useWorkflowActionCatalog(scope?: AuthoringComposerScope, purpose
     const localize = usePluginLocalizedTextResolver({ projection: uiProjection, locale: language });
     const specs = React.useMemo(() => listWorkflowStepActionSpecs(current, uiProjection, localize, offered, purpose), [current, uiProjection, language, localize, offered, purpose]);
     const phase = !enabled ? 'idle' : !machineId || projection.phase === 'ready' ? currentDiscovery?.phase ?? 'loading' : projection.phase;
-    return { specs, phase, machineId, sessionId, serverId: serverId ?? null };
+    return { specs, phase, machineId, sessionId, serverId: serverId ?? null, retry };
 }

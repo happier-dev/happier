@@ -291,7 +291,8 @@ export const SubjectTriggersSectionContent = React.memo(
         ) : null}
         {linkSlot === 'unavailable' && status !== 'failed' ? (
           <SurfaceStateCard testID="subject-triggers-starts-unavailable" size="line" kind="unavailable"
-            title={t('workflows.triggers.section.startsUnavailable')} />
+            title={t('workflows.triggers.section.startsUnavailable')}
+            action={link ? { label: t('common.retry'), onPress: link.retryWhen } : undefined} />
         ) : null}
         {skippedNotSharedCount > 0 ? (
           <SurfaceStateCard testID="subject-triggers-not-shared" size="line" kind="unavailable"
