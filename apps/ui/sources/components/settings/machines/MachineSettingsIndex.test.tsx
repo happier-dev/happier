@@ -578,6 +578,26 @@ describe('All machines (the Settings door index)', () => {
     expect(tree.findAll(node => node.props?.testID === `${row}:title-suffix`)).toHaveLength(0);
   });
 
+  it('gives the Status column the room the row leaves at desktop width, so its sentence is not cut (LABPARITY-ACCEPT-F fix 1)', async () => {
+    // No Machine reports, so the index stands Status where the metric columns would be.
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
+      { ...machine('quiet-a', 'NLDW3-5-36-33', 'a.local'), active: false },
+      { ...machine('quiet-b', 'NLDW6-3-11-20', 'b.local'), active: false },
+    ] }]);
+    const tree = await renderPage();
+    await act(async () => {
+      const stage = tree.findAll(node => node.props?.testID === 'machines.index.collection:stage' && typeof node.props?.onLayout === 'function')[0]!;
+      stage.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 900 } } });
+    });
+    const cell = () => tree.findAll(node => typeof node.type === 'string'
+      && node.props?.testID === 'machines.index.row.machine:srv_a:quiet-a:column:status')[0];
+    await waitForHomeGovernance(() => expect(cell()).toBeDefined());
+    const { StyleSheet } = await import('react-native');
+    const style = StyleSheet.flatten(cell()!.props.style) as { width?: number; minWidth?: number; flexBasis?: number };
+    // Its floor is 200; with ~900 px of row and a short name, the column grows past it.
+    expect(Math.max(style.width ?? 0, style.minWidth ?? 0, style.flexBasis ?? 0)).toBeGreaterThan(200);
+  });
+
   it('says a Machine\'s waiting security updates, or that it needs a restart, on the Work cell\'s second line (lab mIdx)', async () => {
     const withUpdates = (id: string, name: string, updates: object) => ({
       ...machine(id, name, `${id}.local`),

@@ -100,6 +100,14 @@ const MEMORY_COLUMN_WIDTH_PX = 152;
  * a longer line wraps rather than clipping the failing count.
  */
 const WORK_COLUMN_WIDTH_PX = 160;
+/**
+ * Status stands where the metric columns would while no listed machine reports: its floor keeps a short state
+ * ("Offline · Oct 13") whole on a narrow table, and it grows from the room the row leaves (Collection `maxWidth`)
+ * up to its longest sentence on one line ("Machine created. Happier isn't connected to it yet.", ≈340 px), so a
+ * reason is not cut while the row stands empty beside it (LABPARITY-ACCEPT-F fix 1).
+ */
+const STATUS_COLUMN_MIN_WIDTH_PX = 200;
+const STATUS_COLUMN_MAX_WIDTH_PX = 400;
 type MachineIndexItem = MachineCollectionRow & Readonly<{
     key: string;
     sectionKey: string;
@@ -518,7 +526,8 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
                     ) },
             ] : []),
             ...(metrics.length === 0 ? [
-                { key: 'status', title: t('allMachines.columnStatus'), minWidth: 200, priority: 1, listColumn: true, render: (item: MachineIndexItem) => <MachinePresenceCell item={item} /> },
+                { key: 'status', title: t('allMachines.columnStatus'), minWidth: STATUS_COLUMN_MIN_WIDTH_PX, maxWidth: STATUS_COLUMN_MAX_WIDTH_PX,
+                    priority: 1, listColumn: true, render: (item: MachineIndexItem) => <MachinePresenceCell item={item} /> },
             ] : metrics.map((metric, index) => ({
                 key: metric,
                 title: machineSummaryMetricTitle(metric),
