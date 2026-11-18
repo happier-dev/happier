@@ -7,6 +7,7 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { Modal } from '@/modal';
+import { t } from '@/text';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -86,7 +87,9 @@ describe('SettingsHistorySection Action composition', () => {
         await vi.waitFor(() => expect(view.findByTestId('settings-account-history-restore-3')).not.toBeNull());
         expect(storage.getState().settings.actionsSettingsV1.actions?.['settings.invoke']?.enabled).toBe(false);
         await view.pressByTestIdAsync('settings-account-history-restore-3');
-        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalled());
+        await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(
+            t('common.error'), t('actionConfirmations.turnedOffUnnamedMessage'),
+        ));
         expect(home.requests.some(row => row.path === '/v2/account/settings/history/3')).toBe(false);
     });
 

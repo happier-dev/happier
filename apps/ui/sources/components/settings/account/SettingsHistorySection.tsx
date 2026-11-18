@@ -20,6 +20,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
@@ -129,7 +130,10 @@ export const SettingsHistorySection = React.memo(function SettingsHistorySection
                 if (!isCurrent(credentials, expectedSettingsScope)) return;
                 if (!invocation.ok) {
                     if (isActionApprovalDeclinedErrorCode(invocation.errorCode)) return;
-                    throw new Error(invocation.errorCode);
+                    await Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(
+                        invocation, t('settingsAccount.history.unavailableBody'),
+                    ));
+                    return;
                 }
                 const outcome = SettingsDeclarationActionOutputSchemasV1['settings.invoke'].parse(invocation.result);
                 if (outcome.status === 'cancelled') return;
