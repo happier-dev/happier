@@ -109,6 +109,24 @@ const ReleasedCredentialRecordSchema = z.discriminatedUnion('kind', [
 ]);
 
 describe('createQualifiedConnectedAccountDaemonPersistence', () => {
+  it('preserves the retired Account reason for service configuration reads and writes', async () => {
+    const persistence = createQualifiedConnectedAccountDaemonPersistence({
+      credentials: { token: 'retired-account-fixture', encryption: null },
+      getAccountEncryptionMode: async () => 'plain',
+      secrets: { admit: async () => undefined, has: async () => false, read: async () => null },
+    });
+    const target = { kind: 'service' as const, service, modeId: 'oauth' };
+    await expect(persistence.configuration.read(target)).rejects.toMatchObject({
+      code: 'connected_account_configuration_persistence_unavailable',
+      data: { failureCause: { phase: 'connected_account.configuration.service_read', errorCode: 'scope-retired' } },
+    });
+    await expect(persistence.configuration.replace({ target, expectedRevision: null,
+      replacement: { values: {}, secretRefs: {} }, ...runtimeIdentity() })).resolves.toMatchObject({
+      status: 'unavailable', code: 'connected_account_configuration_persistence_unavailable',
+      diagnostic: { details: { failureCause: { phase: 'connected_account.configuration.service_read', errorCode: 'scope-retired' } } },
+    });
+  });
+
   it('reimports the same retained native grant through its fenced credential and recovers health', async () => {
     const oldRevision = 'csr_0000000000000000000000';
     const nextRevision = 'csr_1234567890123456789012';
@@ -1727,6 +1745,20 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       expect(hasSavedSecret).not.toHaveBeenCalled();
       expect(readSavedSecret).not.toHaveBeenCalled();
 
+      mutateConfiguration.mockRejectedValueOnce(Object.assign(new Error('private fixture response'), { code: 'ECONNRESET' }));
+      const refused = await persistence.configuration.replace({
+        target,
+        expectedRevision: 'configuration-1',
+        replacement,
+        ...runtimeIdentity(),
+      });
+      expect(refused).toMatchObject({
+        status: 'unavailable',
+        code: 'connected_account_configuration_persistence_unavailable',
+        diagnostic: { details: { failureCause: { phase: 'connected_account.configuration.account_write', errorCode: 'ECONNRESET' } } },
+      });
+      expect(JSON.stringify(refused)).not.toContain('private fixture response');
+
       storedConfigurationContent =
         accountMode === 'plain'
           ? sealQualifiedConnectedAccountContentEnvelope({
@@ -1783,7 +1815,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         status: 'unavailable',
         code: 'connected_account_configuration_persistence_unavailable',
       });
-      expect(mutateConfiguration).toHaveBeenCalledOnce();
+      expect(mutateConfiguration).toHaveBeenCalledTimes(2);
     },
   );
   it.each([

@@ -7,9 +7,11 @@ import {
 import { isDeepStrictEqual } from 'node:util';
 import { createConnectedAccountCredentialSettlement, readQualifiedConnectedAccountCredentialMaterial, type ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
 import { promoteConnectedAccountCredentialSecrets } from '@/settings/secrets/promoteConnectedAccountCredentialSecrets';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { ConnectedConfigurationCatalogV1Schema,
   type ConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import type { ConnectedAccountCatalogSnapshotV1 } from '@happier-dev/protocol/connect/connectedAccountCatalogV1';
 import { replaceConnectedServiceConfigurationCatalogV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
@@ -98,6 +100,21 @@ type ConfigurationRecord = ReturnType<
   typeof parseConnectedAccountConfigurationRecordContent
 >;
 type ConfigurationContent = Omit<ConfigurationRecord, 'revision'>;
+const configurationUnavailableCode = 'connected_account_configuration_persistence_unavailable';
+
+function configurationUnavailable(failureCause: ActionFailureCauseV1) {
+  return { status: 'unavailable' as const, code: configurationUnavailableCode,
+    ...(failureCause.errorCode !== null || failureCause.httpStatus !== null ? {
+      diagnostic: { code: configurationUnavailableCode, severity: 'error' as const, details: { failureCause: { ...failureCause } } },
+    } : {}),
+  };
+}
+
+function configurationServiceReadFailure(catalog: ConnectedAccountCatalogSnapshotV1): ActionFailureCauseV1 {
+  const errorCode = catalog.status === 'unavailable' ? catalog.reason
+    : catalog.status === 'loading' ? catalog.status : 'catalog_key_mismatch';
+  return { phase: 'connected_account.configuration.service_read', errorClass: 'Error', errorCode, httpStatus: null };
+}
 function configurationContent(record: ConfigurationRecord): ConfigurationContent {
   return Object.freeze({
     values: record.values,
@@ -356,8 +373,10 @@ export function createQualifiedConnectedAccountDaemonPersistence(
       const catalog = await runWithServerHttpBaseUrl(store.serverHttpBaseUrl,
         () => readActiveConnectedAccountCatalog({ credentials: params.credentials, key: 'configurations',
           ...(params.operationContext ? { operationContext: params.operationContext } : {}) }));
+      if (catalog.status !== 'ready' || catalog.record.key !== 'configurations') {
+        return configurationUnavailable(configurationServiceReadFailure(catalog));
+      }
       store.assertCurrent();
-      if (catalog.status !== 'ready' || catalog.record.key !== 'configurations') throw new Error('Configuration catalog unavailable');
       const matchesTarget = (entry: typeof catalog.record.value.entries[number]) =>
         sameService(entry.service, input.target.service) && entry.modeId === input.target.modeId;
       const write = replaceConnectedServiceConfigurationCatalogV1({ catalog, target: input.target,
@@ -380,16 +399,17 @@ export function createQualifiedConnectedAccountDaemonPersistence(
           () => promoteSavedSecretsWithConnectedAccountCatalog({ credentials: params.credentials, preparedSavedSecrets,
             connectedAccountCatalog: { expectedRevision: catalog.revision, record },
             ...(params.operationContext ? { operationContext: params.operationContext } : {}) }));
-        if (result.status !== 'applied') return { status: result.status === 'conflict' ? 'conflict' as const : 'unavailable' as const,
-          code: result.status === 'conflict' ? 'connected_account_configuration_changed'
-            : result.status === 'outcome_unknown' ? 'connected_account_configuration_outcome_unknown'
-              : 'connected_account_configuration_persistence_unavailable' };
+        if (result.status === 'conflict') return { status: 'conflict' as const, code: 'connected_account_configuration_changed' };
+        if (result.status === 'outcome_unknown') return { status: 'unavailable' as const, code: 'connected_account_configuration_outcome_unknown' };
+        if (result.status !== 'applied') return configurationUnavailable({ phase: 'connected_account.configuration.service_promotion',
+          errorClass: 'Error', errorCode: result.status, httpStatus: null });
         committedRecord = result.record;
         committedRevision = result.revision;
       } else {
         const result = await store.writeRecord({ expectedRevision: catalog.revision, record });
-        if (result.status !== 'updated') return { status: result.status === 'conflict' ? 'conflict' as const : 'unavailable' as const,
-          code: result.status === 'conflict' ? 'connected_account_configuration_changed' : 'connected_account_configuration_persistence_unavailable' };
+        if (result.status === 'conflict') return { status: 'conflict' as const, code: 'connected_account_configuration_changed' };
+        if (result.status !== 'updated') return configurationUnavailable({ phase: 'connected_account.configuration.service_write',
+          errorClass: 'Error', errorCode: result.status, httpStatus: null });
         committedRecord = result.record;
         committedRevision = result.revision;
       }
@@ -411,9 +431,9 @@ export function createQualifiedConnectedAccountDaemonPersistence(
       return committed;
     } catch (error) {
       if (committed) return committed;
-      return { status: 'unavailable' as const, code: error instanceof Error && 'code' in error && error.code === 'outcome_unknown'
-        ? 'connected_account_configuration_outcome_unknown'
-        : 'connected_account_configuration_persistence_unavailable' };
+      return error instanceof Error && 'code' in error && error.code === 'outcome_unknown'
+        ? { status: 'unavailable' as const, code: 'connected_account_configuration_outcome_unknown' }
+        : configurationUnavailable(projectActionFailureCauseV1(error, 'connected_account.configuration.service_write'));
     }
   }
 
@@ -504,8 +524,9 @@ export function createQualifiedConnectedAccountDaemonPersistence(
           const catalog = await readActiveConnectedAccountCatalog({ credentials: params.credentials,
             key: 'configurations', ...(params.operationContext ? { operationContext: params.operationContext } : {}) });
           if (catalog.status !== 'ready' || catalog.record.key !== 'configurations') {
-            throw Object.assign(new Error('Connected Account configuration catalog is unavailable'), {
-              code: 'connected_account_configuration_persistence_unavailable',
+            throw new PluginError({
+              code: configurationUnavailableCode,
+              failureCause: configurationServiceReadFailure(catalog),
             });
           }
           const entry = catalog.record.value.entries.find(entry => sameService(entry.service, target.service)
@@ -620,14 +641,9 @@ export function createQualifiedConnectedAccountDaemonPersistence(
             },
           });
         } catch (error) {
-          return Object.freeze({
-            status: readHttpStatus(error) === 409
-              ? 'conflict' as const
-              : 'unavailable' as const,
-            code: readHttpStatus(error) === 409
-              ? 'connected_account_configuration_changed'
-              : 'connected_account_configuration_persistence_unavailable',
-          });
+          return Object.freeze(readHttpStatus(error) === 409
+            ? { status: 'conflict' as const, code: 'connected_account_configuration_changed' }
+            : configurationUnavailable(projectActionFailureCauseV1(error, 'connected_account.configuration.account_write')));
         }
       },
       async destroyAttempt(attemptId: string) {
