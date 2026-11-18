@@ -113,6 +113,7 @@ run_control_command() {
 check_sync_session_clean() {
   session_name=$1
   allow_preparation=${2-0}
+  observe_only=${3-0}
   case "$session_name" in ''|*[!A-Za-z0-9._-]*)
     printf '%s\n' "hstack-dev-target-control: invalid sync session name: $session_name" >&2
     return 1
@@ -234,13 +235,15 @@ EOF
   if [ "$blocking_scan_count" -gt 0 ]; then sync_fact_scanProblems=1; fi
   classify_clean_mutagen_readiness
   if [ "$sync_readiness" = rescan ]; then
+    [ "$observe_only" = 1 ] && return 0
     printf '%s\n' "hstack-dev-target-control: $session_name synchronization needs a fresh scan (scan=$s_alpha_scan/$s_beta_scan transition=$s_alpha_trans/$s_beta_trans): $problem_details" >&2
     [ "$allow_preparation" = 1 ] || return 2
   elif [ "$sync_readiness" != ready ] && { [ "$sync_readiness" != needs-flush ] || [ "$allow_preparation" != 1 ]; }; then
+    [ "$observe_only" = 1 ] && return 0
     printf '%s\n' "hstack-dev-target-control: $session_name synchronization is $sync_readiness (scanned=$sync_fact_scanned cycles=$s_cycles)" >&2
     return 1
   fi
-  if [ "${HSTACK_SYNC_CHECK_VERBOSE-}" = 1 ]; then
+  if [ "$observe_only" != 1 ] && [ "${HSTACK_SYNC_CHECK_VERBOSE-}" = 1 ]; then
     printf '%s\n' "$status_line"
   fi
   return 0
@@ -276,6 +279,22 @@ flush_and_check_sync() {
   # Progress stays diagnostic; stdout belongs to health records or payloads.
   "$control_path" -- "$@" >&2 &
   control_child=$!
+  # Mutagen's flush process can remain open while its session changes to a
+  # terminal state. Observe the same session owner while that process is open;
+  # this has no deadline and lets a real session failure terminate the wait.
+  monitor_status=0
+  while kill -0 "$control_child" 2>/dev/null; do
+    check_sync_session_clean "$session_name" 1 1
+    monitor_status=$?
+    if [ "$monitor_status" -ne 0 ]; then
+      kill -TERM "$control_child" 2>/dev/null || true
+      wait "$control_child" 2>/dev/null || true
+      control_child=''
+      trap - HUP INT TERM
+      return "$monitor_status"
+    fi
+    sleep 1
+  done
   wait "$control_child"
   status=$?
   control_child=''

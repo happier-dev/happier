@@ -282,6 +282,56 @@ test('project log churn does not wedge the flush while persistent source transit
   }
 });
 
+test('an open flush reports a session that becomes unable to synchronize', {
+  skip: process.platform === 'win32',
+}, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-sync-live-failure-'));
+  t.after(() => removeFixture(root));
+  const binDir = join(root, 'bin');
+  const dataDir = join(root, 'mutagen', 'data');
+  const started = join(root, 'flush-started');
+  const release = join(root, 'flush-release');
+  const terminal = join(root, 'session-terminal');
+  const observed = join(root, 'terminal-observed');
+  await mkdir(binDir, { recursive: true });
+  await mkdir(dataDir, { recursive: true });
+  await executable(join(binDir, 'mutagen'), [
+    '#!/bin/sh',
+    'case "$2" in',
+    '  flush)',
+    `    : > ${JSON.stringify(started)}`,
+    `    trap ': > ${JSON.stringify(root)}/flush-terminated; exit 0' TERM`,
+    `    while [ ! -e ${JSON.stringify(release)} ]; do sleep 0.02; done`,
+    '    ;;',
+    '  list)',
+    `    if [ -e ${JSON.stringify(terminal)} ]; then : > ${JSON.stringify(observed)}; printf "%s|HaltedOnRootDeletion|false|false|X|X|X|false|X|X|X|active|2|ok|0|0\\n" "$3";`,
+    `    else printf "%s|Watching|false|true|1|0/0|0/0|true|1|0/0|0/0|active|2|ok|0|0\\n" "$3"; fi`,
+    '    ;;',
+    'esac',
+  ].join('\n'));
+  const env = {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    MUTAGEN_DATA_DIRECTORY: dataDir,
+    DBUS_SESSION_BUS_ADDRESS: '',
+  };
+  const child = spawn(controlExecutable, [
+    '--sync-flush', 'happier-linux', '--', 'mutagen', 'sync', 'flush', 'happier-linux',
+  ], { env, stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  try {
+    await waitForFile(started);
+    await writeFile(terminal, 'terminal');
+    await waitForFile(observed);
+    assert.deepEqual(await waitForExit(child), { code: 1, signal: null });
+    assert.match(stderr, /synchronization status is not clean: HaltedOnRootDeletion/);
+  } finally {
+    await writeFile(release, 'release');
+    if (child.exitCode == null && child.signalCode == null) await waitForExit(child);
+  }
+});
+
 test('native barrier blocks and names project data, stale mirror links and symlinked parents', {
   skip: process.platform === 'win32',
 }, async t => {
