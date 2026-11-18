@@ -1,9 +1,10 @@
-import type { ParsedNotificationTap } from '../notificationRouting';
+import { parseNotificationTap, type ParsedNotificationTap } from '../notificationRouting';
 import type { NotificationPermissionOutcome } from './notificationPermissionCoordinator';
 import { markNotificationPermissionRecoveryNeeded } from './notificationPermissionRecovery';
 import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import { withTimeout } from '@/utils/timing/time';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { PUSH_NOTIFICATION_NATIVE_CALL_TIMEOUT_MS } from '../permission/pushNotificationAccess';
 
 type NotificationPermissionExecution = typeof import('./notificationPermissionActionExecution');
 
@@ -73,20 +74,40 @@ async function runPermissionAction(
     }
 }
 
-export function executeNotificationPermissionAction(
+async function settleConfirmedPresentation(outcome: NotificationPermissionOutcome, parsed: ParsedNotificationTap | null): Promise<NotificationPermissionOutcome> {
+    if (outcome.status !== 'confirmed' || !parsed) return outcome;
+    try {
+        // Presentation has its native-call budget after execution has settled.
+        // Failure cannot turn a confirmed decision into a retryable action.
+        await withTimeout(async () => {
+            const { dismissConfirmedAgentRequestNotification } = await import('./agentRequestNotificationSettlement');
+            await dismissConfirmedAgentRequestNotification(parsed);
+        }, PUSH_NOTIFICATION_NATIVE_CALL_TIMEOUT_MS, 'confirmed notification cleanup');
+    } catch {
+        console.warn('[notifications] Confirmed request notification cleanup unavailable');
+    }
+    return outcome;
+}
+
+export async function executeNotificationPermissionAction(
     parsed: ParsedNotificationTap,
     options: NotificationPermissionActionOptions = {},
 ): Promise<NotificationPermissionOutcome> {
     // Cached observations neither load execution nor create another recovery notice.
     if (options.allowExecution === false) return Promise.resolve({ status: 'not_sent' });
-    return runPermissionAction(options, (implementation, context) =>
+    const outcome = await runPermissionAction(options, (implementation, context) =>
         implementation.executeNotificationPermissionAction(parsed, options, context));
+    return settleConfirmedPresentation(outcome, parsed);
 }
 
-export function handleNotificationBackgroundTask(
+export async function handleNotificationBackgroundTask(
     body: unknown,
     options: NotificationPermissionActionOptions = {},
 ): Promise<NotificationPermissionOutcome> {
-    return runPermissionAction(options, (implementation, context) =>
+    const outcome = await runPermissionAction(options, (implementation, context) =>
         implementation.handleNotificationBackgroundTask(body, options, context));
+    const parsed = outcome.status === 'confirmed' && typeof body === 'object' && body !== null && 'data' in body
+        ? parseNotificationTap({ response: body.data, defaultActionIdentifier: 'expo.modules.notifications.actions.DEFAULT' })
+        : null;
+    return settleConfirmedPresentation(outcome, parsed);
 }

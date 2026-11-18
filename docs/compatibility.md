@@ -922,6 +922,13 @@ and coordinator, and require an explicit success acknowledgement. Cached replies
 never replay. No second question store, permission-response fallback, or answer
 journal is added.
 
+Confirmed notification actions reconcile OS presentation immediately, including
+background execution without a loaded Session. Cleanup matches the saved Home,
+Account, request and occurrence against the current native inventory, preserving
+newer occurrences. Cleanup failure retains the confirmed decision and does not
+replay it. An RPC approval without answer fields cannot settle an
+`AskUserQuestion`; the question remains pending for a valid answer or denial.
+
 Released CLI `cli-v0.2.17` and `cli-v0.2.17-preview.1` at
 `a2c45c86804b24e60ac0b76146a3ef36dfcaa15b` use a strict structured-question request
 schema without `occurrenceId`; they reject these new notification replies rather

@@ -2,6 +2,8 @@ import { deepEqual } from '@/utils/deterministicJson';
 import { isSameAgentStateRequestOccurrence, type AgentStateOutstandingRequest } from './agentStateRequestStore';
 import { normalizeAskUserQuestionInputForPublication } from '@/agent/questions/normalizeAskUserQuestionInput';
 import { logger } from '@/ui/logger';
+import { isAskUserQuestionToolName } from '@happier-dev/protocol';
+import { PUBLIC_RPC_HANDLER_ERROR_CODES, PublicRpcHandlerError } from '@happier-dev/protocol/rpcErrors';
 
 export type PermissionRequestCoordinatorRequest = Readonly<{
     requestId: string;
@@ -297,6 +299,14 @@ export class PermissionRequestCoordinator<TResult> {
         onAdmitted?: () => void;
         expectedOccurrenceId?: string;
     }>): Promise<boolean> {
+        const completed = params.completion.completedRequest;
+        // An approval is not an answer. Keep the question and its provider waiter
+        // pending unless the owning adapter supplied its validated answer fields.
+        if (isAskUserQuestionToolName(params.context.toolName) && completed.status === 'approved'
+            && completed.extraCompletedFields?.structuredAnswersV1 === undefined
+            && completed.extraCompletedFields?.answers === undefined) {
+            throw new PublicRpcHandlerError(PUBLIC_RPC_HANDLER_ERROR_CODES.STRUCTURED_QUESTION_INVALID);
+        }
         return await this.completeResponseWithAck(params);
     }
 

@@ -115,7 +115,6 @@ export function useNotificationResponseRouting(params: Readonly<{
                 fireAndForget((async () => {
                     navigateToSessionRoute({ router, sessionId: pendingAction.sessionId, serverId: saved?.id, refreshAuth: refreshAuthRef.current });
                 })(), { tag: 'RootLayout.pendingNotificationAction' });
-                return;
             }
         }
 
@@ -125,7 +124,6 @@ export function useNotificationResponseRouting(params: Readonly<{
             if (normalizeServerUrl(pending.serverUrl) === active) {
                 clearPendingNotificationNav();
                 navigateToNotificationAccount(pending, () => { router.push(pending.route); });
-                return () => { disposed = true; };
             }
         }
 

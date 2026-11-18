@@ -6,6 +6,7 @@ import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAc
 import { getActiveServerUrl, subscribeActiveServer } from '@/sync/domains/server/serverProfiles';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { loadExpoNotifications } from '@/utils/platform/loadExpoNotifications';
+import { readAgentRequestNotificationIdentity } from './agentRequestNotificationSettlement';
 
 /** Reconciles OS presentation only; the CLI's completed request remains authoritative. */
 export function usePresentedAgentRequestSettlement(): () => void {
@@ -32,12 +33,9 @@ export function usePresentedAgentRequestSettlement(): () => void {
             }));
             for (const notification of presented) {
                 if (disposed) return;
-                const data = notification.request.content.data;
-                if (!data || (data.kind !== 'permission' && data.kind !== 'user_action')) continue;
+                const data = readAgentRequestNotificationIdentity(notification.request.content.data);
+                if (!data) continue;
                 const { accountId, serverUrl, sessionId, requestId, occurrenceId } = data;
-                if (typeof accountId !== 'string' || typeof serverUrl !== 'string'
-                    || typeof sessionId !== 'string' || typeof requestId !== 'string'
-                    || typeof occurrenceId !== 'string' || !occurrenceId) continue;
                 // Read after the native await: an Account/Home may have changed
                 // while inventory loaded. Missing or unloaded detail proves nothing.
                 const scope = getActiveServerAccountScope();
