@@ -50,9 +50,10 @@ function StoredDefinitionHistory(props: Readonly<{
     action={different ? <SectionActionButton testID="project-deployments.receipt.definition.compare"
       icon="git-diff" title={t('projects.scripts.definition.compare')} onPress={() => setCompare(value => !value)} /> : undefined}>
     <DefinitionSelectors definition={source} />
-    <CodeBlockView code={storedComposeDocumentText(source.document)} language="yaml" showHeaderRow={false} showCopyButton wrap />
+    {/* Code scrolls sideways, never wraps mid-token (D24: "postgres-⏎data:" read as two keys on a phone). */}
+    <CodeBlockView code={storedComposeDocumentText(source.document)} language="yaml" showHeaderRow={false} showCopyButton />
     {source.publicFiles?.map(file => <ItemGroup key={file.path} title={file.path} surface="none">
-      <CodeBlockView code={file.content} showHeaderRow={false} showCopyButton wrap />
+      <CodeBlockView code={file.content} showHeaderRow={false} showCopyButton />
     </ItemGroup>)}
     {compare && current ? <ItemGroup title={t('projects.deployments.editors.versionCurrent')}
       description={t('projects.deployments.review.versionStored', { revision: current.contentRevision })} surface="none">

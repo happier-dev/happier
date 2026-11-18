@@ -28,7 +28,6 @@ import { DeploymentTelemetryPanel } from './DeploymentTelemetryPanel';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import {
   PageHeader,
@@ -835,14 +834,14 @@ export const DeploymentEnvironmentDetail = React.memo(
               machineId={runtime?.source.kind === 'plugin' || machineIds.length !== 1 ? null : machineIds[0]} />
           ) : null;
         case 'machineOffline':
-          // The notice slot's column: the line keeps the sheets' edge like every banner in this slot.
+          // The notice slot draws every condition as its one banner, on the sheets' edges a section gap under the tabs
+          // (R2-D10: a freshness line inside a section took the rows' inset and sat 4 px under the tabs).
           return (
-            <ItemGroup surface="none" header="none">
-              <SurfaceFreshnessLine
-                testID="project-deployments.environment.offline"
-                reason={t('projects.deployments.machineOffline', { machine: machineLabel })}
-              />
-            </ItemGroup>
+            <AttentionBanner
+              testID="project-deployments.environment.offline"
+              tone="neutral"
+              title={t('projects.deployments.machineOffline', { machine: machineLabel })}
+            />
           );
         case 'noTarget':
           return (

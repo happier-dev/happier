@@ -235,6 +235,12 @@ export function DeploymentDomainsPanel(
   ) : undefined;
   // "3 domains" and what the list says about each (lab `envDom`); the list draws its own sheet.
   // + Add domain opens the form inline in this section and an empty list is one plain line (pfc-redesign dDomains KEEP).
+  // The built-in address already fills the list; "no domains yet" would contradict the row above it.
+  const tabStateShown = !(unavailableDockerDesktop && domains.result.status === 'empty' || adding && items.length === 0
+    || domains.result.status === 'empty' && (props.builtInUrls?.length ?? 0) > 0);
+  // The list draws its own sheet; with no list, the section's sheet holds its one line (dDomains KEEP: a bordered
+  // "No domains yet" row).
+  const listShown = items.length > 0 || (props.builtInUrls?.length ?? 0) > 0;
   return (
     <ItemGroup
       testID="project-deployments.environment.domains"
@@ -242,7 +248,7 @@ export function DeploymentDomainsPanel(
       title={addressCount > 0 ? t('projects.deployments.editors.domainsCount', { count: addressCount }) : t('projects.deployments.tabDomains')}
       description={t('projects.deployments.editors.domainsLede')}
       action={addAction}
-      surface="none"
+      {...(listShown || !tabStateShown ? { surface: 'none' as const } : {})}
     >
       {unavailableDockerDesktop ? (
         <SurfaceStateCard testID="project-deployments.environment.domains.unavailableDockerDesktop"
@@ -333,9 +339,7 @@ export function DeploymentDomainsPanel(
           domain: { domainId: checkSetup.item.domain.id, targetLinkId: checkSetup.item.domain.targetLinkId },
         })}
       /> : null}
-      {unavailableDockerDesktop && domains.result.status === 'empty' || adding && items.length === 0
-        // The built-in address already fills the list; "no domains yet" would contradict the row above it.
-        || domains.result.status === 'empty' && (props.builtInUrls?.length ?? 0) > 0 ? null : <DeploymentTabState
+      {!tabStateShown ? null : <DeploymentTabState
         result={domains.result}
         testID="project-deployments.environment.domains"
         errorTitle={t('projects.deployments.domainsErrorTitle')}

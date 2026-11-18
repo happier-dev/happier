@@ -316,10 +316,6 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         </ItemGroup>
         </View>
 
-        <View ref={revealHost('sharing')} collapsable={false}>
-          <DeploymentPrivateServiceExports detail={detail} editing={editing} />
-        </View>
-
         <View ref={revealHost('controller')} collapsable={false}>
         <ItemGroup
           testID={section('controller')}
@@ -453,6 +449,11 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         <DeploymentMigrationSettings detail={detail} editing={editing} machineName={machineName} />
         <DeploymentRegistryCredentials detail={detail} editing={editing} lifetime={props.lifetime ?? null} machineName={machineName} />
         </> : null}
+
+        {/* dSettings KEEP order: private sharing follows the registry credentials. */}
+        <View ref={revealHost('sharing')} collapsable={false}>
+          <DeploymentPrivateServiceExports detail={detail} editing={editing} />
+        </View>
 
         <ItemGroup
           testID={section('checks-alerts')}
