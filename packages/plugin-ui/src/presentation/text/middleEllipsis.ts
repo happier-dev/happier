@@ -9,6 +9,12 @@
  * between bidi marks, gives up its start behind one ellipsis: "/tmp…20261030/claude" (sweep #18).
  */
 export function splitForWebMiddleEllipsis(value: string): Readonly<{ head: string; tail: string; headStyle: MiddleEllipsisHeadStyle; tailStyle: MiddleEllipsisTailStyle }> | null {
+  const split = splitAtMiddle(value);
+  // A word space at either edge of a run is dropped by the browser ("POST/checkout", "youcan’t"): it stays, unbreakable.
+  return split && { ...split, head: split.head.replace(/ $/u, '\u00a0'), tail: split.tail.replace(/^(\u200e?) /u, '$1\u00a0') };
+}
+
+function splitAtMiddle(value: string): Readonly<{ head: string; tail: string; headStyle: MiddleEllipsisHeadStyle; tailStyle: MiddleEllipsisTailStyle }> | null {
   const slash = value.lastIndexOf('/');
   if (slash > 0 && slash < value.length - 1) {
     const root = value.indexOf('/', value.startsWith('/') ? 1 : value.indexOf('/') + 1);
@@ -21,8 +27,7 @@ export function splitForWebMiddleEllipsis(value: string): Readonly<{ head: strin
   if (suffix > 0 && suffix < value.length - 3) return { head: value.slice(0, suffix), tail: `\u00a0${value.slice(suffix + 1)}`, headStyle: HEAD, tailStyle: TAIL };
   if (value.length < 8) return null;
   const cut = Math.ceil(value.length * 0.6);
-  // A word space at the cut would be dropped at the edge of its run ("youcan’t"): it stays, unbreakable.
-  return { head: value.slice(0, cut).replace(/ $/u, '\u00a0'), tail: value.slice(cut).replace(/^ /u, '\u00a0'), headStyle: HEAD, tailStyle: TAIL };
+  return { head: value.slice(0, cut), tail: value.slice(cut), headStyle: HEAD, tailStyle: TAIL };
 }
 
 const HEAD = Object.freeze({ flexShrink: 1, minWidth: 0 } as const);

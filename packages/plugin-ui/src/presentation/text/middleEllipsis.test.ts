@@ -12,6 +12,14 @@ describe('splitForWebMiddleEllipsis', () => {
     expect(split!.head.endsWith(' ')).toBe(false);
   });
 
+  it('keeps the word space before a path that starts mid-line ("POST /checkout · Production")', () => {
+    const split = splitForWebMiddleEllipsis('POST /checkout · billing-api · Production');
+    expect(split).not.toBeNull();
+    expect(`${split!.head}${split!.tail}`.replace(/\u00a0/g, ' ').replace(/\u200e/g, '')).toBe('POST /checkout · billing-api · Production');
+    expect(split!.head.endsWith(' ')).toBe(false);
+    expect(split!.tail.replace(/\u200e/g, '').startsWith(' ')).toBe(false);
+  });
+
   it('keeps a name’s distinguishing suffix whole', () => {
     expect(splitForWebMiddleEllipsis('customer-portal · Production')).toMatchObject({ head: 'customer-portal', tail: ' · Production',
       tailStyle: HAPPIER_MIDDLE_ELLIPSIS_STYLE.tail });
