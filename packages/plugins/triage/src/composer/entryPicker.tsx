@@ -30,7 +30,9 @@ import { readTriageEntryRowContextV1 } from '../ui/window/entryDisplay.js';
 import { isHostCancellation } from '../hostCancellation.js';
 import type { TriageRefreshPacingReasonV1 } from '../refresh/refreshEligibility.js';
 import { useTriageRefreshEligibilityNowV1 } from '../ui/window/refreshEligibilityClock.js';
-import { useTriageListWindow } from '../ui/window/useTriageListWindow.js';
+import { useTriageListWindow, type TriageMountedListWindowV1 } from '../ui/window/useTriageListWindow.js';
+import { TRIAGE_LIST_DEFAULT_LENS_V1 } from '../projection/listWindow.js';
+import type { TriageListWindowSnapshotV1 } from '../projection/listWindowStore.js';
 import { selectTriageAttachedEntries, type TriageAttachedEntryV1 } from './attachedEntries.js';
 import { applyTriageEntryMutation, describeTriageMutationRefusal } from './applyEntryMutation.js';
 import { readTriageComposerPickerMount } from './composerMount.js';
@@ -86,6 +88,23 @@ import { projectTriageSourceHealthFailureV1, readTriageListFailureLine } from '.
  */
 
 const NO_ATTACHMENTS: readonly TriageAttachedEntryV1[] = Object.freeze([]);
+
+/**
+ * The shared window as every Composer picker reads it.
+ *
+ * The page owns the window's lens and keeps it after the reader leaves, so a
+ * page search or filter would otherwise empty a picker opened later from
+ * another composer. Pickers search on their own, so they read every retained
+ * entry through the default lens, as the Home widget does, without re-lensing
+ * the page.
+ */
+export function useTriagePickerSnapshot(window: TriageMountedListWindowV1): TriageListWindowSnapshotV1 {
+    return React.useMemo(() => {
+        const projected = window.snapshot.window === undefined
+            ? undefined : window.readOwner?.project(TRIAGE_LIST_DEFAULT_LENS_V1);
+        return projected === undefined ? window.snapshot : { ...window.snapshot, window: projected };
+    }, [window.readOwner, window.snapshot]);
+}
 
 /** One search/refresh head for every consumer of the Composer entry picker. */
 export function TriagePickerHead(props: Readonly<{
@@ -361,7 +380,8 @@ export function TriageEntryPicker(context: RenderContext): React.ReactElement {
     // arriving, so a picker left open past it offers the press again instead of
     // waiting for unrelated state activity.
     const nowMs = useTriageRefreshEligibilityNowV1(window.snapshot.refreshBlocked);
-    const facts = projectTriagePickerCorpusFacts({ snapshot: window.snapshot, nowMs });
+    const retained = useTriagePickerSnapshot(window);
+    const facts = projectTriagePickerCorpusFacts({ snapshot: retained, nowMs });
     const view = buildTriagePickerView({
         facts,
         query,
@@ -507,8 +527,9 @@ export function TriageEntryPicker(context: RenderContext): React.ReactElement {
                 {/*
                   Healthy says nothing. One quiet line speaks only when the list is
                   behind, being read, or waiting to be read; never a green "Up to date".
+                  With no rows the empty state below carries that headline, so it is said once.
                 */}
-                {pacingNotice ?? (view.state.kind === 'stale' ? (
+                {pacingNotice ?? (view.state.kind === 'stale' && view.rows.length > 0 ? (
                     <FreshnessLine
                         asOf={view.state.lastMaterializedAtMs}
                         reason={resolvePickerStateLabel(text, view.state.kind)}

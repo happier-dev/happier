@@ -39,7 +39,8 @@ import {
     testkitSnapshot,
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
-import { refreshTriageListWindow } from '../ui/window/mountedWindow.js';
+import { refreshTriageListWindow, setTriageListWindowLens } from '../ui/window/mountedWindow.js';
+import { TRIAGE_LIST_DEFAULT_LENS_V1 } from '../projection/listWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from '../ui/window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderPickerSurface } from './entryPicker.js';
 import { renderSurface as renderComparisonSurface } from '../ui/comparisonPicker.js';
@@ -554,6 +555,22 @@ describe('the mounted Composer entry picker', () => {
         await expect(picker.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
         expect(await picker.queryByText('Up to date')).toBeUndefined();
         await expect(picker.getByRole('button', { name: 'Refresh' })).resolves.toBeDefined();
+    });
+
+    it('lists every retained entry when the page left its window narrowed by a search', async () => {
+        const harness = createHarness();
+        const picker = await mountPicker(harness, COMPOSER_A, 'triage-picker-page-lens');
+        // QB-39: the page owns the shared window's lens and keeps it after the
+        // reader leaves. A page search that matched nothing must not empty the
+        // picker opened later from another composer, nor make it say twice that
+        // the list is the last known one.
+        await act(async () => {
+            setTriageListWindowLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'no such entry anywhere' },
+                picker.context.hostApi, harness.ephemeralSharedScope);
+        });
+        await act(async () => { await Promise.resolve(); });
+        await expect(picker.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
+        await expect(picker.getByText('Older change')).resolves.toBeDefined();
     });
 
     it('derives multi-selection and later row state only from the canonical Composer snapshot', async () => {

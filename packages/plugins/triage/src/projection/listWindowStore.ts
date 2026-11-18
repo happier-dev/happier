@@ -205,7 +205,7 @@ export type TriageListWindowChangeV1 = Readonly<{
 
 export type TriageListWindowStoreV1 = Readonly<{
     getSnapshot(): TriageListWindowSnapshotV1;
-    /** Project the retained acquisition through another lens without mutating it. */
+    /** Project the retained acquisition through another lens, at this mount's depth, without mutating it. */
     project(lens: TriageListLensV1): TriageListWindowV1 | undefined;
     subscribe(listener: (change: TriageListWindowChangeV1) => void): () => void;
     /** Read retained entry truth, including entries outside the current lens. */
@@ -1497,7 +1497,10 @@ export function createTriageListWindowStore(deps: Readonly<{
             return foldBaseline.entries.get(key)?.row ?? null;
         },
         project(nextLens) {
-            return window === null ? undefined : projectRetained(nextLens, false);
+            // At this mount's accumulated depth, as `rebuild` projects its own
+            // lens: another lens over the same retained rows must not hide the
+            // windows the reader already appended.
+            return window === null ? undefined : projectRetained({ ...nextLens, limit: foldLimit() }, false);
         },
         subscribe(listener) {
             listeners.add(listener);

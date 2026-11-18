@@ -18,6 +18,8 @@ import { readTriageEntryDetail } from '../actions/readEntryDetail.js';
 import { createTestkitSourceSessionRelations, readTestkitSourceSessionLinks } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import { TriageReadEntryDetailInputV1Schema, TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 } from '../actions/entryDetailProtocol.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
+import { setTriageListWindowLens } from './window/mountedWindow.js';
+import { TRIAGE_LIST_DEFAULT_LENS_V1 } from '../projection/listWindow.js';
 import type { EphemeralInputSettlement } from '@happier-dev/plugin-sdk/ui';
 import type { PluginUiContextEnrichmentV1 } from '@happier-dev/plugin-sdk/ui';
 import { PLUGIN_MANIFEST } from '../manifest.js';
@@ -154,7 +156,7 @@ async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIden
     expect(command.action).toBe(TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1);
     return invokeInput(command.input ?? { mountId: readMountId(), operation });
   };
-  return { fixture, settlements, getInputs, native, comparison, invoke, invokeCommand, reads,
+  return { fixture, sharedScope, settlements, getInputs, native, comparison, invoke, invokeCommand, reads,
     readCommands: () => published?.commands ?? [] };
 }
 
@@ -201,6 +203,13 @@ describe('mounted Triage comparison picker', () => {
     expect(await invokeCommand('Search pull requests', { kind: 'setPickerQuery', query: '' })).toEqual({ status: 'applied' });
     expect(await invokeCommand('Refresh')).toEqual({ status: 'applied' });
     expect(reads.scans).toBeGreaterThan(before.scans);
+  });
+  it('offers every retained pull request when the page left the shared window narrowed by a search', async () => {
+    const { fixture, sharedScope, native } = await mountPicker({ skipSelect: true });
+    // QB-39: the page keeps its lens on the shared window after the reader leaves it.
+    await act(async () => { setTriageListWindowLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'no such pull request anywhere' },
+      fixture.context.hostApi, sharedScope); });
+    expect(await fixture.queryByRole('button', { name: native.detailInput.observation.snapshot.title })).toBeDefined();
   });
   it('chooses through the registered mounted Action and keeps search local to the shared corpus', async () => {
     const { settlements, native, comparison, invoke, reads } = await mountPicker({ skipSelect: true });

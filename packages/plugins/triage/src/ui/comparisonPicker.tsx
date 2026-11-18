@@ -15,7 +15,7 @@ import { useTriageRefreshEligibilityNowV1 } from './window/refreshEligibilityClo
 import { readTriageEntryDetailState } from './detail/useTriageEntryDetail.js';
 import { readTriageSourceGetOperationV1, resolveTriageSourceWorkflowSubjectV1 } from './detail/sourceSurface.js';
 import { readTriageComparisonSource } from './detail/readComparison.js';
-import { TriagePickerHead, TriagePickerRow, resolvePickerStateLabel, resolvePacingReasonDescription } from '../composer/entryPicker.js';
+import { TriagePickerHead, TriagePickerRow, resolvePickerStateLabel, resolvePacingReasonDescription, useTriagePickerSnapshot } from '../composer/entryPicker.js';
 import { bindTriageMountedUiActions } from './mountedActions.js';
 import { useTriageCurrentUiContextPublication } from './currentContextPublication.js';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../actions/mountedUiProtocol.js';
@@ -84,11 +84,12 @@ function TriageComparisonPicker(context: RenderContext) {
   const activity = usePluginSurfaceActivity();
   const mountId = React.useId();
   const launch = readInputTypePickerLaunchInput(context.launchInput);
-  const facts = projectTriagePickerCorpusFacts({ snapshot: window.snapshot, nowMs });
+  const retained = useTriagePickerSnapshot(window);
+  const facts = projectTriagePickerCorpusFacts({ snapshot: retained, nowMs });
   const pullRequests = facts.rows.filter(row => resolveTriageSourceWorkflowSubjectV1(surface.targetedContributions, row.entryRef) === 'pullRequest');
   const view = buildTriagePickerView({ facts: { ...facts, rows: pullRequests }, query, attached: [] });
   const row = view.rows.some(candidate => candidate.id === selectedKey)
-    ? window.snapshot.window?.rows.find(candidate => deriveTriageComposerEntryAttachmentKey(candidate.entryRef) === selectedKey) : undefined;
+    ? retained.window?.rows.find(candidate => deriveTriageComposerEntryAttachmentKey(candidate.entryRef) === selectedKey) : undefined;
   const runMountedOperation = async (operation: TriageMountedUiOperationV1, signal: AbortSignal): Promise<TriageMountedUiResultV1> => {
     if (signal.aborted) return { status: 'unavailable' };
     if (operation.kind === 'setPickerQuery') { changeQuery(operation.query); return { status: 'applied' }; }
@@ -105,7 +106,7 @@ function TriageComparisonPicker(context: RenderContext) {
     if (operation.kind !== 'attachEntry') return { status: 'unavailable' };
     const key = deriveTriageComposerEntryAttachmentKey(operation.entryRef);
     const candidate = view.rows.some(item => item.id === key)
-      ? window.snapshot.window?.rows.find(item => deriveTriageComposerEntryAttachmentKey(item.entryRef) === key) : undefined;
+      ? retained.window?.rows.find(item => deriveTriageComposerEntryAttachmentKey(item.entryRef) === key) : undefined;
     if (!candidate) return { status: 'unavailable' };
     setSelectedKey(key);
     return await selection.choose(candidate, signal);
