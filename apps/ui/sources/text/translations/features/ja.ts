@@ -19577,6 +19577,7 @@ const ja: WorkflowTriggersCopy = {
         title: '自動で実行',
         saveToInclude: 'トリガーは保存済みのワークフローを実行します。変更を含めるには保存してください。',
         partialSave: 'ワークフローは保存されました · トリガーは更新されていません',
+        partialSaveBecause: ({ cause }) => `ワークフローは保存されました · トリガーは更新されていません: ${cause}`,
     },
     card: {
         when: "条件",

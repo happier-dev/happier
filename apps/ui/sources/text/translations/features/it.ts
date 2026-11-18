@@ -19643,6 +19643,7 @@ const it: WorkflowTriggersCopy = {
         title: 'Si esegue automaticamente',
         saveToInclude: 'I trigger eseguono il workflow salvato. Salva per includere le modifiche.',
         partialSave: 'Workflow salvato · Trigger non aggiornati',
+        partialSaveBecause: ({ cause }) => `Workflow salvato · Trigger non aggiornati: ${cause}`,
     },
     card: {
         when: "Quando",

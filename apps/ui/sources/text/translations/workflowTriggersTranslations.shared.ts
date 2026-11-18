@@ -375,6 +375,7 @@ export const en = {
         title: 'Runs automatically',
         saveToInclude: 'Triggers run the saved workflow. Save to include your changes.',
         partialSave: 'Workflow saved · Triggers not updated',
+        partialSaveBecause: ({ cause }: { cause: string }) => `Workflow saved · Triggers not updated: ${cause}`,
     },
     card: {
         when: "When",

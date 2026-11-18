@@ -19629,6 +19629,7 @@ const pt: WorkflowTriggersCopy = {
         title: 'Executa automaticamente',
         saveToInclude: 'Os gatilhos executam o fluxo salvo. Salve para incluir suas alterações.',
         partialSave: 'Fluxo salvo · Gatilhos não atualizados',
+        partialSaveBecause: ({ cause }) => `Fluxo salvo · Gatilhos não atualizados: ${cause}`,
     },
     card: {
         when: "Quando",

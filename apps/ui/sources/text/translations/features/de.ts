@@ -19137,6 +19137,7 @@ const de: WorkflowTriggersCopy = {
         title: 'Läuft automatisch',
         saveToInclude: 'Auslöser führen den gespeicherten Workflow aus. Speichere, um deine Änderungen einzuschließen.',
         partialSave: 'Workflow gespeichert · Auslöser nicht aktualisiert',
+        partialSaveBecause: ({ cause }) => `Workflow gespeichert · Auslöser nicht aktualisiert: ${cause}`,
     },
     card: {
         when: "Wann",

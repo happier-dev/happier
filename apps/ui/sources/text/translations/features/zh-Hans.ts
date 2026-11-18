@@ -19517,6 +19517,7 @@ const zhHans: WorkflowTriggersCopy = {
         title: '自动运行',
         saveToInclude: '触发器运行已保存的工作流。保存以包含你的更改。',
         partialSave: '工作流已保存 · 触发器未更新',
+        partialSaveBecause: ({ cause }) => `工作流已保存 · 触发器未更新: ${cause}`,
     },
     card: {
         when: "时机",

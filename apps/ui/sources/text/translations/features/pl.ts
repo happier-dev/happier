@@ -19667,6 +19667,7 @@ const pl: WorkflowTriggersCopy = {
         title: 'Uruchamia się automatycznie',
         saveToInclude: 'Wyzwalacze uruchamiają zapisany przepływ. Zapisz, aby uwzględnić zmiany.',
         partialSave: 'Przepływ zapisany · Wyzwalacze niezaktualizowane',
+        partialSaveBecause: ({ cause }) => `Przepływ zapisany · Wyzwalacze niezaktualizowane: ${cause}`,
     },
     card: {
         when: "Kiedy",

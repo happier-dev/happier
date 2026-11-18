@@ -19657,6 +19657,7 @@ const ca: WorkflowTriggersCopy = {
         title: 'S\'executa automàticament',
         saveToInclude: 'Els activadors executen el flux desat. Desa per incloure els teus canvis.',
         partialSave: 'Flux desat · Activadors no actualitzats',
+        partialSaveBecause: ({ cause }) => `Flux desat · Activadors no actualitzats: ${cause}`,
     },
     card: {
         when: "Quan",

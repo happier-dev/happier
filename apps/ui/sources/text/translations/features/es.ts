@@ -19579,6 +19579,7 @@ const es: WorkflowTriggersCopy = {
         title: 'Se ejecuta automáticamente',
         saveToInclude: 'Los disparadores ejecutan el flujo guardado. Guarda para incluir tus cambios.',
         partialSave: 'Flujo guardado · Disparadores sin actualizar',
+        partialSaveBecause: ({ cause }) => `Flujo guardado · Disparadores sin actualizar: ${cause}`,
     },
     card: {
         when: "Cuándo",

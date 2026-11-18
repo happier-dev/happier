@@ -19700,6 +19700,7 @@ const fr: WorkflowTriggersCopy = {
         title: 'S\'exécute automatiquement',
         saveToInclude: 'Les déclencheurs lancent le workflow enregistré. Enregistre pour inclure tes modifications.',
         partialSave: 'Workflow enregistré · Déclencheurs non mis à jour',
+        partialSaveBecause: ({ cause }) => `Workflow enregistré · Déclencheurs non mis à jour: ${cause}`,
     },
     card: {
         when: "Quand",

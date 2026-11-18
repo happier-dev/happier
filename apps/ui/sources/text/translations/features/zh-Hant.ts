@@ -19517,6 +19517,7 @@ const zhHant: WorkflowTriggersCopy = {
         title: '自動執行',
         saveToInclude: '觸發器執行已儲存的工作流程。儲存以包含你的變更。',
         partialSave: '工作流程已儲存 · 觸發器未更新',
+        partialSaveBecause: ({ cause }) => `工作流程已儲存 · 觸發器未更新: ${cause}`,
     },
     card: {
         when: "時機",

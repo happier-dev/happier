@@ -150,7 +150,7 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
             });
             const outcome = await triggers.save(persisted.definitionId, isCurrent);
             if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
-            if (outcome === 'failed') { setFailed(t('workflows.triggers.editor.partialSave')); return { status: 'refused', reason: 'trigger_save_failed' }; }
+            if (typeof outcome === 'object') { setFailed(outcome.message); return { status: 'refused', reason: 'trigger_save_failed' }; }
             return { status: 'applied' };
         } catch (error) {
             if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };

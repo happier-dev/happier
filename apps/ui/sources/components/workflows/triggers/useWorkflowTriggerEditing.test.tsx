@@ -84,6 +84,8 @@ let serverId: string;
 let disposeLoader: (() => void) | undefined;
 let listReply: (() => Promise<ReturnType<typeof AutomationDefinitionListResponseSchema.parse>>)| undefined;
 let beforeWrite: (() => Promise<void>) | undefined;
+/** The Home refuses this write as it does live (409 with a typed code). */
+let refuseWrite: (() => Readonly<{ status: number; body: unknown }> | undefined) | undefined;
 const writes: Array<ReturnType<typeof AutomationDefinitionCreateRequestSchema.parse> | ReturnType<typeof AutomationDefinitionReconcileRequestSchema.parse>> = [];
 
 // Only the Home's stored Automation rows/CAS are synthetic. The Action front door,
@@ -148,6 +150,8 @@ function installRow(id: string) {
             .some(value => current.triggers.find(trigger => trigger.id === value.triggerId)?.revision !== value.expectedRevision)) {
             return { status: 409, body: { error: 'trigger_revision_conflict' } };
         }
+        const refusal = refuseWrite?.();
+        if (refusal) return refusal;
         await beforeWrite?.();
         const row = AutomationDefinitionDetailSchema.parse({ ...current, name: input.name, description: input.description, enabled: input.enabled,
             workflowDefinitionId: input.workflowDefinitionId ?? current.workflowDefinitionId,
@@ -256,10 +260,13 @@ beforeEach(async () => {
     writes.length = 0;
     listReply = undefined;
     beforeWrite = undefined;
+    refuseWrite = undefined;
     home.answer(serverId, 'GET /v3/automations', { select: async () => ({ body: await listReply?.() ?? listRows() }) });
     home.answer(serverId, 'POST /v3/automations', { select: async raw => {
         const input = AutomationDefinitionCreateRequestSchema.parse(raw);
         writes.push(input);
+        const refusal = refuseWrite?.();
+        if (refusal) return refusal;
         await beforeWrite?.();
         const row = AutomationDefinitionDetailSchema.parse({ id: input.automationId, name: input.name, description: input.description ?? null,
             enabled: input.enabled, workflowDefinitionId: input.workflowDefinitionId ?? null, scopeSessionId: input.scopeSessionId ?? null,
@@ -438,11 +445,17 @@ describe('workflow trigger editing lifetime', () => {
                 eventRef: { ...privateEvent.eventRef, localId: 'reaction' } } });
             hook.getCurrent().setDraft(next);
         });
-        beforeWrite = async () => { if (writes.length === 2) throw new Error('disconnected'); };
-        await act(async () => { expect(await hook.getCurrent().save(definitionId, () => true)).toBe('failed'); });
+        // F11 (WF-ACCEPT-1118): the failed Save says why, through the workflow problem owner, not a bare "not updated".
+        refuseWrite = () => writes.length === 2 ? { status: 409, body: { error: 'invalid_request', code: 'target_unavailable' } } : undefined;
+        await act(async () => {
+            const outcome = await hook.getCurrent().save(definitionId, () => true);
+            expect(outcome).toMatchObject({ kind: 'failed' });
+            // The status line carries the problem owner's cause, never the bare "Triggers not updated".
+            expect(typeof outcome === 'object' ? outcome.message : '').toMatch(/partialSaveBecause\(cause=workflows\.[a-zA-Z.]+\)/);
+        });
         expect(hook.getCurrent().draft.adds.map(add => add.clientId)).toEqual(['second']);
         expect(hook.getCurrent().draft.updates).toEqual({});
-        beforeWrite = undefined;
+        refuseWrite = undefined;
         await act(async () => { expect(await hook.getCurrent().save(definitionId, () => true)).toBe('saved'); });
         expect(hook.getCurrent().dirty).toBe(false);
         expect(rows[0]?.triggers).toHaveLength(2);

@@ -1193,7 +1193,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 // updated" and keeps the pending trigger edits for Try again (07 S4).
                 const triggerOutcome = await triggers.save(persisted.definitionId, isCurrent, caller);
                 if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
-                if (triggerOutcome === 'failed') setSaveFailure(t('workflows.triggers.editor.partialSave'));
+                if (typeof triggerOutcome === 'object') setSaveFailure(triggerOutcome.message);
                 // Save as workflow: point the originating trigger at this workflow (04 §5.4). Until
                 // that write lands the trigger keeps its own steps and the status says so.
                 const retarget = pendingRetargetRef.current;
@@ -1210,10 +1210,10 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                         return { status: 'refused', reason: 'trigger_retarget_failed' };
                     }
                 }
-                if (sourceKind === 'new' && triggerOutcome !== 'failed') {
+                if (sourceKind === 'new' && typeof triggerOutcome !== 'object') {
                     setSavedRouteId(persisted.definitionId);
                 }
-                return triggerOutcome === 'failed' ? { status: 'refused', reason: 'trigger_save_failed' } : { status: 'applied' };
+                return typeof triggerOutcome === 'object' ? { status: 'refused', reason: 'trigger_save_failed' } : { status: 'applied' };
             } catch (error) {
                 if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
                 // A concurrent save keeps the local document and says so; it is

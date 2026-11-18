@@ -5,6 +5,7 @@ import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
 import type { AutomationTriggerId} from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import type { AutomationTriggerDefinition } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import type { WorkflowProjectTargetV1} from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
@@ -38,6 +39,9 @@ import type { WorkflowActionCallerContext } from '@/sync/domains/workflows/callW
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { matchesWorkflowTriggerQuery, workflowTriggerQueryKey } from '@/sync/domains/workflows/workflowTriggerQuery';
 
+/** A trigger Save that did not land: the words the save status shows, cause included. */
+export type WorkflowTriggerSaveFailure = Readonly<{ kind: 'failed'; message: string }>;
+
 export type WorkflowTriggerEditing = Readonly<{
     set: WorkflowTriggerSetV1 | null;
     draft: WorkflowTriggerDraft;
@@ -67,7 +71,8 @@ export type WorkflowTriggerEditing = Readonly<{
      * Writes the pending trigger delta after the definition was saved (03 §5.3 "Save ordering").
      * `failed` keeps exactly the edits that were not applied.
      */
-    save: (workflow: string, isCurrent: () => boolean, caller?: WorkflowActionCallerContext) => Promise<'saved' | 'failed' | 'stale'>;
+    /** A failed Save says why (F11): its message names the cause through the workflow problem owner. */
+    save: (workflow: string, isCurrent: () => boolean, caller?: WorkflowActionCallerContext) => Promise<'saved' | 'stale' | WorkflowTriggerSaveFailure>;
 }>;
 
 /**
@@ -230,6 +235,8 @@ export function useWorkflowTriggerEditing(params: Readonly<{
             },
         }).finally(() => { if (pendingSave.current === pending) pendingSave.current = null; });
         if (!current()) return 'stale';
+        if (outcome.kind === 'failed') return { kind: 'failed', message: t('workflows.triggers.editor.partialSaveBecause',
+            { cause: formatWorkflowProblemMessage(outcome.error) }) };
         return outcome.kind;
     }, [params.accountLifetime, acknowledge]);
 
