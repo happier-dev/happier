@@ -197,6 +197,7 @@ export function resolveDisconnectedTerminalMode(input: Readonly<{
     return null;
   }
   const mode = input.terminal?.mode;
+  if (mode === 'pty') return input.hostKind === 'pty' ? mode : null;
   return mode === 'windows_terminal' || mode === 'windows_console' ? mode : null;
 }
 

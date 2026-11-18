@@ -187,6 +187,12 @@ describe('disconnected terminal-host supervision', () => {
       hostKind: 'pty',
       attachmentId: 'attachment-windows',
     })).toBe('windows_terminal');
+    // A holder-terminal Session (POSIX pty or Windows ConPTY) records realized mode `pty`.
+    expect(resolveDisconnectedTerminalMode({
+      terminal: { mode: 'pty', pty: { host: 'holder' } },
+      hostKind: 'pty',
+      attachmentId: 'attachment-holder',
+    })).toBe('pty');
     expect(resolveDisconnectedTerminalMode({
       terminal: {
         mode: 'windows_console',
