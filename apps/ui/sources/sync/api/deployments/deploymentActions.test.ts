@@ -24,6 +24,10 @@ import { admitPresentUserConfirmationV1 } from '@happier-dev/protocol/actions/ex
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { DeploymentTargetLinkInputV1Schema, DeploymentTargetLinksListInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
+import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/actionCatalog';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { createUiActionAutomationPortV1 } from '@/sync/ops/actions/actionAutomations';
 
 // Only authenticated Home HTTP, daemon transport and device credential IO are replaced.
 vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -248,6 +252,13 @@ function answerMachine(machineId: string) {
     }) });
 }
 
+function answerReceivingDeploymentAutomations(writer: ReturnType<typeof requireAccount>) {
+    homes.answer(writer.serverId, `GET ${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`, {
+        body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }),
+    });
+    return createUiActionAutomationPortV1(writer);
+}
+
 // O-DEPLOY 2026-11-07: UI Link retains private preparation, then the controller
 // owns association and enrollment. Keep both Account-mode codecs real.
 async function answerApprovalSessionPublication(writer: ReturnType<typeof requireAccount>, sessionId: string,
@@ -311,6 +322,50 @@ async function answerApprovalSessionPublication(writer: ReturnType<typeof requir
         }
         return { status: response.status, body: await response.json() };
     } });
+
+    // Current Session delivery validates the receiving Machine capability and
+    // re-reads the canonical message input schema before publishing the
+    // retained approval result. Keep this fixture on that real transport path.
+    const receivingMachine = boundary.machine;
+    Object.assign(receivingMachine, {
+        operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] }, sessionMessageReply: { protocolVersions: [1] } },
+        operationProtocolCapabilitiesRevision: 1,
+    });
+    homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+        body: await createMachineReadBatchResponseFixture(body,
+            id => id === receivingMachine.id ? receivingMachine : null).json(),
+    }) });
+
+    const actionSpecBoundary = await createExternalActionAccountHttpBoundary({
+        serverUrl: writer.endpointUrl, serverIdentityId: writer.serverIdentityId,
+        accountId: writer.accountId, machineId: receivingMachine.id,
+        installationId: receivingMachine.installationId ?? undefined,
+        actionId: 'action.spec.get', tokenEpoch: 0, requesterInvocation: 'required',
+        ...(encryption ? { encryption } : {}),
+        execute: () => ({ actionSpec: actionSpecToActionDefinitionV1(getActionSpec('session.message.send'),
+            { surface: 'mcp', includeOutputSchema: false }) }),
+    });
+    const sessionMessageBoundary = await createExternalActionAccountHttpBoundary({
+        serverUrl: writer.endpointUrl, serverIdentityId: writer.serverIdentityId,
+        accountId: writer.accountId, machineId: receivingMachine.id,
+        installationId: receivingMachine.installationId ?? undefined,
+        actionId: 'session.message.send', tokenEpoch: 0, requesterInvocation: 'required',
+        ...(encryption ? { encryption } : {}),
+        execute: input => ({ status: 'accepted',
+            localId: typeof input === 'object' && input !== null && 'localId' in input
+                && typeof input.localId === 'string' ? input.localId : 'approval-result' }),
+    });
+    for (const [actionId, actionBoundary] of [
+        ['action.spec.get', actionSpecBoundary], ['session.message.send', sessionMessageBoundary],
+    ] as const) {
+        for (const path of [`POST ${bindExternalActionExecutionAuthorizationHttpPathV1(actionId)}`, `POST /v1/actions/${actionId}`]) {
+            homes.answer(serverId, path, { select: async (_body, request) => {
+                const response = await actionBoundary.handle(new URL(request.url), request.init);
+                if (!response) throw new Error(`Expected ${actionId} HTTP boundary`);
+                return { status: response.status, body: await response.json() };
+            } });
+        }
+    }
     return pending.enqueued;
 }
 
@@ -1140,6 +1195,7 @@ it.each(['historical own UI', 'web terminal Session'] as const)('consumes one ap
     const admissions: unknown[] = [];
     const boundaryObservations: unknown[] = [];
     const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+        actionAutomations: answerReceivingDeploymentAutomations(writer),
         approvalsCreate: ({ request }) => createApprovalArtifact({ request, accountId: writer.accountId,
             read: id => writer.readArtifact(id, { fresh: true, ownerOnly: true }),
             create: async (artifactId, header, body, idScope) =>
@@ -1261,6 +1317,7 @@ it('saves a person’s own UI Variables under Account Ask after review without a
     const { createApprovalArtifact } = await import('@/sync/ops/actions/approvalArtifactWriter');
     const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
     const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
+        actionAutomations: answerReceivingDeploymentAutomations(writer),
         resolveEnvironmentApprovalScope: createUiDeploymentActionDeps(writer).resolveEnvironmentApprovalScope,
         approvalsCreate: ({ request }) => createApprovalArtifact({ request, accountId: writer.accountId,
             read: id => writer.readArtifact(id, { fresh: true, ownerOnly: true }),
@@ -1430,6 +1487,7 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
         await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage');
     const read = (artifactId: string) => writer.readArtifact(artifactId, { fresh: true, ownerOnly: true });
     const receiver = createActionExecutor(createActionExecutorBoundaryFixture({ approvalsCreate,
+        actionAutomations: answerReceivingDeploymentAutomations(writer),
         approvalsGet: createApprovalArtifactAccess({ read }).get,
         approvalsUpdate: ({ artifactId, request, expectedStatus }) => writeApprovalRequestArtifact({
             artifactId, request, expectedStatus, read,

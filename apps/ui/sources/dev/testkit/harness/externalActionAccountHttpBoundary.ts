@@ -1,4 +1,4 @@
-import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { projectExternalActionMachineRuntimeDemandV1, readExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import sodium from '@/encryption/libsodium.lib';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -236,6 +236,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                 const environmentId = projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1(admittedEnvelope)
                     ?? native?.environmentId;
                 const requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(envelope);
+                const machineRuntimeDemand = readExternalActionMachineRuntimeDemandV1(params.actionId, envelope);
                 const sync = envelope.v === 1 ? projectWorkspaceSyncAdmissionInputV1(params.actionId, envelope.input)
                     : envelope.workspaceSyncAdmission;
                 // This boundary publishes its installed Machine's SOURCE fact;
@@ -257,6 +258,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                         custodianAccountId: params.custodian?.accountId ?? params.accountId, installationId: machine.installationId,
                         accountEncryptionMode: params.encryption ? 'e2ee' : 'plain', actionId: params.actionId,
                         requestId: envelope.requestId, target,
+                        ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}),
                         ...(workspaceSyncAdmission ? { workspaceSyncAdmission } : {}),
                         ...(environmentId !== undefined ? { environmentId } : {}),
                         ...(deploymentChildRoot ? { deploymentChildRoot: true } : {}),
