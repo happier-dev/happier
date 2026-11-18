@@ -57,6 +57,7 @@ import { isDeploymentReadActionIdV1, isDeploymentPreparationActionIdV1,
 import { readDeploymentReadAuthorizationInTx, readAdmittedRegistryAppUpdateScopeInTx,
     readAdmittedDeploymentReadScopeInTx, readAdmittedProjectReadinessScopeInTx } from '@/app/deployments/deploymentReadAuthorization';
 import { loadDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
+import { liveDeploymentTargetLinkWhere } from '@/app/deployments/deploymentTargetLinkReadService';
 import { readDeploymentReviewedSetupHttpPurpose } from '@/app/deployments/deploymentReviewedChildAuthorization';
 import { admitDeploymentMachineInTx, canDeployDeploymentEnvironment } from '@/app/deployments/deploymentAdmission';
 import { readDeploymentAcceptedExecution, readAcceptedDeploymentReceiptInTx, deploymentInProgressStates, type DeploymentReceiptContinuation } from '@/app/deployments/deploymentAcceptedExecution';
@@ -2687,7 +2688,7 @@ async function isContributedRootEnvironmentRead(verified: VerifiedSignedChildReq
         const artifactId = readArtifactGetHttpPurpose(proof);
         const content = artifactId === null ? null : await db.deploymentEnvironment.findFirst({ where: {
             contentArtifactId: artifactId, deletedAt: null }, select: { id: true } })
-            ?? await db.deploymentTargetLink.findFirst({ where: { contentArtifactId: artifactId, deletedAt: null,
+            ?? await db.deploymentTargetLink.findFirst({ where: { contentArtifactId: artifactId, ...liveDeploymentTargetLinkWhere,
                 environment: { deletedAt: null } }, select: { environmentId: true } }).then(link => link && { id: link.environmentId });
         if (!content) return false;
         environmentId = content.id;

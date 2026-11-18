@@ -15,10 +15,13 @@ import { projectDeploymentListRow } from './deploymentListProjection';
 import { openDeploymentReadCursor, refuseDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
 import { deploymentEnvironmentPrincipalSelect } from './deploymentEnvironmentDeployers';
 
+/** A live Link: neither deleted nor detached. The one definition its readers and admission share. */
+export const liveDeploymentTargetLinkWhere = { deletedAt: null, detachedAt: null } as const satisfies Prisma.DeploymentTargetLinkWhereInput;
+
 /** Inventory headers and their private content use the same persisted owner and live-Link scope. */
 export function deploymentTargetLinkInventoryWhere(input: Pick<DeploymentTargetLinksListInputV1, 'scope' | 'selection'>): Prisma.DeploymentTargetLinkWhereInput {
     const { scope, selection } = input;
-    return { deletedAt: null, detachedAt: null,
+    return { ...liveDeploymentTargetLinkWhere,
         ...(selection ? { targetKind: selection.targetKind, sourceKind: selection.source.kind,
             ...(selection.source.kind === 'plugin'
                 ? { pluginId: selection.source.contribution.pluginId, contributionLocalId: selection.source.contribution.localId }
