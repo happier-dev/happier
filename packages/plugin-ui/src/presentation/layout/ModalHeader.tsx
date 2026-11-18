@@ -216,6 +216,10 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
     gap: props.subtitle != null && props.subtitle !== false && props.leadingPlacement !== 'above' ? space.s8 : space.s10,
   } as const;
   const titleWrap = { flex: 1, minWidth: 0, gap: space.s2 } as const;
+  // An identity mark sits on the title line; the title and subtitle are one tight pair on the title's text
+  // edge beside it (standing decision 5), and the mark and controls centre on the title's own line.
+  const markedSubtitle = Boolean(props.leading) && subtitle !== null && props.leadingPlacement !== 'above';
+  const titleLine = { minHeight: titleLineHeight, justifyContent: 'center' } as const;
 
   if (
     resolveHappierModalHeaderLayout({
@@ -246,13 +250,16 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
             gap: space.s12,
           }}
         >
-          <View style={leadingWrap}>
-            {props.leading}
-            <View style={titleWrap}>{title}</View>
+          <View style={markedSubtitle ? [leadingWrap, { alignItems: 'flex-start' }] : leadingWrap}>
+            {markedSubtitle ? <View style={titleLine}>{props.leading}</View> : props.leading}
+            <View style={titleWrap}>
+              {title}
+              {markedSubtitle ? subtitle : null}
+            </View>
           </View>
-          {close}
+          {markedSubtitle && close !== null ? <View style={titleLine}>{close}</View> : close}
         </View>
-        {subtitle}
+        {markedSubtitle ? null : subtitle}
         <View
           testID={`${testID}-actions-row`}
           style={{
@@ -268,10 +275,7 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
     );
   }
 
-  // An identity mark sits on the title line; the title and subtitle are one tight pair on the title's text
-  // edge beside it (standing decision 5), and the mark and controls centre on the title's own line.
-  if (props.leading && subtitle !== null && props.leadingPlacement !== 'above') {
-    const titleLine = { minHeight: titleLineHeight, justifyContent: 'center' } as const;
+  if (markedSubtitle) {
     return (
       <View
         testID={testID}

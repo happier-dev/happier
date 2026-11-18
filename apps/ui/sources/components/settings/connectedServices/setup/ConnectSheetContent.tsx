@@ -17,6 +17,7 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { presentConnectedAccountNames } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import { t } from '@/text';
+import { useDeviceType } from '@/utils/platform/responsive';
 
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 
@@ -34,7 +35,7 @@ import type {
   ConnectSheetContentProps,
   ConnectSheetKeyRequest,
 } from './ConnectedServiceSetupModal';
-import { isConnectSheetKeyRequest } from './connectSheetOpening';
+import { isConnectSheetKeyRequest, resolveConnectSheetMachineChip } from './connectSheetOpening';
 import { useConnectAccountSheetModel } from './useConnectAccountSheetModel';
 import { useConnectKeySheetModel } from './useConnectKeySheetModel';
 import { ConnectNpmRegistrySheetContent } from '../npm/ConnectNpmRegistrySheetContent';
@@ -247,11 +248,11 @@ function ConnectAccountSheetLeaf(
   // and handed to the sign-in below. Read only while the chosen method needs a machine (58c).
   const targetSelection = model.targetSelection;
   const showTargetSelector = mode === 'new' && model.machineRequired;
-  // Once a method has shown the chip, the band keeps its height on methods that need no machine:
-  // the chip's place stays, empty, so the content under the band does not jump between tabs.
   const [chipShown, setChipShown] = React.useState(showTargetSelector);
   if (showTargetSelector && !chipShown) setChipShown(true);
-  const machineChip = React.useMemo(() => showTargetSelector || chipShown ? (
+  const compact = useDeviceType() === 'phone';
+  const chip = resolveConnectSheetMachineChip({ needed: showTargetSelector, shownBefore: chipShown, compact });
+  const machineChip = React.useMemo(() => chip !== null ? (
     <View
       style={showTargetSelector ? null : styles.reservedChip}
       pointerEvents={showTargetSelector ? 'auto' : 'none'}
@@ -268,7 +269,7 @@ function ConnectAccountSheetLeaf(
         testIDPrefix={showTargetSelector ? 'connected-service-setup-target' : 'connected-service-setup-target-reserved'}
       />
     </View>
-  ) : null, [showTargetSelector, chipShown, purposeRequest, targetSelection, model.machineAvailability]);
+  ) : null, [chip, showTargetSelector, purposeRequest, targetSelection, model.machineAvailability]);
 
   // A repair names its account once, as the band's quiet second line under "Sign in to … again" (owner 11-01):
   // who it is, never a card of its own.

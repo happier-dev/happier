@@ -83,6 +83,32 @@ describe('modal header identity mark', () => {
     expect(sharedRow(mark, title).findAll((node) => node === subtitle)).toHaveLength(1);
   });
 
+  it('keeps the subtitle on the title’s text edge when a compact card moves its actions beneath', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <HappierModalHeader
+          testID="header"
+          leading={<View testID="mark" />}
+          title="Connect Claude"
+          subtitle="Claude and Pi will use it on every machine."
+          titleTestID="title"
+          subtitleTestID="subtitle"
+          actions={<View testID="machine-chip" />}
+          close={<View testID="close" />}
+          compact
+        />,
+      );
+    });
+    const root = renderer.root;
+    const mark = root.findByProps({ testID: 'mark' });
+    const title = root.findByProps({ testID: 'title' });
+    const subtitle = root.findByProps({ testID: 'subtitle' });
+    const chip = root.findByProps({ testID: 'machine-chip' });
+    expect(sharedRow(title, subtitle).findAll((node) => node === mark)).toHaveLength(0);
+    expect(sharedRow(title, subtitle).findAll((node) => node === chip)).toHaveLength(0);
+  });
+
   it('keeps a way-back control beside its title and subtitle on a wide card', () => {
     const root = renderWithMark('above');
     const row = sharedRow(root.findByProps({ testID: 'mark' }), root.findByProps({ testID: 'title' }));
