@@ -813,6 +813,33 @@ test('repo-local wrapper preserves user-defined env keys while managing stack-ow
   }
 });
 
+test('repo-local wrapper preserves the saved repository through startup and env synchronization', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const repoRoot = dirname(dirname(dirname(scriptsDir)));
+  const stacksRoot = mkdtempSync(join(tmpdir(), 'hstack-saved-repo-'));
+  try {
+    const identity = resolveRepoStackIdentity({ repoRoot, stacksStorageRoot: stacksRoot });
+    mkdirSync(identity.stackBaseDir, { recursive: true });
+    const envPath = join(identity.stackBaseDir, 'env');
+    const savedRepo = join(stacksRoot, 'committed-worktree');
+    writeFileSync(envPath, `HAPPIER_STACK_REPO_DIR=${savedRepo}\nHAPPIER_STACK_RUNTIME_MODE=committed\n`);
+    const env = { ...process.env, HAPPIER_STACK_STORAGE_DIR: stacksRoot,
+      HAPPIER_STACK_REPO_LOCAL_AUTO_INSTALL: '0', HAPPIER_STACK_REPO_LOCAL_PREFLIGHT_ONLY: '1' };
+    const dry = await runNode([join(scriptsDir, 'repo_local.mjs'), 'dev', '--dry-run'], { cwd: repoRoot, env });
+    assert.equal(dry.code, 0, dry.stderr);
+    const invocation = JSON.parse(dry.stdout);
+    assert.equal(invocation.env.HAPPIER_STACK_REPO_DIR, savedRepo);
+    assert.equal(invocation.env.HAPPIER_STACK_ENV_FILE, envPath);
+    for (const command of ['dev', 'stop']) {
+      const result = await runNode([join(scriptsDir, 'repo_local.mjs'), command], { cwd: repoRoot, env });
+      assert.equal(result.code, 0, result.stderr);
+      const saved = readFileSync(envPath, 'utf8');
+      assert.equal(saved.match(/^HAPPIER_STACK_REPO_DIR=(.*)$/m)?.[1], savedRepo);
+      assert.match(saved, /^HAPPIER_STACK_RUNTIME_MODE=committed$/m);
+    }
+  } finally { rmSync(stacksRoot, { recursive: true, force: true }); }
+});
+
 test('repo-local wrapper prunes pinned server port when it falls outside the configured stackless port range', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const packageRoot = dirname(scriptsDir); // apps/stack

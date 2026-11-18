@@ -301,6 +301,9 @@ async function main() {
   const stacklessCliHomeDir = stacklessBaseDir ? join(stacklessBaseDir, 'cli') : '';
   const stacklessLogsDir = stacklessBaseDir ? join(stacklessBaseDir, 'logs') : '';
   const existingStacklessEnv = stacklessEnvPath ? readEnvFileObject(stacklessEnvPath) : {};
+  // A stack may be backed by a committed worktree saved in its env file. Preserve
+  // that explicit repository through wrapper startup and child synchronization.
+  const savedRepoDir = String(existingStacklessEnv.HAPPIER_STACK_REPO_DIR ?? '').trim();
   const existingPinnedServerPort = coercePositiveInt(existingStacklessEnv.HAPPIER_STACK_SERVER_PORT);
   const existingPinnedExpoPort = coercePositiveInt(existingStacklessEnv.HAPPIER_STACK_EXPO_DEV_PORT);
   // Keep fresh listeners below Linux's default ephemeral range (32768+) and
@@ -368,7 +371,7 @@ async function main() {
     ...cleaned,
     HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
     HAPPIER_STACK_CLI_ROOT_DIR: repoRoot,
-    HAPPIER_STACK_REPO_DIR: repoRoot,
+    HAPPIER_STACK_REPO_DIR: savedRepoDir || repoRoot,
     ...(isStackManagement
       ? { HAPPIER_STACK_STACK: '' }
       : {
@@ -503,7 +506,7 @@ async function main() {
     // but preserve any user-defined keys they set via `hstack env` / `pnpm run env`.
     const managedEnv = {
       HAPPIER_STACK_STACK: stacklessName,
-      HAPPIER_STACK_REPO_DIR: repoRoot,
+      HAPPIER_STACK_REPO_DIR: savedRepoDir || repoRoot,
       HAPPIER_STACK_SERVER_COMPONENT: serverComponent,
       HAPPIER_DB_PROVIDER: dbTransition.provider,
       ...(dbTransition.databaseUrl ? { DATABASE_URL: dbTransition.databaseUrl } : {}),
