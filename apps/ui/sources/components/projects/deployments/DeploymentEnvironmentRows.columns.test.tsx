@@ -13,10 +13,15 @@ const { deploymentEnvironmentColumns } = await import('./deploymentEnvironmentCo
 it('Services admits public service columns under qualified field identity without acquiring their Resource', () => {
   let reads = 0;
   const source = createServiceColumnSource(() => reads++);
-  const projection = normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(PluginManifestV2Schema.parse(source.manifest)));
+  const manifest = PluginManifestV2Schema.parse(source.manifest);
+  const projection = normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(manifest), undefined, {
+    id: manifest.id, displayName: manifest.displayName, version: manifest.version, enabled: true,
+    source: { kind: 'bundled', locator: manifest.id },
+  });
   const columns = deploymentEnvironmentColumns(false, projection);
-  expect(columns.map(column => column.key)).toEqual(['lastDeploy', 'runsOn', 'state', 'com.acme.requests/requests']);
-  expect(columns.at(-1)).toMatchObject({ title: 'Requests', minWidth: 112, align: 'end', priority: 20, defaultHidden: true });
+  expect(columns.map(column => column.key)).toEqual(['lastDeploy', 'runsOn', 'com.acme.requests/requests', 'state']);
+  expect(columns.at(2)).toMatchObject({ title: 'Requests', subtitle: '24 h', source: manifest.displayName,
+    minWidth: 112, align: 'end', priority: 20, defaultHidden: true });
   expect(deploymentEnvironmentColumns(false, normalizePluginInstalledUiDeclarations({})).map(column => column.key))
     .toEqual(['lastDeploy', 'runsOn', 'state']);
   expect(reads).toBe(0);

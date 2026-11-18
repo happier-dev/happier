@@ -26,6 +26,7 @@ export const PluginListFilterFieldV1Schema = lazyZodSchema(() => z.strictObject(
     ]),
     column: z.optional(z.strictObject({
         title: z.optional(PluginLocalizedStringV2Schema),
+        qualifier: z.optional(PluginLocalizedStringV2Schema),
         width: z.optional(z.number().check(z.gt(0))),
         align: z.optional(z.enum(['start', 'end'])),
         priority: z.optional(z.number()),

@@ -189,20 +189,25 @@ function transportFor(state: string, machineId: string): DeploymentReadTransport
 /** Cold bundled metadata only: without an installed collector, selected Requests stays unknown. */
 function RequestsColumnSpecimen(props: Readonly<{ children: React.ReactNode }>) {
   const current = useAppShellPluginUiProjectionCurrentness();
-  const value = React.useMemo(() => ({
-    pluginUiProjection: normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(
-      PluginManifestV2Schema.parse(telemetryManifest))),
-    pluginBrowserProjection: null,
-    phase: 'current',
-    interactionEnabled: false,
-    machineId: current.machineId,
-    serverId: current.serverId,
-    platform: current.platform,
-    accountLifetime: current.accountLifetime,
-    clientExecutableActivation: { status: 'ready' },
-    reloadConnectedAccountProjection() {},
-    reloadClientExecutables() {},
-  } satisfies AppShellPluginUiProjectionValue), [current.machineId, current.serverId, current.platform, current.accountLifetime]);
+  const value = React.useMemo(() => {
+    const manifest = PluginManifestV2Schema.parse(telemetryManifest);
+    return ({
+      pluginUiProjection: normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(manifest), undefined, {
+        id: manifest.id, displayName: manifest.displayName, version: manifest.version, enabled: true,
+        source: { kind: 'bundled' as const, locator: manifest.id },
+      }),
+      pluginBrowserProjection: null,
+      phase: 'current',
+      interactionEnabled: false,
+      machineId: current.machineId,
+      serverId: current.serverId,
+      platform: current.platform,
+      accountLifetime: current.accountLifetime,
+      clientExecutableActivation: { status: 'ready' },
+      reloadConnectedAccountProjection() {},
+      reloadClientExecutables() {},
+    } satisfies AppShellPluginUiProjectionValue);
+  }, [current.machineId, current.serverId, current.platform, current.accountLifetime]);
   return <AppShellPluginUiProjectionValueProvider value={value}>{props.children}</AppShellPluginUiProjectionValueProvider>;
 }
 

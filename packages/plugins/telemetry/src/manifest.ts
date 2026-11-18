@@ -1,8 +1,8 @@
 import { createLocalCaptureContribution, LOCAL_CAPTURE_DATABASE_ENVIRONMENT_NAMES, LOCAL_CAPTURE_ENVIRONMENT_NAMES } from './contribution.js';
 import { definePlugin, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from '@happier-dev/plugin-sdk/protocol';
-import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_ID_V1, databaseActionLocalIdV1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1,
-    TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
+import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
+import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { TELEMETRY_REQUESTS_FIELD_ID_V1, TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1 } from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
 import { telemetryCollectorRunner } from './telemetry/runner.js';
@@ -74,9 +74,9 @@ export const DATABASE_CAPTURE_PLUGIN = definePlugin({
  // D30/J2: the native exception detail, mounted by PRs & Issues for the Happier exceptions source.
  // D36: App vitals, Metric and Slowest routes, offered in Add widget → Telemetry and never auto-added.
  ui: { listExtensions: { [TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1]: {
-  entity: 'service', filterFields: [{ id: TELEMETRY_REQUESTS_FIELD_ID_V1, title: 'Requests · 24 h',
+  entity: 'service', filterFields: [{ id: TELEMETRY_REQUESTS_FIELD_ID_V1, title: 'Requests',
    source: { resource: DATABASE_CAPTURE_RESOURCE_ID_V1 }, value: { kind: 'number', unit: '{request}' },
-   column: { title: 'Requests · 24 h', width: 112, align: 'end', priority: 20, defaultHidden: true },
+   column: { title: 'Requests', qualifier: '24 h', width: 112, align: 'end', priority: 20, defaultHidden: true },
   }],
  } }, views: [...TELEMETRY_WIDGET_VIEWS], renderers: [
   ...TELEMETRY_WIDGET_RENDERERS,

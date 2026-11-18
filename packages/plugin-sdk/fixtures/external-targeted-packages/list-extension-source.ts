@@ -39,9 +39,9 @@ export function createServiceColumnSource(onResourceRead: () => void = () => {},
             }, observe: () => ({ dispose() {} }) } } },
         ui: { listExtensions: { traffic: {
             entity: 'service',
-            filterFields: [{ id: 'requests', title: 'Requests · 24 h', source: { resource: 'requests' },
+            filterFields: [{ id: 'requests', title: 'Requests', source: { resource: 'requests' },
                 value: { kind: 'number', unit: '{request}' },
-                column: { title: 'Requests', width: 112, align: 'end', priority: 20, defaultHidden: true },
+                column: { title: 'Requests', qualifier: '24 h', width: 112, align: 'end', priority: 20, defaultHidden: true },
             }],
         } } },
     });

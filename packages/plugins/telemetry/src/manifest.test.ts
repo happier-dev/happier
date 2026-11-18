@@ -12,10 +12,10 @@ describe('Telemetry plugin manifest', () => {
     const { TELEMETRY_REQUESTS_FIELD_ID_V1, TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1, DATABASE_CAPTURE_RESOURCE_ID_V1 } = await import('@happier-dev/database-protocol');
     const manifest = PluginManifestV2Schema.parse(PLUGIN_MANIFEST);
     expect(manifest.contributes.ui.listExtensions ?? []).toContainEqual({ id: TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1,
-      entity: 'service', filterFields: [{ id: TELEMETRY_REQUESTS_FIELD_ID_V1, title: 'Requests · 24 h',
+      entity: 'service', filterFields: [{ id: TELEMETRY_REQUESTS_FIELD_ID_V1, title: 'Requests',
         source: { resource: DATABASE_CAPTURE_RESOURCE_ID_V1 },
         value: { kind: 'number', unit: '{request}' },
-        column: { title: 'Requests · 24 h', width: 112, align: 'end', priority: 20, defaultHidden: true } }],
+        column: { title: 'Requests', qualifier: '24 h', width: 112, align: 'end', priority: 20, defaultHidden: true } }],
     });
     expect(projectPluginPortableUiDeclarationsV1(manifest)[`listExtension:happier.telemetry:${TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1}`])
       .toMatchObject({ listExtension: { entity: 'service' } });

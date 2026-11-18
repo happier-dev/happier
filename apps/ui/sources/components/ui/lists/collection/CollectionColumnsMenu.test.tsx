@@ -202,10 +202,10 @@ describe('CollectionColumnsMenuView', () => {
     ).toBe(true);
   });
 
-    it('names a contributed column once when its description only repeats its name', () => {
+    it('keeps a contributed column qualifier beside its short title', () => {
         const columns = collectionColumnsMenuColumns({ id: 'title', title: 'Environment' }, [
-            { key: 'telemetry.requests', title: 'Requests · 24 h', description: 'Requests · 24 h', source: 'Telemetry', defaultHidden: true },
+            { key: 'telemetry.requests', title: 'Requests', description: '24 h', source: 'Telemetry', defaultHidden: true },
         ]);
-        expect(columns[1]).toEqual({ id: 'telemetry.requests', title: 'Requests · 24 h', source: 'Telemetry', defaultHidden: true });
+        expect(columns[1]).toEqual({ id: 'telemetry.requests', title: 'Requests', description: '24 h', source: 'Telemetry', defaultHidden: true });
     });
 });
