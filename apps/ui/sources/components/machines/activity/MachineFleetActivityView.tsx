@@ -288,19 +288,17 @@ export function MachineFleetActivityView() {
   );
 
   return (
-    <ItemList>
+    // The fleet pages (Machines, Updates, Activity) share the wide page column (lab fAct beside fUpd).
+    <ItemList pageColumn="wide">
       <MainScreenHeader
         testID="machines.activity.header"
         title={t(`${s}.title`)}
         alwaysShowTitle
         description={t(`${s}.description`)}
+        // The chips are the header's band: the first one stands on the title's edge (lab fAct). A narrow page
+        // scrolls the four chips sideways rather than squeezing them (lab fActp).
+        band={lifetime ? <SelectionListFilterChips placement="row" edge="page" filters={filters} testID="machines.activity.filters" /> : null}
       />
-      {lifetime ? (
-        <ItemGroup surface="none" testID="machines.activity.filters">
-          {/* A narrow page scrolls the four chips sideways rather than squeezing them (lab fActp). */}
-          <SelectionListFilterChips placement="row" filters={filters} />
-        </ItemGroup>
-      ) : null}
       {state.status === 'loading' ? (
         <ItemGroup surface="none" testID="machines.activity.loading">
           <SkeletonRows rows={5} />
