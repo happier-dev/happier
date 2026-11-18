@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ComposerContentHandleV1Schema, MAX_COMPOSER_CONTENT_INSPECT_BYTES_V1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
 import { FoundSkillDownloadRequestV1Schema, type FoundSkillDownloadRequestV1 } from '@happier-dev/protocol/prompts/library/skills/foundSkillTransferV1';
 import type { RegistryDownloadRequestV1 } from '@happier-dev/protocol/registries';
@@ -95,6 +96,7 @@ type DirectTransferExportPrepareResponse = Readonly<
         error: string;
         code?: string;
         errorCode?: string;
+        failureCause?: ActionFailureCauseV1;
     }
 >;
 
@@ -146,6 +148,10 @@ export function registerMachineDirectTransferExportRpcHandlers(params: Readonly<
             return {
                 success: false,
                 error: error instanceof Error ? error.message : 'Direct transfer export prepare failed',
+                ...(request.t === 'workspace_sync_seed_v1' ? {
+                    code: readFilesystemTransferErrorCode(error, 'action_failed'),
+                    failureCause: projectActionFailureCauseV1(error, 'workspace.seed.export', { allowUnknownErrorCode: true }),
+                } : {}),
                 ...((request.t === 'workspace_sync_resolution_v1' || request.t === 'prompt_asset_download_v1')
                     && error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
                     ? { code: error.code }

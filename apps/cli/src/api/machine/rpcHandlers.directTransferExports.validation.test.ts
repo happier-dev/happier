@@ -1,10 +1,15 @@
+import { projectWorkspaceSyncRpcError } from './workspaceSyncRpcErrors';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { createPrivateWorkspaceSyncSourceSeedPreparation } from '@/daemon/startup/workspaceSyncPrivateExecution';
+import { privateSyncEffectError } from '@/workspaces/activation/privateProjectSyncEffect';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { deriveWorkspaceSyncConflictOperationId } from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest, deriveWorkspaceSyncConflictOperationId } from '@happier-dev/protocol';
 
 import { registerMachineDirectTransferExportRpcHandlers } from './rpcHandlers.directTransferExports';
 import type { RpcHandlerRegistrar } from '../rpc/types';
@@ -28,6 +33,30 @@ function createRpcHandlerRegistrar(): {
 }
 
 describe('direct transfer export request validation', () => {
+    it.each(['git_selection_unavailable', SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE] as const)('keeps the member %s seed refusal and its preparation phase through relationship.create', async code => {
+        const registrar = createRpcHandlerRegistrar();
+        const failureCause = { phase: 'workspace.seed.export', errorClass: 'Error', errorCode: code, httpStatus: null };
+        registerMachineDirectTransferExportRpcHandlers({ rpcHandlerManager: registrar.registrar,
+            prepareExportSession: async () => { throw privateSyncEffectError(Object.assign(new Error('Portable Git metadata unavailable'),
+                { ...(code === SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE ? { errorCode: code } : { code }), failureCause })); } });
+        const response = await registrar.handlers.get(RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE)!({
+            t: 'workspace_sync_seed_v1', operationId: 'seed', sourceWorkspaceRefId: 'source', targetMachineId: 'target',
+            contentPolicy: { v: 1, selection: 'all_files', extraIncludePatterns: [], extraIgnorePatterns: [],
+                policyDigest: computeWorkspaceSyncPolicyDigest({ v: 1, selection: 'all_files', extraIncludePatterns: [], extraIgnorePatterns: [] }) },
+        });
+        expect(response).toMatchObject({ success: false, code, failureCause });
+        const prepare = createPrivateWorkspaceSyncSourceSeedPreparation({ targetMachineId: 'target',
+            credentials: { token: 'test-token', encryption: null }, getTargetPhaseContext: () => ({}) }, {
+            callWorkspaceSeedExport: async () => response, callMachineRpc: async () => null,
+        });
+        const prepared = prepare({ operationId: 'seed', sourceMachineId: 'target', sourceWorkspaceRefId: 'source',
+            contentPolicy: { v: 1, selection: 'all_files', extraIncludePatterns: [], extraIgnorePatterns: [], policyDigest: computeWorkspaceSyncPolicyDigest({ v: 1, selection: 'all_files', extraIncludePatterns: [], extraIgnorePatterns: [] }) } });
+        await expect(prepared).rejects.toMatchObject({ failureCause });
+        const projected = await prepared.catch(error => projectWorkspaceSyncRpcError(error, RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE));
+        expect(readRpcErrorCode(projected)).toBe(code);
+        expect(projected).toMatchObject({ failureCause });
+    });
+
     it('admits publication confinement to the real file source and preserves ordinary exports', async () => {
         const root = await mkdtemp(join(tmpdir(), 'artifact-export-admission-'));
         try {

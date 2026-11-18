@@ -1,3 +1,4 @@
+import { assertWorkspaceSyncSeedExportSucceeded } from '@/workspaces/sync/workspaceSyncSeedTransfer';
 import { createDefaultWorkspaceContentPolicyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -916,10 +917,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
                 timeoutMs: null,
                 ...(request.signal ? { signal: request.signal } : {}),
               });
-            const preparedRaw = await prepare.catch(() => {
-                request.signal?.throwIfAborted();
-                throw compositionError('target_bootstrap_offline', 'Workspace sync source seed is unavailable');
-              });
+            const preparedRaw = await prepare;
+            assertWorkspaceSyncSeedExportSucceeded(preparedRaw);
             if (!preparedRaw || typeof preparedRaw !== 'object' || (preparedRaw as { success?: unknown }).success !== true) {
               throw compositionError('target_bootstrap_offline', 'Workspace sync source seed is unavailable');
             }

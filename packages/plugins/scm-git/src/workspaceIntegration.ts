@@ -346,7 +346,7 @@ export async function assertPortableGitWorkspaceEntries(
         return;
     }
 
-    throw new Error('Workspace transfer contains non-portable git worktree admin state; portable git metadata import was refused');
+    throw Object.assign(new Error('Workspace transfer contains non-portable git worktree admin state; portable git metadata import was refused'), { code: 'git_selection_unavailable' });
 }
 
 export function isGitAdministrativeWorkspacePath(input: Readonly<{

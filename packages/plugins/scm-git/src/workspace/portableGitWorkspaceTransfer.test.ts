@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
+import { assertPortableGitWorkspaceEntries } from '../workspaceIntegration.js';
 
 import {
     createRealGitScmBackendRuntimeServices,
@@ -137,7 +138,7 @@ describe('portable Git workspace transfer', () => {
         }
     });
 
-    for (const sourceKind of ['primary', 'linked'] as const) {
+    for (const sourceKind of ['primary', 'linked', 'separate', 'submodule'] as const) {
         for (const sessionLocation of ['root', 'nested'] as const) {
             it(`materializes a portable ${sourceKind} checkout from a ${sessionLocation} session without copying Git administration`, async () => {
             const repositoryRoot = await createRepositoryFixture();
@@ -153,6 +154,17 @@ describe('portable Git workspace transfer', () => {
                     await writeFile(join(sourcePath, 'linked-untracked.txt'), 'linked untracked\n', 'utf8');
                 }
 
+                if (sourceKind === 'separate') {
+                    await runGit(repositoryRoot, ['init', '--separate-git-dir', join(artifactDirectory, 'admin')]);
+                }
+                if (sourceKind === 'submodule') {
+                    await rm(join(repositoryRoot, '.git', 'index.lock'), { force: true });
+                    await runGit(repositoryRoot, ['-c', 'protocol.file.allow=always', 'submodule', 'add', repositoryRoot, 'child']);
+                    sourcePath = join(repositoryRoot, 'child');
+                    await writeFile(join(sourcePath, 'tracked.txt'), 'working copy\n');
+                    await writeFile(join(sourcePath, 'untracked.txt'), 'untracked\n');
+                }
+
                 const sessionPath = sessionLocation === 'nested' ? join(sourcePath, 'packages', 'empty') : sourcePath;
                 if (sessionLocation === 'nested') await mkdir(sessionPath, { recursive: true });
                 const prepared = await runWithRealGitScmRuntime(() => preparePortableGitWorkspaceTransfer({
@@ -165,10 +177,12 @@ describe('portable Git workspace transfer', () => {
                         strategy: 'transfer_snapshot',
                         includeIgnoredMode: 'exclude',
                         ignoredIncludeGlobs: [],
+                        includeAllIgnored: true,
                     },
                     artifactDirectory,
                 }));
 
+                await assertPortableGitWorkspaceEntries({ entries: prepared.entries });
                 expect(prepared.entries.some((entry) => entry.relativePath.startsWith('.git/'))).toBe(false);
                 expect(prepared.metadata).toMatchObject({
                     sessionRelativeCwd: sessionLocation === 'nested' ? 'packages/empty' : '',
@@ -187,11 +201,11 @@ describe('portable Git workspace transfer', () => {
                 }));
 
                 await expect(runGit(targetPath, ['rev-parse', '--is-inside-work-tree'])).resolves.toBe('true');
-                await expect(runGit(targetPath, ['rev-parse', '--abbrev-ref', 'HEAD'])).resolves.toBe(sourceKind === 'primary' ? 'main' : 'feature');
-                await expect(readFile(join(targetPath, 'tracked.txt'), 'utf8')).resolves.toBe(sourceKind === 'primary' ? 'working copy\n' : 'linked working copy\n');
+                await expect(runGit(targetPath, ['rev-parse', '--abbrev-ref', 'HEAD'])).resolves.toBe(sourceKind !== 'linked' ? 'main' : 'feature');
+                await expect(readFile(join(targetPath, 'tracked.txt'), 'utf8')).resolves.toBe(sourceKind !== 'linked' ? 'working copy\n' : 'linked working copy\n');
                 const status = await runGit(targetPath, ['status', '--short']);
                 expect(status).toContain('M tracked.txt');
-                expect(status).toContain(sourceKind === 'primary' ? '?? untracked.txt' : '?? linked-untracked.txt');
+                expect(status).toContain(sourceKind !== 'linked' ? '?? untracked.txt' : '?? linked-untracked.txt');
                 await expect(runGit(targetPath, ['diff', '--cached', '--quiet'])).resolves.toBe('');
                 await expect(runGit(targetPath, ['diff', '--quiet'])).rejects.toThrow();
                 await expect(runGit(targetPath, ['config', '--local', '--get', 'credential.helper'])).rejects.toThrow();

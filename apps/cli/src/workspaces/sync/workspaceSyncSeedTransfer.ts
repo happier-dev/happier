@@ -1,3 +1,6 @@
+import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -74,6 +77,18 @@ export function resolveWorkspaceSyncSeedTransfer(
     extraIgnorePatterns: [...contentPolicy.extraIgnorePatterns],
     ...(contentPolicy.contentOnly ? { contentOnly: true as const } : {}),
   };
+}
+
+/** Preserve SOURCE refusals before either receiver parses the successful seed descriptor. */
+export function assertWorkspaceSyncSeedExportSucceeded(response: unknown): void {
+  readMachineActionRpcResult(response);
+  if (!response || typeof response !== 'object' || !('success' in response) || response.success !== false) return;
+  readMachineActionRpcResult({
+    error: redactBugReportSensitiveText('error' in response && typeof response.error === 'string'
+      ? response.error : 'Workspace source seed export failed'),
+    errorCode: readActionErrorCodeV1(response) ?? 'action_failed',
+    failureCause: projectActionFailureCauseV1(response, 'workspace.seed.export', { allowUnknownErrorCode: true }),
+  });
 }
 
 function blobTransferId(operationId: string, digest: string): string {

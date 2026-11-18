@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { PluginError, isPluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { TransferEndpointCandidate, WorkspaceContentPolicyV1 } from '@happier-dev/protocol';
 import type { ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 import { createWorkspaceSyncTargetAuthority, isWorkspaceSyncLocalNamespace, type WorkspaceSyncLocalManagedTarget, type WorkspaceSyncTargetAuthority, type WorkspaceSyncTargetAuthorityDependencies, type WorkspaceSyncConflictRecoveryContext } from '@/workspaces/sync/workspaceSyncTargetAuthority';
@@ -135,9 +136,9 @@ export type WorkspaceNativeCopyBaselineEffect = Readonly<{
 /** Private same-binary boundary preserves the canonical owner's typed refusal. */
 export function privateSyncEffectError(error: unknown): Error {
   if (isPluginError(error)) return error;
-  const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-    ? error.code : 'workspace_sync_unavailable';
+  const code = readActionErrorCodeV1(error) ?? 'action_failed';
   return new PluginError({ code, message: error instanceof Error ? error.message : 'Private workspace Sync is unavailable',
+    failureCause: projectActionFailureCauseV1(error, 'native_execution_effect', { allowUnknownErrorCode: true }),
     details: { reason: code, phase: 'native_execution_effect' } });
 }
 

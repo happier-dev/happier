@@ -1,3 +1,4 @@
+import { assertWorkspaceSyncSeedExportSucceeded } from '@/workspaces/sync/workspaceSyncSeedTransfer';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { TransferEndpointCandidateSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
 import { buildDirectPeerTransferEndpointPath } from '@/machines/transfer/directPeerTransport';
@@ -36,6 +37,7 @@ export function createPrivateWorkspaceSyncSourceSeedPreparation(request: Readonl
         targetMachineId: request.targetMachineId, contentPolicy: seed.contentPolicy,
         ...(seed.exclusionCandidates ? { exclusionCandidates: seed.exclusionCandidates } : {}) },
       ...(seed.signal ? { signal: seed.signal } : {}) }, context);
+    assertWorkspaceSyncSeedExportSucceeded(raw);
     if (!raw || typeof raw !== 'object' || !('success' in raw) || raw.success !== true
       || !('transferId' in raw) || raw.transferId !== seed.operationId || !('sizeBytes' in raw)
       || typeof raw.sizeBytes !== 'number' || !Number.isSafeInteger(raw.sizeBytes) || raw.sizeBytes < 0

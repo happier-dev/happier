@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 
 import { runWithScmBackendRegistryLease } from '../scmBackendCatalog';
 import type { ScmBackendRegistry } from '../registry';
-import { resolveScmSelection } from '../resolveScmSelection';
+import { resolveScmSelection, resolveScmSelectionOutcome } from '../resolveScmSelection';
 import {
     createScmWorkspaceIntegrationPortableWorkspacePathRequest,
     type ScmWorkspaceIntegrationPortableWorkspacePathClassification,
@@ -105,18 +105,22 @@ async function resolveWorkspaceTransferStateWithScmWorkspace(
     registry: ScmBackendRegistry;
 }>> {
     const registry = input.registry;
-    const resolved = await resolveScmSelection({
+    const outcome = await resolveScmSelectionOutcome({
         workingDirectory: input.sourcePath,
         cwd: input.sourcePath,
         registry,
     });
-    if (!resolved) {
+    // An unavailable detector is not a plain-folder source. In particular an
+    // ownership refusal must not publish raw Git administration as file content.
+    if (outcome.kind === 'undetermined') throw outcome.error;
+    if (outcome.kind === 'not_a_repository') {
         return {
             transfer: null,
             isNestedRepoSourcePath: false,
             registry,
         };
     }
+    const resolved = outcome;
 
     const isNestedRepoSourcePath = await (async () => {
         const repoRootPath = resolved.context.detection.rootPath;

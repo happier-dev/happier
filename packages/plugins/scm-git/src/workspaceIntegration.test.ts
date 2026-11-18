@@ -168,7 +168,7 @@ describe('git workspace integration', { timeout: 20_000 }, () => {
     it('rejects non-portable linked-worktree admin entries during portable import validation', async () => {
         await expect(assertPortableGitWorkspaceEntries({
             entries: [{ relativePath: '.git/worktrees/feature-auth/HEAD' }],
-        })).rejects.toThrow('non-portable git worktree admin state');
+        })).rejects.toMatchObject({ code: 'git_selection_unavailable' });
     });
 
     it('uses the shared checkout materialization request as the source-of-truth for reconcile inputs', async () => {

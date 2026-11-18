@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createScmBackendRegistry } from '@/scm/registry';
 import { materializeWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/workspace/workspaceExportMaterialization';
 import { writeTransferPayloadSourceToFile } from '@/machines/transfer/transferPayloadFileSink';
@@ -18,6 +20,90 @@ import {
 } from './workspaceSyncSeedTransfer';
 
 describe('workspace sync seed transfer', () => {
+  it('keeps the real Git ownership refusal in an isolated member home instead of exporting raw normal-repository admin', async () => {
+    const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'seed-member-ownership-' });
+    const memberHome = await mkdtemp(join(tmpdir(), 'seed-member-home-'));
+    const registration = createGitScmBackendRuntimeRegistration();
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+      definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git', executableDefinition: registration.runtime!, registration,
+    })]);
+    const request = { operationId: 'member-seed', activeServerDir: memberHome, sourcePath: repository.rootPath,
+      workspaceTransfer: resolveWorkspaceSyncSeedTransfer({ selection: 'all_files', extraIncludePatterns: [], extraIgnorePatterns: [] }), registry };
+    try {
+      // Git's own test switch exercises its actual ownership refusal without requiring root/chown.
+      // It is the same system-boundary discriminator used by repository.test.ts.
+      await runAddedHostedSession({ environment: { ...process.env, HOME: memberHome, USERPROFILE: memberHome,
+        GIT_TEST_ASSUME_DIFFERENT_OWNER: '1' }, workingDirectory: repository.rootPath, end() {} }, async () => {
+        await expect(createWorkspaceSyncSeedExport(request)).rejects.toMatchObject({
+          errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE, message: 'git_dubious_ownership',
+        });
+      });
+      await runAddedHostedSession({ environment: { ...process.env, HOME: memberHome, USERPROFILE: memberHome },
+        workingDirectory: repository.rootPath, end() {} }, async () => {
+        const exported = await createWorkspaceSyncSeedExport(request);
+        const envelope = JSON.parse(exported.payloadSource.payload.toString('utf8'));
+        expect(envelope.workspaceExportArtifacts.workspaceIntegrationMetadata.headRevision).toBe(repository.headCommit);
+        expect(envelope.workspaceExportArtifacts.manifest.entries.some((entry: { relativePath: string }) => entry.relativePath === '.git' || entry.relativePath.startsWith('.git/'))).toBe(false);
+        await exported.payloadSource.dispose?.();
+      });
+    } finally { await Promise.all([rm(repository.rootPath, { recursive: true, force: true }), rm(memberHome, { recursive: true, force: true })]); }
+  });
+
+  it('refuses a real worktree whose common repository moved before publishing a seed', async () => {
+    const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'seed-unavailable-worktree-' });
+    const root = await mkdtemp(join(tmpdir(), 'seed-unavailable-target-'));
+    const registration = createGitScmBackendRuntimeRegistration();
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+      definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git', executableDefinition: registration.runtime!, registration,
+    })]);
+    try {
+      const sourcePath = join(root, 'linked');
+      runScmExecutable(repository.rootPath, 'git', ['worktree', 'add', '-b', 'linked', sourcePath]);
+      await rename(repository.rootPath, join(root, 'moved-common-repository'));
+      await expect(createWorkspaceSyncSeedExport({ operationId: 'unavailable-seed', activeServerDir: root,
+        sourcePath, workspaceTransfer: resolveWorkspaceSyncSeedTransfer({ selection: 'all_files', extraIncludePatterns: [], extraIgnorePatterns: [] }), registry }))
+        .rejects.toMatchObject({ errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE });
+    } finally { await Promise.all([rm(repository.rootPath, { recursive: true, force: true }), rm(root, { recursive: true, force: true })]); }
+  });
+
+  it.each(['normal', 'worktree', 'separate', 'submodule'] as const)('exports and imports a real %s checkout through the finite remote seed', async kind => {
+    const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'seed-worktree-' });
+    const root = await mkdtemp(join(tmpdir(), 'seed-worktree-target-'));
+    const registration = createGitScmBackendRuntimeRegistration();
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+      definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+      executableDefinition: registration.runtime!, registration,
+    })]);
+    let sourcePath = repository.rootPath;
+    try {
+      if (kind === 'worktree') {
+        sourcePath = join(root, 'linked');
+        runScmExecutable(repository.rootPath, 'git', ['worktree', 'add', '-b', 'linked', sourcePath]);
+      } else if (kind === 'separate') {
+        runScmExecutable(sourcePath, 'git', ['init', '--separate-git-dir', join(root, 'admin')]);
+      } else if (kind === 'submodule') {
+        runScmExecutable(sourcePath, 'git', ['-c', 'protocol.file.allow=always', 'submodule', 'add', sourcePath, 'child']);
+        sourcePath = join(sourcePath, 'child');
+      }
+      await writeFile(join(sourcePath, 'tracked.txt'), 'local changes');
+      const exported = await createWorkspaceSyncSeedExport({ operationId: 'worktree-seed', activeServerDir: root,
+        sourcePath, workspaceTransfer: resolveWorkspaceSyncSeedTransfer({ selection: 'all_files', extraIncludePatterns: [], extraIgnorePatterns: [] }), registry });
+      const targetPath = join(root, 'target');
+      const custody = await materializeWorkspaceSyncSeedExport({ operationId: 'worktree-seed', targetPath,
+        requestPayload: async request => {
+          const payload = request.transferId === 'worktree-seed' ? exported.payloadSource
+            : await exported.onDemandScope.resolvePayloadSourceOnOpen({ transferId: request.transferId, requestBody: {} });
+          try { await writeTransferPayloadSourceToFile({ source: payload, destinationPath: request.destinationPath }); }
+          finally { await payload.dispose?.(); }
+        }, materializeWorkspaceExportArtifacts: input => materializeWorkspaceExportArtifactsWithScmWorkspace({ ...input, registry }),
+      });
+      await custody.commit();
+      expect(runScmExecutable(targetPath, 'git', ['rev-parse', 'HEAD'])).toBe(repository.headCommit);
+      expect(await readFile(join(targetPath, 'tracked.txt'), 'utf8')).toBe('local changes');
+      expect((await readFile(join(targetPath, '.git', 'HEAD'), 'utf8')).length).toBeGreaterThan(0);
+    } finally { await Promise.all([rm(repository.rootPath, { recursive: true, force: true }), rm(root, { recursive: true, force: true })]); }
+  });
+
   it.each([
     ['all_files', 'local'], ['all_files', 'remote'],
     ['git_worktree', 'local'], ['git_worktree', 'remote'],
