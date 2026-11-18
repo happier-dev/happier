@@ -245,6 +245,19 @@ function actionFailure(errorCode: string): ActionExecuteFailure {
   return { ok: false, errorCode, error: errorCode };
 }
 
+/**
+ * A stored terminal credential can never mint the fresh `approval.request.decide`
+ * root a replay needs (Protocol reviewer owner). Refuse approve before any
+ * consent write or mint so the person is sent to an Account sign-in.
+ */
+function readTerminalApprovalReviewerRefusal(credentials: StoredCredentials): ActionExecuteFailure | null {
+  if (!hasStoredSessionCredentialProvenance(credentials)) return null;
+  const provenance = readAuthTokenProvenance(decodeJwtPayload(credentials.token), { allowLegacyHome: true })?.provenance;
+  if (provenance?.kind !== 'terminal' || isApprovalDecisionReviewerBindingV1({ authentication: { kind: 'terminal' } })) return null;
+  return { ok: false, errorCode: 'present_user_required', error: 'present_user_required', effectAttempted: false,
+    details: { reason: 'approval_reviewer_required' } };
+}
+
 function withExactSessionId(input: unknown, sessionId: string): unknown {
   const record = readRecord(input);
   return record ? { ...record, sessionId } : input;
@@ -1356,6 +1369,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             // Narrow the Machine branch after the local live decision above.
             if (!origin?.serverIdentityId || !machineId) return actionFailure('approval_origin_unavailable');
             if (signal?.aborted) return actionFailure('cancelled');
+            // This branch always mints a fresh decision root; withdrawals stay allowed.
+            const reviewerRefusal = decision === 'approve' ? readTerminalApprovalReviewerRefusal(credentials) : null;
+            if (reviewerRefusal) return reviewerRefusal;
             // The requester owns this Account approval, including when its
             // original invocation ran on a shared Machine. Reuse signed Action
             // admission; the unsigned public decision RPC remains custodian-only.
@@ -1387,10 +1403,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           const executor = resolveApprovalExecutor(request);
           if (executor.kind !== 'daemon' && executor.kind !== 'live_invocation'
             || readApprovalReplayDecisionAdmission(request) !== 'fresh') return null;
-          const provenance = readAuthTokenProvenance(decodeJwtPayload(credentials.token), { allowLegacyHome: true })?.provenance;
-          if (provenance?.kind !== 'terminal' || isApprovalDecisionReviewerBindingV1({ authentication: { kind: 'terminal' } })) return null;
-          return { ok: false, errorCode: 'present_user_required', error: 'present_user_required', effectAttempted: false,
-            details: { reason: 'approval_reviewer_required' } };
+          return readTerminalApprovalReviewerRefusal(credentials);
         },
       } satisfies Pick<ActionExecutorDeps, 'approvalRequestApproveRefusal'> : {}),
       ...(!machineAdmissionTransport && !params.machineActionDirectTargetTransport
