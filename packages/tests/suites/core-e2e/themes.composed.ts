@@ -518,7 +518,9 @@ export async function runF2() {
     expect(released?.reference).toMatchObject({ kind: 'artifact' });
     const reopened = await theme<{ themes: Entry[] }>('list', {});
     expect(reopened.themes.find(entry => entry.name === legacyProfile.name)?.reference).toEqual(released?.reference);
-    expect((await readSettings()).settings.themeProfiles).toEqual([]);
+    // Migration retires the released field. Inspect stored data before the
+    // current settings parser strips legacy keys from its projection.
+    expect((await readSettings()).rawSettings).not.toHaveProperty('themeProfiles');
     // P09: the body-read budget follows opened records, not the 40+ library.
     for (let index = 0; index < 40; index += 1) {
         await theme('save', { document: document(`Inventory ${index}`,

@@ -24,6 +24,7 @@ type EncryptedAccountSettingsMaterial =
 
 export type EncryptedAccountSettingsV2Row = Readonly<{
   settings: AccountSettings;
+  rawSettings: Record<string, unknown>;
   settingsVersion: number;
 }>;
 
@@ -67,6 +68,7 @@ function openEncryptedAccountSettingsV2Row(
   }
   return {
     settings: accountSettingsParse(rawSettings.data),
+    rawSettings: rawSettings.data,
     settingsVersion: current.version,
   };
 }
@@ -87,6 +89,7 @@ export async function readEncryptedAccountSettingsV2OrEmpty(params: Readonly<{
   if (current.content === null) {
     return {
       settings: accountSettingsParse({}),
+      rawSettings: {},
       settingsVersion: current.version,
     };
   }
