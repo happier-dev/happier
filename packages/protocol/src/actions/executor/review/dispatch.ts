@@ -20,6 +20,7 @@ import { resolveReviewNarratorPolicy } from '../../../reviews/reviewEngines.js';
 import { bytesToHex, randomBytes } from '@noble/hashes/utils';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '../../../execution/runs/responseSchemas.js';
 import { type ActionId } from '../../actionIds.js';
+import { REVIEW_HUMAN_ACTION_IDS_V1 } from '../../actionIdsReviewHumanV1.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import { projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
@@ -222,7 +223,6 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
       }
 
       if (actionId === 'review.start') {
-        if (!deps.reviewEnginesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const detached = readRecord(data.target).kind === 'detached'
           || ctx.actionCaller?.kind === 'workflowRun';
         const sessionId = detached ? null : resolveSessionIdFromInput(parsed.data, ctx);
@@ -243,8 +243,31 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
 
         const reviewInput = data as ReviewStartInput;
         if (requiresReviewWorkflowCompositionV1(reviewInput)) {
-          return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:review.start' };
+          const records = deps.reviewRecords?.(ctx);
+          if (!records) return { ok: false, errorCode: 'review_record_unavailable', error: 'review_record_unavailable' };
+          const reviewRound = await records.start({ reviewId: globalThis.crypto.randomUUID(), title: 'Code review',
+            subjectKind: reviewInput.comparisonId ? 'comparison' : 'repository',
+            sourceKind: ctx.actionCaller?.kind === 'workflowRun' ? 'workflow' : 'direct',
+            ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
+            reviewerIds: reviewReviewerIdsForStartV1(reviewInput), startedAt: Date.now(), signal: ctx.signal });
+          const people = (reviewInput.steps ?? [{ reviewers: reviewInput.reviewers }]).flatMap(step =>
+            step.reviewers.flatMap(reviewer => reviewer.kind === 'person'
+              ? [{ principal: reviewer.principal, required: reviewer.required }] : []));
+          if (people.length > 0) {
+            const requested = await executeHostChild(REVIEW_HUMAN_ACTION_IDS_V1.setReviewers,
+              { ...reviewRound, reviewers: people }, ctx);
+            if (!requested.ok) {
+              await records.settle({ ...reviewRound, outcome: ctx.signal?.aborted ? 'cancelled' : 'failed',
+                finishedAt: Date.now(), runs: [], ...(ctx.signal?.aborted ? {} : { signal: ctx.signal }) });
+              return requested;
+            }
+          }
+          const { buildReviewStepsWorkflowV1 } = await import('../../../workflows/builtins/reviewAndConverge.js');
+          const built = buildReviewStepsWorkflowV1(reviewInput, reviewRound);
+          return executeHostChild('workflow.run.start', { runId: globalThis.crypto.randomUUID(),
+            source: { kind: 'inline', definition: built.definition }, inputs: built.inputs }, ctx);
         }
+        if (!deps.reviewEnginesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const engineSelections = reviewInput.reviewers.flatMap((selection, index) => selection.kind === 'engine'
           ? [{ selection, index, reviewerId: reviewInput.reviewReviewerId ?? reviewReviewerIdForSelectionV1(index) }] : []);
         const admittedEngineSelections = [];

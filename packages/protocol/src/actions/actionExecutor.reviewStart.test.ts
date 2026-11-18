@@ -7,7 +7,8 @@ import { projectActionWorkflowSelectionInputV1 } from './executor/agentStartAdmi
 import { ExecutionRunStartRequestSchema } from '../execution/runs/startRequest';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1';
 import { buildAcpConfigOptionOverridesV1 } from '../sessions/metadata/metadataOverridesV1';
-import { createReviewRecordPortV1, type ReviewArtifactTransportV1, type ReviewRecordPortV1 } from '../reviews/reviewArtifactV1.js';
+import { createReviewRecordPortV1, ReviewRoundBindingV1Schema, type ReviewArtifactTransportV1, type ReviewRecordPortV1 } from '../reviews/reviewArtifactV1.js';
+import { WorkflowRunStartRequestV1Schema } from '../workflows/actionsV1.js';
 import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.testkit.js';
 import { ReviewStartInputSchema, reviewReviewerIdForSelectionV1 } from '../reviews/reviewStart.js';
 import { dispatchReviewDispatch2 } from './executor/review/dispatch.js';
@@ -45,6 +46,87 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
+  it.each(['roster', 'steps', 'people-only'] as const)('refuses an unavailable human request from %s before starting executable reviewers', async selectionSource => {
+    let workflowStarts = 0;
+    const records = createInMemoryReviewRecordPortV1();
+    // Observe the generated identity; admission and settlement keep their real implementation.
+    const starts = vi.spyOn(records, 'start');
+    const executor = createActionExecutor({
+      reviewRecords: () => records,
+      workflowAction: async () => { workflowStarts++; return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' }; },
+      reviewEnginesList: async () => { throw new Error('Reviewers must not start before the human request'); },
+    } as ActionExecutorDeps);
+    const engine = { kind: 'engine', engineId: 'codex' } as const;
+    const person = { kind: 'person', principal: { kind: 'account', accountId: 'requested-user' }, required: true } as const;
+    expect(await executor.execute('review.start', { sessionId: 's1', scope: 'repository', instructions: 'Review together.',
+      reviewers: selectionSource === 'steps' ? [engine] : selectionSource === 'people-only' ? [person] : [engine, person],
+      ...(selectionSource === 'steps' ? { steps: [{ kind: 'review', reviewers: [engine, person], instructions: 'Review together.' }] } : {}) },
+    { surface: 'ui' })).toMatchObject({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:review.reviewers.set' });
+    expect(workflowStarts).toBe(0);
+    const admission = starts.mock.calls[0]?.[0];
+    if (!admission) throw new Error('Expected the durable Review admission');
+    expect((await records.read(admission.reviewId))?.rounds).toEqual([
+      expect.objectContaining({ state: 'failed', finishedAt: expect.any(Number), runs: [] }),
+    ]);
+  });
+  it('settles a cancelled human request without passing the aborted signal to persistence', async () => {
+    const controller = new AbortController();
+    let reviewId = '';
+    let row: Awaited<ReturnType<ReviewArtifactTransportV1['read']>> = null;
+    const records = createReviewRecordPortV1({
+      read: async () => row,
+      create: async input => {
+        reviewId = input.artifactId;
+        row = { ...input, revision: { headerVersion: 1, bodyVersion: 1 } };
+        controller.abort();
+        return row;
+      },
+      update: async input => {
+        input.signal?.throwIfAborted();
+        row = { ...input, revision: { headerVersion: 2, bodyVersion: 2 } };
+        return { ok: true, revision: row.revision };
+      },
+    });
+    const executor = createActionExecutor({ reviewRecords: () => records,
+      workflowAction: async () => { throw new Error('Cancelled requests must not launch executable work'); },
+    } as ActionExecutorDeps);
+    expect(await executor.execute('review.start', { sessionId: 's1', scope: 'repository', instructions: 'Review.',
+      reviewers: [{ kind: 'person', principal: { kind: 'account', accountId: 'requested-user' }, required: true }] },
+    { surface: 'ui', signal: controller.signal })).toMatchObject({ ok: false, errorCode: 'cancelled' });
+    expect((await records.read(reviewId))?.rounds).toEqual([
+      expect.objectContaining({ state: 'cancelled', finishedAt: expect.any(Number), runs: [] }),
+    ]);
+  });
+  it('admits an ordered mixed engine roster once through the canonical Workflow start', async () => {
+    const records = createInMemoryReviewRecordPortV1();
+    const workflowStarts: unknown[] = [];
+    const reviewers = [{ kind: 'engine', engineId: 'codex', modelId: 'first-model', options: { focus: 'security' } },
+      { kind: 'engine', engineId: 'codex', modelId: 'second-model', options: { focus: 'correctness' } }];
+    const executor = createActionExecutor({ reviewRecords: () => records,
+      workflowAction: async invocation => {
+        if (invocation.actionId !== 'workflow.run.start') throw new Error('Unexpected Workflow operation');
+        workflowStarts.push(invocation.input);
+        return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+      },
+    } as ActionExecutorDeps);
+    expect(await executor.execute('review.start', { sessionId: 's1', scope: 'repository', reviewers,
+      instructions: 'Review independently.' }, { surface: 'ui' })).toMatchObject({
+      ok: false, errorCode: 'content_unavailable',
+    });
+    expect(workflowStarts).toEqual([expect.objectContaining({
+      source: { kind: 'inline', definition: expect.objectContaining({ blocks: expect.arrayContaining([
+        expect.objectContaining({ id: 'step-1', kind: 'parallel', branches: [
+          expect.objectContaining({ id: 'branch-step-1-reviewer-1' }),
+          expect.objectContaining({ id: 'branch-step-1-reviewer-2' }),
+        ] }),
+      ]) }) },
+      inputs: expect.objectContaining({ reviewInput: expect.objectContaining({ reviewers }),
+        reviewRound: { reviewId: expect.any(String), roundOrdinal: 1 } }),
+    })]);
+    const request = WorkflowRunStartRequestV1Schema.parse(workflowStarts[0]);
+    const round = ReviewRoundBindingV1Schema.parse(request.inputs?.reviewRound);
+    expect((await records.read(round.reviewId))?.rounds[0]?.state).toBe('running');
+  });
   it.each([
     { runCreation: 'noRunCreated', cancel: false, expectedState: 'failed' },
     { runCreation: 'outcomeUnknown', cancel: false, expectedState: 'running' },
