@@ -121,6 +121,7 @@ export type { ProvidersActionInputById, ProvidersActionResultById } from './prov
 export type { RegistriesActionInputById, RegistriesActionResultById } from './registriesActionDtos.generated.js';
 export type { RemoteHostsActionInputById, RemoteHostsActionResultById } from './remoteHostsActionDtos.generated.js';
 export type { ReviewCommentsActionInputById, ReviewCommentsActionResultById } from './reviewCommentsActionDtos.generated.js';
+export type { ReviewReadsActionInputById, ReviewReadsActionResultById } from './reviewReadsActionDtos.generated.js';
 export type { RolesActionInputById, RolesActionResultById } from './rolesActionDtos.generated.js';
 export type { SavedSecretSharingActionInputById, SavedSecretSharingActionResultById } from './savedSecretSharingActionDtos.generated.js';
 export type { ScmDiffSummaryActionInputById, ScmDiffSummaryActionResultById } from './scmDiffSummaryActionDtos.generated.js';

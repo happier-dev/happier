@@ -2830,6 +2830,9 @@ export type GeneratedActions = Readonly<{
       readonly list: (input: PublicActionInputById["review.engines.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.engines.list">>;
     }> ;
     readonly explainFindings: (input: PublicActionInputById["review.explain_findings"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.explain_findings">>;
+    readonly history: Readonly<{
+      readonly list: (input: PublicActionInputById["review.history.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.history.list">>;
+    }> ;
     readonly start: (input: PublicActionInputById["review.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.start">>;
     readonly walkthrough: (input: PublicActionInputById["review.walkthrough"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.walkthrough">>;
   }> ;
@@ -2847,6 +2850,7 @@ export type GeneratedActions = Readonly<{
       readonly setDisposition: (input: PublicActionInputById["reviews.comments.setDisposition"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"reviews.comments.setDisposition">>;
       readonly transition: (input: PublicActionInputById["reviews.comments.transition"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"reviews.comments.transition">>;
     }> ;
+    readonly list: (input: PublicActionInputById["reviews.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"reviews.list">>;
   }> ;
   readonly roles: Readonly<{
     readonly create: (input: PublicActionInputById["roles.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"roles.create">>;
@@ -5835,6 +5839,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         list: (input: PublicActionInputById["review.engines.list"], options?: ActionExecutionOptions) => execute("review.engines.list", input, options),
       },
       explainFindings: (input: PublicActionInputById["review.explain_findings"], options?: ActionExecutionOptions) => execute("review.explain_findings", input, options),
+      history: {
+        list: (input: PublicActionInputById["review.history.list"], options?: ActionExecutionOptions) => execute("review.history.list", input, options),
+      },
       start: (input: PublicActionInputById["review.start"], options?: ActionExecutionOptions) => execute("review.start", input, options),
       walkthrough: (input: PublicActionInputById["review.walkthrough"], options?: ActionExecutionOptions) => execute("review.walkthrough", input, options),
     },
@@ -5852,6 +5859,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         setDisposition: (input: PublicActionInputById["reviews.comments.setDisposition"], options?: ActionExecutionOptions) => execute("reviews.comments.setDisposition", input, options),
         transition: (input: PublicActionInputById["reviews.comments.transition"], options?: ActionExecutionOptions) => execute("reviews.comments.transition", input, options),
       },
+      list: (input: PublicActionInputById["reviews.list"], options?: ActionExecutionOptions) => execute("reviews.list", input, options),
     },
     roles: {
       create: (input: PublicActionInputById["roles.create"], options?: ActionExecutionOptions) => execute("roles.create", input, options),

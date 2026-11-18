@@ -1,3 +1,4 @@
+import { ReviewListRequestV1Schema, ReviewListResponseV1Schema, ReviewHistoryRequestV1Schema, ReviewHistoryResponseV1Schema } from '../../reviews/reviewListV1.js';
 import { REVIEW_HUMAN_ACTION_IDS_V1 } from '../actionIdsReviewHumanV1.js';
 import { ReviewHumanGetInputV1Schema, ReviewHumanActionStateV1Schema, ReviewReviewersSetInputV1Schema, ReviewVerdictActionInputV1Schema } from '../../reviews/reviewHumanV1.js';
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
@@ -18,7 +19,19 @@ import { resolveExecutionRunMachineRuntimeDemand } from '../executor/sessionScop
 import { ReviewPrepareRoundInputV1Schema, ReviewPreparedRoundV1Schema, ReviewNewRoundInputV1Schema, ReviewNewRoundResultV1Schema } from '../../reviews/reviewRoundActionsV1.js';
 import { REVIEW_PREPARE_ROUND_ACTION_ID_V1, REVIEW_NEW_ROUND_ACTION_ID_V1 } from '../actionIds.js';
 
-function createReviewActionSpecs() {
+function createReviewActionSpecs(): readonly [
+  PreNormalizedActionSpec & { readonly id: typeof REVIEW_HUMAN_ACTION_IDS_V1.get; readonly approval: { readonly result: 'required' }; readonly requiredAuthority: 'account_automation'; readonly inputSchema: typeof ReviewHumanGetInputV1Schema; readonly outputSchema: typeof ReviewHumanActionStateV1Schema },
+  PreNormalizedActionSpec & { readonly id: typeof REVIEW_HUMAN_ACTION_IDS_V1.setReviewers; readonly approval: { readonly result: 'required' }; readonly requiredAuthority: 'account_automation'; readonly inputSchema: typeof ReviewReviewersSetInputV1Schema; readonly outputSchema: typeof ReviewHumanActionStateV1Schema },
+  PreNormalizedActionSpec & { readonly id: typeof REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict; readonly approval: { readonly result: 'required' }; readonly requiredAuthority: 'present_user'; readonly inputSchema: typeof ReviewVerdictActionInputV1Schema; readonly outputSchema: typeof ReviewHumanActionStateV1Schema },
+  PreNormalizedActionSpec & { readonly id: typeof REVIEW_PREPARE_ROUND_ACTION_ID_V1; readonly approval: { readonly result: 'optional'; readonly flow: 'deferred' }; readonly inputSchema: typeof ReviewPrepareRoundInputV1Schema; readonly outputSchema: typeof ReviewPreparedRoundV1Schema },
+  PreNormalizedActionSpec & { readonly id: typeof REVIEW_NEW_ROUND_ACTION_ID_V1; readonly approval: { readonly result: 'optional'; readonly flow: 'deferred' }; readonly inputSchema: typeof ReviewNewRoundInputV1Schema; readonly outputSchema: typeof ReviewNewRoundResultV1Schema },
+  PreNormalizedActionSpec & { readonly id: 'reviews.list'; readonly approval: { readonly result: 'required' }; readonly requiredAuthority: 'account_automation'; readonly inputSchema: typeof ReviewListRequestV1Schema; readonly outputSchema: typeof ReviewListResponseV1Schema },
+  PreNormalizedActionSpec & { readonly id: 'review.history.list'; readonly approval: { readonly result: 'required' }; readonly requiredAuthority: 'account_automation'; readonly inputSchema: typeof ReviewHistoryRequestV1Schema; readonly outputSchema: typeof ReviewHistoryResponseV1Schema },
+  PreNormalizedActionSpec & { readonly id: 'review.start'; readonly approval: { readonly result: 'optional'; readonly flow: 'deferred' }; readonly inputSchema: typeof ReviewStartInputSchema; readonly outputSchema: typeof StrictJsonValueSchema },
+  PreNormalizedActionSpec & { readonly id: 'review.apply'; readonly approval: { readonly result: 'optional'; readonly flow: 'deferred' }; readonly inputSchema: typeof ReviewFindingsApplyInputV1Schema; readonly outputSchema: typeof ReviewFindingsApplyResultV1Schema },
+  PreNormalizedActionSpec & { readonly id: 'review.walkthrough'; readonly approval: { readonly result: 'optional'; readonly flow: 'deferred' }; readonly inputSchema: typeof ReviewWalkthroughInputSchema; readonly outputSchema: typeof StrictJsonValueSchema },
+  PreNormalizedActionSpec & { readonly id: 'review.explain_findings'; readonly approval: { readonly result: 'optional'; readonly flow: 'deferred' }; readonly inputSchema: typeof ReviewExplainFindingsInputSchema; readonly outputSchema: typeof StrictJsonValueSchema },
+] {
   return Object.freeze([
 // Imports added to existing specs/reviews.ts; canonical Action-id constants live in actionIds.ts.
 {
@@ -75,6 +88,32 @@ function createReviewActionSpecs() {
     surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false },
     bindings: { mcpToolName: 'review_new_round', voiceClientToolName: 'review_new_round' },
     inputSchema: ReviewNewRoundInputV1Schema, outputSchema: ReviewNewRoundResultV1Schema,
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: 'reviews.list', executionPlacement: 'account', requiredAuthority: 'account_automation',
+    approval: { result: 'required' }, title: 'List Reviews', safety: 'safe', sideEffectClass: 'read',
+    description: 'Read one authorized Review metadata page. Continue only when another page is explicitly requested. No Review bodies are read.',
+    placements: [], surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false },
+    bindings: { mcpToolName: 'reviews_list', voiceClientToolName: 'reviews_list' },
+    serverTransport: { method: 'POST', path: '/v1/reviews/list' },
+    cli: { acceptsServerId: true, commands: [{ path: ['reviews', 'list'], visibility: 'canonical' }] },
+    inputHints: { fields: [{ path: 'limit', title: 'Page size', widget: 'integer', required: true },
+      { path: 'cursor', title: 'Page cursor', widget: 'text' },
+      { path: 'projectSourceId', title: 'Project source', widget: 'text' },
+      { path: 'needsDecision', title: 'Needs a decision', widget: 'boolean' }] },
+    inputSchema: ReviewListRequestV1Schema, outputSchema: ReviewListResponseV1Schema,
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: 'review.history.list', executionPlacement: 'account', requiredAuthority: 'account_automation',
+    approval: { result: 'required' }, title: 'Read Review history', safety: 'safe', sideEffectClass: 'read',
+    description: 'Read exact finding history across authorized Reviews of the selected workflow. Decisions stay local to each Review.',
+    placements: [], surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false },
+    bindings: { mcpToolName: 'review_history_list', voiceClientToolName: 'review_history_list' },
+    serverTransport: { method: 'POST', path: '/v1/reviews/history/list' },
+    cli: { acceptsServerId: true, commands: [{ path: ['review', 'history', 'list'], visibility: 'canonical' }] },
+    inputHints: { fields: [{ path: 'reviewId', title: 'Review', widget: 'text', required: true },
+      { path: 'workflowId', title: 'Workflow', widget: 'text', required: true }] },
+    inputSchema: ReviewHistoryRequestV1Schema, outputSchema: ReviewHistoryResponseV1Schema,
   } satisfies PreNormalizedActionSpec,
   {
     id: 'review.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},

@@ -456,7 +456,7 @@ export const ACTION_SPEC_FAMILY_IDS: readonly (readonly string[])[] = [
   ["wait"],
   ["notifications.notify_me"],
   ["action.options.resolve", "action.invoke"],
-  ["review.start", "review.apply", "review.walkthrough", "review.explain_findings"],
+  ["review.human.get", "review.reviewers.set", "review.verdict.submit", "review.prepare_round", "review.new_round", "reviews.list", "review.history.list", "review.start", "review.apply", "review.walkthrough", "review.explain_findings"],
   ["subagents.plan.start", "subagents.delegate.start", "voice_agent.start", "sessions.subagents.list", "sessions.subagents.get", "sessions.subagents.watch", "sessions.subagents.upsert", "sessions.subagents.updateStatus", "sessions.subagents.complete"],
   ["execution.run.start", "execution.run.list", "execution.run.get", "execution.run.send", "execution.run.ensure", "execution.run.ensure_or_start", "execution.run.stream.start", "execution.run.stream.read", "execution.run.stream.cancel", "execution.run.stop", "execution.run.cancel_turn", "execution.run.action", "execution.run.permission.respond", "execution.run.wait"],
   ["session.workspace.return.capture", "session.workspace.return.prepare", "session.workspace.return.apply", "session.open", "session.fork", "session.continue_with_replay", "session.rollback", "session.checkpoint_code_rollback", "session.checkpoint", "session.restore", "session.handoff", "session.handoff.prepare_target", "session.handoff.prepare_target_result.get", "session.handoff.prepare_target.resume", "session.handoff.commit", "session.handoff.abort", "session.handoff.status.get"],

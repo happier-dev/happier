@@ -1,3 +1,4 @@
+import { ReviewCommentOperationErrorCodeV1Schema } from '../reviews/comments/actions.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { AccountUsernameUpdateErrorV1Schema } from '../account/profile.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -62,6 +63,7 @@ export const HOME_DOMAIN_ACTION_IDS_V1 = [
   ...SHARED_SAVED_SECRET_ACTION_IDS_V1.filter(isSharedSavedSecretHomeActionIdV1),
   ...ACTION_ID_FAMILIES_V1.session_organization_resources,
   ...ACTION_ID_FAMILIES_V1.collection_space_membership,
+  ...ACTION_ID_FAMILIES_V1.review_reads,
   'session.delete',
   'session.section.set',
   'session.tags.set',
@@ -79,6 +81,7 @@ export type HomeDomainActionIdV1 =
   | SharedSavedSecretHomeActionIdV1
   | typeof ACTION_ID_FAMILIES_V1.session_organization_resources[number]
   | typeof ACTION_ID_FAMILIES_V1.collection_space_membership[number]
+  | typeof ACTION_ID_FAMILIES_V1.review_reads[number]
   | 'session.delete' | 'session.section.set' | 'session.tags.set'
   | 'projects.deploymentDefaults.set';
 
@@ -91,6 +94,7 @@ export function isHomeDomainActionIdV1(value: string): value is HomeDomainAction
 }
 
 const HOME_DOMAIN_ERROR_SCHEMAS_V1 = [
+  lazyZodSchema(() => z.strictObject({ error: ReviewCommentOperationErrorCodeV1Schema })),
   AccountUsernameUpdateErrorV1Schema,
   FriendsMutationErrorSchema,
   HomeGovernanceErrorV1Schema,

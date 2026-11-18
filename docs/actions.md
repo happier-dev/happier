@@ -2788,6 +2788,14 @@ family's withheld operations available by default.
 
 Review verdict Actions declare the CLI paths `reviews comments list`,
 `reviews comments transition`, and `reviews comments set-disposition`.
+In development source, `reviews.list` and `review.history.list` use the same
+Home-domain transport as other Account Actions. The authenticated Home supplies
+the caller Account to the Artifact query owner. Listing returns one demanded
+metadata page with root-finding counts and a continuation cursor; it reads no
+Review bodies and never follows the cursor automatically. History returns exact
+finding identities across authorized earlier Reviews of the selected workflow,
+while each Review keeps its own decisions. UI, CLI, MCP and Voice consume the
+canonical Action schemas and the existing Home/Account scope binding.
 Public review-comment Actions also project named Voice bindings from their
 canonical declarations; generic Voice `action_execute` reaches the same schemas,
 revision checks and approval policy. The internal publication-dispatch claim

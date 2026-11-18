@@ -566,6 +566,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'subagents.delegate.start',
     'voice_agent.start',
   ],
+  review_reads: ['reviews.list', 'review.history.list'],
   review_comments: [
     'reviews.comments.create',
     'reviews.comments.list',
