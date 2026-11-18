@@ -38,7 +38,8 @@ function launchInput() {
       observedAtMs: 1_760_000_700_000, locator: { v: 1, routingToken: 'example-workspace/deploy-tools' },
       snapshot: { v: 1, title: 'Read dispatch', scopeLabel: 'example-workspace/deploy-tools', state: { presentation: 'active', nativeLabel: 'Open' }, facts: [] }, viewer: { involvement: [] } }, linkedSessions: [] });
 }
-async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | 'overview' | 'files' = 'checks', diffFailure?: PluginError, providerFailure = false) {
+async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | 'overview' | 'files' = 'checks', diffFailure?: PluginError, providerFailure = false,
+  overviewTransport?: (result: unknown) => Promise<void>) {
   let panel: 'checks' | 'overview' | 'files' = initialPanel;
   let entryId = '42';
   const input = () => {
@@ -49,6 +50,7 @@ async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | '
   };
   let release!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; });
+  let providerRead = 0;
   const transport = createHttpStub(url => {
     if (url.endsWith('/2.0/user')) return { body: currentUser };
     if (providerFailure && (url.includes('/diffstat') || url.includes('/statuses'))) return { status: 404, body: { error: { message: 'Fixture route is missing' } } };
@@ -56,7 +58,10 @@ async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | '
     if (url.endsWith('/diff')) return { bodyBytes: '' };
     if (url.includes('/statuses')) return { body: { values: [{ uuid: '{7c0d1e2f-3a4b-4c5d-8e9f-0a1b2c3d4e5f}', key: 'PIPELINE', name: 'Dispatch pipeline', state: 'SUCCESSFUL' }] } };
     if (url.includes('/comments')) return { body: { values: [] } };
-    if (url.endsWith(`/pullrequests/${entryId}`)) return { body: { ...pullRequest, id: Number(entryId) } };
+    const requestedEntryId = /\/pullrequests\/(\d+)$/u.exec(new URL(url).pathname)?.[1];
+    if (requestedEntryId !== undefined) return { body: { ...pullRequest, id: Number(requestedEntryId),
+      ...(overviewTransport === undefined ? {} : { summary: { ...pullRequest.summary, raw: `Entry ${requestedEntryId}, provider reply ${++providerRead}` } }),
+    } };
     throw new Error(`Unexpected Bitbucket route: ${url}`);
   });
   const { connectedAccounts } = createConnectedAccountsStub({ accounts: [{ accountId: 'account-1' }] });
@@ -92,7 +97,11 @@ async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | '
         const result = await plugin.invokeAction(request === null ? action.localId : BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listComments,
           request === null ? input : request, { surface: 'ui' });
         if (builds) producerResults.push(result);
-        if (action.localId === BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readOverview) overviewResults.push(result);
+        if (action.localId === BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readOverview) {
+          overviewResults.push(result);
+          // Delay the genuine registered Action's reply at the host transport boundary.
+          await overviewTransport?.(result);
+        }
         return result;
       } },
     });
@@ -168,6 +177,38 @@ describe('registered Bitbucket detail read dispatch', () => {
     await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
     await expect(detail.getByText('Dispatch pipeline')).resolves.toBeDefined();
     expect(producerResults).toHaveLength(1);
+  });
+  it('accepts host panel input and refuses an obsolete Overview reply after Overview to Files to Overview', async () => {
+    let settleFirst!: () => void;
+    const firstReply = new Promise<void>(resolve => { settleFirst = resolve; });
+    let overviewReplies = 0;
+    const { detail, release, overviewResults, selectPanel } = await mountRegisteredDetail(false, 'overview', undefined, false, async () => {
+      if (++overviewReplies === 1) await firstReply;
+    });
+    try {
+      await act(async () => { release(); });
+      expect(overviewResults).toHaveLength(1);
+      const obsolete = BitbucketOverviewResultV1Schema.parse(overviewResults[0]);
+      expect(obsolete.kind).toBe('overview');
+      // Live entry changes replace the source mount. Ordinary panel changes
+      // retain it and end only the previous panel's activity interval.
+      await selectPanel('files');
+      await expect(detail.getByText('No changed files')).resolves.toBeDefined();
+      await selectPanel('overview');
+      expect(overviewResults).toHaveLength(2);
+      const current = BitbucketOverviewResultV1Schema.parse(overviewResults[1]);
+      if (current.kind !== 'overview' || obsolete.kind !== 'overview'
+        || typeof current.description !== 'string' || typeof obsolete.description !== 'string') throw new Error('Expected two distinct Overview replies');
+      expect(current.description).not.toBe(obsolete.description);
+      await expect(detail.getByText(current.description)).resolves.toBeDefined();
+      await act(async () => { settleFirst(); });
+      await expect(detail.getByText(current.description)).resolves.toBeDefined();
+      await expect(detail.queryByText(obsolete.description)).resolves.toBeUndefined();
+      await selectPanel('files');
+      await selectPanel('overview');
+      await expect(detail.getByText(current.description)).resolves.toBeDefined();
+      expect(overviewResults).toHaveLength(2);
+    } finally { settleFirst(); }
   });
   it('rejects a mis-bound registered producer', async () => {
     const { detail, producerResults } = await mountRegisteredDetail(true);
