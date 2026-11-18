@@ -70,8 +70,20 @@ describe('settings Action SessionTarget opt-ins', () => {
     if (actionId === 'session.connected_services_auth.set') {
       expect(h.writes.map(item => (item.input as { machineId: string }).machineId)).toEqual(['machine-a', 'machine-b']);
     }
+    if (actionId === 'session.connected_services_auth.set') {
+      expect(h.writes.map(item => (item.input as { machineId: string }).machineId)).toEqual(['machine-a', 'machine-b']);
+    }
     if (!group.ok) throw new Error('Expected fanout');
     expect(getActionSpec(actionId).outputSchema.safeParse(group.result).success).toBe(true);
+  });
+
+  it('refuses a direct connected-service auth switch whose machine disagrees with the admitted Session', async () => {
+    const h = fixture();
+    const result = await h.executor.execute('session.connected_services_auth.set', {
+      sessionId: 'single', machineId: 'wrong-machine', agentId: 'codex', bindings: { v: 2, bindingsByServiceId: {} },
+    }, context);
+    expect(result).toMatchObject({ ok: false, errorCode: 'session_address_mismatch' });
+    expect(h.writes).toEqual([]);
   });
 
   it('refuses a direct connected-service auth switch whose machine disagrees with the admitted Session', async () => {
