@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 import { formatNextScheduledRun, readNextScheduledRunRefreshAtMs } from '@/components/workflows/triggers/formatTriggerSummary';
-import { formatRelativeTimeShort, readRelativeTimeShortRefreshAtMs, readShortRelativeTimeRefreshAtMs } from '@/utils/time/formatShortRelativeTime';
+import { formatRelativeTimeShort, formatShortRelativeTimeAt, readRelativeTimeShortRefreshAtMs, readShortRelativeTimeRefreshAtMs } from '@/utils/time/formatShortRelativeTime';
 
 import {
     createSessionListRuntimeClock,
@@ -65,6 +65,39 @@ describe('sessionListRuntimeClock', () => {
         await act(async () => screen.tree.unmount());
         expect(vi.getTimerCount()).toBe(0);
     });
+    it('changes every visible minute label in one commit on the wall-clock minute, and keeps hour-old rows off the minute tick', async () => {
+        vi.useFakeTimers();
+        const now = Date.parse('2026-09-30T12:00:20.000Z');
+        vi.setSystemTime(now);
+        const clock = createSessionListRuntimeClock();
+        let hourRowRenders = 0;
+        function MinuteLabel(props: { at: number }) {
+            const next = React.useCallback((at: number) => readShortRelativeTimeRefreshAtMs(props.at, at), [props.at]);
+            return formatShortRelativeTimeAt(props.at, useSessionListRuntimeDeadlineNowMs(next, true, clock));
+        }
+        function HourLabel(props: { at: number }) {
+            hourRowRenders += 1;
+            const next = React.useCallback((at: number) => readShortRelativeTimeRefreshAtMs(props.at, at), [props.at]);
+            return formatShortRelativeTimeAt(props.at, useSessionListRuntimeDeadlineNowMs(next, true, clock));
+        }
+        let commits = 0;
+        // 26 rows active at different seconds of the last minutes, as a freshly seeded list (iOS idle bed).
+        const minuteRows = Array.from({ length: 26 }, (_, index) => now - 120_000 - index * 2_300);
+        const screen = await renderScreen(<React.Profiler id="rows" onRender={() => { commits += 1; }}>
+            {minuteRows.map((at) => <MinuteLabel key={at} at={at} />)}
+            <HourLabel at={now - 2 * 3_600_000 - 5_000} />
+        </React.Profiler>);
+        commits = 0; hourRowRenders = 0;
+        const before = minuteRows.map((at) => formatShortRelativeTimeAt(at, now));
+        // One act per second, so separate timer fires cannot be batched into one commit by the test itself.
+        for (let step = 0; step < 180; step += 1) await act(async () => { vi.advanceTimersByTime(1_000); });
+        // Three wall-clock minutes passed (12:01, 12:02, 12:03): one commit each, every label moved.
+        expect(commits).toBe(3);
+        expect(minuteRows.map((at) => formatShortRelativeTimeAt(at, Date.now()))).not.toEqual(before);
+        expect(hourRowRenders).toBe(0);
+        await act(async () => screen.tree.unmount());
+    });
+
     it('keeps distant display deadlines within the platform timer range without expiring them early', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000);
@@ -152,7 +185,7 @@ describe('sessionListRuntimeClock', () => {
     });
     it('refreshes rounded occurrences and floor ages independently while unrelated subscribers stay stable', async () => {
         vi.useFakeTimers();
-        const now = new Date(2026, 9, 10, 10).getTime();
+        const now = new Date(2026, 9, 10, 10, 0, 30).getTime();
         vi.setSystemTime(now);
         const clock = createSessionListRuntimeClock();
         const next = now + 120_000;
@@ -421,7 +454,10 @@ describe('sessionListRuntimeClock', () => {
             // One tick moved both rows to the SAME new instant. Under a
             // per-row timer each row ticks on its own mount offset and the two
             // labels disagree about "now" for the rest of the minute.
-            expect(firstRow.getCurrent()).toBe(1_500 + SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS);
+            // The cadence wakes on the wall-clock minute (requested at 60 s; the fake clock fires its 59 s delay
+            // after the 500 ms system-time jump), not a rolling minute after the first mount (61.5 s).
+            expect(firstRow.getCurrent()).toBeGreaterThanOrEqual(SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS);
+            expect(firstRow.getCurrent()).toBeLessThan(1_500 + SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS);
             expect(secondRow.getCurrent()).toBe(firstRow.getCurrent());
             expect(vi.getTimerCount()).toBe(1);
 

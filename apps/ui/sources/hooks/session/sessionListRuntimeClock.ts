@@ -294,8 +294,9 @@ export function useSessionListRelativeNowMs(
     clock: SessionListRuntimeClock = sessionListRuntimeClock,
 ): number {
     const nowMs = useSessionListRuntimeNowMs(enabled, clock);
+    // The cadence lands on the wall-clock minute, the same instant minute labels change, so both share one wake.
     useSessionListRuntimeWake(
-        enabled ? nowMs + SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS : null,
+        enabled ? (Math.floor(nowMs / SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS) + 1) * SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS : null,
         enabled,
         clock,
     );

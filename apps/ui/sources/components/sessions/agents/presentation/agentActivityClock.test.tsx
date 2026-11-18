@@ -156,11 +156,11 @@ describe('shared Work clock', () => {
         const screen = await renderScreen(<InboxDates />);
         const before = rowRenders;
         // Real event-loop turns let each boundary register its successor. The two
-        // recent leaves cross ten distinct boundaries; no old label changes.
+        // recent leaves change together on five wall-clock minutes (one wake each); no old label changes.
         for (const step of [10_000, 30_000, 30_000, 30_000, 30_000, 30_000, 30_000, 30_000, 30_000, 30_000, 20_000]) {
             await act(async () => { vi.advanceTimersByTime(step); });
         }
-        expect(fires()).toBe(10);
+        expect(fires()).toBe(5);
         expect(screen.getTextContent()).toMatch(/5m\s+5m$/);
         expect(rowRenders).toBe(before);
         expect(vi.getTimerCount()).toBe(1);
@@ -190,6 +190,9 @@ describe('shared Work clock', () => {
         });
         expect(screen.getTextContent()).toBe('6m');
         expect(fires()).toBe(0);
+        // The next minute label lands on the wall-clock minute (12:06), not the timestamp's own offset (12:05:30).
+        await act(async () => { vi.advanceTimersByTime(30_000); });
+        expect(screen.getTextContent()).toBe('6m');
         await act(async () => { vi.advanceTimersByTime(30_000); });
         expect(screen.getTextContent()).toBe('7m');
         expect(fires()).toBe(1);
@@ -215,7 +218,10 @@ describe('shared Work clock', () => {
         await act(async () => { vi.advanceTimersByTime(1); });
         expect(screen.getTextContent()).toBe('now');
         expect(fires()).toBe(1);
-        await act(async () => { vi.advanceTimersByTime(60_000); });
+        // A future timestamp becomes "now" exactly; "1m" then lands on the wall-clock minute (12:02).
+        await act(async () => { vi.advanceTimersByTime(119_499); });
+        expect(screen.getTextContent()).toBe('now');
+        await act(async () => { vi.advanceTimersByTime(1); });
         expect(screen.getTextContent()).toBe('1m');
         expect(fires()).toBe(2);
         await screen.update(<InboxRelativeTime timestamp={NOW - 3_600_000} nowMs={NOW} />);

@@ -11,12 +11,14 @@ const DAY = 24 * HOUR;
 const NOW = new Date('2025-06-15T12:00:00.000Z').getTime();
 
 describe('compact localized age display boundaries', () => {
-    it.each([[-10_000, 70_000], [30_000, 30_000], [90_000, 30_000], [61 * MINUTE, 59 * MINUTE],
-        [25 * HOUR, 23 * HOUR]])('keeps age %sms until its next display boundary', (age, delay) => {
+    // Minute and hour ages change on the wall-clock minute/hour (one shared wake for every visible label); days stay exact.
+    it.each([[-10_000, 2 * MINUTE, MINUTE], [30_000, MINUTE, MINUTE], [90_000, MINUTE, MINUTE], [61 * MINUTE, HOUR, HOUR],
+        [25 * HOUR, 23 * HOUR, 1]])('keeps age %sms until its next display boundary', (age, delay, granularity) => {
         const at = NOW - age;
         const boundary = readRelativeTimeShortRefreshAtMs(at, NOW);
         expect(boundary).toBe(NOW + delay);
-        expect(formatRelativeTimeShort(at, boundary! - 1)).toBe(formatRelativeTimeShort(at, NOW));
+        expect(boundary! % granularity).toBe(0);
+        expect(formatRelativeTimeShort(at, boundary! - granularity)).toBe(formatRelativeTimeShort(at, NOW));
         expect(formatRelativeTimeShort(at, boundary!)).not.toBe(formatRelativeTimeShort(at, NOW));
     });
     it('does not register a deadline for an invalid timestamp', () => {
@@ -45,12 +47,15 @@ describe('formatShortRelativeTime', () => {
         }
     });
     it.each([-SECOND, 30 * SECOND, 59 * MINUTE, 23 * HOUR, 6 * DAY, 34 * DAY,
-        59 * DAY, 359 * DAY, 364 * DAY, 729 * DAY])('reports the exact next display change for age %s', age => {
+        59 * DAY, 359 * DAY, 364 * DAY, 729 * DAY])('reports the next display change for age %s', age => {
         const at = NOW - age;
         const next = readShortRelativeTimeRefreshAtMs(at, NOW);
+        // Future, day and longer labels change at their exact instant; minute and hour labels on the wall-clock unit.
+        const granularity = age < 0 || age >= DAY ? 1 : age < HOUR ? MINUTE : HOUR;
         expect(next).not.toBeNull();
         expect(next).toBeGreaterThan(NOW);
-        expect(formatShortRelativeTimeAt(at, next! - 1)).toBe(formatShortRelativeTimeAt(at, NOW));
+        expect(next! % granularity).toBe(0);
+        expect(formatShortRelativeTimeAt(at, next! - granularity)).toBe(formatShortRelativeTimeAt(at, NOW));
         expect(formatShortRelativeTimeAt(at, next!)).not.toBe(formatShortRelativeTimeAt(at, NOW));
     });
     afterEach(() => {
