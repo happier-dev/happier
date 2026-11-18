@@ -16,6 +16,41 @@ daemon must support these development flows. If the deployment controls are
 unavailable, check with your Home operator before proceeding.
 </Callout>
 
+## Describe your app
+
+In **Deploy an app**, choose **Describe your app** and write what you want to
+build in your own words. Auto mode reads the current starters, catalog apps,
+deployment targets, Stores, Machines, and available repository forges. It runs a
+read-only suggestion task on an eligible Machine and Agent. If the setup needs
+more information, the questions appear in the same step. You can answer them,
+try again, or choose a starter yourself. If no Machine has a ready Agent, the
+step shows each Machine's reason and its available next action.
+
+The returned setup cards are checked against that catalog before they are shown.
+They identify what the app starts from, where it runs, and any selected data
+store. A card can also show **Code lives on** with the selected forge. Choose
+**Use this setup** after reviewing the card.
+
+Code-creating choices, including a starter or a scratch app, create the reviewed
+repository, Source, and Project and open a Session. The Session receives your
+description followed by the reviewed setup. The Agent builds or customizes the
+app, runs its own validation scripts, creates a preview Environment, and checks
+preview health. Review the preview URL and health before using the ordinary
+**Deploy Production** action. Production remains your step.
+
+Choices that already contain code continue directly to **Where it runs**. This
+includes a catalog app and the existing repository, Docker image, and Compose
+paths. Those paths continue through Details and Review without opening a build
+Session.
+
+Plan and price lines come from the selected target's declared provider facts.
+Each fact is shown with the provider page and the date it was checked. When a
+connected Vercel or Cloudflare account reports a plan that matches one of those
+declared plans, the card and Review can show **Your plan**. If the account is not
+connected or the provider's plan cannot be mapped, the dated declared facts stay
+visible without a personal plan line. These are reference facts for choosing a
+setup, not a live quote.
+
 ## What you need
 
 - A signed-in Happier app and an online Machine connected to the same Home.

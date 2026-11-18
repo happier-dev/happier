@@ -54,6 +54,56 @@ and the person's ordinary destination review. An Open refusal or uncertain
 outcome stops the sequence. Stored definitions and provider Git integration do
 not require this checkout step. Deploy itself never opens a checkout internally.
 
+## Describe your app auto mode (0.3 development)
+
+Auto mode has one catalog owner and one validation owner shared by the Deploy an
+app dialog and the `happier:deploy` Session skill. The
+`deployments.suggestions.catalog` Action composes the current starter and catalog
+app listings, deployment target facts, Stores, Machines and their readiness,
+connected-account metadata, and forge descriptors. Each source remains owned by
+its existing registry, Machine, target, connected-account, or SCM plugin owner.
+The catalog is a snapshot held by the caller for the suggestion round.
+
+The dialog uses a read-only `task` run on the first eligible Machine whose Agent
+can run the `deploy_suggestion` task. Its input contains the person's description,
+the catalog snapshot, and variable names with secret flags, never secret values.
+The run can return typed questions in the existing transient question shape. The
+dialog renders those questions in its existing form, and an answer starts a new
+round against the retained snapshot. A connect explicitly rebuilds the catalog.
+
+Both hosts send the model result to `deployments.suggestions.check`. The
+protocol owner `validateDeploySuggestionV1` parses the result once, drops unknown
+ids, invalid recommendations, price text, and incompatible source/target/forge
+pairs, then returns the validated recommendations, dropped reasons, and any
+questions. Cards are rendered from that checked result and the catalog facts.
+No model-written price is displayed.
+
+Target plugins declare dated plan facts and a public source URL. The shared cost
+presenter prints those facts and the checked date. When a connected Vercel or
+Cloudflare account exposes a provider plan through its existing `quota()` read,
+the UI matches that name to a declared plan by id or title and adds a `Your plan`
+line. An absent or unmapped plan leaves the declared facts visible without that
+line.
+
+`Use this setup` routes through `applyDeploySuggestion`. A starter or scratch
+recommendation uses the existing forge compatibility read, defaults to GitHub
+when it is an offered choice, and creates the repository, Source, and Project
+through `projects.starters.create`. That Action receives the person's description
+byte-for-byte followed by `renderDeployPlanBriefV1`, then the existing
+`sessionHandoff` opens the build Session. The Session runs the project's own
+scripts, creates a preview Environment, deploys the preview, and checks health.
+Review shows the observed preview URL and health. Production remains the
+person's ordinary reviewed step. A catalog-app recommendation and the dialog's
+existing repository, image, and Compose doors are pure deploys and continue to
+the existing Where it runs flow without a build Session.
+
+The built-in `happier:deploy` skill points to `references/create-app.md` on
+demand. That reference uses the same catalog, native Session questions, check
+Action, cards, starter/scratch creation, and build → preview → health loop. The
+flow budgets and deciding evidence for F1–F8 live in
+`.agents/skills/happier-performance/references/flow-budgets.md` under the
+`journey-deploy.F1` through `journey-deploy.F8` rows.
+
 ## Activity selection (0.3 development)
 
 The existing `readDeploymentActivityPage` accepts `actorAccountId`,
