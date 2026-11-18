@@ -77,6 +77,9 @@ test('completed generation publications replace the owned Expo while output-only
         await mkdir(join(nextExecutable, '..'), { recursive: true });
         await writeFile(nextExecutable, await readFile(executable));
         await chmod(nextExecutable, 0o755);
+        // pnpm always writes its root state; a publication without an installed tree is refused.
+        await mkdir(join(installCwd, 'node_modules'), { recursive: true });
+        await writeFile(join(installCwd, 'node_modules', '.modules.yaml'), '');
       });
     // Join the real native publication event and the complete owner replacement.
     await publicationObserved;

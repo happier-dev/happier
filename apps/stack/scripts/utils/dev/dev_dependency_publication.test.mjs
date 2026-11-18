@@ -82,6 +82,9 @@ test('noninteractive stack dev follows publications while external server startu
       const next = join(installCwd, 'apps/ui/node_modules/.bin/expo');
       await mkdir(join(next, '..'), { recursive: true });
       await writeFile(next, expoScript); await chmod(next, 0o755);
+      // pnpm always writes its root state; a publication without an installed tree is refused.
+      await mkdir(join(installCwd, 'node_modules'), { recursive: true });
+      await writeFile(join(installCwd, 'node_modules', '.modules.yaml'), '');
     });
   await t.waitFor(async () => assert.equal((await readLaunches()).length, 2,
     `the real dev owner must replace Expo before external server readiness; output:\n${output}`), { timeout: 10000 });

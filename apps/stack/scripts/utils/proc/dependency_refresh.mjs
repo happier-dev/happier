@@ -18,7 +18,7 @@ import { inspectUiPostinstallOutputs } from './ui_postinstall.mjs';
 import { inspectPatchHashDrift, relockPatchHashes, validateRegisteredPatches } from './patch_hash_relock.mjs';
 import { createWorkspaceBuildWaitNotifier } from './workspaceBuildWaitNotifier.mjs';
 import { admitDependencyReaders, closeDependencyReaderAdmission, DEPENDENCY_LOCK_STALE_AFTER_MS, dependencyWriterEnv, hasDependencyReadLock, inheritedDependencyWriter, waitForDependencyReaders, withDependencyReadLock } from './dependency_consumption.mjs';
-import { createDependencyGeneration, flipDependencyGeneration, isDependencyGenerationManaged, moveInPlaceInstallationIntoGeneration, pruneDependencyGenerations, readCurrentDependencyGeneration, readRegisteredDependencyProcesses, retainDependencyGeneration, retargetGenerationWorkspaceLinks } from './dependency_generations.mjs';
+import { assertDependencyGenerationInstalled, createDependencyGeneration, flipDependencyGeneration, newDependencyGenerationName, resolveDependencyGenerationContainer, isDependencyGenerationManaged, moveInPlaceInstallationIntoGeneration, pruneDependencyGenerations, readCurrentDependencyGeneration, readRegisteredDependencyProcesses, retainDependencyGeneration, retargetGenerationWorkspaceLinks } from './dependency_generations.mjs';
 
 const REFRESH_STATE_VERSION = 7;
 const REFRESH_MARKER = '.happier-stack-dependencies-ready';
@@ -661,9 +661,14 @@ export async function withDependencyRefresh({
     let published = !generations;
     const runRefresh = async () => {
       if (!generations) return await refresh({ env: installEnv });
-      generation = await createDependencyGeneration(installDir);
+      // Readers prune outside the writer: pin the generation being installed,
+      // before it exists, until this attempt ends (2026-11-18 14:49Z: departing
+      // readers removed it mid-install). Any pruner honours a live retention record.
+      const name = newDependencyGenerationName();
+      const installing = retainDependencyGeneration(`${context.lockPath}.readers`, name, [process.pid]);
       const publishInstallation = async () => {
         if (published) return;
+        await assertDependencyGenerationInstalled(generation);
         await retargetGenerationWorkspaceLinks(installDir, generation);
         for (const project of ['', ...generation.projects]) {
           await rm(join(generation.genRoot, project, 'node_modules', '.ignored'), { recursive: true, force: true });
@@ -688,14 +693,17 @@ export async function withDependencyRefresh({
         await flipDependencyGeneration(installDir, generation);
       };
       try {
+        generation = await createDependencyGeneration(installDir, { name });
         await refresh({ env: installEnv, installCwd: generation.genRoot, publishInstallation });
         await publishInstallation();
       } catch (error) {
         if (!published) {
-          await rm(generation.genRoot, { recursive: true, force: true });
+          await rm(join(resolveDependencyGenerationContainer(installDir), name), { recursive: true, force: true });
           generation = null;
         }
         throw error;
+      } finally {
+        for (const path of installing) await rm(path, { force: true });
       }
     };
     try {

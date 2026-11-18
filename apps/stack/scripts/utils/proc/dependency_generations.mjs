@@ -70,9 +70,12 @@ async function readProjectDirs(installDir) {
  * with every other entry linked to the checkout's own (so installed lifecycle
  * scripts read and write the real sources). `genRoot` lays it out elsewhere
  * (a revision base installs from its own manifests and lockfile). */
-export async function createDependencyGeneration(installDir, { genRoot: target } = {}) {
+export function newDependencyGenerationName() {
+  return `g${Date.now().toString(36).padStart(9, '0')}-${randomUUID().slice(0, 8)}`;
+}
+
+export async function createDependencyGeneration(installDir, { genRoot: target, name = newDependencyGenerationName() } = {}) {
   const root = resolve(installDir);
-  const name = `g${Date.now().toString(36).padStart(9, '0')}-${randomUUID().slice(0, 8)}`;
   const genRoot = target ? resolve(target) : join(resolveDependencyGenerationContainer(root), name);
   const projects = await readProjectDirs(root);
   const spine = new Set(['']);
@@ -137,6 +140,22 @@ async function linkInstalledEntry(installDir, path, target) {
   await replaceWithSymlink(path, target);
 }
 
+/** Refuse to publish a generation that lost its installation: its shadow root
+ * or its installed root tree is gone or empty (2026-11-18 14:49Z: a generation
+ * removed mid-install was published as empty directories). Runs before any live
+ * path changes, so the previous generation stays current. */
+export async function assertDependencyGenerationInstalled({ genRoot }) {
+  const installed = await readdir(join(genRoot, 'node_modules'))
+    .catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
+  if (!installed.some(name => !CHECKOUT_STATE_ENTRY.test(name))) {
+    throw new Error(`dependency generation ${genRoot} has no installed tree; the installation did not complete`);
+  }
+}
+
+// A project directory is part of the generation's layout: never recreate it,
+// so a generation removed meanwhile fails the switch instead of publishing empty.
+const mkdirInGeneration = path => mkdir(path).catch(error => error.code === 'EEXIST' ? undefined : Promise.reject(error));
+
 /** Switch the checkout to the generation: every project's `node_modules`, then
  * every installation entry of the real root `node_modules` (stale ones that name
  * an older generation are removed), then the current-generation link. */
@@ -144,13 +163,13 @@ export async function flipDependencyGeneration(installDir, { genRoot, projects }
   const root = resolve(installDir);
   for (const project of projects) {
     const generationModules = join(genRoot, project, 'node_modules');
-    await mkdir(generationModules, { recursive: true });
+    await mkdirInGeneration(generationModules);
     await linkInstalledEntry(root, join(root, project, 'node_modules'), relative(join(root, project), generationModules));
   }
   const rootModules = join(root, 'node_modules');
   const generationModules = join(genRoot, 'node_modules');
   await mkdir(rootModules, { recursive: true });
-  await mkdir(generationModules, { recursive: true });
+  await mkdirInGeneration(generationModules);
   const installed = (await readdir(generationModules)).filter(name => !CHECKOUT_STATE_ENTRY.test(name)).sort();
   for (const name of installed) {
     await linkInstalledEntry(root, join(rootModules, name), relative(rootModules, join(generationModules, name)));
@@ -204,12 +223,17 @@ export async function moveInPlaceInstallationIntoGeneration(installDir) {
 // Unlike reader records, writers never drain them.
 const RETENTION_RECORD = /^retain-\d+-/u;
 
-/** Retain `generation` for each live process (a Stack running on it). */
+/** Retain `generation` for each live process (a Stack running on it, or the
+ * writer installing it). Returns the record paths written. */
 export function retainDependencyGeneration(readersDir, generation, pids) {
   mkdirSync(readersDir, { recursive: true });
+  const paths = [];
   for (const pid of pids) {
-    writeFileSync(join(readersDir, `retain-${pid}-${randomUUID()}.json`), JSON.stringify({ pid, generation }), { flag: 'wx' });
+    const path = join(readersDir, `retain-${pid}-${randomUUID()}.json`);
+    writeFileSync(path, JSON.stringify({ pid, generation }), { flag: 'wx' });
+    paths.push(path);
   }
+  return paths;
 }
 
 function readReaderRecords(readersDir) {
@@ -233,8 +257,9 @@ export function readRegisteredDependencyProcesses(readersDir) {
 
 /** Remove every generation no live record names, except the current one. A
  * record pins only the generation it registered on, never the newer ones (a
- * long-running Stack pinned all 18 on 2026-11-18). A reader record without a
- * generation (an older client) retains all of them. Returns the removed names. */
+ * long-running Stack pinned all 18 on 2026-11-18); a writer pins the generation
+ * it is installing the same way. A reader record without a generation (an older
+ * client) retains all of them. Returns the removed names. */
 export async function pruneDependencyGenerations(installDir, { readersDir }) {
   const container = resolveDependencyGenerationContainer(installDir);
   const current = readCurrentDependencyGeneration(installDir);

@@ -133,6 +133,47 @@ test('a failed generation install leaves the live tree and its admission untouch
   assert.equal(existsSync(join(installDir, 'node_modules')), true);
 });
 
+test('a reader leaving while a generation installs never removes the installing generation', async t => {
+  const { env, installDir } = await setup(t);
+  await moveInPlaceInstallationIntoGeneration(installDir);
+  await writeFile(join(installDir, 'pnpm-lock.yaml'), '# v2\n');
+  // 2026-11-18 14:49Z: a reader exiting mid-install pruned the generation being
+  // installed (neither current nor recorded), and the switch then published it empty.
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  let entered;
+  const inside = new Promise(resolve => { entered = resolve; });
+  const reader = dependencies.withDependencyConsumption({ installDir, env }, async () => { entered(); await held; });
+  await inside;
+  await dependencies.withDependencyRefresh({ installDir, env, generationInstall: true },
+    async ({ installCwd = installDir, publishInstallation }) => {
+      await fakeInstall(installCwd, 'v2');
+      release();
+      await reader;
+      await publishInstallation?.();
+    });
+  assert.deepEqual(readInstalled(installDir), ['module.exports = "v2";\n', 'module.exports = "v2";\n']);
+});
+
+test('an installation whose generation lost its tree midway never switches, and the previous generation stays live', async t => {
+  const { env, installDir } = await setup(t);
+  const first = (await moveInPlaceInstallationIntoGeneration(installDir)).name;
+  await writeFile(join(installDir, 'pnpm-lock.yaml'), '# v2\n');
+  // The installer reports success, but its tree is gone (ENOSPC, a removal):
+  // publishing must refuse before any live path changes.
+  await assert.rejects(dependencies.withDependencyRefresh({ installDir, env, generationInstall: true },
+    async ({ installCwd = installDir, publishInstallation }) => {
+      await fakeInstall(installCwd, 'v2');
+      await rm(installCwd, { recursive: true, force: true });
+      await publishInstallation?.();
+    }), { code: 'HAPPIER_DEPENDENCY_REFRESH_FAILED' });
+  assert.equal(readCurrentDependencyGeneration(installDir), first);
+  assert.deepEqual(readInstalled(installDir), ['module.exports = "v1";\n', 'module.exports = "v1";\n']);
+  assert.deepEqual(await readdir(join(installDir, '.happier', 'deps', 'node_modules')), [first]);
+  await dependencies.withDependencyConsumption({ installDir, env }, async () => { readInstalled(installDir); });
+  assert.equal((await dependencies.inspectDependencyRefresh({ installDir, env })).failedInstallIdentity !== null, true);
+});
+
 test('a Stack running on the checkout keeps the replaced generation until it exits', async t => {
   const { fixture, env: baseEnv, installDir } = await setup(t);
   const first = (await moveInPlaceInstallationIntoGeneration(installDir)).name;
