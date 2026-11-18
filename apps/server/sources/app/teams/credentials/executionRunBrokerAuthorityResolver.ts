@@ -48,7 +48,9 @@ export function createExecutionRunBrokerCurrentnessResolver(input: Readonly<{
             const { reason } = parsed.data;
             if (reason === 'not_found') return failure('execution_run_not_found');
             if (reason === 'terminal') return failure('execution_run_terminal');
-            return failure(reason === 'runtime_unavailable' ? 'execution_run_authority_unavailable' : 'operation_not_current', reason);
+            if (reason === 'runtime_unavailable') return failure('execution_run_authority_unavailable', reason);
+            // Identity and occurrence details can describe another Account's Run.
+            return failure('operation_not_current', reason === 'detached' ? reason : undefined);
         }
         if (parsed.data.serverIdentityId !== serverIdentityId
             || parsed.data.requestingAccountId !== request.requestingAccountId

@@ -2781,6 +2781,9 @@ projection, so the offered source revision is not recomputed with the custodian'
 Agent adapter or consent. Closed broker-open refusal codes remain typed through
 the daemon/runner boundary and construction diagnostics; they are not daemon
 authority failures.
+For Execution Run broker admission, Home reports `execution_run_authority_unavailable`
+when the worker cannot supply a readable authority reply. An explicit terminal
+Run or mismatched authority still receives its existing refusal.
 The Agent receives the local machine-carrier capability through its declared raw
 credential header, not a public-header/config literal; signed Home authority
 remains with the admitted stream. Security/currentness fingerprints continue
