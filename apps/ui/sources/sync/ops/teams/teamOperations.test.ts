@@ -53,6 +53,25 @@ describe('Team lifecycle and logo mutations', () => {
 });
 
 describe('setTeamPolicy', () => {
+    it('changes the audience for new Team Reviews independently of Session defaults', async () => {
+        const targetTeam = await target();
+        const team = teamSummaryFixture({ policy: teamPolicyFixture({
+            sessionCreationPolicy: 'team_default', reviewCreationPolicy: 'team_required',
+        }) });
+        const path = '/v1/teams/policy/set';
+        harness.answer(targetTeam.scope.serverId, path, { body: team });
+
+        await expect(setTeamPolicy({ ...targetTeam, reviewCreationPolicy: 'team_required' }))
+            .resolves.toEqual({ kind: 'succeeded', team });
+
+        expect(harness.requestsFor(path).map(request => request.input)).toEqual([
+            { v: 1, teamId: 'team-1', reviewCreationPolicy: 'team_required' },
+        ]);
+        expect(getTeamSnapshot(targetTeam.scope, targetTeam.address)?.data?.policy).toMatchObject({
+            sessionCreationPolicy: 'team_default', reviewCreationPolicy: 'team_required',
+        });
+    });
+
     it('submits the prior authentication value and replacement as one policy patch', async () => {
         const confirmation = await target();
         const authenticationPolicy = {

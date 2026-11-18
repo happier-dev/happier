@@ -171,7 +171,7 @@ export function setTeamPolicy(params: Readonly<{
     previousAuthenticationPolicy?: TeamAuthenticationPolicyComparisonBasisV1;
     /** `null` restores Home inheritance; omitted leaves the current value unchanged. */
     authenticationPolicy?: TeamAuthenticationPolicyV1 | null;
-} & Pick<TeamPolicySetInputV1, 'managedDefaults' | 'managedGroupDefaults'>>): Promise<TeamMutationOutcome> {
+} & Pick<TeamPolicySetInputV1, 'reviewCreationPolicy' | 'managedDefaults' | 'managedGroupDefaults'>>): Promise<TeamMutationOutcome> {
     return mutateTeam({
         scope: params.scope,
         address: params.address,
@@ -179,6 +179,7 @@ export function setTeamPolicy(params: Readonly<{
         input: {
             v: 1,
             teamId: params.address.teamId,
+            ...(params.reviewCreationPolicy !== undefined ? { reviewCreationPolicy: params.reviewCreationPolicy } : {}),
             ...(params.sessionCreationPolicy !== undefined
                 ? { sessionCreationPolicy: params.sessionCreationPolicy } : {}),
             ...(params.externalSharingPolicy !== undefined
