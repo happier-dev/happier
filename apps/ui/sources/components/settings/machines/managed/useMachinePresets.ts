@@ -108,8 +108,12 @@ export function useMachinePresetPreparation(input: Readonly<{
     const currentAccepted = accepted?.scopeKey === scopeKey
         && (accepted.presetRevision === preset?.revision || accepted.value.operationId === prepared?.operationId) ? accepted.value : null;
     const operationId = currentAccepted?.operationId ?? prepared?.operationId ?? '';
+    // The accepted receipt is UI-local. A page reload must rejoin the same
+    // finite owner from the private prepared binding instead of guessing that
+    // a building row is interrupted while its Action is still running.
+    const operationMachineId = currentAccepted?.machineId ?? prepared?.binding.machineId ?? null;
     const observed = useActionOperation({ serverId: binding?.isCurrent() ? binding.scope.serverId : null, operationId },
-        currentAccepted && binding ? { machineId: currentAccepted.machineId,
+        operationMachineId && binding ? { machineId: operationMachineId,
             actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1, lifetime: binding } : undefined);
     const operation = binding?.isCurrent() && observed?.snapshot.scope.accountId === binding.scope.accountId
         && observed.snapshot.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1 ? observed : null;
