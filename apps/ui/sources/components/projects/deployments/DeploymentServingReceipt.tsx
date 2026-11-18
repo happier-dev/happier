@@ -5,7 +5,6 @@ import type { DeploymentStepV1 } from '@happier-dev/deployment-protocol/v1';
 
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
@@ -192,7 +191,8 @@ function servingCells(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  card: { padding: PAGE_LIST_METRICS.cardPaddingPx },
+  // The hero lies flat on the page (lab `d1-d1d-populated`): its text stands in the page column, not in a card.
+  card: { minWidth: 0 },
   top: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s16 },
   topText: { flex: 1, minWidth: 0, gap: theme.space.s2 },
   phoneActions: { marginTop: theme.space.s8, flexDirection: 'row' },

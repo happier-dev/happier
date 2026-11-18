@@ -1255,7 +1255,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
       serverId, environmentActions: actions });
     const id = 'project-deployments.environment.settings.backups';
     try {
-      expect(await settle(`${id}.run`)).not.toBeNull();
+      expect(await settle(`${id}.operations.run`)).not.toBeNull();
       const { Item } = await import('@/components/ui/lists/Item');
       // The saved destination reads as its descriptor-declared values on the row (lab d7), not as a disabled form.
       await vi.waitFor(() => {
@@ -1266,16 +1266,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
       // Opening Settings reads only the recorded history (the owner's facts); it runs and verifies nothing.
       await vi.waitFor(() => expect(screen.getTextContent()).toContain('Backup failed'));
       expect(effects.map((effect) => effect.actionId)).toEqual(['deployments.backups.history']);
-      await screen.pressByTestIdAsync(`${id}.verify`);
-      expect(await settle(`${id}.snapshot.${'e'.repeat(64)}`)).not.toBeNull();
-      // Saved copies read newest first: the later 'e' snapshot leads the list.
-      const listed = screen.findAll(node => typeof node.props.testID === 'string'
-        && /\.snapshot\.[0-9a-f]{64}$/.test(node.props.testID)).map(node => node.props.testID as string);
-      expect([...new Set(listed)]).toEqual([`${id}.snapshot.${'e'.repeat(64)}`, `${id}.snapshot.${snapshot.snapshotId}`]);
-      expect(screen.findByTestId(`${id}.snapshot.${'e'.repeat(64)}.manifestReadBack`)).toBeNull();
-      expect(effects[1]).toMatchObject({ actionId: 'deployments.backups.inventory' });
-      await screen.pressByTestIdAsync(`${id}.verify`);
-      await screen.pressByTestIdAsync(`${id}.run`);
+      // One list: each recorded run once, newest first; a failed run offers no checks.
+      expect(screen.findByTestId(`${id}.history.nightly-failed`)).not.toBeNull();
+      expect(screen.findByTestId(`${id}.history.nightly-failed.more`)).toBeNull();
+      await screen.pressByTestIdAsync(`${id}.operations.run`);
       expect(await settle(`${id}.result`)).not.toBeNull();
       expect(effects.find(effect => effect.actionId === 'deployments.backups.run')).toMatchObject({ actionId: 'deployments.backups.run', input: {
         serverId: serverIdentityId, environmentId: detail.environment.id, expectedRevision: 1, configRevision: 1,
@@ -1285,14 +1279,20 @@ describe('Environment → Settings: checks, backups, previews', () => {
       await vi.waitFor(() => expect(screen.findAllByProps({ testID: `${id}.status`,
         detail: formatAsOfTime(Date.parse('2026-11-06T10:01:00Z')) })).not.toHaveLength(0));
       expect(effects.filter(effect => effect.actionId === 'deployments.backups.history')).toHaveLength(2);
-      await screen.pressByTestIdAsync(`${id}.verify`);
-      expect(await settle(`${id}.snapshot.${snapshot.snapshotId}.manifestReadBack`)).not.toBeNull();
-      await screen.pressByTestIdAsync(`${id}.snapshot.${snapshot.snapshotId}.manifestReadBack`);
-      expect(effects.at(-1)).toMatchObject({ actionId: 'deployments.backups.verify', input: {
+      // A recorded backup is checked from its own row by its run and snapshot, without reading the inventory.
+      expect(await settle(`${id}.history.backup-operation.more`)).not.toBeNull();
+      const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+      const checks = () => screen.findAllByType(DropdownMenu).find(node => (node.props.items as Array<{ id: string }>)
+        .some(item => item.id === 'manifestReadBack'))!;
+      expect(checks().props.items.map((item: { id: string }) => item.id)).toEqual(['manifestReadBack', 'repositoryCheck']);
+      await act(async () => checks().props.onSelect('manifestReadBack'));
+      const lastVerify = () => effects.filter(effect => effect.actionId === 'deployments.backups.verify').at(-1);
+      await vi.waitFor(() => expect(lastVerify()).toMatchObject({ input: {
         backupOperationId: 'backup-operation', snapshotId: snapshot.snapshotId, level: 'manifestReadBack',
-      } });
-      await screen.pressByTestIdAsync(`${id}.snapshot.${snapshot.snapshotId}.repositoryCheck`);
-      expect(effects.at(-1)).toMatchObject({ actionId: 'deployments.backups.verify', input: { level: 'repositoryCheck' } });
+      } }));
+      await act(async () => checks().props.onSelect('repositoryCheck'));
+      await vi.waitFor(() => expect(lastVerify()).toMatchObject({ input: { level: 'repositoryCheck' } }));
+      expect(effects.some(effect => effect.actionId === 'deployments.backups.inventory')).toBe(false);
       expect(screen.getTextContent()).toContain('Repository check');
       // Test probes the saved destination read-only and names what to check (lab d7d/destfail).
       await screen.pressByTestIdAsync(`${id}.destination.test`);
@@ -1961,7 +1961,8 @@ describe('Environment → Settings: checks, backups, previews', () => {
     } finally { await screen.unmount(); controller.retire(); }
   });
 
-  it.each(['permissions', 'overview'])('opens Configure Previews from %s at the canonical Settings section', async tab => {
+  // Overview keeps no configuration at rest (PAGE-ACCEPT-176 D6): Previews is a Settings section, reached here from Permissions.
+  it.each(['permissions'])('opens Configure Previews from %s at the canonical Settings section', async tab => {
     await homes.reset();
     const serverId = await homes.addHome({ name: 'Preview navigation', serverUrl: 'https://preview-navigation.test',
       accountId: 'account-owner', currentAccount: true });

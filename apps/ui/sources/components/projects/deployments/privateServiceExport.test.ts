@@ -32,12 +32,13 @@ describe('private service export authoring availability', () => {
       .toEqual({ kind: 'unavailable', reason: 'unsupported' });
   });
 
-  it('requires native host Machines instead of offering platform publication authoring', () => {
+  it('requires native host Machines; a platform Environment has no private sharing at all (PAGE-ACCEPT-176 D14)', () => {
     const detail = privatePublicationDetail();
     const runtime = detail.runtimeTargetLink!;
-    expect(privateServiceExportAuthoring({ ...detail, runtimeTargetLink: { ...runtime,
-      source: { kind: 'plugin', contribution: { pluginId: 'example.platform', localId: 'runtime' } }, machines: [] } }, true))
-      .toEqual({ kind: 'unavailable', reason: 'machineMissing' });
+    const platform = { ...detail, runtimeTargetLink: { ...runtime,
+      source: { kind: 'plugin' as const, contribution: { pluginId: 'example.platform', localId: 'runtime' } }, machines: [] } };
+    expect(privateServiceExportAuthoring(platform, true)).toEqual({ kind: 'unavailable', reason: 'platformTarget' });
+    expect(privateServiceExportAuthoring(platform, false)).toEqual({ kind: 'unavailable', reason: 'platformTarget' });
     expect(privateServiceExportAuthoring({ ...detail, runtimeTargetLink: { ...runtime, machines: [] } }, true))
       .toEqual({ kind: 'unavailable', reason: 'machineMissing' });
   });

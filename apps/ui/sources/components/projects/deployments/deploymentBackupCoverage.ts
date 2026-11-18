@@ -5,7 +5,8 @@ type Environment = Pick<DeploymentEnvironmentHeaderV1, 'id' | 'serverId' | 'proj
 export type BackupReadinessObservation = Readonly<{ input: ProjectReadinessReadInputV1;
   result: ProjectReadinessReadResultV1 | null; pending: boolean; failureCode: string | null }>;
 export type EnvironmentBackupCoverage = Readonly<{ environment: Environment;
-  status: 'covered' | 'uncovered' | 'notNeeded' | 'loading' | 'unavailable'; reason: string | null; refreshing: boolean;
+  /** `unverified`: backups exist but none is verified yet, which is not the same as having none. */
+  status: 'covered' | 'unverified' | 'uncovered' | 'notNeeded' | 'loading' | 'unavailable'; reason: string | null; refreshing: boolean;
   /** When its last backup completed (the recorded facts readiness already reads); null when none is recorded. */
   lastBackupAt: number | null }>;
 
@@ -48,7 +49,7 @@ export function projectBackupCoverage(visible: readonly Environment[], observati
       degraded ||= pending || failureCode !== null;
       const fact = facts.get(selection.environmentId);
       const status = fact ? fact.status === 'ready' ? fact.reason === 'notNeeded' ? 'notNeeded' : 'covered'
-        : fact.status === 'actionNeeded' ? 'uncovered' : 'unavailable'
+        : fact.status === 'actionNeeded' ? fact.reason === 'backup_verification_required' ? 'unverified' : 'uncovered' : 'unavailable'
         : admitted.has(selection.environmentId) ? 'notNeeded' : failureCode ? 'unavailable' : 'loading';
       outcomes.set(key,
       { status, reason: fact?.reason ?? failureCode, refreshing: pending,
@@ -58,9 +59,10 @@ export function projectBackupCoverage(visible: readonly Environment[], observati
   const rows: readonly EnvironmentBackupCoverage[] = visible.map(environment => ({ environment,
     ...(outcomes.get(selectionKey(environment)) ?? { status: 'loading', reason: null, refreshing: false, lastBackupAt: null }) }));
   const count = (status: EnvironmentBackupCoverage['status']) => rows.filter(row => row.status === status).length;
-  const covered = count('covered'); const uncovered = count('uncovered'); const notNeeded = count('notNeeded');
+  const covered = count('covered'); const uncovered = count('uncovered'); const unverified = count('unverified');
+  const notNeeded = count('notNeeded');
   const unresolved = count('loading') + count('unavailable');
   const status = rows.length === 0 ? 'empty' : rows.every(row => row.status === 'loading') ? 'loading'
     : rows.every(row => row.status === 'unavailable') ? 'unavailable' : unresolved > 0 || degraded ? 'partial' : 'ready';
-  return { status, rows, covered, uncovered, notNeeded, unresolved, total: rows.length - notNeeded } as const;
+  return { status, rows, covered, unverified, uncovered, notNeeded, unresolved, total: rows.length - notNeeded } as const;
 }

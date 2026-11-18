@@ -23,13 +23,15 @@ export function isPrivateServiceExport(entry: ServiceExport): boolean {
 
 export type PrivateServiceExportAuthoring =
   | Readonly<{ kind: 'ready'; machineIds: readonly string[] }>
-  | Readonly<{ kind: 'unavailable'; reason: 'readOnly' | 'repository' | 'unsupported' | 'machineMissing' | 'multipleMachines' }>;
+  | Readonly<{ kind: 'unavailable'; reason: 'platformTarget' | 'readOnly' | 'repository' | 'unsupported' | 'machineMissing' | 'multipleMachines' }>;
 
 /** Authoring consumes the caller's edit decision; network observations belong to the editor. */
 export function privateServiceExportAuthoring(
   detail: DeploymentEnvironmentReadDetailV1,
   canEdit: boolean,
 ): PrivateServiceExportAuthoring {
+  // Private sharing publishes a Compose service from a Machine; a platform Environment has none to share.
+  if (detail.runtimeTargetLink?.source.kind === 'plugin') return { kind: 'unavailable', reason: 'platformTarget' };
   if (!canEdit) return { kind: 'unavailable', reason: 'readOnly' };
   if (detail.content.definition.kind !== 'stored') return { kind: 'unavailable', reason: 'repository' };
   if (detail.content.ownServer?.serviceExports?.some(entry => !isPrivateServiceExport(entry))) {

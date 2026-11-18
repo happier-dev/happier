@@ -19006,6 +19006,7 @@ settingsSession: {
           columnDatabase: "База данных",
           columnBackups: "Резервные копии",
           backupCovered: "Есть копия",
+          backupUnverified: "Не проверено",
           backupNotNeeded: "Не нужно",
           countDatabases: ({ count }: { count: number }) => `Баз данных: ${count}`,
           needYou: ({ count }: { count: number }) => `Требуют внимания: ${count}`,

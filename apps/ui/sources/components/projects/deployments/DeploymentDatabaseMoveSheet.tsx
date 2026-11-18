@@ -27,6 +27,7 @@ import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { authorDatabaseMoveCutoverPatch } from './databaseMoveCutover';
 import { prepareDatabaseMoveWriters } from './databaseMoveWriters';
 import { useDeploymentMoveWorkflow } from './useDeploymentMoveWorkflow';
+import { WorkflowStartRefusal } from '@/components/workflows/run/WorkflowStartRefusal';
 import { storedComposeDocumentText } from './storedComposeDocumentText';
 
 type MoveInput = Extract<Parameters<ReturnType<typeof useDeploymentMoveWorkflow>['run']>[0], { kind: 'stateful' }>;
@@ -187,6 +188,7 @@ function DeploymentDatabaseMoveCutoverSheet(props: Readonly<{ prepared: Prepared
   return <ListPresentationProvider value="page" pageInsets="contained">
     <View testID="project-deployments.move.review" style={deploymentSheetStyles.body}>
       <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.move.dataReviewLead')}</Text>
+      <WorkflowStartRefusal refusal={move.refusal} testID="project-deployments.move.review.refused" />
       <ItemGroup title={t('projects.deployments.move.writers')}>
         {props.writers.writers.map(writer => <MoveWriterItem key={`${writer.machineId}:${writer.serviceId}`}
           serverId={props.lifetime.scope.serverId} writer={writer} />)}

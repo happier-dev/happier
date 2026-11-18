@@ -10,7 +10,8 @@ export function useDeploymentWorkflow(lifetime: ServerAccountScopeLifetime, proj
     const actions = React.useMemo(() => createDeploymentActions(lifetime, projectSourceId), [lifetime, projectSourceId]);
     const run = (author: (requestId: string) => Readonly<{ definition: WorkflowDefinitionV1; inputs: WorkflowRunNowRequest['inputs'] }>,
         title: string, controllerMachineId: string) => admission.runNow({
-        refusal: 'alert', isInvocationCurrent: lifetime.isCurrent,
+        // The sheet that pressed Start says a refusal in place, with its phase and code (PAGE-ACCEPT-176 D25).
+        refusal: 'inline', isInvocationCurrent: lifetime.isCurrent,
         prepareRequest: async runId => {
             const authored = author(runId);
             const saved = await actions.saveWorkflow(runId, authored.definition, title);

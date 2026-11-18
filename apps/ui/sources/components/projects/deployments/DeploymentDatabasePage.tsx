@@ -46,7 +46,8 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
-import { DeploymentBackupControls, DeploymentBackupPruneRow, DeploymentRestoreDrillRow, deploymentBackupAttention, useDeploymentBackupFacts } from './DeploymentBackupControls';
+import { DeploymentBackupControls, DeploymentBackupSectionActions, deploymentBackupAttention, useDeploymentBackupFacts,
+  useDeploymentBackupOperations, useDeploymentRestoreDrill } from './DeploymentBackupControls';
 import { databaseEngineTitle, describeDatabaseSize } from './databasePresentation';
 import {
   DeployOutcomeBanner,
@@ -94,7 +95,6 @@ import { useDeploymentTargetLinkChoices } from './useDeploymentTargetLinkChoices
 import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1, DatabaseTargetsListResultV1Schema }
   from '@happier-dev/database-protocol';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
-import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { HappyError } from '@/utils/errors/errors';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -118,11 +118,7 @@ function resolveDatabase(detail: Detail, key: string): Database | null {
   return link ? { kind: 'managed', key, link } : null;
 }
 
-const HISTORY_ACTION = {
-  backup: 'projects.deployments.databaseHistoryBackup',
-  verify: 'projects.deployments.databaseHistoryVerify',
-  prune: 'projects.deployments.databaseHistoryPrune',
-} as const;
+const noop = () => {};
 
 /**
  * P9: one database of an Environment, pushed in place like a receipt. Identity, how apps reach it, its backups,
@@ -205,7 +201,13 @@ export function DeploymentDatabasePage(
       .map((source) => source.sourceId)
     : null;
   const backup = useDeploymentBackupFacts(actions, factsInput, presented, restorePointSourceIds);
-  const backupNow = useDeploymentChangePress(props.review, backup.reload);
+  // One controller for Back up now (section title and missed notice), a backup's checks and Remove old backups now.
+  const backupOperations = useDeploymentBackupOperations({ detail: database?.kind === 'selfHosted' ? detail ?? null : null,
+    configuration: database?.kind === 'selfHosted' ? backupConfiguration ?? null : null, actions,
+    review: props.review, onSettled: backup.reload });
+  const restoreDrill = useDeploymentRestoreDrill(lifetime && detail ? detail.environment.serverId : null);
+  // Opening the console reads its targets through the Action owner; a refusal reads as words in the console section.
+  const consoleOpen = useDeploymentChangePress(props.review, noop);
   const machineIds = React.useMemo(
     () => (target ? [target.machineId] : []),
     [target?.machineId],
@@ -229,8 +231,8 @@ export function DeploymentDatabasePage(
     props.onBack,
   );
   const workbenchNavigation = usePluginSurfaceDestinationNavigationBinding();
-  const [workbenchOpening, openWorkbench] = useHappyAction(async () => {
-    if (!actions || !detail || !database || !workbenchNavigation) return;
+  const openWorkbench = () => consoleOpen.press(async () => {
+    if (!actions || !detail || !database || !workbenchNavigation) return { ok: true };
     if (!detail.environment.controllerMachineId) throw new HappyError('machine_unavailable', false);
     const scope = { kind: 'environment' as const, environment: {
       serverId: detail.environment.serverId, projectSourceId: detail.environment.projectSourceId,
@@ -249,6 +251,7 @@ export function DeploymentDatabasePage(
       input: projectNativeJsonValueForTransport({ scope, ...(matches.length === 1 ? { descriptor: matches[0] } : {}) }),
     });
     if (!opened.ok) throw new HappyError(opened.reason, false);
+    return { ok: true };
   });
   const id = 'project-deployments.database';
   const { theme } = useUnistyles();
@@ -308,7 +311,7 @@ export function DeploymentDatabasePage(
 
   const facts = backup.facts;
   const ready = facts?.status === 'ready' ? facts : null;
-  const { missed, entries, failed: failedBackup } = deploymentBackupAttention(facts);
+  const { missed, failed: failedBackup } = deploymentBackupAttention(facts);
   const failed = failedBackup !== null;
   const status = missed
     ? {
@@ -348,14 +351,7 @@ export function DeploymentDatabasePage(
           : database.link.targetLink.targetKind }];
 
 
-  const runBackup =
-    factsInput && actions
-      ? () =>
-          backupNow.press(async () => {
-            await actions.runBackup(factsInput);
-            return { ok: true };
-          })
-      : null;
+  const runBackup = backupOperations.run;
 
   const retainedBackup =
     retained.result.value && activeId
@@ -485,6 +481,15 @@ export function DeploymentDatabasePage(
     });
   } : null;
 
+  // The rare backup operations sit in the section's ⋯: where they go and how many are kept is configured in Settings.
+  const backupMore = [
+    ...(backupOperations.prune ? [{ id: 'prune', title: t('projects.deployments.settingsSections.pruneTitle'),
+      onPress: () => { void backupOperations.prune?.(); } }] : []),
+    ...(restoreDrill ? [{ id: 'drill', title: restoreDrill.title, onPress: restoreDrill.open }] : []),
+    { id: 'settings', title: t('projects.deployments.backupDestination'),
+      onPress: () => props.onNavigate({ tab: 'settings', section: 'backups' }) },
+  ];
+
   return (
     <NavigationBackChromeProvider control={backControl}>
       <View style={styles.page}>
@@ -517,12 +522,6 @@ export function DeploymentDatabasePage(
               <FactStrip facts={headerFacts} layout="columns" divided narrow={props.phone} testID={`${id}.facts.strip`} />
             </ItemGroup>
           ) : null}
-          <ItemGroup>
-            <Item testID={`${id}.query`} title={t('common.open')}
-              icon={<Icon name="terminal" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
-              loading={workbenchOpening}
-              {...(actions && workbenchNavigation ? { onPress: openWorkbench } : { mode: 'info' as const })} />
-          </ItemGroup>
           {missed ? (
             <AttentionBanner
               testID={`${id}.missed`}
@@ -535,21 +534,14 @@ export function DeploymentDatabasePage(
                 runBackup
                   ? {
                       label: t('projects.deployments.backupRun'),
-                      loading: backupNow.running,
-                      disabled: backupNow.running,
+                      loading: backupOperations.change.running,
+                      disabled: backupOperations.change.running,
                       onPress: () => {
                         void runBackup();
                       },
                     }
                   : null
               }
-            />
-          ) : null}
-          {backupNow.outcome && target ? (
-            <DeployOutcomeBanner
-              controller={backupNow.banner}
-              machine={machineName(target.machineId)}
-              copy="setting"
             />
           ) : null}
 
@@ -565,15 +557,24 @@ export function DeploymentDatabasePage(
             />
           ) : null}
 
-          {database.kind === 'selfHosted' ? (
-            // A console opens only over a private route, never publicly; no private Domain provider serves one yet.
+          {database.kind === 'selfHosted' || (actions && workbenchNavigation) ? (
+            // One console row: it opens where this Home can open one, and otherwise says why it can't (a console
+            // opens only over a private route, never publicly; no private Domain provider serves one yet).
             <ItemGroup testID={`${id}.console`} title={t('projects.deployments.overviewStatus.consoleTitle')}>
-              <Item
-                testID={`${id}.console.access`}
-                title={t('projects.deployments.overviewStatus.consolePrivateAccess')}
-                mode="info"
-                detail={t('projects.deployments.overviewStatus.consolePrivateUnavailable')}
-              />
+              {actions && workbenchNavigation ? (
+                <Item testID={`${id}.query`} title={t('common.open')}
+                  icon={<Icon name="terminal" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+                  loading={consoleOpen.running} onPress={() => { void openWorkbench(); }} />
+              ) : (
+                <Item
+                  testID={`${id}.console.access`}
+                  title={t('projects.deployments.overviewStatus.consolePrivateAccess')}
+                  mode="info"
+                  detail={t('projects.deployments.overviewStatus.consolePrivateUnavailable')}
+                />
+              )}
+              {consoleOpen.outcome ? <DeployOutcomeBanner controller={consoleOpen.banner}
+                machine={target ? machineName(target.machineId) : null} copy="setting" /> : null}
             </ItemGroup>
           ) : null}
 
@@ -602,86 +603,16 @@ export function DeploymentDatabasePage(
               title={t('projects.deployments.dataBackups')}
               description={t('projects.deployments.databaseBackupsDescription')}
               action={
-                openRestore ? (
-                  <SectionActionButton
-                    testID={`${id}.restore`}
-                    title={t('projects.deployments.restoreAction')}
-                    onPress={openRestore}
-                  />
-                ) : undefined
+                <DeploymentBackupSectionActions
+                  operations={backupOperations}
+                  onRestore={openRestore}
+                  more={backupMore}
+                  testID={id}
+                />
               }
             >
-              <Item
-                testID={`${id}.destination`}
-                title={t('projects.deployments.backupDestination')}
-                subtitle={t('projects.deployments.databaseDestinationDetail')}
-                icon={<Icon name="gear" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
-                onPress={() =>
-                  props.onNavigate({ tab: 'settings', section: 'backups' })
-                }
-              />
-              {lifetime ? (
-                <DeploymentBackupControls
-                  detail={detail}
-                  configuration={backupConfiguration}
-                  lifetime={lifetime}
-                  review={props.review}
-                  onBackupCompleted={backup.reload}
-                  machineName={machineName}
-                  testID={`${id}.controls`}
-                />
-              ) : null}
-              {lifetime ? <DeploymentRestoreDrillRow serverId={detail.environment.serverId} testID={`${id}.controls.drill`} /> : null}
-              {lifetime ? <DeploymentBackupPruneRow detail={detail} configuration={backupConfiguration} actions={actions}
-                review={props.review} machineName={machineName} testID={`${id}.controls`} /> : null}
-            </ItemGroup>
-          ) : null}
-
-          {database.kind === 'selfHosted' && backupConfiguration ? (
-            <ItemGroup
-              testID={`${id}.history`}
-              title={t('projects.deployments.databaseHistoryTitle')}
-            >
-              {facts?.status === 'unavailable' ||
-              (ready && ready.history === null) ? (
-                <Item
-                  testID={`${id}.history.unavailable`}
-                  title={t('projects.deployments.databaseHistoryUnavailable')}
-                  mode="info"
-                />
-              ) : ready && entries.length === 0 ? (
-                <Item
-                  testID={`${id}.history.empty`}
-                  title={t('projects.deployments.databaseHistoryEmpty')}
-                  mode="info"
-                />
-              ) : (
-                entries.map((entry) => {
-                  const action = t(HISTORY_ACTION[entry.action]);
-                  return (
-                    <Item
-                      key={entry.operationId}
-                      testID={`${id}.history.${entry.operationId}`}
-                      title={formatAsOfTime(entry.completedAt)}
-                      subtitle={
-                        entry.state === 'failed'
-                          ? t('projects.deployments.databaseHistoryFailed', {
-                              action,
-                            })
-                          : entry.state === 'cancelled'
-                            ? t(
-                                'projects.deployments.databaseHistoryCancelled',
-                                { action },
-                              )
-                            : entry.snapshotIds.length > 0
-                              ? `${action} · ${t('projects.deployments.databaseHistorySnapshots', { count: entry.snapshotIds.length })}`
-                              : action
-                      }
-                      mode="info"
-                    />
-                  );
-                })
-              )}
+              <DeploymentBackupControls operations={backupOperations} facts={facts}
+                machineName={machineName} testID={id} />
             </ItemGroup>
           ) : null}
 

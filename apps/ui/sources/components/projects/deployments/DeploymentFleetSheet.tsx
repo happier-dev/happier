@@ -19,6 +19,7 @@ import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { t } from '@/text';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { useDeploymentWorkflow } from './useDeploymentWorkflow';
+import { WorkflowStartRefusal } from '@/components/workflows/run/WorkflowStartRefusal';
 import { DeploymentFleetIngress } from './DeploymentFleetIngress';
 import { DeploymentMachinesEmpty } from './DeploymentMachinesEmpty';
 import type { DeploymentIngressV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
@@ -79,6 +80,7 @@ export function DeploymentFleetSheet(props: DeploymentFleetSheetInput & CustomMo
         <View testID="project-deployments.fleet" style={deploymentSheetStyles.body}>
             <Text style={deploymentSheetStyles.lead}>{t(change.kind === 'add'
                 ? runtimeLink.activeDeploymentId ? 'projects.deployments.settingsSections.fleet.addBody' : 'projects.deployments.settingsSections.fleet.firstAddBody' : 'projects.deployments.settingsSections.fleet.removeBody')}</Text>
+            <WorkflowStartRefusal refusal={workflow.refusal} testID="project-deployments.fleet.refused" />
             {change.kind === 'add' && runtimeLink.activeDeploymentId && !sourceIntent ? <SurfaceStateCard
                 testID="project-deployments.fleet.sourceUnavailable" size="line" kind="unavailable"
                 title={t('projects.deployments.settingsSections.fleet.sourceUnavailable')}

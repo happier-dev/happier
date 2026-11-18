@@ -1,6 +1,5 @@
 import * as React from 'react';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentContentV1 } from '@happier-dev/deployment-protocol/v1';
 
 import { SharedSavedSecretValueItem } from '@/components/secrets/SharedSavedSecretValueItem';
 import { useSavedSecretCatalogEntries } from '@/components/secrets/useSavedSecretCatalog';
@@ -14,7 +13,6 @@ import { t } from '@/text';
 export function DeploymentAdminLogin(props: Readonly<{
   template: DeploymentEnvironmentDetailV1['content']['template'] | null;
   bindings: DeploymentEnvironmentDetailV1['content']['bindings'];
-  images: DeploymentContentV1['images'];
   scope: ServerAccountScopeLifetime['scope'];
   active: boolean;
   servingUrl: string | null;
@@ -28,9 +26,9 @@ export function DeploymentAdminLogin(props: Readonly<{
     && row.phase === 'runtime' && row.name === fields.password && row.source.kind === 'secret') : undefined;
   const passwordRef = password?.source.kind === 'secret' ? password.source.ref : null;
   const usernameRef = username?.source.kind === 'secret' ? username.source.ref : null;
-  // Its own sheet under What runs, drawn only when the app has a login, a first-run step or catalog images to say.
-  if (username?.source.kind !== 'value' && !usernameRef && !passwordRef && !props.template?.firstRunSetup
-    && !(props.template && props.images.length > 0)) return null;
+  // Its own sheet under What runs, drawn only when the app has a login or a first-run step to say. The exact images
+  // a release ran are said once, on its receipt.
+  if (username?.source.kind !== 'value' && !usernameRef && !passwordRef && !props.template?.firstRunSetup) return null;
   return <ItemGroup header="none">
     {username?.source.kind === 'value' ? <Item testID="project-deployments.environment.services.login.username"
       title={t('projects.deployments.databaseUsername')} subtitle={username.source.value} mode="info" showChevron={false} /> : null}
@@ -45,14 +43,6 @@ export function DeploymentAdminLogin(props: Readonly<{
           onPress: () => { if (props.servingUrl) props.onOpenServing?.(props.servingUrl); } }
         : { label: t('projects.deployments.tabDomains'), testID: 'project-deployments.environment.services.firstRun.domains',
           onPress: props.onOpenDomains }} /> : null}
-    {props.template && props.images.map(image => <Item key={`${image.service}:${image.platform}`}
-      testID={`project-deployments.environment.services.image:${image.service}`}
-      title={`${image.service} · ${image.platform}`}
-      subtitle={[image.registryReference, image.manifestDigest].filter(Boolean).join('\n')}
-      subtitleLines={0} mode="info" showChevron={false} />)}
-    {props.template && props.images.length > 0 ? <Item
-      testID="project-deployments.environment.services.image.notice"
-      title={t('projects.deployments.overviewStatus.catalogImageBody')} titleLines={0} mode="info" showChevron={false} /> : null}
   </ItemGroup>;
 }
 

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readDeploymentComposeServiceFacts } from './deploymentPreflightWarnings';
 import { View } from 'react-native';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import { MachinePrivateNetworkObservationV1Schema, type MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
@@ -44,6 +45,7 @@ export function DeploymentPrivateServiceExports(props: Readonly<{
   const exports = props.detail.content.ownServer?.serviceExports ?? [];
   const editing = props.editing;
   const authoring = privateServiceExportAuthoring(props.detail, editing !== null);
+  if (authoring.kind === 'unavailable' && authoring.reason === 'platformTarget') return null;
   const open = () => {
     if (!editing || authoring.kind !== 'ready') return;
     showDeploymentSheet({ component: PrivateServiceExportSheet,
@@ -75,7 +77,7 @@ export function privateServiceExportUnavailableReason(
     case 'unsupported': return t('projects.deployments.settingsSections.privateSharingUnsupported');
     case 'machineMissing': return t('projects.deployments.settingsSections.privateSharingNetworkMissing');
     case 'multipleMachines': return t('projects.deployments.settingsSections.privateSharingMultipleMachines');
-    case 'readOnly': return null;
+    case 'readOnly': case 'platformTarget': return null;
   }
 }
 
@@ -96,6 +98,20 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
   const [service, setService] = React.useState(services[0] ?? '');
   const [key, setKey] = React.useState(services[0] ?? '');
   const [containerPort, setContainerPort] = React.useState('');
+  // The port the stored Compose service declares fills Container port, as Add a domain does (D29); typed values stay.
+  const storedDocument = props.detail.content.definition.kind === 'stored' ? props.detail.content.definition.document : null;
+  const [declaredPorts, setDeclaredPorts] = React.useState<ReadonlyArray<Readonly<{ service: string; containerPort: number }>>>([]);
+  React.useEffect(() => {
+    if (!storedDocument) return;
+    let current = true;
+    void readDeploymentComposeServiceFacts(storedDocument).then(facts => { if (current) setDeclaredPorts(facts.containerPorts); },
+      () => { /* Compose that does not parse declares no port; the field stays typed. */ });
+    return () => { current = false; };
+  }, [storedDocument]);
+  React.useEffect(() => {
+    const ports = [...new Set(declaredPorts.filter(entry => entry.service === service).map(entry => entry.containerPort))];
+    if (ports.length === 1) setContainerPort(currentPort => currentPort === '' ? String(ports[0]) : currentPort);
+  }, [declaredPorts, service]);
   const [scheme, setScheme] = React.useState('');
   const [reachId, setReachId] = React.useState<string | null>(null);
   const [address, setAddress] = React.useState<string | null>(null);
@@ -185,7 +201,7 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
         </> : <>
       <FieldItem label={t('projects.deployments.settingsSections.privateSharingService')}><ValueFieldSelect testID={`${id}.service`}
         label={t('projects.deployments.settingsSections.privateSharingService')} items={services.map(value => ({ id: value, title: value }))}
-        selectedId={service} onSelect={value => { setService(value); setKey(value); }} fill /></FieldItem>
+        selectedId={service} onSelect={value => { setService(value); setKey(value); setContainerPort(''); }} fill /></FieldItem>
       {field('key', t('projects.deployments.settingsSections.privateSharingKey'), key, setKey)}
       {field('containerPort', t('projects.deployments.settingsSections.privateSharingPort'), containerPort, setContainerPort)}
       {field('scheme', t('projects.deployments.settingsSections.privateSharingScheme'), scheme, setScheme)}

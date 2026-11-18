@@ -5,7 +5,13 @@ import { StatusDot } from '@/components/ui/status/StatusDot';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import { DeploymentBackupConfigurationV1Schema,
   type DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentBackupInventoryResultV1, DeploymentBackupVerifyInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+import type { DeploymentBackupVerifyInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+import type { DeploymentBackupHistoryResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupHistoryV1';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
+import { formatElapsedDuration } from '@/components/machines/durationWords';
+import type { DeploymentBackupFacts } from './useDeploymentBackupFacts';
 
 import { Item } from '@/components/ui/lists/Item';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
@@ -59,7 +65,7 @@ import type { StoragePathCapacityV1 } from '@happier-dev/protocol/storage/storag
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { MachineSetupRecipeInputs } from '@/components/settings/machines/managed/MachineSetupRecipeInputs';
 import { readMachineSetupRecipeInputState } from '@/components/settings/machines/managed/machineSetupRecipeInputsModel';
-import { deploymentActionRefusalRemedy } from './deploymentPresentation';
+import { deploymentActionRefusalRemedy, deploymentWorkStatus } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { deploymentBackupKeepFields as KEEP_FIELDS, deploymentBackupKeepLabels as KEEP_LABEL,
   deploymentBackupRetentionDraftFrom as draftFrom, retentionFromDraft,
@@ -68,104 +74,158 @@ import { useBackupPathCapacity, BackupPathCapacityReview } from './DeploymentBac
 export { retentionFromDraft } from './deploymentBackupRetention';
 
 const noop = () => {};
-type Snapshot = DeploymentBackupInventoryResultV1['snapshots'][number];
+type BackupHistoryEntry = NonNullable<DeploymentBackupHistoryResultV1['history']>['entries'][number];
+type ActionsFactoryForOperations = ReturnType<typeof createDeploymentActions>;
 
-/** Explicit finite Actions only. The saved configuration and capture receipts remain authoritative. */
+/**
+ * One controller for a configured backup's operations. Back up now, a backup's checks and Remove old backups now share
+ * one result line and one outcome, and each settles by re-reading the history its list shows.
+ */
+export function useDeploymentBackupOperations(props: Readonly<{
+  detail: DeploymentEnvironmentReadDetailV1 | null;
+  configuration: DeploymentBackupConfigurationV1 | null;
+  actions: ActionsFactoryForOperations | null;
+  review: DeploymentReviewHandle | null;
+  onSettled: () => void;
+}>) {
+  const { actions, configuration } = props;
+  const change = useDeploymentChangePress(props.review, props.onSettled);
+  const [result, setResult] = React.useState<string | null>(null);
+  const target = props.detail ? deploymentDataTargetOperands(props.detail) : null;
+  const deploymentId = props.detail?.runtimeTargetLink?.activeDeploymentId ?? null;
+  const input = actions && target && deploymentId && configuration
+    ? { ...target, deploymentId, configRevision: configuration.configRevision } : null;
+  const run = actions && input ? () => change.press(async () => {
+    setResult(null);
+    const capture = await actions.runBackup(input);
+    setResult(t('projects.deployments.backupCompleted', { count: capture.manifests.length }));
+    return { ok: true };
+  }) : null;
+  // A recorded backup names its run and snapshots, so it is checked without reading the destination's inventory.
+  const verify = actions && input ? (entry: BackupHistoryEntry, level: DeploymentBackupVerifyInputV1['level']) => change.press(async () => {
+    setResult(null);
+    for (const snapshotId of entry.snapshotIds) {
+      await actions.verifyBackup({ ...input, backupOperationId: entry.operationId, snapshotId, level });
+    }
+    setResult(t('projects.deployments.backupVerified', { level: level === 'repositoryCheck'
+      ? t('projects.deployments.backupRepositoryCheck') : t('projects.deployments.backupManifestReadBack'),
+      time: formatAsOfTime(entry.completedAt) }));
+    return { ok: true };
+  }) : null;
+  const retention = configuration?.retention.kind === 'keep' ? configuration.retention : null;
+  const prune = actions && target && retention ? () => change.press(async () => {
+    setResult(null);
+    const pruned = await actions.pruneBackups({ ...target, retention });
+    setResult(pruned.forgottenSnapshotIds.length > 0
+      ? t('projects.deployments.settingsSections.pruned', { count: pruned.forgottenSnapshotIds.length })
+      : t('projects.deployments.settingsSections.prunedNothing'));
+    return { ok: true };
+  }) : null;
+  return { change, result, run, verify, prune, machineId: target?.machineId ?? null, deployed: deploymentId !== null };
+}
+
+export type DeploymentBackupOperations = ReturnType<typeof useDeploymentBackupOperations>;
+
+/**
+ * The Backups section's operations on its title (lab `database/backups`): Restore…, Back up now, then the rare ones in
+ * the section's `⋯`. The page names those rare operations; Back up now is the operations owner's.
+ */
+export function DeploymentBackupSectionActions(props: Readonly<{
+  operations: DeploymentBackupOperations;
+  onRestore: (() => void) | null;
+  more: readonly Readonly<{ id: string; title: string; onPress: () => void }>[];
+  testID: string;
+}>) {
+  const { operations } = props;
+  const [open, setOpen] = React.useState(false);
+  const items = React.useMemo(() => props.more.map(entry => ({ id: entry.id, title: entry.title,
+    testID: `${props.testID}.more.${entry.id}` })), [props.more, props.testID]);
+  return (
+    <View style={styles.sectionActions}>
+      {props.onRestore ? <SectionActionButton testID={`${props.testID}.restore`} icon="clock-counter-clockwise"
+        title={t('projects.deployments.restoreAction')} onPress={props.onRestore} /> : null}
+      {operations.run ? <SectionActionButton testID={`${props.testID}.run`} title={t('projects.deployments.backupRun')}
+        disabled={operations.change.running} onPress={operations.run} /> : null}
+      {items.length > 0 ? (
+        <DropdownMenu open={open} onOpenChange={setOpen} items={items} matchTriggerWidth={false} placement="bottom"
+          popoverAccessibilityLabel={t('projects.deployments.dataBackups')}
+          onSelect={(itemId) => props.more.find(entry => entry.id === itemId)?.onPress()}
+          trigger={({ toggle }) => (
+            <IconButton testID={`${props.testID}.more`} iconName="dots-three" variant="plain"
+              accessibilityLabel={t('common.more')} onPress={toggle} />
+          )} />
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * The one list of backups: each recorded run once, newest first, with its outcome, what it saved and how long it took;
+ * a run's checks sit in its `⋯`, and a failed run says so in its own row. The facts owner reads the history.
+ */
 export function DeploymentBackupControls(props: Readonly<{
-  detail: DeploymentEnvironmentReadDetailV1;
-  configuration: DeploymentBackupConfigurationV1;
-  lifetime: ServerAccountScopeLifetime;
-  review: DeploymentReviewHandle;
-  onBackupCompleted: () => void;
+  operations: DeploymentBackupOperations;
+  facts: DeploymentBackupFacts | null;
   machineName: (machineId: string) => string;
   testID: string;
 }>) {
-  const actions = React.useMemo(() => createDeploymentActions(props.lifetime, props.detail.environment.projectSourceId),
-    [props.lifetime, props.detail.environment.projectSourceId]);
-  const change = useDeploymentChangePress(props.review, noop);
-  const [snapshots, setSnapshots] = React.useState<readonly Snapshot[] | null>(null);
-  const [open, setOpen] = React.useState(false);
-  const [result, setResult] = React.useState<string | null>(null);
-  const target = deploymentDataTargetOperands(props.detail);
-  const deploymentId = props.detail.runtimeTargetLink?.activeDeploymentId;
-  if (!target || !deploymentId) return (
-    <Item title={t('projects.deployments.backupNeedsDeployment')} mode="info" />
-  );
-  const input = { ...target, deploymentId, configRevision: props.configuration.configRevision };
-  const run = () => change.press(async () => {
-    setResult(null);
-    const capture = await actions.runBackup(input);
-    // The response is the capture receipt; do not re-read our own write as an inventory refresh.
-    setSnapshots(capture.manifests.map(manifest => ({ snapshot: manifest.snapshot,
-      totalBytesProcessed: manifest.totalBytesProcessed, source: { sourceId: manifest.sourceId, kind: manifest.kind },
-      verification: { kind: 'verified', backupOperationId: capture.operationId, configRevision: manifest.configRevision } })));
-    setResult(t('projects.deployments.backupCompleted', { count: capture.manifests.length }));
-    props.onBackupCompleted();
-    return { ok: true };
-  });
-  const inspect = async () => {
-    if (open) { setOpen(false); return; }
-    if (snapshots !== null) { setOpen(true); return; }
-    await change.press(async () => {
-      const inventory = await actions.backupInventory(input);
-      setSnapshots(inventory.snapshots);
-      setOpen(true);
-      return { ok: true };
-    });
-  };
-  const verify = (snapshot: Snapshot, level: DeploymentBackupVerifyInputV1['level']) => change.press(async () => {
-    if (snapshot.verification.kind !== 'verified') return { ok: false, error: snapshot.verification.reason };
-    setResult(null);
-    const checked = await actions.verifyBackup({ ...input, backupOperationId: snapshot.verification.backupOperationId,
-      snapshotId: snapshot.snapshot.snapshotId, level });
-    setResult(t('projects.deployments.backupVerified', { level: checked.level === 'repositoryCheck'
-      ? t('projects.deployments.backupRepositoryCheck') : t('projects.deployments.backupManifestReadBack'),
-      time: formatAsOfTime(Date.parse(snapshot.snapshot.time)) }));
-    return { ok: true };
-  });
+  const { operations, facts } = props;
+  if (!operations.deployed) return <Item title={t('projects.deployments.backupNeedsDeployment')} mode="info" />;
+  const ready = facts?.status === 'ready' ? facts : null;
+  const verification = ready?.history?.lastVerification;
+  const backups = (ready?.history?.history?.entries ?? []).filter(entry => entry.action === 'backup')
+    .sort((a, b) => b.completedAt - a.completedAt);
   return (
     <>
-      {/* Each row names what it is and its button the operation, so no row says the same thing twice. */}
-      <Item title={t('projects.deployments.backupRunTitle')} subtitle={t('projects.deployments.backupRunDescription')}
-        mode="info" rightElement={
-          <SectionActionButton testID={`${props.testID}.run`} title={t('projects.deployments.backupRun')}
-            disabled={change.running} onPress={run} />
-        } />
-      {/* The saved copies are read when asked (one inventory read), then each can be checked without a restore. */}
-      <Item title={t('projects.deployments.backupListTitle')} subtitle={t('projects.deployments.backupListDescription')}
-        mode="info" rightElement={
-          <SectionActionButton testID={`${props.testID}.verify`}
-            title={t(open ? 'projects.deployments.backupListHide' : 'projects.deployments.backupListShow')}
-            disabled={change.running} onPress={inspect} />
-        } />
-      {change.running ? <Item title={t('common.loading')} mode="info" /> : null}
-      {result ? <Item testID={`${props.testID}.result`} title={result} mode="info" /> : null}
-      {change.outcome ? <DeployOutcomeBanner controller={change.banner}
-        machine={props.machineName(target.machineId)} copy="setting" /> : null}
-      {open && snapshots?.length === 0 ? <Item title={t('projects.deployments.backupNoSnapshots')} mode="info" /> : null}
-      {open ? newestFirst(snapshots)?.map(snapshot => (
-        <Item key={snapshot.snapshot.snapshotId} testID={`${props.testID}.snapshot.${snapshot.snapshot.snapshotId}`}
-          title={formatAsOfTime(Date.parse(snapshot.snapshot.time))}
-          subtitle={snapshot.verification.kind === 'unknown'
-            ? t('projects.deployments.backupCaptureUnavailable') : snapshot.source?.sourceId}
-          mode="info" bottomElement={snapshot.verification.kind === 'verified' ? (
-            <View style={styles.checks}>
-              <SectionActionButton testID={`${props.testID}.snapshot.${snapshot.snapshot.snapshotId}.manifestReadBack`}
-                title={t('projects.deployments.backupManifestReadBack')} disabled={change.running}
-                onPress={() => verify(snapshot, 'manifestReadBack')} />
-              <SectionActionButton testID={`${props.testID}.snapshot.${snapshot.snapshot.snapshotId}.repositoryCheck`}
-                title={t('projects.deployments.backupRepositoryCheck')} disabled={change.running}
-                onPress={() => verify(snapshot, 'repositoryCheck')} />
-            </View>
-          ) : undefined} />
-      )) : null}
+      {operations.result ? <Item testID={`${props.testID}.result`} title={operations.result} mode="info" /> : null}
+      {operations.change.outcome ? <DeployOutcomeBanner controller={operations.change.banner}
+        machine={operations.machineId ? props.machineName(operations.machineId) : null} copy="setting" /> : null}
+      {facts === null || facts.status === 'unavailable' || (ready && !ready.history) ? (
+        <Item testID={`${props.testID}.history.unavailable`} title={t('projects.deployments.databaseHistoryUnavailable')} mode="info" />
+      ) : !ready ? (
+        <Item testID={`${props.testID}.history.loading`} title={t('common.loading')} mode="info" />
+      ) : backups.length === 0 ? (
+        <Item testID={`${props.testID}.history.empty`} title={t('projects.deployments.databaseHistoryEmpty')} mode="info" />
+      ) : backups.map(entry => (
+        <BackupRow key={entry.operationId} entry={entry} operations={operations}
+          verified={verification?.backupOperationId === entry.operationId && verification.result === 'verified'}
+          testID={`${props.testID}.history.${entry.operationId}`} />
+      ))}
     </>
   );
 }
 
-/** Saved copies read newest first, the one a person most likely wants (lab `database/backups`). */
-function newestFirst(snapshots: readonly Snapshot[] | null): readonly Snapshot[] | null {
-  return snapshots && [...snapshots].sort((a, b) => Date.parse(b.snapshot.time) - Date.parse(a.snapshot.time));
+function BackupRow(props: Readonly<{ entry: BackupHistoryEntry; operations: DeploymentBackupOperations; verified: boolean; testID: string }>) {
+  const { entry, operations } = props;
+  const [open, setOpen] = React.useState(false);
+  const backup = t('projects.deployments.databaseHistoryBackup');
+  const checks = entry.state === 'succeeded' && entry.snapshotIds.length > 0 && operations.verify ? [
+    { id: 'manifestReadBack', title: t('projects.deployments.backupManifestReadBack'), testID: `${props.testID}.manifestReadBack` },
+    { id: 'repositoryCheck', title: t('projects.deployments.backupRepositoryCheck'), testID: `${props.testID}.repositoryCheck` },
+  ] : null;
+  const verify = operations.verify;
+  return (
+    <Item
+      testID={props.testID}
+      icon={<WorkStatusGlyph status={deploymentWorkStatus(entry.state)} testIDSuffix={`backup-${entry.operationId}`} />}
+      title={formatAsOfTime(entry.completedAt)}
+      subtitle={entry.state === 'failed' ? t('projects.deployments.databaseHistoryFailed', { action: backup })
+        : entry.state === 'cancelled' ? t('projects.deployments.databaseHistoryCancelled', { action: backup })
+        : [t('projects.deployments.databaseHistorySnapshots', { count: entry.snapshotIds.length }),
+          ...(props.verified ? [t('projects.deployments.databaseBackupVerified')] : [])].join(' · ')}
+      detail={formatElapsedDuration(entry.completedAt - entry.startedAt)}
+      mode="info"
+      rightElement={checks && verify ? (
+        <DropdownMenu open={open} onOpenChange={setOpen} items={checks} matchTriggerWidth={false} placement="bottom"
+          popoverAccessibilityLabel={formatAsOfTime(entry.completedAt)}
+          onSelect={(itemId) => { void verify(entry, itemId === 'repositoryCheck' ? 'repositoryCheck' : 'manifestReadBack'); }}
+          trigger={({ toggle }) => (
+            <IconButton testID={`${props.testID}.more`} iconName="dots-three" variant="plain"
+              accessibilityLabel={t('common.more')} disabled={operations.change.running} onPress={toggle} />
+          )} />
+      ) : undefined}
+    />
+  );
 }
 
 type Retention = DeploymentBackupConfigurationV1['retention'];
@@ -780,14 +840,19 @@ export function DeploymentBackupCredentialRows(props: Readonly<{
 
 /** The starter editor owns destination/check selection, grants and scheduling; opening it has no effects. */
 /** The restore-drill door: one per surface, placed by the page that composes the backup rows. */
-export function DeploymentRestoreDrillRow(props: Readonly<{ serverId: string; testID: string }>) {
+export function useDeploymentRestoreDrill(serverId: string | null): Readonly<{ title: string; description: string; open: () => void }> | null {
   const router = useRouter();
   const starter = getWorkflowStarterExamplesV1().find(example => example.key === 'restore-drill');
-  if (!starter) return null;
-  return <Item title={t(starter.titleKey)} subtitle={t(starter.descriptionKey)} mode="info"
-    rightElement={<SectionActionButton testID={props.testID} title={t('common.open')}
-      onPress={() => router.push({ pathname: WORKFLOWS_NEW_ROUTE,
-        params: { example: starter.key, serverId: props.serverId } })} />} />;
+  if (!starter || !serverId) return null;
+  return { title: t(starter.titleKey), description: t(starter.descriptionKey),
+    open: () => router.push({ pathname: WORKFLOWS_NEW_ROUTE, params: { example: starter.key, serverId } }) };
+}
+
+export function DeploymentRestoreDrillRow(props: Readonly<{ serverId: string; testID: string }>) {
+  const drill = useDeploymentRestoreDrill(props.serverId);
+  if (!drill) return null;
+  return <Item title={drill.title} subtitle={drill.description} mode="info"
+    rightElement={<SectionActionButton testID={props.testID} title={t('common.open')} onPress={drill.open} />} />;
 }
 
 /**
@@ -868,4 +933,5 @@ export function DeploymentBackupScheduleRow(props: Readonly<{
 
 const styles = StyleSheet.create((theme) => ({
   checks: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 },
+  sectionActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
 }));

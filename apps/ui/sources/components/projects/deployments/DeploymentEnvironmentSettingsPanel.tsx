@@ -46,9 +46,12 @@ import { DeploymentTabState } from './DeploymentTabState';
 import { DeploymentPrivateServiceExports } from './DeploymentPrivateServiceExports';
 import { DeploymentFleetIngress } from './DeploymentFleetIngress';
 import { MoveDefinitionToRepository } from './MoveDefinitionToRepository';
-import { StoredDefinitionEditor, type StoredDefinitionDocument } from './StoredDefinitionEditor';
+import { StoredDefinitionEditor, StoredDefinitionOverview, type StoredDefinitionDocument } from './StoredDefinitionEditor';
+import { storedComposeDocumentText } from './storedComposeDocumentText';
 import {
   DeploymentBackupControls,
+  DeploymentBackupSectionActions,
+  useDeploymentBackupOperations,
   DeploymentBackupDestinationRow,
   DeploymentBackupRetentionRows,
   DeploymentBackupSetup,
@@ -72,6 +75,7 @@ import {
 } from './useDeploymentReads';
 
 const noop = () => {};
+const NO_MORE_BACKUP_ACTIONS: readonly never[] = Object.freeze([]);
 
 /** What a manager can change from Settings and Permissions, through the Action owner. */
 export type DeploymentEnvironmentEditing = Readonly<{
@@ -175,6 +179,14 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
     ) : null;
     const checkLifetime = editing ? props.lifetime ?? null : null;
     const checkAnchor = React.useRef<View>(null);
+    // The stored definition reads as its summary until the person opens it (lab `envsettings-page`); the editor and
+    // Move to repository open together, so Settings never carries a full Compose editor at rest (D7).
+    const [definitionOpenPressed, setDefinitionOpen] = React.useState(false);
+    // A draft in progress stays open across tab changes (the page owns the typed document).
+    const storedDefinition = detail.content.definition.kind === 'stored' ? detail.content.definition : null;
+    const storedReadable = React.useMemo(() => storedDefinition ? storedComposeDocumentText(storedDefinition.document) : null,
+      [storedDefinition]);
+    const definitionOpen = definitionOpenPressed || (storedReadable !== null && props.definitionDocument.document !== storedReadable);
     const [openingCheckSetup, setOpeningCheckSetup] = React.useState(false);
 
     return (
@@ -193,10 +205,17 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         </ItemGroup>
         {changeOutcome(null)}
         {/* The kept order (dEnvSettings KEEP): the stored definition and Move to repository, then where it runs. */}
-        {detail.content.definition.kind === 'stored' ? <StoredDefinitionEditor environment={detail.environment}
+        {detail.content.definition.kind === 'stored' && !definitionOpen ? <StoredDefinitionOverview
+          revision={detail.content.definition.contentRevision}
+          editable={editing !== null && detail.environment.capabilities.role === 'manager'}
+          onOpen={() => setDefinitionOpen(true)}
+          onMove={editing?.actions.moveToRepository && detail.environment.capabilities.role === 'manager'
+            ? () => setDefinitionOpen(true) : null} /> : null}
+        {detail.content.definition.kind === 'stored' && definitionOpen ? <StoredDefinitionEditor environment={detail.environment}
           definition={detail.content.definition} document={props.definitionDocument} editing={editing} change={change} /> : null}
-        {editing ? <MoveDefinitionToRepository detail={detail} lifetime={props.lifetime ?? null}
-          move={editing.actions.moveToRepository ?? null} review={editing.review} onChanged={editing.onChanged} machineName={machineName} /> : null}
+        {editing && (definitionOpen || detail.content.definition.kind !== 'stored') ? <MoveDefinitionToRepository detail={detail}
+          lifetime={props.lifetime ?? null} move={editing.actions.moveToRepository ?? null} review={editing.review}
+          onChanged={editing.onChanged} machineName={machineName} /> : null}
         <View ref={revealHost('servers-build')} collapsable={false}>
         <ItemGroup
           testID={section('servers-build')}
@@ -493,9 +512,10 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             })}
           />
         ) : null}
-        <View ref={revealHost('backups')} collapsable={false}>
+        {/* Native backups copy a Machine's volumes and dumps; a platform Environment's data is its provider's (D14). */}
+        {platformSource === null ? <View ref={revealHost('backups')} collapsable={false}>
           <BackupRows {...props} testID={section('backups')} />
-        </View>
+        </View> : null}
         {detail.environment.purpose === 'preview' || props.lifetime || detail.content.previewTemplate ? (
           <View ref={revealHost('previews')} collapsable={false}>
           <ItemGroup
@@ -636,6 +656,9 @@ function BackupRows(props: SectionProps) {
   const configured = backup && !('notNeeded' in backup) ? backup : null;
   const factsInput = target && deploymentId && configured ? { ...target, deploymentId, configRevision: configured.configRevision } : null;
   const backupFacts = useDeploymentBackupFacts(actions, factsInput, true);
+  // Without a Database page these operations have no other home; one controller serves the action and the list.
+  const backupOperations = useDeploymentBackupOperations({ detail: props.detail, configuration: configured,
+    actions: manager && props.review ? actions : null, review: props.review ?? null, onSettled: backupFacts.reload });
   const attention = deploymentBackupAttention(backupFacts.facts);
   const retentionChange = useDeploymentChangePress(editing?.review ?? null, noop);
   const [retentionResult, setRetentionResult] = React.useState<DeploymentBackupConfigureResultV1 | null>(null);
@@ -669,13 +692,9 @@ function BackupRows(props: SectionProps) {
       testID={props.testID}
       title={t('projects.deployments.sectionBackups')}
       description={t('projects.deployments.sectionBackupsDescription')}
-      action={restore && operationsHere && props.onRestore ? (
-        <SectionActionButton
-          testID={`${props.testID}.restore.open`}
-          title={t('projects.deployments.restoreAction')}
-          icon="clock-counter-clockwise"
-          onPress={props.onRestore}
-        />
+      action={restore && operationsHere && (props.onRestore || backupOperations.run) ? (
+        <DeploymentBackupSectionActions operations={backupOperations} onRestore={props.onRestore ?? null}
+          more={NO_MORE_BACKUP_ACTIONS} testID={`${props.testID}.operations`} />
       ) : undefined}
     >
       {children}
@@ -754,13 +773,8 @@ function BackupRows(props: SectionProps) {
         mode="info"
       /> : null}
       {operationsHere && props.lifetime && props.review && props.detail.environment.capabilities.role === 'manager' ? (
-        <DeploymentBackupControls
-          key={`${props.lifetime.scope.serverId}:${props.lifetime.scope.accountId}:${props.detail.environment.id}:${props.detail.environment.revision}:${props.detail.runtimeTargetLink?.activeDeploymentId}:${backup.configRevision}`}
-          detail={props.detail} configuration={backup} lifetime={props.lifetime}
-          review={props.review}
-          onBackupCompleted={backupFacts.reload}
-          machineName={props.machineName} testID={props.testID}
-        />
+        <DeploymentBackupControls operations={backupOperations} facts={backupFacts.facts}
+          machineName={props.machineName} testID={props.testID} />
       ) : null}
       {/* The copy the serving deploy kept before its migration is one of the saved copies; Restore above opens it. */}
       {operationsHere && props.onRestore && props.retainedBackup ? (

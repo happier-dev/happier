@@ -105,7 +105,7 @@ import { prepareDeploymentSourceCheckout } from './prepareDeploymentSourceChecko
 import { DeploymentEnvironmentAgentActions } from './DeploymentEnvironmentAgentActions';
 import { DeploymentEnvironmentSettingsPanel, type DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
 import { showDeploymentFleetSheet } from './DeploymentFleetSheet';
-import { StoredDefinitionOverview, useStoredDefinitionDocument } from './StoredDefinitionEditor';
+import { useStoredDefinitionDocument } from './StoredDefinitionEditor';
 import { DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1, DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1,
   DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentDomainsPanel, type DeploymentDomainEditing } from './DeploymentDomainsPanel';
@@ -141,6 +141,7 @@ import {
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { useOpenNewApp } from '@/components/projects/starters/newAppPresentation';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import {
   useDeploymentEnvironment,
@@ -167,7 +168,6 @@ import { EnvironmentLogsCompanion } from './EnvironmentLogsCompanion';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { randomUUID } from '@/platform/randomUUID';
-import { DeploymentVersionComparison } from './DeploymentVersionComparison';
 import { DeploymentPullRequestDeploy } from './DeploymentPullRequestDeploy';
 import { DeploymentPendingRequest } from './DeploymentPendingRequest';
 import { DeploymentLiveAddressActions } from './deploymentLiveAddress';
@@ -776,6 +776,8 @@ export const DeploymentEnvironmentDetail = React.memo(
         } } : undefined}
         deleteTitle={disposition.canDelete ? t('projects.deployments.menuDelete', { name: detail.content.name }) : null}
         onDelete={() => openDisposition(null)}
+        deployProduction={detail.environment.purpose === 'preview'
+          ? { projectSourceId: detail.environment.projectSourceId, previewEnvironmentId: detail.environment.id } : undefined}
         pin={{ pinned: pinned.includes(detail.environment.id), toggle: () => {
           void pinProjectService({ serverId: props.serverId, environmentId: detail.environment.id, pinned: !pinned.includes(detail.environment.id) });
         } }}
@@ -997,16 +999,11 @@ export const DeploymentEnvironmentDetail = React.memo(
                   controlTarget={{ serverId: props.serverId, environmentId: props.environmentId, machineIds,
                     active: props.demand.mounted && props.demand.visible && props.demand.focused }} />
               ) : null}
-              {sourceMethod && platform && runtime ? <ItemGroup header="none">
-                <DeploymentSourceMethodChoice methods={platform.sourceMethods} value={sourceMethod}
-                  testID="project-deployments.environment.sourceMethod" disabled={!ready || deploying || reviewPending}
-                  onChange={(value) => setSourceMethod({ targetLinkId: runtime.id, value })} />
-              </ItemGroup> : null}
               {/* Serving now (lab `envOv` hero, owner 22:35Z): the address, the serving version's labelled cells and the
                   last deploy's steps in one card; then the headline facts; then the Environment's agent actions. */}
               {activeReceipt ? (
                 <>
-                  <ItemGroup testID="project-deployments.environment.serving">
+                  <ItemGroup testID="project-deployments.environment.serving" surface="none">
                     <DeploymentServingReceipt receipt={activeReceipt}
                       still={attention?.kind === 'latestFailed'}
                       address={liveUrl ? {
@@ -1067,13 +1064,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               )}
               {/* Before anything serves, the Environment's agent actions are the next step under the facts. */}
               {ready ? null : environmentAgentActions}
-              {/* The kept order (dEnvOv KEEP item 3): Definition and Needs a repository, then Data; what runs follows. */}
-              {detail.content.definition.kind === 'stored' ? <StoredDefinitionOverview
-                revision={detail.content.definition.contentRevision}
-                editable={environmentEditing !== null && detail.environment.capabilities.role === 'manager'}
-                onOpen={() => openTab('settings')}
-                onMove={environmentEditing?.actions.moveToRepository && detail.environment.capabilities.role === 'manager'
-                  ? () => openTab('settings') : null} /> : null}
+              {/* The definition is configuration: Settings summarizes it and opens its editor (PAGE-ACCEPT-176 D6/D7). */}
               <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}
                 lifetime={props.lifetime} presented={props.demand.mounted && props.demand.visible && props.demand.focused}
                 onOpen={props.onOpenDatabase}
@@ -1117,12 +1108,12 @@ export const DeploymentEnvironmentDetail = React.memo(
                   />
                 </ItemGroup>
               ) : null}
-              {services.length > 0 && props.lifetime ? (
+              {/* An app's own sign-in stays under What runs; a database's credentials belong to its Database page. */}
+              {services.length > 0 && props.lifetime && !detail.content.template?.data?.length ? (
                   <DeploymentAdminLogin
                     template={detail.content.template ?? null}
                     bindings={detail.content.bindings}
                     scope={props.lifetime.scope}
-                    images={activeReceipt?.content.images ?? []}
                     active={props.demand.mounted && props.demand.visible}
                     servingUrl={adminServingUrl}
                     onOpenDomains={() => openTab('domains')}
@@ -1130,9 +1121,6 @@ export const DeploymentEnvironmentDetail = React.memo(
                   />
               ) : null}
               <DeploymentPendingRequest pending={detail.pendingDeployment} serverId={props.serverId} />
-              {active.snapshot.value?.content.sourceIntent ? <DeploymentVersionComparison
-                source={active.snapshot.value.content.sourceIntent} current={detail.content.definition}
-                workspaceRef={props.workspaceRef} serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
               {detail.content.definition.kind === 'repository' ? <DeploymentPullRequestDeploy
                 key={`${props.serverId}:${props.accountId}:${detail.environment.projectSourceId}:${projectSource.source?.source.revision ?? props.workspaceRef?.source?.revision}:${props.workspaceRef?.id}`}
                 workspaceRef={props.workspaceRef} projectSourceId={detail.environment.projectSourceId}
@@ -1183,48 +1171,6 @@ export const DeploymentEnvironmentDetail = React.memo(
               ) : null}
               {/* Once Deploy leads, they are a titled section of their own beside the Environment's other agent work. */}
               {ready ? environmentAgentActions : null}
-              {triggerSubject ? (
-                <SubjectTriggersSection subject={triggerSubject} contextSubjects={backupContext}
-                  subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
-                  deploymentEnvironment={{ serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
-                    environmentId: detail.environment.id }}
-                  deploymentSourceName={projectSource.source?.source.name}
-                  controllerMachineId={detail.environment.controllerMachineId}
-                  pushSetup={detail.content.definition.kind === 'repository' && detail.environment.runtimeTargetLinkId ? {
-                    environment: { serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
-                      environmentId: detail.environment.id },
-                    targetLinkId: detail.environment.runtimeTargetLinkId,
-                    project: { machineId: detail.environment.controllerMachineId, directory: '~' },
-                    protection: detail.environment.protection,
-                  } : undefined} />
-              ) : null}
-              {detail.environment.purpose !== 'preview' ? (
-                // Previews are a section of their own (title, purpose, current state), never a lone card under Triggers.
-                <ItemGroup testID="project-deployments.environment.overview.previewsSection"
-                  title={t('projects.deployments.sectionPreviews')}
-                  description={t('projects.deployments.sectionPreviewsDescription')}>
-                  <Item testID="project-deployments.environment.overview.previews"
-                    icon={<Icon name="git-pull-request" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
-                    title={t('projects.deployments.settingsSections.previewEditor.configure')}
-                    subtitle={detail.content.previewTemplate?.enabled
-                      ? t('projects.deployments.settingsSections.previewsOn')
-                      : t('projects.deployments.settingsSections.previewsOff')}
-                    onPress={() => openTab('settings', 'previews')} />
-                </ItemGroup>
-              ) : null}
-              {/* Deploy from CI is a section of its own (lab ci/box): what it lets CI do, then the one token row. */}
-              {ciInput ? (
-                <ItemGroup testID="project-deployments.environment.ci.section"
-                  title={t('projects.deployments.overviewStatus.ciTitle')}
-                  description={t('projects.deployments.overviewStatus.ciDescription', { name: detail.content.name })}>
-                  <Item title={t('projects.deployments.overviewStatus.ciTokensTitle')}
-                    subtitle={t('projects.deployments.overviewStatus.ciTokensBody')}
-                    showChevron={false} accessoryLayout="adaptive"
-                    rightElement={<RoundButton size="small" display="secondary" testID="project-deployments.environment.ci"
-                      title={t('projects.deployments.overviewStatus.manage')}
-                      onPress={() => showDeploymentCiTokenSheet(ciInput)} />} />
-                </ItemGroup>
-              ) : null}
             </>
           ) : tab === 'history' ? (
             <DeploymentHistoryPage
@@ -1299,6 +1245,13 @@ export const DeploymentEnvironmentDetail = React.memo(
               editing={environmentEditing}
             />
           ) : (
+            <>
+            {/* How a platform Environment deploys is configuration: Settings, never ahead of what serves (lab d4d). */}
+              {sourceMethod && platform && runtime ? <ItemGroup header="none">
+                <DeploymentSourceMethodChoice methods={platform.sourceMethods} value={sourceMethod}
+                  testID="project-deployments.environment.sourceMethod" disabled={!ready || deploying || reviewPending}
+                  onChange={(value) => setSourceMethod({ targetLinkId: runtime.id, value })} />
+              </ItemGroup> : null}
             <DeploymentEnvironmentSettingsPanel
               detail={detail}
               previewBindings={previewBindings}
@@ -1326,6 +1279,37 @@ export const DeploymentEnvironmentDetail = React.memo(
                 door: 'rail', target: { machineId, serverId: props.serverId }, tab: { id: 'services' },
               }) as never)}
             />
+            {/* Automations and Deploy from CI configure the Environment, so they live with its Settings (lab envsettings). */}
+              {triggerSubject ? (
+                <SubjectTriggersSection subject={triggerSubject} contextSubjects={backupContext}
+                  subjectName={props.environmentTitle?.(props.environmentId) ?? detail.content.name}
+                  deploymentEnvironment={{ serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
+                    environmentId: detail.environment.id }}
+                  deploymentSourceName={projectSource.source?.source.name}
+                  sourceAudience={projectSource.audience}
+                  controllerMachineId={detail.environment.controllerMachineId}
+                  pushSetup={detail.content.definition.kind === 'repository' && detail.environment.runtimeTargetLinkId ? {
+                    environment: { serverId: props.serverId, projectSourceId: detail.environment.projectSourceId,
+                      environmentId: detail.environment.id },
+                    targetLinkId: detail.environment.runtimeTargetLinkId,
+                    project: { machineId: detail.environment.controllerMachineId, directory: '~' },
+                    protection: detail.environment.protection,
+                  } : undefined} />
+              ) : null}
+              {/* Deploy from CI is a section of its own (lab ci/box): what it lets CI do, then the one token row. */}
+              {ciInput ? (
+                <ItemGroup testID="project-deployments.environment.ci.section"
+                  title={t('projects.deployments.overviewStatus.ciTitle')}
+                  description={t('projects.deployments.overviewStatus.ciDescription', { name: detail.content.name })}>
+                  <Item title={t('projects.deployments.overviewStatus.ciTokensTitle')}
+                    subtitle={t('projects.deployments.overviewStatus.ciTokensBody')}
+                    showChevron={false} accessoryLayout="adaptive"
+                    rightElement={<RoundButton size="small" display="secondary" testID="project-deployments.environment.ci"
+                      title={t('projects.deployments.overviewStatus.manage')}
+                      onPress={() => showDeploymentCiTokenSheet(ciInput)} />} />
+                </ItemGroup>
+              ) : null}
+            </>
           )}
         </ItemList>
         <EnvironmentLogsCompanion
@@ -1651,8 +1635,10 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
   const duration = deploymentDurationMs(receipt);
   // The same calendar-day boundary as History's day groups, so a row never disagrees with its heading.
   const age = formatRelativeTime(deploymentReceiptAtMs(receipt), Date.now());
-  // A settled success says nothing; trouble and work in progress lead the facts line in their tone.
-  const lead = receipt.title ? deploymentHistoryLead(receipt, receipt.failure) : null;
+  // A settled success says nothing; trouble and work in progress lead the facts line in their tone. "Running, not
+  // verified" is about what serves now, so only the live row says it; a superseded run reads as the run it was (D17).
+  const settledPast = !props.live && receipt.state === 'running_unverified';
+  const lead = receipt.title && !settledPast ? deploymentHistoryLead(receipt, receipt.failure) : null;
   const facts = props.byYou ? [t('projects.deployments.byYou')] : [];
   // A phone keeps the title's width: duration and age join the facts line instead of a right column.
   if (props.phone) facts.push(...(duration !== null ? [formatElapsedDuration(duration)] : []), age);
@@ -1665,7 +1651,7 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
       testID={`project-deployments.receipt.row.${receipt.id}`}
       leftElement={
         <WorkStatusGlyph
-          status={deploymentWorkStatus(receipt.state)}
+          status={deploymentWorkStatus(settledPast ? 'succeeded' : receipt.state)}
           testIDSuffix={`deployment-${receipt.id}`}
         />
       }
@@ -1918,12 +1904,21 @@ function EnvironmentMenu(
     onDelete: () => void;
     /** Pin keeps it at the top of the person's Services column; Unpin takes it off (projects.services.pin). */
     pin?: Readonly<{ pinned: boolean; toggle: () => void }>;
+    /**
+     * A preview's Deploy to Production (deploy auto-mode U9): Deploy an app on this Project's code, its Review showing
+     * this preview's address and health before the person deploys Production.
+     */
+    deployProduction?: Readonly<{ projectSourceId: string; previewEnvironmentId: string }>;
   }>,
 ) {
   const { theme } = useUnistyles();
   const [open, setOpen] = React.useState(false);
+  const openNewApp = useOpenNewApp();
   const items = React.useMemo(
     (): readonly DropdownMenuItem[] => [
+      ...(props.deployProduction ? [{ id: 'deployProduction', testID: 'project-deployments.environment.menu.deployProduction',
+        title: t('projects.deployments.menuDeployProduction'),
+        icon: <Icon name="rocket" size={16} color={theme.colors.text.secondary} /> }] : []),
       ...(props.pin ? [{ id: 'pin', testID: 'project-deployments.environment.menu.pin',
         title: props.pin.pinned ? t('projects.actions.unpin') : t('projects.actions.pin'),
         icon: <Icon name={props.pin.pinned ? 'push-pin-slash' : 'push-pin'} size={16} color={theme.colors.text.secondary} /> }] : []),
@@ -1971,7 +1966,7 @@ function EnvironmentMenu(
           }]
         : []),
     ],
-    [props.deleteTitle, props.onDuplicate, props.onMove, props.onOpenHistory, props.logs?.open, Boolean(props.logs), props.pin?.pinned, Boolean(props.pin), theme.colors.state.danger.foreground, theme.colors.text.secondary],
+    [Boolean(props.deployProduction), props.deleteTitle, props.onDuplicate, props.onMove, props.onOpenHistory, props.logs?.open, Boolean(props.logs), props.pin?.pinned, Boolean(props.pin), theme.colors.state.danger.foreground, theme.colors.text.secondary],
   );
   return (
     <DropdownMenu
@@ -1982,7 +1977,8 @@ function EnvironmentMenu(
       placement="bottom"
       popoverAccessibilityLabel={t('common.more')}
       onSelect={(id) => {
-        if (id === 'pin') props.pin?.toggle();
+        if (id === 'deployProduction' && props.deployProduction) openNewApp(null, null, props.deployProduction);
+        else if (id === 'pin') props.pin?.toggle();
         else if (id === 'history') props.onOpenHistory?.();
         else if (id === 'duplicate') props.onDuplicate?.();
         else if (id === 'move') props.onMove?.();

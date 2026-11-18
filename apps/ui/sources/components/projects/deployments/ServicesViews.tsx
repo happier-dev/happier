@@ -174,6 +174,8 @@ export function ServicesDatabasesView(
       const status = coverage.get(row.environmentId);
       return status === 'uncovered' ? <Status tone="warning" label={t('projects.deployments.notBackedUp')} presentation="inline" />
         : status === 'covered' ? t('projects.deployments.services.backupCovered')
+        // Backups exist but none is verified yet: a quiet fact, never "Not backed up" (D13).
+        : status === 'unverified' ? t('projects.deployments.services.backupUnverified')
         : status === 'notNeeded' ? t('projects.deployments.services.backupNotNeeded')
         // Said as the coverage owner reports it: still reading, or its read failed (never a bare dash for either).
         : status === 'unavailable' ? <Status tone="muted" label={t('projects.deployments.services.backupUnchecked')} presentation="inline" />

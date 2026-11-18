@@ -39,6 +39,17 @@ describe('visible Environment backup coverage', () => {
   const coverage = projectBackupCoverage(visible, [{ input, result, pending: false, failureCode: null }]);
   expect(coverage.rows.map(row => row.lastBackupAt)).toEqual([1_700_000_000_000, null]);
  });
+ it('never says "not backed up" about backups that exist but are not yet verified (PAGE-ACCEPT-176 D13)', () => {
+  const visible = headers.slice(0, 2); const input = planVisibleBackupReadiness(visible, true)[0]!;
+  const result: ProjectReadinessReadResultV1 = { serverId: input.serverId, projectId: input.projectId, status: 'ready', facts: [
+    { kind: 'backups', owner: 'deploymentBackups', environmentId: 'env-0', status: 'actionNeeded', reason: 'backup_verification_required',
+      backups: { lastSuccessfulBackup: { operationId: 'op-1', completedAt: 1_700_000_000_000, configRevision: 1, snapshotIds: ['snap-1'] } } },
+    { kind: 'backups', owner: 'deploymentBackups', environmentId: 'env-1', status: 'actionNeeded', reason: 'no_verified_backup_yet' },
+  ] };
+  const coverage = projectBackupCoverage(visible, [{ input, result, pending: false, failureCode: null }]);
+  expect(coverage.rows.map(row => row.status)).toEqual(['unverified', 'uncovered']);
+  expect(coverage).toMatchObject({ uncovered: 1, unverified: 1 });
+ });
  it('settles missing, failed and pending reads without claiming coverage or fetching', () => {
   const visible = headers.slice(0, 1); const input = planVisibleBackupReadiness(visible, true)[0]!;
   expect(projectBackupCoverage([], []).status).toBe('empty');

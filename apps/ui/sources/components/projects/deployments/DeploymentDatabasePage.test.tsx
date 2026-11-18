@@ -157,6 +157,8 @@ async function renderDatabase(
     /** The Environment shares the database on a private network (its saved export). */
     shared?: boolean;
     moveDestination?: boolean;
+    /** The Machine refuses the Move Workflow's start. */
+    refuseWorkflowStart?: boolean;
     moveDestinationWithApp?: boolean;
     sourceMultiMachine?: boolean;
     moveWritersUnavailable?: boolean;
@@ -482,9 +484,14 @@ async function renderDatabase(
     });
     await answerExternalActionAccountForHome(homes, serverId, {
       machineId, installationId: 'installation-a', actionId: 'workflow.run.start', tokenEpoch: 0,
+      failure: result => {
+        const code = result && typeof result === 'object' ? Reflect.get(result, 'errorCode') : null;
+        return typeof code === 'string' ? { errorCode: code, error: code } : null;
+      },
       execute: raw => {
         const operand = WorkflowRunStartRequestV1Schema.parse(raw);
         effects.push({ actionId: 'workflow.run.start', input: operand });
+        if (input.refuseWorkflowStart) return { errorCode: 'machine_unavailable' };
         return { admission: 'created', run: createWorkflowRunSummaryFixture({ id: operand.runId, machineId,
           ownerAccountId: 'account-owner', origin: { kind: 'direct' } }) };
       },
@@ -599,10 +606,11 @@ async function renderDatabase(
 }
 
 describe('Environment → Database → Private console', () => {
-  it('says private access is unavailable on this server, with no Add, Domains or Open lead', async () => {
+  it('shows one console row: Open where the workbench can open it, never beside a contradicting unavailable row', async () => {
     const view = await renderDatabase({ storedDefinition: true });
     try {
-      expect(await view.settle(`${page}.console.access`)).not.toBeNull();
+      expect(await view.settle(`${page}.query`)).not.toBeNull();
+      expect(view.screen.findByTestId(`${page}.console.access`)).toBeNull();
       for (const control of ['open', 'add', 'domains']) {
         expect(view.screen.findByTestId(`${page}.console.${control}`)).toBeNull();
       }
@@ -798,6 +806,24 @@ describe('Environment → Database → Move', () => {
       expect(await view.settle('project-deployments.move.destination.unavailable')).not.toBeNull();
       expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(true);
       expect(view.effects.some(effect => effect.actionId === 'deployments.backups.run')).toBe(false);
+    } finally { await view.dispose(); }
+  });
+
+  it('says a refused Move start in the sheet, with its code under Technical details, never as a bare alert (D25)', async () => {
+    const view = await renderDatabase({ moveDestination: true, storedDefinition: true, refuseWorkflowStart: true });
+    try {
+      await view.settle(`${page}.move`);
+      await view.screen.pressByTestIdAsync(`${page}.move`);
+      await view.settle('project-deployments.move.destination:database-dedicated');
+      await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
+      await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(false));
+      await view.screen.pressByTestIdAsync('project-deployments.move.copy');
+      await view.settle('project-deployments.move.save');
+      await view.screen.pressByTestIdAsync('project-deployments.move.save');
+      expect(await view.settle('project-deployments.move.review.refused')).not.toBeNull();
+      const { Modal } = await import('@/modal');
+      expect(vi.mocked(Modal.alert)).not.toHaveBeenCalled();
+      expect(routerMock.spies.push).not.toHaveBeenCalled();
     } finally { await view.dispose(); }
   });
 
@@ -1397,7 +1423,7 @@ describe('Environment → Data → Database page (P9)', () => {
         serverId: view.serverIdentityId, environmentId: view.environmentId, expectedRevision: 1, configRevision: 1,
         machineId: view.machineId, installationId: 'installation-a', targetLinkId: 'target-link', deploymentId: 'deployment-a',
       });
-      await view.screen.pressByTestIdAsync(`${page}.controls.run`);
+      await view.screen.pressByTestIdAsync(`${page}.run`);
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
       expect(view.effects.find((effect) => effect.actionId === 'deployments.backups.run')?.input).toEqual(history);
       expect(await view.settle(`${page}.history.manual-backup`)).not.toBeNull();
@@ -1417,10 +1443,12 @@ describe('Environment → Data → Database page (P9)', () => {
     const view = await renderDatabase({ keepLastWithVolume: true, restore: vi.fn() as never });
     try {
       expect(await view.settle(`${page}.history.empty`)).not.toBeNull();
-      // Prune: the same row and Action Settings had, now offered once, here.
-      expect(await view.settle(`${page}.controls.prune.run`)).not.toBeNull();
-      const { Item } = await import('@/components/ui/lists/Item');
-      expect(view.screen.findAllByType(Item).filter(row => row.props.testID === `${page}.controls.prune`)).toHaveLength(1);
+      // Prune: the same Action Settings had, now offered once, here, in the Backups section's ⋯.
+      expect(await view.settle(`${page}.more`)).not.toBeNull();
+      const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+      const more = view.screen.findAllByType(DropdownMenu).filter(node => (node.props.items as Array<{ id: string }>)
+        .some(item => item.id === 'prune'));
+      expect(more).toHaveLength(1);
       // Restore offers this database's named volume next to its dump.
       expect(await view.settle(`${page}.restore`)).not.toBeNull();
       await view.screen.pressByTestIdAsync(`${page}.restore`);

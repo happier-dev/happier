@@ -57,6 +57,8 @@ it('offers Move for a stored definition through Environment Settings without rea
         demand={{ mounted: false, visible: false, focused: false }} machineName={id => id} environmentTitle={() => null}
         lifetime={lifetime} editing={{ actions: createDeploymentActions(lifetime, scope.projectSourceId), serverId,
             review: { pendingId: null, request() {}, open() {} }, onChanged() {} }} /></ItemList>);
+    // Settings summarizes the stored definition; Move opens with its editor (PAGE-ACCEPT-176 D7).
+    await screen.pressByTestIdAsync('project-deployments.environment.definition.move');
     expect(screen.findByTestId('project-deployments.environment.moveRepository.open')).not.toBeNull();
     expect(homes.requestsFor(`/v1/projects/sources/${detail.environment.projectSourceId}`)).toHaveLength(0);
     expect(screen.findByTestId('project-deployments.environment.moveRepository.path.input')).toBeNull();
@@ -218,6 +220,7 @@ it.each(['existing', 'attach', 'create', 'create-new', 'resume'] as const)('revi
         lifetime={lifetime} editing={{ actions: createDeploymentActions(lifetime, source.id), serverId,
             review: { pendingId: null, request() {}, open() {} }, onChanged: changed }} /></ItemList>);
     const id = 'project-deployments.environment.moveRepository';
+    await screen.pressByTestIdAsync('project-deployments.environment.definition.move');
     await screen.pressByTestIdAsync(`${id}.open`);
     if (creating) {
         await act(async () => { await waitForTestEvent(screen.subscribe, () => screen.findByTestId(`${id}.createRepository`), node => node !== null); });

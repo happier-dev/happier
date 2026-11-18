@@ -1494,7 +1494,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.space.s6,
     paddingVertical: theme.space.s2,
     marginLeft: -theme.space.s6,
-    borderRadius: 6,
+    borderRadius: theme.borderRadius.sm,
   },
   phase: { ...Typography.variant('body'), color: theme.colors.text.secondary },
   sourceTitle: {

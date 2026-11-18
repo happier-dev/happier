@@ -112,6 +112,7 @@ import {
 import { projectAcceptedWorkflowRunTarget } from '../run/projectAcceptedWorkflowRunTarget';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { WorkflowRunAgentOverrideField } from '../run/WorkflowRunAgentOverrideField';
+import { WorkflowStartRefusal } from '../run/WorkflowStartRefusal';
 import { useOpenExecutionRunDetails } from '@/components/sessions/runs/useOpenExecutionRunDetails';
 import {
     resolveWorkflowProblemPresentation,
@@ -2058,12 +2059,7 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
         ? <SurfaceStateCard testID="workflow-run-again-pending" size="line" kind="loading"
             title={t(pageStart.state === 'reconciling' ? 'workflows.start.stillStarting' : 'workflows.start.starting')}
             accessibilitySemantics="status" />
-        : pageStart.refusal ? <><SurfaceStateCard testID="workflow-run-again-refused" size="line"
-            kind={pageStart.refusal.accessibilitySemantics === 'status' ? 'unavailable' : 'error'}
-            title={pageStart.refusal.title} reason={pageStart.refusal.message}
-            accessibilitySemantics={pageStart.refusal.accessibilitySemantics} />
-            {pageStart.refusal.technicalDetails ? <TechnicalDetailsDisclosure title={t('workflows.run.technicalDetails')}
-                lines={pageStart.refusal.technicalDetails} /> : null}</> : null;
+        : pageStart.refusal ? <WorkflowStartRefusal refusal={pageStart.refusal} testID="workflow-run-again-refused" /> : null;
     // While Run again is unsettled its review is the request it re-sends, including any Agent swap.
     const runAgainRetained = runNow.retainedRequest;
     const retainedReplay = runAgainRetained?.input.source.kind === 'inline' ? runAgainRetained.input.source.replay : undefined;
