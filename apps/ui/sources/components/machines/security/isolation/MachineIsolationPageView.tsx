@@ -125,11 +125,14 @@ export function MachineIsolationPageView(props: MachineIsolationPageViewProps) {
     {
       id: DIRECTLY,
       title: t('machineDetailPage.isolation.directly'),
+      subtitle: t('machineDetailPage.isolation.directlyDetail', { machine: machineName }),
       icon: <Icon name="desktop" size={15} />,
     },
+    // The configured sandboxes follow under their own title (lab scene 1 `menu`).
     ...entries.map((entry) => ({
       id: entry.id,
       title: entry.name,
+      category: t('machineDetailPage.isolation.sandboxes.title'),
       ...(entry.mark ? { icon: entry.mark } : {}),
     })),
   ];
@@ -239,8 +242,8 @@ export function MachineIsolationPageView(props: MachineIsolationPageViewProps) {
             testID="machine-isolation-sandboxes-empty"
             layout="inline"
             iconName="cube"
-            title={t('machineDetailPage.isolation.host.emptyTitle', { machine: machineName })}
-            subtitle={t('machineDetailPage.isolation.host.emptyReason', { machine: machineName })}
+            title={t('machineDetailPage.isolation.sandboxes.emptyTitle', { machine: machineName })}
+            subtitle={t('machineDetailPage.isolation.sandboxes.emptyReason', { machine: machineName })}
             {...(props.onAdd
               ? {
                   primaryAction: {
