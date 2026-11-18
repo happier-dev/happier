@@ -49,6 +49,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { enableAuthentication } from '@/app/api/utils/enableAuthentication';
 import { registerAuthPingRoute } from '../auth/registerAuthPingRoute';
 import { registerExternalActionRoutes } from './registerExternalActionRoutes';
+import { automationRoutes } from '../automations/automationRoutes';
 import { registerDiscussionRoutes } from '../discussions/registerDiscussionRoutes';
 import { registerSessionListingRoutes } from '../session/registerSessionListingRoutes';
 import { registerSessionPatchRoute } from '../session/registerSessionPatchRoute';
@@ -86,6 +87,7 @@ import { runWithServerHttpBaseUrl } from '../../../../../../cli/src/api/client/s
 import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from '../../../../../../cli/src/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createStopSession } from '../../../../../../cli/src/daemon/sessions/stopSession';
 import { createOnChildExited } from '../../../../../../cli/src/daemon/sessions/onChildExited';
+import { legacyPidSessionTrackingKey } from '../../../../../../cli/src/daemon/sessions/sessionTrackingKey';
 import { retireExactTerminalControlServiceability } from '../../../../../../cli/src/daemon/sessions/retireTerminalControlServiceability';
 import { readProcessIdentityByPid } from '../../../../../../cli/src/daemon/processIdentity';
 import { projectMachineRpcTransportAcknowledgement } from '../../../../../../cli/src/api/machine/projectMachineRpcTransportAcknowledgement';
@@ -98,7 +100,7 @@ import { ConnectedServiceRuntimeRegistry } from '../../../../../../cli/src/daemo
 import { createRequesterSessionControlRuntimeFixture } from '../../../../../../cli/src/daemon/testkit/requesterSessionControlRuntimeFixture';
 import { createCurrentMachineExecutionOriginContextResolver } from '../../../../../../cli/src/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { createServerUrlServerFeaturesSnapshotStore } from '../../../../../../cli/src/features/serverFeaturesSnapshotStore';
-import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
+import { prepareE2eeAccountApiTokenLabel } from '@/testkit/privateLabelFixture';
 
 const document = (text: string) => ({ t: 'plain' as const, v: { v: 1 as const, parts: [{ t: 'text' as const, text }] } });
 
@@ -108,7 +110,7 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
         initAuth: true, initEncrypt: true, initFiles: true, env: { AUTH_REQUIRED_LOGIN_PROVIDERS: '', AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS: '0',
             HAPPIER_FEATURE_AUTH_EMAIL_PASSWORD__ENABLED: 'true', HAPPIER_FEATURE_E2EE__KEYLESS_ACCOUNTS_ENABLED: 'true',
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional', HAPPIER_FEATURE_SESSIONS__ENABLED: '1',
-            HAPPIER_FEATURE_SESSIONS_CONVERSATIONS__ENABLED: '1' } }); }, 300_000);
+            HAPPIER_FEATURE_SESSIONS_CONVERSATIONS__ENABLED: '1', HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1' } }); }, 300_000);
     afterAll(async () => { resetInMemoryAccountSettingsContextForTests(); await database?.close(); });
 
     it.each(['none', 'attachment-local', 'attachment-signed', 'attachment-signed-post', 'attachment-e2ee-mcp-post-terminal-daemon', 'attachment-source-mismatch', 'policy-withdrawn', 'session-access', 'participant', 'account-credential', 'home-unavailable', 'wrong-machine',
@@ -216,9 +218,10 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
         const publisherSocket = {};
         expect(await presence.registerPublisher({ socket: publisherSocket, binding: { accountId: account.id, machineId: machine.id, sessionId: session.id },
             completeActivitySnapshot: { state: 'idle', activeCount: 0 } })).toMatchObject({ status: 'registered' });
-        const tracked: TrackedSession = { pid, childProcess: child, startedBy: 'daemon', happySessionId: session.id,
+        const trackingKey = legacyPidSessionTrackingKey(pid);
+        const tracked: TrackedSession = { trackingKey, pid, childProcess: child, startedBy: 'daemon', happySessionId: session.id,
             processStartTimeMs: identity.processStartTimeMs, spawnOptions: { directory: database.baseDir } };
-        const sessions = new Map([[pid, tracked]]);
+        const sessions = new Map([[trackingKey, tracked]]);
         const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
         const httpOutcomes: string[] = [];
         const uploadAdmissions: Array<{ status: number; tokenKind: string; externalAction: boolean }> = [];
@@ -287,8 +290,9 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
         app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler); enableAuthentication(app);
         // Replace socket-room discovery only. Its answer follows the real
         // tracked-runner owner that canonical Stop retires below.
-        app.decorate('resolveCurrentSessionMachine', async () => sessions.has(pid) ? machine.id : null);
+        app.decorate('resolveCurrentSessionMachine', async () => sessions.has(trackingKey) ? machine.id : null);
         registerAuthPingRoute(app);
+        automationRoutes(app);
         registerExternalActionRoutes(app); registerDiscussionRoutes(app); registerSessionListingRoutes(app); registerSessionPatchRoute(app);
         registerSessionMessageRoutes(app); registerAccountEncryptionRoutes(app); registerAccountSettingsRoutes(app); registerAccountProfileRoute(app);
         artifactsRoutes(app); kvRoutes(app); featuresRoutes(app);
@@ -368,7 +372,7 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
                 expect(await createConnectedServiceCredentialApi(credentials).getAccountEncryptionMode({ refresh: true,
                     throwOnTransportError: true }), `Fixture Account mode: ${JSON.stringify(httpOutcomes)}`).toBe(accountMode);
                 const currentness = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials, machineId: machine.id,
-                    serverId, serverApiUrl: serverHttpBaseUrl, isSessionCallerCurrent: async () => sessions.has(pid) });
+                    serverId, serverApiUrl: serverHttpBaseUrl, isSessionCallerCurrent: async () => sessions.has(trackingKey) });
                 if (!currentness) throw new Error('Canonical credential-backed approval currentness unavailable');
                 const publisher = createApprovedDiscussionAgentPublisher({ credentials, machineId: machine.id, serverId, serverUrl: serverHttpBaseUrl,
                     isApprovalExecutionOriginCurrent: currentness, publish: (publication, options) => apiMachine!.postAgentDiscussionMessage(publication, options) });
@@ -410,7 +414,7 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
                         agentStartCaller: { kind: 'session' as const, sessionId: session.id, starterDepth: 0, turnDepth: 0 },
                         causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' } };
                     const daemon = await createSessionDaemonAuthorityFixture({ sessionId: session.id,
-                        execute: operation => capture(operation, { sessionId: session.id, isCurrent: async () => sessions.has(pid) }) });
+                        execute: operation => capture(operation, { sessionId: session.id, isCurrent: async () => sessions.has(trackingKey) }) });
                     await serverFeatures.refresh();
                     const runtime = createHappierMcpServer({ sessionId: session.id,
                         getServerBinding: () => ({ serverId, serverUrl: serverHttpBaseUrl }),
@@ -444,7 +448,7 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
                         ...(!attachmentPost ? { replyTarget: { kind: 'message', messageId: addressing.messageId } } : {}) }, witness: {
                         turnId, inputId, userMessageSeq: 1, userMessageSeqs: [1], workDepth: 0, callerPermissionMode: 'default', discussionAddressing: addressing,
                         agentStartCaller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 } } },
-                    { sessionId: session.id, isCurrent: async () => sessions.has(pid) });
+                    { sessionId: session.id, isCurrent: async () => sessions.has(trackingKey) });
                 if (!e2eeMcp) expect(draft, JSON.stringify({ draft, httpOutcomes })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
                 // Native completion and original-outcome projection are one
                 // transaction in applySessionTurnMutation. Seeding a completed
@@ -516,9 +520,9 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
                 await bootstrapAccountSettingsContext({ credentials, mode: 'blocking' });
                 expect(await currentness({ origin: approval.executionOriginV1, request: approval }),
                     'Fixture signed origin and Account policy current in the startup-selected Home before Stop').toBe(true);
-                const onExit = createOnChildExited({ pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+                const onExit = createOnChildExited({ trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
                     getApiMachineForSessions: () => apiMachine!, removeSessionMarkerFn: async () => undefined });
-                const stop = createStopSession({ pidToTrackedSession: sessions, readHostAttachmentState: async () => ({ status: 'absent' }),
+                const stop = createStopSession({ trackedSessionsByKey: sessions, readHostAttachmentState: async () => ({ status: 'absent' }),
                     readTerminalAttachmentInfo: async () => null, waitForTrackedRunnersExit: async () => {
                         const [code, signal] = await exited; await onExit(pid, { reason: 'process-exited', code, signal });
                         return sessions.size === 0;
@@ -780,8 +784,9 @@ describe.skipIf(process.platform !== 'linux')('signed private Discussion draft a
                                 privateKey: decodeBase64(installation.privateKey, 'base64url') }) } });
                         // APPR-S3 admits ordinary terminal Actions; scoped API
                         // credentials still cannot attest an installed publisher.
-                        const scopedCredential = await auth.createApiToken({ accountId: account.id,
-                            tokenId: randomUUID(), label: await preparePlainAccountApiTokenLabel(account.id, 'Discussion publisher negative') });
+                        const tokenId = randomUUID();
+                        const scopedCredential = await auth.createApiToken({ accountId: account.id, tokenId,
+                            label: await prepareE2eeAccountApiTokenLabel(account.id, tokenId, 'Discussion publisher negative') });
                         expect((await probe(sign(fresh()), scopedCredential.token)).statusCode).toBe(403);
                         const differentAccount = await db.account.create({ data: { encryptionMode: 'plain' } });
                         const differentTerminal = await auth.createToken(differentAccount.id, undefined, { kind: 'terminal', authority: 'account_automation' });

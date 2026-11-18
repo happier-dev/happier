@@ -11,7 +11,6 @@ import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
-import { auth } from '@/app/auth/auth';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { artifactUpdateHandler } from '@/app/api/socket/artifactUpdateHandler';
 import { createAuthenticatedFakeSocket, getSocketHandler } from '@/app/api/testkit/socketHarness';
@@ -259,8 +258,7 @@ describe('Memory decision source disclosure at the Artifact HTTP boundary', () =
         const original = await source(owner.id);
         const memory = await artifact(owner.id);
         await db.artifactGrant.create({ data: { principalKind: 'account' as const, artifactId: memory.id, accountId: reader.id, accessLevel: 'view', createdByAccountId: owner.id } });
-        const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
-        const socket = Object.assign(createAuthenticatedFakeSocket(), { handshake: { auth: { token } }, disconnect: vi.fn() });
+        const socket = createAuthenticatedFakeSocket({ data: { userId: owner.id, authTokenKind: 'account' } });
         artifactUpdateHandler(owner.id, socket as unknown as Socket);
         const payload = { artifactId: memory.id, body: { data: plain({ body: 'decision' }), expectedVersion: 1 }, memoryDecisionSource: original.ref };
         const denied = vi.fn();

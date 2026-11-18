@@ -6,19 +6,20 @@ import { inTx } from '@/storage/inTx';
 import { mayInjectResourceContextInTx } from '@/app/session/access/sessionContextInjection';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
-import { buildDiscussionMutationRequestBodyV1 } from '@happier-dev/protocol/discussions/api';
+import { buildDiscussionMutationRequestBodyV1, DISCUSSION_HTTP_PATHS_V1, DiscussionMessagesResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 import { createDiscussion, postDiscussionMessage } from './mutations';
 import { inviteDiscussionParticipant, setDiscussionGrant } from './accessService';
 import { readDiscussionMessages, listDiscussions, readDiscussionMessageInTx } from './queries';
 import { previewDiscussionSecondOpinion } from './secondOpinion';
 import { DISCUSSION_SECOND_OPINION_PREVIEW_HTTP_PATH_V1, DiscussionSecondOpinionPreviewResponseV1Schema } from '@happier-dev/protocol/discussions/secondOpinion';
 import { registerDiscussionRoutes } from '@/app/api/routes/discussions/registerDiscussionRoutes';
+import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { deleteOwnedSession } from '@/app/session/delete/deleteOwnedSession';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { DiscussionCreateInputV1Schema, DiscussionPostInputV1Schema, DiscussionInviteInputV1Schema } from '@happier-dev/protocol/discussions/actions';
-import { DiscussionSecondOpinionStartInputV1Schema } from '@happier-dev/protocol/discussions/secondOpinionActions';
+import { DiscussionSecondOpinionStartInputV1Schema, DiscussionSecondOpinionStartResultV1Schema } from '@happier-dev/protocol/discussions/secondOpinionActions';
 import { projectDiscussionSecondOpinionPreviewInputV1 } from '@happier-dev/protocol/actions/executor/discussionSecondOpinion';
 import { resolveDiscussionSecondOpinionSourceGrantsV1 } from '@happier-dev/protocol/discussions/secondOpinion';
 import { createDiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
@@ -146,7 +147,7 @@ describe('Second opinion source admission (SQLite)', () => {
                 'discussion.second_opinion.start': ['ui'], 'discussion.create': ['ui'], 'discussion.invite': ['ui'],
                 'discussion.post': ['ui'], 'session.access.grant.set': ['ui'], 'session.transcript.get': ['ui'],
             } }) };
-        const request = { intent: 'preview', title: 'Review this answer', question: 'What would you change?',
+        const request = { intent: 'preview', title: 'Payments — second opinion', question: 'What would you change?',
             source: { kind: 'session', message: { kind: 'session', session: { serverId: 'home', sessionId: source.id }, messageId: answer.id } },
             participants: [{ kind: 'account', accountId: reader.id }],
             reviewers: [{ selection: { kind: 'session', session: { serverId: 'home', sessionId: reviewer.id } } }],
@@ -176,11 +177,38 @@ describe('Second opinion source admission (SQLite)', () => {
         const asked = await executor.execute('discussion.second_opinion.start', ask, context);
         expect(asked, JSON.stringify(asked))
             .toMatchObject({ ok: true, result: { status: 'asked', grantedAccountIds: [reader.id] } });
+        if (!asked.ok) throw new Error(asked.errorCode);
+        const secondOpinion = DiscussionSecondOpinionStartResultV1Schema.parse(asked.result);
+        if (secondOpinion.status !== 'asked') throw new Error('Expected an addressed question');
         expect(await inTx(tx => readCommittedSessionMessageInTx(tx, { accountId: reader.id, authentication,
             sessionId: source.id, messageId: answer.id }))).toMatchObject({ row: { id: answer.id, content: { t: 'plain', v: { text: 'Private answer' } } } });
-        expect(await executor.execute('discussion.second_opinion.start', ask, context)).toMatchObject({ ok: true, result: { status: 'asked' } });
+        const followUp = document('Later Payments context');
+        const later = await postDiscussionMessage({ ...actor, discussionId: secondOpinion.discussion.discussionId,
+            request: buildDiscussionMutationRequestBodyV1({ kind: 'post', localId: crypto.randomUUID(),
+                content: { t: 'plain', v: followUp }, authoredContent: followUp, mentionedAccountIds: [] }) });
+        if (!later.ok) throw new Error(later.error);
+        expect(await executor.execute('discussion.second_opinion.start', ask, context)).toMatchObject({ ok: true,
+            result: { status: 'asked', discussion: secondOpinion.discussion, messageRef: secondOpinion.messageRef } });
         expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: source.id, accountId: reader.id } })).toBe(1);
-        expect(await db.discussionMessage.count({ where: { discussion: { creationLocalId: request.retry.creationLocalId } } })).toBe(2);
+        const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await withAuthenticatedTestApp(registerDiscussionRoutes, async app => {
+            const url = DISCUSSION_HTTP_PATHS_V1.messages.replace(':discussionId', secondOpinion.discussion.discussionId);
+            const read = (accountId: string) => app.inject({ method: 'GET', url, headers: { 'x-test-user-id': accountId } });
+            const opened = await read(reader.id);
+            expect(opened.statusCode).toBe(200);
+            const page = DiscussionMessagesResponseV1Schema.parse(opened.json());
+            expect(page.messages).toMatchObject([
+                { content: { t: 'plain', v: document('Private answer') } },
+                { id: secondOpinion.messageRef.messageId, replyTarget: { kind: 'message', messageId: page.messages[0]?.id },
+                    addressingV1: { throughSeq: 2, participantSessionIds: [reviewer.id] } },
+                { id: later.value.message.id, content: { t: 'plain', v: followUp }, addressingV1: { participantSessionIds: [] } },
+            ]);
+            const fixedContext = await app.inject({ method: 'GET', url: `${url}?throughSeq=2`, headers: { 'x-test-user-id': reader.id } });
+            expect(fixedContext.statusCode).toBe(200);
+            expect(DiscussionMessagesResponseV1Schema.parse(fixedContext.json()).messages.map(message => message.id))
+                .toEqual(page.messages.slice(0, 2).map(message => message.id));
+            expect((await read(outsider.id)).statusCode).toBe(404);
+        });
     });
     it('opens the E2EE source as the previewed person only after the explicit canonical grant stores their sealed key', async () => {
         const { owner, reader, source, answer } = await encryptedSourceFixture();

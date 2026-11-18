@@ -99,7 +99,7 @@ it.each([
     ['identity_missing', 'discussion_machine_identity_missing'],
     ['identity_mismatch', 'discussion_machine_identity_mismatch'],
     ['installation_missing', 'discussion_machine_installation_missing'],
-    ['credential', 'discussion_machine_credential_not_current'],
+    ['disconnected', 'discussion_machine_credential_not_current'],
     ['admission', 'machine_unavailable'],
     ['installation_mismatch', 'discussion_machine_installation_mismatch'],
     ['custodian', 'discussion_machine_custodian_mismatch'],
@@ -117,7 +117,8 @@ it.each([
     if (branch === 'identity_missing') Reflect.deleteProperty(socket.data!, 'machineId');
     if (branch === 'identity_mismatch') packet.machineId = randomUUID();
     if (branch === 'installation_missing') Reflect.deleteProperty(socket.data!, VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY);
-    if (branch === 'credential') socket.handshake.auth.token = 'invalid';
+    // Account credential withdrawal evicts the admitted socket.
+    if (branch === 'disconnected') socket.connected = false;
     if (branch === 'admission') await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
     if (branch === 'installation_mismatch') await db.machine.update({ where: { id: machine.id }, data: { installationId: randomUUID() } });
     if (branch === 'custodian') {

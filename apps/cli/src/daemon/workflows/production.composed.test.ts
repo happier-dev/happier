@@ -805,12 +805,13 @@ describe('production workflow coordinator', () => {
     const participants = (concurrentRound ? ['session-1', 'session-2'] : ['session-1'])
       .map(sessionId => ({ kind: 'session' as const, session: { serverId: 'server-1', sessionId } }));
     const discussion = { serverId: scenario === 'review_stable_home' ? 'srv_workflow_home' : 'server-1', discussionId: 'discussion-1' };
+    const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.test', localId: 'test' } };
     const credentials = { token: 'e30.eyJzdWIiOiJhY2NvdW50LTEifQ.signature', encryption: null } as const;
     const step: WorkflowDefinitionV1['blocks'][number] = { ...onlyStep, input: [{ kind: 'discussion_context', scope: 'addressing_message' },
       { kind: 'discussion_context', scope: 'so_far' }] };
     const definition: WorkflowDefinitionV1 = { version: 1, inputs: projectsRound ? [{ name: 'participants', valueType: 'json',
       multiple: true, inputType: { hostType: 'agentParticipant' }, required: true }] : [], defaults: {
-      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
+      agentTarget,
       conversation: { kind: 'existing_session', sessionId: 'session-1', machineId },
     }, blocks: projectsRound ? [{ kind: 'loop', id: 'opinions', repetition: { kind: 'items',
       items: { kind: 'input', name: 'participants', path: [] }, execution: 'parallel', failurePolicy: 'collect_outcomes' },
@@ -904,6 +905,8 @@ describe('production workflow coordinator', () => {
     let denied = false;
     let releaseDeniedSibling = () => {};
     const denialObserved = new Promise<void>(resolve => { releaseDeniedSibling = resolve; });
+    let releaseLateOpinion = () => {};
+    const firstOpinionPublished = new Promise<void>(resolve => { releaseLateOpinion = resolve; });
     const previousGet = vi.mocked(axios.get).getMockImplementation()!;
     vi.mocked(axios.get).mockImplementation(async (url, config) => {
       transportRequests.push(`get ${url}`);
@@ -998,6 +1001,7 @@ describe('production workflow coordinator', () => {
       committedPosts.set(expectedLocalId, publicationId);
       publishedInputs.set(publicationInputId, publicationId);
       parents.push(expectedParent);
+      if (scenario === 'round_concurrent' && publicationSessionId === 'session-1') releaseLateOpinion();
       const publicationSeq = concurrentRound ? parents.length + 3 : 4;
       if (scenario === 'denied' || hasReview || projectsRound) return { v: 1, ok: true, value: {
         message: { ...wireMessage(publicationSeq), id: publicationId, localId: expectedLocalId, content: request.request.content,
@@ -1037,13 +1041,14 @@ describe('production workflow coordinator', () => {
         return await boundary.execute(operation, options);
       } },
       execution: { ...productionExecution({ enqueue: async request => {
+        if (scenario === 'round_concurrent' && request.sessionId === 'session-2') await firstOpinionPublished;
         inputs.push(request.text);
         workflow = request.workflow;
         inputLocalId = deriveWorkflowSessionInputLocalIdV2(request.workflow);
         admittedInputs.set(inputLocalId, { workflow: request.workflow, discussion: request.discussionAddressing! });
         return { status: 'accepted', localId: inputLocalId };
       }, observe: async ({ sessionId, localId, signal }) => {
-        if (concurrentRound) {
+        if (deniedActive) {
           if (++observing === participants.length) releaseObservations();
           await bothObserving;
         }
@@ -1214,6 +1219,15 @@ describe('production workflow coordinator', () => {
     expect(JSON.stringify(fixed)).not.toContain('peer sentinel');
     expect(current.map(value => isWorkflowJsonObject(value.value) ? value.value.id : undefined)).toEqual(['message-1', 'question', 'message-3']);
     const previousReads = reads.length;
+    if (scenario === 'round_concurrent') {
+      for (const prompt of inputs) {
+        const addressed = readPromptContext(prompt).filter(value => value.reference.kind === 'discussion_context'
+          && value.reference.scope === 'addressing_message');
+        expect(addressed.map(value => isWorkflowJsonObject(value.value) ? value.value.id : undefined))
+          .toEqual(['message-1', 'question']);
+      }
+      expect([...committedPosts.values()]).toEqual(['published-session-1', 'published-session-2']);
+    }
     if (scenario === 'denied') {
       const root = boundary.rows().find(row => row.index.parentRecordId === null)!;
       const owner = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId,
@@ -1239,6 +1253,9 @@ describe('production workflow coordinator', () => {
     expect(await coordinate({ ...claim, expectedRevision: boundary.run().revision })).toMatchObject({ state: 'succeeded' });
     expect(inputs).toHaveLength(hasReview ? 2 : participants.length);
     expect(reads).toHaveLength(previousReads);
+    if (scenario === 'round_concurrent') {
+      expect([...committedPosts.values()]).toEqual(['published-session-1', 'published-session-2']);
+    }
     expect(publicationAuthorityReads).toBe(0);
   });
   it.each([

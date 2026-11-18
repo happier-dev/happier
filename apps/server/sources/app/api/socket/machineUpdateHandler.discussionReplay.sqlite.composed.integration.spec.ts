@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DISCUSSION_AGENT_POST_EVENT_V1, DiscussionAgentPostResponseV1Schema, DiscussionAgentApprovedReplayResponseV1Schema } from '@happier-dev/protocol/discussions/api';
+import { DISCUSSION_AGENT_POST_EVENT_V1, DISCUSSION_HTTP_PATHS_V1, DiscussionAgentPostResponseV1Schema, DiscussionAgentApprovedReplayResponseV1Schema, DiscussionMessagesResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 import { auth } from '@/app/auth/auth';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -12,6 +12,8 @@ import { resolveMachineAdmissionInTx } from '@/app/machines/machineAccess';
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createFakeSocket, getSocketHandler } from '@/app/api/testkit/socketHarness';
+import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { registerDiscussionRoutes } from '@/app/api/routes/discussions/registerDiscussionRoutes';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { createDiscussion } from '@/app/discussions/mutations';
 import { inviteDiscussionParticipant, removeDiscussionParticipant, setDiscussionParticipantPolicy } from '@/app/discussions/accessService';
@@ -21,7 +23,6 @@ import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from './machineSocke
 import { createWorkflowDiscussionResultPublisher } from '../../../../../cli/src/daemon/workflows/workflowDiscussionPublication';
 import { deriveWorkflowDiscussionReplyLocalIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import { buildDiscussionMutationRequestBodyV1 } from '@happier-dev/protocol/discussions/api';
-import { readDiscussionMessages } from '@/app/discussions/queries';
 import { createTestWorkflowCoordinator, createInMemoryWorkflowCoordinatorStore } from '../../../../../cli/src/daemon/workflows/workflowCoordinator.testkit';
 import type { WorkflowCoordinatorInvocation } from '../../../../../cli/src/daemon/workflows/coordinator';
 import { projectWorkflowRetainedRuntimeSelectionV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -55,10 +56,13 @@ describe('installed Machine reviewed Discussion publication (SQLite)', () => {
     it.each(['action', 'detached', 'failed_before_start', 'cancelled_before_start'] as const)('carries a real Workflow result producer through the installed Machine append and Discussion reader without a Session (%s)', async executionKind => {
         const lifecycle = executionKind === 'failed_before_start' ? 'failed' : executionKind === 'cancelled_before_start' ? 'cancelled' : 'completed';
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.userRelationship.create({ data: { fromUserId: owner.id, toUserId: reader.id, status: 'friend' } });
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, installationId: randomUUID(),
             metadata: encodePlainMachineStoredContent({}), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
         const created = await createDiscussion({ actorAccountId: owner.id, authentication, request: { creationLocalId: randomUUID(),
-            titleContent: { t: 'plain', v: { v: 1, title: 'Workflow result' } }, firstMessage: { localId: randomUUID(),
+            titleContent: { t: 'plain', v: { v: 1, title: 'Payments — Workflow result' } },
+            participants: [{ kind: 'account', accountId: reader.id }], firstMessage: { localId: randomUUID(),
                 content: content('Question'), mentionedAccountIds: [] } } });
         if (!created.ok) throw new Error(created.error);
         const discussionId = created.value.discussion.id;
@@ -68,10 +72,13 @@ describe('installed Machine reviewed Discussion publication (SQLite)', () => {
         const invocation = await db.workflowRunInvocation.create({ data: { runId: run.id, sequence: 1n, memberOrdinal: 0n,
             lifecycle, contentEnvelope: 'sealed-accepted-result' } });
         const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
-        const socket = Object.assign(createFakeSocket({ data: { clientType: 'machine-scoped', machineId: machine.id,
-            authAuthority: 'present_user', [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId } }),
-            { handshake: { auth: { token } } });
-        machineUpdateHandler(owner.id, socket as never, options);
+        const connectPublisher = () => {
+            const socket = createFakeSocket({ data: { clientType: 'machine-scoped', machineId: machine.id,
+                authAuthority: 'present_user', [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId } });
+            machineUpdateHandler(owner.id, socket as never, options);
+            return socket;
+        };
+        let socket = connectPublisher();
         const origin = { discussion: { serverId: 'home', discussionId }, messageId: created.value.firstMessage.id, throughSeq: created.value.firstMessage.seq };
         const acceptedDelivery = await materializeWorkflowAcceptedSnapshotV1({ definition: { version: 1, inputs: [],
             defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'external.agent', localId: 'native' } } },
@@ -182,14 +189,23 @@ describe('installed Machine reviewed Discussion publication (SQLite)', () => {
             return;
         }
         const firstId = lastMessageId;
+        expect(firstId).toBeDefined();
+        socket.connected = false;
+        socket = connectPublisher();
+        lastMessageId = undefined;
         await publish({ runId: run.id, invocation: accepted });
         expect(lastMessageId).toBe(firstId);
-        expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(2);
-        const read = await readDiscussionMessages({ actorAccountId: owner.id, authentication, discussionId, query: {} });
-        expect(read).toMatchObject({ ok: true, value: { messages: expect.arrayContaining([expect.objectContaining({
-            id: firstId, producerV1: expect.objectContaining({ kind: 'workflow', invocationRecordId: invocation.id }),
-            content: { t: 'plain', v: lastContent },
-        })]) } });
+        const readerToken = await auth.createToken(reader.id, undefined, { kind: 'account', authority: 'present_user' });
+        await withAuthenticatedTestApp(registerDiscussionRoutes, async app => {
+            const response = await app.inject({ method: 'GET',
+                url: DISCUSSION_HTTP_PATHS_V1.messages.replace(':discussionId', discussionId), headers: { authorization: `Bearer ${readerToken}` } });
+            expect(response.statusCode).toBe(200);
+            const page = DiscussionMessagesResponseV1Schema.parse(response.json());
+            expect(page.messages).toMatchObject([{ id: origin.messageId }, {
+                id: firstId, producerV1: { kind: 'workflow', invocationRecordId: invocation.id },
+                content: { t: 'plain', v: lastContent }, replyTarget: { kind: 'message', messageId: origin.messageId },
+            }]);
+        }, { authentication: 'real' });
         await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
         await expect(publish({ runId: run.id, invocation: accepted })).rejects.toThrow('workflow_discussion_publication_unavailable');
     });
@@ -374,9 +390,6 @@ describe('installed Machine reviewed Discussion publication (SQLite)', () => {
         socket.data!.clientType = 'user-scoped';
         expect(await publish()).toMatchObject({ ok: false, error: 'discussion_machine_identity_missing' });
         socket.data!.clientType = 'machine-scoped';
-        socket.handshake.auth.token = 'not-a-current-credential';
-        expect(await publish()).toMatchObject({ ok: false, error: 'discussion_machine_credential_not_current' });
-        socket.handshake.auth.token = token;
         await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
         expect(await publish()).toMatchObject({ ok: false, error: 'discussion_post_denied' });
         await db.machine.update({ where: { id: machine.id }, data: { revokedAt: null } });
@@ -393,6 +406,9 @@ describe('installed Machine reviewed Discussion publication (SQLite)', () => {
         expect(await removeDiscussionParticipant({ actorAccountId: owner.id, authentication, discussionId,
             request: { participant: { kind: 'session', sessionId: session.id } } })).toMatchObject({ ok: true });
         expect(await publish(newPacket())).toMatchObject({ ok: false, error: 'discussion_post_denied' });
+        // A handler already dispatched by the socket can observe credential eviction.
+        socket.connected = false;
+        expect(await publish(newPacket())).toMatchObject({ ok: false, error: 'discussion_machine_credential_not_current' });
         expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(2);
     });
 });
