@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
@@ -61,16 +62,24 @@ export const ProjectCockpitShell = React.memo((props: ProjectCockpitShellProps) 
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
             {/* Context, Memory, Deployments and Session defaults read the Project source, not the checkout. */}
             {props.surface === 'context' || props.surface === 'memory' || props.surface === 'deployments' || props.surface === 'defaults' ? null
-                : <View style={REACHABILITY_LINE_EDGES}><CheckoutReachabilityLine scope={props.workspaceRef} testID="project-checkout-reachability" /></View>}
+                : <ProjectReachabilityLine workspaceRef={props.workspaceRef} />}
             <ProjectCockpitSurface {...props} />
         </View>
     </CheckoutReachabilityScope>
     </ProjectCredentialScope>
 ));
 
-// Above the page, the line stands on the page's content edges (its sheet inset), not on a list's box edge: the line
-// keeps its own list-box margin, so the slot adds the rest.
-const REACHABILITY_LINE_EDGES = { paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx - HAPPIER_COLLECTION_LIST_METRICS.toolsInset } as const;
+// Above the page, the line stands on the page's content edges: the page column (centred, capped as the page's frame is)
+// and its sheet inset, not a list's box edge. The line keeps its own list-box margin, so the slot adds the rest.
+const REACHABILITY_LINE_EDGES = { width: '100%', alignSelf: 'center',
+    paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx - HAPPIER_COLLECTION_LIST_METRICS.toolsInset } as const;
+
+function ProjectReachabilityLine(props: Readonly<{ workspaceRef: WorkspaceRefV1 }>) {
+    const column = useLayoutMaxWidthStyle();
+    return <View style={[REACHABILITY_LINE_EDGES, column]}>
+        <CheckoutReachabilityLine scope={props.workspaceRef} testID="project-checkout-reachability" />
+    </View>;
+}
 
 function ProjectCredentialScope(props: React.PropsWithChildren<Readonly<{ serverId: string }>>) {
     const credentialScope = useServerCredentialAccountScopeBinding(props.serverId);
