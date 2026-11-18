@@ -186,7 +186,9 @@ describe('session.list execution', () => {
         requests.push(request);
         return buildSessionAwarenessListResultV1({
           sessions: request.query?.cursor
-            ? [awareness('working', 'working', 'working'), awareness('needs', 'waiting', 'permission_required')]
+            ? [awareness('working', 'working', 'working'), awareness('needs', 'waiting', 'permission_required'),
+              // An older list pin is promoted on page one and also appears in its ordinary page.
+              awareness('recent', 'waiting', 'pending_input')]
             : [awareness('recent', 'waiting', 'pending_input'), { ...awareness('locked', 'idle', 'none'), title: undefined, encryption: 'locked', availability: 'locked' }],
           nextCursor: request.query?.cursor ? null : cursor,
           hasNext: !request.query?.cursor, attentionNextCursor: null, attentionHasNext: false,

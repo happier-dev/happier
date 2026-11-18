@@ -585,6 +585,8 @@ export async function resolveInputOptions(params: Readonly<{
     // Project membership belongs to session.list's admitted metadata/workspace owner.
     // Read it through that owner, then order the same Home corpus without narrowing it.
     const projectSessionIds = new Set<string>();
+    // A pin promoted on the first page can also appear at its ordinary position.
+    const offeredSessionIds = new Set<string>();
     for (const projectFilter of project ? [project, undefined] : [undefined]) {
       let cursor: string | undefined;
       do {
@@ -606,8 +608,11 @@ export async function resolveInputOptions(params: Readonly<{
             projectSessionIds.add(session.sessionId);
             continue;
           }
+          if (offeredSessionIds.has(session.sessionId)) continue;
           const offered = readSessionAwarenessOption(sessionServerId, session);
-          if (offered) groups[offered.group].push(offered.option);
+          if (!offered) continue;
+          offeredSessionIds.add(session.sessionId);
+          groups[offered.group].push(offered.option);
         }
         cursor = page.hasNext ? page.nextCursor ?? undefined : undefined;
       } while (cursor);
