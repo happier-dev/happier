@@ -1,6 +1,6 @@
 import type { StoredCredentials } from '@/persistence';
 
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { isPlainMachineDataKeyMarker, resolvePublishedMachineDataEncryptionKeyV1 } from '@happier-dev/protocol/machines/machineStoredContent';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import type { AccountScopedCryptoMaterial, ExpectedRunnerMachineContentKeyBindingV1 } from '@happier-dev/protocol';
@@ -88,11 +88,7 @@ export function resolvePublishedMachineEncryptionContext(
     : encryption?.type === 'legacy'
       ? { type: 'legacy', secret: encryption.secret }
       : null;
-  const accountContentSecret = encryption?.type === 'dataKey'
-    ? encryption.machineKey
-    : encryption?.type === 'legacy'
-      ? deriveAccountMachineKeyFromRecoverySecret(encryption.secret)
-      : null;
+  const accountContentSecret = accountScopedMaterial ? resolveAccountContentSecretKey(accountScopedMaterial) : null;
   const openedDataEncryptionKey =
     typeof published === 'string'
     && !isPlainMachineDataKeyMarker(published)

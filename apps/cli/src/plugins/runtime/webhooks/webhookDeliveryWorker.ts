@@ -2,6 +2,7 @@ import { PluginWebhookActionInputV1Schema, PluginWebhookActionResultV1Schema, Pl
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { openBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { PluginWebhookActionInputV1, PluginWebhookActionResultV1, PluginWebhookAutomationAdmissionUnresolvedV1, PluginWebhookClaimResultV1, PluginWebhookSettleResultV1 } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
@@ -78,10 +79,12 @@ function openContentV1(claim: DeliveryClaimV1, credentials: StoredCredentials) {
   }
   const encryption = credentials.encryption;
   if (!encryption) return null;
-  const secret = encryption.type === 'dataKey' ? encryption.machineKey : encryption.secret;
+  // The server seals delivery content to the Account content public key.
   const plaintext = openBoxBundle({
     bundle: decodeBase64(claim.envelope.c, 'base64'),
-    recipientSecretKeyOrSeed: secret,
+    recipientSecretKeyOrSeed: resolveAccountContentSecretKey(encryption.type === 'dataKey'
+      ? { type: 'dataKey', machineKey: encryption.machineKey }
+      : { type: 'legacy', secret: encryption.secret }),
   });
   if (!plaintext) return null;
   try {

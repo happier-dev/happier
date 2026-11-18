@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { deriveBoxPublicKeyFromSeed, sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
+import tweetnacl from 'tweetnacl';
+import { sealBoxBundle } from '@happier-dev/protocol/crypto/boxBundle';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { PluginWebhookDeliveryContentV1Schema } from '@happier-dev/protocol/plugins/webhooks/deliveryV1';
 
 import {
@@ -93,8 +95,8 @@ describe('plugin webhook claimed delivery worker', () => {
   });
 
   it.each([
-    ['plain', 'github_hmac_sha256_v1'], ['e2ee', 'github_hmac_sha256_v1'],
-    ['plain', 'capabilityUrl_v1'], ['e2ee', 'capabilityUrl_v1'],
+    ['plain', 'github_hmac_sha256_v1'], ['legacy', 'github_hmac_sha256_v1'], ['dataKey', 'github_hmac_sha256_v1'],
+    ['plain', 'capabilityUrl_v1'], ['legacy', 'capabilityUrl_v1'], ['dataKey', 'capabilityUrl_v1'],
   ] as const)('drops retired %s %s stored content while dispatching the same-plugin Action and settling only the renewed lease', async (mode, verifier) => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
@@ -106,9 +108,13 @@ describe('plugin webhook claimed delivery worker', () => {
       verified: { ...selectedContent.verified, retired: true },
     };
     expect(PluginWebhookDeliveryContentV1Schema.safeParse(retainedContent).success).toBe(false);
+    // The server seals to the Account content public key: the recovery-secret
+    // derived content key pair (legacy) or the data-key machine key pair.
+    const accountContentSecretKey = mode === 'legacy' ? deriveAccountMachineKeyFromRecoverySecret(secret) : secret;
+    const accountContentPublicKey = tweetnacl.box.keyPair.fromSecretKey(accountContentSecretKey).publicKey;
     const sealedContent = Buffer.from(sealBoxBundle({
       plaintext: new TextEncoder().encode(JSON.stringify(retainedContent)),
-      recipientPublicKey: deriveBoxPublicKeyFromSeed(secret),
+      recipientPublicKey: accountContentPublicKey,
       randomBytes: length => new Uint8Array(length).fill(3),
     })).toString('base64');
     const renew = vi.fn(async () => ({ kind: 'renewed' as const, revision: 8, expiresAtMs: 120_000 }));
@@ -147,7 +153,9 @@ describe('plugin webhook claimed delivery worker', () => {
         pluginVersion: '1.0.0',
         target,
       },
-      credentials: { token: 'token', encryption: mode === 'plain' ? null : { type: 'legacy', secret } },
+      credentials: { token: 'token', encryption: mode === 'plain' ? null
+        : mode === 'legacy' ? { type: 'legacy', secret }
+          : { type: 'dataKey', publicKey: accountContentPublicKey, machineKey: secret } },
       transport: { renew, complete, fail },
       execute,
     })).resolves.toEqual({ kind: 'settled', state: 'succeeded' });
