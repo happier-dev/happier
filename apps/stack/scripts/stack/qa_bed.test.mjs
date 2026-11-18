@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdir, writeFile } from 'node:fs/promises';
 
-import { ensureQaBedRunning, projectQaBedReadiness, readQaBedProfile, resolveQaBedDaemonHost, startQaBedStack } from './qa_bed.mjs';
+import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
+import { ensureQaBedRunning, projectQaBedReadiness, readQaBedProfile, resolveQaBedDaemonHost, seedAccount, startQaBedStack } from './qa_bed.mjs';
 
 const targets = [
   { name: 'nl3', repoDir: '/home/happier/happier-dev/', platform: 'posix' },
@@ -75,4 +77,17 @@ test('reset starts a stopped bed before seeding its fresh Account', async () => 
   await ensureQaBedRunning({ rootDir: '/r', stackName: 'b' }, { readServerUrlImpl: async () => '', startImpl: start });
   await ensureQaBedRunning({ rootDir: '/r', stackName: 'b' }, { readServerUrlImpl: async () => 'http://x', startImpl: start });
   assert.deepEqual(starts, ['start']);
+});
+
+test('a seed failure reports its fixture operation and HTTP status without exposing child output', async (t) => {
+  const fixture = await createTempFixture(t);
+  await mkdir(fixture.path('packages', 'tests', 'scripts'), { recursive: true });
+  await writeFile(fixture.path('packages', 'tests', 'scripts', 'runTsxEntrypoint.mjs'), `
+    console.log(JSON.stringify({ kind: 'qa_bed_seed', ok: false, phase: 'machine_registration', httpStatus: 400 }));
+    console.error('fixture-secret-that-must-not-be-printed');
+    process.exitCode = 1;
+  `);
+  await assert.rejects(seedAccount({ repoDir: fixture.root, serverUrl: 'http://qa.test', profile: 'small', keyFile: fixture.path('account.key') }),
+    (error) => error.code === 'qa_bed_seed_failed' && /machine_registration.*400/.test(error.message)
+      && !error.message.includes('fixture-secret-that-must-not-be-printed'));
 });

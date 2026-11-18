@@ -98,15 +98,19 @@ function readJsonLine(text, kind) {
   return found;
 }
 
-async function seedAccount({ rootDir, repoDir, serverUrl, profile, keyFile }) {
+export async function seedAccount({ repoDir, serverUrl, profile, keyFile }) {
   const { runCaptureResult } = await import('../utils/proc/proc.mjs');
   const testsDir = join(repoDir, 'packages/tests');
   const result = await runCaptureResult(process.execPath, ['scripts/runTsxEntrypoint.mjs', 'src/testkit/qaBed/seedQaBedMain.ts',
     '--server-url', serverUrl, '--profile', profile, '--key-file', keyFile], { cwd: testsDir, env: process.env });
-  requireOk(result, 'seed');
   const summary = readJsonLine(result.out, 'qa_bed_seed');
-  if (!summary?.ok) throw Object.assign(new Error('[qa-bed] seed printed no summary'), { code: 'qa_bed_seed_failed' });
-  void rootDir;
+  if (summary?.ok === false && typeof summary.phase === 'string' && /^[a-z]+(?:_[a-z]+)*$/u.test(summary.phase)) {
+    const status = Number.isInteger(summary.httpStatus) && summary.httpStatus >= 100 && summary.httpStatus <= 599
+      ? ` (HTTP ${summary.httpStatus})` : '';
+    throw Object.assign(new Error(`[qa-bed] seed failed at ${summary.phase}${status}`), { code: 'qa_bed_seed_failed' });
+  }
+  requireOk(result, 'seed');
+  if (summary?.ok !== true) throw Object.assign(new Error('[qa-bed] seed printed no summary'), { code: 'qa_bed_seed_failed' });
   return summary;
 }
 
@@ -204,7 +208,7 @@ async function seedAndSignIn({ rootDir, stackName, profile }) {
   const dir = qaBedDir(resolveStackEnvPath(stackName).baseDir);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const keyFile = join(dir, 'account.key');
-  const summary = await seedAccount({ rootDir, repoDir: info.repo.dir, serverUrl, profile, keyFile });
+  const summary = await seedAccount({ repoDir: info.repo.dir, serverUrl, profile, keyFile });
   // Counts and Session ids only; the key stays in account.key (0600).
   await writeFile(join(dir, 'seed.json'), `${JSON.stringify({ ...summary, seededAt: new Date().toISOString() }, null, 2)}\n`, { mode: 0o600 });
   await signInCli({ rootDir, stackName, keyFile });
