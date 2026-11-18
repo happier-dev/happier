@@ -611,7 +611,10 @@ export class RpcHandlerManager {
             && readDeploymentArchiveRpcEffectV1(targetMethod) === archiveExecution.effectActionId
             && archiveExecution.installationId === archiveRouting.installationId
             && sameStrictJsonValue(archiveExecution.authorization, parsedInputAuthorization.data)
-            && sameStrictJsonValue(archiveProof.externalActionExecution.authorization, parsedInputAuthorization.data)
+            // The parent proof keeps the box sealed to the receiver, which signs its
+            // download with the opened, box-free root; match the signed root identity as Home does.
+            && archiveProof.externalActionExecution.authorization.token === parsedInputAuthorization.data.token
+            && sameStrictJsonValue(archiveProof.externalActionExecution.authorization.binding, parsedInputAuthorization.data.binding)
             && sameStrictJsonValue(archiveExecution.target, parsedInputAuthorization.data.binding.target)
             && workspaceSyncSourceExecution?.success && workspaceSyncSourceExecution.data.method === request.method
             && sameStrictJsonValue(workspaceSyncSourceExecution.data.params, request.params)

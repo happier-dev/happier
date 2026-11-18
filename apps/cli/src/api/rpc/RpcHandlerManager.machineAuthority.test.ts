@@ -131,6 +131,43 @@ it.each(['account', 'terminal'] as const)('admits only the closed finite archive
     .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
 });
 
+it('admits the receiver archive download whose parent proof still carries the receiver-sealed requester box', async () => {
+  const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'member', actionId: 'deployments.deploy',
+    machineId: 'receiver', installationId: 'receiver-install', phase: 'activate', deploymentId: 'deployment',
+    selectedDeploymentId: 'deployment', actionOperationId: 'operation',
+    input: { serverId: 'home', environmentId: 'environment', targetLinkId: 'link', expectedRevision: 1,
+      expectedTargetLinkRevision: 1, requestKey: 'request', contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 } });
+  const h = await createDeploymentChildRequesterHarness({ encryptionMode: 'plain', job,
+    receivingIdentity: { machineId: 'receiver', installationId: 'receiver-install', homeIdentityId: 'home' } });
+  // The controller-signed child packet carries the box sealed to the receiver; the
+  // receiver opens it and signs its download with the box-free admitted root.
+  expect(h.packet.externalActionExecution.authorization.requesterAccountContext).toBeDefined();
+  const { requesterAccountContext: _box, ...admittedRoot } = h.packet.externalActionExecution.authorization;
+  const root = ExternalActionExecutionAuthorizationV1Schema.parse(admittedRoot);
+  const proof = createDeploymentChildExecutionProofV1(h.packet,
+    { environmentId: 'environment', deploymentId: 'deployment', holderMachineId: 'holder', holderInstallationId: 'holder-install' });
+  const method = `holder:${RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD}`;
+  const params = { source: { rootPath: '/archive', path: '/archive/image.tar' } };
+  const rpc = new RpcHandlerManager({ scopePrefix: 'holder', localMachineId: 'holder', encryptionMode: 'plain', logger: () => {},
+    // Home is the network boundary; real local wire parsing and authority matching remain intact.
+    authorizeRequest: async () => ({ ok: true }) });
+  rpc.registerHandler(RPC_METHODS.DAEMON_FILESYSTEM_DOWNLOAD, async (_input, context) => ({
+    rootAccount: context?.callerInputAuthorization?.binding.accountId }));
+  const request = { method, params, callerAuthority: 'account_automation' as const, callerInputAuthorization: root,
+    machineAdmission: { actorAccountId: 'receiver-ann', custodianAccountId: 'holder-owner', machineId: 'holder',
+      installationId: 'holder-install', role: 'use' as const, encryptionMode: 'plain' as const },
+    workspaceSyncSourceExecution: { method, requestId: 'download-request', params, externalActionExecution: { v: 1 as const,
+      authorization: root, effectActionId: 'daemon.filesystem.download' as const, target: root.binding.target,
+      installationId: 'receiver-install', machineSignature: 'a'.repeat(86), deploymentChildExecution: proof } } };
+  expect(await rpc.handleRequest(request)).toMatchObject({ rootAccount: root.binding.accountId });
+  // A different signed root still refuses even with the same sealed parent proof.
+  const other = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, token: 'other-root' });
+  expect(await rpc.handleRequest({ ...request, callerInputAuthorization: other,
+    workspaceSyncSourceExecution: { ...request.workspaceSyncSourceExecution, externalActionExecution: {
+      ...request.workspaceSyncSourceExecution.externalActionExecution, authorization: other } } }))
+    .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+});
+
 it.each(['account', 'terminal'] as const)('preserves the %s root authority when admitting exact-machine terminal observation', async kind => {
   const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-home-root', binding: {
     accountId: 'actor', custodianAccountId: 'owner', authentication: { kind, tokenEpoch: 1 },
