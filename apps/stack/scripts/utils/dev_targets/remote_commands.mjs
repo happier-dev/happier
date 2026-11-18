@@ -2046,6 +2046,30 @@ export function buildRemoteDoctorCommand(target) {
   );
 }
 
+/**
+ * Reads a Stack's own server identity record on a target, or with `serverIdentityId` replaces it
+ * there (private directory and file, atomic rename). The record carry owner supplies the path.
+ */
+export function buildRemoteServerIdentityRecordCommand(target, { recordPath, serverIdentityId = null }) {
+  const expression = serverIdentityId === null ? [
+    "const fs = require('node:fs');",
+    `try { process.stdout.write(fs.readFileSync(${JSON.stringify(recordPath)}, 'utf8')); }`,
+    "catch (error) { if (error.code !== 'ENOENT') throw error; }",
+  ].join('\n') : [
+    "const fs = require('node:fs'), path = require('node:path');",
+    `const recordPath = ${JSON.stringify(recordPath)};`,
+    'fs.mkdirSync(path.dirname(recordPath), { recursive: true, mode: 0o700 });',
+    'const temporaryPath = `${recordPath}.${process.pid}.tmp`;',
+    `fs.writeFileSync(temporaryPath, ${JSON.stringify(`${serverIdentityId}\n`)}, { mode: 0o600 });`,
+    'fs.renameSync(temporaryPath, recordPath);',
+  ].join('\n');
+  if (target.platform === 'windows') {
+    return wrapRemoteScript(target, ['$ErrorActionPreference = "Stop"', `node -e ${powershellNativeArgument(expression)}`,
+      'exit $LASTEXITCODE'].join('; '));
+  }
+  return wrapRemoteScript(target, ['set -euo pipefail', `exec node -e ${posixQuote(expression)}`].join('; '));
+}
+
 export function buildRemoteInstallCredentialCommand(target, { stagedPath, finalPath, clearAll = false }) {
   // Preserve target enrollment within an Account, but carry an explicit
   // controller re-login across Accounts. CLI auth owns selecting the Machine

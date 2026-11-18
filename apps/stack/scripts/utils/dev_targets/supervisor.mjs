@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls';
 import { packControlledRuntimeSnapshot, transferRuntimeFile, removeRemoteRuntimeTransferArchives } from './runtime_artifact_transfer.mjs';
 import { ensureRemoteServerDataReady } from './retained_server_data.mjs';
+import { carryStackOwnServerIdentityRecord } from './server_identity_record.mjs';
+import { resolveStackOwnServerIdentityRecordPath } from '../stack/server_profile_reconciliation.mjs';
 import { isAuthFlowEnabled, resolveStackDaemonStartRequested } from '../auth/daemon_gate.mjs';
 import { waitForStackCredentialPath } from '../auth/wait_for_credentials.mjs';
 import { findExistingStackCredentialPath } from '../auth/credentials_paths.mjs';
@@ -588,6 +590,15 @@ export async function startStackDevTargets(
   const closeRequested = new Promise((resolve) => {
     resolveCloseRequested = resolve;
   });
+  // A shared-database stack's daemon host recognizes its own server's Home identity only from its
+  // local copy of the record that server wrote. A daemon placed apart from the server starts after
+  // that server served (and so recorded), then receives the record over this controller's SSH.
+  const serverPlan = servicePlans.find(plan => plan.services.server) ?? null;
+  const sharedDatabaseConsumer = Boolean(resolveStackOwnServerIdentityRecordPath(env));
+  const carriesServerIdentityRecord = plan => sharedDatabaseConsumer
+    && plan.services.daemon && !plan.services.server && !plan.preserveDaemon;
+  let announceServerServed;
+  const serverServed = new Promise(resolve => { announceServerServed = resolve; });
   const publishTargetState = (plan, status, details = {}) => {
     if (isSuperseded) return;
     if (status !== 'starting') {
@@ -1279,8 +1290,20 @@ export async function startStackDevTargets(
         createdTunnel = tunnel !== previousTunnel;
         // Initial establishment and reconnect await the owning SSH confirmation.
         await verifyTargetForward(plan);
+        const carriesRecord = carriesServerIdentityRecord(plan);
+        if (carriesRecord && serverPlan) {
+          beginPhase('server-readiness');
+          const served = await Promise.race([serverServed.then(() => true), closeRequested.then(() => false)]);
+          if (!served || closed) return null;
+        }
         beginPhase('worker');
         if (!remoteCommand) return null;
+        if (carriesRecord) {
+          const serverIdentityId = await carryStackOwnServerIdentityRecord({ stackName, runtimeMode, env: infraEnv,
+            serverTarget: serverPlan?.target ?? null, daemonTarget: target, sshArgs: openSsh.sshArgs }, { runProcess });
+          if (serverIdentityId) logger.info?.(`[dev-targets] ${target.name} received server identity record ${serverIdentityId} from ${serverPlan?.target.name ?? 'the local server'}`);
+          if (closed) return null;
+        }
         // Once a server command might create data, its target must remain the
         // authority even if SSH dies before readiness is observed.
         await pinServerDataAuthority();
@@ -1531,7 +1554,10 @@ export async function startStackDevTargets(
                   ? 'daemon'
                   : null;
             if (readyService) {
-              if (readyService === 'server') serverReady = true;
+              if (readyService === 'server') {
+                serverReady = true;
+                announceServerServed();
+              }
               if (readyService === 'expo') expoReady = true;
               if (readyService === 'daemon') daemonReady = true;
               retryAttempt = 0;
@@ -1726,10 +1752,18 @@ export async function startStackDevTargets(
 
     await Promise.all(plans.map(async (plan, index) => {
       const { target } = plan;
-      const initialWorker = await startTarget(plan, index);
-      const initialTunnel = tunnelsByTarget.get(target.name) ?? null;
-      if (initialWorker === TARGET_SYNC_READY) return;
-      startTargetLifecycle(plan, index, initialWorker, initialTunnel);
+      const begin = async () => {
+        const initialWorker = await startTarget(plan, index);
+        const initialTunnel = tunnelsByTarget.get(target.name) ?? null;
+        if (initialWorker === TARGET_SYNC_READY) return;
+        startTargetLifecycle(plan, index, initialWorker, initialTunnel);
+      };
+      // A daemon that waits for its separately placed server must not hold startup (or close) on it.
+      if (serverPlan && carriesServerIdentityRecord(plan)) {
+        lifecycleTasks.push(begin().catch(error => {
+          logger.error?.(`[dev-targets] ${target.name} startup failed: ${error instanceof Error ? error.message : String(error)}`);
+        }));
+      } else await begin();
     }));
 
     return {
