@@ -5,7 +5,7 @@ import { isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/action
 import { createPendingSessionBirth } from './pendingSessionBirth';
 import { MACHINE_REACHABILITY_ACTION_IDS_V1, MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
-import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, isDeploymentTargetLinkActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, isDeploymentTargetLinkActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 import type {
   ActionOperationCancelV1Response,
@@ -39,7 +39,7 @@ import { projectActionOperationFailure } from './actionOperationFailure';
 import { createActionOperationSetupReview } from './actionOperationSetupReview';
 import { settleReviewedIsolationPredecessors } from './settleReviewedIsolationPredecessors';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
-import type { ActionOperationStore } from './actionOperationStore';
+import type { ActionOperationStore, RetainedInvocationInput } from './actionOperationStore';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import type {
   ActionOperationCancellation,
@@ -143,6 +143,9 @@ export function createActionOperationRunner(deps: Readonly<{
     rejoinPendingApproval?: true;
     approvedActionReplay?: import('@happier-dev/protocol/actions').ActionExecutorContext['approvedActionReplay'];
     input?: unknown;
+    semanticInput?: unknown;
+    /** A retained teardown probe supplies the original request before overlaying retained execution facts. */
+    resumeRetained?: true;
     /** Host domain correspondence only; every root retains its own receipt. */
     joinEarlierActive?: (input: unknown) => boolean;
     /** The admitting owner's public refusal projection also serves retained replies. */
@@ -220,12 +223,28 @@ export function createActionOperationRunner(deps: Readonly<{
         throw error;
       }
     };
+    const isTeardown = request.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1;
+    const comparableInput = (input: unknown) => {
+      if (!isTeardown || !input || typeof input !== 'object' || !('contentArtifactId' in input)) return input ?? null;
+      // The signed transition advances its receipt head without changing the teardown intent.
+      const { contentHeaderVersion: _header, contentBodyVersion: _body, ...intent } = input as Record<string, unknown>;
+      return intent;
+    };
     const inputIdentity = createCanonicalJsonSigningInput(spawnSelection
       ? { ...spawnIdentity, ...normalizeSessionCreationSelectionIdentityV1(spawnSelection) }
-      : request.input === undefined ? null : request.input);
+      : comparableInput(request.semanticInput ?? request.input));
+    const retainInputs = (): RetainedInvocationInput => ({
+      inputIdentity,
+      ...(request.semanticInput !== undefined && !request.resumeRetained
+        ? { preparedInput: createCanonicalJsonSigningInput(request.input ?? null) } : {}),
+    });
     const reviewedReentry = existing?.observation?.kind === 'review_required' && !active.has(existing.operationId)
       && action.operationReentry?.(existing, request.input) === 'resume';
-    const hasMatchingInputIdentity = existing ? deps.store.hasMatchingInputIdentity(existing.operationId, inputIdentity) : false;
+    const hasMatchingInputIdentity = existing && (request.existingDeploymentOperationId
+      // This private observer already proved correspondence to this active operation.
+      ? deps.store.hasMatchingPreparedInputIdentity(existing.operationId, inputIdentity)
+      : deps.store.hasMatchingInputIdentity(existing.operationId, inputIdentity,
+          request.resumeRetained ? createCanonicalJsonSigningInput(comparableInput(request.input)) : inputIdentity));
     const hasMatchingOrigin = !existing || deps.store.hasMatchingDeploymentChildIdentity(existing.operationId, request.deploymentChildIdentity)
       && deps.store.hasMatchingDeploymentTokenOrigin(existing.operationId, request.deploymentTokenOrigin);
     // Only the domain's fresh-admission policy can replace failed prepared input,
@@ -661,7 +680,8 @@ export function createActionOperationRunner(deps: Readonly<{
         return await invoke(existing.operationId, existing.cancellation, resumed?.state === 'running' && existing.state === 'failed');
       }
       if (reentry === 'resume') {
-        deps.store.replaceInputIdentity(existing.operationId, inputIdentity);
+        const inputs = retainInputs();
+        deps.store.replaceInputIdentity(existing.operationId, inputs.inputIdentity, inputs.preparedInput);
         deps.store.updateObservation(existing.operationId, null, undefined);
         return await invoke(existing.operationId, existing.cancellation, true);
       }
@@ -690,7 +710,7 @@ export function createActionOperationRunner(deps: Readonly<{
       cancellation,
       ...(request.requestId ? { requestId: request.requestId } : {}),
       ...(request.domainRef ? { domainRef: request.domainRef } : {}),
-      inputIdentity,
+      ...retainInputs(),
       ...(request.deploymentChildIdentity ? { deploymentChildIdentity: request.deploymentChildIdentity } : {}),
       ...(request.deploymentTokenOrigin ? { deploymentTokenOrigin: request.deploymentTokenOrigin } : {}),
     });

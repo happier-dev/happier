@@ -1679,6 +1679,8 @@ export type ActionExecutorDeps = Readonly<{
   runActionOperation?: (request: Readonly<{
     actionId: ActionId;
     input: unknown;
+    /** Authored operands before deployment preparation, for host-local request comparison. */
+    semanticInput?: unknown;
     context: ActionExecutorContext;
     /** Dynamic contributed Action declaration consumed by the shared operation owner. */
     operation?: ActionOperationDeclarationV1;

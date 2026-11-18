@@ -16,6 +16,7 @@ import { logger } from '@/ui/logger';
 
 const ReceiptSchema = z.strictObject({
     version: z.literal(1), snapshot: ActionOperationSnapshotV1Schema, inputIdentity: z.string(),
+    preparedInput: z.optional(z.string()),
     deploymentChildIdentity: z.optional(z.string()),
     requesterWorkAttributionV1: z.optional(RequesterWorkAttributionV1Schema),
 });

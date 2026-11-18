@@ -4209,6 +4209,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             options?.approvalReplay === true, undefined, options?.sessionTargetLeaf === true);
         };
         return await runActionOperation({ actionId, input: admittedInput, context: ctx, execute,
+          ...(deploymentReview !== undefined && isDeploymentActionIdV1(actionId) && semanticInput !== admittedInput
+            ? { semanticInput } : {}),
           ...(actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 ? { resume: async (operationContext: ActionExecutorContext): Promise<ActionExecuteResult> => {
             const authorization = ctx.externalActionExecutionAuthorization;
             const prepared = authorization && deps.prepareApprovalExecutionAuthorization

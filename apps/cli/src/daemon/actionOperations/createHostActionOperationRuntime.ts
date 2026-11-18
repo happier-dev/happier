@@ -241,6 +241,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
   const observeExecution = async (request: Readonly<{
     actionId: string;
     input: unknown;
+    semanticInput?: unknown;
     /** Receiving-host metadata for a typed operation arm, never public input. */
     operation?: ActionOperationDeclarationV1;
     response?: 'admission';
@@ -352,12 +353,6 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     const teardown = request.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1
       ? DeploymentActionInputSchemasV1['deployments.teardown'].safeParse(request.input) : null;
     let operationInput = request.input;
-    if (teardown?.success && 'contentArtifactId' in teardown.data) {
-      // The signed transition owner advances this receipt's head. Its Artifact
-      // identity and teardown intent, rather than those head versions, identify a retry.
-      const { contentHeaderVersion: _header, contentBodyVersion: _body, ...intent } = teardown.data;
-      operationInput = intent;
-    }
     if (request.resumeRetained && teardown?.success && retainedOperation && !('contentArtifactId' in teardown.data)) {
       const original = store.readDeploymentInvocationInput(scope, retainedOperation.operationId);
       if (!original || typeof original !== 'object' || Array.isArray(original)) return { ok: false,
@@ -404,6 +399,8 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       ...(carriesNativeConfirmation(request.actionId, request.rpcContext) ? { rejoinPendingApproval: true as const } : {}),
       ...(request.rpcContext?.approvedActionReplay ? { approvedActionReplay: request.rpcContext.approvedActionReplay } : {}),
       input: operationInput,
+      semanticInput: request.resumeRetained ? request.input : request.semanticInput,
+      ...(request.resumeRetained ? { resumeRetained: true as const } : {}),
       ...(deploymentChildIdentity ? { deploymentChildIdentity } : {}),
       ...(deploymentTokenOrigin ? { deploymentTokenOrigin } : {}),
       onOperation: operation => {
@@ -687,7 +684,8 @@ export async function runHostActionOperation(
     || Boolean(context.externalActionExecutionAuthorization?.binding.workflowActionOrigin);
   const workflowOperationReceipt = isMachineSetupOperationActionIdV1(request.actionId);
   const workflowContinuationResult = readManagedWorkflowContinuationResultPort(context);
-  return observeExecution({ actionId: request.actionId, input: request.input, rpcContext: rpcContext ?? context, actionContext: context,
+  return observeExecution({ actionId: request.actionId, input: request.input, semanticInput: request.semanticInput,
+    rpcContext: rpcContext ?? context, actionContext: context,
     ...(workflowContinuationResult ? { workflowContinuationResult } : {}),
     ...((context.surface === 'agent' || context.surface === 'mcp') && !context.approvedActionReplay
       // Setup completion retains this host receipt before observing terminal

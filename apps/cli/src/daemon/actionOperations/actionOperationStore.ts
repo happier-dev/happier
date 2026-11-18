@@ -44,10 +44,17 @@ function backupTargetKey(scope: ActionOperationQueryScope, target: DeploymentBac
     target.machineId, target.installationId, target.targetLinkId]);
 }
 
-function readBackupInput(actionId: string, inputIdentity: string): DeploymentBackupOperation['input'] | undefined {
+export type RetainedInvocationInput = Readonly<{ inputIdentity: string; preparedInput?: string }>;
+
+function readPreparedInput(input: RetainedInvocationInput): unknown {
+  // Older retained records used one value for both comparison and execution.
+  try { return JSON.parse(input.preparedInput ?? input.inputIdentity); }
+  catch { return undefined; }
+}
+
+function readBackupInput(actionId: string, metadata: RetainedInvocationInput): DeploymentBackupOperation['input'] | undefined {
   if (!isDeploymentBackupActionIdV1(actionId) && actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) return undefined;
-  let input: unknown;
-  try { input = JSON.parse(inputIdentity); } catch { return undefined; }
+  const input = readPreparedInput(metadata);
   const parsed = actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
     ? DeploymentBackupRestoreInputV1Schema.safeParse(input)
     : DeploymentBackupActionInputSchemasV1[actionId].safeParse(input);
@@ -75,6 +82,7 @@ type CreateActionOperationInput = Readonly<{
   cancellation: ActionOperationSnapshotV1['cancellation'];
   domainRef?: ActionOperationSnapshotV1['domainRef'];
   inputIdentity: string;
+  preparedInput?: string;
   deploymentChildIdentity?: string;
   deploymentTokenOrigin?: DeploymentTokenOperationOrigin;
   requesterWorkAttributionV1?: RequesterWorkAttributionV1;
@@ -150,7 +158,7 @@ export function createActionOperationStore(options?: Readonly<{
       throw new RpcError('Action operation receipt storage is unavailable on this Machine', 'action_operation_unavailable');
     }
   };
-  const invocationMetadata = new Map<string, Readonly<{ inputIdentity: string; deploymentChildIdentity?: string;
+  const invocationMetadata = new Map<string, RetainedInvocationInput & Readonly<{ deploymentChildIdentity?: string;
     deploymentTokenOrigin?: DeploymentTokenOperationOrigin; requesterWorkAttributionV1?: RequesterWorkAttributionV1;
     backupInput?: DeploymentBackupOperation['input']; backupTargetKey?: string; retainedTeardown?: RetainedTeardownExecution;
     workflowContinuationResult?: ManagedWorkflowContinuationResult }>>();
@@ -173,7 +181,7 @@ export function createActionOperationStore(options?: Readonly<{
   const retainInvocation = (snapshot: ActionOperationSnapshotV1,
     metadata: NonNullable<ReturnType<typeof invocationMetadata.get>>): void => {
     unindexBackup(snapshot.operationId);
-    const backupInput = readBackupInput(snapshot.actionId, metadata.inputIdentity);
+    const backupInput = readBackupInput(snapshot.actionId, metadata);
     const key = backupInput ? backupTargetKey(snapshot.scope, backupInput) : undefined;
     invocationMetadata.set(snapshot.operationId, { ...metadata, backupInput, backupTargetKey: key });
     if (key !== undefined) {
@@ -235,6 +243,7 @@ export function createActionOperationStore(options?: Readonly<{
       try {
         if (!projectOpenReceiptPersistence) throw new ProjectOpenReceiptPersistenceError(false);
         projectOpenReceiptPersistence.save({ version: 1, snapshot, inputIdentity: metadata.inputIdentity,
+          ...(metadata.preparedInput !== undefined ? { preparedInput: metadata.preparedInput } : {}),
           ...(metadata.deploymentChildIdentity ? { deploymentChildIdentity: metadata.deploymentChildIdentity } : {}),
           ...(metadata.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: metadata.requesterWorkAttributionV1 } : {}) });
       } catch {
@@ -337,6 +346,7 @@ export function createActionOperationStore(options?: Readonly<{
     }));
     snapshots.set(snapshot.operationId, snapshot);
     retainInvocation(snapshot, { inputIdentity: receipt.inputIdentity,
+      ...(receipt.preparedInput !== undefined ? { preparedInput: receipt.preparedInput } : {}),
       ...(receipt.deploymentChildIdentity ? { deploymentChildIdentity: receipt.deploymentChildIdentity } : {}),
       ...(receipt.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: receipt.requesterWorkAttributionV1 } : {}) });
     if (!isTerminal(prior)) {
@@ -436,6 +446,7 @@ export function createActionOperationStore(options?: Readonly<{
       });
       snapshots.set(input.operationId, snapshot);
       retainInvocation(snapshot, { inputIdentity: input.inputIdentity,
+        ...(input.preparedInput !== undefined ? { preparedInput: input.preparedInput } : {}),
         ...(input.deploymentChildIdentity ? { deploymentChildIdentity: input.deploymentChildIdentity } : {}),
         ...(input.deploymentTokenOrigin ? { deploymentTokenOrigin: Object.freeze({ ...input.deploymentTokenOrigin }) } : {}),
         ...(attribution ? { requesterWorkAttributionV1: attribution } : {}) });
@@ -496,10 +507,10 @@ export function createActionOperationStore(options?: Readonly<{
     },
 
     /** Used only after the Action declaration admits a newly reviewed re-entry. */
-    replaceInputIdentity(operationId: string, inputIdentity: string): void {
+    replaceInputIdentity(operationId: string, inputIdentity: string, preparedInput?: string): void {
       const current = snapshots.get(operationId), metadata = invocationMetadata.get(operationId);
       if (!current || isTerminal(current) || !metadata) throw new Error('action_operation_unavailable');
-      retainInvocation(current, { ...metadata, inputIdentity });
+      retainInvocation(current, { ...metadata, inputIdentity, preparedInput });
     },
 
     updateProgress(operationId: string, progress: ActionOperationProgressV1): ActionOperationSnapshotV1 | null {
@@ -625,8 +636,13 @@ export function createActionOperationStore(options?: Readonly<{
       return findByRequestIdentity(scope, actionId, requestId);
     },
 
-    hasMatchingInputIdentity(operationId: string, inputIdentity: string): boolean {
-      return invocationMetadata.get(operationId)?.inputIdentity === inputIdentity;
+    hasMatchingInputIdentity(operationId: string, inputIdentity: string, legacyInputIdentity = inputIdentity): boolean {
+      const metadata = invocationMetadata.get(operationId);
+      return metadata?.inputIdentity === (metadata?.preparedInput === undefined ? legacyInputIdentity : inputIdentity);
+    },
+    hasMatchingPreparedInputIdentity(operationId: string, inputIdentity: string): boolean {
+      const metadata = invocationMetadata.get(operationId);
+      return (metadata?.preparedInput ?? metadata?.inputIdentity) === inputIdentity;
     },
     /** Strict local acceptance order, independent of wall-clock ties/corrections.
      * Imported snapshots have no local invocation and cannot prove new admission.
@@ -648,7 +664,7 @@ export function createActionOperationStore(options?: Readonly<{
       const metadata = invocationMetadata.get(operationId);
       if (!snapshot || !inScope(snapshot, scope) || (snapshot.actionId !== DEPLOYMENT_DEPLOY_ACTION_ID_V1 && snapshot.actionId !== DEPLOYMENT_TEARDOWN_ACTION_ID_V1
         && snapshot.actionId !== DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) || !metadata) return undefined;
-      return JSON.parse(metadata.inputIdentity);
+      return readPreparedInput(metadata);
     },
     /** Exact host-only receipt read. Work is proportional to this target's
      * retained invocations, never the Machine's whole operation inventory. */
