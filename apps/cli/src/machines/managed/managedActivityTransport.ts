@@ -55,7 +55,7 @@ export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAc
     const waitUntilConnected = (signal?: AbortSignal) => issueSocketRpcCallWithCancellation({ signal, issue: () => connected });
     const pump = withUserScopedRpcSocket({ token: input.token, serverUrl: input.serverUrl,
         connectTimeoutMs: resolveSessionControlSocketConnectTimeoutMs(), signal: lifetime.signal,
-        reattachOnReconnect: true, disconnectMessage: 'Managed activity observation disconnected',
+        reattachOnReconnect: true,
     }, async (socket, connect, attemptSignal) => {
         const onUpdate = (update: unknown) => {
             const parsed = UpdateContainerSchema.safeParse(update);

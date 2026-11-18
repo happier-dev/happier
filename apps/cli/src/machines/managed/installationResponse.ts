@@ -52,7 +52,6 @@ export function createCliManagedInstallationRespond(params: Readonly<{
             invokeInstallation: async (response, signal) => withUserScopedRpcSocket({
                 token: params.credentials.token, serverUrl: params.serverUrl,
                 connectTimeoutMs: resolveSessionControlSocketConnectTimeoutMs(), signal,
-                disconnectMessage: 'Managed installation response disconnected',
             }, async (socket, connect, requestSignal) => {
                 await connect();
                 return parseResponse(await callSocketRpc({ socket, target: { kind: 'machine', id: response.controller!.machineId },

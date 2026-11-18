@@ -489,8 +489,7 @@ lines.close(); process.stdin.destroy();\n`);
                     const machine = await readManagedMachine({ credentials, serverHttpBaseUrl: controller.baseUrl,
                         homeId: controller.serverId, managedId: ref.id, signal: lifetime.signal });
                     await withUserScopedRpcSocket({ token: requester.token, serverUrl: controller.baseUrl,
-                        connectTimeoutMs: resolveSessionControlSocketConnectTimeoutMs(), signal: lifetime.signal,
-                        disconnectMessage: 'Enrollment approval disconnected' }, async (socket, connect, signal) => {
+                        connectTimeoutMs: resolveSessionControlSocketConnectTimeoutMs(), signal: lifetime.signal }, async (socket, connect, signal) => {
                         await connect();
                         const respond = async (response: { delivery: { kind: 'terminalPairing' } } | { answer: { approved: true } }) => {
                             const input = ManagedInstallationResponseV1Schema.parse({ homeId: controller.serverId,
