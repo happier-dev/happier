@@ -96,6 +96,29 @@ describe('neutral intervals and outcomes', () => {
       expect(query(mount.container, 'events-readout')!.textContent).toContain('Shipment');
     } finally { mount.unmount(); }
   });
+  // DESIGN-1118-B S2: a waterfall's SQL rows read as code, led by their kind's mark (lab p7AddNow-trace).
+  it('leads a row with its mark and sets an identifier label in the code face', () => {
+    const mount = mountThroughReactNativeWeb(<IntervalTimeline theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="spans"
+      label="Request timeline" domain={{ start: 0, end: 412 }} geometry={{ width: 900, height: 200 }} size="full"
+      intervals={[{ id: 'root', label: 'POST /checkout', start: 0, end: 412 },
+        { id: 'q', label: 'SELECT * FROM carts WHERE id = $1', start: 12, end: 18, depth: 1, identifier: true,
+          glyph: <span data-testid="spans-glyph-q" /> }]} />);
+    try {
+      const glyph = query(mount.container, 'spans-glyph-q');
+      expect(glyph).not.toBeNull();
+      // The drawn row's label (the exact rows behind Details keep the interface face).
+      const label = [...mount.container.querySelectorAll<HTMLElement>('div, span')]
+        .find((node) => node.childElementCount === 0 && node.textContent === 'SELECT * FROM carts WHERE id = $1'
+          && node.style.fontFamily.includes('IBMPlexMono-Regular'));
+      expect(label).toBeDefined();
+      // The mark comes before the label it qualifies.
+      expect(glyph!.compareDocumentPosition(label!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      const root = [...mount.container.querySelectorAll<HTMLElement>('div, span')]
+        .find((node) => node.childElementCount === 0 && node.textContent === 'POST /checkout')!;
+      expect(root.style.fontFamily).not.toContain('IBMPlexMono-Regular');
+    } finally { mount.unmount(); }
+  });
+
   it('retains exact endpoint facts when a consumer supplies abbreviated visible labels', () => {
     const mount = mountThroughReactNativeWeb(<IntervalTimeline theme={SURFACE_CONTEXT_THEME_FIXTURE} testID="labels"
       label="Laboratory observation" domain={{ start: 0, end: 24 }} geometry={{ width: 390, height: 160 }}

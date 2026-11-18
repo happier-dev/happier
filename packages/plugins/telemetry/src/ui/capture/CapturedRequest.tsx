@@ -7,14 +7,18 @@
 
 import * as React from 'react';
 import {
+  Icon,
   Item,
   ItemGroup,
+  Row,
   Stack,
   Text,
   usePluginTheme,
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
 import {
+  CapacityBar,
+  HAPPIER_DATA_METRICS,
   HAPPIER_PAGE_METRICS,
   HappierPressable,
   IntervalTimeline,
@@ -48,6 +52,9 @@ const CAPTURE_LOG_LINES_INSET = Object.freeze({
   paddingVertical: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx,
 });
 
+/** The share bar's length beside the step's figures (lab p7AddNow-trace). */
+const SHARE_BAR_STYLE = Object.freeze({ width: HAPPIER_DATA_METRICS.shareBarWidthPx, marginTop: HAPPIER_DATA_METRICS.axisGapPx });
+
 function rowLabel(
   row: Readonly<{ label: string; repeated?: Readonly<{ count: number }> }>,
 ): string {
@@ -76,6 +83,7 @@ export function CapturedRequestSlowest({
   locale: string;
 }>): React.ReactElement | null {
   const text = usePluginTranslation();
+  const theme = usePluginTheme();
   const steps = React.useMemo(
     () =>
       slowestSteps(projectWaterfall(trace.summaries, trace.repeatedQueries)),
@@ -109,6 +117,18 @@ export function CapturedRequestSlowest({
                 value={text('plugins.telemetry.request.shareOfRequest', '{share} of the request', {
                   share: formatTelemetryMetric('errorRate', share, locale),
                 })}
+              />
+              {/* The share as a bar, so the slowest step reads at a glance (the shared capacity bar, its whole = the request). */}
+              <CapacityBar
+                theme={theme}
+                label={rowLabel(row)}
+                value={share}
+                capacity={1}
+                size="inline"
+                showCaption={false}
+                color={failedStep(row) ? theme.colors.danger : theme.colors.mutedText}
+                style={SHARE_BAR_STYLE}
+                testID={`telemetry.request.slowest.share.${row.id}`}
               />
             </Stack>
           }
@@ -176,6 +196,10 @@ export function CapturedRequestWaterfall({
               // label | bar | duration, with the flagged span tagged once (lab p7Issues occurrence).
               value: formatHappierDuration(row.end - row.start, locale),
               ...(raised ? { flag: flag.label } : {}),
+              // A query reads as code, led by the database mark (lab p7AddNow-trace).
+              ...(row.kind === 'query'
+                ? { identifier: true, glyph: <Icon name="database" size="small" tone="secondary" /> }
+                : {}),
             };
           })}
           domain={waterfall.domain}
@@ -323,19 +347,29 @@ function CapturedLogLine({
           ? text('plugins.telemetry.exceptions.logUnavailable', 'The collector didn’t return this line.')
           : (body.body ?? text('plugins.telemetry.exceptions.logEmpty', 'This line has no message.'));
   // Lines wrap rather than cut: on a phone the clock leaves the message room, so no line is a dead end.
+  // The clock, level and service are the line's fixed lead; the message is its own column, so a long one wraps
+  // under its own first word rather than back under the clock.
   const line = (
-    <Text variant="code" selectable={!truncated} tone={failing ? 'danger' : 'neutral'}>
-      <Text variant="code" tone="secondary" value={`${clock}  `} />
-      <Text variant="code" tone={tone} value={severity} />
-      {service === null ? null : <Text variant="code" tone="secondary" value={`  ${service}`} />}
+    <Row gap="none" align="flex-start">
+      <Stack gap="none" testID={testID ? `${testID}.prefix` : undefined}>
+        <Text variant="code" selectable={!truncated}>
+          <Text variant="code" tone="secondary" value={`${clock}  `} />
+          <Text variant="code" tone={tone} value={severity} />
+          {service === null ? null : <Text variant="code" tone="secondary" value={`  ${service}`} />}
+          <Text variant="code" value="  " />
+        </Text>
+      </Stack>
       {message === null ? null : (
-        <Text
-          variant="code"
-          tone={body?.kind === 'unavailable' ? 'secondary' : failing ? 'danger' : 'neutral'}
-          value={`  ${message}`}
-        />
+        <Stack gap="none" grow testID={testID ? `${testID}.message` : undefined}>
+          <Text
+            variant="code"
+            selectable={!truncated}
+            tone={body?.kind === 'unavailable' ? 'secondary' : failing ? 'danger' : 'neutral'}
+            value={message}
+          />
+        </Stack>
       )}
-    </Text>
+    </Row>
   );
   return (
     <Stack gap="none" testID={testID}>

@@ -50,6 +50,8 @@ export const HAPPIER_DATA_METRICS = Object.freeze({
   laneSideLabelMinWidthPx: 480,
   /** A rows timeline at that width: each label beside its bar (a waterfall's span column) and the value after it. */
   intervalRowLabelWidthPx: 240,
+  /** A share bar beside a row's figures (a request step's share of the request): long enough to compare down the rows. */
+  shareBarWidthPx: 112,
   intervalRowValueWidthPx: 64,
   /** Opacity of the text colour for resting bars, a proportion's track and its fill. */
   barRestOpacity: 0.16,

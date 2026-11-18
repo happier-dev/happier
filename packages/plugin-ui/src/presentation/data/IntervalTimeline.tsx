@@ -40,6 +40,10 @@ export type IntervalTimelineInterval = Readonly<{
   flag?: string;
   /** `layout="rows"`: nesting under the interval above (a span inside its request); indents the label only. */
   depth?: number;
+  /** `layout="rows"`: the row's kind mark before its label (a query's database glyph), drawn as given. */
+  glyph?: ReactNode;
+  /** `layout="rows"`: the label names code (a SQL statement, a function), set in the code face. */
+  identifier?: boolean;
   /** Exact domain wording for interaction only; axis, rows and selection readout retain their formatter. */
   datum?: HappierChartDatum;
   /** `layout="lanes"`: the lane this interval is drawn in (a machine, an agent). */
@@ -343,7 +347,10 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
         const labelLine = <View style={{ flexDirection: 'row', alignItems: 'center', gap: HAPPIER_DATA_METRICS.axisGapPx * 1.5, minWidth: 0,
           ...(interval.depth ? { paddingLeft: interval.depth * HAPPIER_DATA_METRICS.blockGapPx } : {}),
           ...(sideLabels ? { width: HAPPIER_DATA_METRICS.intervalRowLabelWidthPx } : { alignSelf: 'stretch' }) }}>
-            <HappierText style={{ ...(sideLabels ? text.body : text.caption), flexShrink: 1 }} numberOfLines={1}>{interval.label}</HappierText>
+            {interval.glyph ? <View aria-hidden importantForAccessibility="no-hide-descendants" style={{ flexShrink: 0 }}>{interval.glyph}</View> : null}
+            <HappierText style={{ ...(sideLabels ? text.body : text.caption), flexShrink: 1,
+              ...(interval.identifier && props.theme.typography?.code?.fontFamily ? { fontFamily: props.theme.typography.code.fontFamily } : {}) }}
+              numberOfLines={1}>{interval.label}</HappierText>
             {interval.flag ? <HappierText testID={props.testID ? `${props.testID}-flag-${interval.id}` : undefined}
               style={{ ...text.captionStrong, color: props.theme.statusText?.danger ?? props.theme.colors.danger, flexShrink: 0 }}>{interval.flag}</HappierText> : null}
             {!sideLabels && interval.value ? <HappierText style={{ ...text.caption, marginLeft: 'auto', flexShrink: 0 }} tabularNumbers>{interval.value}</HappierText> : null}
