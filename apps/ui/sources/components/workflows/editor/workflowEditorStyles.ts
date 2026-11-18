@@ -693,6 +693,12 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         gap: theme.space.s4,
         minWidth: 0,
     },
+    /** The Session chips' own wrapping row, held to its line so a phone wraps them instead of clipping (WF-ACCEPT-1118 item 4). */
+    stepSessionChipGroup: {
+        maxWidth: '100%',
+        flexShrink: 1,
+        minWidth: 0,
+    },
     /** Its label/value rows (lab `.uwe-kb`). */
     kindCardBody: {
         paddingHorizontal: HAPPIER_PAGE_METRICS.cardPaddingPx,

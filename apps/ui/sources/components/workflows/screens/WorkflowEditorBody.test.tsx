@@ -1566,6 +1566,30 @@ describe('workflow editor body', () => {
         expect(picker[0]!.props.workspace.step.sameAsWorkflow).toBeDefined();
     });
 
+    it('puts each Step options label above its value in the phone sheet, beside it in the panel', async () => {
+        const harness = await loadHarness();
+        const { WorkflowFieldPair } = await import('@/components/workflows/editor/WorkflowStepDataEditor');
+        const labelBasis = (screen: Awaited<ReturnType<typeof renderBody>>) => {
+            const row = screen.findByTestId('workflow-editor-inspector-workspace-row');
+            const pair = row?.findAllByType(WorkflowFieldPair)[0];
+            const column = pair?.findAll((node) => typeof node.type === 'string' && Array.isArray(node.props.style))[0];
+            return (column?.props.style as unknown[]).reduce<unknown>((basis, part) =>
+                (part !== null && typeof part === 'object' && 'flexBasis' in part ? (part as { flexBasis: unknown }).flexBasis : basis), undefined);
+        };
+        const wide = await renderBody(harness, { selectedBlockId: 'analyze' });
+        await wide.pressByTestIdAsync('workflow-editor-step-analyze-customize');
+        expect(labelBasis(wide)).not.toBe('100%');
+        await wide.unmount();
+
+        // WF-ACCEPT-1118 item 4 (lab phone frames): at 390 the sheet's rows read label, then value.
+        paneState.detailsAvailable = false;
+        viewport.window = { width: 390, height: 844 };
+        getStorage().setState({ localSettings: { ...getStorage().getState().localSettings, uiMultiPanePanelsEnabled: false } });
+        const phone = await renderBody(harness, { selectedBlockId: 'analyze' });
+        await phone.pressByTestIdAsync('workflow-editor-step-analyze-customize');
+        expect(labelBasis(phone)).toBe('100%');
+    });
+
     it('keeps the menus opened inside Step options within its frame', async () => {
         const harness = await loadHarness();
         const { PopoverBoundaryProvider } = await import('@/components/ui/popover/PopoverBoundary');

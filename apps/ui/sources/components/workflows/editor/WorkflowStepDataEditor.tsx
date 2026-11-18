@@ -306,9 +306,9 @@ export function WorkflowFieldPair(props: Readonly<{
     return (
         <>
             <View
-                style={[workflowEditorStyles.actionFieldLabelColumn, { flexBasis: ACTION_FIELD_LABEL_COLUMN_PX * metricScale },
+                style={[workflowEditorStyles.actionFieldLabelColumn, { flexBasis: track?.stacked === true ? '100%' : ACTION_FIELD_LABEL_COLUMN_PX * metricScale },
                     track?.width == null ? null : { width: track.width }]}
-                onLayout={track === null || track.width !== null ? undefined
+                onLayout={track === null || track.width !== null || track.stacked === true ? undefined
                     : (event) => track.report(props.trackKey, event.nativeEvent.layout.width)}
             >
                 <Text style={workflowEditorStyles.actionFieldLabel}>{props.label}</Text>
@@ -349,7 +349,12 @@ export function formatWorkflowBindingLiteral(draft: WorkflowEditorDraft, referen
 export const WorkflowKindCardLabelTrack = React.createContext<Readonly<{
     width: number | null;
     report: (rowKey: string, width: number) => void;
+    /** A phone sheet's rows (Step options at 390): each label sits on its own line above its value. */
+    stacked?: boolean;
 }> | null>(null);
+
+/** Step options presented as the phone sheet: labels above their values, no shared column to measure. */
+export const WORKFLOW_STACKED_LABEL_TRACK = Object.freeze({ width: null, report: () => {}, stacked: true });
 
 /** The Result row's one line: "Named fields · fixed Yes/No, notes Text". */
 export function formatWorkflowNamedResultSummary(

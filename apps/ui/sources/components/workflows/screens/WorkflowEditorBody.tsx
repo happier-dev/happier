@@ -100,6 +100,7 @@ import type { EntityDragScopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import type { WorkflowProjectTargetControlHandle } from '../editor/WorkflowProjectTargetControl';
 import { WorkflowStepPlaceContext, type WorkflowStepPlace } from '../editor/WorkflowProjectTargetControl';
+import { WORKFLOW_STACKED_LABEL_TRACK, WorkflowKindCardLabelTrack } from '../editor/WorkflowStepDataEditor';
 import {
     WorkflowSaveStatus,
     WorkflowStatusReadout,
@@ -1285,7 +1286,9 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
             maxHeightCap={STEP_OPTIONS_MAX_HEIGHT_PX}
             onRequestClose={closeSettingsPopover}
         >
-            {({ maxHeight, maxWidth }) => (
+            {({ maxHeight, maxWidth, presentation }) => (
+                // The phone sheet's rows read label, then value (lab phone frames); the panel keeps its column.
+                <WorkflowKindCardLabelTrack.Provider value={presentation === 'sheet' ? WORKFLOW_STACKED_LABEL_TRACK : null}>
                 <FloatingOverlay
                     maxHeight={Math.min(maxHeight, STEP_OPTIONS_MAX_HEIGHT_PX)}
                     surfaceChrome="theme"
@@ -1301,6 +1304,7 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                         onDone={closeSettingsPopover}
                     />
                 </FloatingOverlay>
+                </WorkflowKindCardLabelTrack.Provider>
             )}
         </Popover>
     );

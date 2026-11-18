@@ -169,6 +169,7 @@ export function WorkflowStepOptionChips(
     <View style={workflowEditorStyles.stepOptionChips}>
       <View style={workflowEditorStyles.stepOptionChipList}>
         {sessionFields.length === 0 ? null : (
+          <View style={workflowEditorStyles.stepSessionChipGroup}>
           <SessionAuthoringControls
             presentation="chips"
             fields={sessionFields}
@@ -184,6 +185,7 @@ export function WorkflowStepOptionChips(
               : { facts: props.authoringFacts })}
             testIDPrefix={`${props.testIDPrefix}-session`}
           />
+          </View>
         )}
         {workspaceChange === undefined && props.inheritedWorkspaceLabel === undefined ? null : (
           <WorkflowStepWorkspaceChip
