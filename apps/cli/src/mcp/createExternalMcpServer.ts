@@ -27,6 +27,8 @@ import { isControllerDeploymentMutationAction } from '@/session/actions/createCl
 import { createCliActionExecutorFromCredentials, resolveAccountWorkspaceMachine } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { dispatchOriginalAccountAction, prepareOriginalAccountPresetAcquire, readExternalActionRequesterInvocation } from '@/api/externalActionExecutionAuthorization';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { resolveCliActionCallerWorkflowTarget } from '@/session/actions/resolveCliActionCallerSession';
 import { createDaemonPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
 import { executeAccountPluginAction } from '@/session/actions/executeAccountPluginAction';
 import {
@@ -297,12 +299,25 @@ export function createExternalMcpServer(params: Readonly<{
             if (!admittedActionId.success) return { ok: false as const, errorCode: 'unsupported_action', error: 'unsupported_action' };
             const sessionId = context?.defaultSessionId && context.defaultSessionId !== 'cli-global'
               ? context.defaultSessionId : null;
+            let requestedTarget = context?.externalActionTarget ?? controlControllerTarget ?? undefined;
+            if (actionId === 'workflow.run.start' && sessionId
+              && !(requestedTarget?.kind === 'machine' && requestedTarget.project)) {
+              // Focus supplies placement only; it never authenticates the MCP
+              // caller as this Session or grants present-user authority.
+              const focusedTarget = await resolveCliActionCallerWorkflowTarget({
+                context: { ...context, defaultSessionId: sessionId }, credentials: params.credentials,
+                boundSessionId: sessionId, ...(requestedTarget ? { target: requestedTarget } : {}),
+                resolveTransportForSession: (idOrPrefix, signal) => runWithServerHttpBaseUrl(serverHttpBaseUrl, async () =>
+                  resolveSessionTransportContext({ reason: 'session-action', credentials: params.credentials, idOrPrefix,
+                    serverFeaturesSnapshot: await resolveServerFeaturesSnapshot(), ...(signal ? { signal } : {}) })),
+              });
+              if (!focusedTarget) return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
+              requestedTarget = focusedTarget;
+            }
             const reconciliation = reconcileExternalActionTarget({
               actionId: admittedActionId.data,
               rawInput: input,
-              target: context?.externalActionTarget
-                ?? controlControllerTarget
-                ?? (params.machineId ? { kind: 'machine', machineId: params.machineId } : undefined),
+              target: requestedTarget ?? (params.machineId ? { kind: 'machine', machineId: params.machineId } : undefined),
               currentMachineId: params.machineId ?? '',
               context: { actionCaller: context?.actionCaller, surface: toolSurface },
             });

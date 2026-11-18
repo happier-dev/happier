@@ -59,6 +59,10 @@ import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protoc
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { runCompiledActionCliCommand } from '@/cli/actions/executeCommand';
 import { listCompiledActionCliCommands } from '@/cli/actions/compiledCommands';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import { createExternalMcpServer } from '@/mcp/createExternalMcpServer';
 
 const workflowAccountPersonToken = `fixture.${Buffer.from(JSON.stringify({ sub: 'account-1', tokenEpoch: 0,
   provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
@@ -296,7 +300,7 @@ describe('createCliActionDeps workflow boundary', () => {
         reason: 'requester_runtime_unavailable', errorCode: 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE' } });
     expect(http.get.mock.calls.length + http.post.mock.calls.length + machineRpc.mock.calls.length).toBe(beforeHttp);
   });
-  it.each(['compiled_cli_missing_runtime', 'account_person', 'compiled_cli', 'compiled_cli_no_target', 'compiled_cli_missing_machine', 'bound_cli', 'terminal_person', 'agent_process', 'session_custody', 'inherited_custody'] as const)(
+  it.each(['compiled_cli_missing_runtime', 'account_person', 'compiled_cli', 'compiled_cli_no_target', 'compiled_cli_missing_machine', 'bound_cli', 'standalone_mcp', 'standalone_mcp_ask', 'terminal_person', 'agent_process', 'session_custody', 'inherited_custody'] as const)(
     'retains only a person CLI starter through credentialed daemon admission and stored Workflow materialization (%s)', async actor => {
     const originalExitCode = process.exitCode;
     // Private daemon control uses Axios.request; retain its real loopback HTTP
@@ -318,13 +322,23 @@ describe('createCliActionDeps workflow boundary', () => {
       : `fixture.${Buffer.from(JSON.stringify({ sub: 'account-1', tokenEpoch: 0,
         provenance: { v: 1, kind: authenticationKind, authority } })).toString('base64url')}.signature`;
     const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+    const standaloneMcp = actor === 'standalone_mcp' || actor === 'standalone_mcp_ask';
+    const approvalHome = actor === 'standalone_mcp_ask' ? Fastify() : null;
+    const approvalArtifacts = approvalHome ? registerPlainArtifactRoutes(approvalHome, 'account-1') : null;
+    if (approvalHome) onTestFinished(() => approvalHome.close());
+    if (actor === 'standalone_mcp_ask') machineRpc.mockImplementation(async (request: { method: string }) => {
+      // The Machine catalog is a transport boundary. Any command invocation
+      // here is a failed Ask/no-effect assertion, not an executed fixture shell.
+      expect(request.method).toBe(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
+      return { protocolVersion: 1, projection: { v: 2, generation: 1, agentsById: {}, actionsById: {} } };
+    });
     const identity = createMachineInstallationIdentityFixture();
     const installationPrivateKey = Buffer.from(identity.privateKeyBase64, 'base64url');
     const target = { kind: 'machine' as const, machineId: 'machine-1',
       project: { machineId: 'machine-1', directory: tmpdir() } };
     const serverId = 'workflow-starter-r4';
     const originalServerId = configuration.activeServerId;
-    if (actor === 'inherited_custody' || actor === 'bound_cli') Object.assign(configuration, { activeServerId: serverId });
+    if (actor === 'inherited_custody' || actor === 'bound_cli' || standaloneMcp) Object.assign(configuration, { activeServerId: serverId });
     const serverApiUrl = 'https://workflow-person.test';
     // Authenticated features use fetch, not the Axios Account/storage boundary.
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
@@ -399,6 +413,11 @@ describe('createCliActionDeps workflow boundary', () => {
       if (url.endsWith('/v1/machines/machine-1')) return { status: 200, data: { machine } };
       if (url.endsWith('/v2/account/settings')) return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
       if (url.endsWith('/v2/account/settings/history')) return { status: 200, data: { snapshots: [] } };
+      if (approvalHome && new URL(url).pathname.startsWith('/v1/artifacts')) {
+        const requestUrl = new URL(url);
+        const response = await approvalHome.inject({ method: 'GET', url: requestUrl.pathname + requestUrl.search });
+        return { status: response.statusCode, data: response.json() };
+      }
       if (url.includes('/v1/artifacts?')) return readEmptyPlainArtifactListFixture(url, 'account-1');
       if (url.endsWith(PROMPT_LIBRARY_ROWS_ROUTE_V1)) return { status: 200, data: PromptLibraryRowsListResponseV1Schema.parse({
         status: 'listed', rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1,
@@ -408,9 +427,11 @@ describe('createCliActionDeps workflow boundary', () => {
     });
     const basePost = http.post.getMockImplementation()!;
     const runId = '77777777-7777-4777-8777-777777777779';
-    const input = { runId, source: { kind: 'inline', definition: { version: 1, defaults: {}, blocks: [
-      { kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } },
-    ] } } };
+    const input = { runId, source: { kind: 'inline', definition: { version: 1, defaults: {},
+      blocks: actor === 'standalone_mcp_ask' ? [{ kind: 'action', id: 'command', actionId: 'machines.command.run', input: {
+        command: { kind: 'literal', value: 'printf MCP_COMMAND_REQUIRES_ASK' },
+      } }] : [{ kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } }],
+    } } };
     const command = listCompiledActionCliCommands().find(value => value.actionId === 'workflow.run.start');
     if (!command) throw new Error('workflow_run_cli_unavailable');
     const output: string[] = [];
@@ -447,6 +468,10 @@ describe('createCliActionDeps workflow boundary', () => {
     });
     http.post.mockImplementation(async (url: string, body: Record<string, unknown>) => {
       if (recordingDaemonStart) daemonNetworkRequests.push(`POST ${new URL(url).pathname}${body.operation ? `:${body.operation}` : ''}`);
+      if (approvalHome && new URL(url).pathname.startsWith('/v1/artifacts')) {
+        const response = await approvalHome.inject({ method: 'POST', url: new URL(url).pathname, payload: body });
+        return { status: response.statusCode, data: response.json() };
+      }
       if (url.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
       if (url.endsWith('/execution-authorization')) {
         const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
@@ -495,6 +520,24 @@ describe('createCliActionDeps workflow boundary', () => {
         await runWithServerHttpBaseUrl(serverApiUrl, () => cmdSessionActionsExecute(['actions', 'execute', sessionId, 'workflow.run.start',
           '--action-request-id', 'workflow-cli-person-start', '--input-json', JSON.stringify(input), '--json'],
         { readCredentialsFn: async () => credentials }));
+      } else if (standaloneMcp) {
+        const { mcp } = runWithServerHttpBaseUrl(serverApiUrl, () => createExternalMcpServer({ credentials,
+          defaultSessionId: sessionId, machineId: target.machineId, serverFeaturesSnapshot: enabledFeatures,
+          daemonControlTarget: { pid: process.pid, httpPort: address.port, controlToken: 'workflow-starter-control' },
+        }));
+        const client = new Client({ name: 'workflow-mcp-daemon', version: '1' });
+        const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+        try {
+          await mcp.connect(serverTransport); await client.connect(clientTransport);
+          const result = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute',
+            arguments: { actionId: 'workflow.run.start', input } }));
+          const content = result.content.find(item => item.type === 'text');
+          const payload: unknown = content?.type === 'text' ? JSON.parse(content.text) : null;
+          expect(result.isError, JSON.stringify(result)).not.toBe(true);
+          output.push(JSON.stringify({ ok: true, data: payload }));
+        } finally {
+          await client.close(); await mcp.close();
+        }
       } else if (actor === 'agent_process') {
         await runCompiledActionCliCommand({ command, argv: [...command.path, '--server-id', serverId,
           '--input-json', JSON.stringify(input), '--json'],
@@ -524,6 +567,14 @@ describe('createCliActionDeps workflow boundary', () => {
         return;
       }
       const commandResult = JSON.parse(output.join(''));
+      if (actor === 'standalone_mcp_ask') {
+        expect(commandResult).toMatchObject({ ok: true, data: { kind: 'approval_request_created', actionId: 'workflow.run.start' } });
+        const artifactId: unknown = commandResult.data.artifactId;
+        if (typeof artifactId !== 'string') throw new Error('Missing retained Workflow approval');
+        expect(approvalArtifacts?.read(artifactId)).toBeDefined();
+        expect(http.post.mock.calls.filter(([, body]) => body.operation === 'admit')).toEqual([]);
+        return;
+      }
       if (actor === 'account_person') expect(daemonNetworkRequests).toEqual([
         'GET /v1/account/profile', 'GET /v1/account/encryption/currentness', 'GET /v2/account/settings',
         'POST /v1/actions/workflow.run.start/execution-authorization/verify',
@@ -533,17 +584,29 @@ describe('createCliActionDeps workflow boundary', () => {
       expect(actor === 'bound_cli' ? commandResult.data.result : commandResult.data).toMatchObject({ admission: 'created' });
       const admitted = http.post.mock.calls.find(([, body]) => body.operation === 'admit')?.[1];
       expect(admitted).toBeDefined();
-      expect(admittedModeReads).toBeDefined();
-      // Finite Account materialization consumes its retained admission witness.
-      // Session birth retains its separate Settings and custody bootstrap.
-      if (actor !== 'bound_cli') expect(http.get.mock.calls.filter(([url]) => String(url).endsWith('/account/encryption/currentness')))
-        .toHaveLength(admittedModeReads!);
+      if (actor === 'standalone_mcp') {
+        // Private signed-root MCP resolves its Account witness through
+        // workflowFamily, not the external Session RPC's requester factory.
+        expect(http.get.mock.calls.some(([url]) => String(url).endsWith('/account/encryption/currentness')),
+          JSON.stringify(http.get.mock.calls.map(([url]) => new URL(String(url)).pathname))).toBe(true);
+      } else {
+        expect(admittedModeReads).toBeDefined();
+        // Finite Account materialization consumes its retained admission witness.
+        // Session birth retains its separate Settings and custody bootstrap.
+        if (actor !== 'bound_cli') expect(http.get.mock.calls.filter(([url]) => String(url).endsWith('/account/encryption/currentness')))
+          .toHaveLength(admittedModeReads!);
+      }
       const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
         binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId },
         envelope: parseWorkflowStoredContentEnvelopeV1(admitted.acceptedEnvelope) });
       if (accepted.kind !== 'available') throw new Error('accepted_snapshot_unavailable');
       expect(accepted.content.workspaceTarget.project.directory).toBe(target.project.directory);
-      expect(accepted.content.origin?.actionPolicy).toMatchObject({ surface: 'cli' });
+      expect(accepted.content.origin?.actionPolicy).toMatchObject({ surface: actor === 'standalone_mcp' ? 'mcp' : 'cli' });
+      if (actor === 'standalone_mcp') {
+        expect(accepted.content.origin?.authenticatedStarterV1).toBeUndefined();
+        expect(accepted.content.origin?.originSessionId).toBeUndefined();
+        return;
+      }
       expect(accepted.content.origin?.authenticatedStarterV1).toMatchObject({
         requestRef: actor === 'compiled_cli' ? expect.any(String) : 'workflow-cli-person-start',
         requester: { serverId: 'srv_cli_person', accountId: 'account-1' },
