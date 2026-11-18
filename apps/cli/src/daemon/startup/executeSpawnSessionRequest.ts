@@ -1843,7 +1843,7 @@ export async function executeSpawnSessionRequest(
                 const target = sessionTarget.target;
                 const signal = sessionTarget.signal;
                 registerSessionTargetWorkspace({ sessionId: spawnResult.sessionId, lifetime: signal, primarySocketPath: sessionTarget.placement.primarySocketPath,
-                    target: { id: target.id, holderPath: target.holderPath, helperPath: target.helperPath, socketDirectory: target.socketDirectory,
+                    target: { id: target.id, lifetime: target.lifetime, holderPath: target.holderPath, helperPath: target.helperPath, socketDirectory: target.socketDirectory,
                         exec: command => target.exec(command, signal), openChannel: argv => target.openChannel(argv, signal) },
                     workspace: sessionTargetWorkspace, baseline: sessionTargetBaseline });
             }

@@ -57,7 +57,7 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         await symlink(root, alias);
         registerSessionTargetWorkspace({ sessionId: 'path-session', lifetime: lifetime.signal,
             primarySocketPath: join(directory, 'not-started.sock'),
-            target: { id: 'path-target', holderPath: holderExecutable!, helperPath: helperExecutable!, socketDirectory: directory, ...operations },
+            target: { id: 'path-target', lifetime: lifetime.signal, holderPath: holderExecutable!, helperPath: helperExecutable!, socketDirectory: directory, ...operations },
             workspace: { hostRoot: root, targetRoot: guestRoot } });
         try {
             const source = resolveSessionTargetWorkspace({ rootPath: child });
@@ -84,7 +84,7 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         const lifetime = new AbortController();
         const primarySocketPath = join(directory, 'primary.sock');
         registerSessionTargetWorkspace({ sessionId: 'session-t1', lifetime: lifetime.signal, primarySocketPath,
-            target: { id: 'managed:row-1', holderPath: holderExecutable!, helperPath: helperExecutable!, socketDirectory: directory, ...operations },
+            target: { id: 'managed:row-1', lifetime: lifetime.signal, holderPath: holderExecutable!, helperPath: helperExecutable!, socketDirectory: directory, ...operations },
             workspace: { hostRoot: '/host/sessions/ws', targetRoot: guestRoot } });
         // A request scoped to another Session never borrows this Session's placement (SEC1116G item 1).
         expect(resolveSessionTargetWorkspace({ sessionId: 'another-session', rootPath: '/host/sessions/ws' })).toBeNull();

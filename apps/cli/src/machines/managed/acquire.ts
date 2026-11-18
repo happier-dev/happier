@@ -555,6 +555,8 @@ export type ManagedSessionTargetRequest = Readonly<{
 /** The target's provider operations for one Session, under the Session authority, plus where its holder lives. */
 export type ManagedSessionTarget = Readonly<{
     id: string;
+    /** Ends with the Session or when the managed target revokes this admission. */
+    lifetime: AbortSignal;
     holderPath: string;
     helperPath: string;
     socketDirectory: string;
@@ -765,7 +767,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         }
         return Object.freeze({
             id: `managed:${current.id}`, holderPath: placed.holderPath, helperPath: placed.helperPath, socketDirectory: placed.socketDirectory,
-            platform: placed.platform, home: placed.platform.home,
+            platform: placed.platform, home: placed.platform.home, lifetime,
             // Only the creating provider can attest an isolated target that Happier created.
             ...(correlation.resource.origin === 'created' ? { agentEnvironment: { IS_SANDBOX: '1' } } : {}),
             putFile: (path, bytes, signal) => io.putFile({ path, bytes, signal }),

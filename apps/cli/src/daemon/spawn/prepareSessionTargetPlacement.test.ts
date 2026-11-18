@@ -34,7 +34,7 @@ function fakeCustody() {
     const requests: ManagedSessionTargetRequest[] = [];
     return { requests, open: async (request: ManagedSessionTargetRequest) => {
         requests.push(request);
-        return { id: 'managed:row-1', holderPath: '/g/.happier/holder/v/happier-session-holder', helperPath: '/g/h', socketDirectory: '/g/run',
+        return { id: 'managed:row-1', lifetime: request.lifetime, holderPath: '/g/.happier/holder/v/happier-session-holder', helperPath: '/g/h', socketDirectory: '/g/run',
             home: '/g', platform: { os: 'linux' as const, arch: 'x64' as const, home: '/g' },
             exec: async (command: string) => ({ status: 0, stdout: `ran:${command}`, stderr: '' }),
             putFile: async () => undefined,

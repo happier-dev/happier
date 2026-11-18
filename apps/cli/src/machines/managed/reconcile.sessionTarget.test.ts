@@ -12,6 +12,8 @@ import type { ManagedMachineAcquisitionDriverInput } from './acquire';
 import type { ManagedMachinePolicyInvalidation } from '@/api/apiMachine';
 import { createManagedNativeInvocation, reconcileManagedMachine } from './reconcile';
 import { createManagedMachineAcquisitionDriver, createManagedMachineControllerClient } from './acquire';
+import { registerSessionTargetWorkspace, resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { deliverSessionTargetLaunch } from '@/daemon/spawn/prepareSessionTargetPlacement';
 import { createManagedPresetHydrator } from './presetHydration';
 import { execFile } from 'node:child_process';
@@ -1011,6 +1013,46 @@ describe('Session placement on a managed target (driver)', () => {
         await expect(target.exec('true', new AbortController().signal)).rejects.toMatchObject({ code: 'intent_changed' });
         expect(h.calls.length).toBe(before);
         expect(reads).toBe(2);
+    });
+
+    it('routes an unscoped workspace request to the live Session after deletion revokes the earlier target at the same root', async () => {
+        const h = harness({ guest: true });
+        const replacement = { ...machine, id: 'replacement-target' };
+        const rows = new Map([[machine.id, machine], [replacement.id, replacement]]);
+        const listeners = new Set<(change?: ManagedMachinePolicyInvalidation) => void | Promise<void>>();
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async id => rows.get(id) ?? null,
+            subscribeManagedMachineChanges: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; } });
+        const root = await mkdtemp(join(tmpdir(), 'placed-workspace-source-'));
+        onTestFinished(() => rm(root, { recursive: true, force: true }));
+        const place = async (managedId: string, sessionId: string) => {
+            const session = new AbortController();
+            onTestFinished(() => session.abort());
+            const target = await driver.openSessionTarget({ managedId, sessionId, requesterAccountId: 'owner',
+                lifetime: session.signal, holder });
+            registerSessionTargetWorkspace({ sessionId, lifetime: session.signal, primarySocketPath: join(target.socketDirectory, `${sessionId}.sock`),
+                target: { ...target, exec: command => target.exec(command, session.signal),
+                    openChannel: argv => target.openChannel(argv, session.signal) },
+                workspace: { hostRoot: root, targetRoot: '/g/project' } });
+            return { session, target };
+        };
+        const old = await place(machine.id, 'old-session');
+        const admission = createFilesystemEffectAdmission({ resolveWorkspaceTarget: resolveSessionTargetWorkspace });
+        const selectByDirectory = () => admission.selectWorkspaceSource(undefined, { cwd: root });
+        const oldSource = selectByDirectory();
+        expect(oldSource.id).toBe('managed:managed-target:old-session');
+
+        rows.set(machine.id, { ...machine, desired: 'delete', intentRevision: machine.intentRevision + 1 });
+        await Promise.all([...listeners].map(async listener => await listener({ kind: 'managed', managedIds: [machine.id] })));
+        expect(old.session.signal.aborted).toBe(false);
+        await expect(old.target.exec('true', old.session.signal)).rejects.toMatchObject({ code: 'intent_changed' });
+        expect(selectByDirectory()).toBe(oldSource); // A revoked-only root must still refuse through the target.
+        const live = await place(replacement.id, 'live-session');
+        await expect(live.target.exec('true', live.session.signal)).resolves.toMatchObject({ status: 0 });
+        const liveScope = { authorization: { kind: 'session.write', sessionId: 'live-session' } };
+        const liveSource = admission.selectWorkspaceSource(liveScope, { cwd: root });
+        expect(liveSource.id).toBe('managed:replacement-target:live-session');
+        expect(selectByDirectory()).toBe(liveSource);
+        expect(admission.selectWorkspaceSource({ authorization: { kind: 'session.write', sessionId: 'old-session' } }, { cwd: root })).toBe(oldSource);
     });
 
     it.each([false, true, 'baked', 'deferred'] as const)('opens the opaque preset context and preserves required Setup even without a retained Setup record (%s)', async requiredSetup => {

@@ -138,7 +138,7 @@ it.each([false, true])('reuses a committed native finite seed across admitted ch
         const releaseRelay = await restoreSessionTargetRelay({ request: { managedId: 'guest' }, sessionKey: baselineRequest.sessionId,
           requesterAccountId: 'owner', holderVersion: 'test', socketPath: createSessionHolderSocketPath(), readTrustedCallerPid: () => process.pid,
           // Restored Session authority is the provider boundary; the baseline read uses the real finite worker owner above.
-          openManagedSessionTarget: async () => ({ id: 'managed:guest', holderPath: '/guest/holder', helperPath: '/guest/helper',
+          openManagedSessionTarget: async ({ lifetime }) => ({ id: 'managed:guest', lifetime, holderPath: '/guest/holder', helperPath: '/guest/helper',
             socketDirectory: parent, home: parent, platform: { os: 'linux', arch: 'x64', home: parent },
             exec: async () => ({ status: 0, stdout: '', stderr: '' }), putFile: async () => undefined,
             ensureWorkspaceRuntime: async () => ({ binaryPath: '/guest/happier' }), openChannel: () => new PassThrough() }),

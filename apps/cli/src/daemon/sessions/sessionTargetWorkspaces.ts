@@ -18,6 +18,7 @@ import { expandHomeDirPath, isCanonicalAbsolutePathInsideRoot } from '@/utils/pa
  */
 export type SessionTargetWorkspaceTarget = Readonly<{
     id: string;
+    lifetime: AbortSignal;
     holderPath: string;
     helperPath: string;
     socketDirectory: string;
@@ -74,34 +75,34 @@ function physicalPath(path: string): string | null {
     try { return realpathSync(expandHomeDirPath(path)); } catch { return null; }
 }
 
+function findWorkspaceAt(path: string, readRoot: (entry: Entry) => string | null): [string, Entry] | undefined {
+    let revoked: [string, Entry] | undefined;
+    for (const registration of entries) {
+        const entry = registration[1];
+        const root = readRoot(entry);
+        if (!root || !isCanonicalAbsolutePathInsideRoot(root, path)) continue;
+        if (!entry.target.lifetime.aborted) return registration;
+        revoked ??= registration;
+    }
+    return revoked;
+}
+
+function findWorkspaceByDirectory(path: string): [string, Entry] | undefined {
+    const lexical = findWorkspaceAt(path, entry => entry.workspace.hostRoot);
+    if (lexical && !lexical[1].target.lifetime.aborted) return lexical;
+    const requestedPath = physicalPath(path);
+    const physical = requestedPath ? findWorkspaceAt(requestedPath, entry => physicalPath(entry.workspace.hostRoot)) : undefined;
+    if (physical && !physical[1].target.lifetime.aborted) return physical;
+    // A revoked-only root must keep its target refusal, including when it no longer exists.
+    return lexical ?? physical;
+}
+
 /** `resolveWorkspaceTarget` for filesystem admission, including directory-only Git panel requests. */
 export function resolveSessionTargetWorkspace(placement: WorkspaceSourcePlacement): WorkspaceSource | null {
-    let sessionId = placement.sessionId;
-    let entry = sessionId ? entries.get(sessionId) : undefined;
-    // A Session-scoped request uses only its own Session's placement: another Session's root
-    // stays this Machine's path, so the host identity check decides it (SEC1116G item 1).
-    if (!sessionId && placement.rootPath) {
-        for (const [id, candidate] of entries) {
-            if (isCanonicalAbsolutePathInsideRoot(candidate.workspace.hostRoot, placement.rootPath)) {
-                sessionId = id;
-                entry = candidate;
-                break;
-            }
-        }
-        // Aliases of a shared root carry the same placement. Keep lexical matching
-        // above even for unavailable/nonexistent paths: failure must not select host IO.
-        if (!entry) {
-            const requestedPath = physicalPath(placement.rootPath);
-            if (requestedPath) for (const [id, candidate] of entries) {
-                const root = physicalPath(candidate.workspace.hostRoot);
-                if (root && isCanonicalAbsolutePathInsideRoot(root, requestedPath)) {
-                    sessionId = id;
-                    entry = candidate;
-                    break;
-                }
-            }
-        }
-    }
+    // Explicit Session scope selects its own placement, including a revoked target.
+    const [sessionId, entry] = placement.sessionId
+        ? [placement.sessionId, entries.get(placement.sessionId)] as const
+        : (placement.rootPath ? findWorkspaceByDirectory(placement.rootPath) : undefined) ?? [];
     if (!entry) return null;
     const client = workspaceClient(entry);
     entry.source ??= createHolderWorkspaceSource({ id: `${entry.target.id}:${sessionId}`, rootPath: entry.workspace.hostRoot,

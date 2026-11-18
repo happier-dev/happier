@@ -203,7 +203,7 @@ export async function restoreSessionTargetRelay(input: SessionTargetAuthorityReq
             const baseline = input.projectFiles.readBaseline
                 ? await input.projectFiles.readBaseline(lifetime.signal) : origin.baseline ?? null;
             registerSessionTargetWorkspace({ sessionId, lifetime: lifetime.signal, primarySocketPath,
-                target: { id: target.id, holderPath: target.holderPath, helperPath: target.helperPath, socketDirectory: target.socketDirectory,
+                target: { id: target.id, lifetime: target.lifetime, holderPath: target.holderPath, helperPath: target.helperPath, socketDirectory: target.socketDirectory,
                     exec: command => target.exec(command, lifetime.signal), openChannel: argv => target.openChannel(argv, lifetime.signal) },
                 workspace: { hostRoot: origin.sourceWorkspace.rootPath, targetRoot: origin.targetWorkspace.rootPath },
                 ...(baseline ? { baseline } : {}) });
