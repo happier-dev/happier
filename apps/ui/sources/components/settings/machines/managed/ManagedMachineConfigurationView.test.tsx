@@ -692,6 +692,61 @@ describe('mounted managed configurator', () => {
     expect(harness.requests.filter(request => /machines\.provisioners\.(check|options)|machines\.managed\.acquire/.test(request.path))).toHaveLength(0);
   });
 
+  it('keeps the offline Pool recovery without offering a redundant form retry for Docker', async () => {
+    const { DEVCONTAINER_PLUGIN } = await import('../../../../../../../packages/plugins/devcontainer/src/manifest');
+    const { installBundledPluginUiDeclarationsForTests } = await import('@/dev/testkit/mocks/bundledPluginUiAssets');
+    const manifest = PluginPortableReleaseManifestV1Schema.parse(DEVCONTAINER_PLUGIN.manifest);
+    onTestFinished(installBundledPluginUiDeclarationsForTests([{ pluginId: manifest.id, pluginVersion: manifest.version,
+      packageName: '@happier-dev/plugins-devcontainer', displayName: manifest.displayName, hasMachineProvisioners: true,
+      entriesById: {}, normalizedManifest: manifest }]));
+    const homeId = 'srv_docker_offline_pool';
+    const serverId = await addPresetHome({ name: 'Compute', serverUrl: 'https://docker-offline-pool.example.test',
+      serverIdentityId: homeId, accountId: 'owner', currentAccount: true, machinePoolsEnabled: true });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
+    const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } =
+      await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' };
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1,
+      intentReads: [{ pluginId: manifest.id, response: createEnabledMachinePluginIntentReadFixture(manifest) }],
+      materializations: [], snapshots: [] } });
+    const declarations = await readPluginAccountAvailability(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' });
+    if (declarations.kind !== 'available') throw new Error('Expected the Docker declaration');
+    const { projectAccountManagedProvisioners } = await import('@happier-dev/cli-common/machines/managed/provisioners');
+    const selected = projectAccountManagedProvisioners(declarations.declarations).find(row => row.contribution.pluginId === manifest.id);
+    if (!selected) throw new Error('Expected the Docker provisioner');
+    const choices = { runtime: 'docker', workspaceFolder: '/home/owner/projects/website',
+      configuration: { kind: 'image', image: 'ubuntu:24.04' } };
+    const poolId = '6be84651-2df7-4125-aac4-0d093217b198';
+    const saved = createPlainManagedMachinePresetFixture({ id: 'docker-offline-pool', homeId, revision: 0,
+      name: 'Docker container', owner: { kind: 'account', accountId: 'owner' }, controllerPoolId: poolId,
+      launch: { provider: selected.contribution, schemaVersion: selected.descriptor.schemaVersion, name: 'Docker container', choices } });
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
+    const { MachinePoolListOutputV1Schema } = await import('@happier-dev/protocol/machines/pools/v1');
+    harness.answer(serverId, '/v1/machines/pools/list', { body: MachinePoolListOutputV1Schema.parse({ pools: [{
+      pool: { id: poolId, name: { kind: 'available', label: { content: { t: 'plain', v: 'Docker pool' }, recipientEnvelope: null } },
+        description: null, revision: 0, createdAt: 1, updatedAt: 1, audience: { kind: 'private' }, members: [] },
+      availability: { state: 'known', connectedCount: 0, enabledCount: 1 },
+      access: { canManage: true, canResolve: true, canViewMembers: true },
+    }] }) });
+    await answerProvisionerAction(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+      const request = readProvisionerRequest(value);
+      return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
+        execution: { ok: true, result: { provisioners: [selected] } } } };
+    } });
+    const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+    const { t } = await import('@/text');
+    const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
+      provisioner={buildQualifiedPluginContributionKey(selected.contribution)} presetId={saved.id} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('machinePresets.poolNoMachine')));
+      await flushHookEffects();
+      expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
+      expect(screen.findByTestId('managed-config.form-unavailable')).toBeNull();
+      expect(screen.findByTestId('managed-config.form-unavailable:action')).toBeNull();
+    } finally { await screen.unmount(); }
+  });
+
   it.each(([
     { availability: { state: 'known', connectedCount: 0, enabledCount: 1 }, disabled: true },
     { availability: { state: 'known', connectedCount: 1, enabledCount: 1 }, disabled: false },

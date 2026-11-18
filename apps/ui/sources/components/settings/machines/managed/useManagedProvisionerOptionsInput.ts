@@ -42,9 +42,9 @@ export async function readManagedProvisionerOptionsInput(input: Readonly<{
             ? selected.manifest.contributes.actions.find(action => action.id === localId) : undefined;
         return action?.inputSchema ? { kind: 'ready', schema: action.inputSchema,
             action: { pluginId: identity.pluginId, id: localId, occurrenceId },
-            ...(input.declarationsOnly ? { presentation: {
+            presentation: {
                 title: action.title, description: action.description, inputHints: action.inputHints,
-            } } : {}) }
+            } }
             : { kind: 'unavailable', error: 'option_unavailable' };
     }
     const result = await machinePluginActionSchemasRead(controller.machineId, {
