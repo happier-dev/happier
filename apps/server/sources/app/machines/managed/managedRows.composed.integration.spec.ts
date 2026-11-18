@@ -55,7 +55,9 @@ describe('retained managed rows across declaration changes', () => {
             machineId: controller.machineId, materializationId: controller.installationId, pluginId: manifest.id, version: manifest.version,
             sourceClass: 'bundledFirstParty', portableRelease: false, archiveDigestSha256: declaration.manifestDigestSha256,
             uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
-        const choices = { store: '/tmp/managed-power-report', image: 'fixture:ubuntu', arch: 'x86_64' as const,
+        // Short stores keep Lima's socket paths inside the Unix limit, so the fixture
+        // never depends on the test host's home directory (machineLima.mjs fallback).
+        const choices = { store: '/tmp/mr-power', image: 'fixture:ubuntu', arch: 'x86_64' as const,
             vmType: 'qemu' as const, cpus: 2, memoryGiB: 4, diskGiB: 16, mounts: [] };
         const input = { enrollmentIdentity: { kind: 'existingUser' as const, role: 'adopted' as const },
             selection: { kind: 'one-off' as const, homeId, controller,
@@ -96,7 +98,7 @@ describe('retained managed rows across declaration changes', () => {
         await db.machine.create({ data: { id: controller.machineId, accountId: account.id, metadata: '{}', active: true,
             installationId: controller.installationId, pluginMaterializationRevision: 1n } });
         const manifest = await seedBundledManagedAvailability(account.id, homeId, controller, ['machine-lima.json']);
-        const choices = { store: '/tmp/managed-cleanup-custody', image: 'fixture:ubuntu', arch: 'x86_64' as const,
+        const choices = { store: '/tmp/mr-cleanup', image: 'fixture:ubuntu', arch: 'x86_64' as const,
             vmType: 'qemu' as const, cpus: 2, memoryGiB: 4, diskGiB: 16, mounts: [] };
         const input = { enrollmentIdentity: { kind: 'existingUser' as const, role: 'adopted' as const },
             selection: { kind: 'one-off' as const, homeId, controller,
@@ -153,7 +155,7 @@ describe('retained managed rows across declaration changes', () => {
         await db.machine.create({ data: { id: controller.machineId, accountId: account.id, metadata: '{}', active: true,
             installationId: controller.installationId, installationPublicKey: new Uint8Array(keys.publicKey), pluginMaterializationRevision: 1n } });
         const manifest = await seedBundledManagedAvailability(account.id, homeId, controller, ['machine-lima.json']);
-        const choices = { store: '/tmp/managed-observation-reload', image: 'fixture:ubuntu', arch: 'x86_64' as const,
+        const choices = { store: '/tmp/mr-observe', image: 'fixture:ubuntu', arch: 'x86_64' as const,
             vmType: 'qemu' as const, cpus: 2, memoryGiB: 4, diskGiB: 16, mounts: [] };
         const input = { enrollmentIdentity: { kind: 'existingUser' as const, role: 'adopted' as const },
             selection: { kind: 'one-off' as const, homeId, controller,
@@ -243,7 +245,7 @@ describe('retained managed rows across declaration changes', () => {
         await db.machine.create({ data: { id: controller.machineId, accountId: account.id, metadata: '{}', active: true,
             installationId: controller.installationId, installationPublicKey: new Uint8Array(keys.publicKey), pluginMaterializationRevision: 1n } });
         const manifest = await seedBundledManagedAvailability(account.id, homeId, controller);
-        const choices = { store: '/tmp/managed-row-skew', image: 'fixture:ubuntu', arch: 'x86_64' as const,
+        const choices = { store: '/tmp/mr-skew', image: 'fixture:ubuntu', arch: 'x86_64' as const,
             vmType: 'qemu' as const, cpus: 2, memoryGiB: 4, diskGiB: 16, mounts: [] };
         const input = { enrollmentIdentity: { kind: 'existingUser' as const, role: 'adopted' as const },
             selection: { kind: 'one-off' as const, homeId, controller,
@@ -272,7 +274,8 @@ describe('retained managed rows across declaration changes', () => {
         const reconciliation = defineMachineProvisionerReconciliationSchemas({ launch: staleLaunch,
             resource: LimaResourceSchema, nativeOperation: LimaResourceSchema });
         const stale = PluginManifestV2Schema.parse({ ...manifest, contributes: { ...manifest.contributes,
-            machineProvisioners: [{ ...provisioner, launchSchema: staleLaunchSchema }],
+            // PAY49 predates Lima preparation (3011268c06a), so its stale descriptor has none.
+            machineProvisioners: [{ ...(({ preparation: _preparation, ...rest }) => rest)(provisioner), launchSchema: staleLaunchSchema }],
             actions: manifest.contributes.actions?.map(action => action.id === provisioner.actions.acquire
                 ? { ...action, inputSchema: roles.acquireInput.jsonSchema, resultSchema: reconciliation.result.jsonSchema }
                 : action.id === provisioner.reconciliation?.action

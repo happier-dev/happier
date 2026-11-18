@@ -34,6 +34,7 @@ import { ManagedAdmissionOutputV1Schema, ManagedControllerContextOutputV1Schema,
 import { ManagedPolicyCensusOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { LUME_PLUGIN } from '../../../../../../packages/plugins/machine-lume/src/manifest';
 import { createLumeNativeClient } from '../../../../../../packages/plugins/machine-lume/src/machine/nativeClient';
+import { lumeProcessResult } from '../../../../../../packages/plugins/machine-lume/src/machine/nativeClient.testkit';
 import { createLumeProvider } from '../../../../../../packages/plugins/machine-lume/src/machine/provider';
 import { resolveMachineSetup, reportMachineSetup } from './machineSetup';
 import { createManagedPresetHydrator, openManagedPresetCarrier } from '../../../../../cli/src/machines/managed/presetHydration';
@@ -1384,15 +1385,19 @@ describe("managed acquisition durable authority", () => {
         expect(await submitManagedIntent(correlation)).toMatchObject({ submitted: true });
         let exists = true;
         const nativeRequests: string[] = [];
-        const native = createLumeNativeClient({ baseUrl: 'http://localhost:7777', fetch: async (input, init) => {
+        // Pinned Lume deletes a stopped VM through a fresh CLI process (b33ac5c7340);
+        // the process runner is the OS boundary, the HTTP reads stay real.
+        const native = createLumeNativeClient({ baseUrl: 'http://localhost:7777', command: {
+            executable: { kind: 'managedDependency', id: { pluginId: 'happier.machine.lume', localId: 'lume-cli' } },
+            exec: { run: async request => {
+                expect(request.args).toEqual(['delete', '--force', '--storage', value.storage, '--', value.vmName]);
+                nativeRequests.push('CLI delete'); expect(exists).toBe(true); exists = false;
+                return lumeProcessResult(0);
+            } } }, fetch: async (input, init) => {
             const url = new URL(String(input));
             expect(url.pathname).toBe(`/lume/vms/${value.vmName}`);
             expect(url.searchParams.get('storage')).toBe(value.storage);
             nativeRequests.push(init?.method ?? 'GET');
-            if (init?.method === 'DELETE') {
-                expect(exists).toBe(true); exists = false;
-                return Response.json({});
-            }
             return exists ? Response.json({ name: value.vmName, locationName: value.storage, status: 'stopped', os: 'macos',
                 cpuCount: choices.cpu, memorySize: choices.memoryBytes, diskSize: { allocated: 1073741824, total: choices.diskBytes } })
                 : Response.json({ message: `Virtual machine not found: ${value.vmName}` }, { status: 400 });
@@ -1423,7 +1428,7 @@ describe("managed acquisition durable authority", () => {
         expect(settled.submittedNativeEffect).toBeUndefined();
         expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } }))
             .toMatchObject({ allocation: 'confirmed-absent', cleanup: null });
-        expect(nativeRequests).toEqual(['GET', 'DELETE', 'GET']);
+        expect(nativeRequests).toEqual(['GET', 'CLI delete', 'GET']);
     });
 
     it.each(['retry', 'canceled', 'same-admission', 'unavailable', 'stale', 'policy-edit', 'moved-controller'] as const)(
@@ -1799,7 +1804,9 @@ describe("managed acquisition durable authority", () => {
         expect(await admitManagedAcquire(request)).toMatchObject({ replayed: true, machine: { id: created.machine.id } });
         const retained = await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } });
         expect(retained.admittedInput).toEqual({ computeInput: input, continuation: { requestEnvelopeDigest: request.requestEnvelopeDigest },
-            enrollmentAccountId: account.id, requestEnvelopeDigest: request.requestEnvelopeDigest });
+            enrollmentAccountId: account.id, requestEnvelopeDigest: request.requestEnvelopeDigest,
+            // Home pins the guest CLI it will serve at admission (4902f15c22d).
+            guestCli: expect.objectContaining({ source: 'home-payload' }) });
         expect(await db.managedMachine.count({ where: { admittedActionRequestId: "managed-first-request" } })).toBe(1);
         await expect(admitManagedAcquire({ ...request, requestEnvelopeDigest: "verified-changed-private-continuation" })).rejects.toMatchObject({ code: "request_conflict" });
         const correlation = { homeId, managedId: created.machine.id, expectedIntentRevision: 0, requestId: request.input.requestId, controller };
@@ -2564,7 +2571,7 @@ describe("managed acquisition durable authority", () => {
         const retained = (await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } })).admittedInput;
         const identity = { computeInput: projected.input, continuation: { requestEnvelopeDigest: request.requestEnvelopeDigest } };
         expect(retained).toEqual({ ...identity, enrollmentAccountId: fixture.account.id,
-            requestEnvelopeDigest: request.requestEnvelopeDigest });
+            requestEnvelopeDigest: request.requestEnvelopeDigest, guestCli: expect.objectContaining({ source: 'home-payload' }) });
         expect(JSON.stringify(retained)).not.toContain("private-managed-initial-message");
         expect(JSON.stringify(retained)).not.toContain("private-managed-startup-instructions");
         // Historical rows retained the continuation digest without the newer
