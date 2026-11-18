@@ -463,6 +463,8 @@ export type ScmWorkingSnapshot = {
     entriesPage?: { totalFiles: number; nextCursor: number | null };
     /** Set on a `detail` reply: `entries` was not sent ('facts' also measured no totals or conflicts). */
     detail?: 'summary' | 'facts';
+    /** Content revision of a full changed-file list, reusable as knownListRevision. */
+    listRevision?: string;
     summary?: { changedFiles: number; includedAdded: number; includedRemoved: number; pendingAdded: number; pendingRemoved: number };
     totals: {
         includedFiles: number;
@@ -551,6 +553,7 @@ export type ScmStatusSnapshotRequest = {
     /** Absent: the full changed-file list. 'summary': counts only. 'facts': no working-copy scan. */
     detail?: 'summary' | 'facts';
     entriesPage?: { limit: number; cursor?: number; path?: string };
+    knownListRevision?: string;
 };
 export type ScmWorktreesEnrichmentRequest = Pick<ScmStatusSnapshotRequest, 'cwd' | 'backendPreference' | 'outcomeVersion'> & { worktreePaths: string[] };
 export type ScmWorktreeEnrichmentEntry = { path: string; changeCount?: number; lastActivityAt?: number;
@@ -568,6 +571,7 @@ export type ScmWorktreesEnrichmentResponse = {
 
 export type ScmStatusSnapshotResponse = {
     success: boolean;
+    unchanged?: true;
     snapshot?: ScmWorkingSnapshot;
     freshness?: {
         source: 'live-local' | 'cached-local' | 'cached-remote' | 'explicit-remote';
@@ -1129,7 +1133,11 @@ export type ScmRepositoryCloneInput = {
     destinationParentPath: string;
     destinationDirectoryName: string;
     protocol: ScmCloneProtocol;
-    initialCheckout?: { branch: 'main' | null; commit: string } | { branch: 'main'; revision: 'latest-stable' };
+    authentication?: 'connected_account';
+    initialCheckout?:
+        | { branch: 'main' | null; commit: string }
+        | { branch: 'main'; revision: 'latest-stable' }
+        | { branch: string };
     confirmed: true;
     authorizationToken: 'clone-repository';
 };

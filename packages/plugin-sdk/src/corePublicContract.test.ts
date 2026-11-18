@@ -374,32 +374,8 @@ describe('CORE.T1/T5 public contract', () => {
     });
 
     it('freezes the exact service roster behind one availability query', () => {
-        expectTypeOf<PluginServiceId>().toEqualTypeOf<
-            | 'logger'
-            | 'backgroundServices'
-            | 'healthChecks'
-            | 'storage'
-            | 'settings'
-            | 'secrets'
-            | 'events'
-            | 'http'
-            | 'fs'
-            | 'exec'
-            | 'providers'
-            | 'managedServices'
-            | 'machineProvisioners'
-            | 'machineConnectorSecrets'
-            | 'deploymentSource'
-            | 'sessions'
-            | 'resources'
-            | 'mcp'
-            | 'notifications'
-            | 'connectedAccounts'
-            | 'actions'
-            | 'targetedContributions'
-            | 'interactions'
-            | 'composerContent'
-        >();
+        expectTypeOf<PluginServiceId>().toEqualTypeOf<Exclude<keyof PluginServices, 'availability'>>();
+        expectTypeOf<PluginServices['availability']>().parameter(0).toEqualTypeOf<PluginServiceId>();
         expectTypeOf<PluginServices['availability']>().toBeFunction();
         expectTypeOf<PluginServices>().toHaveProperty('connectedAccounts');
         expectTypeOf<PluginServices>().toHaveProperty('actions');

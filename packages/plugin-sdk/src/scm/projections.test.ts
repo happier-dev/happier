@@ -710,6 +710,12 @@ describe('SCM package-local projections', () => {
             .toEqualTypeOf<typeof protocolScm.SCM_OPERATION_ERROR_CODES>();
         expectTypeOf<scmProjection.ScmWorkingSnapshot>()
             .toEqualTypeOf<ProtocolScmWorkingSnapshot>();
+        expectTypeOf<scmProjection.ScmWorkingSnapshot['listRevision']>()
+            .toEqualTypeOf<ProtocolScmWorkingSnapshot['listRevision']>();
+        expectTypeOf<scmProjection.ScmStatusSnapshotRequest['knownListRevision']>()
+            .toEqualTypeOf<protocolScm.ScmStatusSnapshotRequest['knownListRevision']>();
+        expectTypeOf<scmProjection.ScmStatusSnapshotResponse['unchanged']>()
+            .toEqualTypeOf<protocolScm.ScmStatusSnapshotResponse['unchanged']>();
         expectTypeOf<NonNullable<scmProjection.ScmWorkingSnapshot['freshness']>['source']>()
             .toEqualTypeOf<'live-local' | 'cached-local' | 'cached-remote' | 'explicit-remote'>();
         expectTypeOf<NonNullable<scmProjection.ScmWorkingSnapshot['freshness']>['source']>()

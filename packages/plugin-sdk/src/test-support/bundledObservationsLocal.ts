@@ -44,10 +44,19 @@ export const LOCAL_OBSERVATION_CASES: BundledObservationCase[] = [
         return { status: token ? 200 : state === 'absent' ? 404 : state === 'failure' ? 503 : 200,
           headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
       } });
+      const unavailable = (): never => { throw new Error('Unexpected Connected Account operation'); };
       return createCloudClient({ signal: new AbortController().signal, invokedAtMs: 10,
         services: { http, connectedAccounts: {
-          getBinding: async () => ({ account: { service: DOCKER_ACCOUNT_SERVICE, accountId: 'fixture' } }),
+          getBinding: async (purpose) => ({
+            purpose, service: DOCKER_ACCOUNT_SERVICE,
+            target: { kind: 'account', displayName: 'Docker fixture' },
+            account: { service: DOCKER_ACCOUNT_SERVICE, accountId: 'fixture' },
+          }),
           materialize: async () => ({ kind: 'environment', env: { DOCKER_ID: 'fixture-user', DOCKER_PAT: 'fixture-token' } }),
+          requestSelection: unavailable,
+          listAccounts: unavailable,
+          materializeListedAccount: unavailable,
+          watch: unavailable,
         } } }).inspect({ sandboxName: sandboxFixture.name });
     },
   })),
@@ -70,7 +79,10 @@ export const LOCAL_OBSERVATION_CASES: BundledObservationCase[] = [
         storage: state === 'running' || state === 'stopped' ? 'retained' : 'unknown',
         size: state === 'provisioning-zero-dimensions' ? { cpuCores: size.cpuCores } : size },
     async observe() {
-      const native = createLumeNativeClient({ baseUrl: 'http://localhost:7777', fetch: async () => {
+      const native = createLumeNativeClient({ baseUrl: 'http://localhost:7777', command: {
+        executable: { kind: 'managedDependency', id: { pluginId: 'happier.machine.lume', localId: 'lume-cli' } },
+        exec: { async run() { throw new Error('Unexpected native mutation'); } },
+      }, fetch: async () => {
         if (state === 'failure') return Response.json({}, { status: 503 });
         if (state === 'malformed') return new Response('{');
         if (state === 'absent') return Response.json({ message: 'Virtual machine not found: happier-test' }, { status: 400 });

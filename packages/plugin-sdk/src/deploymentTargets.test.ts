@@ -25,8 +25,12 @@ it('publishes the canonical role and preparation contracts through public SDK au
 
 it('preserves an external data capability without authoring runtime Actions', () => {
     const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
+    const runtime = {
+        async listTargets() { throw new Error('Unexpected target discovery'); },
+        async open() { throw new Error('Unexpected connection acquisition'); },
+    };
     const definition = { role: 'data', title: 'External database', targetKind: 'external', icon: 'server-outline',
-        targetSchema: closed, linkSchema: closed, dataV1: { database: { engineId: 'postgresql' } } } as const satisfies publicAuthoring.DeploymentTargetAuthorDefinitionV1;
+        targetSchema: closed, linkSchema: closed, dataV1: { database: { engineId: 'postgresql', runtime } } } as const satisfies publicAuthoring.DeploymentTargetAuthorDefinitionV1;
     const plugin = definePlugin({
         id: 'com.example.data-target', version: '1.0.0', displayName: 'External database',
         deploymentTargets: { database: definition },
@@ -34,7 +38,9 @@ it('preserves an external data capability without authoring runtime Actions', ()
     const parsed = parsePluginManifest(plugin.manifest);
     expect(parsed.ok, parsed.ok ? undefined : JSON.stringify(parsed.diagnostics)).toBe(true);
     if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
-    expect(parsed.manifest.contributes.deploymentTargets).toEqual([{ id: 'database', ...definition }]);
+    expect(parsed.manifest.contributes.deploymentTargets).toEqual([{
+        id: 'database', ...definition, dataV1: { database: { engineId: 'postgresql' } },
+    }]);
 });
 
 it('keeps managed database callbacks private and binds them to the declared target activation', async () => {
@@ -69,7 +75,8 @@ it('preserves an external author runtime target through SDK projection and canon
         resultSchema: publicAuthoring.DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema, dangerLevel: 'safe', readOnly: true,
         run: async () => ({ v: 1, state: 'succeeded', observedAtMs: 1 }) } as const;
     const write = { ...read, title: 'Deploy', dangerLevel: 'writesLocal', readOnly: false } as const;
-    const plans = [{ id: 'free', title: 'Free', facts: [{ label: 'Price', value: '$0' }], included: ['Custom domains'],
+    const plans = [{ id: 'free', title: 'Free', price: { amount: '0', currency: 'USD', unit: 'month' },
+        facts: [{ label: 'Builds', value: '500 a month' }], included: ['Custom domains'],
         source: { url: 'https://example.com/pricing', checkedAt: '2026-11-16' } }];
     const definition = { role: 'runtime', title: 'External runtime', targetKind: 'external', icon: 'server-outline', plans,
         targetSchema: closed, linkSchema: closed,

@@ -184,7 +184,7 @@ const vercel = [
 ];
 
 async function boatObserve(value: unknown, status = 200, transportFailure = false): Promise<MachineProvisionerObservationV1> {
-    const http = createPluginHttpFixture({ request: request => {
+    const http = createPluginHttpFixture({ async request(request) {
         if (transportFailure) throw new Error('simulated HTTP transport failure');
         return { status, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(value)) };
     } });

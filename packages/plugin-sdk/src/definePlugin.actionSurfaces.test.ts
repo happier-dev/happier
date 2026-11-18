@@ -7,7 +7,7 @@ describe('authored Action surface admission', () => {
             id: 'example.surface-admission', version: '0.0.0', displayName: 'Surface admission',
             actions: { read: { title: 'Read', surfaces: ['ui', 'cli', 'plugin'], placementBindings: [], run: () => null } },
         });
-        expect(manifest.contributes.actions[0]?.surfaces).toEqual(['ui', 'cli', 'plugin']);
+        expect(manifest.contributes.actions?.[0]?.surfaces).toEqual(['ui', 'cli', 'plugin']);
     });
 
     it('retains the author default when no surfaces were selected', () => {
@@ -15,7 +15,7 @@ describe('authored Action surface admission', () => {
             id: 'example.default-surfaces', version: '0.0.0', displayName: 'Default surfaces',
             actions: { read: { title: 'Read', run: () => null } },
         });
-        expect(manifest.contributes.actions[0]?.surfaces).toEqual(['cli']);
+        expect(manifest.contributes.actions?.[0]?.surfaces).toEqual(['cli']);
     });
 
     it('projects an explicitly person-only UI Action without an agent surface', () => {
@@ -28,7 +28,7 @@ describe('authored Action surface admission', () => {
                 },
             },
         });
-        expect(manifest.contributes.actions[0]?.personOnly).toBe(true);
-        expect(manifest.contributes.actions[0]?.surfaces).toEqual(['ui', 'cli']);
+        expect(manifest.contributes.actions?.[0]?.personOnly).toBe(true);
+        expect(manifest.contributes.actions?.[0]?.surfaces).toEqual(['ui', 'cli']);
     });
 });

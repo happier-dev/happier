@@ -103,7 +103,9 @@ describe('public machine provisioner authoring', () => {
         if (action.id === 'options') delete envelope.properties.code;
       }
       if (action.id === 'options') {
-        const facts = result.properties?.dimensions?.properties?.size?.items?.properties?.nativeFacts;
+        const items = result.properties?.dimensions?.properties?.size?.items;
+        if (!items || Array.isArray(items)) throw new Error('Expected canonical size item schema');
+        const facts = items.properties?.nativeFacts;
         if (!facts?.properties?.size?.properties) throw new Error('Expected canonical native option facts');
         delete facts.properties.network;
         delete facts.properties.size.properties.memoryBytes;

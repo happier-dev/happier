@@ -11,7 +11,7 @@ const runtime = createMachineProvisionerApiKeyAccount({
   name: 'Example', keyDescription: 'an Example key', codePrefix: 'example', purpose: 'cloud-api',
   headers: [{ origin: 'https://api.example.test', headerName: 'authorization', scheme: 'bearer' }],
   probe: { request: { url: 'https://api.example.test/account', method: 'GET' },
-    read: () => ({ status: 'connected', scopes: [] }) },
+    read: () => ({ status: 'connected', displayName: 'Example account', scopes: [] }) },
 }).runtime;
 
 function context(status: number, failure?: Error): ConnectedAccountReadContext {

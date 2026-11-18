@@ -261,8 +261,7 @@ describe('ActionsService source contract', () => {
         // do not flow back into canonical parser-output types.
         // The producer refines only the recursive validator's erased inline
         // definition. Preserve each containing request and every other Action.
-        type TriggerActionId = 'workflow.trigger.add' | 'workflow.trigger.update'
-            | 'session.trigger.add' | 'session.trigger.update';
+        type TriggerActionId = 'workflow.trigger.add' | 'workflow.trigger.update';
         type RefineInlineDefinition<T> = T extends { kind: 'inline'; definition: unknown }
             ? Omit<T, 'definition'> & { definition: CanonicalWorkflowDefinitionV1 } : T;
         type RefineTarget<T> = {
@@ -283,8 +282,6 @@ describe('ActionsService source contract', () => {
         type PublicTriggerDefinitions = {
             'workflow.trigger.add': InlineDefinition<PluginActionInputById['workflow.trigger.add']['target']>;
             'workflow.trigger.update': InlineDefinition<PluginActionInputById['workflow.trigger.update']['patch']['target']>;
-            'session.trigger.add': InlineDefinition<PluginActionInputById['session.trigger.add']['target']>;
-            'session.trigger.update': InlineDefinition<PluginActionInputById['session.trigger.update']['patch']['target']>;
         };
         type CanonicalTriggerDefinitions = { [Id in TriggerActionId]: CanonicalWorkflowDefinitionV1 };
         const canonicalInputsFitPublic = (

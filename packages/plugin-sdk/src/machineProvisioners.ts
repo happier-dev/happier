@@ -78,7 +78,10 @@ export type MachineProvisionerSnapshotResultV1 = canonical.MachineProvisionerSna
 export const MachineProvisionerSnapshotResultV1Schema: ProtocolComposableSchema<MachineProvisionerSnapshotResultV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerSnapshotResultV1Schema);
 export const MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1 = /* @__PURE__ */ projectProtocolValue(canonical.MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1);
 export const readMachineProvisionerResizeCapabilityV1 = /* @__PURE__ */ projectProtocolValue(canonical.readMachineProvisionerResizeCapabilityV1);
-export const requiresMachineProvisionerEffectReviewV1 = /* @__PURE__ */ projectProtocolValue(canonical.requiresMachineProvisionerEffectReviewV1);
+export const requiresMachineProvisionerEffectReviewV1: (
+  provisioner: Pick<MachineProvisionerContributionV1, 'effectReview'>,
+  launchInput: unknown,
+) => boolean = canonical.requiresMachineProvisionerEffectReviewV1;
 export const readMachineProvisionerResizeRequirementsV1 = /* @__PURE__ */ projectProtocolValue(canonical.readMachineProvisionerResizeRequirementsV1);
 export const managedMachineResizeRequiresRestartV1 = /* @__PURE__ */ projectProtocolValue(canonical.managedMachineResizeRequiresRestartV1);
 export const MachineProvisionerSizeV1Schema: ProtocolComposableSchema<MachineProvisionerSizeV1> = /* @__PURE__ */ projectProtocolValue(canonical.MachineProvisionerSizeV1Schema);

@@ -1,4 +1,5 @@
 /** @moduleRealm any */
+import type { ProtocolComposableSchema } from './protocol/protocolFacade.js';
 
 /** The Protocol subject owner supplies the same identity to core and external resource pages. */
 export type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
@@ -21,20 +22,10 @@ export type { PluginSubjectKindContributionV1, PluginSubjectKindListInputV1, Plu
 export type { PluginSubjectProjectionV1 } from '@happier-dev/protocol/plugins/actions/v2';
 
 /** Ordinary read Actions and the core subject picker consume these same page contracts. */
-export const PluginSubjectKindListInputV1Schema: Readonly<{
-    jsonSchema: PluginJsonSchema;
-    parse(value: unknown): PluginSubjectKindListInputV1;
-    safeParse(value: unknown):
-        | Readonly<{ success: true; data: PluginSubjectKindListInputV1 }>
-        | Readonly<{ success: false; error: unknown }>;
-}> = PluginSubjectKindListInputV1ProtocolSchema;
-export const PluginSubjectKindListResultV1Schema: Readonly<{
-    jsonSchema: PluginJsonSchema;
-    parse(value: unknown): PluginSubjectKindListResultV1;
-    safeParse(value: unknown):
-        | Readonly<{ success: true; data: PluginSubjectKindListResultV1 }>
-        | Readonly<{ success: false; error: unknown }>;
-}> = PluginSubjectKindListResultV1ProtocolSchema;
+export const PluginSubjectKindListInputV1Schema: ProtocolComposableSchema<PluginSubjectKindListInputV1> =
+    PluginSubjectKindListInputV1ProtocolSchema;
+export const PluginSubjectKindListResultV1Schema: ProtocolComposableSchema<PluginSubjectKindListResultV1> =
+    PluginSubjectKindListResultV1ProtocolSchema;
 
 import { AutomationConversationAdmitInputV1Schema as canonicalAutomationConversationAdmitInputV1Schema, AutomationConversationAdmitResultV1Schema as canonicalAutomationConversationAdmitResultV1Schema, AutomationConversationResultDeliveryV1Schema as canonicalAutomationConversationResultDeliveryV1Schema, AutomationResultDeliveryInputV1JsonSchema as canonicalAutomationResultDeliveryInputV1JsonSchema, AutomationResultDeliveryInputV1Schema as canonicalAutomationResultDeliveryInputV1Schema, AutomationResultDeliveryResultV1JsonSchema as canonicalAutomationResultDeliveryResultV1JsonSchema, AutomationResultDeliveryResultV1Schema as canonicalAutomationResultDeliveryResultV1Schema, AutomationResultDeliverySourceV1JsonSchema as canonicalAutomationResultDeliverySourceV1JsonSchema, AutomationResultDeliverySourceV1Schema as canonicalAutomationResultDeliverySourceV1Schema } from '@happier-dev/protocol/automations/result-delivery';
 import type {

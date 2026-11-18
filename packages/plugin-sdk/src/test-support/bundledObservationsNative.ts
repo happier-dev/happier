@@ -82,7 +82,10 @@ function inspectModal(outcome: 'running' | 'ended' | 'absent' | 'failure' | 'mis
   };
   const client: ModalNativeClient = {
     version: () => '0.11.0', apps: { async fromName() { throw new Error('Unexpected inventory'); } },
-    images: { fromRegistry() { throw new Error('Unexpected image lookup'); } },
+    images: {
+      fromRegistry() { throw new Error('Unexpected image lookup'); },
+      fromId() { throw new Error('Unexpected image lookup'); },
+    },
     sandboxes: { async fromId() { return sandbox; }, async create() { throw new Error('Unexpected allocation'); }, async *list() { throw new Error('Unexpected inventory'); } },
   };
   return createModalProvisionerRoles(client, observedAt).inspect({ resource: { appId: 'app-1', sandboxId: 'sandbox-1' } });
