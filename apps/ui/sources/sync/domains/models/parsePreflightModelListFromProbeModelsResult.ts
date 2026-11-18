@@ -14,7 +14,7 @@ export function parsePreflightModelListFromProbeModelsResult(raw: unknown): Pref
         availableModels: modelsRaw
             .filter((m): m is Record<string, unknown> => Boolean(m) && typeof m === 'object' && typeof m.id === 'string' && typeof m.name === 'string')
             .flatMap((m) => {
-                const descriptor = AgentProbeModelSchema.safeParse({ id: m.id, name: m.name, capabilities: m.capabilities, costTier: m.costTier });
+                const descriptor = AgentProbeModelSchema.safeParse({ id: m.id, name: m.name, capabilities: m.capabilities, costTier: m.costTier, upstreamRef: m.upstreamRef });
                 if (!descriptor.success) return [];
                 return [{
                 id: String(m.id),
@@ -28,6 +28,7 @@ export function parsePreflightModelListFromProbeModelsResult(raw: unknown): Pref
                     : {}),
                 ...(descriptor.data.capabilities ? { capabilities: descriptor.data.capabilities } : {}),
                 ...(descriptor.data.costTier ? { costTier: descriptor.data.costTier } : {}),
+                ...(descriptor.data.upstreamRef ? { upstreamRef: descriptor.data.upstreamRef } : {}),
                 }];
             }),
         supportsFreeform: Boolean(supportsFreeformRaw),

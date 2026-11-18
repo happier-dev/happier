@@ -21,6 +21,7 @@ export type AgentType = string;
 export type ModelOption = Readonly<{
     value: ModelMode;
     label: string;
+    upstreamRef?: ProviderModelDescriptorV1['upstreamRef'];
     description: string;
     extendedContextModelId?: string;
     modelOptions?: readonly AcpConfigOption[];
@@ -36,6 +37,7 @@ export type PreflightModelList = Readonly<{
         modelOptions?: readonly AcpConfigOption[];
         capabilities?: ProviderModelDescriptorV1['capabilities'];
         costTier?: ProviderModelDescriptorV1['costTier'];
+        upstreamRef?: ProviderModelDescriptorV1['upstreamRef'];
     }>>;
     supportsFreeform: boolean;
     unavailable?: boolean;
@@ -79,8 +81,12 @@ function mergeDynamicModelOptionWithCatalog(
     const catalog = catalogByValue.get(option.value) ?? null;
     if (!catalog) return option;
     const hasDescription = typeof option.description === 'string' && option.description.trim().length > 0;
-    // Observed catalogs own membership and capabilities; curated copy only enriches presentation.
-    return !hasDescription && catalog.description ? { ...option, description: catalog.description } : option;
+    // Observed catalogs own membership and capabilities. An exact native catalog id can supply presentation facts.
+    const description = hasDescription ? option.description : catalog.description || option.description;
+    const upstreamRef = option.upstreamRef ?? catalog.upstreamRef;
+    return description === option.description && upstreamRef === option.upstreamRef
+        ? option
+        : { ...option, description, ...(upstreamRef ? { upstreamRef } : {}) };
 }
 
 /**
@@ -171,6 +177,7 @@ export function getModelOptionsForPreflightModelList(list: PreflightModelList): 
                 value,
                 label,
                 description: typeof m.description === 'string' ? m.description : '',
+                ...(m.upstreamRef ? { upstreamRef: m.upstreamRef } : {}),
                 ...(readExtendedContextModelId(m.extendedContextModelId)
                     ? { extendedContextModelId: readExtendedContextModelId(m.extendedContextModelId) }
                     : {}),
@@ -289,6 +296,7 @@ function getStaticModelOptionsForAgentType(
             value,
             label: model.name,
             description: typeof model.description === 'string' ? model.description : '',
+            ...(model.upstreamRef ? { upstreamRef: model.upstreamRef } : {}),
             ...(readExtendedContextModelId(model.extendedContextModelId)
                 ? { extendedContextModelId: readExtendedContextModelId(model.extendedContextModelId) }
                 : {}),

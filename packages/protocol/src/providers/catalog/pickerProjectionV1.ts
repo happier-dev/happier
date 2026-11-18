@@ -76,6 +76,7 @@ export function projectProviderCatalogForPicker(input: Readonly<{
         || sameRef(row.ref, input.defaultSelection) || (input.favoriteSelections?.some(ref => sameRef(row.ref, ref)) ?? false);
       const candidates = [...catalog.rows, ...catalog.staleRows.filter(exception)];
       let withheld = 0;
+      const withheldUpstreamModels = new Map<string, NonNullable<ProviderPickerHiddenSource['upstreamModels']>[number]>();
       for (const row of candidates) {
         const hiddenScope = resolveHiddenScope(row, input.modelVisibilityByRef);
         const hidden = hiddenScope !== null;
@@ -87,6 +88,14 @@ export function projectProviderCatalogForPicker(input: Readonly<{
         if (hidden && !current && input.mode !== 'management') continue;
         if (!sourceShown && input.mode !== 'management' && !input.sourceConnectionId && !retained) {
           withheld += 1;
+          const upstreamRef = row.descriptor.upstreamRef;
+          if (catalog.authorization.authorized && upstreamRef) {
+            const key = JSON.stringify([upstreamRef.vendor, upstreamRef.vendorModelId]);
+            const existing = withheldUpstreamModels.get(key);
+            if (!existing || existing.endpointHealth === 'unauthorized') {
+              withheldUpstreamModels.set(key, { upstreamRef, endpointHealth: row.presentation.endpointHealth?.status ?? 'not_checked' });
+            }
+          }
           continue;
         }
         rows.push({
@@ -104,7 +113,9 @@ export function projectProviderCatalogForPicker(input: Readonly<{
       if (!sourceShown && input.mode !== 'management' && !input.sourceConnectionId
           && (withheld > 0 || rows.length > 0)) {
         hiddenSources.push({ connectionId: catalog.connectionId, providerName: catalog.providerName,
-          connectionName: catalog.connectionName, modelCount: withheld });
+          connectionName: catalog.connectionName, modelCount: withheld,
+          ...(withheldUpstreamModels.size > 0 ? { upstreamModels: [...withheldUpstreamModels.values()] } : {}),
+        });
       }
       // Explicit source browsing must retain the owner's typed refusal even
       // when authorization removes every model from the selectable list.

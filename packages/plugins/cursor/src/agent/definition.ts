@@ -41,6 +41,7 @@ export const AGENT_DEFINITION = Object.freeze({
     staticModels: [{
       id: 'composer-2.5-fast',
       name: 'Composer 2.5 Fast',
+      upstreamRef: { vendor: 'cursor', vendorModelId: 'composer-2.5' },
       description: 'Cursor Composer 2.5 fast model, discovered dynamically when the Cursor CLI is available.',
     }],
   },

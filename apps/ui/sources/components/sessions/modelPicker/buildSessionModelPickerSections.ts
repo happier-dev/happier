@@ -25,6 +25,7 @@ import {
     type SessionModelPickerOptionValue,
     type SessionModelPickerValue,
 } from './sessionModelSelectionKey';
+import { resolveSessionModelPickerSourceState, type SessionModelPickerSourceState } from './selectSessionModelPickerSourceGroups';
 
 export type SessionModelProjectionGroup = Extract<
     DaemonProviderModelProjectionResponseV1,
@@ -67,6 +68,7 @@ export type SessionNativeModelOption = Readonly<{
     value: string;
     label: string;
     description?: string;
+    upstreamRef?: ProviderModelDescriptorV1['upstreamRef'];
     /** The options this model declares (its effort tiers), so its card can offer them before it is chosen. */
     modelOptions?: readonly AcpConfigOption[];
 }>;
@@ -79,6 +81,8 @@ export type SessionNativeModelOption = Readonly<{
 export type SessionModelPickerOptionSource = Readonly<{ label: string; native: boolean; inDescription?: boolean }>;
 export type SessionModelPickerOption = OptionPickerOption<SessionModelPickerOptionValue> & Readonly<{
     source?: SessionModelPickerOptionSource;
+    upstreamRef?: ProviderModelDescriptorV1['upstreamRef'];
+    sourceState?: SessionModelPickerSourceState;
     /** Recovery can be clickable while the model remains unavailable for selection. */
     availability?: 'available' | 'unavailable';
     unavailableReason?: string | null;
@@ -119,6 +123,8 @@ export function withSessionModelSourceSuffixes(
         return changed ? { ...section, options } : section;
     });
 }
+
+export { selectSessionModelPickerSourceGroups, type SessionModelPickerSourceGroup } from './selectSessionModelPickerSourceGroups';
 
 export type SessionModelSelectedTriggerPresentation = Readonly<{
     subtitle: string;
@@ -224,6 +230,8 @@ export function buildSessionModelPickerSections(input: Readonly<{
                 description: presentation.description,
                 disabled: true,
                 source: nativeSource,
+                upstreamRef: model.upstreamRef,
+                sourceState: 'ready',
                 availability: 'unavailable',
                 unavailableReason: presentation.primaryStatus?.label ?? t('agentInput.model.unavailable'),
             }];
@@ -232,6 +240,7 @@ export function buildSessionModelPickerSections(input: Readonly<{
         // improvement"), so it is read in full rather than cut mid-sentence.
         return [{ value, label: model.label, searchText: model.value, description: model.description, source: nativeSource,
             ...(model.description ? { descriptionLines: 0 } : {}),
+            upstreamRef: model.upstreamRef,
             availability: 'available', unavailableReason: null }];
     });
 
@@ -263,6 +272,8 @@ export function buildSessionModelPickerSections(input: Readonly<{
                 // gets the card's second line instead of cutting the id short.
                 descriptionLines: 2,
                 source,
+                upstreamRef: row.descriptor.upstreamRef,
+                sourceState: resolveSessionModelPickerSourceState(group.authorization, row.endpointHealth),
                 disabled: presentation.selectionDisabled,
                 availability: presentation.selectionDisabled ? 'unavailable' : 'available',
                 unavailableReason: presentation.selectionDisabled

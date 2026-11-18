@@ -709,7 +709,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
             "type": "boolean"
           }
         ],
-        "name": "Fable 5.1"
+        "name": "Fable 5.1",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-fable-5-1"
+        }
       },
       {
         "contextWindowTokens": 1000000,
@@ -758,7 +762,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
             "type": "boolean"
           }
         ],
-        "name": "Opus 5.5"
+        "name": "Opus 5.5",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-opus-5-5"
+        }
       },
       {
         "contextWindowTokens": 1000000,
@@ -807,11 +815,19 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
             "type": "boolean"
           }
         ],
-        "name": "Opus 5"
+        "name": "Opus 5",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-opus-5"
+        }
       },
       {
         "id": "claude-sonnet-5-5",
-        "name": "Sonnet 5.5"
+        "name": "Sonnet 5.5",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-sonnet-5-5"
+        }
       },
       {
         "contextWindowTokens": 1000000,
@@ -860,7 +876,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
             "type": "boolean"
           }
         ],
-        "name": "Sonnet 5"
+        "name": "Sonnet 5",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-sonnet-5"
+        }
       },
       {
         "contextWindowTokens": 1000000,
@@ -909,7 +929,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
             "type": "boolean"
           }
         ],
-        "name": "Fable 5"
+        "name": "Fable 5",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-fable-5"
+        }
       },
       {
         "contextWindowTokens": 1000000,
@@ -958,7 +982,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
             "type": "boolean"
           }
         ],
-        "name": "Mythos 5"
+        "name": "Mythos 5",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-mythos-5"
+        }
       },
       {
         "contextWindowTokens": 1000000,
@@ -1007,7 +1035,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
             "type": "boolean"
           }
         ],
-        "name": "Opus 4.8"
+        "name": "Opus 4.8",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-opus-4-8"
+        }
       },
       {
         "contextWindowTokens": 1000000,
@@ -1056,7 +1088,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
             "type": "boolean"
           }
         ],
-        "name": "Opus 4.7"
+        "name": "Opus 4.7",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-opus-4-7"
+        }
       },
       {
         "contextWindowTokens": 200000,
@@ -1089,7 +1125,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
             "type": "select"
           }
         ],
-        "name": "Opus 4.6"
+        "name": "Opus 4.6",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-opus-4-6"
+        }
       },
       {
         "contextWindowTokens": 200000,
@@ -1122,13 +1162,21 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
             "type": "select"
           }
         ],
-        "name": "Sonnet 4.6"
+        "name": "Sonnet 4.6",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-sonnet-4-6"
+        }
       },
       {
         "costTier": "low",
         "description": "Claude Haiku model for lighter tasks and lower-latency replies.",
         "id": "claude-haiku-5-5",
-        "name": "Haiku 5.5"
+        "name": "Haiku 5.5",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-haiku-5-5"
+        }
       },
       {
         "aliases": [
@@ -1137,7 +1185,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
         "costTier": "low",
         "description": "Fastest Claude option for lighter tasks and lower-latency replies.",
         "id": "claude-haiku-4-5",
-        "name": "Haiku 4.5"
+        "name": "Haiku 4.5",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-haiku-4-5"
+        }
       },
       {
         "description": "Prior Opus generation alias for compatibility with existing Claude setups.",
@@ -1164,12 +1216,20 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
             "type": "select"
           }
         ],
-        "name": "Opus 4.5"
+        "name": "Opus 4.5",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-opus-4-5"
+        }
       },
       {
         "description": "Prior Sonnet generation alias for compatibility with existing Claude setups.",
         "id": "claude-sonnet-4-5",
-        "name": "Sonnet 4.5"
+        "name": "Sonnet 4.5",
+        "upstreamRef": {
+          "vendor": "anthropic",
+          "vendorModelId": "claude-sonnet-4-5"
+        }
       }
     ],
     "supportsFreeform": true,
@@ -2103,7 +2163,11 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       {
         "description": "Cursor Composer 2.5 fast model, discovered dynamically when the Cursor CLI is available.",
         "id": "composer-2.5-fast",
-        "name": "Composer 2.5 Fast"
+        "name": "Composer 2.5 Fast",
+        "upstreamRef": {
+          "vendor": "cursor",
+          "vendorModelId": "composer-2.5"
+        }
       }
     ],
     "supportsFreeform": true,
@@ -2796,32 +2860,56 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       {
         "description": "Best for complex reasoning, coding, and longer-running tasks.",
         "id": "gemini-2.5-pro",
-        "name": "Gemini 2.5 Pro"
+        "name": "Gemini 2.5 Pro",
+        "upstreamRef": {
+          "vendor": "google",
+          "vendorModelId": "gemini-2.5-pro"
+        }
       },
       {
         "description": "Fast, balanced Gemini model for general-purpose work.",
         "id": "gemini-2.5-flash",
-        "name": "Gemini 2.5 Flash"
+        "name": "Gemini 2.5 Flash",
+        "upstreamRef": {
+          "vendor": "google",
+          "vendorModelId": "gemini-2.5-flash"
+        }
       },
       {
         "description": "Lowest-latency Gemini 2.5 option for lightweight prompts.",
         "id": "gemini-2.5-flash-lite",
-        "name": "Gemini 2.5 Flash Lite"
+        "name": "Gemini 2.5 Flash Lite",
+        "upstreamRef": {
+          "vendor": "google",
+          "vendorModelId": "gemini-2.5-flash-lite"
+        }
       },
       {
         "description": "Preview flash model from the Gemini 3 generation.",
         "id": "gemini-3-flash-preview",
-        "name": "Gemini 3 Flash Preview"
+        "name": "Gemini 3 Flash Preview",
+        "upstreamRef": {
+          "vendor": "google",
+          "vendorModelId": "gemini-3-flash-preview"
+        }
       },
       {
         "description": "Preview pro model with stronger reasoning and coding depth.",
         "id": "gemini-3-pro-preview",
-        "name": "Gemini 3 Pro Preview"
+        "name": "Gemini 3 Pro Preview",
+        "upstreamRef": {
+          "vendor": "google",
+          "vendorModelId": "gemini-3-pro-preview"
+        }
       },
       {
         "description": "Latest Gemini 3.1 preview with the strongest reasoning in this static list.",
         "id": "gemini-3.1-pro-preview",
-        "name": "Gemini 3.1 Pro Preview"
+        "name": "Gemini 3.1 Pro Preview",
+        "upstreamRef": {
+          "vendor": "google",
+          "vendorModelId": "gemini-3.1-pro-preview"
+        }
       }
     ],
     "supportsFreeform": true,

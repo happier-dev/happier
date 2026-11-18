@@ -53,10 +53,15 @@ export const parseClaudeModelCatalog: ProviderCatalogParser = input => {
   const parsed = parseAnthropicModelCatalog(input);
   return {
     ...parsed,
-    models: parsed.models.map(model => ({
-      ...model,
-      ...(model.name === undefined ? {} : { name: normalizeAnthropicModelDisplayName(model.name, model.id) }),
-    })),
+    models: parsed.models.map(model => {
+      // The Anthropic-compatible endpoint can also serve unrelated gateway ids.
+      const upstreamRef = ANTHROPIC_STATIC_MODELS.find(candidate => candidate.id === model.id)?.upstreamRef;
+      return {
+        ...model,
+        ...(upstreamRef ? { upstreamRef } : {}),
+        ...(model.name === undefined ? {} : { name: normalizeAnthropicModelDisplayName(model.name, model.id) }),
+      };
+    }),
   };
 };
 
@@ -147,6 +152,7 @@ function projectAnthropicModelDefinition(definition: AnthropicModelDefinition): 
   });
   return {
     ...model,
+    upstreamRef: { vendor: 'anthropic', vendorModelId: model.id },
     ...(oneMillionContext === 'always'
       ? { contextWindowTokens: ANTHROPIC_1M_CONTEXT_WINDOW_TOKENS }
       : {}),

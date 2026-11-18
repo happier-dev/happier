@@ -3,10 +3,10 @@ import type { AgentModelDescriptor, ProviderModelDescriptorV1 } from '@happier-d
 import { resolveModelStructuredOutputSupport } from '@happier-dev/protocol/models/descriptor';
 
 /** Native catalog membership can use the Agent's publication contract; explicit model evidence wins. */
-export function projectNativeModelStructuredOutputCapabilities(
-  models: readonly AgentModelDescriptor[],
+export function projectNativeModelStructuredOutputCapabilities<Model extends Pick<AgentModelDescriptor, 'id' | 'capabilities'>>(
+  models: readonly Model[],
   agentFormats?: readonly string[] | null,
-): AgentModelDescriptor[] {
+): Model[] {
   return models.map(model => {
     const support = resolveModelStructuredOutputSupport({ model, catalogModel: true, agentFormats });
     return support === 'unknown' && model.capabilities?.structuredOutput === undefined && model.id !== 'default'

@@ -89,6 +89,7 @@ const ProbeDynamicModelInputSchema = lazyZodSchema(() => z.object({
   modelOptions: z.optional(z.array(z.unknown())),
   capabilities: ProviderModelDescriptorV1Schema.shape.capabilities,
   costTier: ProviderModelDescriptorV1Schema.shape.costTier,
+  upstreamRef: ProviderModelDescriptorV1Schema.shape.upstreamRef,
 }));
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -141,6 +142,7 @@ function buildStatic(
         ...(Array.isArray(model.modelOptions) && model.modelOptions.length > 0 ? { modelOptions: model.modelOptions } : {}),
         ...(model.capabilities ? { capabilities: model.capabilities } : {}),
         ...(model.costTier ? { costTier: model.costTier } : {}),
+        ...(model.upstreamRef ? { upstreamRef: model.upstreamRef } : {}),
       })) : [];
   const availableModels = [
     staticModels.find(model => model.id === 'default') ?? buildDefaultModelPlaceholder(),
@@ -229,6 +231,7 @@ function normalizeProbeModel(modelRaw: unknown): ProbedAgentModel | null {
     ...(normalizedOptions && normalizedOptions.length > 0 ? { modelOptions: normalizedOptions } : {}),
     ...(parsed.data.capabilities ? { capabilities: parsed.data.capabilities } : {}),
     ...(parsed.data.costTier ? { costTier: parsed.data.costTier } : {}),
+    ...(parsed.data.upstreamRef ? { upstreamRef: parsed.data.upstreamRef } : {}),
   };
 }
 

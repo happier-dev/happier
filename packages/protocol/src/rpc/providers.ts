@@ -29,7 +29,7 @@ import { ProviderBindingAuthorizationTicketV1Schema } from '../providers/grants/
 import { ProviderEndpointUrlSyntaxSchema } from '../providers/endpointUrlSchema.js';
 import { ProviderPublicHeadersV1Schema } from '../providers/publicHeadersSchema.js';
 import { ProviderEndpointPolicyV1Shape } from '../providers/endpointPolicyV1.js';
-import { ProviderModelDescriptorV1Schema } from '../models/descriptor.js';
+import { ProviderModelDescriptorV1Schema, ProviderModelUpstreamRefV1Schema } from '../models/descriptor.js';
 import {
   ProviderConnectionSummaryHealthV1Schema,
   ProviderEndpointHealthStatusV1Schema,
@@ -1124,6 +1124,11 @@ export const DaemonProviderModelProjectionHiddenSourceV1Schema = lazyZodSchema((
   connectionDisplayNameMode: z.enum(['automatic', 'custom']),
   // Withheld rows only: zero when every compatible model is retained as an exception.
   modelCount: z.number().check(z.int(), z.nonnegative()),
+  /** Exact matches and endpoint observations withheld from ordinary browse on this authorized source. */
+  upstreamModels: z.optional(z.array(z.strictObject({
+    upstreamRef: ProviderModelUpstreamRefV1Schema,
+    endpointHealth: ProviderEndpointHealthStatusV1Schema,
+  }))),
 }));
 export type DaemonProviderModelProjectionHiddenSourceV1 = z.infer<typeof DaemonProviderModelProjectionHiddenSourceV1Schema>;
 

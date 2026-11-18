@@ -52,8 +52,11 @@ export const parseVercelModels: ProviderCatalogParser = (body) => {
     const modelOptions = buildProviderReasoningModelOptions({
       supportedLevels: PROVIDER_REASONING_EFFORT_LEVELS_V1.filter(level => advertisedEfforts.has(level)),
     });
+    // Gateway language models use provider/model ids. Virtual models are user-defined routes.
+    const upstream = /^(?!vmc\/)([^/\s]+)\/([^/\s]+)$/u.exec(row.id);
     models.push({
       id: row.id,
+      ...(upstream ? { upstreamRef: { vendor: upstream[1]!, vendorModelId: upstream[2]! } } : {}),
       ...(row.name === undefined ? {} : { name: row.name }),
       ...(context === undefined ? {} : { contextWindowTokens: context }),
       capabilities: {

@@ -1,6 +1,6 @@
 const GEMINI_AGENT_ID = 'gemini';
 
-const GEMINI_STATIC_MODELS = [
+const GEMINI_STATIC_MODELS = ([
   {
     id: 'gemini-2.5-pro',
     name: 'Gemini 2.5 Pro',
@@ -31,7 +31,10 @@ const GEMINI_STATIC_MODELS = [
     name: 'Gemini 3.1 Pro Preview',
     description: 'Latest Gemini 3.1 preview with the strongest reasoning in this static list.',
   },
-] as const;
+] as const).map(model => ({
+  ...model,
+  upstreamRef: { vendor: 'google', vendorModelId: model.id },
+}));
 
 // IMPORTANT: this must stay JSON-serializable (data-only).
 export const AGENT_DEFINITION = Object.freeze({

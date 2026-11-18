@@ -36,5 +36,11 @@ export type ProviderPickerCatalogGroup = Readonly<{
   connectionId: ProviderConnectionId; providerName: string; connectionName: string;
   authorization: ProviderCatalogAuthorizationPresentation; rows: readonly ProviderPickerCatalogRow[];
 }>;
-export type ProviderPickerHiddenSource = Readonly<{ connectionId: ProviderConnectionId; providerName: string; connectionName: string; modelCount: number }>;
+export type ProviderPickerHiddenSource = Readonly<{
+  connectionId: ProviderConnectionId; providerName: string; connectionName: string; modelCount: number;
+  upstreamModels?: Readonly<{
+    upstreamRef: NonNullable<ProviderMergedCatalogRowV1['descriptor']['upstreamRef']>;
+    endpointHealth: ProviderEndpointRuntimeStateV1['status'];
+  }>[];
+}>;
 export type ProviderPickerCatalogProjection = Readonly<{ groups: readonly ProviderPickerCatalogGroup[]; hiddenSources: readonly ProviderPickerHiddenSource[] }>;

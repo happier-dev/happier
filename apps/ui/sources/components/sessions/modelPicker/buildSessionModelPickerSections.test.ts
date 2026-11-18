@@ -11,6 +11,7 @@ import {
     resolveSessionModelSourceDescriptor,
     buildSessionModelSelectedTriggerPresentation,
     hiddenModelVisibilityKeys,
+    selectSessionModelPickerSourceGroups,
     withSessionModelSourceSuffixes,
 } from './buildSessionModelPickerSections';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
@@ -67,6 +68,24 @@ function providerGroup(input: Readonly<{
 }
 
 describe('buildSessionModelPickerSections', () => {
+    it('offers credential recovery instead of counting a gateway that rejected its API key', () => {
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const upstreamRef = { vendor: 'openai', vendorModelId: 'gpt-4' };
+        const group = providerGroup({ connectionId: 'pc_invalid_key', modelId: 'openai/gpt-4' });
+        const sections = buildSessionModelPickerSections({
+            declarationContext: { kind: 'account' }, agentTargetKey,
+            nativeModels: [{ value: 'gpt-4', label: 'GPT-4', upstreamRef }],
+            providerGroups: [{ ...group, rows: group.rows.map(row => ({
+                ...row, descriptor: { ...row.descriptor, upstreamRef }, endpointHealth: 'unauthorized',
+            })) }],
+            hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true,
+        });
+        const model = selectSessionModelPickerSourceGroups(sections).find(candidate => candidate.upstreamRef?.vendorModelId === 'gpt-4');
+        expect(model).toMatchObject({ sourceCount: 1, sources: expect.arrayContaining([
+            expect.objectContaining({ providerConnectionId: group.connectionId, state: 'needs-key' }),
+        ]) });
+    });
+
     it('shows one exact native ref when the observed Account catalog also supplies it', () => {
         const group = providerGroup({ connectionId: 'connected-source:account', modelId: 'observed-model' });
         const selected = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'observed-model' };

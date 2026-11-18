@@ -7,10 +7,21 @@ import {
   isAnthropic1mAlwaysOnModelId,
   isAnthropic1mContextOptInModelId,
   normalizeAnthropicModelDisplayName,
+  parseClaudeModelCatalog,
   resolveAnthropicDefaultEffortLevelForModelId,
 } from './catalog.js';
 
 describe('Anthropic Provider catalog', () => {
+  it('publishes a native upstream identity only for a model id the catalog owns', () => {
+    const { models } = parseClaudeModelCatalog({ data: [
+      { id: 'claude-sonnet-4-6', display_name: 'Claude Sonnet 4.6' },
+      { id: 'proxy/sonnet', display_name: 'Claude Sonnet 4.6' },
+    ] });
+    const upstreamRef = { vendor: 'anthropic', vendorModelId: 'claude-sonnet-4-6' };
+    expect(models[0]?.upstreamRef).toEqual(upstreamRef);
+    expect(models[1]?.upstreamRef).toBeUndefined();
+  });
+
   it('uses the catalog effort descriptor default for native model presentation', () => {
     for (const model of ANTHROPIC_STATIC_MODELS) {
       const effort = model.modelOptions?.find(option => option.id === 'reasoning_effort');

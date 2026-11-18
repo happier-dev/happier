@@ -126,6 +126,7 @@ export function buildTeamCredentialModelPickerSections(
             const recovery = recoveryPresentation === null ? null : teamCredentialRecoveryLabel(recoveryPresentation);
             return [{
                 value: row.selection,
+                upstreamRef: row.descriptor.upstreamRef,
                 label: row.descriptor.name || row.selection.modelId,
                 searchText: row.selection.modelId,
                 ...(experimental ? { titleAccessory: createElement(StatusPill, {

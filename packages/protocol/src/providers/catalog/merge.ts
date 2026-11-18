@@ -22,6 +22,7 @@ const ConnectedAccountPurposesSchema = z.array(QualifiedConnectedAccountPurposeV
 export type ProviderCatalogProbeModelV1 = Readonly<{
   id: ProviderModelDescriptorV1['id'];
   name?: ProviderModelDescriptorV1['name'];
+  upstreamRef?: ProviderModelDescriptorV1['upstreamRef'];
   contextWindowTokens?: ProviderModelDescriptorV1['contextWindowTokens'];
   modelOptions?: ProviderModelDescriptorV1['modelOptions'];
   capabilities?: ProviderModelDescriptorV1['capabilities'];
@@ -32,6 +33,7 @@ export type ProviderCatalogProbeModelV1 = Readonly<{
 const providerCatalogProbeModelSchema = z.strictObject({
   id: ProviderModelDescriptorV1Schema.shape.id,
   name: z.optional(ProviderModelDescriptorV1Schema.shape.name),
+  upstreamRef: ProviderModelDescriptorV1Schema.shape.upstreamRef,
   contextWindowTokens: ProviderModelDescriptorV1Schema.shape.contextWindowTokens,
   modelOptions: ProviderModelDescriptorV1Schema.shape.modelOptions,
   capabilities: ProviderModelDescriptorV1Schema.shape.capabilities,
@@ -165,6 +167,7 @@ export function projectProviderCatalogProbeModelDescriptorV1(model: ProviderCata
   return {
     id: model.id,
     name: model.name ?? model.id,
+    ...(model.upstreamRef ? { upstreamRef: model.upstreamRef } : {}),
     ...(model.contextWindowTokens ? { contextWindowTokens: model.contextWindowTokens } : {}),
     ...(model.modelOptions ? { modelOptions: model.modelOptions } : {}),
     ...(model.capabilities ? { capabilities: model.capabilities } : {}),
@@ -238,8 +241,10 @@ export function mergeProviderCatalogV1(input: Readonly<{
         ],
       };
     }
+    const upstreamRef = probeById.get(id)?.upstreamRef ?? descriptor.upstreamRef ?? staticById.get(id)?.upstreamRef;
     rows.push({
-      descriptor: { ...descriptor, name: manual?.name ?? resolveModelDisplayName(descriptor, modelNameCatalog) },
+      descriptor: { ...descriptor, ...(upstreamRef ? { upstreamRef } : {}),
+        name: manual?.name ?? resolveModelDisplayName(descriptor, modelNameCatalog) },
       sources: { manual: Boolean(manual), static: staticById.has(id), probe: probeById.has(id) },
       confidence,
       catalogStale,

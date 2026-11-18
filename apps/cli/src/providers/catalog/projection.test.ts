@@ -122,4 +122,25 @@ describe('Provider source discovery', () => {
       serializeModelVisibilityRefV1({ scope: 'allAgents', providerConnectionId: connectionId, modelId }), 'hidden' as const]));
     expect(projectProviderCatalogForPicker({ ...input, modelVisibilityByRef: everyModelHidden }).hiddenSources).toEqual([]);
   });
+  it('reports exact withheld model identities only for an authorized machine source', () => {
+    const upstreamRef = { vendor: 'anthropic', vendorModelId: 'claude-sonnet' };
+    const rows = catalog.rows.map(row => ({ ...row, descriptor: { ...row.descriptor, upstreamRef } }));
+    const input = { modelVisibilityByRef: {}, modelPickerVisibilityByConnectionId: { pc_a: false } };
+    expect(projectProviderCatalogForPicker({ ...input, catalogs: [{ ...catalog, rows }] }).hiddenSources)
+      .toMatchObject([{ upstreamModels: [{ upstreamRef, endpointHealth: 'not_checked' }] }]);
+    expect(projectProviderCatalogForPicker({ ...input, observationScope: 'account', catalogs: [{ ...catalog, rows,
+      authorization: { authorized: false, errorCode: 'provider_machine_unavailable' } }] }).hiddenSources[0])
+      .not.toHaveProperty('upstreamModels');
+  });
+  it('reports credential recovery for a withheld exact match whose endpoint rejects its key', () => {
+    const upstreamRef = { vendor: 'anthropic', vendorModelId: 'claude-sonnet' };
+    const rows = catalog.rows.map(row => ({ ...row, descriptor: { ...row.descriptor, upstreamRef },
+      presentation: { ...row.presentation, endpointHealth: {
+        status: 'unauthorized' as const, activity: 'idle' as const, errorCode: 'provider_endpoint_unauthorized' as const,
+        observedAt: 1,
+      } } }));
+    expect(projectProviderCatalogForPicker({ catalogs: [{ ...catalog, rows }], modelVisibilityByRef: {},
+      modelPickerVisibilityByConnectionId: { pc_a: false } }).hiddenSources)
+      .toMatchObject([{ upstreamModels: [{ upstreamRef, endpointHealth: 'unauthorized' }] }]);
+  });
 });

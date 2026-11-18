@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
 import { CapabilitySupportSchema } from '../providers/capabilities/v1.js';
+import { NonBlankOpaqueIdentifierSchema } from '../strings/opaqueIdentifier.js';
 import { ProviderModelIdSchema } from '../providers/ids.js';
 
 export const AgentModelOptionValueIdSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(256)));
@@ -87,9 +88,16 @@ export type ProviderModelInlineCompletionV1 = z.infer<typeof ProviderModelInline
 export const ProviderModelNextEditV1Schema = z.omit(ProviderModelInlineCompletionV1Schema, { rawFimTemplate: true });
 export type ProviderModelNextEditV1 = z.infer<typeof ProviderModelNextEditV1Schema>;
 
+export const ProviderModelUpstreamRefV1Schema = z.strictObject({
+  vendor: NonBlankOpaqueIdentifierSchema,
+  vendorModelId: NonBlankOpaqueIdentifierSchema,
+});
+
 export type ProviderModelDescriptorV1 = Readonly<{
   id: string;
   name: string;
+  /** Catalog-produced display equivalence; each source still owns its exact selection. */
+  upstreamRef?: Readonly<z.infer<typeof ProviderModelUpstreamRefV1Schema>>;
   /** Catalog-owned relative cost class; absence never implies a low-cost model. */
   costTier?: 'low' | 'standard' | 'premium';
   /** Provider/source-owned request spellings for this exact canonical model. */
@@ -110,6 +118,7 @@ export type ProviderModelDescriptorV1 = Readonly<{
 export const ProviderModelDescriptorV1Schema = z.strictObject({
   id: ProviderModelIdSchema,
   name: z.string().check(z.trim(), z.minLength(1)),
+  upstreamRef: z.optional(ProviderModelUpstreamRefV1Schema),
   costTier: z.optional(z.enum(['low', 'standard', 'premium'])),
   aliases: z.optional(z.array(ProviderModelIdSchema)),
   description: z.optional(z.string()),

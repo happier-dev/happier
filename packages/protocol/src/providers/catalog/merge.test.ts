@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ProviderManualModelV1Schema } from '../settings/v1.js';
 import type { ProviderCatalogProbeModelV1 } from './merge.js';
+import { parseProviderCatalogResponse } from './response.js';
 import type { ProviderModelDescriptorV1 } from '../../models/descriptor.js';
 
 import {
@@ -11,6 +12,21 @@ import {
 } from './merge.js';
 
 describe('provider catalog merge', () => {
+  it('retains exact gateway upstream identities through the catalog, without inferring from opaque ids', () => {
+    const { models } = parseProviderCatalogResponse('openai-models', { data: [
+      { id: 'openai/gpt-4', canonical_slug: 'openai/gpt-4', name: 'GPT-4' },
+      { id: 'custom/gpt-4', name: 'GPT-4' },
+    ] });
+    const probeState = applyProviderCatalogRefreshV1({ snapshot: null, staleProbeModels: [] }, {
+      status: 'success', observedAt: 1, models,
+    });
+    const { rows } = mergeProviderCatalogV1({ staticModels: [], manualModels: [], probeState });
+    expect(rows.find(row => row.descriptor.id === 'openai/gpt-4')?.descriptor).toMatchObject({
+      upstreamRef: { vendor: 'openai', vendorModelId: 'gpt-4' },
+    });
+    expect(rows.find(row => row.descriptor.id === 'custom/gpt-4')?.descriptor.upstreamRef).toBeUndefined();
+  });
+
   it.each(['augment', 'probe-authoritative'] as const)('uses manual reasoning declarations only without source facts (%s)', (membershipPolicy) => {
     const effort = (value: string) => ({ id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: value,
       options: [{ value, name: value }] });

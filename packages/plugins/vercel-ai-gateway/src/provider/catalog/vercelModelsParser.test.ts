@@ -9,6 +9,7 @@ describe('Vercel AI Gateway catalog', () => {
     expect(models.map(model => model.id)).toEqual(['openai/gpt-5', 'anthropic/claude-sonnet-4', 'vmc/team-model']);
     expect(models[0]).toMatchObject({
       name: 'GPT-5', contextWindowTokens: 400000,
+      upstreamRef: { vendor: 'openai', vendorModelId: 'gpt-5' },
       capabilities: { toolRoundTrips: 'supported', reasoningControls: 'supported' },
       modelOptions: [{ id: 'reasoning_effort', type: 'select', currentValue: 'high',
         options: [{ value: 'low', name: 'Low' }, { value: 'medium', name: 'Medium' },
@@ -17,6 +18,7 @@ describe('Vercel AI Gateway catalog', () => {
     // A budget/toggle is not an effort level, and a reasoning tag alone must not invent controls.
     expect(models[1]?.modelOptions).toBeUndefined();
     expect(models[2]?.modelOptions).toBeUndefined();
+    expect(models[2]?.upstreamRef).toBeUndefined();
     expect(models[2]?.capabilities?.reasoningControls).toBe('unknown');
   });
 

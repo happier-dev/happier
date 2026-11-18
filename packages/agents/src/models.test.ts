@@ -13,6 +13,13 @@ import {
 } from './models.js';
 
 describe('agent model config', () => {
+  it('carries exact vendor identities for models published by their native Agents', () => {
+    expect(getAgentStaticModels('gemini').find(model => model.id === 'gemini-2.5-pro')?.upstreamRef)
+      .toEqual({ vendor: 'google', vendorModelId: 'gemini-2.5-pro' });
+    expect(getAgentStaticModels('cursor').find(model => model.id === 'composer-2.5-fast')?.upstreamRef)
+      .toEqual({ vendor: 'cursor', vendorModelId: 'composer-2.5' });
+    expect(getAgentStaticModels('codex').every(model => model.upstreamRef === undefined)).toBe(true);
+  });
   it('covers every canonical agent in the shared model artifact map without fabricating static config', () => {
     expect(Object.keys(AGENT_MODEL_CONFIG).sort()).toEqual([...AGENT_IDS].sort());
     expect(getAgentModelConfig('antigravity')).toBeNull();

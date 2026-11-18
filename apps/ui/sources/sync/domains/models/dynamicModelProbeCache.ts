@@ -65,6 +65,7 @@ function normalizePersistedModelList(input: unknown): PreflightModelList | null 
             id: modelRecord.id,
             name: modelRecord.name,
             capabilities: modelRecord.capabilities,
+            upstreamRef: modelRecord.upstreamRef,
         });
         if (!descriptor.success) return [];
         return [{
@@ -76,6 +77,7 @@ function normalizePersistedModelList(input: unknown): PreflightModelList | null 
                 ? { extendedContextModelId: modelRecord.extendedContextModelId }
                 : {}),
             ...(modelOptions ? { modelOptions } : {}),
+            ...(descriptor.data.upstreamRef ? { upstreamRef: descriptor.data.upstreamRef } : {}),
             // Retained catalogs may contain synthetic rows; missing persisted evidence stays unknown until a new probe.
             capabilities: {
                 ...descriptor.data.capabilities,

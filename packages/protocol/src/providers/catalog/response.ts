@@ -64,6 +64,12 @@ function parseOpenAiModels(input: unknown): ParsedProviderCatalogResponse {
     models: normalizeModels(rows.map((row) => {
       const id = requiredOwnString(row, 'id');
       const name = optionalOwnString(row, 'name');
+      // OpenRouter exposes the author and canonical slug explicitly. Plain OpenAI-compatible
+      // ids are opaque, even if they also happen to contain a slash.
+      const canonicalSlug = Object.getOwnPropertyDescriptor(row, 'canonical_slug');
+      const upstream = typeof canonicalSlug?.value === 'string'
+        ? /^([^/\s]+)\/([^/\s]+)$/u.exec(canonicalSlug.value)
+        : null;
       const purposeProperty = Object.getOwnPropertyDescriptor(row, 'happier_connected_account_purposes');
       if (purposeProperty && (!purposeProperty.enumerable || !('value' in purposeProperty))) {
         throw new TypeError('Provider model purposes must be data');
@@ -72,6 +78,7 @@ function parseOpenAiModels(input: unknown): ParsedProviderCatalogResponse {
         ? ProviderCatalogProbeModelV1Schema.shape.connectedAccountPurposes.parse(purposeProperty.value)
         : undefined;
       return { id, ...(name === undefined ? {} : { name }),
+        ...(upstream ? { upstreamRef: { vendor: upstream[1]!, vendorModelId: upstream[2]! } } : {}),
         ...(connectedAccountPurposes === undefined ? {} : { connectedAccountPurposes }) };
     })),
     loadStates: [],
