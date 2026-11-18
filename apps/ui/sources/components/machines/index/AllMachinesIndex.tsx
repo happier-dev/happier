@@ -157,7 +157,7 @@ function AllMachinesIndexBody() {
     const lookSubjects = React.useMemo(() => selectFleetLookSubjects(attention.entries), [attention.entries]);
     const needsYouSubjectKeys = useReconciledStableRows(lookSubjects.map(entry => entry.key), String);
     const needsYouKeys = React.useMemo(() => new Set(needsYouSubjectKeys), [needsYouSubjectKeys]);
-    // The machines whose resources need attention: a phone list row says why on its second line; a calm one has none.
+    // The machines whose resources need attention: a phone list row says why on its second line, in place of its work.
     const rowAttentionKeys = React.useMemo(() => new Set(attention.entries
         .filter(entry => selectHeadlineReason(entry.attention) !== null).map(entry => entry.key)), [attention.entries]);
     const fleetTitle = describeFleetTitle({ subjects: attention.entries, reportingCount: attention.reportingCount });
@@ -265,7 +265,7 @@ function AllMachinesIndexBody() {
     // "—", so the table says each machine's presence instead (the no-metrics layout).
     const anyOnline = items.some(item => item.kind === 'machine' && item.online);
     const shownMetrics = anyOnline ? summarySetting.metrics : NO_METRICS;
-    const anatomy = useMachineIndexAnatomy(view, summarySetting.style, shownMetrics, deviceType === 'phone', cardAttention, anyOnline, rowAttentionKeys);
+    const anatomy = useMachineIndexAnatomy(view, summarySetting.style, shownMetrics, cardAttention, anyOnline, rowAttentionKeys);
     // An open page keeps its online machines' summaries live (one batched demand for the whole fleet), owned by a
     // leaf so a hide or a window blur withdraws it without redrawing the page.
     const demandKeys = React.useMemo(() => items.flatMap(item => item.online && item.kind === 'machine'
@@ -478,10 +478,10 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
 /**
  * One anatomy for both views (lab `rm` F, Fp, FC). The table: the machine with what it is after its name
  * ("48 cores · 125 GB"), its work, one cell per shown metric — offline machines keep missing-value marks,
- * while an online refusal says why across its figures. The phone's list: work on the name's line, the strip (or why there is
- * none) beneath. The grid: the card body with its metric tiles.
+ * while an online refusal says why across its figures. The phone's list: the name alone, and one status line beneath it
+ * (why it is quiet, what needs attention, or its work). The grid: the card body with its metric tiles.
  */
-function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummaryStyle, metrics: readonly MachineSummaryMetric[], phone: boolean, cardAttention: ReadonlyMap<string, MachineAttentionEntry>,
+function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummaryStyle, metrics: readonly MachineSummaryMetric[], cardAttention: ReadonlyMap<string, MachineAttentionEntry>,
     /** No listed machine is online: no one has work to show, so the table has no Work column of blanks. */
     anyOnline: boolean,
     /** Machines whose resources need attention (attention entry keys). */
@@ -501,15 +501,12 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         // What the machine is ("64 cores · 251 GiB") gives way before its name, so the part that tells namesakes apart
         // ("· 0c82") stays readable (Collection's inline title line truncates first).
         titleSuffix: (item) => item.facts ? <Text numberOfLines={1} style={stylesheet.quiet}>{item.facts}</Text> : null,
-        // The list's second line (phones): what needs attention with its one value, or why the machine is quiet
-        // (offline, unreadable). A calm online machine has no second line. The grid's cards carry their own lines.
-        ...(view === 'grid' ? {} : { byline: (item: MachineIndexItem) => item.reason !== null || !item.online
-            || rowAttentionKeys.has(JSON.stringify([item.serverId, machineKeyOf(item).machineId]))
-            ? <MachineIndexListLine item={item} /> : null }),
-        // A phone's list says the work on the name's line, where the table gives it a column. A machine that is not
-        // online passes no meta (its byline says its presence), as the table's Work cell gives it to the presence too.
-        // A card says its work once, in its footer, so only the list puts it on the name's line.
-        ...(phone && view !== 'grid' ? { titleMeta: (item: MachineIndexItem) => item.online ? <MachineWorkCell item={item} /> : null } : {}),
+        // The list's one row anatomy (phones): the name alone on line 1, and one status line beneath it on every
+        // row (DESIGN "Phones recompose": a sentence never sits right of a label). That line is why the machine is
+        // quiet (offline, unreadable), else what needs attention with its one value, else its work, as the table's
+        // Work column says it. The grid's cards carry their own lines.
+        ...(view === 'grid' ? {} : { byline: (item: MachineIndexItem) => <MachineIndexListLine item={item}
+            attention={rowAttentionKeys.has(JSON.stringify([item.serverId, machineKeyOf(item).machineId]))} /> }),
         fields: [
             // Offline machines retain one missing-value mark per metric; an online refusal can span the figures.
             ...(anyOnline ? [
@@ -554,20 +551,22 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         testID: (item) => `machines.index.row.${item.key}`,
         columnTitles: { title: t('allMachines.columnMachine') },
         };
-    }, [anyOnline, cardAttention, language, metrics, phone, rowAttentionKeys, style, theme.colors.text.secondary, view]);
+    }, [anyOnline, cardAttention, language, metrics, rowAttentionKeys, style, theme.colors.text.secondary, view]);
 }
 
 /**
- * The phone list's second line: why the machine is quiet (unreadable, not online), or what needs attention with the one
- * value behind it ("Short on memory · 82%"), never unlabelled instruments (owner bar 11-16).
+ * The phone list's second line, on every row: why the machine is quiet (unreadable, not online), else what needs
+ * attention with the one value behind it ("Short on memory · 82%"), never unlabelled instruments (owner bar 11-16),
+ * else its work ("No work", "2 working").
  */
-const MachineIndexListLine = React.memo(function MachineIndexListLine(props: Readonly<{ item: MachineIndexItem }>) {
+const MachineIndexListLine = React.memo(function MachineIndexListLine(props: Readonly<{ item: MachineIndexItem; attention: boolean }>) {
     const { item } = props;
     const quiet = item.reason ?? (item.online ? null : item.presence);
-    return <MachineIndexMeter item={item} enabled={quiet === null}>
-        {quiet !== null ? <Text numberOfLines={1} style={stylesheet.quiet}>{quiet}</Text>
-            : <MachineListRowSummary testID={`machines.index.strip.${item.key}`} serverId={item.serverId}
-                machineId={machineKeyOf(item).machineId} online={item.online} quietWord={null} />}
+    if (quiet !== null) return <Text numberOfLines={1} style={stylesheet.quiet}>{quiet}</Text>;
+    if (!props.attention) return <MachineWorkCell item={item} />;
+    return <MachineIndexMeter item={item} enabled>
+        <MachineListRowSummary testID={`machines.index.strip.${item.key}`} serverId={item.serverId}
+            machineId={machineKeyOf(item).machineId} online={item.online} quietWord={null} />
     </MachineIndexMeter>;
 });
 

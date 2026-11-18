@@ -342,7 +342,7 @@ it.each(['rail', 'settings'] as const)('opens fleet Updates and Activity in the 
   expect(opened().some(href => typeof href === 'string' && href.startsWith('/settings/'))).toBe(false);
 });
 
-it('gives a phone index row no title meta while the machine has nothing to say there (offline), and its work when online', async () => {
+it('gives every phone index row one anatomy: the name alone on line 1, its one status line (work or presence) on line 2', async () => {
   const ReactNative = await import('react-native');
   // The window is the boundary that makes this a phone.
   const dimensions = vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 3, fontScale: 1 });
@@ -354,11 +354,24 @@ it('gives a phone index row no title meta while the machine has nothing to say t
     const tree = await renderPage();
     const row = (id: string) => tree.findAll(node => node.props.testID === `machines.index.row.machine:srv_a:${id}`);
     await waitForHomeGovernance(() => expect(row('idle').length).toBeGreaterThan(0));
-    // The work cell is the phone row's title meta (the bundler may suffix the function's name).
-    const titleMeta = (id: string) => tree.findAll(node => typeof node.type === 'function'
-      && /^MachineWorkCell\d*$/u.test(node.type.name) && node.props.item?.key === `machine:srv_a:${id}`);
-    expect(titleMeta('live').length).toBeGreaterThan(0);
-    expect(titleMeta('idle')).toHaveLength(0);
+    // The bundler may suffix a function's name.
+    const named = (name: string, id: string) => tree.findAll(node => typeof node.type === 'function'
+      && new RegExp(`^${name}\\d*$`, 'u').test(node.type.name) && node.props.item?.key === `machine:srv_a:${id}`);
+    const textOf = (node: { children: unknown[] }): string => node.children
+      .map(child => typeof child === 'string' ? child : textOf(child as { children: unknown[] })).join('');
+    // Both rows have the second line; the online machine says its work there, never at the name line's end.
+    expect(named('MachineIndexListLine', 'live').length).toBeGreaterThan(0);
+    expect(named('MachineIndexListLine', 'idle').length).toBeGreaterThan(0);
+    const work = named('MachineWorkCell', 'live');
+    expect(work.length).toBeGreaterThan(0);
+    for (const cell of work) {
+      let ancestor = cell.parent;
+      while (ancestor && !(typeof ancestor.type === 'function' && /^MachineIndexListLine\d*$/u.test(ancestor.type.name))) ancestor = ancestor.parent;
+      expect(ancestor).toBeTruthy();
+    }
+    // The offline machine's line is its presence, with no work cell.
+    expect(named('MachineWorkCell', 'idle')).toHaveLength(0);
+    expect(textOf(named('MachineIndexListLine', 'idle')[0]!)).not.toBe('');
   } finally {
     dimensions.mockRestore();
   }
