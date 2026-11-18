@@ -1,9 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { ChangesResponseSchema } from '@happier-dev/protocol/changes';
+import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, ChangeEntrySchema, ChangesResponseSchema } from '@happier-dev/protocol/changes';
+import { ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER, ACCOUNT_STORED_CONTENT_SESSION_ACCESS_WITNESS_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { buildProviderAccountUsageMaterialChangesV1, readProviderAccountUsageChangedRecordIdsV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/providerAccountUsagePrimitives';
+import { z } from 'zod';
 
-import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { markAccountChanged, markAccountProjectionChanges } from "@/app/changes/markAccountChanged";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -81,7 +83,8 @@ describe("changesRoutes automation changes (integration)", () => {
         await withAuthenticatedTestApp(changesRoutes, async app => {
             const read = async (after: number, limit: number) => {
                 const response = await app.inject({ method: 'GET', url: `/v2/changes?after=${after}&limit=${limit}`,
-                    headers: { 'x-test-user-id': account.id } });
+                    headers: { 'x-test-user-id': account.id,
+                        [ACCOUNT_STORED_CONTENT_COMPATIBILITY_HTTP_HEADER]: String(ACCOUNT_STORED_CONTENT_SESSION_ACCESS_WITNESS_PROTOCOL_VERSION) } });
                 expect(response.statusCode).toBe(200);
                 return ChangesResponseSchema.parse(response.json());
             };
@@ -95,6 +98,42 @@ describe("changesRoutes automation changes (integration)", () => {
                 expect(quota.full).toBe(true);
                 expect((await read(quota.nextCursor, 2)).changes.map(change => change.entityId)).toEqual(['after']);
             }
+        });
+    });
+
+    it('drains a trailing Session in one predecessor catch-up when a quota pair straddles a full page', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const recordId = buildProviderAccountUsageRecordId({ providerId: 'claude', accountSubjectId: 'account',
+            subjectKind: 'account', quotaScope: 'account' });
+        const [global, exact] = buildProviderAccountUsageMaterialChangesV1(recordId);
+        const limit = ACCOUNT_CHANGES_PAGE_LIMIT_V1;
+        await inTx(async tx => {
+            await markAccountProjectionChanges(tx, 'machine', new Map(Array.from({ length: limit - 1 },
+                (_, index) => [`machine-${index}`, [account.id]] as const)));
+            await markAccountChanged(tx, { accountId: account.id, ...global });
+            await markAccountChanged(tx, { accountId: account.id, ...exact });
+            await markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: 'trailing-session', hint: { pendingCount: 2, pendingVersion: 1 } });
+        });
+        await withAuthenticatedTestApp(changesRoutes, async app => {
+            // The 0.2 reader (73c533b470 packages/protocol/src/changes.ts) rejects
+            // extra response fields. It drains until changes.length < limit.
+            const predecessorPage = z.strictObject({ changes: z.array(ChangeEntrySchema), nextCursor: z.number().int().nonnegative() });
+            const appliedSessions: string[] = [];
+            const pageSizes: number[] = [];
+            let after = 0;
+            for (;;) {
+                const response = await app.inject({ method: 'GET', url: `/v2/changes?after=${after}&limit=${limit}`,
+                    headers: { 'x-test-user-id': account.id } });
+                expect(response.statusCode).toBe(200);
+                const { changes, nextCursor } = predecessorPage.parse(response.json());
+                appliedSessions.push(...changes.filter(change => change.kind === 'session').map(change => change.entityId));
+                pageSizes.push(changes.length);
+                expect(nextCursor).toBeGreaterThan(after);
+                after = nextCursor;
+                if (changes.length < limit) break;
+            }
+            expect(pageSizes).toEqual([limit, 2]);
+            expect(appliedSessions).toEqual(['trailing-session']);
         });
     });
 
@@ -170,7 +209,6 @@ describe("changesRoutes automation changes (integration)", () => {
                         },
                     }],
                     nextCursor: exactCursor.resolveCursor(),
-                    full: false,
                 });
             },
         );

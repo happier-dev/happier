@@ -560,7 +560,7 @@ describe("changesRoutes (/v2/changes cursor safety)", () => {
             expect.objectContaining({
                 where: { accountId: "u1", cursor: { gt: 50 } },
                 orderBy: [{ cursor: "asc" }, { kind: "asc" }, { entityId: "asc" }],
-                take: 3,
+                take: 4,
             }),
         );
 

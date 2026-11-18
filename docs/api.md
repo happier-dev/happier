@@ -1512,9 +1512,11 @@ Account cursor. `410 cursor-gone` requires a snapshot rebuild. The separate
 (`400 invalid_params`). See the [change-feed contract](protocol.md#session-changes-03-development-source).
 
 Qualified provider usage publications pair the existing Account-wide change
-row with its exact record row. The feed keeps that pair together at page
-boundaries. A request with `limit=1` can return both rows of a pair so it can
-advance without splitting their scope proof. A paired hint can certify one
+row with its exact record row. With the Account stored-content V4 declaration,
+the feed keeps that pair together across page boundaries and uses `full` to
+signal continuation. A request with `limit=1` can return both rows of a pair.
+Requests without V4 retain the released `{changes, nextCursor}` response and
+ordinary row-count paging. A paired hint can certify one
 changed UTC day for readers that already admitted history through the hint's
 starting cursor. If it also identifies a changed accepted-history suffix, its
 lower bound uses the server's stored observation timestamp. Missing hints or

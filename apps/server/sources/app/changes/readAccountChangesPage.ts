@@ -110,8 +110,8 @@ export async function withAccountChangesReads<T>(
 export function projectAccountChangesPage(input: Readonly<{
     visibleRows: readonly AccountChangeRowFacts[];
     nextCursor: number;
-    /** More rows may follow `nextCursor` (judged on the stored rows, before any filter). */
-    full: boolean;
+    /** More rows may follow `nextCursor`. Omitted on the released HTTP envelope. */
+    full?: boolean;
     pendingRunIdsBySessionId: ReadonlyMap<string, readonly string[]>;
     /** Undefined when the peer does not consume the Session access witness. */
     sessionAccessResolutions: readonly SessionAccessResolutionEntry[] | undefined;
@@ -153,7 +153,7 @@ export function projectAccountChangesPage(input: Readonly<{
             };
         }),
         nextCursor,
-        full: input.full,
+        ...(input.full === undefined ? {} : { full: input.full }),
         ...(sessionAccessWitness === undefined ? {} : { sessionAccessWitness }),
     } };
 }
@@ -191,6 +191,9 @@ export async function readAccountChangesPage(input: Readonly<{
     const { accountId: userId, after, limit, sessionId, compatibility } = input;
     const selectedKinds = input.kinds;
     const hasSelection = selectedKinds !== undefined;
+    // The same V4 declaration admits the additive change-feed response fields.
+    // Released readers reject those fields and drain by the requested row count.
+    const supportsFull = compatibility.supportsSessionAccessWitnessProtocol;
 
     const readPage = async (read: <T>(operation: (tx: Tx) => Promise<T>, singleStatement?: boolean) => Promise<T>) => {
         const account = await read(tx => tx.account.findUnique({
@@ -209,13 +212,14 @@ export async function readAccountChangesPage(input: Readonly<{
                 ...(selectedKinds === undefined ? {} : { kind: { in: [...selectedKinds] } }),
             },
             orderBy: [{ cursor: 'asc' }, { kind: 'asc' }, { entityId: 'asc' }],
-            take: limit + 1,
+            take: supportsFull ? limit + 1 : limit,
             select: { cursor: true, kind: true, entityId: true, changedAt: true, hint: true },
         }), true);
         const last = readRows[limit - 1];
         const next = readRows[limit];
         // Never acknowledge only the legacy/global half of a verified quota
-        // pair. Defer the pair together, or carry it on a one-row HTTP page.
+        // pair to a V4 reader. Defer the pair together, or carry it on a
+        // one-row HTTP page. Released readers keep their original row boundary.
         const splitQuotaPair = last && next && isPairedProviderAccountUsageChangeV1(last, next);
         const rows = readRows.slice(0, splitQuotaPair ? limit === 1 ? 2 : limit - 1 : limit);
         const full = readRows.length >= limit;
@@ -253,6 +257,6 @@ export async function readAccountChangesPage(input: Readonly<{
     const nextCursor = hasSelection && !full
         ? account.seq
         : rows.length > 0 ? rows[rows.length - 1]!.cursor : after;
-    return projectAccountChangesPage({ visibleRows: page.visibleRows, nextCursor, full,
+    return projectAccountChangesPage({ visibleRows: page.visibleRows, nextCursor, ...(supportsFull ? { full } : {}),
         pendingRunIdsBySessionId: page.pendingRunIdsBySessionId, sessionAccessResolutions: page.sessionAccessResolutions });
 }
