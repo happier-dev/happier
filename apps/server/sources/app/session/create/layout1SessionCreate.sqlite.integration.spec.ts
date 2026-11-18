@@ -437,10 +437,16 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
         }));
         await admitWorkflowRun({ accountId: owner.id, runId, machineId: machine.id,
             origin: { kind: "direct" }, acceptedEnvelope, accountCurrentness });
+        await db.automationRun.update({
+            where: { id: runId },
+            data: { state: "running", claimedByMachineId: machine.id, attempt: 1, workflowCustodyState: "pending" },
+        });
         const child = await inTx((tx) => createOrRejoinLayout1SessionByTagInTx(tx,
             prepared({ accountId: owner.id, tag: "workflow-child", originKind: "run_step", originRunId: runId, workDepth: 31 })));
         if (child.kind !== "created") throw new Error("Workflow child was not created");
         expect(child.session).toMatchObject({ originKind: "run_step", originRunId: runId, workDepth: 31 });
+        expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId }, select: { producedSessionId: true } }))
+            .toMatchObject({ producedSessionId: child.session.id });
         await expect(inTx((tx) => createOrRejoinLayout1SessionByTagInTx(tx,
             prepared({ accountId: other.id, tag: "foreign-workflow-child", originKind: "run_step", originRunId: runId, workDepth: 31 }))))
             .rejects.toMatchObject({ name: "SessionCreationOriginError" });

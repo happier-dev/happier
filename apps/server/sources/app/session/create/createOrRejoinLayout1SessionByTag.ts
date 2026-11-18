@@ -31,6 +31,7 @@ import type { SessionAccessAuthentication } from "@/app/session/access/sessionAc
 import { restoreSessionTagRejoinInTx } from "./restoreSessionTagRejoinInTx";
 import type { SessionCreationExecutionAuthorization } from './apiTokenSessionCreationAuthorization';
 import { readSessionCreationApiTokenIdInTx } from './apiTokenSessionCreationAuthorization';
+import { retainWorkflowRunProducedSessionInTx } from '@/app/automations/automationRunService';
 
 /**
  * Ordinary released create-or-rejoin identity: `(accountId, tag)` owns
@@ -198,6 +199,14 @@ async function insertAdmittedLayout1SessionInTx(
         authentication,
         sessionCreationAuthorization,
     });
+    if (prepared.originKind === "run_step" && prepared.originRunId !== undefined) {
+        await retainWorkflowRunProducedSessionInTx({
+            tx,
+            accountId: prepared.accountId,
+            runId: prepared.originRunId,
+            sessionId: created.id,
+        });
+    }
     return {
         kind: "created",
         session: created,

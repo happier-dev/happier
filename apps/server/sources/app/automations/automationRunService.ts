@@ -1,5 +1,6 @@
 import { encodeStoredText } from '@/storage/storedContent';
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
+import { getDbProviderFromEnv } from "@/storage/prisma";
 import { publishManagedRunWakeInTx } from '@/app/machines/managed/managedWake';
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { invalidateSessionReviewProjectionForRunInTx } from './sessionReviewProjectionInvalidation';
@@ -263,6 +264,79 @@ export async function retainAutomationRunProducedSession(params: {
             runId: params.runId,
         });
     }, { transactionClass: "automation-run-produced-session-retain" });
+}
+
+/**
+ * Retains a Workflow Run's child Session at the Session birth owner. Workflow
+ * startup creates the child through the local Session constructor and therefore
+ * does not pass through the Socket start ingress, where the Automation-shaped
+ * retention callback normally runs.
+ */
+export async function retainWorkflowRunProducedSessionInTx(params: {
+    tx: Tx;
+    accountId: string;
+    runId: string;
+    sessionId: string;
+}): Promise<boolean> {
+    await acquireWorkflowPublicationLocksInTx(params.tx, {
+        accountId: params.accountId,
+        runIds: [params.runId],
+    });
+    if (getDbProviderFromEnv(process.env, "postgres") !== "sqlite") {
+        const accountFence = await acquireAccountEncryptionTransitionFenceInTx(
+            params.tx,
+            params.accountId,
+            "content",
+        );
+        if (accountFence.status !== "ready") return false;
+    }
+
+    const run = await params.tx.automationRun.findFirst({
+        where: {
+            id: params.runId,
+            accountId: params.accountId,
+            workflowAcceptedSnapshotEnvelope: { not: null },
+            workflowCustodyState: "pending",
+            claimedByMachineId: { not: null },
+            state: { in: ["running", "cancelled", "outcome_uncertain"] },
+        },
+        select: {
+            state: true,
+            revision: true,
+            producedSessionId: true,
+            workflowCustodyState: true,
+        },
+    });
+    if (!run) return false;
+
+    const session = await params.tx.session.findFirst({
+        where: {
+            id: params.sessionId,
+            accountId: params.accountId,
+            originKind: "run_step",
+            originRunId: params.runId,
+        },
+        select: { id: true },
+    });
+    if (!session) return false;
+    if (run.producedSessionId !== null) return run.producedSessionId === session.id;
+
+    const retained = await params.tx.automationRun.updateMany({
+        where: {
+            id: params.runId,
+            accountId: params.accountId,
+            state: run.state,
+            revision: run.revision,
+            workflowCustodyState: run.workflowCustodyState,
+            producedSessionId: null,
+        },
+        data: {
+            producedSessionId: session.id,
+            revision: { increment: 1 },
+            updatedAt: new Date(),
+        },
+    });
+    return retained.count === 1;
 }
 
 
