@@ -38,6 +38,7 @@ import {
   readServiceCheckFacts,
   readServiceCheckRecent,
   readServiceCheckSettings,
+  serviceCheckAutomationExecutionContext,
   serviceCheckShownDefinition,
   serviceCheckCauseText,
   serviceCheckKeyFlowCauseText,
@@ -453,7 +454,11 @@ export function ServiceCheckDetail(
         </ItemGroup>
       ) : null}
       {automationSubject ? (
-        <SubjectTriggersSection subject={automationSubject} subjectName={definition?.name ?? shown?.checkId ?? row.automationId} />
+        <SubjectTriggersSection
+          subject={automationSubject}
+          subjectName={definition?.name ?? shown?.checkId ?? row.automationId}
+          executionContext={serviceCheckAutomationExecutionContext(settings)}
+        />
       ) : null}
       <ItemGroup
         title={t('projects.deployments.tabSettings')}

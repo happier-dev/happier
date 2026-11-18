@@ -139,6 +139,14 @@ export type ServiceCheckSettings = Readonly<{
   }>;
 }>;
 
+/** The observer placement a Health Automations section needs to read its event starts and offer Link workflow. */
+export function serviceCheckAutomationExecutionContext(settings: ServiceCheckSettings | null): Readonly<{
+  machineId: string;
+  directory: '~';
+}> | undefined {
+  return settings?.observerMachineId ? { machineId: settings.observerMachineId, directory: '~' } : undefined;
+}
+
 export type ServiceCheckDefinitionFacts = Readonly<{
   checkId: string;
   name: string;

@@ -22,7 +22,7 @@ import { buildDeploymentAccountChangeV1, DeploymentDomainPageSuccessV1Schema, De
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { databaseActionMetadata, type DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
+import { databaseActionMetadata, readAutomationDatabaseSubjectV1, type DatabaseDescriptorV1 } from '@happier-dev/database-protocol';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
@@ -127,12 +127,15 @@ describe('deployment scoped read transport', () => {
             placement: { serverId, accountId: 'account-owner', machineId: runtimeMember.machineId, installationId: runtimeMember.installationId },
             automationSubject: { ok: true, subject: { kind: 'database', serverId,
                 target: { kind: 'environment', environmentId: detail.environment.id, service: 'postgres', database: 'receipt-database' } } } };
+        const nativeWithoutSubject: DatabaseDescriptorV1 = (({ automationSubject: _automationSubject, ...descriptor }) => descriptor)(native);
         const managed = (database: string): DatabaseDescriptorV1 => ({ ...native,
             target: { kind: 'managed_deployment', environment: environmentRef, targetLinkId: 'managed-link',
                 contribution: { pluginId: 'provider', contributionId: 'data' }, platformProjectId: 'provider-project', branchId: 'branch', database },
             automationSubject: { ok: true, subject: { kind: 'database', serverId, target: { kind: 'managed_deployment',
                 environmentId: detail.environment.id, targetLinkId: 'managed-link', databaseName: database } } } });
-        const selected = nativeKind ? native : managed('first-database');
+        // A native deployment_service descriptor from an older daemon may omit the optional projection field. The
+        // transport still owns enough canonical target data to project the native subject deterministically.
+        const selected = kind === 'deployment_service' ? nativeWithoutSubject : nativeKind ? native : managed('first-database');
         const targets = nativeKind ? [selected] : [selected, managed('second-database')];
         homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
             environment: detail.environment, targetLinks: [runtimeLink] } });
@@ -198,7 +201,7 @@ describe('deployment scoped read transport', () => {
                     service: 'postgres', targetLinkId: 'runtime-link', deploymentId: 'serving-receipt',
                     machineId: runtimeMember.machineId, installationId: runtimeMember.installationId }]);
                 if (!disabled) expect(page).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {
-                    postgres: selected.automationSubject,
+                    postgres: kind === 'deployment_service' ? readAutomationDatabaseSubjectV1(serverId, native.target) : selected.automationSubject,
                 } }] } });
                 expect(invocations).toMatchObject(disabled ? [
                     { target: { kind: 'machine', machineId: runtimeMember.machineId }, input: { service: 'postgres' } },

@@ -1,7 +1,7 @@
 import { DeploymentPendingDeployStoredIntentV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { DatabaseTargetsListResultV1Schema, type DatabaseTargetsListResultV1,
+import { DatabaseTargetsListResultV1Schema, readAutomationDatabaseSubjectV1, type DatabaseTargetsListResultV1,
     type AutomationDatabaseSubjectReadV1 } from '@happier-dev/database-protocol';
 import {
     DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentDataSizeResultV1Schema,
@@ -218,10 +218,17 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 }
                 const databaseSubjects = Object.fromEntries<AutomationDatabaseSubjectReadV1>((databaseTargets?.targets ?? []).flatMap<readonly [string, AutomationDatabaseSubjectReadV1]>(descriptor => {
                     const target = descriptor.target;
-                    if (!descriptor.automationSubject) return [];
-                    if (target.kind === 'deployment_service') return [[target.serviceId, descriptor.automationSubject]];
-                    if (target.kind === 'managed_deployment' && !descriptor.automationSubject.ok) {
-                        return [[target.targetLinkId, descriptor.automationSubject]];
+                    // Native deployment_service identity is fully determined by the target. Keep the section visible
+                    // when an older daemon omits the optional projected subject; managed targets still require the
+                    // producer's explicit read/refusal because their provider identity is not reconstructible here.
+                    const automationSubject = descriptor.automationSubject
+                        ?? (target.kind === 'deployment_service'
+                            ? readAutomationDatabaseSubjectV1(target.environment.serverId, target)
+                            : undefined);
+                    if (!automationSubject) return [];
+                    if (target.kind === 'deployment_service') return [[target.serviceId, automationSubject]];
+                    if (target.kind === 'managed_deployment' && !automationSubject.ok) {
+                        return [[target.targetLinkId, automationSubject]];
                     }
                     return [];
                 }));

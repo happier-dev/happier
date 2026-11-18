@@ -4,6 +4,7 @@ import {
   readServiceCheckFacts,
   readServiceCheckRecent,
   readServiceCheckSettings,
+  serviceCheckAutomationExecutionContext,
   serviceCheckShownDefinition,
   readServiceCheckDefinitions,
   serviceCheckResultWord,
@@ -142,6 +143,9 @@ describe('A Check’s settings come from its saved source (the edit seed), as sa
         check: { checkId: 'second', kind: { pluginId: 'happier.machine.services', localId: 'http' } },
       },
     });
+    expect(serviceCheckAutomationExecutionContext(readServiceCheckSettings(seed(source([
+      check('first', { endpoint: 'https://first.example', expectStatus: 204 }),
+    ])), 'first'))).toEqual({ machineId: 'machine-observer', directory: '~' });
   });
 
   it('says nothing it cannot read: an unparsable source or a missing seed yields no settings', () => {
@@ -180,6 +184,7 @@ describe('A Check’s settings come from its saved source (the edit seed), as sa
     ]), { kind: 'durablePush', webhookEndpointId: 'w', webhookRoutingSourceInstanceId: 'health:x' }), null);
     expect(settings).toMatchObject({ kind: 'tcp', address: 'db.internal:5432', expectStatus: null, keyword: null,
       observerMachineId: null, alertChannels: 0 });
+    expect(serviceCheckAutomationExecutionContext(settings)).toBeUndefined();
   });
 });
 
