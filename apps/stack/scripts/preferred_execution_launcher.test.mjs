@@ -2225,12 +2225,13 @@ test('AUTO sends small suites to a free peer when the broker head reserves the o
     'a small suite must not spend preparation on the head-reserved host');
 });
 
-// P03-ADMISSION-PLACEMENT 2026-11-16. Probe fields 17-26: unreserved, dependency
+// P03-ADMISSION-PLACEMENT 2026-11-16. Probe fields 17-27: unreserved, dependency
 // refresh, achievable, queued, total/reserved/unreserved/queued CPU, broker
-// ceiling (its HSTACK_MEMORY_CAPACITY bound) and projected start (ms).
+// ceiling (its HSTACK_MEMORY_CAPACITY bound), projected start (ms) and the floor
+// the broker would reserve for this command's identity.
 const placementSample = ({ platform = 'linux', cores = 8, load = 0.1, availableKiB = 0, totalKiB = 33554432, unreservedKiB = 0,
-  achievableKiB = 'unknown', queuedKiB = 0, ceilingKiB = 'unknown', expectedStartMs = 'unknown' }) =>
-  `${cores} ${load} ${availableKiB / totalKiB} 22000000 20 0 ${availableKiB} ${totalKiB} 0 0 0 0 0 0 0 ${platform} ${unreservedKiB} 0 ${achievableKiB} ${queuedKiB} ${cores} 0 ${cores} 0 ${ceilingKiB} ${expectedStartMs}`;
+  achievableKiB = 'unknown', queuedKiB = 0, ceilingKiB = 'unknown', expectedStartMs = 'unknown', identityFloorKiB = 'unknown' }) =>
+  `${cores} ${load} ${availableKiB / totalKiB} 22000000 20 0 ${availableKiB} ${totalKiB} 0 0 0 0 0 0 0 ${platform} ${unreservedKiB} 0 ${achievableKiB} ${queuedKiB} ${cores} 0 ${cores} 0 ${ceilingKiB} ${expectedStartMs} ${identityFloorKiB}`;
 
 async function placementFleet(t, samples) {
   const fixture = await memoryRoutingFixture(t);
@@ -2349,6 +2350,48 @@ test('AUTO sends test overflow to a Mac only while every Linux worker would queu
   const loaded = await placementFleet(t, { nl1: busy, 'mac-host': placementSample({ platform: 'darwin', cores: 18, load: 244, totalKiB: gibKiB(128), availableKiB: gibKiB(60), unreservedKiB: gibKiB(60) }) });
   assert.equal(spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], loaded.invocation).stdout, 'remote:nl1\n',
     'a Mac whose run queue exceeds its cores takes no overflow');
+});
+
+// P03-SPLIT-AUDIT-A P1-5: a Mac that cannot take a heavy command reported no
+// projection, which turned projected-finish placement off for every Linux worker.
+test('AUTO keeps projected-finish placement for heavy commands a Mac in the pool cannot take', { skip: process.platform !== 'linux' }, async t => {
+  const mac = placementSample({ platform: 'darwin', cores: 18, load: 4, totalKiB: gibKiB(128), availableKiB: gibKiB(60), unreservedKiB: gibKiB(60) });
+  const fixture = await placementFleet(t, {
+    nl3: placementSample({ achievableKiB: gibKiB(40), ceilingKiB: gibKiB(200), queuedKiB: gibKiB(8), expectedStartMs: 900_000 }),
+    nl1: placementSample({ achievableKiB: gibKiB(40), ceilingKiB: gibKiB(100), queuedKiB: gibKiB(32), expectedStartMs: 60_000 }),
+    'mac-host': mac,
+  });
+  const compiler = spawnSync('/bin/sh', [launcher, '--', 'node', 'scripts/workspaces/runTypeScriptCli.mjs', '--noEmit', '-p', 'apps/ui/tsconfig.json'], fixture.invocation);
+  assert.equal(compiler.status, 0, compiler.stderr);
+  assert.equal(compiler.stdout, 'remote:nl1\n', 'the shortest projected start wins with the Mac in the pool');
+  assert.match(compiler.stderr, /^HSTACK_PLACEMENT_EXCLUDED target=mac-host reason=overflow-only class=compilation-ui\S*$/m);
+});
+
+// P03-SPLIT-AUDIT-A P1-4: placement sized a command by its class floor (compilation-ui-tsrs,
+// 10 GiB) while each broker reserves the identity's recorded peak, so a worker that
+// would admit the command at once was refused or demoted. The probe names the command's
+// identity and each worker's broker answers with the floor it would reserve.
+test('AUTO sizes a heavy command by the floor each worker\'s broker would reserve for its identity', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await placementFleet(t, {
+    small: placementSample({ totalKiB: gibKiB(25), availableKiB: gibKiB(8), unreservedKiB: gibKiB(8), achievableKiB: gibKiB(8.5),
+      ceilingKiB: gibKiB(9), expectedStartMs: 0, identityFloorKiB: gibKiB(4) }),
+    big: placementSample({ totalKiB: gibKiB(125), achievableKiB: gibKiB(40), ceilingKiB: gibKiB(100), queuedKiB: gibKiB(64),
+      expectedStartMs: 3_600_000, identityFloorKiB: gibKiB(4) }),
+  });
+  const ssh = join(fixture.binDir, 'ssh');
+  const trace = join(fixture.root, 'probes.log');
+  await writeFile(`${ssh}.real`, await readFile(ssh, 'utf8'));
+  await executable(`${ssh}.real`, await readFile(ssh, 'utf8'));
+  await executable(ssh, `#!/bin/sh\ncase "$*" in *getconf*) printf '%s\\n' "$*" >> ${JSON.stringify(trace)} ;; esac\nexec ${JSON.stringify(`${ssh}.real`)} "$@"\n`);
+  const args = ['node', 'scripts/workspaces/runTypeScriptCli.mjs', '--noEmit', '-p', 'apps/ui/tsconfig.json'];
+  const result = spawnSync('/bin/sh', [launcher, '--', ...args], fixture.invocation);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'remote:small\n', 'a worker whose broker would admit this identity now is not refused by the class floor');
+  const probes = await readFile(trace, 'utf8');
+  assert.match(probes, /--heavyweight-memory-sample/);
+  for (const option of ['--class=compilation-ui-tsrs', ...args.map(arg => `--identity-arg=${arg}`)]) {
+    assert.ok(probes.includes(option), `the broker sample names the routed identity (${option})`);
+  }
 });
 
 for (const dispatcher of ['native', 'javascript']) {

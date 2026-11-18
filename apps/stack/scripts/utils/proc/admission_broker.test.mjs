@@ -1052,6 +1052,30 @@ test('a routed command is identified by its own argv, not the remote wrapper scr
   assert.equal(Number(await readFile(floorFile, 'utf8')), 1.5 * gib, 'the run reserves its own recorded identity peak');
 });
 
+// P03-SPLIT-AUDIT-A P1-4: placement sized commands by the class floor while the
+// broker reserved the identity's recorded peak. A sample names the identity, and the
+// broker answers with the floor it would reserve for it, so placement uses one rule.
+test('a sample for a routed command answers the floor the broker would reserve for its identity', linux, async t => {
+  const gib = 1024 * 1024;
+  const { root } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }),
+    admitDisk: () => ({ admitted: true }) });
+  await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
+    [JSON.stringify(['compilation-ui', 'apps/ui', 'vitest', ['.']])]: 1.5 * gib }));
+  const sample = async identityArgs => {
+    let written = '';
+    const write = t.mock.method(process.stdout, 'write', chunk => { written += chunk; return true; });
+    try {
+      await runAdmissionClient(['--sample', `--root=${root}`, '--class=compilation-ui', `--floor-kib=${20 * gib}`,
+        '--projects=.', `--repo=${root}`, '--identity-cwd=apps/ui', ...identityArgs.map(arg => `--identity-arg=${arg}`)]);
+    } finally { write.mock.restore(); }
+    return JSON.parse(written);
+  };
+  assert.equal((await sample(['pnpm', 'exec', 'vitest', 'run', 'sources/a.test.ts'])).identityFloorKiB, 1.5 * gib,
+    'a recorded identity is sized by its recorded peak, as its reservation will be');
+  assert.equal((await sample(['node', 'unrecorded.mjs'])).identityFloorKiB, 1.5 * gib,
+    'an unrecorded identity takes the same related record the reservation would');
+});
+
 test('succession re-sizes a recovered slot to max(its scope memory.current, its identity kernel peak)', linux, async t => {
   const gib = 1024 * 1024;
   const readMemory = () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib });

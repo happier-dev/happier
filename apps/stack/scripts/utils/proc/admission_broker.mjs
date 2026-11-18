@@ -929,7 +929,18 @@ export function createAdmissionBroker({ root,
       let request;
       try { request = JSON.parse(line); } catch { socket.destroy(); return; }
       if (request.kind === 'watch') { subscribers.set(socket, null); return; }
-      if (request.kind === 'sample') { send(socket, { kind: 'sample' }); socket.end(); return; }
+      if (request.kind === 'sample') {
+        // Placement names the routed command's identity and gets the floor this broker
+        // would reserve for it (the same owner as acquire), never the class floor.
+        const identity = request.identity;
+        const valid = identity && typeof identity.resourceClass === 'string' && typeof identity.component === 'string'
+          && typeof identity.entry === 'string' && Number.isSafeInteger(identity.floorKiB) && identity.floorKiB > 0
+          && Array.isArray(identity.projects) && identity.projects.every(project => typeof project === 'string');
+        send(socket, { kind: 'sample', ...(valid ? { identityFloorKiB: recordedIdentityFloorKiB({ resourceClass: identity.resourceClass,
+          className: identity.resourceClass, component: identity.component, entry: identity.entry,
+          projects: identity.projects, floorKiB: identity.floorKiB }) } : {}) });
+        socket.end(); return;
+      }
       if (request.kind === 'check') {
         const valid = Number.isSafeInteger(request.floorKiB) && request.floorKiB > 0 && validCpuRequest(request);
         const available = status();

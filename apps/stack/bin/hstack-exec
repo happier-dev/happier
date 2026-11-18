@@ -138,10 +138,12 @@ score_load_sample() {
   # Physical eligibility is the worker broker's own HSTACK_MEMORY_CAPACITY
   # bound: its admission ceiling (host memory clamped to the jobs slice, field
   # 25). Achievable memory below the floor is a wait the broker keeps queued,
-  # so it orders candidates instead of refusing them.
+  # so it orders candidates instead of refusing them. The floor is the one that
+  # broker would reserve for this command's identity (field 27) when it reported one.
   printf '%s\n' "$1" | awk -v heavy="${2-0}" -v minimum_capacity="${3-0}" '
     {
       if ($1 <= 0 || $2 < 0) exit
+      if (minimum_capacity > 0 && $27 ~ /^[0-9]+$/ && $27 > 0) minimum_capacity = $27
       if (minimum_capacity > 0 && $8 < minimum_capacity) exit
       if (minimum_capacity > 0 && $25 ~ /^[0-9]+$/ && $25 < minimum_capacity) exit
       ratio = $3
@@ -256,8 +258,24 @@ is_heavyweight_dispatch_class() {
 . "$script_dir/../scripts/utils/proc/native_admission_client.sh" || exit 1
 
 if [ "${1-}" = --heavyweight-memory-sample ]; then
-  [ "$#" -eq 1 ] && [ "$(uname -s 2>/dev/null || true)" = Linux ] || exit 1
-  read_native_admission_fact --sample
+  shift
+  [ "$(uname -s 2>/dev/null || true)" = Linux ] || exit 1
+  # Placement may name a routed command's class and admission identity; the broker
+  # then also answers the floor it would reserve for it (identityFloorKiB).
+  heavyweight_sample_class=
+  for heavyweight_sample_option in "$@"; do
+    case "$heavyweight_sample_option" in
+      --class=*) heavyweight_sample_class=${heavyweight_sample_option#--class=} ;;
+      --projects=*|--identity-cwd=*|--identity-arg=*) ;;
+      *) exit 1 ;;
+    esac
+  done
+  if [ -n "$heavyweight_sample_class" ]; then
+    read_native_admission_fact --sample "--floor-kib=$(heavyweight_memory_floor_kib "$heavyweight_sample_class" worker)" "--repo=$repo_root" "$@"
+  else
+    [ "$#" -eq 0 ] || exit 1
+    read_native_admission_fact --sample
+  fi
   exit $?
 fi
 
@@ -1289,6 +1307,33 @@ fi
 # Explicit worker options are declared demand, resolved by the generated policy.
 heavyweight_requested_cpu=$(eval "${explicit_remote_environment-}"; heavyweight_requested_cpu_cores "$@") || exit 1
 heavyweight_remote_class=$policy_heavyClass
+# The routed command's admission identity (admissionCommandIdentity in
+# admission_client.mjs): its cwd and argv, with the admission script in place of
+# a bash -c body, and the repository-root project set its admitted wrapper runs
+# with. The remote admission receives these options, and placement asks each
+# worker's broker for the floor it would reserve for the same identity, so
+# placement and the broker size this command by one rule.
+# A routed `sh|bash -c <body>` runs the policy's admission script as its body.
+runs_admission_script() {
+  [ -n "${policy_admissionScript-}" ] && [ "$#" -eq 3 ] || return 1
+  case "$1" in sh|bash|*/sh|*/bash) return 0 ;; esac
+  return 1
+}
+admission_identity_options=" $(quote_remote "--identity-cwd=$relative_cwd") $(quote_remote --projects=.)"
+add_admission_identity_arguments() {
+  if runs_admission_script "$@"; then set -- "$1" "$2" "$policy_admissionScript"; fi
+  for admission_identity_argument in "$@"; do
+    admission_identity_options="$admission_identity_options $(quote_remote "--identity-arg=$admission_identity_argument")"
+  done
+}
+add_admission_identity_arguments "$@"
+# Only a payload admission of the placement class itself has this identity;
+# a separate placement class sizes a nested step, and an export its workers.
+placement_identity_sample_options=
+if [ "$heavyweight_admission_required" -eq 1 ] && [ "$heavyweight_remote_class" = "$heavyweight_placement_class" ] \
+  && [ "$heavyweight_placement_class" != source-web-export ]; then
+  placement_identity_sample_options=" $(quote_remote "--class=$heavyweight_remote_class")$admission_identity_options"
+fi
 typecheck_affinity_key=
 case "$policy_heavyClass" in compilation|compilation-*)
   # Advisory locality only, never a compiler-currentness or result-cache key.
@@ -1491,11 +1536,12 @@ reserved_cpu=unknown
 unreserved_cpu=unknown
 queued_cpu=unknown
 ceiling_memory=unknown
-expected_start=unknown"
+expected_start=unknown
+identity_floor=unknown"
   if [ "$heavyweight_placement_required" -eq 1 ]; then
     probe="$probe
 if [ \"\$platform\" = linux ]; then
-  budget=\$($(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-memory-sample) || exit 1
+  budget=\$($(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-memory-sample$placement_identity_sample_options) || exit 1
   achievable_memory=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"achievableMemoryKiB\":\([0-9][0-9]*\).*/\1/p')
   [ -n \"\$achievable_memory\" ] || achievable_memory=unknown
   unreserved_memory=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"unreservedMemoryKiB\":\(-\{0,1\}[0-9][0-9]*\).*/\1/p')
@@ -1513,6 +1559,8 @@ if [ \"\$platform\" = linux ]; then
   expected_start=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"expectedStartMs\":\([0-9][0-9]*\).*/\1/p')
   [ -n \"\$ceiling_memory\" ] || ceiling_memory=unknown
   [ -n \"\$expected_start\" ] || expected_start=unknown
+  identity_floor=\$(printf '%s\\n' \"\$budget\" | sed -n 's/.*\"identityFloorKiB\":\([0-9][0-9]*\).*/\1/p')
+  [ -n \"\$identity_floor\" ] || identity_floor=unknown
 fi"
   fi
   probe="$probe
@@ -1523,7 +1571,7 @@ dependency_busy=0"
 dependency_busy=\$(node --input-type=module -e $(quote_remote "$dependency_probe") $(quote_remote "$remote_executor_repo/apps/stack/scripts/utils/proc/dependency_refresh.mjs") $(quote_remote "$remote_repo")) || exit 1"
   fi
   probe="$probe
-printf '%s %s %s %s %s %s %s %s %s %s\\n' \"\$unreserved_memory\" \"\$dependency_busy\" \"\$achievable_memory\" \"\$queued_memory\" \"\$total_cpu\" \"\$reserved_cpu\" \"\$unreserved_cpu\" \"\$queued_cpu\" \"\$ceiling_memory\" \"\$expected_start\""
+printf '%s %s %s %s %s %s %s %s %s %s %s\\n' \"\$unreserved_memory\" \"\$dependency_busy\" \"\$achievable_memory\" \"\$queued_memory\" \"\$total_cpu\" \"\$reserved_cpu\" \"\$unreserved_cpu\" \"\$queued_cpu\" \"\$ceiling_memory\" \"\$expected_start\" \"\$identity_floor\""
   remote_command="${path_setup}cd -- $(quote_remote "$remote_cwd") && $availability && { ${capability_setup}bash -lc $(quote_remote "$probe") && printf '%s\\n' \"\$runtime_worker_target\"; }"
   set --
   # Only AUTO candidate placement may abandon a slow connect and choose another
@@ -1590,7 +1638,7 @@ read_fresh_cache() {
     fi
     available=1
   fi
-  printf '%s %s %s %s\n' "$available" "$score" "$capacity" "$(printf '%s\n' "$cached_sample" | awk '{print $(NF-1)}')"
+  printf '%s %s %s %s %s\n' "$available" "$score" "$capacity" "$(printf '%s\n' "$cached_sample" | awk '{print $(NF-1), ($27 ~ /^[0-9]+$/ ? $27 : "-")}')"
 }
 
 report_placement_exclusion() {
@@ -1600,7 +1648,8 @@ report_placement_exclusion() {
 
 report_insufficient_memory_capacity() {
   printf '[preferred-execution] insufficient memory capacity on %s for %s (requires=%s KiB; total/achievable KiB=%s)\n' \
-    "$1" "$heavyweight_placement_class" "$minimum_memory_capacity_kib" "$(printf '%s\n' "$2" | awk '{print $8 "/" $19}')" >&2
+    "$1" "$heavyweight_placement_class" "$(printf '%s\n' "$2" | awk -v floor="$minimum_memory_capacity_kib" '{print ($27 ~ /^[0-9]+$/ && $27 > 0 ? $27 : floor)}')" \
+    "$(printf '%s\n' "$2" | awk '{print $8 "/" $19}')" >&2
 }
 
 probe_target() {
@@ -1632,20 +1681,23 @@ probe_target() {
   if [ -n "$heavyweight_placement_class" ]; then
     command_key="$command_key:$heavyweight_placement_class"
   fi
+  if [ -n "$placement_identity_sample_options" ]; then
+    command_key="$command_key:$(printf '%s\n' "$placement_identity_sample_options" | cksum | awk '{print $1}')"
+  fi
   cache_path="$cache_dir/$name.cache"
   now=$(date +%s)
   cached=$(read_fresh_cache "$cache_path" "$now" 2>/dev/null || true)
   if [ -n "$cached" ]; then
     cached_available=${cached%% *}
     if [ "$cached_available" = 1 ]; then
-      IFS=' ' read -r _cached_available cached_score cached_capacity runtime_worker_target <<EOF
+      IFS=' ' read -r _cached_available cached_score cached_capacity runtime_worker_target cached_identity_floor <<EOF
 $cached
 EOF
       runtime_native_preference=0
       case ",$runtime_build_components," in
         *,daemon,*) [ "$runtime_worker_target" = "$runtime_build_target" ] || runtime_native_preference=1 ;;
       esac
-      printf '%s %s %s %s %s cached %s\n' "$number" "$name" "$probe_available" "$cached_score" "$cached_capacity" "$runtime_native_preference"
+      printf '%s %s %s %s %s cached %s %s\n' "$number" "$name" "$probe_available" "$cached_score" "$cached_capacity" "$runtime_native_preference" "${cached_identity_floor:--}"
       return
     elif [ "$cached_available" = 2 ]; then
       report_insufficient_memory_capacity "$name" "$(sed -n '1p' "$cache_dir/$name.telemetry")"
@@ -1710,7 +1762,7 @@ EOF
     # instead of erasing them: an erased queue read as zero backlog and drew all
     # heavy work to that worker (2026-11-17 nl1: 83 waiting, nl3 0).
     telemetry_previous=$(sed -n '1p' "$telemetry_cache" 2>/dev/null || true)
-    telemetry=$(printf '%s\n' "$sample" | awk -v heavy="$heavyweight_placement_required" -v previous="$telemetry_previous" '{for(i=1;i<=15;i++){if($i !~ /^[0-9]+([.][0-9]+)?$/)$i=0} platform=($16=="linux"||$16=="darwin")?$16:"unknown"; if ($19 == "" && split(previous, kept, " ") >= 20 && kept[16] == platform && kept[19] ~ /^[0-9]+$/) {for(i=17;i<=26;i++) $i=(i in kept ? kept[i] : "")} printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,platform,($17==""?$7:$17),($18==""?0:$18),($19==""?"unknown":$19),($20==""?(heavy?0:"unknown"):$20); for(i=21;i<=26;i++) printf " %s", ($i ~ /^[0-9]+$/ ? $i : "unknown"); printf "\n"}')
+    telemetry=$(printf '%s\n' "$sample" | awk -v heavy="$heavyweight_placement_required" -v previous="$telemetry_previous" '{for(i=1;i<=15;i++){if($i !~ /^[0-9]+([.][0-9]+)?$/)$i=0} platform=($16=="linux"||$16=="darwin")?$16:"unknown"; if ($19 == "" && split(previous, kept, " ") >= 20 && kept[16] == platform && kept[19] ~ /^[0-9]+$/) {for(i=17;i<=26;i++) $i=(i in kept ? kept[i] : "")} printf "%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,platform,($17==""?$7:$17),($18==""?0:$18),($19==""?"unknown":$19),($20==""?(heavy?0:"unknown"):$20); for(i=21;i<=27;i++) printf " %s", ($i ~ /^[0-9]+$/ ? $i : "unknown"); printf "\n"}')
     telemetry_temporary=$(create_cache_temporary "$telemetry_cache" 2>/dev/null || true)
     if [ -n "$telemetry_temporary" ]; then
       printf '%s\n' "$telemetry" > "$telemetry_temporary" && \
@@ -1725,7 +1777,8 @@ EOF
       rm -f -- "$temporary" 2>/dev/null || true
     fi
     if [ -n "$score" ]; then
-      printf '%s %s %s %s %s fresh %s\n' "$number" "$name" "$probe_available" "$score" "$capacity" "$runtime_native_preference"
+      printf '%s %s %s %s %s fresh %s %s\n' "$number" "$name" "$probe_available" "$score" "$capacity" "$runtime_native_preference" \
+        "$(printf '%s\n' "$sample" | awk '{print ($27 ~ /^[0-9]+$/ ? $27 : "-")}')"
     else
       report_insufficient_memory_capacity "$name" "$sample"
       printf '%s %s 0 - 1 memory-capacity\n' "$number" "$name"
@@ -1919,10 +1972,14 @@ if [ -n "$typecheck_affinity_key" ] && [ -z "$explicit_target_number" ] && [ "$p
 fi
 for result_path in "$probe_tmp"/[0-9]* "$probe_tmp/local"; do
   [ -f "$result_path" ] || continue
-  IFS=' ' read -r candidate_number candidate_name candidate_available candidate_score candidate_capacity candidate_cache candidate_native_preference < "$result_path" || continue
+  IFS=' ' read -r candidate_number candidate_name candidate_available candidate_score candidate_capacity candidate_cache candidate_native_preference candidate_identity_floor < "$result_path" || continue
   candidate_queue_pressure=0
   candidate_empty_memory=0
   candidate_expected_start=-
+  # The floor this worker's broker would reserve for this command's identity
+  # (its probe's field 27), else the class floor.
+  candidate_floor=$minimum_memory_capacity_kib
+  case "${candidate_identity_floor:--}" in ''|*[!0-9]*|0) ;; *) [ "$minimum_memory_capacity_kib" -eq 0 ] || candidate_floor=$candidate_identity_floor ;; esac
   case "$candidate_available:$candidate_cache" in
     0:prerequisite|0:capability|0:bun-pin|0:go-toolchain|0:dispatch-sync)
       case " ${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} " in
@@ -2001,9 +2058,9 @@ EOF
     fi
     # A same-project follower performs its own flush on the leader's worker;
     # source/compiler equality is established there before heavy admission.
-    if [ "$candidate_name" = "$typecheck_running_target" ] && [ "$candidate_memory" -ge "$minimum_memory_capacity_kib" ] && [ "$candidate_queued_memory" = 0 ] && [ "$candidate_cpu_fits" = 1 ]; then candidate_native_preference=-2; fi
+    if [ "$candidate_name" = "$typecheck_running_target" ] && [ "$candidate_memory" -ge "$candidate_floor" ] && [ "$candidate_queued_memory" = 0 ] && [ "$candidate_cpu_fits" = 1 ]; then candidate_native_preference=-2; fi
     candidate_base_preference=${candidate_native_preference:-0}
-    if [ "$heavyweight_placement_required" -eq 1 ] && { [ "$candidate_memory" -lt "$minimum_memory_capacity_kib" ] || [ "$candidate_cpu_fits" != 1 ]; }; then
+    if [ "$heavyweight_placement_required" -eq 1 ] && { [ "$candidate_memory" -lt "$candidate_floor" ] || [ "$candidate_cpu_fits" != 1 ]; }; then
       # Fitting workers precede busy workers using the existing preference
       # order (native=0, cross-target=1), then compare backlog and load.
       candidate_native_preference=$(( ${candidate_native_preference:-0} + 2 ))
@@ -2032,12 +2089,21 @@ EOF
               candidate_expected_start=0
             fi ;;
         esac
+        # Test overflow only (owner ruling 2026-11-17): a Mac that cannot take this
+        # command now is no AUTO candidate for it, as for light commands. Kept, it
+        # had no projected start and turned projected-finish placement off for
+        # every Linux worker (P03-SPLIT-AUDIT-A P1-5). Explicit pins still reach it.
+        if [ "$candidate_expected_start" != 0 ] && [ -z "$explicit_target_number" ]; then
+          candidate_available=0
+          candidate_cache=overflow-only
+          report_placement_exclusion "$candidate_name" "$candidate_cache"
+        fi
       else
         # Achievable memory below the floor needs memory outside admission to
         # leave first: order such a worker after those whose brokers can hold it.
         case "$candidate_achievable" in
           ''|*[!0-9]*) ;;
-          *) [ "$candidate_achievable" -ge "$minimum_memory_capacity_kib" ] || candidate_native_preference=$((candidate_native_preference + 2)) ;;
+          *) [ "$candidate_achievable" -ge "$candidate_floor" ] || candidate_native_preference=$((candidate_native_preference + 2)) ;;
         esac
         case "$candidate_projected" in ''|*[!0-9]*) ;; *) candidate_expected_start=$candidate_projected ;; esac
       fi
@@ -2394,21 +2460,14 @@ fi
 # Explicit per-invocation environment wins over inherited caller budgets.
 remote_command_environment="$remote_command_environment$explicit_remote_environment"
 remote_command_arguments=
-if [ -n "${policy_admissionScript-}" ]; then
-  case "$1" in
-    sh|bash|*/sh|*/bash)
-      if [ "$#" -eq 3 ]; then set -- "$1" "$2" "$policy_admissionScript"; fi ;;
-  esac
-fi
+if runs_admission_script "$@"; then set -- "$1" "$2" "$policy_admissionScript"; fi
 append_remote_command_argument() {
   remote_command_arguments="$remote_command_arguments $(quote_remote "$1")"
 }
 argument_position=0
-remote_identity_options=
 for argument in "$@"; do
   argument_position=$((argument_position + 1))
   append_remote_command_argument "$argument"
-  remote_identity_options="$remote_identity_options $(quote_remote "--identity-arg=$argument")"
   if [ "$argument_position" -eq 1 ]; then
     if [ "$governor_inject_rg_threads" -eq 1 ]; then
       append_remote_command_argument "--threads=$resource_governor_workers"
@@ -2449,7 +2508,7 @@ if [ "$heavyweight_admission_required" -eq 1 ] && [ "${policy_selfPublisher-0}" 
   # The same native launcher owns local and target admission. The target's
   # POSIX account home is machine-local rather than target-config-local, so
   # independently routed jobs contend even when their CLI homes differ.
-  heavyweight_admission_prefix=" cd -- $(quote_remote "$remote_repo"); $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admission $(quote_remote "--class=$heavyweight_remote_class") $(quote_remote "--machine=$selected_name") $(quote_remote "--cpu-cores=$heavyweight_requested_cpu") $(quote_remote "--failure-id=$admission_failure_id") $(quote_remote "--identity-cwd=$relative_cwd")$remote_identity_options --"
+  heavyweight_admission_prefix=" cd -- $(quote_remote "$remote_repo"); $(quote_remote "$remote_executor_repo/apps/stack/bin/hstack-exec") --heavyweight-admission $(quote_remote "--class=$heavyweight_remote_class") $(quote_remote "--machine=$selected_name") $(quote_remote "--cpu-cores=$heavyweight_requested_cpu") $(quote_remote "--failure-id=$admission_failure_id")$admission_identity_options --"
   if [ -n "$remote_workspace_lock_argument" ]; then
     heavyweight_admission_prefix="${heavyweight_admission_prefix% --}$remote_workspace_lock_argument --"
   fi

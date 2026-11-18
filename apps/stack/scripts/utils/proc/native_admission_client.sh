@@ -33,7 +33,7 @@ resolve_heavyweight_admission_root() { resolve_native_host_admission_root; }
 
 read_native_admission_fact() {
   native_admission_query_root=$(resolve_native_host_admission_root) || return 1
-  run_dependency_free_node "$admission_client" "$1" "--root=$native_admission_query_root"
+  run_dependency_free_node "$admission_client" "$@" "--root=$native_admission_query_root"
 }
 
 resolve_worker_cpu_budget() {

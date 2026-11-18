@@ -455,11 +455,21 @@ export async function runAdmissionClient(argv = process.argv.slice(2)) {
   const value = name => options.find(item => item.startsWith(`--${name}=`))?.slice(name.length + 3);
   const root = value('root');
   if (!root) throw new Error('host admission root is required');
+  // A routed dispatch admits its \`bash -c\` wrapper; the dispatcher forwards the
+  // command's own argv and cwd so the identity is the command's, not the wrapper's.
+  const identityArgs = options.filter(item => item.startsWith('--identity-arg=')).map(item => item.slice('--identity-arg='.length));
+  const repoDir = value('repo') ?? process.cwd();
+  const identity = identityArgs.length ? admissionCommandIdentity({ repoDir,
+    cwd: resolve(repoDir, value('identity-cwd') ?? '.'), command: identityArgs[0], args: identityArgs.slice(1) }) : {};
+  const projects = value('projects')?.split('\n').filter(Boolean);
   if (options.some(option => ['--sample', '--active-count', '--waiting-count', '--unreserved-memory', '--check'].includes(option))) {
     const sample = await requestAdmissionSample(root, options.includes('--check')
       ? { kind: 'check', floorKiB: Number(value('floor-kib')),
         cpuCost: resolveAdmissionCpuCost(value('class')),
-        requestedCpuCores: value('cpu-cores') === 'host' ? 'host' : Number(value('cpu-cores') ?? 0) } : { kind: 'sample' });
+        requestedCpuCores: value('cpu-cores') === 'host' ? 'host' : Number(value('cpu-cores') ?? 0) }
+      // Placement's sample for a routed command: the broker answers the floor it would reserve for this identity.
+      : { kind: 'sample', ...(identity.entry !== undefined && value('class') ? { identity: { ...identity,
+        resourceClass: value('class'), floorKiB: Number(value('floor-kib')), projects: projects ?? [] } } : {}) });
     if (options.includes('--check')) process.exitCode = sample.kind === 'admitted' ? 0 : 1;
     else {
       const selected = options.includes('--active-count') ? sample.activeCount
@@ -470,15 +480,9 @@ export async function runAdmissionClient(argv = process.argv.slice(2)) {
     return;
   }
   if (!options.includes('--run') || delimiter < 0 || !argv[delimiter + 1]) throw new Error('admission requires a command');
-  // A routed dispatch admits its \`bash -c\` wrapper; the dispatcher forwards the
-  // command's own argv and cwd so the identity is the command's, not the wrapper's.
-  const identityArgs = options.filter(item => item.startsWith('--identity-arg=')).map(item => item.slice('--identity-arg='.length));
-  const repoDir = value('repo') ?? process.cwd();
-  const identity = identityArgs.length ? admissionCommandIdentity({ repoDir,
-    cwd: resolve(repoDir, value('identity-cwd') ?? '.'), command: identityArgs[0], args: identityArgs.slice(1) }) : {};
   process.exitCode = await runAdmissionCommand({ ...identity, root, className: value('class'),
     floorKiB: Number(value('floor-kib')), machine: value('machine'),
-    projects: value('projects')?.split('\n').filter(Boolean),
+    projects,
     exportMode: value('export-mode'), exportWorkers: Number(value('export-workers')),
     requestedCpuCores: value('cpu-cores') === undefined ? undefined
       : value('cpu-cores') === 'host' ? 'host' : Number(value('cpu-cores')),
