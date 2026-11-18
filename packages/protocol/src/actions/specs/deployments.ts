@@ -367,6 +367,18 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       },
       technicalInputPaths: ['mode', 'serverId', 'environmentId', 'installationId', 'targetLinkId', 'deploymentId',
         'source', 'destination', 'snapshot', 'snapshotReview', 'expectedRevision', 'prepareOperationId', 'operationId'] } } : {}),
+    // A person approves where backups go by its consequence; the destination's plugin, ids and stored
+    // configuration only correlate the request and read under Technical details.
+    ...(backupConfigure ? { approvalPresentation: {
+      summary: (input: unknown) => {
+        const intent = readRecord(input).intent;
+        return intent === 'test' ? 'Checks that the backup destination can be reached. Nothing is saved.'
+          : intent === 'initializeAndSave' ? 'Creates a backup repository at the destination and saves this Environment’s backup setup.'
+          : intent === 'rekeyAndSave' ? 'Re-keys this Environment’s backups and saves the new setup.'
+          : intent === 'markNotNeeded' ? 'Records that this Environment has nothing to back up.'
+          : 'Saves where this Environment’s backups go.';
+      },
+      technicalInputPaths: ['serverId', 'environmentId', 'expectedRevision', 'configuration'] } } : {}),
     inputHints,
     ...(isDeploymentTargetLinkActionIdV1(id) || backupConfigure || backup && !isDeploymentBackupReadActionIdV1(id) || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_DOMAINS_REMOVE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ROLLBACK_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_RESTART_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_PROMOTE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 ? {
       operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } },

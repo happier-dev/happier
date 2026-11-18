@@ -12,6 +12,27 @@ import { SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board
 afterEach(() => setPreferredLanguageFromSettings('en'));
 
 describe('the shared Action approval presentation owner', () => {
+    it('never shows a person the agent instructions an Action declares, even when a receiver carries them as its summary', () => {
+        const deploy = getActionSpec('deployments.deploy');
+        const deployArgs = { serverId: 'home', environmentId: 'env-orders', targetLinkId: 'link-web-01' };
+        const agentText = deploy.inputHints?.description ?? deploy.description ?? '';
+        expect(agentText.length).toBeGreaterThan(0);
+        expect(presentActionApproval({ actionId: 'deployments.deploy', actionArgs: deployArgs, kind: 'confirmation',
+            preview: { summary: agentText } }).summary).toBeNull();
+
+        const configure = getActionSpec('deployments.backups.configure');
+        const configureArgs = { serverId: 'home', environmentId: 'env-orders', expectedRevision: 1, intent: 'initializeAndSave',
+            configuration: { configRevision: 1, destinationRef: { pluginId: 'happier.backup.destinations', localId: 'local' },
+                occurrenceId: 'local', config: { path: '/srv/backups/orders-api' } } };
+        const shown = presentActionApproval({ actionId: 'deployments.backups.configure', actionArgs: configureArgs, kind: 'confirmation',
+            preview: { summary: configure.inputHints?.description ?? configure.description } });
+        expect(shown.summary).not.toBe(configure.inputHints?.description);
+        expect(shown.summary).not.toBe(configure.description);
+        // The person reads one consequence sentence; raw configuration stays under Technical details.
+        expect(shown.summary?.split(/(?<=\.)\s/u)).toHaveLength(1);
+        expect(configure.approvalPresentation?.technicalInputPaths).toEqual(expect.arrayContaining(['configuration']));
+    });
+
     it('names a pressed contribution by its carried declaration, not the generic host Action', () => {
         const actionArgs = { action: { pluginId: 'happier.triage', localId: 'work-items/transition-v1' }, input: { itemId: 'LIN-482' } };
         const preview = { actionId: 'action.invoke', actionArgs, summary: 'Invoke contributed action.',

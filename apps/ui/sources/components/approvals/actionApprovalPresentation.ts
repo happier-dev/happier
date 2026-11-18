@@ -232,8 +232,11 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
         },
     });
     const authoredSummary = input.authoredSummary?.trim();
-    const distinctAuthoredSummary = authoredSummary && authoredSummary !== summarySource && authoredSummary !== canonicalCopySummary
-        ? authoredSummary : null;
+    // An Action's declared description tells an agent how to call it; it is never the person's review copy,
+    // even when a receiver carries it as its summary. The person reads `approvalPresentation.summary` and facts.
+    const agentInstructions = authoredSummary === spec.description?.trim() || authoredSummary === spec.inputHints?.description?.trim();
+    const distinctAuthoredSummary = authoredSummary && !agentInstructions && authoredSummary !== summarySource
+        && authoredSummary !== canonicalCopySummary ? authoredSummary : null;
     const summary = distinctAuthoredSummary ? distinctAuthoredSummary
         : t('actionPresentation.summary', { actionId: spec.id,
             source: summarySource === `${spec.title}.` ? `${titleSource}.`
