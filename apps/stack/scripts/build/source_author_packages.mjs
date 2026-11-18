@@ -21,7 +21,11 @@ export function isFirstPartyBuiltInput(key, workspacePackages) {
 }
 
 export async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, projectDir, runtimeDir, workspacePackages, build,
-  sourceInputDigests, readSourceInput, retainedRuntime, env, signal }) {
+  sourceInputDigests, readSourceInput, retainedRuntime, env, signal,
+  // Where external author dependencies resolve, and the root their physical copies may
+  // come from: the runtime's own installation, or (a runtime that captures its
+  // dependencies later) the installation the caller captures them from.
+  authorDependencies = { resolveFromPackageJsonPath: join(runtimeDir, 'package.json'), dereferenceRootDir: runtimeDir } }) {
   const started = performance.now();
   const workDir = await mkdtemp(join(runtimeDir, '.author-emission-'));
   try {
@@ -143,8 +147,8 @@ export async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, project
           // installation. Source package node_modules may point at the retained
           // install outside this source-runtime root, which the physical author
           // bundle must never capture directly.
-          resolveFromPackageJsonPath: join(runtimeDir, 'package.json'),
-          dereferenceRootDir: runtimeDir,distDir:outputDir});
+          resolveFromPackageJsonPath: authorDependencies.resolveFromPackageJsonPath,
+          dereferenceRootDir: authorDependencies.dereferenceRootDir,distDir:outputDir});
         removeOwnedDirectorySync(join(destDir, 'src'));
         // The author materializer owns declaration work. Retain its production
         // inputs within the existing physical package, so authoring later uses

@@ -116,6 +116,19 @@ test('source author runtime emits the 18-package closure without native declarat
   const privateBundle = join(runtimeDir, 'authoring/node_modules/@happier-dev/author-private');
   assert.match(await readFile(join(privateBundle, 'dist/index.js'), 'utf8'), /private/);
   assert.equal(await readFile(join(sdk, 'node_modules/author-external/index.js'), 'utf8'), 'export const external = "captured-external";\n');
+  // A revision runtime that captures its dependencies has none linked yet: its author
+  // packages resolve their externals from the revision's own installation.
+  const revisionRuntime = fixture.path('revision-runtime');
+  const installation = fixture.path('installation');
+  await mkdir(revisionRuntime);
+  await writeFile(join(revisionRuntime, 'package.json'), JSON.stringify({ name: '@fixture/revision-runtime' }));
+  await cp(join(runtimeDir, 'node_modules'), join(installation, 'node_modules'), { recursive: true });
+  await emitSourceAuthorPackages({ repoDir, sourceRepoDir: repoDir, projectDir, runtimeDir: revisionRuntime,
+    workspacePackages: await readWorkspacePackages(repoDir), build, sourceInputDigests: {},
+    readSourceInput: path => readFile(path), env: process.env,
+    authorDependencies: { resolveFromPackageJsonPath: join(installation, 'apps/cli/package.json'), dereferenceRootDir: installation } });
+  assert.equal(await readFile(join(revisionRuntime, 'authoring/node_modules/@happier-dev/plugin-sdk/node_modules/author-external/index.js'), 'utf8'),
+    'export const external = "captured-external";\n');
   assert.match(await readFile(join(sdk, 'dist/.happier-source/src/index.ts'), 'utf8'), /author-16/);
   assert.ok((await readdir(join(sdk, 'dist/.happier-source'))).includes('tsconfig.json'),
     'the existing author materializer can produce declarations later from captured inputs');

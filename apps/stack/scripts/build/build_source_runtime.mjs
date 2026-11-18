@@ -1752,7 +1752,11 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, dependencyRootD
     // closure; tiny source runtime fixtures have no such package inventory.
     if ((manifest.bundledDependencies ?? []).some(name => workspacePackages.get(name)?.manifest.happier?.publicSdkRelease)) {
       const author = await emitSourceAuthorPackages({repoDir,sourceRepoDir,projectDir,runtimeDir,workspacePackages,
-        build,sourceInputDigests,readSourceInput,retainedRuntime,env,signal});
+        build,sourceInputDigests,readSourceInput,retainedRuntime,env,signal,
+        // A captured-dependency runtime has no installation linked yet: its author
+        // externals come from the installation its runtime dependencies are captured from.
+        ...(captureDependencies ? { authorDependencies: { resolveFromPackageJsonPath: join(dependencyRootDir, 'apps/cli/package.json'),
+          dereferenceRootDir: dependencyRootDir } } : {})});
       // Author closures can exceed the engine's function-argument limit.
       for (const path of author.codeFiles) retainedCodeFiles.push(path);
       authorPackageInputIdentities = author.inputIdentities;
