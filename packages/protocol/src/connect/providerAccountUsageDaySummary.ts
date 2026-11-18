@@ -81,7 +81,30 @@ export function buildProviderAccountUsageDaySummaryV1(input: Readonly<{
     return providerAccountUsagePaceWindowIdentityKey({ recordId: input.recordId, meterId, windowStartAtMs: start, resetAtMs: reset,
       windowDurationMs: reset - start });
   };
-  for (const window of previous?.windows ?? []) windows.set(key(window.meterId, window.windowStartAtMs, window.resetAtMs), { ...window, resets: window.resets.map(reset => ({ ...reset })) });
+  const resetKey = (window: ProviderAccountUsageDaySummaryV1['windows'][number], at: number) =>
+    window.windowStartAtMs === null || window.resetAtMs === null
+      ? String(at) : key(window.meterId, at - (window.resetAtMs - window.windowStartAtMs), at);
+  for (const window of previous?.windows ?? []) {
+    const identity = key(window.meterId, window.windowStartAtMs, window.resetAtMs);
+    const retained = windows.get(identity);
+    if (!retained) {
+      windows.set(identity, { ...window, resets: window.resets.map(reset => ({ ...reset })) });
+      continue;
+    }
+    // Legacy summaries could retain two jittered clocks for one window. Their
+    // terminal samples cannot reconstruct an earlier peak after compaction.
+    const [older, newer] = window.lastObservedAtMs >= retained.lastObservedAtMs ? [retained, window] : [window, retained];
+    const resets = new Map(older.resets.map(reset => [resetKey(older, reset.resetAtMs), { ...reset }]));
+    for (const reset of newer.resets) {
+      const id = resetKey(newer, reset.resetAtMs);
+      const prior = resets.get(id);
+      resets.set(id, { ...reset, usedBeforeReset: reset.usedBeforeReset ?? prior?.usedBeforeReset ?? null });
+    }
+    const peaks = [older.peakUsed, newer.peakUsed].filter(peak => peak !== null);
+    windows.set(identity, { ...newer, resets: [...resets.values()],
+      firstObservedAtMs: Math.min(older.firstObservedAtMs, newer.firstObservedAtMs),
+      peakUsed: peaks.length ? Math.max(...peaks) : null });
+  }
   // Retained last samples allow a late detail row to advance a previous peak
   // after the original detail was removed, without fabricating observations.
   const observations = [...(input.precedingSnapshot ? [input.precedingSnapshot] : []),
@@ -109,14 +132,17 @@ export function buildProviderAccountUsageDaySummaryV1(input: Readonly<{
     }
     if (reset) {
       const owner = windows.get(key(meter.meterId, reset.windowStartAtMs, reset.resetAtMs)) ?? windows.get(id)!;
-      if (!owner.resets.some(value => value.resetAtMs === reset.resetAtMs)) owner.resets.push({ resetAtMs: reset.resetAtMs,
+      const boundary = resetKey(owner, reset.resetAtMs);
+      if (!owner.resets.some(value => resetKey(owner, value.resetAtMs) === boundary)) owner.resets.push({ resetAtMs: reset.resetAtMs,
         usedBeforeReset: before?.meters.find(value => value.meterId === meter.meterId)?.used ?? null });
     }
   }
   for (const window of windows.values()) for (const reset of window.resets) {
     // The terminal used value follows the latest witnessed pre-reset sample,
     // including a newly backfilled sample earlier than the next window.
-    if (reset.resetAtMs === window.resetAtMs) reset.usedBeforeReset = window.lastSnapshot.meters[0]?.used ?? reset.usedBeforeReset;
+    if (window.resetAtMs !== null && resetKey(window, reset.resetAtMs) === resetKey(window, window.resetAtMs)) {
+      reset.usedBeforeReset = window.lastSnapshot.meters[0]?.used ?? reset.usedBeforeReset;
+    }
   }
   let observedAtRange: ProviderAccountUsageDaySummaryV1['observedAtRange'];
   if (!previous || previous.observedAtRange || input.completeDayHistory) {

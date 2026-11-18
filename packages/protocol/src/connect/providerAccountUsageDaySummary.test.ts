@@ -135,6 +135,24 @@ describe('provider quota daily summary', () => {
     expect(merged.windows[0]?.peakUsed).toBe(80);
     expect(merged.windows.flatMap(window => window.resets)).toEqual([{ resetAtMs: day + 1000, usedBeforeReset: 80 }]);
   });
+  it('preserves legacy same-second peaks, bounds and resets when no original detail remains', () => {
+    const earlier = sample(day + 1200, 20, day + 2000);
+    const latest = sample(day + 1800, 30, day + 2400);
+    const first = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, snapshots: [earlier] });
+    const second = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, snapshots: [latest] });
+    const previous = { ...second, windows: [
+      { ...first.windows[0]!, peakUsed: 90, firstObservedAtMs: day + 1000, resets: [
+        { resetAtMs: day + 1000, usedBeforeReset: 85 }, { resetAtMs: day + 2000, usedBeforeReset: 20 },
+      ] },
+      { ...second.windows[0]!, resets: [{ resetAtMs: day + 2400, usedBeforeReset: 30 }] },
+    ] };
+    const rebuilt = buildProviderAccountUsageDaySummaryV1({ recordId, dayStartAtMs: day, previous, snapshots: [] });
+    expect(rebuilt.windows).toEqual([{ ...second.windows[0]!, peakUsed: 90,
+      firstObservedAtMs: day + 1000, lastObservedAtMs: day + 1800, resets: [
+        { resetAtMs: day + 1000, usedBeforeReset: 85 }, { resetAtMs: day + 2400, usedBeforeReset: 30 },
+      ] }]);
+    expect(previous.windows[0]?.peakUsed).toBe(90);
+  });
   it('keeps day chart facts identical on 30D/90D/1Y/All ranges across the detail boundary', () => {
     const snapshots = Array.from({ length: 120 }, (_, index) => [sample((index + 1) * day + 100, 40, (index + 1) * day + 1000),
       sample((index + 1) * day + 900, 85, (index + 1) * day + 1000), sample((index + 1) * day + 1100, 3, (index + 1) * day + 2000)]).flat();
