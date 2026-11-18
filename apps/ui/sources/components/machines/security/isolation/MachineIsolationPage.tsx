@@ -15,6 +15,7 @@ import { useMachineIsolationPolicy } from '@/hooks/machine/useMachineIsolationPo
 import { Modal } from '@/modal';
 import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { t } from '@/text';
 
@@ -39,7 +40,7 @@ import { MachineIsolationAddSandboxModal, type MachineIsolationAddedSandbox } fr
 import { randomUUID } from '@/platform/randomUUID';
 
 type SaveFailure = Readonly<
-  | { kind: 'failed'; policy: MachineIsolationPolicyV1; code?: string }
+  | { kind: 'failed'; policy: MachineIsolationPolicyV1; code?: string; message?: string }
   | { kind: 'conflict' }
 >;
 type ViewBase = Omit<MachineIsolationPageViewProps, 'entries' | 'checkFailure'>;
@@ -62,10 +63,13 @@ export function MachineIsolationPage(
 ) {
   const { serverId, machine, machineName } = props;
   const isolation = useMachineIsolationPolicy({ serverId, machine });
-  const { policy, savePolicy } = isolation;
+  const { policy, savePolicy, targetKey } = isolation;
   const latestPolicy = React.useRef(policy);
   latestPolicy.current = policy;
-  const [failure, setFailure] = React.useState<SaveFailure | null>(null);
+  const latestTarget = React.useRef(targetKey);
+  latestTarget.current = targetKey;
+  const [failedSave, setFailedSave] = React.useState<Readonly<{ targetKey: string; failure: SaveFailure }> | null>(null);
+  const failure = failedSave?.targetKey === targetKey ? failedSave.failure : null;
   const controller = React.useMemo<ManagedControllerV1 | undefined>(
     () =>
       machine.installationId
@@ -77,7 +81,11 @@ export function MachineIsolationPage(
 
   const save = React.useCallback(
     async (next: MachineIsolationPolicyV1) => {
-      setFailure(null);
+      if (latestTarget.current !== targetKey) return;
+      setFailedSave(null);
+      const showFailure = (failure: SaveFailure) => {
+        if (latestTarget.current === targetKey) setFailedSave({ targetKey, failure });
+      };
       try {
         const result = await savePolicy(next);
         if (!result) return;
@@ -93,21 +101,24 @@ export function MachineIsolationPage(
         )
           return;
         if (status === 'conflict') {
-          setFailure({ kind: 'conflict' });
+          showFailure({ kind: 'conflict' });
           return;
         }
         if (!result.ok && result.errorCode === 'action_account_scope_changed')
           return;
-        setFailure({
+        showFailure({
           kind: 'failed',
           policy: next,
           code: result.ok ? (status ?? 'invalid_result') : result.errorCode,
+          message: result.ok
+            ? undefined
+            : resolveActionExecutionErrorMessage(result, t('machineDetailPage.isolation.saveFailed')),
         });
       } catch {
-        setFailure({ kind: 'failed', policy: next, code: 'unavailable' });
+        showFailure({ kind: 'failed', policy: next, code: 'unavailable' });
       }
     },
-    [savePolicy],
+    [savePolicy, targetKey],
   );
   const onChooseTarget = React.useCallback(
     (kind: MachineIsolationWorkKind, id: string | null) => {
@@ -180,7 +191,7 @@ export function MachineIsolationPage(
       ? { title: t('machineDetailPage.isolation.changed') }
       : failure
         ? {
-            title: t('machineDetailPage.isolation.saveFailed'),
+            title: failure.message ?? t('machineDetailPage.isolation.saveFailed'),
             code: failure.code,
             onRetry: () => {
               void save(failure.policy);

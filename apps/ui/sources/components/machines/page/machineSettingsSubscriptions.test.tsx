@@ -20,6 +20,7 @@ const { MachineTerminalSettingsSection } = await import('../terminal/MachineTerm
 const { MachineComputerUseSection } = await import('../computer/MachineComputerUseSection');
 const { MachineInstallablesSection } = await import('../installables/MachineInstallablesSection');
 const { MachineRolesSection } = await import('../security/MachineRolesSection');
+const { MachineIsolationPage } = await import('../security/isolation/MachineIsolationPage');
 const { Modal } = await import('@/modal');
 const { t } = await import('@/text');
 const { MachineToolRow } = await import('../installables/MachineToolRow');
@@ -98,6 +99,25 @@ describe('Machine settings subscriptions', () => {
             if (intent === 'auto-install policy') {
                 expect(storage.getState().settings.installablesPolicyByMachineId[machine.id]?.[tool.key]?.autoInstallWhenNeeded).toBe(false);
             }
+        } finally { await screen.unmount(); }
+    });
+
+    it('explains a refused Isolation change and preserves the saved policy', async () => {
+        const machine = createMachineFixture({ id: 'isolation', isShared: false });
+        const successor = createMachineFixture({ id: 'other-isolation', isShared: false });
+        await account.restore({ currentAccount: true, machines: [machine, successor], settings: {
+            actionsSettingsV1: { v: 1, actions: { 'machines.isolation.set': { enabled: false } } },
+        } });
+        const screen = await renderScreen(<MachineIsolationPage serverId={account.serverId}
+            machine={machine} machineName="Isolation Machine" online />);
+        try {
+            await act(async () => { await resolveServerCredentialAccountScope(account.serverId); });
+            await screen.pressByTestIdAsync('machine-isolation-native');
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('actionConfirmations.turnedOffUnnamedMessage')));
+            expect(storage.getState().machines[machine.id]?.metadata?.isolationPolicyV1).toEqual(machine.metadata?.isolationPolicyV1);
+            await screen.update(<MachineIsolationPage serverId={account.serverId}
+                machine={successor} machineName="Other Machine" online />);
+            expect(screen.findByTestId('machine-isolation-save-failure')).toBeNull();
         } finally { await screen.unmount(); }
     });
 

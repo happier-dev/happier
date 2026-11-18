@@ -16,6 +16,7 @@ export function useMachineIsolationProposedOutcome(snapshot: MachineIsolationGet
 export function useMachineIsolationPolicy(input: Readonly<{ serverId: string; machine: Machine | null }>) {
     const snapshot = React.useMemo(() => readSyncedMachineIsolationPolicy(input.machine), [input.machine]);
     const execution = useMountedActionExecution(input.serverId);
+    const { executeForPresentation } = execution;
     const targetKey = JSON.stringify([execution.binding?.scope, input.machine?.id]);
     const [pending, setPending] = React.useState<Readonly<{
         targetKey: string; policy: MachineIsolationPolicyV1; metadataVersion: number | null;
@@ -32,21 +33,21 @@ export function useMachineIsolationPolicy(input: Readonly<{ serverId: string; ma
         const expected = currentPending?.metadataVersion != null
             ? { policy: currentPending.policy, metadataVersion: currentPending.metadataVersion } : snapshot;
         setPending({ targetKey, policy, metadataVersion: null });
-        const result = await execution.execute('machines.isolation.set', {
+        const result = await executeForPresentation('machines.isolation.set', {
             serverId: input.serverId, machineId: input.machine.id,
             expectedMetadataVersion: expected.metadataVersion, expectedPolicy: expected.policy, policy,
         }).catch(error => {
             setPending(previous => previous?.targetKey === targetKey ? null : previous);
             throw error;
         });
-        const parsed = result.ok ? MachineIsolationMutationResultV1Schema.safeParse(result.result) : null;
+        const parsed = result?.ok ? MachineIsolationMutationResultV1Schema.safeParse(result.result) : null;
         if (parsed?.success && (parsed.data.status === 'applied' || parsed.data.status === 'satisfied' || parsed.data.status === 'unchanged')) {
             const settled = { targetKey, policy: parsed.data.policy, metadataVersion: parsed.data.metadataVersion };
             setPending(previous => previous?.targetKey === targetKey ? settled : previous);
         } else setPending(previous => previous?.targetKey === targetKey ? null : previous);
         return result;
-    }, [snapshot, input.machine, input.serverId, currentPending, targetKey, execution.execute]);
+    }, [snapshot, input.machine, input.serverId, currentPending, targetKey, executeForPresentation]);
 
     return { snapshot, policy: snapshot.status === 'ready' ? currentPending?.policy ?? snapshot.policy : null,
-        saving: currentPending !== null && currentPending.metadataVersion === null, savePolicy };
+        saving: currentPending !== null && currentPending.metadataVersion === null, savePolicy, targetKey };
 }
