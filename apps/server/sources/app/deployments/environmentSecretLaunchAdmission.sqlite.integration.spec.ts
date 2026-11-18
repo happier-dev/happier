@@ -930,6 +930,49 @@ describe('private installed Environment secret launch transport', () => {
             expect(custodian.statusCode, custodian.body).toBe(401);
         }, { authentication: 'real' });
     });
+    it('admits a person-started Workflow Run approval-scope Environment read under its workflow.run.start root (MOVE-WORKFLOW item 10)', async () => {
+        // A Run's steps execute with the accepted workflow.run.start authorization as their carrier
+        // (buildWorkflowActionContext). Each deployment step's approval scope reads its Environment first.
+        const f = await admittedTeamDelivery('plain');
+        const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+        const machine = await db.machine.findUniqueOrThrow({ where: { id: f.controller.machineId }, select: { accountId: true } });
+        await db.machine.update({ where: { id: f.controller.machineId }, data: { accountId: f.owner.id } });
+        const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const target = { kind: 'machine' as const, machineId: f.controller.machineId };
+        const rootActionId = 'workflow.run.start' as const;
+        const read = async (accountId: string, tokenEpoch: number, effectActionId: string,
+            path = `/v1/deployments/environments/${row.id}?serverId=${serverId}`) => {
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: { workflowId: 'deployment-move' } };
+            const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId, serverIdentityId: serverId,
+                authentication: { kind: 'account', tokenEpoch }, actionId: rootActionId, machineId: target.machineId, target,
+                requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) });
+            return { method: 'GET' as const, url: path, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId, target, installationId: f.controller.installationId, requestId: envelope.requestId,
+                    method: 'GET', path, privateKey: f.controller.keys.secretKey }),
+            } };
+        };
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); }, async app => {
+            const manager = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, 'deployments.environments.get'));
+            expect(manager.statusCode, manager.body).toBe(200);
+            expect(manager.json()).toMatchObject({ ok: true, environment: { id: row.id } });
+            // The Run root does not widen to other effects or to Environment content.
+            expect((await app.inject(await read(f.owner.id, f.owner.tokenEpoch, 'deployments.environments.list',
+                `/v1/deployments/environments?serverId=${serverId}`))).statusCode).toBe(401);
+            expect((await app.inject(await read(f.owner.id, f.owner.tokenEpoch, 'artifact.get',
+                `/v1/artifacts/${row.contentArtifactId}`))).statusCode).toBe(401);
+            const foreign = await app.inject(await read(outsider.id, outsider.tokenEpoch, 'deployments.environments.get').catch(() => null)
+                ?? { method: 'GET', url: '/v1/never' });
+            expect(foreign.statusCode, foreign.body).not.toBe(200);
+            await db.machine.update({ where: { id: f.controller.machineId }, data: { accountId: machine.accountId } });
+            const custodian = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, 'deployments.environments.get'));
+            expect(custodian.statusCode, custodian.body).toBe(401);
+        }, { authentication: 'real' });
+    });
+
     it('refuses a person-presented semantic database root after its member left the Source Team', async () => {
         const f = await admittedTeamDelivery('plain', false, 'postgres');
         const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });

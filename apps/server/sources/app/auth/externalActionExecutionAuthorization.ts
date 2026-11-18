@@ -1258,6 +1258,19 @@ function isWorkflowDiscussionPreparationEffect(rootActionId: string, effectActio
     return rootActionId === 'workflow.run.start' && effectActionId === 'discussion.read';
 }
 
+/**
+ * A person-started Run's steps use the accepted workflow.run.start authorization as their carrier
+ * (buildWorkflowActionContext). Before each deployment step, the approval-scope owner
+ * (createDeploymentApprovalScopeResolverV1) reads that step's Environment or receipt metadata as the
+ * requester. Only those two metadata reads cross; a foreign custodian Machine gains no requester read.
+ */
+function isWorkflowDeploymentApprovalScopeReadEffect(binding: ExternalActionExecutionAuthorizationBindingV1,
+    effectActionId: string): boolean {
+    return binding.actionId === WORKFLOW_RUN_START_ACTION_ID_V1 && 'authentication' in binding
+        && binding.custodianAccountId === binding.accountId
+        && (effectActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 || effectActionId === DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1);
+}
+
 /** Memory admission inspects existing exposure before proposing or performing a write. */
 function isMemoryExposureReadEffect(rootActionId: string, effectActionId: string): boolean {
     return (rootActionId === 'approval.request.create' || isMemoryWriteActionV1(rootActionId))
@@ -1462,6 +1475,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         docRead: isDocReadEffect(binding.actionId, effectActionId),
         secondOpinion: isSecondOpinionEffect(binding.actionId, effectActionId),
         workflowDiscussion: isWorkflowDiscussionPreparationEffect(binding.actionId, effectActionId),
+        workflowDeploymentRead: isWorkflowDeploymentApprovalScopeReadEffect(binding, effectActionId),
         memory: isMemoryExposureReadEffect(binding.actionId, effectActionId),
         personalUsage: isPersonalUsageReadEffect(binding.actionId, effectActionId),
         personalSavedSecret: personalSavedSecretResourceMutationActionIdV1(binding.actionId) === effectActionId,
@@ -3742,6 +3756,14 @@ function isWorkflowRunActionHttpPurpose(verified: VerifiedSignedChildRequest,
             && (isAccountActionHttpOperation('discussion.read', proof)
                 || isDiscussionActionHttpPreparation(verified, proof)
                 || proof.path === '/v1/features/authenticated');
+    }
+    if (verified.signedChildPurpose.sibling.workflowDeploymentRead) {
+        // The route keeps the requester's own Environment and receipt access; no content custody opens.
+        if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined
+            || !isAccountActionHttpOperation(verified.effectActionId, proof)) return false;
+        const operands = proof.routeInput;
+        return typeof operands === 'object' && operands !== null && 'serverId' in operands
+            && operands.serverId === verified.binding.serverIdentityId;
     }
     if (verified.binding.actionId === WORKFLOW_RUN_START_ACTION_ID_V1 && isManagedCreationChildHttpPurpose(verified, proof)) return true;
     const reads = ['get', 'run-key.census', 'run-key.commit'];
