@@ -303,6 +303,9 @@ export function ServiceCheckDetail(
     : null;
   return (
     <View testID={`services.check.${row.automationId}.${row.triggerId}`}>
+      {/* The head holds the meta line (beside the pane's title) and the check's actions; on the page with neither, it
+          draws nothing, so the bars stand right under the header (lab A3). */}
+      {(props.metaInHeader || meta === null) && !settings && !(failing && investigateSubject) ? null : (
       <ItemGroup surface="none" testID="services.check.head">
         {props.metaInHeader || meta === null ? null : (
           <Text
@@ -320,6 +323,7 @@ export function ServiceCheckDetail(
           ) : null}
         </View>
       </ItemGroup>
+      )}
       {failing ? (
         <AttentionBanner
           testID="services.check.failing"
@@ -406,6 +410,8 @@ export function ServiceCheckDetail(
       })}
       {recent ? (
         <ItemGroup
+          // Results are records the person reads down: a flat list with its section title, no card (lab A3; owner 11-15).
+          surface="none"
           title={t(`${k}.recentResults`)}
           description={t(recent.partial ? `${k}.recentResultsPartial` : `${k}.recentResultsBody`)}
           testID="services.check.results"
