@@ -1382,5 +1382,7 @@ test('preparation failures report their stage without starting the compiler', as
   const { child, stderr } = setup.start([runner, '--verifyProjectCoverage', 'absent.json', '-p', 'tsconfig.json']);
   assert.deepEqual(await once(child, 'exit'), [1, null]);
   assert.match(stderr(), /\[typecheck-failure\] project-coverage:/u);
+  // The verdict carries its thrown cause, not only a step code.
+  assert.match(stderr(), /\[typecheck-failure-detail\] \{"name":"[A-Za-z]+","message":"[^"]+"/u);
   await assert.rejects(readFile(setup.pidFile), { code: 'ENOENT' });
 });

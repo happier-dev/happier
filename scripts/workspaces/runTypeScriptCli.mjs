@@ -12,7 +12,7 @@ import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { prepareReferencedTypecheckDeclarations, orderTypecheckProjects } from './prepareReferencedTypecheckDeclarations.mjs';
 import { ensureWorkspacePackagesBuiltForComponents } from './ensureWorkspacePackagesBuilt.mjs';
 import { prepareWorkspaceSourceTypecheckProjects } from './workspaceSourceTypecheck.mjs';
-import { createTypecheckDiagnosticRun, createTypecheckInputObservation, isCompleteTypecheckDiagnosticResult, typecheckDiagnosticFailureIdentifier, typecheckPartitionFailure } from './typecheckDiagnostics.mjs';
+import { createTypecheckDiagnosticRun, createTypecheckInputObservation, isCompleteTypecheckDiagnosticResult, typecheckDiagnosticFailureIdentifier, typecheckFailureDetail, typecheckPartitionFailure } from './typecheckDiagnostics.mjs';
 import {
   resolveTypeScriptCliInvocation,
   shouldRouteTypeScriptCliThroughHstack,
@@ -237,6 +237,7 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
       if (cancelled) break;
       // Output paths belong to the authored config; finite projections inherit
       // them through extends and only replace membership and references.
+      failureStep = 'project-build-preparation';
       prepareTypeScriptProjectBuildFromArgs(project.authoredArgs, { cwd: process.cwd() });
       // Declaration preparation is a UI workload. Expose its actual project
       // to the existing classifier instead of charging it to the CLI consumer.
@@ -291,6 +292,7 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
     }
   } catch (error) {
     process.stderr.write(`[typecheck-failure] ${typecheckDiagnosticFailureIdentifier(error, failureStep)}\n`);
+    process.stderr.write(`[typecheck-failure-detail] ${JSON.stringify(typecheckFailureDetail(error))}\n`);
     if (Array.isArray(error?.cycle)) process.stderr.write(`[typecheck-reference-cycle] ${error.cycle.join(' -> ')}\n`);
     result = { status: 1, signal: null };
   } finally {

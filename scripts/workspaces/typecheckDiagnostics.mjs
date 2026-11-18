@@ -83,11 +83,43 @@ class DiagnosticSnapshotError extends Error {
   }
 }
 
+const FAILURE_CODE = /^[A-Z][A-Z0-9_]{0,63}$/u;
+
 export function typecheckDiagnosticFailureIdentifier(error, fallbackStep) {
   const step = error instanceof DiagnosticSnapshotError ? error.step : fallbackStep;
+  // A failure is typed by its own code, else by the child exit or signal it
+  // carries, else by its error class; UNKNOWN only when none of those exist.
+  const name = typeof error?.name === 'string' && error.name !== 'Error' && /^[A-Za-z][A-Za-z0-9]{0,63}$/u.test(error.name)
+    ? error.name : undefined;
   const code = Number.isInteger(error?.code) ? `EXIT_${error.code}`
-    : typeof error?.code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/u.test(error.code) ? error.code : 'UNKNOWN';
+    : typeof error?.code === 'string' && FAILURE_CODE.test(error.code) ? error.code
+      : Number.isInteger(error?.exitCode) ? `EXIT_${error.exitCode}`
+        : typeof error?.signal === 'string' && FAILURE_CODE.test(error.signal) ? error.signal
+          : name ?? 'UNKNOWN';
   return `${step}:${code}`;
+}
+
+// The last stderr lines a failed child returned on the error itself; inherited
+// child stderr is already in the log above the verdict.
+const STDERR_TAIL_LINES = 20;
+
+/** The thrown cause behind a `[typecheck-failure]` identifier: message, throw
+ * site and each `cause`, so a failed preparation never reads as an opaque code. */
+export function typecheckFailureDetail(error) {
+  const describe = value => {
+    if (!(value instanceof Error)) return { message: String(value) };
+    const at = value.stack?.split('\n').find(line => /^\s+at /u.test(line))?.trim().replace(/^at /u, '');
+    const stderr = typeof value.stderr === 'string' ? value.stderr
+      : Buffer.isBuffer(value.stderr) ? value.stderr.toString('utf8') : '';
+    const stderrTail = stderr.split(/\r?\n/u).filter(Boolean).slice(-STDERR_TAIL_LINES);
+    return { name: value.name, message: value.message, ...(at ? { at } : {}), ...(stderrTail.length ? { stderrTail } : {}) };
+  };
+  const causes = [];
+  for (let cause = error?.cause, seen = new Set([error]); cause != null && !seen.has(cause); cause = cause?.cause) {
+    seen.add(cause);
+    causes.push(describe(cause));
+  }
+  return { ...describe(error), ...(causes.length ? { causes } : {}) };
 }
 
 async function diagnosticStep(step, operation) {

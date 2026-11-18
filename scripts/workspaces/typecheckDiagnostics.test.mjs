@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createTypecheckDiagnosticRun, isCompleteTypecheckDiagnosticResult, typecheckDiagnosticFailureIdentifier } from './typecheckDiagnostics.mjs';
+import { createTypecheckDiagnosticRun, isCompleteTypecheckDiagnosticResult, typecheckDiagnosticFailureIdentifier, typecheckFailureDetail } from './typecheckDiagnostics.mjs';
 
 test('a partition stopped before semantic checking cannot publish a completed baseline', async t => {
   const f = await fixture(t);
@@ -226,4 +226,19 @@ test('global diagnostics remain visible; non-typecheck commands cannot replace a
     run.record(project, { stdout: compilerDiagnostic, status: 2 });
     assert.deepEqual(await run.publish(), []);
   }
+});
+
+test('a preparation failure without a code is identified by its exit, signal or class and keeps its message', () => {
+  const worker = Object.assign(new Error('Dependency declaration preparation failed'), { exitCode: 7, signal: null });
+  assert.equal(typecheckDiagnosticFailureIdentifier(worker, 'declaration-preparation'), 'declaration-preparation:EXIT_7');
+  const interrupted = Object.assign(new Error('Dependency declaration emission interrupted'), { signal: 'SIGTERM' });
+  assert.equal(typecheckDiagnosticFailureIdentifier(interrupted, 'declaration-preparation'), 'declaration-preparation:SIGTERM');
+  assert.equal(typecheckDiagnosticFailureIdentifier(new TypeError('x is not iterable'), 'declaration-preparation'),
+    'declaration-preparation:TypeError');
+  const cause = Object.assign(new Error('pnpm refused'), { stderr: `${'noise\n'.repeat(50)}ERR_PNPM_X lockfile\n` });
+  const detail = typecheckFailureDetail(new Error('Missing TypeScript declaration owner for a.ts', { cause }));
+  assert.equal(detail.message, 'Missing TypeScript declaration owner for a.ts');
+  assert.match(detail.at, /typecheckDiagnostics\.test\.mjs/u);
+  assert.equal(detail.causes[0].message, 'pnpm refused');
+  assert.match(detail.causes[0].stderrTail.at(-1), /ERR_PNPM_X lockfile/u);
 });
