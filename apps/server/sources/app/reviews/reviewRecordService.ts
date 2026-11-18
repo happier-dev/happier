@@ -26,7 +26,21 @@ export async function writeReviewRoundState(tx: Tx, input: Readonly<{ reviewId: 
         if (metadata.currentRoundOrdinal !== (current?.currentRoundOrdinal ?? 0) + 1) notAdmitted();
         const data = { state: metadata.state, currentRoundOrdinal: metadata.currentRoundOrdinal,
             startedAt: new Date(metadata.startedAt), finishedAt: null };
-        if (current) await tx.reviewMetadata.update({ where: { artifactId: reviewId }, data });
+        if (current) {
+            await tx.reviewMetadata.update({ where: { artifactId: reviewId }, data });
+            // Eligibility was frozen when requested. A new round renews only
+            // required requests, without re-reading Team membership or grants.
+            const requests = await tx.reviewRequestedReviewer.findMany({
+                where: { reviewId, roundOrdinal: current.currentRoundOrdinal, required: true },
+                select: { principalKey: true, principal: true, required: true,
+                    eligibleAccounts: { select: { accountId: true } } },
+            });
+            for (const request of requests) {
+                await tx.reviewRequestedReviewer.create({ data: { reviewId, roundOrdinal: metadata.currentRoundOrdinal,
+                    principalKey: request.principalKey, principal: request.principal!, required: request.required,
+                    eligibleAccounts: { create: request.eligibleAccounts.map(({ accountId }) => ({ accountId })) } } });
+            }
+        }
         else await tx.reviewMetadata.create({ data: { artifactId: reviewId, ...metadata, ...data } });
         return true;
     }
