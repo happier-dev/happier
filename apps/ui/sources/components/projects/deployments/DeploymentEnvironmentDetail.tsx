@@ -985,7 +985,8 @@ export const DeploymentEnvironmentDetail = React.memo(
             actionsLayout="hang"
           />
 
-          <ItemGroup surface="none" header="none">
+          {/* The tabs hang from the page header (lab envOv): the header owns their distance, not the page's section gap. */}
+          <ItemGroup surface="none" header="none" headerStyle={styles.tabsUnderHeader}>
             <EnvironmentPageNavigation navigation={navigation} phone={props.phone} onSelect={selectPage} />
           </ItemGroup>
           {/* One attention slot under the tabs (R3): only the highest-precedence notice; lower ones stay in their rows. */}
@@ -1516,6 +1517,9 @@ const styles = StyleSheet.create((theme) => ({
   phoneDeploy: { flexGrow: 1 },
   phoneSplit: { flexGrow: 1, alignSelf: 'stretch' },
   split: { flexDirection: 'row', alignItems: 'center', gap: 1 },
+  tabsUnderHeader: {
+    paddingTop: 0,
+  },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',

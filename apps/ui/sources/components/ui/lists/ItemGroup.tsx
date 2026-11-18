@@ -53,6 +53,7 @@ import {
     type HappierPageSheetProps,
     happierPageTextMetrics,
     resolveHappierItemGroupConstraints,
+    useHappierPageSection,
 } from '@happier-dev/plugin-ui/presentation';
 
 
@@ -63,7 +64,10 @@ export { HappierItemGroupSelectionContext as ItemGroupSelectionContext } from '@
 export interface ItemGroupProps {
     /** Identifies the whole section (header and rows) for tests and automation. */
     testID?: string;
-    /** A containing sheet may already own this section's header and spacing. */
+    /**
+     * `none` drops the section's header. Its leading space stays the page's: a section in the page flow still starts
+     * one section gap below what precedes it, and only a containing sheet, column or menu owns that space instead.
+     */
     header?: 'section' | 'none';
     title?: string | React.ReactNode;
     /**
@@ -660,6 +664,9 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     } = props;
     const defaultSurface = React.useContext(ItemGroupDefaultSurfaceContext);
     const floatingSurface = useFloatingListSurface();
+    // A section in the page flow keeps the page's rhythm even without a header: nothing contains it to own the gap.
+    const inPageSheet = useHappierPageSection() !== null;
+    const pageFlowBlock = isPage && !contained && !floatingSurface && !inPageSheet;
     const sidePaneTextEdge = useSidePaneTextEdge();
     const inspector = usePageRowDensityOverride() === 'inspector';
     const renderPageDescription = (content: React.ReactNode) => (
@@ -761,7 +768,10 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
         <View testID={testID} style={[styles.wrapper, style]}>
             <View style={[styles.container, contained ? styles.containedContainer : null, constrainToContentWidth && !widgetBody ? { maxWidth } : undefined]}>
                 {/* Header */}
-                {props.header === 'none' ? null : isPage && (title || description || action) ? (
+                {props.header === 'none' ? (
+                    pageFlowBlock && virtualizedSegment?.first !== false
+                        ? <View style={[styles.pageHeaderNoTitle, inspector ? styles.pageHeaderNoTitleInspector : null, headerStyle]} /> : null
+                ) : isPage && (title || description || action) ? (
                     <HappierPageSectionHeader
                         title={(titleAccessory || titleLeading) && typeof title === 'string' ? (
                             <View style={styles.pageTitleRow}>

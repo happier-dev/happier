@@ -57,6 +57,31 @@ function rowDividers(screen: Screen, rowTestIds: readonly string[]): Array<strin
     });
 }
 
+/**
+ * The vertical space a section draws above its content: the top padding and margin of every host box between the
+ * section's root and the content (its own spacer views included), as the page lays it out.
+ */
+function spaceAbovePx(screen: Screen, sectionTestID: string, contentTestID: string): number {
+    const section = screen.findAllByTestId(sectionTestID).find((node) => typeof node.type === 'string');
+    const content = screen.findAllByTestId(contentTestID).find((node) => typeof node.type === 'string');
+    if (!section || !content) throw new Error(`Missing ${sectionTestID} or ${contentTestID}`);
+    const top = (node: ReactTestInstance) => { const style = flattenTestStyle(node.props.style);
+        const read = (value: unknown) => (typeof value === 'number' ? value : 0);
+        return read(style.paddingTop ?? style.paddingVertical ?? style.padding) + read(style.marginTop ?? style.marginVertical ?? style.margin); };
+    let total = 0;
+    const walk = (node: ReactTestInstance): boolean => {
+        if (node === content) return true;
+        if (typeof node.type === 'string') total += top(node);
+        for (const child of node.children) {
+            if (typeof child === 'string') continue;
+            if (walk(child)) return true;
+        }
+        return false;
+    };
+    walk(section);
+    return total;
+}
+
 /** How far a node's leading edge sits from the scope's edge: the sum of the leading margins of it and its host ancestors. */
 function leadingOffsetPx(screen: Screen, testID: string): number {
     let node: ReactTestInstance | null = screen.findAllByTestId(testID).find((candidate) => typeof candidate.type === 'string') ?? null;
@@ -288,6 +313,28 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
             contentRow: leadingOffsetPx(screen, 'content-row') - tiles,
             line: leadingOffsetPx(screen, 'line') - tiles,
         }).toEqual({ row: rowBleed, contentRow: rowBleed, line: rowBleed });
+    });
+
+    it('keeps the page rhythm for a headerless section in the page flow: one section gap below what precedes it', async () => {
+        const { ItemGroup, ListPresentationProvider } = await loadModules();
+        const { View } = await import('react-native');
+        // Environment Overview: the attention banner (an untitled page block), then the Serving card (`header="none"`).
+        const page = await renderScreen(
+            <ListPresentationProvider value="page">
+                <ItemGroup testID="banner" surface="none"><View testID="banner-body" /></ItemGroup>
+                <ItemGroup testID="serving" header="none"><View testID="serving-body" /></ItemGroup>
+            </ListPresentationProvider>,
+        );
+        expect(spaceAbovePx(page, 'serving', 'serving-body')).toBe(spaceAbovePx(page, 'banner', 'banner-body'));
+        expect(spaceAbovePx(page, 'serving', 'serving-body')).toBeGreaterThan(0);
+        await page.unmount();
+        // A contained column owns its own spacing: there the section stays flush.
+        const column = await renderScreen(
+            <ListPresentationProvider value="page" pageInsets="contained">
+                <ItemGroup testID="flow" header="none"><View testID="flow-body" /></ItemGroup>
+            </ListPresentationProvider>,
+        );
+        expect(spaceAbovePx(column, 'flow', 'flow-body')).toBe(0);
     });
 
     it('hands each row its position in the section, so a highlighted first or last row follows the sheet corners', async () => {
