@@ -914,7 +914,7 @@ const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} encara no està preparada per allotjar desplegaments`,
     hostSetupBody: "Revises cada canvi abans que s’executi res. Desar aquest entorn pot esperar fins aleshores.",
     hostSetupAction: ({ machine }) => `Prepara ${machine}`,
-    hostReviewAction: ({ machine }) => `Revisa la preparació de ${machine}`,
+    hostReviewShort: 'Revisa la preparació',
     hostUnchecked: ({ machine }) => `No s’ha pogut comprovar si ${machine} pot allotjar desplegaments`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "ca">;

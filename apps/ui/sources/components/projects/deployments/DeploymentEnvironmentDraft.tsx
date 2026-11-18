@@ -771,14 +771,15 @@ export const DeploymentEnvironmentDraft = React.memo(
               title={t(host.readiness === 'needsSetup' ? 'projects.deployments.platformLink.hostNeedsSetup'
                 : 'projects.deployments.platformLink.hostUnchecked', { machine: machineName(chosen.id) })}
               description={t('projects.deployments.platformLink.hostSetupBody')}
-              action={{ label: t('projects.deployments.platformLink.hostReviewAction', { machine: machineName(chosen.id) }),
+              // The title already names the Machine; the way forward stays quiet beside the footer's one primary (R2-D5).
+              action={{ label: t('projects.deployments.platformLink.hostReviewShort'),
                 onPress: () => {
                   if (host.setup) void host.review();
                   else if (props.lifetime) router.push(machinePageHref({ door: 'rail',
                     target: { machineId: chosen.id, serverId: props.lifetime.scope.serverId }, tab: { id: 'setup' } }));
                 }, loading: host.reviewing,
                 disabled: hostApply.pending || (host.setup ? !host.canReview : !props.lifetime),
-                display: 'default', testID: 'project-deployments.draft.hostSetup.prepare' }}
+                display: 'secondary', testID: 'project-deployments.draft.hostSetup.prepare' }}
             />
           ) : null}
           {!onPlatform && host.setup ? <MachineSetupRecipeInputs setup={host.setup} projection={host.inputProjection}

@@ -911,7 +911,7 @@ const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} non è ancora pronta per ospitare deployment`,
     hostSetupBody: "Rivedi ogni modifica prima che venga eseguito qualcosa. Il salvataggio di questo ambiente può attendere.",
     hostSetupAction: ({ machine }) => `Prepara ${machine}`,
-    hostReviewAction: ({ machine }) => `Rivedi la preparazione di ${machine}`,
+    hostReviewShort: 'Rivedi la preparazione',
     hostUnchecked: ({ machine }) => `Impossibile verificare se ${machine} può ospitare deployment`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "it">;

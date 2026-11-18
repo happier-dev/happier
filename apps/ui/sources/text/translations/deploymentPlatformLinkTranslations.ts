@@ -94,7 +94,7 @@ export type DeploymentPlatformLinkCopy = Readonly<{
   hostNeedsSetup: (params: { machine: string }) => string;
   hostSetupBody: string;
   hostSetupAction: (params: { machine: string }) => string;
-  hostReviewAction: (params: { machine: string }) => string;
+  hostReviewShort: string;
   hostUnchecked: (params: { machine: string }) => string;
 }>;
 
@@ -189,7 +189,7 @@ export const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} isn’t set up to host deploys yet`,
     hostSetupBody: "You review every change before anything runs. Saving this environment can wait until then.",
     hostSetupAction: ({ machine }) => `Set up ${machine}`,
-    hostReviewAction: ({ machine }) => `Review setup for ${machine}`,
+    hostReviewShort: 'Review setup',
     hostUnchecked: ({ machine }) => `Couldn’t check whether ${machine} can host deploys`,
   },
 } satisfies Pick<Record<SupportedLanguage, DeploymentPlatformLinkCopy>, 'en'>;

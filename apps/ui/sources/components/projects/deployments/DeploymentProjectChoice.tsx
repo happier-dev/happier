@@ -110,7 +110,8 @@ export function DeploymentProjectChoiceGroups(props: Readonly<{
       {model.newProject ? (
         <Item
           title={t('capabilities.store.appPage.projectNameLabel')}
-          accessoryLayout="stacked"
+          // A field is a row like its neighbours: label left, field right; a phone stacks it (R2-D5).
+          accessoryLayout="adaptive"
           rightElement={
             <FieldTextInput
               testID={`${testIDPrefix}.newName`}

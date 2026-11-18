@@ -904,7 +904,7 @@ const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} nie jest jeszcze gotowa do hostowania wdrożeń`,
     hostSetupBody: "Przeglądasz każdą zmianę, zanim cokolwiek się uruchomi. Zapisanie tego środowiska może poczekać.",
     hostSetupAction: ({ machine }) => `Skonfiguruj ${machine}`,
-    hostReviewAction: ({ machine }) => `Przejrzyj konfigurację ${machine}`,
+    hostReviewShort: 'Przejrzyj konfigurację',
     hostUnchecked: ({ machine }) => `Nie udało się sprawdzić, czy ${machine} może hostować wdrożenia`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "pl">;

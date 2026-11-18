@@ -902,7 +902,7 @@ const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} はまだデプロイを受け入れる準備ができていません`,
     hostSetupBody: "実行前にすべての変更を確認できます。この環境の保存はそれまで待てます。",
     hostSetupAction: ({ machine }) => `${machine} をセットアップ`,
-    hostReviewAction: ({ machine }) => `${machine} のセットアップを確認`,
+    hostReviewShort: 'セットアップを確認',
     hostUnchecked: ({ machine }) => `${machine} がデプロイを受け入れられるか確認できませんでした`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "ja">;

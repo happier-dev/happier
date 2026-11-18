@@ -891,7 +891,7 @@ const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} 尚未设置为可托管部署`,
     hostSetupBody: "在任何操作运行前，你都会审核每项更改。保存此环境可以等到那时再进行。",
     hostSetupAction: ({ machine }) => `设置 ${machine}`,
-    hostReviewAction: ({ machine }) => `查看 ${machine} 的设置`,
+    hostReviewShort: '查看设置',
     hostUnchecked: ({ machine }) => `无法检查 ${machine} 是否可以托管部署`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "zh-Hans">;

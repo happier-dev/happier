@@ -906,7 +906,7 @@ const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} ещё не готова принимать развёртывания`,
     hostSetupBody: "Вы проверяете каждое изменение до запуска. Сохранение этого окружения может подождать.",
     hostSetupAction: ({ machine }) => `Настроить ${machine}`,
-    hostReviewAction: ({ machine }) => `Проверить настройку ${machine}`,
+    hostReviewShort: 'Проверить настройку',
     hostUnchecked: ({ machine }) => `Не удалось проверить, может ли ${machine} принимать развёртывания`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "ru">;

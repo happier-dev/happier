@@ -912,7 +912,7 @@ const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} aún no está preparada para alojar despliegues`,
     hostSetupBody: "Revisas cada cambio antes de que se ejecute nada. Guardar este entorno puede esperar hasta entonces.",
     hostSetupAction: ({ machine }) => `Preparar ${machine}`,
-    hostReviewAction: ({ machine }) => `Revisar la preparación de ${machine}`,
+    hostReviewShort: 'Revisar la preparación',
     hostUnchecked: ({ machine }) => `No se pudo comprobar si ${machine} puede alojar despliegues`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "es">;

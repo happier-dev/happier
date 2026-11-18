@@ -908,7 +908,7 @@ const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} ist noch nicht für Deployments eingerichtet`,
     hostSetupBody: "Du prüfst jede Änderung, bevor etwas läuft. Das Speichern dieser Umgebung kann so lange warten.",
     hostSetupAction: ({ machine }) => `${machine} einrichten`,
-    hostReviewAction: ({ machine }) => `Einrichtung von ${machine} prüfen`,
+    hostReviewShort: 'Einrichtung prüfen',
     hostUnchecked: ({ machine }) => `Konnte nicht prüfen, ob ${machine} Deployments hosten kann`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "de">;

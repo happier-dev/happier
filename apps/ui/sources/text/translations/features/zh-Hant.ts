@@ -892,7 +892,7 @@ const deploymentPlatformLinkTranslations = {
     hostNeedsSetup: ({ machine }) => `${machine} 尚未設定為可託管部署`,
     hostSetupBody: "在任何操作執行前，你都會審核每項變更。儲存此環境可以等到那時再進行。",
     hostSetupAction: ({ machine }) => `設定 ${machine}`,
-    hostReviewAction: ({ machine }) => `檢視 ${machine} 的設定`,
+    hostReviewShort: '檢視設定',
     hostUnchecked: ({ machine }) => `無法檢查 ${machine} 是否可以託管部署`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "zh-Hant">;
