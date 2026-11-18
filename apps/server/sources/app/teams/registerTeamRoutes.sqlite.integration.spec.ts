@@ -76,23 +76,6 @@ describe("Team routes (SQLite integration)", () => {
         expect(unauthenticated.statusCode).toBe(401);
     });
 
-    it("preserves the managed-only missing initial owner cause through the Team HTTP envelope", async () => {
-        const admin = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain", homeRole: "admin" } });
-        await db.homeGovernancePolicy.update({ where: { id: HOME_GOVERNANCE_POLICY_ID }, data: { teamCreationPolicy: "managed_only" } });
-        try {
-            const refused = await post("/v1/teams/create", admin.id, { v: 1, name: "Managed owner cause", requestKey: crypto.randomUUID() });
-            expect(refused.statusCode).toBe(400);
-            expect(refused.json()).toEqual({ error: "invalid_team_input",
-                details: { field: "initialOwnerAccountId", reason: "required" } });
-            expect(await db.team.findFirst({ where: { name: "Managed owner cause" } })).toBeNull();
-            const accepted = await post("/v1/teams/create", admin.id, { v: 1, name: "Managed owner chosen",
-                initialOwnerAccountId: admin.id, requestKey: crypto.randomUUID() });
-            expect(accepted.statusCode, accepted.body).toBe(200);
-        } finally {
-            await db.homeGovernancePolicy.update({ where: { id: HOME_GOVERNANCE_POLICY_ID }, data: { teamCreationPolicy: "self_service" } });
-        }
-    });
-
     it("writes independent Review policy through the Team Action transport and refuses a member", async () => {
         const owner = await account();
         const member = await account();

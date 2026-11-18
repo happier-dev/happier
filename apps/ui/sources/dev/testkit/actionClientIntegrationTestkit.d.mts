@@ -7,6 +7,10 @@ export type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaratio
 
 export function installBundledPluginUiArtifactsForTests(artifacts: BundledPluginUiAppArtifactInventory): () => void;
 export function installBundledPluginUiDeclarationsForTests(declarations: readonly PluginHostBundledUiDeclaration[]): () => void;
+export function mountUiManagedMachineDetail(params: Readonly<{ serverId: string; managedId: string }>): Promise<Readonly<{
+    readControls(): Readonly<{ delete: boolean; stop: boolean; remove: boolean }>;
+    close(): Promise<void>;
+}>>;
 export function mountUiRetainedProjectTerminal(workspace: import('@happier-dev/protocol/workspaces/workspaceRefV1').WorkspaceAddressV1): Promise<Readonly<{
     scopeId: string;
     accountId: string;

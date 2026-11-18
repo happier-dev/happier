@@ -26,6 +26,23 @@ export { installBundledPluginUiArtifactsForTests, installBundledPluginUiDeclarat
 export { prepareAuthenticationInventory } from './fixtures/connectedAccountAuthentication';
 export type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaration } from '@/sync/domains/plugins/availability/bundledPluginUiArtifactInventory';
 
+/** Mount the actual managed detail surface after restoring the journey's Account. */
+export async function mountUiManagedMachineDetail(params: Readonly<{ serverId: string; managedId: string }>) {
+    const [{ createElement }, { ManagedMachineDetail }, { renderMountedCurrentUiContext }] = await Promise.all([
+        import('react'), import('@/components/settings/machines/managed/ManagedMachineDetail'),
+        import('./harness/mountedCurrentUiContext'),
+    ]);
+    const screen = await renderMountedCurrentUiContext(createElement(ManagedMachineDetail, params));
+    return {
+        readControls: () => ({
+            delete: screen.findByTestId('managed-machine.delete') !== null,
+            stop: screen.findByTestId('managed-machine.stop') !== null,
+            remove: screen.findByTestId('managed-machine.remove') !== null,
+        }),
+        close: screen.unmount,
+    };
+}
+
 /** Real UI client for cross-app journeys; only the platform lock API is substituted. */
 export async function connectUiActionClient(params: Readonly<{ serverUrl: string; publicEndpoint?: string; addressAnchorUrl?: string; credentials: AuthCredentials }>) {
     const locks = installWebLockManagerMock();
