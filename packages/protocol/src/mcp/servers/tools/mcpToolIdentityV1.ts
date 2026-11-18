@@ -55,7 +55,7 @@ export function createMcpCatalogPermissionChoiceV1(input: Readonly<{
   let id = 'mcp_always_allow';
   for (let suffix = 1; offeredIds.has(id); suffix += 1) id = `mcp_always_allow:${suffix}`;
   return {
-    ...grant, id, label: 'Always allow', scope: 'localPersistent',
+    ...grant, id, label: 'Always allow for this Account', scope: 'localPersistent',
     followUp: { actionId: 'mcp.servers.tools.set', input: {
       serverId: mcpTool.item.serverId, tools: { [mcpTool.tool]: 'allow' },
     } },

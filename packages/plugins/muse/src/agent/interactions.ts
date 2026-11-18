@@ -44,7 +44,10 @@ function approvalChoices(params: NativeRecord, readNativeChildOrigin?: (subagent
         if (!decision || (scope !== 'once' && scope !== 'session' && scope !== 'localPersistent')) {
             throw new PluginError({ code: 'unsupported', message: 'Muse offered an unsupported approval decision or scope.' });
         }
-        return { id: requiredString(choice, 'choiceId'), label: plainToolLabel(requiredString(choice, 'label')), decision, scope,
+        const id = requiredString(choice, 'choiceId');
+        const nativeLabel = requiredString(choice, 'label');
+        const label = id === 'allow_local_mcp_tool' ? 'Always allow in Muse' : plainToolLabel(nativeLabel);
+        return { id, label, decision, scope,
             ...(typeof choice.rulePreview === 'string' ? { rulePreview: plainToolLabel(choice.rulePreview) } : {}),
             ...(choice.acceptsFeedback === true ? { allowsFeedback: true } : {}),
             response: { approved: decision !== 'denied' && decision !== 'abort', decision } };

@@ -124,14 +124,20 @@ it('retains Allow once approval after the native tool and turn complete', async 
     } finally { events.dispose(); await fixture.dispose(); await rm(scratch, { recursive: true, force: true }); }
 });
 
-it.each(['qa_muse_r1117c', 'qa-muse-r1117c'])('round-trips catalog %s through native approval and applies its captured grant once', async (catalogName) => {
+it.each([
+    { catalogName: 'qa_muse_r1117c', selectedChoice: 'mcp_always_allow' },
+    { catalogName: 'qa-muse-r1117c', selectedChoice: 'mcp_always_allow' },
+    { catalogName: 'qa-muse-r1117c', selectedChoice: 'allow_local_mcp_tool' },
+])('offers distinct native and Account grants and applies $selectedChoice for $catalogName', async ({ catalogName, selectedChoice }) => {
     const nativeToolName = 'mcp__qa_muse_r1117c__qa_echo';
     const assigned = assignMcpWireNames({ items: [{ serverId: 'catalog-probe', name: catalogName, serverTitle: 'Probe' }] });
     // Advanced create handshake plus the captured lifecycle allow-once turn.
-    // Only the MCP tool identity is schema-derived on that native occurrence.
-    // The native process still rejects every choice ID outside its own offer.
+    // Use the live r1117e MCP choice shape with the fixture tool name.
+    // MSP playback validates the offered choice ID and models native policy storage.
     const scratch = await mkdtemp(join(tmpdir(), 'muse-mcp-catalog-choice-'));
     const recordingPath = join(scratch, 'recording.json');
+    const nativePolicyPath = join(scratch, 'native-policy.json');
+    const toolRule = 'tool `mcp__qa_muse_r1117c__qa_echo`';
     const recording = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/lifecycle.json', import.meta.url), 'utf8')));
     if (!Array.isArray(recording.rows)) throw new Error('Missing captured native rows');
     const advanced = readMuseRecord(JSON.parse(await readFile(new URL('./testkit/fixtures/advanced.json', import.meta.url), 'utf8')));
@@ -150,14 +156,15 @@ it.each(['qa_muse_r1117c', 'qa-muse-r1117c'])('round-trips catalog %s through na
             ? { ...row, message: { ...message, params: { ...params,
                 subject: { kind: 'tool', toolName: nativeToolName }, toolName: nativeToolName, rawArgs: '{"query":"pebble"}',
                 availableChoices: Array.isArray(params.availableChoices)
-                    ? params.availableChoices.map(value => readMuseRecord(value).choiceId === 'allow_once'
-                        ? { ...readMuseRecord(value), label: 'Allow tool `mcp__qa_muse_r1117c__qa_echo`', rulePreview: 'tool `mcp__qa_muse_r1117c__qa_echo`' }
+                    ? params.availableChoices.map(value => readMuseRecord(value).choiceId === 'allow_local_prefix'
+                        ? { choiceId: 'allow_local_mcp_tool', label: 'Always allow this MCP tool', rulePreview: toolRule,
+                            decision: 'approvedPolicyAmendment', scope: 'localPersistent' }
                         : value) : [],
             } } }
             : row;
     }) }));
     const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'approval-local-persistent', recordingPath,
-            nativePolicyPath: join(scratch, 'unused-native-policy.json') },
+            nativePolicyPath },
         readActiveTurnAdmissionWitness: () => ({ inputId: 'catalog-choice-input', turnId: 'catalog-choice-turn',
             userMessageSeq: null, userMessageSeqs: [], causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } }),
         mcpToolContext: { mcpServerIdentities: assigned.mcpServerIdentities,
@@ -178,11 +185,15 @@ it.each(['qa_muse_r1117c', 'qa-muse-r1117c'])('round-trips catalog %s through na
             const pending = Object.values(fixture.host.getAgentStateSnapshot()?.requests ?? {}).find(request => request.tool === nativeToolName);
             expect(pending).toMatchObject({ turnId: 'catalog-choice-turn' });
             expect(pending?.arguments).toEqual({ query: 'pebble' });
-            expect(pending?.nativeChoices?.choices.find(choice => choice.id === 'allow_once')).toMatchObject({
-                label: 'Allow tool mcp__qa_muse_r1117c__qa_echo', rulePreview: 'tool mcp__qa_muse_r1117c__qa_echo',
+            const nativePolicy = pending?.nativeChoices?.choices.find(choice => choice.id === 'allow_local_mcp_tool');
+            expect(nativePolicy).toMatchObject({
+                label: 'Always allow in Muse', rulePreview: `tool ${nativeToolName}`,
+                scope: 'localPersistent', response: { decision: 'approved_execpolicy_amendment' },
             });
+            expect(nativePolicy?.followUp).toBeUndefined();
             expect(pending?.nativeChoices?.choices.find(choice => choice.id === 'mcp_always_allow')).toMatchObject({
-                scope: 'localPersistent', followUp: { actionId: 'mcp.servers.tools.set',
+                label: 'Always allow for this Account', scope: 'localPersistent', response: { decision: 'approved' },
+                followUp: { actionId: 'mcp.servers.tools.set',
                     input: { serverId: 'catalog-probe', tools: { qa_echo: 'allow' } } },
             });
         });
@@ -190,13 +201,21 @@ it.each(['qa_muse_r1117c', 'qa-muse-r1117c'])('round-trips catalog %s through na
         if (!entry?.[1].nativeChoices) throw new Error('Expected native MCP catalog offer');
         const [id, pending] = entry;
         await expectNativeApprovalApplied(fixture, { id, nativeChoice: {
-            requirementId: pending.nativeChoices.requirementId, choiceId: 'mcp_always_allow',
+            requirementId: pending.nativeChoices.requirementId, choiceId: selectedChoice,
         } });
         await events.until('turn-complete');
         expect(fixture.host.getAgentStateSnapshot()?.completedRequests?.[id]).toMatchObject({
-            nativeChoice: { choiceId: 'mcp_always_allow' },
+            nativeChoice: { choiceId: selectedChoice },
         });
-        expect((await fixture.readAudit()).methods.filter(method => method === 'approval/decide')).toHaveLength(1);
+        const audit = await fixture.readAudit();
+        expect(audit.methods.filter(method => method === 'approval/decide')).toHaveLength(1);
+        if (selectedChoice === 'allow_local_mcp_tool') {
+            expect(JSON.parse(await readFile(nativePolicyPath, 'utf8'))).toMatchObject({
+                choiceId: selectedChoice, scope: 'localPersistent', rulePreview: toolRule,
+            });
+        } else {
+            await expect(readFile(nativePolicyPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+        }
     } finally { events.dispose(); await fixture.dispose(); await rm(scratch, { recursive: true, force: true }); }
 });
 

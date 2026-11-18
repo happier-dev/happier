@@ -91,23 +91,26 @@ describe('Session permission offered choices', () => {
         [buildOpenCodePermissionApprovalRequest({ requestId: 'native-permission/opaque', providerSessionId: null, permission: toolName,
             patterns: ['*'] }).nativeChoices!, 'allow_session', ['allow', 'allow_session', 'mcp_always_allow', 'deny', 'stop']],
         [piChoices, 'allow_session', ['allow', 'allow_session', 'mcp_always_allow', 'deny', 'stop']],
-        [museChoices, 'allow_once', ['allow_once', 'allow_session', 'mcp_always_allow', 'abort']],
+        [museChoices, 'allow_once', ['allow_once', 'allow_session', 'allow_local_mcp_tool', 'mcp_always_allow', 'abort']],
     ] satisfies [NativePermissionChoicesV1, string, string[]][])('keeps the session grant and puts refusals last (%#)', (native, grantId, expectedIds) => {
         const choices = resolveSessionPermissionChoices({ toolName, mcpTool, canWriteCatalog: true,
             nativeChoices: withCatalogOffer(native, grantId) });
         expect(choices.map(choice => choice.id)).toEqual(expectedIds);
         expect(choices.find(choice => choice.scope === 'session')?.label).toBe('capabilities.session.ask.allowSession');
-        expect(choices.find(choice => choice.scope === 'localPersistent')).toMatchObject({
-            label: 'capabilities.session.toolAsk.alwaysAllow',
+        expect(choices.find(choice => choice.followUp)).toMatchObject({
+            label: 'Always allow for this Account',
             response: { nativeChoice: { requirementId: native.requirementId, choiceId: 'mcp_always_allow' } },
             followUp: { actionId: 'mcp.servers.tools.set', input: { serverId: 'docs-id', tools: { mutate: 'allow' } } },
         });
     });
-    it.each(['tool mcp__docs__mutate', 'tool `mcp__docs__mutate`'])('keeps the catalog grant for the exact MCP rule %s', rulePreview => {
+    it.each(['tool mcp__docs__mutate', 'tool `mcp__docs__mutate`'])('preserves both producer offers when preview text describes the same tool (%s)', rulePreview => {
         const nativeChoices = withCatalogOffer({ ...museChoices, choices: museChoices.choices.map((choice): NativeChoice =>
             choice.id === 'allow_local_mcp_tool' ? { ...choice, rulePreview } : choice) }, 'allow_once');
         const choices = resolveSessionPermissionChoices({ toolName, mcpTool, canWriteCatalog: true, nativeChoices });
-        expect(choices.filter(choice => choice.scope === 'localPersistent').map(choice => choice.id)).toEqual(['mcp_always_allow']);
+        expect(choices.filter(choice => choice.scope === 'localPersistent')).toMatchObject([
+            { id: 'allow_local_mcp_tool', label: 'Always allow this MCP tool', rulePreview },
+            { id: 'mcp_always_allow', label: 'Always allow for this Account', followUp: { actionId: 'mcp.servers.tools.set' } },
+        ]);
     });
     it('retains a native persistent rule when the catalog does not cover that rule', () => {
         const nativeChoices = withCatalogOffer({ ...museChoices, choices: museChoices.choices.map((choice): NativeChoice =>
@@ -117,12 +120,15 @@ describe('Session permission offered choices', () => {
         expect(resolveSessionPermissionChoices({ toolName, nativeChoices: museChoices }).map(choice => choice.id))
             .toContain('allow_local_mcp_tool');
     });
-    it('keeps an available native MCP grant when the corresponding catalog offer is withheld', () => {
+    it('preserves both offers and the catalog authority decision when catalog access is withheld', () => {
         const choices = resolveSessionPermissionChoices({ toolName, mcpTool, canWriteCatalog: true,
             nativeChoices: withCatalogOffer(museChoices, 'allow_once'),
             nativeChoiceAvailability: [{ choiceId: 'mcp_always_allow', allowed: false, reason: 'owner_required' }],
         });
-        expect(choices.filter(choice => choice.scope === 'localPersistent').map(choice => choice.id)).toEqual(['allow_local_mcp_tool']);
+        expect(choices.filter(choice => choice.scope === 'localPersistent')).toMatchObject([
+            { id: 'allow_local_mcp_tool' },
+            { id: 'mcp_always_allow', availability: { allowed: false, reason: 'owner_required' } },
+        ]);
     });
     it.each([
         { label: 'available once', allowed: true, omitOnce: false, expected: 'opaque:once' },

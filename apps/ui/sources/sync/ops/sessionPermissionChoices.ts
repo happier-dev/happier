@@ -90,28 +90,14 @@ export function resolveSessionPermissionChoices(input: SessionPermissionChoicesI
         if (!native.success) return [];
         const { requirementId, choices } = native.data;
         const availability = new Map(input.nativeChoiceAvailability?.map(value => [value.choiceId, value]));
-        const catalogOffer = input.mcpTool && choices.find(choice => choice.followUp && choice.scope === 'localPersistent');
-        // The native tool-wide amendment and the catalog grant both skip future asks for this tool.
-        // Retained offers may still have the vendor's inline-code delimiters around the exact tool name.
-        const nativeToolOffer = catalogOffer && choices.find(choice => !choice.followUp
-            && choice.scope === 'localPersistent' && choice.decision === 'approved_execpolicy_amendment'
-            && (choice.rulePreview === `tool ${input.toolName}` || choice.rulePreview === `tool \`${input.toolName}\``));
-        let omitOffer: typeof nativeToolOffer;
-        if (nativeToolOffer && catalogOffer) {
-            const catalogUnavailable = input.canWriteCatalog === false || availability.get(catalogOffer.id)?.allowed === false;
-            omitOffer = catalogUnavailable && availability.get(nativeToolOffer.id)?.allowed !== false
-                ? catalogOffer : nativeToolOffer;
-        }
+        const hasCatalogOffer = input.mcpTool && choices.some(choice => choice.followUp && choice.scope === 'localPersistent');
         const grants: SessionPermissionChoice[] = [];
         const refusals: SessionPermissionChoice[] = [];
         for (const choice of choices) {
-            if (choice === omitOffer) continue;
-            const sessionToolOffer = catalogOffer && choice.scope === 'session'
+            const sessionToolOffer = hasCatalogOffer && choice.scope === 'session'
                 && (choice.decision === 'approved_for_session'
                     || (choice.response.allowedTools?.length === 1 && choice.response.allowedTools[0] === input.toolName));
-            let label = toSentenceCase(choice.label);
-            if (choice === catalogOffer) label = t('capabilities.session.toolAsk.alwaysAllow');
-            if (sessionToolOffer) label = t('capabilities.session.ask.allowSession');
+            const label = sessionToolOffer ? t('capabilities.session.ask.allowSession') : toSentenceCase(choice.label);
             const projected: SessionPermissionChoice = {
                 id: choice.id, label, decision: choice.decision, scope: choice.scope,
                 ...(choice.rulePreview !== undefined ? { rulePreview: choice.rulePreview } : {}),
