@@ -19,6 +19,10 @@ export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
 export const REVIEW_PREPARE_ROUND_ACTION_ID_V1 = 'review.prepare_round' as const;
 export const REVIEW_SETTLE_ROUND_ACTION_ID_V1 = 'review.settle_round' as const;
 export const REVIEW_NEW_ROUND_ACTION_ID_V1 = 'review.new_round' as const;
+/** These start surfaces only offer read-only execution. */
+export function isReadOnlyExecutionRunStartActionIdV1(actionId: string): boolean {
+  return actionId === 'review.start' || actionId === 'subagents.plan.start';
+}
 import { REVIEW_HUMAN_ACTION_IDS_V1 } from './actionIdsReviewHumanV1.js';
 export { REVIEW_HUMAN_ACTION_IDS_V1, isReviewHumanActionIdV1, type ReviewHumanActionIdV1 } from './actionIdsReviewHumanV1.js';
 

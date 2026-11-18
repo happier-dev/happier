@@ -6,6 +6,7 @@ import {
 } from '../sessions/metadata/sessionPermissionModes.js';
 import { parseAgentPermissionIntentV1Alias, type AgentPermissionIntentV1 } from '../runtime/permissionIntentV1.js';
 import type { ExecutionRunIntent } from '../execution/runs/runPrimitives.js';
+import { isReadOnlyExecutionRunStartActionIdV1 } from './actionIds.js';
 
 /** Retained execution-run wire values for mixed-version daemon compatibility. */
 export const EXECUTION_RUN_ACTION_PERMISSION_MODES = [
@@ -79,8 +80,6 @@ export function executionRunPermissionModeFromSessionModeV1(mode: string): Execu
   return 'default';
 }
 
-const READ_ONLY_START_ACTIONS: ReadonlySet<string> = new Set(['review.start', 'subagents.plan.start']);
-
 /**
  * Which permission levels a start action's launch surface may offer (`null`: any), and the level a
  * draft starts with (`null`: leave it unset; admission applies `defaultExecutionRunPermissionMode`).
@@ -89,7 +88,7 @@ export function executionRunActionPermissionPolicyV1(actionId: string): Readonly
   allowed: readonly ExecutionRunActionPermissionMode[] | null;
   defaultMode: ExecutionRunActionPermissionMode | null;
 }> {
-  if (READ_ONLY_START_ACTIONS.has(actionId)) return { allowed: ['read_only'], defaultMode: 'read_only' };
+  if (isReadOnlyExecutionRunStartActionIdV1(actionId)) return { allowed: ['read_only'], defaultMode: 'read_only' };
   if (actionId === 'subagents.delegate.start') return { allowed: null, defaultMode: defaultExecutionRunPermissionMode('delegate') };
   return { allowed: null, defaultMode: null };
 }
