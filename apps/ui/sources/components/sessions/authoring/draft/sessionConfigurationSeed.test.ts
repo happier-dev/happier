@@ -14,6 +14,26 @@ import { buildNewSessionConfigurationDraft, buildNewSessionTempDataFromSessionCo
 import { buildNewSessionAuthoringDraftFromPersistedDraft, buildNewSessionTempDataFromAuthoringDraft } from './sessionAuthoringDraftAdapters';
 
 describe('sessionConfigurationSeed', () => {
+    it.each(['unspecified', 'stored-automatic', 'local-automatic'] as const)(
+        'preserves model intent when opening a copied configuration (%s)', source => {
+            const seed = buildNewSessionTempDataFromSessionConfiguration({
+                session: {
+                    id: 'source-session',
+                    encryptionMode: 'plain',
+                    metadata: {
+                        path: '/workspace/source', host: 'dev-host', flavor: 'codex',
+                        ...(source === 'stored-automatic'
+                            ? { modelSelectionIntentV1: { v: 1, selection: null, updatedAt: 50 } } : {}),
+                    },
+                    ...(source === 'local-automatic' ? { modelMode: 'default', modelModeUpdatedAt: 50 } : {}),
+                },
+                machineId: 'machine-source',
+            });
+            const reopened = buildNewSessionAuthoringDraftFromPersistedDraft(buildNewSessionConfigurationDraft(seed));
+            expect(reopened.modelSelection).toBe(source === 'unspecified' ? undefined : null);
+        },
+    );
+
     it.each((['team', 'group', 'project'] as const).flatMap(layer =>
         [true, false].map(inherited => ({ layer, inherited }))))(
         'keeps copied $layer approval policy tighten-only (source inherited: $inherited)', ({ layer, inherited }) => {

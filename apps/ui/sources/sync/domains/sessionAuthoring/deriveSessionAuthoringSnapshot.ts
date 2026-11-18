@@ -3,7 +3,7 @@ import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import { readSessionCapabilitySelectionFromMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 
-import { getModelOverrideForSpawn } from '@/sync/domains/models/modelOverride';
+import { readSessionModelAuthoringChoice } from '@/sync/domains/models/modelOverride';
 import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -18,7 +18,6 @@ import {
 } from './sessionAuthoringNormalization';
 import type { SessionAuthoringSnapshot } from './sessionAuthoringSnapshot';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { readSessionModelSelectionIntentFromMetadata } from '@/sync/domains/models/readSessionModelSelectionIntent';
 
 export function deriveSessionAuthoringSnapshot(params: Readonly<{
     session: Pick<
@@ -45,12 +44,8 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
     );
     const metadataPermissionMode = metadataPermission?.intent ?? null;
     const metadataPermissionModeUpdatedAt = metadataPermission?.updatedAt ?? null;
-    const metadataModelIntent = agentTargetKey
-        ? readSessionModelSelectionIntentFromMetadata(metadata, agentTargetKey)
-        : null;
-    const modelSelection = agentTargetKey
-        ? getModelOverrideForSpawn(params.session as Session, agentTargetKey)?.modelSelection ?? null
-        : null;
+    const modelChoice = agentTargetKey ? readSessionModelAuthoringChoice(params.session as Session, agentTargetKey) : undefined;
+    const modelSelection = modelChoice?.modelSelection ?? null;
     const capabilitySelection = readSessionCapabilitySelectionFromMetadataV1(metadata);
 
     return {
@@ -69,7 +64,7 @@ export function deriveSessionAuthoringSnapshot(params: Readonly<{
         permissionModeUpdatedAt: permissionOverride?.permissionModeUpdatedAt ?? metadataPermissionModeUpdatedAt,
         modelSelection,
         modelId: modelSelection?.ref.modelId ?? null,
-        modelUpdatedAt: modelSelection?.updatedAt ?? metadataModelIntent?.updatedAt ?? null,
+        modelUpdatedAt: modelChoice?.updatedAt ?? null,
         capabilitySelection,
         connectedServices: normalizeSessionAuthoringConnectedServices(
             metadata && Object.prototype.hasOwnProperty.call(metadata, 'connectedServices')

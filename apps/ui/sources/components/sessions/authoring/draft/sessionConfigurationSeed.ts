@@ -102,9 +102,9 @@ export function buildNewSessionTempDataFromSessionConfiguration(params: Readonly
         resumeSessionId: null,
         permissionMode: snapshot.permissionMode,
         permissionModeUpdatedAt: snapshot.permissionModeUpdatedAt,
-        modelSelection: snapshot.agentTarget
-            ? rekeyCompatibilityModelSelection(snapshot.modelSelection, snapshot.agentTarget)
-            : snapshot.modelSelection,
+        modelSelection: snapshot.modelUpdatedAt === null
+            ? undefined
+            : rekeyCompatibilityModelSelection(snapshot.modelSelection, snapshot.agentTarget),
         capabilitySelection: snapshot.capabilitySelection,
         connectedServices: snapshot.connectedServices,
         terminal: snapshot.terminal,
