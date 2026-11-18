@@ -7,6 +7,7 @@ import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import type { DeploySuggestionCatalogV1, DeploySuggestionRecommendationV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 
 const LazyNewAppScreen = retryableLazy(async () => {
   const module = await import('./NewAppScreen');
@@ -14,13 +15,18 @@ const LazyNewAppScreen = retryableLazy(async () => {
 });
 
 /** What the entrance already knows: a Project's Deploy an app opens with that Project's code chosen as Your code. */
-export type NewAppContext = Readonly<{ projectSourceId?: string | null; previewEnvironmentId?: string | null; startOn?: 'describe' | null }>;
+export type NewAppSuggestionContext = Readonly<{
+  description: string;
+  recommendation: DeploySuggestionRecommendationV1;
+  catalog: DeploySuggestionCatalogV1;
+}>;
+export type NewAppContext = Readonly<{ projectSourceId?: string | null; previewEnvironmentId?: string | null; startOn?: 'describe' | null; suggestion?: NewAppSuggestionContext | null }>;
 
-function NewAppDialog(props: CustomModalInjectedProps & Readonly<{ onClone?: (() => void) | null; starterId?: string | null; machine?: QualifiedMachineV1 | null; projectSourceId?: string | null; previewEnvironmentId?: string | null; startOn?: 'describe' | null }>) {
+function NewAppDialog(props: CustomModalInjectedProps & Readonly<{ onClone?: (() => void) | null; starterId?: string | null; machine?: QualifiedMachineV1 | null; projectSourceId?: string | null; previewEnvironmentId?: string | null; startOn?: 'describe' | null; suggestion?: NewAppSuggestionContext | null }>) {
   return (
     <React.Suspense fallback={<View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><ActivitySpinner /></View>}>
       <LazyNewAppScreen onClose={props.onClose} setChrome={props.setChrome} onClone={props.onClone} starterId={props.starterId} machine={props.machine}
-        projectSourceId={props.projectSourceId} previewEnvironmentId={props.previewEnvironmentId} startOn={props.startOn} />
+        projectSourceId={props.projectSourceId} previewEnvironmentId={props.previewEnvironmentId} startOn={props.startOn} suggestion={props.suggestion} />
     </React.Suspense>
   );
 }
@@ -34,17 +40,24 @@ export function useOpenNewApp(onClone?: (() => void) | null): (starterId?: strin
   return React.useCallback((starterId?: string | null, machine?: QualifiedMachineV1 | null, context?: NewAppContext) => {
     Modal.show({
       component: NewAppDialog,
-      props: { onClone: onClone ?? null, starterId: starterId ?? null, machine: machine ?? null, projectSourceId: context?.projectSourceId ?? null, previewEnvironmentId: context?.previewEnvironmentId ?? null, startOn: context?.startOn ?? null },
-      // The draft is the person's writing: a stray click outside never throws it away.
-      closeOnBackdrop: false,
-      chrome: {
-        kind: 'card',
-        title: t('newApp.title'),
-        testID: 'newApp.dialog',
-        scrollHost: 'bounded',
-        phonePresentation: 'sheet',
-        dimensions: { width: 640, maxHeightRatio: 0.88, size: 'lg' },
-      },
+      props: { onClone: onClone ?? null, starterId: starterId ?? null, machine: machine ?? null, projectSourceId: context?.projectSourceId ?? null, previewEnvironmentId: context?.previewEnvironmentId ?? null, startOn: context?.startOn ?? null, suggestion: context?.suggestion ?? null },
+      ...newAppDialogPresentation(),
     });
   }, [onClone]);
+}
+
+/** The New app dialog's presentation, shared with the dev specimen that opens the same dialog over fixtures. */
+export function newAppDialogPresentation() {
+  return {
+    // The draft is the person's writing: a stray click outside never throws it away.
+    closeOnBackdrop: false,
+    chrome: {
+      kind: 'card' as const,
+      title: t('newApp.title'),
+      testID: 'newApp.dialog',
+      scrollHost: 'bounded' as const,
+      phonePresentation: 'sheet' as const,
+      dimensions: { width: 640, maxHeightRatio: 0.88, size: 'lg' as const },
+    },
+  };
 }

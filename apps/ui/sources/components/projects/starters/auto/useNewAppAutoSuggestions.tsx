@@ -23,11 +23,10 @@ import { useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
 import type {
-  NewAppAutoCard,
-  NewAppAutoFact,
   NewAppAutoMachine,
   NewAppAutoView,
 } from './NewAppAutoStep';
+import { deploySuggestionCardId, deploySuggestionCardIndex, presentDeploySuggestionCard } from './DeploySuggestionCards';
 
 type Runner = Extract<DeploySuggestionProgress, { kind: 'runner' }>;
 type RunStop = Extract<DeploySuggestionProgress, { kind: 'run' }>['stop'];
@@ -59,14 +58,16 @@ export type NewAppAutoChosen = Readonly<{
  * closing drops the run, the description stays while the dialog is open).
  */
 export function useNewAppAutoSuggestions(
-  params: Readonly<{ serverId: string | null; active: boolean }>,
+  params: Readonly<{ serverId: string | null; active: boolean; initial?: Readonly<{ description: string; chosen: NewAppAutoChosen }> | null }>,
 ) {
   const { theme } = useUnistyles();
   const router = useRouter();
   const [runnerChoice] = useSettingMutable('deploySuggestionRunnerV1');
-  const [description, setDescription] = React.useState('');
-  const [phase, setPhase] = React.useState<Phase>({ kind: 'describe' });
-  const [chosenCardId, setChosenCardId] = React.useState<string | null>(null);
+  const [description, setDescription] = React.useState(params.initial?.description ?? '');
+  const [phase, setPhase] = React.useState<Phase>(() => params.initial ? {
+    kind: 'settled', outcome: { kind: 'recommendations', recommendations: [params.initial.chosen.recommendation], catalog: params.initial.chosen.catalog }, runner: null,
+  } : { kind: 'describe' });
+  const [chosenCardId, setChosenCardId] = React.useState<string | null>(params.initial ? deploySuggestionCardId(0) : null);
   const abort = React.useRef<AbortController | null>(null);
   const round = React.useRef<Readonly<{
     serverId: string;
@@ -211,7 +212,7 @@ export function useNewAppAutoSuggestions(
           ? t('newApp.auto.sourceNote', { machine: phase.runner.label })
           : null,
         cards: outcome.recommendations.map((recommendation, index) =>
-          presentCard(
+          presentDeploySuggestionCard(
             recommendation,
             outcome.catalog,
             index,
@@ -242,7 +243,7 @@ export function useNewAppAutoSuggestions(
     if (settled?.kind !== 'recommendations' || chosenCardId === null)
       return null;
     const recommendation =
-      settled.recommendations[Number(chosenCardId.slice(CARD_PREFIX.length))];
+      settled.recommendations[deploySuggestionCardIndex(chosenCardId) ?? -1];
     return recommendation ? { recommendation, catalog: settled.catalog } : null;
   }, [chosenCardId, settled]);
   const adjustChosen = React.useCallback((changes: Partial<Pick<DeploySuggestionRecommendationV1, 'source' | 'targetId' | 'data'>>) => {
@@ -287,7 +288,6 @@ export function useNewAppAutoSuggestions(
   };
 }
 
-const CARD_PREFIX = 'suggestion-';
 
 /** The runner as its owner reports it (Auto's resolved title); an explicit choice is named by the Agent catalog. */
 function runnerAgentTitle(runner: Runner): string {
@@ -300,7 +300,7 @@ function runnerAgentTitle(runner: Runner): string {
   }
   return runner.agentTargetKey;
 }
-const cardId = (index: number) => `${CARD_PREFIX}${index}`;
+const cardId = deploySuggestionCardId;
 
 function runsOnLine(runner: Runner): string {
   return t('newApp.auto.runsOn', {
@@ -348,54 +348,6 @@ function workingSteps(phase: Extract<Phase, { kind: 'working' }>): SetupStep[] {
       ),
     },
   ];
-}
-
-/** A card says the owner's facts in words: every title comes from the snapshot the suggestion was checked against. */
-function presentCard(
-  recommendation: DeploySuggestionRecommendationV1,
-  catalog: DeploySuggestionCatalogV1,
-  index: number,
-  starterMark: React.ReactNode,
-): NewAppAutoCard {
-  const source = recommendation.source;
-  const sourceTitle =
-    source.kind === 'starter'
-      ? catalog.starters.find((item) => item.id === source.starterId)?.title
-      : source.kind === 'catalogApp'
-        ? catalog.apps.find((item) => item.id === source.appId)?.title
-        : undefined;
-  const target = catalog.targets.find(
-    (item) => item.id === recommendation.targetId,
-  )?.title;
-  const data = recommendation.data;
-  const dataTitle =
-    data.kind === 'store'
-      ? data.engine
-      : data.kind === 'catalogApp'
-        ? catalog.apps.find((item) => item.id === data.appId)?.title
-        : undefined;
-  const facts: NewAppAutoFact[] = [
-    ...(sourceTitle
-      ? [
-          {
-            key: 'startsFrom' as const,
-            value: sourceTitle,
-            ...(source.kind === 'starter' ? { mark: starterMark } : {}),
-          },
-        ]
-      : []),
-    ...(target ? [{ key: 'runsOn' as const, value: target }] : []),
-    ...(dataTitle ? [{ key: 'data' as const, value: dataTitle }] : []),
-  ];
-  const card = recommendation as DeploySuggestionRecommendationV1 &
-    Partial<Readonly<{ title: string; why: string }>>;
-  return {
-    id: cardId(index),
-    title: card.title ?? recommendation.whatToBuild,
-    why: card.why ?? '',
-    recommended: index === 0,
-    facts,
-  };
 }
 
 /** Each Machine in the runner owner's words: offline, or the owner's reason, with the Machine's setup as the next step. */

@@ -69,6 +69,7 @@ import type { TransientQuestionAnswerState } from '@/components/appShell/plugins
 import { useNewAppAutoSuggestions, type NewAppAutoChosen } from './auto/useNewAppAutoSuggestions';
 import { DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1 } from '@happier-dev/protocol/projects/starters/createV1';
 import { applyDeploySuggestion } from './applyDeploySuggestion';
+import type { NewAppSuggestionContext } from './newAppPresentation';
 import { useNewAppForges, type ForgeOwnerFact } from './useNewAppForges';
 import { isRepositoryAddressCandidate } from '@/components/projects/sources/projectSourceAddress';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
@@ -120,6 +121,8 @@ export type NewAppScreenProps = Partial<
     projectSourceId?: string | null;
     /** Review the build preview named by a Deploy to Production entry point. */
     previewEnvironmentId?: string | null;
+    /** A checked Session suggestion to open with its description and first card already selected. */
+    suggestion?: NewAppSuggestionContext | null;
     /** An empty state's "Describe your app": the dialog opens on the describe step (journey-deploy S1). */
     startOn?: 'describe' | null;
   }>;
@@ -169,10 +172,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const starters = React.useMemo(() => starterCatalog.items.filter((item) => item.starterDeploy !== undefined),
     [starterCatalog.items]);
 
-  const [step, setStep] = React.useState<Step>(props.startOn === 'describe' ? 'auto' : 'start');
+  const [step, setStep] = React.useState<Step>(props.suggestion || props.startOn === 'describe' ? 'auto' : 'start');
   // Describe your app (journey-deploy S1/S2/S!): the suggestion owner's last report, and the setup the person chose.
-  const auto = useNewAppAutoSuggestions({ serverId: scope?.serverId ?? null, active: step === 'auto' });
-  const [appliedSuggestion, setAppliedSuggestion] = React.useState<NewAppAutoChosen | null>(null);
+  const auto = useNewAppAutoSuggestions({ serverId: scope?.serverId ?? null, active: step === 'auto',
+    initial: props.suggestion ? { description: props.suggestion.description, chosen: props.suggestion } : null });
+  const [appliedSuggestion, setAppliedSuggestion] = React.useState<NewAppAutoChosen | null>(props.suggestion ?? null);
   // The open questions round's answers (journey-deploy F2): the step owns them, the footer sends them.
   const [questionAnswers, setQuestionAnswers] = React.useState<TransientQuestionAnswerState | null>(null);
   // Adjust (journey-deploy autoAdjust) is a view of the cards: it holds only while a chosen setup is shown.
