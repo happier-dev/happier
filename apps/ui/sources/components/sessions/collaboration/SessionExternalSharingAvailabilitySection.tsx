@@ -108,7 +108,7 @@ export function SessionExternalSharingAvailabilitySection(props: Readonly<{
                         display="secondary"
                         title={t('externalSessions.operationTitleMaterialize')}
                         loading={availability.materializeInFlight}
-                        disabled={availability.materializeInFlight || !availability.sourceMachineOnline}
+                        disabled={!availability.canStartMaterialization}
                         onPress={availability.startMaterialization}
                         accessibilityLabel={`${t('externalSessions.operationTitleMaterialize')}. ${subtitle}`}
                     /></View>}
@@ -117,13 +117,13 @@ export function SessionExternalSharingAvailabilitySection(props: Readonly<{
         );
     }
     if (sharingPresentation.state === 'import_incomplete') {
-        const title = availability.canResumePartialImport
-            ? t('externalSessions.operationActionResume')
-            : t('externalSessions.sharingImportIncomplete');
-        const subtitle = availability.canResumePartialImport
-            ? t('externalSessions.sharingImportIncomplete')
-            : availability.sourceMachineUnavailableReason
-                ?? t('externalSessions.sharingActionAwaitingAvailability');
+        const { materializeInFlight, canResumePartialImport, resumeInFlight } = availability;
+        const title = materializeInFlight ? t('externalSessions.operationTitleMaterialize')
+            : canResumePartialImport ? t('externalSessions.operationActionResume')
+                : t('externalSessions.sharingImportIncomplete');
+        const subtitle = materializeInFlight ? undefined
+            : canResumePartialImport ? t('externalSessions.sharingImportIncomplete')
+                : availability.sourceMachineUnavailableReason ?? t('externalSessions.sharingActionAwaitingAvailability');
         return (
             <ItemGroup>
                 <Item
@@ -131,10 +131,10 @@ export function SessionExternalSharingAvailabilitySection(props: Readonly<{
                     title={title}
                     subtitle={subtitle}
                     icon={<Icon name="cloud-arrow-up" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />}
-                    loading={availability.resumeInFlight}
-                    disabled={!availability.canResumePartialImport || availability.resumeInFlight}
-                    onPress={availability.canResumePartialImport ? availability.resumePartialImport : undefined}
-                    mode={availability.canResumePartialImport ? undefined : 'info'}
+                    loading={materializeInFlight || resumeInFlight}
+                    disabled={!canResumePartialImport || materializeInFlight || resumeInFlight}
+                    onPress={canResumePartialImport ? availability.resumePartialImport : undefined}
+                    mode={canResumePartialImport ? undefined : 'info'}
                     showChevron={false}
                 />
             </ItemGroup>
@@ -161,7 +161,7 @@ export function SessionExternalSharingAvailabilitySection(props: Readonly<{
                     subtitle={availability.updateSharedCopySubtitle}
                     icon={<Icon name="arrow-clockwise" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />}
                     loading={availability.materializeInFlight}
-                    disabled={availability.materializeInFlight || !availability.sourceMachineOnline}
+                    disabled={!availability.canStartMaterialization}
                     onPress={availability.startMaterialization}
                     showChevron={false}
                     accessibilityLabel={`${t('externalSessions.sharingUpdateSharedCopy')}. ${availability.updateSharedCopySubtitle}`}

@@ -25,7 +25,7 @@ function availability(overrides: Partial<ExternalSessionSharingAvailability>): E
             materializedThroughSourceAt: null,
         },
         sharingPresentationNowMs: 1_000,
-        sourceMachineOnline: true,
+        canStartMaterialization: true,
         sourceMachineUnavailableReason: null,
         updateSharedCopySubtitle: 'Refresh the shared snapshot.',
         materializeInFlight: false,

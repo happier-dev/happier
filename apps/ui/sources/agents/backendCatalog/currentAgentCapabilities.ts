@@ -3,9 +3,12 @@ import type {
 import type {
     PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
 import type {
+    PluginProjectedAgentV2,
     PluginProjectionV2,
 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
+import { parseExternalSessionsSourceForDeclaration } from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import type { ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import type { AgentSessionCompactionAvailabilityV1 } from '@happier-dev/protocol/plugins/agents';
 import {
     evaluateAgentSessionCapabilitySupport,
@@ -39,6 +42,36 @@ export type CurrentProjectedAgentCapabilities = Readonly<{
 function normalizeAgentId(value: string | null | undefined): string | null {
     const normalized = typeof value === 'string' ? value.trim() : '';
     return normalized.length > 0 ? normalized : null;
+}
+
+export function resolveProjectedExternalSessionsAgent(params: Readonly<{
+    providerId: string;
+    projection: PluginProjectionV2 | null | undefined;
+}>): Readonly<{
+    agent: PluginProjectedAgentV2;
+    externalSessions: NonNullable<PluginProjectedAgentV2['externalSessions']>;
+}> | null {
+    const projection = params.projection;
+    const agent = projection?.agentsById[params.providerId];
+    const externalSessions = agent?.externalSessions;
+    if (!projection || !agent || agent.id !== params.providerId
+        || !externalSessions || externalSessions.generation !== projection.generation) return null;
+
+    const installedPackage = projection.installedPackagesById[externalSessions.agent.pluginId];
+    if (installedPackage?.id !== externalSessions.agent.pluginId || installedPackage.enabled !== true) return null;
+    return { agent, externalSessions };
+}
+
+/** Import and background observation both need to page the exact source and read its append frontier. */
+export function supportsProjectedExternalSessionTranscript(
+    externalSessions: PluginProjectedAgentV2['externalSessions'] | undefined,
+    source: ExternalSessionsSource,
+): boolean {
+    if (externalSessions?.operations.pageTranscript !== true
+        || externalSessions.operations.readAfterTranscript !== true) return false;
+    const declaration = externalSessions.sources.find(candidate => candidate.sourceKind === source.kind);
+    return declaration !== undefined && declaration.resumeOnly !== true
+        && parseExternalSessionsSourceForDeclaration(declaration, source) !== null;
 }
 
 /**

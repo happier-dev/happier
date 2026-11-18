@@ -125,14 +125,9 @@ describe('resolveSessionViewExternalControlFooter', () => {
         const footer = resolveFooter({
             externalSessionLink: { machineId: 'machine-1' },
             materializeNeeded: true,
+            materializeAvailable: true,
             hasWriteAccess: true,
-            externalSessionRuntime: {
-                status: {
-                    machineOnline: true,
-                    runnerActive: true,
-                    activity: 'running',
-                },
-            },
+            externalSessionRuntime: { status: null },
             externalSessionTakeover: {
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
@@ -169,7 +164,7 @@ describe('resolveSessionViewExternalControlFooter', () => {
             },
             isHiddenSystemSessionSession: false,
         });
-        expect(unknownFooter?.materialize?.requestEnabled).toBe(true);
+        expect(unknownFooter?.materialize?.requestEnabled).toBe(false);
 
         const offlineFooter = resolveFooter({
             externalSessionLink: { machineId: 'machine-1' },

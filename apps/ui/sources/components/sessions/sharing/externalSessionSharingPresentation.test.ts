@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ExternalSessionOperationSharedPresentationV1Schema } from '@happier-dev/protocol/sessions/external/operationV1';
 
 import { resolveExternalSessionSharingPresentation } from './externalSessionSharingPresentation';
 
@@ -25,6 +26,36 @@ describe('resolveExternalSessionSharingPresentation', () => {
             state: 'import_incomplete',
             action: 'resume_awaiting_action_owner',
         });
+    });
+
+    it('keeps partial publication in flight while the same import is still running', () => {
+        expect(resolveExternalSessionSharingPresentation({
+            machineName: 'Studio Mac',
+            sharing: { kind: 'import_incomplete' },
+            operation: ExternalSessionOperationSharedPresentationV1Schema.parse({
+                v: 1, operationId: 'import-1', revision: 2, kind: 'materialize',
+                status: 'running', phase: 'importing',
+            }),
+        })).toMatchObject({
+            shareable: false,
+            state: 'import_incomplete',
+            action: 'materialize_in_flight',
+        });
+    });
+
+    it.each([
+        { kind: 'requires_persisted_import' },
+        { kind: 'published_snapshot', materializedThroughSourceAt: 1_700_000_000_000 },
+    ] as const)('replaces the sharing start action while a published materialization runs ($kind)', (sharing) => {
+        const input = {
+            machineName: 'Studio Mac',
+            sharing,
+            operation: ExternalSessionOperationSharedPresentationV1Schema.parse({
+                v: 1, operationId: 'import-1', revision: 1, kind: 'materialize',
+                status: 'running', phase: 'importing',
+            }),
+        };
+        expect(resolveExternalSessionSharingPresentation(input).action).toBe('materialize_in_flight');
     });
 
     it('shows published linked snapshots as shareable but stale', () => {

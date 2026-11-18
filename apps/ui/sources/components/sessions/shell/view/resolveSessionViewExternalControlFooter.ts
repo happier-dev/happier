@@ -30,6 +30,7 @@ type Input = Readonly<{
         'agentLabel' | 'machineLabel'
     >;
     materializeNeeded?: boolean;
+    materializeAvailable?: boolean;
     hasWriteAccess?: boolean;
     externalSessionRuntime: Readonly<{
         status?: Readonly<{
@@ -108,6 +109,7 @@ function resolveContinueInNewSession(
         requestEnabled:
             input.hasWriteAccess === true
             && status.machineOnline === true
+            && (!input.materializeNeeded || input.materializeAvailable === true)
             && !owner.inFlight
             && input.externalSessionMaterialize?.materializeInFlight !== true,
         inFlight: owner.inFlight,
@@ -160,7 +162,7 @@ export function resolveSessionViewExternalControlFooter(input: Input): SessionVi
                 ? {
                     requestEnabled:
                         input.hasWriteAccess === true
-                        && (status == null || status.machineOnline === true)
+                        && input.materializeAvailable === true
                         && !input.externalSessionMaterialize.materializeInFlight,
                     inFlight: input.externalSessionMaterialize.materializeInFlight,
                     onRequest: createMaterializeCallback(input),

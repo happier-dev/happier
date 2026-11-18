@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { useExternalSessionAgentCapabilities } from '@/components/sessions/model/useExternalSessionAgentCapabilities';
+import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import type { ExternalSessionOperationShellPresentation } from '@/components/sessions/external/progress/externalSessionOperationShellPresentation';
 import type { resolveExternalSessionIdentityPresentation } from '@/components/sessions/presentation/externalSessionIdentityPresentation';
 import type { resolveExternalSessionRuntimePresentation } from '@/components/sessions/presentation/externalSessionRuntimePresentation';
@@ -58,7 +59,7 @@ export function useSessionViewExternalControlFooter(
     sessionRouteServerId: string | null | undefined;
     machineId: string | null | undefined;
     sessionAccountLifetime: Parameters<
-      typeof useDaemonMergedProjectionInputs
+      typeof useExternalSessionAgentCapabilities
     >[0]['accountLifetime'];
     executionRunsEnabled: boolean;
     router: ReplayForkLauncherParams['router'];
@@ -110,19 +111,18 @@ export function useSessionViewExternalControlFooter(
       openReplayFork: openExternalSessionReplayFork,
     });
   const externalSessionLink = externalSessionRuntime.externalSessionLink;
-  const linkedAgentProjection = useDaemonMergedProjectionInputs({
-    sections: ['agentsById'],
-    machineId: externalSessionLink?.machineId,
-    serverId: externalSessionRuntime.sessionServerId ?? sessionRouteServerId,
+  const externalServerId = externalSessionRuntime.sessionServerId ?? sessionRouteServerId;
+  const [sourcePresence] = useMachinePresenceSummaries(
+    externalServerId,
+    externalSessionLink && materializeNeeded ? [externalSessionLink.machineId] : [],
+    params.sessionAccountLifetime,
+  );
+  const { writerSafety: takeoverWriterSafety, materializeAvailable } = useExternalSessionAgentCapabilities({
+    link: externalSessionLink,
+    serverId: externalServerId,
+    sourceMachineOnline: sourcePresence?.reachability === 'reachable',
     accountLifetime: params.sessionAccountLifetime,
-    enabled: externalSessionLink !== null,
   });
-  const takeoverWriterSafety =
-    externalSessionLink && linkedAgentProjection.phase === 'ready'
-      ? linkedAgentProjection.inputs?.pluginProjectionV2?.agentsById[
-          externalSessionLink.agentId
-        ]?.externalSessions?.writerSafety
-      : undefined;
   return React.useMemo(
     () =>
       resolveSessionViewExternalControlFooter({
@@ -146,6 +146,7 @@ export function useSessionViewExternalControlFooter(
           machineLabel: externalSessionIdentityPresentation.machineLabel,
         },
         materializeNeeded,
+        materializeAvailable,
         hasWriteAccess,
         externalSessionRuntime: {
           status: externalSessionRuntime.status
@@ -183,6 +184,7 @@ export function useSessionViewExternalControlFooter(
       externalSessionIdentityPresentation.agentLabel,
       externalSessionIdentityPresentation.machineLabel,
       externalSessionMaterialize.materializeInFlight,
+      materializeAvailable,
       materializeNeeded,
       externalSessionContinueInNewSession.available,
       externalSessionContinueInNewSession.inFlight,

@@ -8,6 +8,7 @@ import { parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 
 import { resolveQualifiedConnectedAccountLabel } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
+import { resolveProjectedExternalSessionsAgent, supportsProjectedExternalSessionTranscript } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import type {
     ExternalSessionBrowseLinkEnsureRequestExtras,
@@ -37,36 +38,6 @@ export function resolveExternalSessionBrowseTargetForQualifiedSource(params: Rea
         return source ? [{ agentId: agent.id, source }] : [];
     });
     return matches.length === 1 ? matches[0] : null;
-}
-
-function resolveProjectedExternalSessionsAgent(params: Readonly<{
-    providerId: string;
-    projection: PluginProjectionV2 | null | undefined;
-}>): Readonly<{
-    agent: PluginProjectedAgentV2;
-    externalSessions: NonNullable<PluginProjectedAgentV2['externalSessions']>;
-}> | null {
-    const projection = params.projection;
-    if (!projection) return null;
-    const agent = projection.agentsById[params.providerId];
-    const externalSessions = agent?.externalSessions;
-    if (
-        !agent
-        || agent.id !== params.providerId
-        || !externalSessions
-        || externalSessions.generation !== projection.generation
-    ) {
-        return null;
-    }
-    const installedPackage = projection.installedPackagesById[externalSessions.agent.pluginId];
-    if (
-        !installedPackage
-        || installedPackage.id !== externalSessions.agent.pluginId
-        || installedPackage.enabled !== true
-    ) {
-        return null;
-    }
-    return { agent, externalSessions };
 }
 
 function resolveProjectedExternalSessionBrowseAgent(params: Readonly<{
@@ -317,8 +288,8 @@ export function listExternalSessionBrowseProviderIds(params: Readonly<{
 /**
  * Client-side eligibility for observation-backed background follow of a linked
  * External Session: the Agent must still be projected by the current generation
- * from an enabled package, and the linked source must be a source that Agent
- * currently declares and accepts.
+ * from an enabled package, and the linked source must support transcript paging
+ * and reading after the current frontier.
  *
  * It deliberately does not read `terminalFollow.userRowClassification`. That
  * cold opt-in gates native terminal-mode transcript projection
@@ -335,15 +306,10 @@ export function supportsExternalSessionBackgroundFollow(params: Readonly<{
     source: ExternalSessionsSource;
     projection: PluginProjectionV2 | null | undefined;
 }>): boolean {
-    const projected = resolveProjectedExternalSessionsAgent(params);
-    const declaration = projected?.externalSessions.sources.find(
-        (candidate) => candidate.sourceKind === params.source.kind,
+    return supportsProjectedExternalSessionTranscript(
+        resolveProjectedExternalSessionsAgent(params)?.externalSessions,
+        params.source,
     );
-    // A resume-only source declares listing plus "resume in Happier" and
-    // nothing else, so a retained link to one must never expose background
-    // follow even though its source kind still parses.
-    if (!declaration || declaration.resumeOnly === true) return false;
-    return parseExternalSessionsSourceForDeclaration(declaration, params.source) !== null;
 }
 
 export function resolveExternalSessionBrowseLinkEnsureRequestExtras(params: Readonly<{

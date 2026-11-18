@@ -153,6 +153,14 @@ If the machine goes offline:
 - direct follow/tail stops
 - direct takeover controls are unavailable until the machine returns
 
+In 0.3 development builds, **Import into Happier** also requires a reachable
+source machine and an Agent that reports it can read and keep up with the
+transcript. The same requirement applies when **Continue in a new session**
+needs to import the transcript first. **Background Follow** becomes available
+to turn on when the Agent reports those transcript capabilities for the linked
+source. You can still turn off an existing follow policy if the capabilities
+can no longer be verified.
+
 If the session has already been imported into Happier, the Happier-managed session remains available as a normal Happier session.
 
 ## Search and filtering

@@ -12,6 +12,7 @@ import { resolveSessionMachineId } from '@/sync/domains/session/external/resolve
 import { useExternalSessionOperationOwnerHydration } from '@/components/sessions/transcript/items/useExternalSessionOperationOwnerHydration';
 import { createExternalSessionTranscriptLiveSourceKeyFromLink, readExternalSessionTranscriptStorageState, resolveExternalSessionTranscriptAuthorityState } from '@/sync/runtime/external/externalSessionTranscriptAuthority';
 import { resolveExternalSessionSharingPresentation } from '@/components/sessions/sharing/externalSessionSharingPresentation';
+import { useExternalSessionAgentCapabilities } from '@/components/sessions/model/useExternalSessionAgentCapabilities';
 import { useSessionListRuntimeNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { t } from '@/text';
 import { getRandomBytes } from 'expo-crypto';
@@ -115,11 +116,20 @@ export function useExternalSessionSharingAvailability({ serverId, sessionId, ses
     const sharingPresentation = resolveExternalSessionSharingPresentation({
         machineName: getMachineDisplayName(machine) ?? externalSessionLink?.machineId ?? null,
         sharing: transcriptAuthorityState.sharing,
+        operation: operationPresentation,
     });
     const sharingPresentationNowMs = useSessionListRuntimeNowMs(
         sharingPresentation.state === 'shared_snapshot_stale',
     );
     const sourceMachineOnline = sourceMachineReachability === true;
+    const offersMaterialization = sharingPresentation.action === 'import_awaiting_action_owner'
+        || sharingPresentation.action === 'update_awaiting_action_owner';
+    const { materializeAvailable } = useExternalSessionAgentCapabilities({
+        link: offersMaterialization && sourceMachineOnline ? externalSessionLink : null,
+        serverId: machineScopeServerId,
+        sourceMachineOnline,
+    });
+    const canStartNewMaterialization = offersMaterialization && materializeAvailable;
     const sourceMachineUnavailableReason = sourceMachineOnline
         ? null
         : sourceMachineReachability === false
@@ -130,13 +140,10 @@ export function useExternalSessionSharingAvailability({ serverId, sessionId, ses
     const updateSharedCopySubtitle = sourceMachineUnavailableReason
         ?? t('externalSessions.sharingUpdateSharedCopyDescription');
     const materializeIdempotencyKeyRef = useRef<string | null>(null);
-    const [materializeInFlight, startMaterialization] = useHappyAction(
+    const [materializeRequestInFlight, startMaterialization] = useHappyAction(
         useCallback(async () => {
             const signal = requestControllerRef.current?.signal;
-            if (!signal || signal.aborted) return;
-            if (!externalSessionLink) {
-                throw new HappyError(t('externalSessions.sharingTranscriptUnavailable'), false);
-            }
+            if (!signal || signal.aborted || !canStartNewMaterialization || !externalSessionLink) return;
             const idempotencyKey = materializeIdempotencyKeyRef.current
                 ?? createMaterializeIdempotencyKey();
             materializeIdempotencyKeyRef.current = idempotencyKey;
@@ -162,7 +169,7 @@ export function useExternalSessionSharingAvailability({ serverId, sessionId, ses
                 );
             }
             materializeIdempotencyKeyRef.current = null;
-        }, [externalSessionLink, serverId, sessionId]),
+        }, [canStartNewMaterialization, externalSessionLink, serverId, sessionId]),
     );
     const operationProgressPresentation = React.useMemo(() => (
         operationOwnerHydration.progress
@@ -228,9 +235,11 @@ export function useExternalSessionSharingAvailability({ serverId, sessionId, ses
     );
 
     return {
-        sharingPresentation, sharingPresentationNowMs, sourceMachineOnline,
+        sharingPresentation, sharingPresentationNowMs,
         sourceMachineUnavailableReason, updateSharedCopySubtitle,
-        materializeInFlight, startMaterialization, canResumePartialImport,
+        materializeInFlight: materializeRequestInFlight || sharingPresentation.action === 'materialize_in_flight',
+        canStartMaterialization: canStartNewMaterialization && !materializeRequestInFlight,
+        startMaterialization, canResumePartialImport,
         resumeInFlight, resumePartialImport,
     };
 }

@@ -765,7 +765,7 @@ function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
 
     // After the session's own rows: "This session" opens with its name, the rail choice and Talk (lab
     // `b-promote`); following rows come after them.
-    if (externalSessionLink && supportsExternalSessionBackgroundFollowForLink) {
+    if (externalSessionLink && (externalSessionFollowPolicy === 'background_follow' || supportsExternalSessionBackgroundFollowForLink)) {
       push('session', {
         id: 'session.externalSession.backgroundFollow',
         title: t('session.actionMenu.backgroundFollow'),

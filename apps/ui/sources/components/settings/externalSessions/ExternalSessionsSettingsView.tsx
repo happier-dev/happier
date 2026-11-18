@@ -146,7 +146,7 @@ const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(
             projection: daemonMergedProjection.inputs?.pluginProjectionV2,
         });
 
-    if (capabilityPhase === 'ready' && !supportsBackgroundFollow) {
+    if (!enabled && capabilityPhase === 'ready' && !supportsBackgroundFollow) {
         return (
             <Item
                 testID={`settings-external-sessions-follow-item-${props.row.session.id}`}
@@ -167,17 +167,15 @@ const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(
     // status cannot be verified instead of leaving an enabled-looking control.
     const capabilityPending = capabilityPhase === 'loading' || capabilityPhase === 'idle';
     const capabilityUnavailable = capabilityPhase === 'error' || capabilityPhase === 'unsupported';
-    const disabled = capabilityPending
-        || capabilityUnavailable
-        || !props.row.canChange
-        || (!props.row.enabled && props.mutationStatus === 'unsupported');
+    const disabled = !props.row.canChange
+        || (!enabled && (capabilityPending || capabilityUnavailable || props.mutationStatus === 'unsupported'));
     return (
         <Item
             testID={`settings-external-sessions-follow-item-${props.row.session.id}`}
             {...(props.showDivider === undefined ? {} : { showDivider: props.showDivider })}
             title={props.row.title}
             subtitle={capabilityUnavailable ? resolveFollowStatusSubtitle('unknown') : resolveFollowStatusSubtitle(status)}
-            loading={capabilityPending}
+            loading={!enabled && capabilityPending}
             disabled={disabled}
             rightElement={(
                 <Switch

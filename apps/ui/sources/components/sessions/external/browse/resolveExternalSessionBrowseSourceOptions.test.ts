@@ -300,6 +300,20 @@ describe('resolveExternalSessionBrowseSourceOptions', () => {
         })).toBe(true);
     });
 
+    it.each(['pageTranscript', 'readAfterTranscript'] as const)(
+        'withholds background follow when the projected Agent cannot %s',
+        async operation => {
+            const { supportsExternalSessionBackgroundFollow } = await externalSessionBrowseModulePromise;
+            const projection = createProjection(['codex']);
+            projection.agentsById.codex.externalSessions!.operations[operation] = false;
+            expect(supportsExternalSessionBackgroundFollow({
+                providerId: 'codex',
+                source: { kind: 'codexHome', home: 'user' },
+                projection: PluginProjectionV2Schema.parse(projection),
+            })).toBe(false);
+        },
+    );
+
     it('resolves a non-bundled auxiliary-only Agent from the daemon projection without static Agent catalog membership', async () => {
         const { listExternalSessionBrowseProviderIds, resolveExternalSessionBrowseSourceOptions } = await externalSessionBrowseModulePromise;
         const projection = PluginProjectionV2Schema.parse({
