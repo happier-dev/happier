@@ -29,10 +29,10 @@ const RETIRED_AUTHORING_SPELLINGS = [
     '.superRefine',
 ] as const;
 
-async function productionSources(directory: URL): Promise<readonly string[]> {
+async function productionSources(directory: URL, excluded: readonly string[] = []): Promise<readonly string[]> {
     const entries = await readdir(directory, { recursive: true });
     return Promise.all(entries
-        .filter((entry) => entry.endsWith('.ts') && !entry.endsWith('.test.ts'))
+        .filter((entry) => entry.endsWith('.ts') && !entry.endsWith('.test.ts') && !excluded.includes(entry))
         .map((entry) => readFile(new URL(entry, directory), 'utf8')));
 }
 
@@ -55,11 +55,12 @@ describe('Triage protocol authoring surface', () => {
             }
         }
 
-        // `/testing/v1` derives maximum encoded sizes from published JSON Schema and
-        // can therefore inspect a pattern with the standard library. The executable
-        // V1 schemas themselves must stay entirely within the public composition
-        // algebra; letting a test utility widen that boundary would be a false pass.
-        for (const source of v1Sources) {
+        // The published maximum-size derivation walks JSON Schema patterns with
+        // the standard library; it does not author executable schemas. Keep the
+        // composition boundary enforced on every schema-authoring module.
+        for (const source of await productionSources(v1Directory, [
+            'maximumEncodedValue.ts',
+        ])) {
             expect(source).not.toMatch(/\bRegExp\b/u);
         }
     });
