@@ -10,7 +10,7 @@ import { TeamCredentialResourceEntitledPageV1Schema } from '@happier-dev/protoco
 import { createCompactSessionListRowFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import tweetnacl from 'tweetnacl';
 import { SessionPermissionRespondRpcParamsV1Schema } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
@@ -83,12 +83,10 @@ const {
   callMachineRpc,
   spawnMachineSession,
   resolveMachineSpawnSessionByNonce,
-  readMachineOperationProtocolCapabilitiesV1,
 } = vi.hoisted(() => ({
   callMachineRpc: vi.fn(),
   spawnMachineSession: vi.fn(),
   resolveMachineSpawnSessionByNonce: vi.fn(),
-  readMachineOperationProtocolCapabilitiesV1: vi.fn(),
 }));
 
 vi.mock('@/daemon/controlClient', async (importOriginal) => ({
@@ -159,10 +157,6 @@ vi.mock('@/session/transport/rpc/machineRpc', async importOriginal => ({
   dispatchRequesterSessionSpawnNewRpc: async () => null,
 }));
 
-vi.mock('@/api/machine/machineOperationProtocolCapabilities', () => ({
-  readMachineOperationProtocolCapabilitiesV1,
-}));
-
 import { createCliActionExecutor } from './createCliActionExecutor';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
@@ -207,6 +201,11 @@ import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externa
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { bindExternalActionExecutionAuthorizationVerifyHttpPathV1, ExternalActionExecutionAuthorizationV1Schema, ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { configuration } from '@/configuration';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { MachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { MachineOperationProtocolCapabilitiesV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { readStoredCredentials, writeCredentialsTokenOnly } from '@/persistence';
 import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1, ProfileRecordV1Schema, ProfileRowsListResponseV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
@@ -223,6 +222,7 @@ const env = process.env;
 const PLUGIN_ACTION_ID = 'acme.cli-action-exec.plugin/actions/review-start';
 const ACTIVATED_PLUGIN_ACTION_ID = 'acme.cli-activated-action.plugin/actions/review-start';
 const storedArtifacts = new Map<string, ReturnType<typeof ArtifactHttpReadV1Schema.parse>>();
+let machineCapabilitiesRevision = 1;
 
 function acknowledgeArtifactCreate(body: unknown) {
   const input = ArtifactJsonCreateHttpInputV1Schema.parse(body);
@@ -255,14 +255,25 @@ function setAccountSettingsBoundary(input: Readonly<{ settings: Readonly<Record<
     const path = new URL(url).pathname;
     if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
       mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+    if (path === '/v1/account/encryption') return { status: 200,
+      data: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }) };
     if (path === '/v2/account/settings') return { status: 200,
       data: { version: settingsVersion, content: { t: 'plain', v: rawSettings } } };
     if (path === '/v1/account/profile') return { status: 200, data: { id: input.token
       ? JSON.parse(Buffer.from(input.token.split('.')[1]!, 'base64url').toString()).sub : 'account-1' } };
     if (path === '/v1/machines' || path === '/v1/machines/machine-1') {
-      const machine = { ...ExternalActionMachineBootstrapV1Schema.parse({ id: 'machine-1', active: true,
+      const machine = MachinePublishedRowV1Schema.parse({ ...ExternalActionMachineBootstrapV1Schema.parse({ id: 'machine-1', active: true,
         kind: 'persistent', installationId: 'installation-1', managedMachineRef: null,
-        revokedAt: null, replacedByMachineId: null }), activeAt: Date.now() };
+        revokedAt: null, replacedByMachineId: null }), activeAt: Date.now(),
+        metadata: encodePlainMachineStoredContent(MachinePublishedMetadataV1Schema.parse({
+          host: hostname(), platform: process.platform, happyCliVersion: configuration.currentCliVersion,
+          homeDir: homedir(), happyHomeDir: configuration.happyHomeDir,
+        })),
+        metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
+        dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+        operationProtocolCapabilities: MachineOperationProtocolCapabilitiesV1Schema.parse({ sessionSpawn: { protocolVersions: [1] } }),
+        operationProtocolCapabilitiesRevision: machineCapabilitiesRevision,
+      });
       return { status: 200, data: path === '/v1/machines' ? [machine] : { machine } };
     }
     if (path === ACP_CATALOG_ROWS_ROUTE_V1) return { status: 200,
@@ -689,7 +700,6 @@ describe('createCliActionExecutor', () => {
     callMachineRpc.mockReset();
     spawnMachineSession.mockReset();
     resolveMachineSpawnSessionByNonce.mockReset();
-    readMachineOperationProtocolCapabilitiesV1.mockReset();
     fetchSessionById.mockReset();
     fetchSessionsPage.mockReset();
     lookupSessionsByTags.mockReset();
@@ -761,10 +771,7 @@ describe('createCliActionExecutor', () => {
       contentKeyFingerprint: null,
       updatedAt: 1,
     });
-    readMachineOperationProtocolCapabilitiesV1.mockResolvedValue({
-      capabilities: { sessionSpawn: { protocolVersions: [1] } },
-      revision: 1,
-    });
+    machineCapabilitiesRevision = 1;
     mockMachineSpawnSuccess('sess-new');
     resolveMachineSpawnSessionByNonce.mockResolvedValue({ status: 'unsupported' });
     callMachineRpc.mockImplementation(async (call: MachineRpcCall) => {
@@ -2054,7 +2061,7 @@ describe('createCliActionExecutor', () => {
       initialTriggers: [{ target: { kind: 'workflow', ref: 'builtin:missing-workflow' },
         trigger: { kind: 'sessionLifecycle', enabled: true, events: ['sessionStarted'], policy: { kind: 'firstMatch' } } }],
     }), { surface: 'cli', defaultSessionId: 'sess-1' });
-    expect(result).toEqual({ ok: true, result: { type: 'error', code: 'target_unavailable', retryable: false } });
+    expect(result).toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details: { type: 'error', code: 'target_unavailable', retryable: false } });
     expect(spawnMachineSession).not.toHaveBeenCalled();
   });
 
@@ -2103,7 +2110,9 @@ describe('createCliActionExecutor', () => {
       surface: 'cli', defaultSessionId: 'sess-1', signal: controller.signal,
     });
 
-    expect(result).toEqual({ ok: true, result: { type: 'error', code: 'target_unavailable', retryable: false } });
+    expect(result).toEqual(abort
+      ? { ok: false, errorCode: 'cancelled', error: expect.any(String), details: { outcome: 'unknown' } }
+      : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details: { type: 'error', code: 'target_unavailable', retryable: false } });
     expect(latestSessionSpawnRequest).toMatchObject({ directory: '/repo/.dev/worktree/initial-trigger' });
     const compensations = callMachineRpc.mock.calls.filter(([call]) => call.method === RPC_METHODS.SCM_WORKTREE_REMOVE);
     expect(compensations).toEqual([]);
@@ -2134,7 +2143,11 @@ describe('createCliActionExecutor', () => {
       },
     }), {
       surface: 'cli', defaultSessionId: 'sess-1', signal: controller.signal,
-    })).resolves.toEqual({ ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' } });
+    })).resolves.toEqual(abort
+      ? { ok: false, errorCode: 'cancelled',
+        error: 'Action wait was cancelled; the Action may still be running and its outcome is unknown.',
+        details: { outcome: 'unknown' } }
+      : { ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' } });
     expect(latestSessionSpawnRequest).toMatchObject({ directory: '/repo/.dev/worktree/uncertain',
       sessionCreationCorrespondence: { recipe: { checkout: { baseRef: 'main', branchName: 'feature/actual' } } },
     });
@@ -2486,8 +2499,9 @@ describe('createCliActionExecutor', () => {
     );
 
     expect(result).toMatchObject({
-      ok: true,
-      result: { type: 'error', code: 'permission_denied', retryable: false },
+      ok: false,
+      errorCode: 'permission_denied',
+      details: { type: 'error', code: 'permission_denied', retryable: false },
     });
     expect(validateStoredAuthTokenAgainstActiveServer).toHaveBeenCalledWith('token');
     expect(spawnMachineSession).not.toHaveBeenCalled();
@@ -2589,7 +2603,7 @@ describe('createCliActionExecutor', () => {
     expect((await readStoredCredentials())?.token).toBe(token);
     const entitledCatalog = {
       resources: [{
-        id: 'resource-a', teamId: 'team-a', displayName: 'Shared Codex account',
+        id: 'resource-a', teamId: 'team-a', displayName: { content: { t: 'plain', v: 'Shared Codex account' }, recipientEnvelope: null },
         resourceRevision: 7, readiness: { kind: 'available' }, recoveryAction: null,
         mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered',
         sessionUsePolicy: 'personal_allowed', providerModels: [],
@@ -2623,9 +2637,7 @@ describe('createCliActionExecutor', () => {
       }] },
       settingsVersion: 8, loadedAtMs: 1234, settingsSecretsReadKeys: [], whenRefreshed: null,
     });
-    readMachineOperationProtocolCapabilitiesV1.mockResolvedValue({
-      capabilities: { sessionSpawn: { protocolVersions: [1] } }, revision: 2,
-    });
+    machineCapabilitiesRevision = 2;
     lookupSessionsByTags.mockResolvedValue({ state: 'available', sessions: [] });
     mockMachineSpawnSuccess('sess-team-default');
 
@@ -2706,9 +2718,7 @@ describe('createCliActionExecutor', () => {
       }] },
       settingsVersion: 8, loadedAtMs: 1234, settingsSecretsReadKeys: [], whenRefreshed: null,
     });
-    readMachineOperationProtocolCapabilitiesV1.mockResolvedValue({
-      capabilities: { sessionSpawn: { protocolVersions: [1] } }, revision: 2,
-    });
+    machineCapabilitiesRevision = 2;
     lookupSessionsByTags.mockResolvedValue({ state: 'available', sessions: [] });
     mockMachineSpawnSuccess('sess-team-explicit');
     const explicitSlot = {
@@ -2748,8 +2758,9 @@ describe('createCliActionExecutor', () => {
     );
 
     expect(result).toMatchObject({
-      ok: true,
-      result: { type: 'error', code: 'spawn_failed', retryable: true },
+      ok: false,
+      errorCode: 'spawn_failed',
+      details: { type: 'error', code: 'spawn_failed', retryable: true },
     });
     expect(resolveMachineSpawnSessionByNonce).toHaveBeenCalledTimes(1);
     expect(resolveMachineSpawnSessionByNonce).toHaveBeenCalledWith(expect.any(String));
@@ -2779,8 +2790,9 @@ describe('createCliActionExecutor', () => {
     };
 
     await expect(executor.execute('session.spawn_new', input, context)).resolves.toMatchObject({
-      ok: true,
-      result: { type: 'error', code: 'spawn_failed' },
+      ok: false,
+      errorCode: 'spawn_failed',
+      details: { type: 'error', code: 'spawn_failed' },
     });
     await expect(executor.execute('session.spawn_new', input, {
       ...context,
@@ -2874,8 +2886,9 @@ describe('createCliActionExecutor', () => {
     );
 
     expect(result).toMatchObject({
-      ok: true,
-      result: { type: 'error', code: 'spawn_failed', retryable: true,
+      ok: false,
+      errorCode: 'spawn_failed',
+      details: { type: 'error', code: 'spawn_failed', retryable: true,
         launchError: { code: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK,
           message: 'Failed to spawn session: Child process exited before session webhook (pid=1234, code=null, signal=SIGKILL)' } },
     });
@@ -2900,8 +2913,9 @@ describe('createCliActionExecutor', () => {
     );
 
     expect(result).toMatchObject({
-      ok: true,
-      result: { type: 'error', code: 'spawn_failed', retryable: true,
+      ok: false,
+      errorCode: 'spawn_failed',
+      details: { type: 'error', code: 'spawn_failed', retryable: true,
         launchError: { code: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
           message: 'OhMyPi has no available models. Set provider API keys before starting a session.' } },
     });
@@ -2923,7 +2937,7 @@ describe('createCliActionExecutor', () => {
     const result = await executor.execute('session.spawn_new',
       createSessionSpawnInput({ agentTarget: SESSION_SPAWN_AGENT_TARGETS.codex }),
       { surface: 'cli', defaultSessionId: 'sess-1' });
-    expect(result).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed', retryable: false,
+    expect(result).toMatchObject({ ok: false, errorCode: 'spawn_failed', details: { type: 'error', code: 'spawn_failed', retryable: false,
       launchError: { code: 'connected_service_credential_reconnect_required', message: expect.stringMatching(/reconnect/i) } } });
   });
 
@@ -2944,8 +2958,9 @@ describe('createCliActionExecutor', () => {
     );
 
     expect(result).toMatchObject({
-      ok: true,
-      result: { type: 'error', code: 'incompatible_target', retryable: false },
+      ok: false,
+      errorCode: 'incompatible_target',
+      details: { type: 'error', code: 'incompatible_target', retryable: false },
     });
     expect(JSON.stringify(result)).not.toContain('spawn_recovery_');
     expect(resolveMachineSpawnSessionByNonce).not.toHaveBeenCalled();
@@ -2967,8 +2982,9 @@ describe('createCliActionExecutor', () => {
     );
 
     expect(result, JSON.stringify(result)).toMatchObject({
-      ok: true,
-      result: {
+      ok: false,
+      errorCode: 'incompatible_target',
+      details: {
         type: 'error',
         code: 'incompatible_target',
         retryable: false,

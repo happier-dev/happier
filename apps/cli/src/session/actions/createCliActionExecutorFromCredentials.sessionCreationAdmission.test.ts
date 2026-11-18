@@ -32,6 +32,8 @@ import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSna
 import { McpServerCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { createCliMcpServerStore } from '@/settings/mcp/mcpServerStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { SessionSpawnNewInputV2Schema as BeforeCommitObservationInputSchema } from '../../../../../packages/protocol/src/sessions/creation/testFixtures/sessionSpawnInputBeforeCommitObservation';
 
 // The daemon uses bundled Undici; keep the file's HTTP fixtures at that same
@@ -469,9 +471,14 @@ describe('paired terminal Action admission', () => {
             const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 4,
                 provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
             const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+            onTestFinished(installAxiosRequestMethodAdapter());
             setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {},
                 settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
-            vi.spyOn(axios, 'get').mockImplementation(async url => {
+            vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
+                if (new URL(url).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+                    expect(options?.headers?.Authorization).toBe(`Bearer ${token}`);
+                    return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+                }
                 if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
                 if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
                     settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
