@@ -349,6 +349,25 @@ not enable an older running server. Changing the setting also requires a server
 restart; leaving it unset or setting it to `0` disables serving, even if retained
 producer archives exist.
 
+For a Darwin arm64 guest served by a Linux Home, run the same payload producer
+natively on an arm64 Mac at the selected source revision. Transfer that producer's
+retained archive using Stack's existing runtime file transfer. Before preparing
+the Home server, register the archive in the existing
+`HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA` stack setting as JSON:
+
+```json
+{"archives":[{"target":{"os":"darwin","arch":"arm64"},"sha256":"<producer archive SHA-256>","archivePath":"/absolute/path/on/home-build-host/darwin-arm64.tar.gz"}]}
+```
+
+Use the producer's exact target and SHA-256. The archive path is local to the
+Home's preparation host, so transfer it there first. Leave
+`HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT` unset unless you also supply a native
+unpacked payload root. Preparation builds its native payload, verifies and copies
+the registered archive into the same retained archive collection, and publishes
+both through the existing export. A checksum mismatch refuses preparation.
+Replacing or removing a registration takes effect on the next server preparation
+and restart. Linux never cross-builds the Mac payload.
+
 The Home advertises only archives it actually has. Each new guest operation
 captures its target and exact archive SHA-256, and the guest checks that digest
 before extracting or running the CLI. Copied Add Machine commands use that same

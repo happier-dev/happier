@@ -32,11 +32,10 @@ export async function readPublishedSourceRuntimeRecord({ bundleRoot, candidateKe
 export function projectRemoteGuestCliPayloadEnvironment(env = process.env) {
   const root = String(env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim();
   return { ...(env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1' ? { HAPPIER_DEV_GUEST_CLI_EXPORT: '1' } : {}),
-    ...(root && !/[\0\r\n]/.test(root)
-    ? { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: root,
-      ...(env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA
-        ? { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA } : {}) }
-    : {}) };
+    ...(root && !/[\0\r\n]/.test(root) ? { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: root } : {}),
+    ...((env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1' || root && !/[\0\r\n]/.test(root))
+      && env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA
+      ? { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA } : {}) };
 }
 
 export async function readSourceRuntimeBundleRecord(entrypoint) {

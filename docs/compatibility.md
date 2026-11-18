@@ -385,6 +385,13 @@ Source-built Dev/QA Homes may opt in to HTTP payload export with
 `HAPPIER_DEV_GUEST_CLI_EXPORT=1`; the default is off and released builds compile
 this capability out. Their identity may additionally carry `payloads`, each with
 its canonical guest build target, exact archive-byte SHA256 and Home URL/path.
+Source preparation may register another native host's archive through the existing
+`HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA.archives` entries. Registered
+foreign targets are copied into the same retained owner and their producer digest
+is verified before publication; locally built targets retain their local producer.
+The target/digest registration participates in source-bundle reuse. This changes
+only development preparation inputs; the Home descriptor and enrollment pin
+contracts remain the same.
 Home captures its own list once in the existing admitted Create input; requester
 copies have no authority. The native target probe selects one entry from that frozen list; the guest verifies
 its pinned SHA256 before extraction or execution and uses ordinary payload

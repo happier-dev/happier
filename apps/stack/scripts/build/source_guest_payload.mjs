@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { copyFile, mkdir, symlink } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CLI_BINARY_TARGETS, resolveCliToolsPlatformDir, resolveCurrentBinaryTarget, resolveExecutableName } from '../../../../packages/cli-common/src/componentArtifacts/targets.ts';
 import { run } from '../utils/proc/proc.mjs';
@@ -33,6 +33,38 @@ export function readSourceGuestPayloadTargets(env) {
   return targets.length ? targets : null;
 }
 
+// Registered archives come from this same producer on another native build host.
+// Rebuilt targets keep their local producer; registration supplies only the others.
+export function readSourceGuestPayloadArchiveImports(env) {
+  if (env.HAPPIER_DEV_GUEST_CLI_EXPORT !== '1') return [];
+  const archives = JSON.parse(env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA || '{}').archives ?? [];
+  if (!Array.isArray(archives)) throw new Error('[source-bundle] guest archive metadata must contain an archive list');
+  const rebuilt = readSourceGuestPayloadTargets(env) ?? [];
+  const imports = new Map();
+  for (const archive of archives) {
+    const target = CLI_BINARY_TARGETS.find(target => target.os === archive?.target?.os && target.arch === archive?.target?.arch);
+    if (!target || !/^[a-f0-9]{64}$/.test(archive.sha256 ?? '')
+        || typeof archive.archivePath !== 'string' || !isAbsolute(archive.archivePath)) {
+      throw new Error('[source-bundle] invalid registered guest archive metadata');
+    }
+    if (rebuilt.some(item => item.target.os === target.os && item.target.arch === target.arch)) continue;
+    imports.set(`${target.os}-${target.arch}`, { target: { os: target.os, arch: target.arch },
+      sha256: archive.sha256, archivePath: archive.archivePath });
+  }
+  return [...imports.values()].sort((a, b) => `${a.target.os}-${a.target.arch}`.localeCompare(`${b.target.os}-${b.target.arch}`));
+}
+
+async function retainGuestArchive({ target, archivePath: source, sha256 }, outputDir, signal) {
+  const archivePath = join(outputDir, 'guest-payload-archives', `${target.os}-${target.arch}.tar.gz`);
+  await mkdir(dirname(archivePath), { recursive: true });
+  await copyFile(source, archivePath);
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(archivePath, { signal })) hash.update(chunk);
+  const digest = hash.digest('hex');
+  if (sha256 && sha256 !== digest) throw new Error(`[source-bundle] registered guest archive checksum mismatch for ${target.os}/${target.arch}`);
+  return { target: { os: target.os, arch: target.arch }, sha256: digest, archivePath };
+}
+
 export function sourceGuestPayloadEnvironment(payload) {
   return { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: payload.root,
     HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: JSON.stringify({ root: payload.root,
@@ -42,6 +74,7 @@ export function sourceGuestPayloadEnvironment(payload) {
 
 export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, dependencyRootDir, outputDir, targets, sourceCapture, env, signal }) {
   const root = join(outputDir, 'guest-payload');
+  const importedArchives = readSourceGuestPayloadArchiveImports(env);
   // The caller owns these captured inputs. Reuse canonical capture containment
   // for mounted installed dependencies; tree callers also name their pinned install.
   const captureContext = { HAPPIER_STACK_REPO_DIR: repoDir,
@@ -79,14 +112,14 @@ export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, dependen
       if (env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1') {
         const archive = await createScpReadyPayloadArchive(join(root, relativeDir));
         try {
-          const archivePath = join(outputDir, 'guest-payload-archives', `${target.os}-${target.arch}.tar.gz`);
-          await mkdir(dirname(archivePath), { recursive: true });
-          await copyFile(join(archive.archiveStageRoot, archive.archiveFileName), archivePath);
-          const hash = createHash('sha256');
-          for await (const chunk of createReadStream(archivePath)) hash.update(chunk);
-          exportedArchives.push({ target: { os: target.os, arch: target.arch }, sha256: hash.digest('hex'), archivePath });
+          exportedArchives.push(await retainGuestArchive({ target,
+            archivePath: join(archive.archiveStageRoot, archive.archiveFileName) }, outputDir, signal));
         } finally { await archive.cleanup(); }
       }
+    }
+    for (const archive of importedArchives) {
+      signal?.throwIfAborted();
+      exportedArchives.push(await retainGuestArchive(archive, outputDir, signal));
     }
     const collection = targets.some(item => item.relativeDir);
     const identity = collection

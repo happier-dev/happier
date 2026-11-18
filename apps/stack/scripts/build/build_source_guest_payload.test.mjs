@@ -21,6 +21,7 @@ import { readWorkspacePackages, workspaceSourcePackageClosure } from '../../../.
 import { resolveInstalledRuntimePackage } from '../../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
 import { buildSourceRuntimeBundle, setBundleReadOnly } from './build_source_runtime.mjs';
 import { runCapture } from '../utils/proc/proc.mjs';
+import { adoptDependencyInstallation, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
 import cliDistBuildManifest from '../../../../packages/cli-common/cliDistBuildManifest.cjs';
 import { createCliSourceLoader } from '../../../../packages/cli-common/cliSourceLoader.mjs';
 import { CLI_BINARY_TARGETS, resolveCliToolsPlatformDir, resolveCurrentBinaryTarget } from '../../../../packages/cli-common/src/componentArtifacts/targets.ts';
@@ -211,6 +212,49 @@ test('guest payload retains host and target holders and includes native support 
   await writeFile(join(cliDir, 'package.json'), JSON.stringify(hostManifest));
 });
 
+test('source Home registers a Mac-native archive alongside its own payload without cross-building', compilerFixtureOptions, async t => {
+  const { fixture, repoDir, native, env, target } = await createGuestPayloadFixture(t);
+  if (target.os !== 'linux') return t.skip('Linux Home registration of a Mac-native archive');
+  const build = native?.build ?? buildSourceRuntimeBundle;
+  const options = { repoDir, stackBaseDir: fixture.path('stacks/guest'), component: 'daemon',
+    waitForSourceChanges: false, env: { ...env, HAPPIER_DEV_GUEST_CLI_EXPORT: '1' } };
+  const ordinary = await build(options);
+  assert.deepEqual(ordinary.guestPayload.archives.map(archive => archive.target), [{ os: target.os, arch: target.arch }]);
+  // Bytes received from the native Mac compiler/archive process are an external
+  // build boundary. Linux capture, payload production, registration and retention stay real.
+  const archivePath = fixture.path('mac-host/darwin-arm64.tar.gz');
+  await mkdir(dirname(archivePath), { recursive: true });
+  const bytes = Buffer.from('archive emitted by the native Mac compiler boundary');
+  await writeFile(archivePath, bytes);
+  const mac = { target: { os: 'darwin', arch: 'arm64' },
+    sha256: createHash('sha256').update(bytes).digest('hex'), archivePath };
+  const registeredEnv = { ...options.env,
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: JSON.stringify({ archives: [mac] }) };
+  assert.deepEqual(projectRemoteGuestCliPayloadEnvironment(registeredEnv), {
+    HAPPIER_DEV_GUEST_CLI_EXPORT: '1', HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: registeredEnv.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA,
+  }, 'remote reload forwards the archive registration even without an unpacked-root override');
+  const registered = await build({ ...options, stackBaseDir: fixture.path('stacks/export-consumer'),
+    env: { ...registeredEnv, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'guest' } });
+  const retained = registered.guestPayload.archives.find(archive => archive.target.os === 'darwin' && archive.target.arch === 'arm64');
+  assert.ok(retained, 'Linux preparation must retain the registered native Mac archive');
+  assert.notEqual(retained.archivePath, archivePath);
+  assert.equal(retained.sha256, mac.sha256);
+  assert.deepEqual(await readFile(retained.archivePath), bytes);
+  assert.deepEqual(JSON.parse(registered.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA).archives, registered.guestPayload.archives);
+  assert.equal(registered.guestPayload.archives.some(archive => archive.target.os === 'darwin' && archive.target.arch === 'x64'), false);
+  await writeFile(archivePath, 'changed transfer bytes');
+  assert.deepEqual(await readFile(retained.archivePath), bytes, 'retention owns a copy independent of the imported file');
+  const removed = await build({ ...options, stackBaseDir: fixture.path('stacks/export-consumer'),
+    env: { ...options.env, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'guest' } });
+  assert.equal(removed.guestPayload.archives.some(archive => archive.target.os === 'darwin'), false,
+    'completed-producer adoption must also honour a removed registration');
+  await assert.rejects(build({ ...options, stackBaseDir: fixture.path('stacks/bad-import'), env: { ...registeredEnv,
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: JSON.stringify({ archives: [{ ...mac, sha256: '0'.repeat(64) }] }) } }),
+    { code: 'source_runtime_producer_failed', phase: 'source-producer' }, 'changed transfer bytes cannot be published with the old pin');
+  const disabled = await build({ ...options, env: { ...registeredEnv, HAPPIER_DEV_GUEST_CLI_EXPORT: '0' } });
+  assert.equal(disabled.guestPayload.archives, undefined);
+});
+
 test('guest payload and daemon retain the same captured source after live edits and guest-only changes invalidate reuse', compilerFixtureOptions, async t => {
   const { fixture, repoDir, cliDir, sourceCommon, native, env, target } = await createGuestPayloadFixture(t);
   const pluginRoot = join(repoDir, 'packages/plugins/fixture-ui');
@@ -390,6 +434,9 @@ test('tree reload publishes a native guest payload from the selected revision in
   await git('config', 'user.email', 'test@example.invalid');
   await git('add', '.');
   await git('commit', '--quiet', '-m', 'guest source fixture');
+  // Borrowed packages do not carry the donor checkout's installation admission.
+  await rm(resolveDependencyRefreshMarkerPath(repoDir), { force: true });
+  await adoptDependencyInstallation({ installDir: repoDir, componentDir: cliDir, env });
   const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'),
     outputDir: fixture.path('descriptors') });
   await writeFile(join(cliDir, 'src/index.ts'), 'export const snapshot = "foreign dirty edit";');

@@ -32,7 +32,7 @@ import { resolveDependencyInstallRoot, resolveDependencyRefreshMarkerPath, resol
 import { diagnoseSourceReloadFailure, emitSourceReloadRefusal, parseSourceReloadRefusalLine, recordSourceReloadRefusal } from '../runtime/shared/source_reload_refusal.mjs';
 import { emitSourceAuthorPackages, isFirstPartyBuiltInput } from './source_author_packages.mjs';
 import { readSourceRuntimeDependencyIdentity } from './source_author_inputs.mjs';
-import { buildSourceGuestPayload, readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
+import { buildSourceGuestPayload, readSourceGuestPayloadArchiveImports, readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
 import { resolveRuntimeBuildAuthority } from '../runtime/shared/runtime_build_authority.mjs';
 import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable } from './source_runtime_last_green.mjs';
 import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourceReloadPluginFailures.mjs';
@@ -188,6 +188,7 @@ async function sourceBundleFingerprint({ repoDir, identityRepoDir = repoDir, com
   const options = [identityRepoDir, component, serverComponent, dbProvider, process.version, process.platform, process.arch, esbuild.version, files,
     guestPayloadTargets?.map(({ target, relativeDir }) => [target.bunTarget, relativeDir]) ?? null,
     exportGuestPayload,
+    readSourceGuestPayloadArchiveImports(env).map(({ target, sha256 }) => [target.os, target.arch, sha256]),
     component === 'server' ? env.HAPPIER_BUILD_GUEST_CLI_SOURCE ?? 'home-payload' : null,
     component === 'server' ? env.HAPPIER_BUILD_GUEST_CLI_CHANNEL ?? 'publicdev' : null];
   return await readBuildInputIdentity({ sourceDir: sharedSourceInputs?.repoDir ?? repoDir,
@@ -284,6 +285,11 @@ async function readReusableSourceBundle({ outputDir, record, repoDir, component,
     const targets = readSourceGuestPayloadTargets(env);
     if (targets?.some(({ target }) => !record.guestPayload?.archives?.some(archive =>
       archive.target.os === target.os && archive.target.arch === target.arch))) return null;
+    const imported = readSourceGuestPayloadArchiveImports(env);
+    const retained = (record.guestPayload?.archives ?? []).filter(archive => !targets?.some(({ target }) =>
+      archive.target.os === target.os && archive.target.arch === target.arch));
+    if (imported.length !== retained.length || imported.some(archive => !retained.some(existing =>
+      existing.target.os === archive.target.os && existing.target.arch === archive.target.arch && existing.sha256 === archive.sha256))) return null;
   }
   if (component === 'server'
       && (record.serverComponent !== serverComponent || record.dbProvider !== (dbProvider ?? (serverComponent === 'happier-server-light' ? 'sqlite' : 'postgres')))) return null;

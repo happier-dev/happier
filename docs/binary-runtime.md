@@ -321,7 +321,17 @@ neither is available. In 0.3 development, source-built Homes can opt in with
 `HAPPIER_DEV_GUEST_CLI_EXPORT=1` before source-runtime preparation. Preparation uses
 the existing CLI payload and SCP archive owners, retains one archive per produced
 target with the server runtime, and advertises its exact SHA-256 and Home download
-path in `capabilities.guestCli.payloads`. Home captures its own descriptor in the
+path in `capabilities.guestCli.payloads`. A source Home can also retain an archive
+built by this same producer on another native host. For example, build Darwin
+arm64 on mac-host, transfer its retained archive through Stack's existing runtime
+file transfer, and register its producer entry (`target`, `sha256`, `archivePath`)
+in `HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA.archives` before Home server
+preparation. The path must be absolute on the Home's preparation host. Preparation
+copies registered foreign-target archives into its own retained output and verifies
+the copied bytes against the producer's SHA-256. Targets being built locally keep
+the local producer. Bundle reuse includes the registered target/digest list;
+removing or replacing a registration requires preparation again. No Linux-to-Mac
+cross-build or public fallback is introduced. Home captures its own descriptor in the
 existing Create admission. Update/Retry receives a new Home-owned snapshot through
 its admitted root or the existing authenticated Account context response; requester
 descriptors never choose the retained archive. The installer verifies the pinned
@@ -341,7 +351,8 @@ That source selects the newest published signed CLI in the advertised major.mino
 `line` and `channel`, then acquires its exact immutable version. Stable Homes
 select stable releases; preview and dev Homes select only their own channel.
 The controller's channel cannot choose a different line or channel. Before either
-source promotes a payload, the supplier reads an existing guest CLI's version and refuses a downgrade; an
+source promotes a payload, the managed guest installer reads an existing guest
+CLI's version and refuses a downgrade; an
 unreadable installed version refuses instead of being treated as absent.
 Standalone SSH setup retains its own verified release acquisition contract. A missing target executable or release archive reports
 `guest_payload_missing` during installation, and a mismatched native executable
@@ -443,8 +454,13 @@ loaded source payload.
 The invoking UI's Account-native and native SSH enrollment use the same source
 and version decision. For `public-release`, the existing signed installer runs
 on the guest and requires no controller-local filesystem access. For
-`home-payload`, an app without access to the payload reports `guest_payload_missing`
-and directs the person to a connected controller. Both transports retain the
+`home-payload`, the invoking app requires a selected controller before Account
+admission unless its enrollment host supplies an actual payload installer.
+A native HTTP bridge alone does not supply payload bytes. An unreadable Home
+CLI identity also refuses before admission. The Add chooser and configurator
+consume the same availability decision and existing controller selector. Copied
+connection commands use the same Home-advertised identity, independently of how
+the Home profile was added. Both transports retain the
 existing signed checksum verification, exact archive-version check and ordinary
 Home enrollment lifecycle. Public acquisition reports typed unavailable,
 line-mismatch, invalid-version or downgrade refusals through the operation.
