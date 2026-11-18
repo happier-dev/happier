@@ -1635,20 +1635,6 @@ describe('authenticated finite Project Action owner', () => {
             domainRef: { purpose: 'script', machineId: 'machine', workspaceRefId: 'accepted', cwd: h.root } });
         expect(preparing?.domainRef).not.toHaveProperty('terminalId');
         const reviewed = ProjectSetupConsentFailureDetailsV1Schema.parse(h.operationRuntime.store.get(scope, 'operation')!.setupReview);
-        // This contract compares consent intent, not concurrent operation-id
-        // allocation. Admit each original request before asserting its receipt.
-        for (const [index, consentScope] of (['thisTime'] as const).entries()) {
-            const pending = await h.invoke('projects.prepare', {
-                workspace: h.address, phase: 'setup', expectedEffectDigest: reviewed.reviewedEffectDigest, consentScope,
-            }, { ...h.context, transportRequestId: `prepare-${consentScope}` });
-            const operationId = `operation-${index + 2}`;
-            expect(pending).toMatchObject({ operation: { operationId } });
-            await expect.poll(() => h.operationRuntime.store.get(scope, operationId)?.setupReview?.code).toBe('project_setup_consent_required');
-            expect(h.operationRuntime.store.get(scope, operationId)).toMatchObject({ state: 'accepted', setupReview: {
-                kind: 'pendingApproval', reviewedEffectDigest: reviewed.reviewedEffectDigest,
-                consentScope,
-            } });
-        }
         expect(await h.rpcInvoke('projects.prepare', { workspace: h.address, phase: 'setup', consentScope: 'thisTime' }))
             .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
         // Remembered consent belongs to the approving app, never the native preparation RPC.
@@ -1682,7 +1668,7 @@ describe('authenticated finite Project Action owner', () => {
         expect(result, JSON.stringify(result)).toMatchObject({ operation: { state: 'accepted' } });
     });
 
-    it('satisfies the held same-digest setup after This time completion without a second native setup and leaves a different digest held', async () => {
+    it('consumes admitted direct This time once, releases the same digest, and leaves a different digest held', async () => {
         const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 1,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const manifest = { version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } };
@@ -1702,11 +1688,10 @@ describe('authenticated finite Project Action owner', () => {
         const differentReview = ProjectSetupConsentFailureDetailsV1Schema.parse(h.operationRuntime.store.get(scope, different.operation.operationId)!.setupReview);
         expect(differentReview.reviewedEffectDigest).not.toBe(reviewed.reviewedEffectDigest);
         await writeFile(join(h.root, '.happier/project.json'), JSON.stringify(manifest));
-        // The authenticated user's invocation policy allows this RPC; only the
-        // exact This time decision authorizes its setup effect, never Trust.
-        h.waiveSetupApproval();
+        // This owner receives an admitted request, including a person's approved
+        // agent request. It must consume that decision without asking again.
         try {
-            const oneTime = ProjectCommandActionOutputV1Schema.parse(await h.rpcInvoke('projects.prepare', {
+            const oneTime = ProjectCommandActionOutputV1Schema.parse(await h.invoke('projects.prepare', {
                 ...input, expectedEffectDigest: reviewed.reviewedEffectDigest, consentScope: 'thisTime',
             }, { ...h.context, transportRequestId: 'this-time' }));
             await expect.poll(() => h.spawned.length).toBe(1);

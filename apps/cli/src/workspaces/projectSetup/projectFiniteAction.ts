@@ -515,12 +515,12 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             ...(environmentBindings ? { environmentBindings } : {}),
             ...(request.actionId === 'projects.prepare' ? { expectedEffectDigest: request.input.expectedEffectDigest, skipForInvocation: request.input.skipForInvocation } : {}),
             ...(request.actionId === 'projects.prepare' && request.input.consentScope === 'thisTime'
-                && request.input.expectedEffectDigest && args.context.authority === 'present_user'
-                ? { effectDecision: { authority: args.context.authority, project: association.project,
+                && request.input.expectedEffectDigest
+                ? { effectDecision: { project: association.project,
                     reviewedEffectDigest: request.input.expectedEffectDigest } } : {}),
             ...(setupDecision ? { expectedEffectDigest: setupDecision.reviewedEffectDigest,
                 skipForInvocation: setupDecision.skipForInvocation,
-                ...(!setupDecision.skipForInvocation ? { effectDecision: { authority: 'present_user' as const,
+                ...(!setupDecision.skipForInvocation ? { effectDecision: {
                     project: association.project, reviewedEffectDigest: setupDecision.reviewedEffectDigest } } : {}),
             } : {}),
         });

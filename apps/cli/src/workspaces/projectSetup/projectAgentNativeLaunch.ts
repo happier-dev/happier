@@ -111,7 +111,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                 if (prepared.kind !== 'prepared') return fail('project_workspace_changed');
                 return { ...prepared.preparation, signal, retainNativeInvocation: custody.retain,
                     ...(decision ? { expectedEffectDigest: decision.reviewedEffectDigest, skipForInvocation: decision.skipForInvocation,
-                        ...(!decision.skipForInvocation ? { effectDecision: { authority: 'present_user' as const,
+                        ...(!decision.skipForInvocation ? { effectDecision: {
                             project: prepared.outcome.plan.project, reviewedEffectDigest: decision.reviewedEffectDigest } } : {}) } : {}) };
             };
             const refresh = async (presentation?: Pick<ProjectSetupReviewPresentation, 'provenance'>) => {

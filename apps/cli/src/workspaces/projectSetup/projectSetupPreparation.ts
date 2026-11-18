@@ -79,8 +79,8 @@ export type ProjectSetupPreparationInput = Readonly<{
     /** The containing accepted operation owns these invocations through actual settlement. */
     retainNativeInvocation?: (production: import('@/plugins/runtime/invocation/services/exec').ProjectNativeEffectCaptureForHost) => void;
     successHomeDir?: string;
-    /** Supplied only by the admitted host human-review producer, never Action params or custodian credentials. */
-    effectDecision?: Readonly<{ authority: 'present_user'; project: QualifiedProjectTrustProjectV1; reviewedEffectDigest: string }>;
+    /** Supplied only by the admitted host decision producer, never raw Action params or custodian credentials. */
+    effectDecision?: Readonly<{ project: QualifiedProjectTrustProjectV1; reviewedEffectDigest: string }>;
     /** The admitted host's original surface and Account policy, never Project Action input. */
     approvalContext?: ActionExecutorContext;
     /** Unattended checkout destruction consumes remembered lifecycle consent only. */
@@ -639,7 +639,6 @@ export async function admitReviewedProjectSetup(input: ProjectSetupPreparationIn
             consent = admittedConsent;
         } else if (input.effectDecision !== undefined) {
             const decision = input.effectDecision;
-            if (decision.authority !== 'present_user') return { kind: 'pendingApproval', code: 'project_setup_consent_required', plan };
             const project = QualifiedProjectTrustProjectV1Schema.safeParse(decision.project);
             if (!project.success || project.data.serverId !== plan.project.serverId || project.data.projectId !== plan.project.projectId) return refuse('project_setup_consent_invalid');
             if (decision.reviewedEffectDigest !== plan.reviewedEffectDigest) return { kind: 'pendingApproval', code: 'project_setup_effect_changed', plan };

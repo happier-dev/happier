@@ -459,7 +459,7 @@ describe('current Project setup effect and preparation admission', () => {
         expect(await prepareProjectSetup(input)).toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
     });
 
-    it('honours the setup Action surface waiver without creating remembered trust or accepting an agent decision', async () => {
+    it('honours the setup Action surface waiver without creating remembered trust', async () => {
         const { input } = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } });
         const post = trustTransport(null);
         const settings = { v: 1, actions: {}, approvalWaivedSurfaces: { 'projects.prepare': ['agent'] } };
@@ -475,12 +475,8 @@ describe('current Project setup effect and preparation admission', () => {
         expect(await prepareProjectSetup({ ...waived, secretEnvironment: withSavedSecretMaterializer({ ...waived.secretEnvironment, savedSecretMaterializer: undefined, accountSettings: {
             actionsSettingsV1: { ...settings, actions: { 'projects.prepare': { approvalRequiredSurfaces: ['agent'] } } },
         } }) })).toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
-        const plan = await reviewed(input);
         expect(await prepareProjectSetup({ ...waived, expectedEffectDigest: 'stale' }))
             .toMatchObject({ kind: 'pendingApproval', code: 'project_setup_effect_changed' });
-        const decision = { authority: 'present_user' as const, project: plan.project, reviewedEffectDigest: plan.reviewedEffectDigest };
-        expect(await prepareProjectSetup({ ...waived, effectDecision: { ...decision, authority: 'account_automation' } as unknown as typeof decision }))
-            .toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
     });
 
     it('consumes the exact setup reviewed in an admitted Move without trusting a public parent projection or changed target effects', async () => {
@@ -803,11 +799,11 @@ describe('current Project setup effect and preparation admission', () => {
         expect((await reviewed(input)).reviewedEffectDigest).toBe(first.reviewedEffectDigest);
     });
 
-    it('consumes exact current host human effect consent this time without granting remembered trust or accepting an invocation waiver', async () => {
+    it('consumes admitted exact effect consent this time without granting remembered trust', async () => {
         const { input } = await fixture({ version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } });
         const plan = await reviewed(input);
         const post = trustTransport(null);
-        const decision = { authority: 'present_user' as const, project: input.projectAssociation.project, reviewedEffectDigest: plan.reviewedEffectDigest };
+        const decision = { project: input.projectAssociation.project, reviewedEffectDigest: plan.reviewedEffectDigest };
         const thisTime = { ...input, effectDecision: decision };
         expect(await prepareProjectSetup(thisTime)).toMatchObject({ kind: 'prepared', consent: 'thisTime', previousSuccess: false });
         expect(post).not.toHaveBeenCalled();
@@ -815,9 +811,6 @@ describe('current Project setup effect and preparation admission', () => {
         expect(await prepareProjectSetup(stale)).toMatchObject({ kind: 'pendingApproval', code: 'project_setup_effect_changed' });
         const wrongProject = { ...input, effectDecision: { ...decision, project: { ...decision.project, projectId: 'other-project' } } };
         expect(await prepareProjectSetup(wrongProject)).toMatchObject({ kind: 'refused', code: 'project_setup_consent_invalid' });
-        // Untyped ingress cannot manufacture the host's authenticated human-decision fact.
-        const automated = { ...input, effectDecision: { ...decision, authority: 'account_automation' } as unknown as typeof decision };
-        expect(await prepareProjectSetup(automated)).toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
         expect(post).not.toHaveBeenCalled();
     });
 

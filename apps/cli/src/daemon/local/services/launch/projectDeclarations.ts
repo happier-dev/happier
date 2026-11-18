@@ -419,7 +419,7 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             nativeIo: runtime.nativeIo, signal,
             dotenvPreparation,
             originalEnvironment,
-            ...(approval?.setup?.required ? { effectDecision: { authority: 'present_user' as const,
+            ...(approval?.setup?.required ? { effectDecision: {
                 project: approval.setup.project, reviewedEffectDigest: approval.setup.reviewedEffectDigest } } : {}),
             retainNativeInvocation: production => nativeCustody ? nativeCustody.retain(production) : nativeInvocations.add(production),
             ...(runtime.successHomeDir ? { successHomeDir: runtime.successHomeDir } : {}),
