@@ -31,7 +31,6 @@ import {
 } from '@happier-dev/protocol';
 
 import { createWorkflowRunRecoveryReader, createWorkflowInvocationRecoveryFactWriter } from './recovery';
-import { registerTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { createWorkflowInvocationRecoveryObserver } from './daemonRuntime';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { createPlainWorkflowRunKeyCensusFixture, createWorkflowRunStorageTestkit, type WorkflowRunStorageTestkitOperation } from './workflowRunStorage.testkit';
@@ -779,23 +778,6 @@ describe.each(['plain', 'e2ee'] as const)('frozen result recovery (%s)', (mode) 
     expect(recovered.lifecycle).toBe('running');
     expect(recovered.progress.result).toBeUndefined();
     expect(recovered.custody).toBe('pending');
-  });
-
-  it('redacts registered host secrets from a detached result during recovery before storage', async () => {
-    const unregister = registerTranscriptSecret('native-host-secret');
-    try {
-      const recovered = await recoverResult({
-        name: 'detached secret',
-        contract: { kind: 'json', schema: { type: 'object', required: ['answer'] } },
-        observed: { kind: 'typed', value: { answer: 'native-host-secret' } },
-        expected: { result: { answer: '[redacted]' } },
-        lifecycle: 'completed',
-      });
-      expect(recovered.progress.result).toEqual({ answer: '[redacted]' });
-      expect(recovered.custody).toBe('settled');
-    } finally {
-      unregister();
-    }
   });
 });
 

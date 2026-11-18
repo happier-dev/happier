@@ -30,7 +30,6 @@ import { WorkflowDiscussionPublicationUnavailable } from './workflowDiscussionPu
 import { hasRetainedWorkflowActionOperation, LOST_ACTION_OPERATION_CODE } from './actionOperationObservation';
 import { resolveWorkflowSessionLaunch } from './sessionStepLaunch';
 import { WORKFLOW_RECOVERABLE_INVOCATION_LIFECYCLES_V1 as RECOVERABLE_INVOCATION_LIFECYCLES } from '@happier-dev/protocol/workflows';
-import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
 const TERMINAL_RUN_STATES = new Set([
   'succeeded', 'failed', 'cancelled', 'expired', 'dispatch_failed', 'skipped',
@@ -278,13 +277,12 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
       const validated = validateExecutionRunProfileResult(value, { kind: 'json', schema });
       return validated.ok ? { ...observation, result: validated.value } : { kind: 'failed', code: 'schema_mismatch' };
     }
-    const detachedResult = execution?.kind === 'detached_run' ? redactTranscriptSecrets(observation.result) : observation.result;
     const value = step.pauseForReview && invocation.progress.review?.resultSource?.kind === 'published'
       && invocation.progress.result !== undefined
       ? { encoding: 'typed' as const, value: invocation.progress.result }
       : execution?.kind === 'session' || execution?.kind === 'session_ready'
       ? typeof observation.result === 'string' ? { encoding: 'raw_text' as const, value: observation.result } : null
-      : execution?.kind === 'detached_run' ? { encoding: 'typed' as const, value: detachedResult } : null;
+      : execution?.kind === 'detached_run' ? { encoding: 'typed' as const, value: observation.result } : null;
     const decoded = value ? decodeExecutionRunResultObservation(value, step.result) : null;
     return decoded?.ok ? { ...observation, result: decoded.value }
       : { kind: 'failed', code: 'invalid_result_contract', ...(decoded && !decoded.ok ? { message: decoded.reason } : {}),

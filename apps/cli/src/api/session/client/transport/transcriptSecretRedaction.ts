@@ -2,7 +2,11 @@
  * Exact-value redaction of host-minted secrets that an Agent can read and echo into its
  * transcript. Applied once at each Session writer of Agent-authored content, before encryption or
  * plain storage: the message writer (`buildOutboundSessionMessagePayload`) and the Agent-state commit
- * (`ApiSessionClient.updateAgentState`, which carries permission request arguments).
+ * (`ApiSessionClient.updateAgentState`, which carries permission request arguments). Execution Run
+ * output leaves its hosting process only through the Run read projection in
+ * `dispatchExecutionRunRpcAction.ts`, which applies it there for every reader, including Workflow
+ * storage that Team members can read. Retired secrets no longer authenticate, so read-time
+ * redaction of live registrations is sufficient.
  *
  * Covers Session MCP registration bearers, plugin-hosted loopback MCP servers and the session hook server. Their
  * secrets reach the Agent only through its runner-written private config (MCP client config,
