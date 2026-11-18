@@ -8667,6 +8667,24 @@ class Sync {
           return this.serverScopeGeneration === generation && this.credentials === credentials;
       };
 
+      /** Active Account reads share the initial feed cut before admitting retained snapshots. */
+      public awaitInitialAccountRead = async (scope: ServerAccountScope, signal?: AbortSignal): Promise<void> => {
+          throwIfAborted(signal);
+          if (this.embedSessionScope || this.changesCursor !== null || !this.isAppliedTransportAccountScopeCurrent(scope)) return;
+          const isCurrent = this.createServerScopeGuard();
+          // Bootstrap enters this pause gate before the applied Account becomes available.
+          const ready = this.pauseController.waitUntilResumed().then(() => {
+              if (isCurrent() && !signal?.aborted) return this.initialChangesCursor.waitForPendingCapture();
+          });
+          if (!signal) return ready;
+          await new Promise<void>((resolve, reject) => {
+              const wake = () => resolve();
+              signal.addEventListener('abort', wake, { once: true });
+              void ready.finally(() => signal.removeEventListener('abort', wake)).then(resolve, reject);
+          });
+          throwIfAborted(signal);
+      };
+
       private bootstrapSync = async (): Promise<void> => {
           const embedScope = this.embedSessionScope;
           const generation = this.serverScopeGeneration;

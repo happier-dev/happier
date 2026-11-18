@@ -2,9 +2,10 @@ import 'fake-indexeddb/auto';
 import { it, expect, onTestFinished, vi } from 'vitest';
 import type { Duplex } from 'node:stream';
 import { setImmediate as nextTask } from 'node:timers/promises';
+import type { Server as SocketIoServer } from 'socket.io';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { UsageAnalyticsQueryBatchRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { UsageAnalyticsQueryBatchRequestSchema, UsageEventIngestRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { accountRoutes } from '../../../server/sources/app/api/routes/account/accountRoutes';
 import { registerAuthPingRoute } from '../../../server/sources/app/api/routes/auth/registerAuthPingRoute';
 import { changesRoutes } from '../../../server/sources/app/api/routes/changes/changesRoutes';
@@ -19,7 +20,7 @@ import { db } from '../../../server/sources/storage/db';
 import { createAccountTokenForTests, createLightSqliteHarness } from '../../../server/sources/testkit/lightSqliteHarness';
 import { installLocalStorageMock } from '../auth/storage/tokenStorage.web.testHelpers';
 import { buildUsageAnalyticsViewModel, USAGE_MODEL_MIX_OTHER_KEY } from '../sync/api/account/usageAnalytics';
-import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore } from '../sync/api/account/usageQueryResource';
+import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, readUiUsageQueryBatch } from '../sync/api/account/usageQueryResource';
 import { getServerFeaturesSnapshot } from '../sync/api/capabilities/serverFeaturesClient';
 import { subscribeHomeAccountChange } from '../sync/runtime/orchestration/homeAccountChange';
 import { buildUsageRigPresetPlans } from './testkit/fixtures/usageRigPresets';
@@ -29,7 +30,10 @@ import { createDeferred } from './testkit/hooks/createDeferred';
 
 vi.mock('react-native', async () => (await import('./testkit/mocks/reactNative')).createReactNativeWebMock());
 
-it('preserves accounted model groups and Other across a real Home reconnection without acquiring accounting again', async () => {
+it.each([
+    { title: 'preserves accounted model groups and Other across a real Home reconnection without acquiring accounting again', duringGap: false },
+    { title: 'includes an accounting write committed before the initial cursor and socket in the first retained read', duringGap: true },
+])('$title', async ({ duringGap }) => {
     const webStorage = installLocalStorageMock();
     onTestFinished(webStorage.restore);
     const harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-usage-rig-reconnect-', initAuth: true, initEncrypt: true,
@@ -54,6 +58,17 @@ it('preserves accounted model groups and Other across a real Home reconnection w
         });
         const { startSocket } = await import('../../../server/sources/app/api/socket');
         closeSocket = startSocket(app);
+        const socketAdmission = createDeferred<void>();
+        let heldSocket = false;
+        if (duringGap) {
+            // startSocket assigns the real Socket.IO server to the presence port.
+            const socketServer = app.machineDaemonPresence as SocketIoServer;
+            socketServer.engine.use((_request, _response, next) => {
+                heldSocket = true;
+                void socketAdmission.promise.then(() => next());
+            });
+            onTestFinished(() => socketAdmission.resolve());
+        }
         const origin = await app.listen({ host: '127.0.0.1', port: 0 });
         const allowSocket = allowRealServerSocketBoundary(origin);
         try {
@@ -61,7 +76,7 @@ it('preserves accounted model groups and Other across a real Home reconnection w
             const now = USAGE_RIG_NOW;
             const session = await db.session.create({ data: { accountId: account.id, tag: 'usage-rig-reconnect',
                 encryptionMode: 'plain', metadata: '{}', createdAt: new Date(now - 3 * USAGE_RIG_DAY) }, select: { id: true } });
-            await db.usageEvent.createMany({ data: Array.from({ length: 6 }, (_, index) => {
+            await db.usageEvent.createMany({ data: Array.from({ length: duringGap ? 1 : 6 }, (_, index) => {
                 const tokens = (index + 1) * 10;
                 return { accountId: account.id, sessionId: session.id, observedAt: new Date(now - (1 + index % 2) * USAGE_RIG_DAY),
                     externalKey: `rig-reconnect-${index}`, agentId: 'codex', modelId: `rig-model-${index}`, source: 'codex_app_server',
@@ -73,20 +88,25 @@ it('preserves accounted model groups and Other across a real Home reconnection w
             const coldCursor = createDeferred<void>();
             onTestFinished(() => coldCursor.resolve());
             let heldCursor = false;
+            let cursorAnchored = false;
             const accountingRequests: Array<{ issuedAt: number; queries: number; detail: number;
-                ranges: Array<{ startMs?: number; endMs?: number }>; sessions: number; status?: number; aborted?: boolean }> = [];
+                ranges: Array<{ startMs?: number; endMs?: number }>; sessions: number; cursorAnchored: boolean; status?: number; aborted?: boolean }> = [];
             const home = await restoreServerAccountForTest({ serverUrl: origin, credentials, requestOwnsReachabilityProbes: true,
                 request(input, init) {
                     const path = new URL(String(input)).pathname;
                     if (path === '/v2/cursor' && !heldCursor) {
                         heldCursor = true;
-                        return coldCursor.promise.then(() => fetch(input, init));
+                        return coldCursor.promise.then(async () => {
+                            const response = await fetch(input, init);
+                            cursorAnchored = response.ok;
+                            return response;
+                        });
                     }
                     if (path === '/v2/usage/query-batch' && typeof init?.body === 'string') {
                         const body = UsageAnalyticsQueryBatchRequestSchema.parse(JSON.parse(init.body));
                         const observation: typeof accountingRequests[number] = { issuedAt: Date.now(), queries: body.queries.length, detail: body.contributionQueries?.length ?? 0,
                             ranges: body.queries.map(query => query.dateRange ?? {}),
-                            sessions: body.queries.reduce((count, query) => count + (query.filters?.sessionIds?.length ?? 0), 0) };
+                            sessions: body.queries.reduce((count, query) => count + (query.filters?.sessionIds?.length ?? 0), 0), cursorAnchored };
                         accountingRequests.push(observation);
                         return fetch(input, init).then(response => { observation.status = response.status; return response; }, error => {
                             observation.aborted = init.signal?.aborted;
@@ -111,7 +131,52 @@ it('preserves accounted model groups and Other across a real Home reconnection w
                 }, { serverIds: [serverId], reconnect: 'refresh' });
                 const release = entry.subscribe(() => {}, true);
                 try {
-                    await expect.poll(() => accountingRequests.length, { timeout: 20_000 }).toBeGreaterThan(beforeCold);
+                    await expect.poll(() => heldCursor && entry.getSnapshot().pending !== 'idle', { timeout: 20_000 }).toBe(true);
+                    await nextTask();
+                    expect(accountingRequests).toHaveLength(beforeCold);
+                    expect(entry.getSnapshot().value).toBeUndefined();
+                    const { apiSocket } = await import('../sync/api/session/apiSocket');
+                    if (duringGap) {
+                        const settledTokens = () => {
+                            const snapshot = entry.getSnapshot();
+                            return snapshot.pending === 'idle' && snapshot.value
+                                ? decodeUsageQueryResource(snapshot.value).results.find(row => row.accounting?.modelTimeline?.length)?.accounting?.totals.tokens.total
+                                : undefined;
+                        };
+                        await expect.poll(() => heldSocket, { timeout: 20_000 }).toBe(true);
+                        expect(apiSocket.getSocketId()).toBeFalsy();
+                        const abandoned = new AbortController();
+                        const reason = new Error('Withdrawn accounting demand');
+                        const withdrawn = expect(readUiUsageQueryBatch(context, preset!.plan.input!, abandoned.signal)).rejects.toBe(reason);
+                        await nextTask();
+                        abandoned.abort(reason);
+                        await withdrawn;
+                        expect(accountingRequests).toHaveLength(beforeCold);
+                        const observedAt = Date.now();
+                        const ingest = await fetch(new URL('/v2/usage-events', origin), {
+                            method: 'POST', headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
+                            body: JSON.stringify(UsageEventIngestRequestSchema.parse({ sessionId: session.id, observedAt,
+                                agentId: 'codex', modelId: 'rig-model-0', source: 'codex_app_server', scope: 'turn_delta', isCumulative: false,
+                                externalKey: 'usage-rig-pre-anchor-write', tokens: { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 },
+                                cost: { reportedUsd: null, estimatedUsd: 0.05, currency: 'USD', costSource: 'pricing_estimate' },
+                            })),
+                        });
+                        expect(ingest.status).toBe(200);
+                        await ingest.json();
+                        expect(accountingRequests).toHaveLength(beforeCold);
+                        coldCursor.resolve();
+                        socketAdmission.resolve();
+                        await expect.poll(() => apiSocket.getSocketId(), { timeout: 20_000 }).toBeTruthy();
+                        await expect.poll(() => coldEvents.some(event => event.source === undefined), { timeout: 20_000 }).toBe(true);
+                        await expect.poll(() => settledTokens(), { timeout: 20_000 }).toBeDefined();
+                        console.info(JSON.stringify({ kind: 'usage-accounting-initial-gap', seeded: 10, committed: 15, shown: settledTokens(), observedAt,
+                            accountingRequests: accountingRequests.slice(beforeCold), coldEvents }));
+                        await expect.poll(settledTokens, { timeout: 20_000 }).toBe(15);
+                        expect(accountingRequests.slice(beforeCold)).toEqual([expect.objectContaining({ cursorAnchored: true, status: 200 })]);
+                        expect(accountingRequests[beforeCold]?.ranges.some(({ startMs, endMs }) =>
+                            startMs !== undefined && endMs !== undefined && startMs <= observedAt && observedAt < endMs)).toBe(true);
+                        return;
+                    }
                     coldCursor.resolve();
                     await expect.poll(() => coldEvents.some(event => event.source === undefined), { timeout: 20_000 }).toBe(true);
                     await expect.poll(() => ({ pending: entry.getSnapshot().pending, showedValue: !!entry.getSnapshot().value }),
@@ -129,6 +194,7 @@ it('preserves accounted model groups and Other across a real Home reconnection w
                     for (const bucket of modelMix.buckets) expect(bucket.tokens.reduce<number>((sum, tokens) => sum + (tokens ?? 0), 0)).toBe(bucket.total);
                     expect(modelMix.total).toBe(210);
                     expect.soft(accountingRequests.slice(beforeCold), 'cold accounting acquisitions').toHaveLength(1);
+                    expect(accountingRequests[beforeCold]?.cursorAnchored).toBe(true);
                     const ranges = accountingRequests[beforeCold]!.ranges;
                     const current = ranges.find(range => range.startMs !== undefined && range.endMs !== undefined
                         && ranges.some(candidate => candidate.endMs === range.startMs));
@@ -136,7 +202,6 @@ it('preserves accounted model groups and Other across a real Home reconnection w
                     expect(current).toBeDefined();
                     expect(comparison).toEqual({ startMs: 2 * current!.startMs! - current!.endMs!, endMs: current!.startMs });
 
-                    const { apiSocket } = await import('../sync/api/session/apiSocket');
                     await expect.poll(() => transports.size).toBeGreaterThan(0);
                     const initialSocketId = apiSocket.getSocketId();
                     expect(initialSocketId).toBeTruthy();
@@ -174,7 +239,7 @@ it('preserves accounted model groups and Other across a real Home reconnection w
                         expect(accountingRequests.length - beforeRefusal).toBe(1);
                         console.info(JSON.stringify({ kind: 'usage-accounting-refusal', code: 'denied', accountingRequests: accountingRequests.length - beforeRefusal }));
                     } finally { releaseRefusal(); }
-                } finally { coldCursor.resolve(); stopColdEvents(); release(); }
+                } finally { coldCursor.resolve(); socketAdmission.resolve(); stopColdEvents(); release(); }
             } finally { await home.dispose(); }
         } finally { allowSocket.dispose(); }
     } finally {

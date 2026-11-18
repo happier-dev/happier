@@ -17,6 +17,10 @@ export class InitialChangesCursor {
         this.acquisition = null;
     }
 
+    async waitForPendingCapture(): Promise<void> {
+        await this.acquisition?.pending;
+    }
+
     async capture(params: Readonly<{
         serverId: string;
         serverUrl: string;

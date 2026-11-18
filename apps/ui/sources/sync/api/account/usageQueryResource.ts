@@ -1320,6 +1320,11 @@ export async function readUiUsageQueryBatch(
     options = undefined;
     requireCurrent(context, signal);
     const { queries } = normalizeUsageQueryBatchInput(input);
+    if (queries.some(query => query.includeAccounting)) {
+        const { sync } = await import('@/sync/sync');
+        await sync?.awaitInitialAccountRead(context.accountLifetime.scope, signal);
+        requireCurrent(context, signal);
+    }
     const calendarQueryKeys = new Set(queries.filter(query => query.includeAccounting && (query.includeActivity || query.includeModelTimeline))
         .map(query => getUsageQueryKey(query)));
     getUsageQueryResourceStore(context);
@@ -1850,7 +1855,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     // Metric selects a presentation of the same accounting operands. Its
     // first mount must keep the retained input's instant after a scoped wake.
     const accountingInputKey = (query: UsageQuery) => getUsageQueryKey({ ...query, metric: 'tokens' });
-    const accountingInputs = new Map<string, { query: UsageQuery; identity: object; nowMs: number }>();
+    const accountingInputs = new Map<string, { query: UsageQuery; identity: object; nowMs?: number }>();
     let retainedCurrentness = captureAccountEncryptionCurrentness(lifetime.scope.serverId);
     const replaceAccounting = () => {
         resourceInputs = {};
@@ -1947,15 +1952,17 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     // without scheduling a second read of those same admitted inputs.
     const readUsageAdmission = (reference: Parameters<PluginUiResourceStore['getEntry']>[0], queries: readonly UsageQuery[]) => {
         if (!retainedCurrentness.isCurrent()) replaceAccounting();
-        // Relative windows advance at the local-day boundary even while closed.
-        for (const query of queries) owner.readAccountingInstant(query);
+        // Watching can name the first input before the initial cursor is ready.
+        // Only an admitted read anchors its window. Established windows still
+        // advance at the local-day boundary even while closed.
+        if (admittedAccounting) for (const query of queries) owner.readAccountingInstant(query);
         const readInputs = [resourceInputs,
             ...(queries.some(query => query.includeSessionEvidence || query.includeTranscriptEvidence || query.includeWorkEvidence)
                 ? [sessionEvidenceInputs] : []), ...queries.map(query => {
                 const key = accountingInputKey(query);
-                let admitted = accountingInputs.get(key);
-                if (!admitted) { admitted = { query, identity: {}, nowMs: Date.now() }; accountingInputs.set(key, admitted); }
-                return admitted.identity;
+                let input = accountingInputs.get(key);
+                if (!input) { input = { query, identity: {} }; accountingInputs.set(key, input); }
+                return input.identity;
             })];
         const snapshot = owner.store.getEntry(reference).getSnapshot();
         const content = snapshot.value;
@@ -1987,10 +1994,10 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             }
             let input = accountingInputs.get(key);
             if (!input) {
-                input = { query, identity: {}, nowMs: admittedAccounting!.nowMs };
+                input = { query, identity: {} };
                 accountingInputs.set(key, input);
             }
-            return input.nowMs;
+            return input.nowMs ??= admittedAccounting!.nowMs;
         },
         readAccounting(request, query, signal, includeContributions = true, includeSessionIds = false, workOnly = false, onIssued) {
             requireCurrent(sharedContext, signal);
@@ -2593,7 +2600,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     const changedRequests = new Set<string>();
                     const nowMs = Date.now();
                     for (const [key, input] of accountingInputs) {
-                        if (!usageAccountingChangeAffectsQueries([input.query], change)) continue;
+                        if (input.nowMs === undefined || !usageAccountingChangeAffectsQueries([input.query], change)) continue;
                         for (const read of resolveUsagePageAccountingReads([input.query], input.nowMs)) {
                             changedRequests.add(getUsageAnalyticsQueryRequestKey(usageQueryToAnalyticsRequest({ ...read.query, period: read.period },
                                 undefined, usageProjectScopeKeys(lifetime.scope.serverId))));
