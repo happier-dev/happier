@@ -205,6 +205,7 @@ describe('accepted Project Service declaration starter', () => {
             const service = h.owner.listProjectServices()[0]!;
             const terminalId = service.terminalView?.terminalId;
             expect(terminalId).toEqual(expect.any(String));
+            expect(started).toMatchObject({ terminalView: service.terminalView });
             const read = { terminalId, byteOffset: 0 };
             const interrupt = { terminalId, event: { t: 'key', key: 'c', modifiers: ['ctrl'] } };
             // Manage permission does not grant another Account this retained terminal.

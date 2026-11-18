@@ -26,7 +26,7 @@ export type LocalServiceLauncherStartResolution<TDeclaration = unknown> = Readon
 >;
 
 export type LocalServiceLauncherStartExecutionOutcome = Readonly<
-    | { status: 'succeeded'; currentTarget?: LocalServiceManagedServiceActionTargetV1 }
+    | { status: 'succeeded'; currentTarget?: LocalServiceManagedServiceActionTargetV1; terminalView?: DaemonLocalServiceLauncherStartResponseV1['terminalView'] }
     | { status: 'denied' | 'failed'; reasonCode: string; prerequisite?: LocalServiceNativePrerequisiteV1; establishmentFailure?: LocalServiceEstablishmentFailureV1; reviewedEffect?: JsonValue; reviewedEffectDigest?: string }
 >;
 
@@ -81,6 +81,7 @@ function response(input: Readonly<{
     reviewedEffect?: JsonValue;
     reviewedEffectDigest?: string;
     currentTarget?: LocalServiceManagedServiceActionTargetV1;
+    terminalView?: DaemonLocalServiceLauncherStartResponseV1['terminalView'];
     snapshot: LocalServiceLauncherSnapshotV1;
 }>): DaemonLocalServiceLauncherStartResponseV1 {
     return DaemonLocalServiceLauncherStartResponseV1Schema.parse({
@@ -94,6 +95,7 @@ function response(input: Readonly<{
         ...(input.reviewedEffect !== undefined ? { reviewedEffect: input.reviewedEffect } : {}),
         ...(input.reviewedEffectDigest ? { reviewedEffectDigest: input.reviewedEffectDigest } : {}),
         ...(input.currentTarget ? { currentTarget: input.currentTarget } : {}),
+        ...(input.terminalView ? { terminalView: input.terminalView } : {}),
         snapshot: input.snapshot,
     });
 }
@@ -300,6 +302,7 @@ export function createLocalServiceLauncherStartTarget<TDeclaration = unknown>(
             ...(outcome.status !== 'succeeded' && outcome.prerequisite ? { prerequisite: outcome.prerequisite } : {}),
             ...(outcome.status !== 'succeeded' && outcome.establishmentFailure ? { establishmentFailure: outcome.establishmentFailure } : {}),
             ...(outcome.status === 'succeeded' && outcome.currentTarget ? { currentTarget: outcome.currentTarget } : {}),
+            ...(outcome.status === 'succeeded' && outcome.terminalView ? { terminalView: outcome.terminalView } : {}),
             ...(outcome.status !== 'succeeded' && outcome.reviewedEffect !== undefined ? { reviewedEffect: outcome.reviewedEffect } : {}),
             ...(outcome.status !== 'succeeded' && outcome.reviewedEffectDigest ? { reviewedEffectDigest: outcome.reviewedEffectDigest } : {}),
             snapshot: responseSnapshot,
