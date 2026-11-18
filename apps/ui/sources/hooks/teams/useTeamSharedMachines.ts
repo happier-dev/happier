@@ -3,7 +3,7 @@ import * as React from 'react';
 import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
+import { serverAccountScopedTeamKey, type TeamAddress } from '@/sync/domains/teams/teamAddress';
 import type { TeamActionOutcome } from '@/sync/ops/teams/teamActionClient';
 import { readTeamSharedMachines, type TeamSharedMachineListItem } from '@/sync/ops/teams/teamSharedMachines';
 import type { HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -29,8 +29,8 @@ export function useTeamSharedMachines(input: TeamMachineListTarget): TeamSharedM
 export function useTeamSharedMachineList<Row>(
     input: TeamMachineListTarget,
     observations: Readonly<{
-        get(scope: ServerAccountScope, address: TeamAddress): readonly Row[] | undefined;
-        apply(address: TeamAddress, lifetime: ServerAccountScopeLifetime, rows: readonly Row[] | null): void;
+        get(key: string): readonly Row[] | undefined;
+        apply(key: string, lifetime: ServerAccountScopeLifetime, rows: readonly Row[] | null): void;
     }>,
     getRowKey: (row: Row) => string,
     read: (input: Readonly<{ scope: ServerAccountScope; address: TeamAddress; signal: AbortSignal }>) =>
@@ -44,14 +44,15 @@ export function useTeamSharedMachineList<Row>(
     const requested = input.enabled && scope !== null && address !== null && serverId === address.serverId;
     const enabled = requested
         && binding !== null && binding.isCurrent() && areServerAccountScopesEqual(binding.scope, scope);
-    const retained = requested && (enabled || resolution.kind === 'resolving') ? observations.get(scope, address) : undefined;
+    const queryKey = requested ? serverAccountScopedTeamKey(scope, address) : '';
+    const retained = requested && (enabled || resolution.kind === 'resolving') ? observations.get(queryKey) : undefined;
     const page = useTeamPagedList<Row>({
         key: JSON.stringify([serverId, accountId, teamId, binding?.credentialKey]), enabled, getRowKey,
-        initialRows: enabled ? retained : undefined,
+        initialPage: enabled && retained !== undefined ? { items: retained, nextCursor: null } : undefined,
         onStateChange: state => {
             if (!enabled || !binding || !address) return;
-            if (state.status === 'ready') observations.apply(address, binding, state.rows);
-            if (state.error && isAuthoritativeScopedSnapshotRefusalKind(state.error.kind)) observations.apply(address, binding, null);
+            if (state.status === 'ready') observations.apply(queryKey, binding, state.rows);
+            if (state.error && isAuthoritativeScopedSnapshotRefusalKind(state.error.kind)) observations.apply(queryKey, binding, null);
         },
         accountChange: { serverId, affects: affectsMachines },
         loadPage: async (_cursor, signal) => {

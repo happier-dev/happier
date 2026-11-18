@@ -148,6 +148,22 @@ describe('useTeamPagedList', () => {
         await rendered.unmount();
     });
 
+    it('keeps a warm range after a failed return and waits for a fresh cursor before continuing', async () => {
+        const loadPage = vi.fn().mockResolvedValue({ kind: 'failed', failure: UNREACHABLE });
+        const rendered = await renderHook(() => useTeamPagedList<string>({
+            key: 'k',
+            enabled: true,
+            initialPage: { items: ['member-a'], nextCursor: 'old-cursor' },
+            loadPage,
+        }));
+        await vi.waitFor(() => expect(rendered.getCurrent()).toMatchObject({
+            rows: ['member-a'], status: 'error', hasMore: false,
+        }));
+        await act(async () => rendered.getCurrent().loadMore());
+        expect(loadPage).toHaveBeenCalledTimes(1);
+        await rendered.unmount();
+    });
+
     it('reloads a mounted Team page for its exact Home on Team AccountChange only', async () => {
         const loadPage = vi.fn().mockResolvedValue(ok(['member-a'], null));
         const rendered = await renderHook(() => useTeamPagedList<string>({

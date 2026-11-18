@@ -17,14 +17,14 @@ export type TeamPageOutcome<TRow> =
  */
 export async function loadTeamPageRange<TRow>(params: Readonly<{
     loadedRowCount: number;
-    loadPage: (cursor: string | null) => Promise<TeamPageOutcome<TRow>>;
+    loadPage: (cursor: string | null) => Promise<TeamPageOutcome<TRow> | null>;
     isCancelled?: () => boolean;
 }>): Promise<TeamPageOutcome<TRow> | null> {
     const items: TRow[] = [];
     let cursor: string | null = null;
     while (true) {
         const outcome = await params.loadPage(cursor);
-        if (params.isCancelled?.()) return null;
+        if (outcome === null || params.isCancelled?.()) return null;
         if (outcome.kind === 'failed') return outcome;
         items.push(...outcome.value.items);
         cursor = outcome.value.nextCursor;

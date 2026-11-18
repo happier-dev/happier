@@ -1,13 +1,14 @@
 import type { SavedSecretCatalogResultV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 
-import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import { runTeamAction } from '@/sync/ops/teams/teamActionClient';
 import { homeAccountChangeAffectsSavedSecretCatalog } from '@/sync/runtime/orchestration/changesPlanner';
+import { teamSharedSavedSecretPages } from '@/sync/store/teams/teamsSnapshots';
 
-import { useTeamPagedList, type TeamPagedList } from './useTeamPagedList';
+import { useTeamObservedPagedList } from './useTeamObservedPagedList';
+import type { TeamPagedList } from './useTeamPagedList';
 
 /** Team discovery reads value-free metadata without changing the Account-wide credential catalog. */
 export function useTeamSharedSavedSecrets(input: Readonly<{
@@ -20,12 +21,11 @@ export function useTeamSharedSavedSecrets(input: Readonly<{
     const { scope, address, pageSize } = input;
     const serverId = scope?.serverId ?? '';
     const teamId = address?.teamId ?? '';
-    const { binding } = useServerCredentialAccountScopeBinding(input.enabled ? serverId : null);
-    const enabled = input.enabled && scope !== null && address !== null && serverId === address.serverId
-        && binding !== null && binding.isCurrent() && areServerAccountScopesEqual(binding.scope, scope);
-    return useTeamPagedList<SavedSecretCatalogResultV1>({
-        key: JSON.stringify([serverId, scope?.accountId, teamId, pageSize, binding?.credentialKey]),
-        enabled,
+    return useTeamObservedPagedList<SavedSecretCatalogResultV1>({
+        scope,
+        observations: teamSharedSavedSecretPages,
+        key: JSON.stringify([serverId, scope?.accountId, teamId, pageSize]),
+        enabled: input.enabled && address !== null && serverId === address.serverId,
         accountChange: { serverId, affects: homeAccountChangeAffectsSavedSecretCatalog },
         loadPage: async (cursor, signal) => {
             if (!scope || !address) return null;

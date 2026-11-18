@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { useLayoutEffect } from 'react';
 import { act, createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import {
     createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance,
@@ -23,6 +24,48 @@ beforeEach(async () => { await homes.reset(); resetTeamActionClientForTests(); }
 afterEach(() => { resetTeamActionClientForTests(); standardCleanup(); });
 
 describe('useTeamSharedSavedSecrets', () => {
+    it('renders both observed pages on the first return and revalidates the range', async () => {
+        const serverId = await homes.addHome({ name: 'Home', serverUrl: 'https://saved-secrets-return.test', accountId: 'member' });
+        const scope = createServerAccountScope(serverId, 'member')!;
+        const first = row('first');
+        const second = row('second');
+        const returnedFirst = row('updated-first');
+        const pending = createDeferred<void>();
+        let returning = false;
+        homes.answer(serverId, PATH, { select: (_input, request) => {
+            const cursor = new URL(request.url).searchParams.get('cursor');
+            return {
+                body: SharedSavedSecretListOutputV1Schema.parse({
+                    resources: cursor ? [second] : [returning ? returnedFirst : first], nextCursor: cursor ? null : 'first',
+                }),
+                ...(returning ? { respondAfter: pending.promise } : {}),
+            };
+        } });
+        const useList = () => useTeamSharedSavedSecrets({
+            scope, address: { serverId, teamId: 'team-a' }, enabled: true, pageSize: 1,
+        });
+        const initial = await renderHook(useList);
+        await waitForHomeGovernance(() => expect(initial.getCurrent().rows).toEqual([first]));
+        await act(async () => initial.getCurrent().loadMore());
+        expect(initial.getCurrent().rows).toEqual([first, second]);
+        await initial.unmount();
+
+        returning = true;
+        const commits: Array<ReturnType<typeof useList>> = [];
+        const remounted = await renderHook(() => {
+            const result = useList();
+            useLayoutEffect(() => { commits.push(result); }, [result]);
+            return result;
+        });
+        expect(commits[0]).toMatchObject({ rows: [first, second], status: 'refreshing', hasMore: false });
+        await act(async () => pending.resolve());
+        await waitForHomeGovernance(() => expect(remounted.getCurrent()).toMatchObject({
+            rows: [returnedFirst, second], status: 'ready', hasMore: false,
+        }));
+        expect(homes.requests.filter(request => request.path.split('?')[0] === PATH)).toHaveLength(4);
+        await remounted.unmount();
+    });
+
     it('requests only demanded Team metadata pages and releases demand while hidden', async () => {
         const serverId = await homes.addHome({ name: 'Home', serverUrl: 'https://saved-secrets.test', accountId: 'member' });
         const scope = createServerAccountScope(serverId, 'member')!;

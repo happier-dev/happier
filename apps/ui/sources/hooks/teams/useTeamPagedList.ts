@@ -3,7 +3,7 @@ import * as React from 'react';
 import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
 import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
-import { loadTeamPageRange, type TeamPageOutcome } from '@/sync/engine/teams/loadTeamPageRange';
+import { loadTeamPageRange, type TeamPage, type TeamPageOutcome } from '@/sync/engine/teams/loadTeamPageRange';
 import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 
 /**
@@ -17,10 +17,9 @@ import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/
  * Separate copies would eventually disagree about the one behaviour that
  * matters — whether a partial roster survives a failure — so it lives here once.
  *
- * Members and Groups collections use the shared Teams snapshot owner instead.
- * This pager holds no cross-surface state. The caller
- * supplies the exact Home/entity identity for the canonical wake, while the
- * Home's HTTP page remains the sole data and authority source.
+ * The pager owns the mounted cursor. A Teams snapshot can provide the last
+ * observed range for display while this observer revalidates from page one.
+ * The caller supplies the exact Home/entity identity for the canonical wake.
  */
 
 export type { TeamPage, TeamPageOutcome } from '@/sync/engine/teams/loadTeamPageRange';
@@ -45,17 +44,17 @@ export type TeamPagedListState<TRow> = Readonly<{
     hasMore: boolean;
 }>;
 
-function initialState<TRow>(rows?: readonly TRow[]): TeamPagedListState<TRow> {
+function initialState<TRow>(observation?: TeamPage<TRow>): TeamPagedListState<TRow> {
     return Object.freeze({
-        rows: rows ?? [],
-        status: rows === undefined ? 'loading' as const : 'refreshing' as const,
+        rows: observation?.items ?? [],
+        status: observation === undefined ? 'loading' as const : 'refreshing' as const,
         error: null,
         cursor: null,
-        hasMore: true,
+        hasMore: observation?.nextCursor !== null,
     });
 }
 
-export function useTeamPagedList<TRow>(params: Readonly<{
+export type TeamPagedListOptions<TRow> = Readonly<{
     /**
      * The identity of the sequence. A cursor names a position inside one
      * sequence, so any change here — a different Team, filter or Group — starts
@@ -63,11 +62,11 @@ export function useTeamPagedList<TRow>(params: Readonly<{
      */
     key: string;
     enabled: boolean;
-    loadPage: (cursor: string | null, signal: AbortSignal) => Promise<TeamPageOutcome<TRow>>;
+    loadPage: (cursor: string | null, signal: AbortSignal) => Promise<TeamPageOutcome<TRow> | null>;
     /** Domain identity for admitted rows whose consumers require reference reuse. */
     getRowKey?: (row: TRow) => string;
-    /** Last-known rows owned by a retained snapshot, shown while this observer refreshes. */
-    initialRows?: readonly TRow[];
+    /** The last observed range, shown while this observer refreshes from the first page. */
+    initialPage?: TeamPage<TRow>;
     /** Persists each settled projection through the caller's canonical owner. */
     onStateChange?: (state: TeamPagedListState<TRow>) => void;
     /** Optional AccountChange invalidation for the exact Home owning this page. */
@@ -75,18 +74,20 @@ export function useTeamPagedList<TRow>(params: Readonly<{
         | Readonly<{ entityId: string; affects?: never }>
         | Readonly<{ entityId?: never; affects: (event: HomeAccountChangeEvent) => boolean }>
     );
-}>): TeamPagedList<TRow> {
+}>;
+
+export function useTeamPagedList<TRow>(params: TeamPagedListOptions<TRow>): TeamPagedList<TRow> {
     const { key, enabled, getRowKey } = params;
-    const [rendered, setRendered] = React.useState(() => ({ key, enabled, state: initialState(params.initialRows) }));
-    const state = rendered.key === key && rendered.enabled === enabled ? rendered.state : initialState(params.initialRows);
+    const [rendered, setRendered] = React.useState(() => ({ key, enabled, state: initialState(params.initialPage) }));
+    const state = rendered.key === key && rendered.enabled === enabled ? rendered.state : initialState(params.initialPage);
 
     // Answers for a superseded sequence must never be applied over its successor.
     const generation = React.useRef(0);
     // The caller may rebuild its closure on every render; only the latest is used.
     const loadPageRef = React.useRef(params.loadPage);
     loadPageRef.current = params.loadPage;
-    const initialRowsRef = React.useRef(params.initialRows);
-    initialRowsRef.current = params.initialRows;
+    const initialPageRef = React.useRef(params.initialPage);
+    initialPageRef.current = params.initialPage;
     const onStateChangeRef = React.useRef(params.onStateChange);
     onStateChangeRef.current = params.onStateChange;
     const inFlight = React.useRef(false);
@@ -109,15 +110,18 @@ export function useTeamPagedList<TRow>(params: Readonly<{
         if (inFlight.current && mode === 'more') return;
 
         const previous = stateRef.current;
-        if (mode === 'more' && (!previous.hasMore || previous.status === 'loading' || previous.status === 'refreshing')) return;
+        if (mode === 'more' && (previous.cursor === null || previous.status === 'loading' || previous.status === 'refreshing')) return;
         const loadPage = loadPageRef.current;
         const onStateChange = onStateChangeRef.current;
 
+        const initialPage = initialPageRef.current;
+        const loadedRowCount = mode === 'refresh' ? previous.rows.length
+            : mode === 'reset' ? initialPage?.items.length : undefined;
         const cursor = mode === 'more' ? previous.cursor : null;
         publish(mode === 'reset'
-            ? initialState(initialRowsRef.current)
+            ? initialState(initialPage)
             : mode === 'refresh'
-                ? { ...previous, status: initialRowsRef.current === undefined ? 'loading' : 'refreshing', error: null }
+                ? { ...previous, status: initialPage === undefined ? 'loading' : 'refreshing', error: null }
                 : { ...previous, status: 'loading_more', error: null });
 
         const currentGeneration = mode === 'more' ? generation.current : (generation.current += 1);
@@ -127,9 +131,9 @@ export function useTeamPagedList<TRow>(params: Readonly<{
         inFlight.current = true;
         try {
             const isCancelled = () => controller.signal.aborted || currentGeneration !== generation.current;
-            const outcome = mode === 'refresh'
+            const outcome = loadedRowCount !== undefined
                 ? await loadTeamPageRange({
-                    loadedRowCount: previous.rows.length,
+                    loadedRowCount,
                     loadPage: (freshCursor) => loadPage(freshCursor, controller.signal),
                     isCancelled,
                 })
@@ -147,7 +151,7 @@ export function useTeamPagedList<TRow>(params: Readonly<{
                     ...base,
                     rows: withdrawn ? initialState<TRow>().rows : base.rows,
                     cursor: withdrawn ? null : base.cursor,
-                    hasMore: withdrawn ? false : base.hasMore,
+                    hasMore: !withdrawn && base.cursor !== null,
                     status: 'error',
                     error: outcome.failure,
                 };

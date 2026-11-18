@@ -36,7 +36,7 @@ export function useTeamSharedResourcesSummary(input: Readonly<{
         ? getTeamSharedResourcesSummarySnapshot(scope, address)?.data ?? undefined : undefined;
     const page = useTeamPagedList<TeamSharedResourceSummaryRowV1>({
         key: JSON.stringify([serverId, accountId, teamId, binding?.credentialKey]), enabled, getRowKey: teamSharedResourceSummaryRowKeyV1,
-        initialRows: enabled ? retained : undefined,
+        initialPage: enabled && retained !== undefined ? { items: retained, nextCursor: null } : undefined,
         onStateChange: next => {
             if (!enabled || !scope || !address || !binding?.isCurrent()) return;
             if (next.status === 'ready') applyTeamSharedResourcesSummary(scope, address, next.rows, binding);

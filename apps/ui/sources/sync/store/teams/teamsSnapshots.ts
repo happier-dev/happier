@@ -14,6 +14,10 @@ import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/p
 import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
 import type { TeamSharedMachineListItem } from '@/sync/ops/teams/teamSharedMachines';
+import type { TeamPage } from '@/sync/engine/teams/loadTeamPageRange';
+import type { SavedSecretCatalogResultV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import type { ArtifactActionResultV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol/discussions/actions';
 import { snapshotReferenceSelectionKey } from '@/sync/domains/scope/snapshotReferenceSelectionKey';
 import { CredentialCatalogPublication } from './credentialCatalogPublication';
 import { areSnapshotProjectionsEquivalent as areProjectionsEquivalent, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
@@ -213,22 +217,21 @@ const credentialCatalogs = new CredentialCatalogPublication();
 const credentialResources = new Map<string, TeamCredentialResourceSnapshot>();
 const sharedResourceSummaries = new Map<string, TeamSharedResourcesSummarySnapshot>();
 
-/** Complete Team-filtered lists are separate from the Account inventory. */
-function createTeamSharedMachineObservations<Row>() {
+/** Retained Team-filtered observations have their own query and credential lifetime. */
+function createTeamObservations<Data>() {
     const observations = new Map<string, Readonly<{
-        rows: readonly Row[];
+        data: Data;
         lifetime: ServerAccountScopeLifetime;
     }>>();
     return {
-        get(scope: ServerAccountScope, address: TeamAddress) {
-            const observation = observations.get(serverAccountScopedTeamKey(scope, address));
-            return observation?.lifetime.isCurrent() ? observation.rows : undefined;
+        get(key: string) {
+            const observation = observations.get(key);
+            return observation?.lifetime.isCurrent() ? observation.data : undefined;
         },
-        apply(address: TeamAddress, lifetime: ServerAccountScopeLifetime, rows: readonly Row[] | null) {
+        apply(key: string, lifetime: ServerAccountScopeLifetime, data: Data | null) {
             if (!lifetime.isCurrent()) return;
-            const key = serverAccountScopedTeamKey(lifetime.scope, address);
-            if (rows === null) observations.delete(key);
-            else observations.set(key, { rows, lifetime: readServerAccountScopeOwnerLifetime(lifetime) });
+            if (data === null) observations.delete(key);
+            else observations.set(key, { data, lifetime: readServerAccountScopeOwnerLifetime(lifetime) });
         },
         clearForServer(serverId: string) {
             for (const [key, observation] of observations) {
@@ -239,8 +242,18 @@ function createTeamSharedMachineObservations<Row>() {
     };
 }
 
-export const teamSharedMachineObservations = createTeamSharedMachineObservations<TeamSharedMachineListItem>();
-export const teamSharedMachinePoolObservations = createTeamSharedMachineObservations<MachinePoolViewV1>();
+export const teamSharedMachineObservations = createTeamObservations<readonly TeamSharedMachineListItem[]>();
+export const teamSharedMachinePoolObservations = createTeamObservations<readonly MachinePoolViewV1[]>();
+export const teamSharedSavedSecretPages = createTeamObservations<TeamPage<SavedSecretCatalogResultV1>>();
+export const teamSharedArtifactPages = createTeamObservations<TeamPage<ArtifactActionResultV1<'artifact.list'>['items'][number]>>();
+export const teamSharedDiscussionPages = createTeamObservations<TeamPage<DiscussionOpenedSummaryV1>>();
+const retainedTeamObservations = [
+    teamSharedMachineObservations,
+    teamSharedMachinePoolObservations,
+    teamSharedSavedSecretPages,
+    teamSharedArtifactPages,
+    teamSharedDiscussionPages,
+];
 const listeners = new Set<() => void>();
 
 function notify(): void {
@@ -1407,8 +1420,7 @@ export function clearTeamsSnapshotsForServer(serverIdRaw: string): void {
         sharedResourceSummaries.delete(key);
         changed = true;
     }
-    teamSharedMachineObservations.clearForServer(serverId);
-    teamSharedMachinePoolObservations.clearForServer(serverId);
+    for (const observations of retainedTeamObservations) observations.clearForServer(serverId);
     if (changed) notify();
 }
 
@@ -1423,7 +1435,6 @@ export function resetTeamsSnapshotsForTests(): void {
     credentialCatalogs.clear();
     credentialResources.clear();
     sharedResourceSummaries.clear();
-    teamSharedMachineObservations.clear();
-    teamSharedMachinePoolObservations.clear();
+    for (const observations of retainedTeamObservations) observations.clear();
     listeners.clear();
 }
