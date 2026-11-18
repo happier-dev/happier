@@ -46,6 +46,7 @@ export function WorkflowFinalOutputEditor(props: Readonly<{
                 open={open}
                 onOpenChange={setOpen}
                 selectedId={selectedId}
+                showCategoryTitles
                 // The field select names the value, so the menu checks it among its rows: "Nothing ×", then the
                 // step results as one group (lab round 1116c sent-v-result), in Steps and the Sentence clause alike.
                 items={[

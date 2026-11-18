@@ -57,6 +57,8 @@ describe('workflow final output accessibility', () => {
     it('lists Nothing with its mark, then the step results under one group (lab round 1116c sent-v-result)', async () => {
         const draft = createWorkflowEditorDraft({ draftId: 'anatomy', name: 'Review' });
         const screen = await renderScreen(<WorkflowFinalOutputEditor draft={draft} onChange={vi.fn()} testIDPrefix="output" />);
+        // The group's title is drawn, not only its rows grouped (seen missing live, 11-18 final frames).
+        expect(screen.root.findByType(DropdownMenu).props.showCategoryTitles).toBe(true);
         const items = screen.root.findByType(DropdownMenu).props.items as ReadonlyArray<{ id: string; icon?: unknown; category?: string }>;
         // WF-ACCEPT-1118 item 6: "Nothing ×", then a "Step results" group, as in Steps and the Sentence clause.
         expect(items[0]).toMatchObject({ id: 'none' });
