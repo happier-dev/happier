@@ -107,6 +107,8 @@ describe('Claude JSONL projection', () => {
     it.each([
         { type: 'cost-state', sessionId: 'native', totalCostUSD: 0, modelUsage: {}, hasUnknownModelCost: false },
         { type: 'atis-latch', sessionId: 'native', atis: 'fixture bookkeeping' },
+        // Observed READY176 native JSONL: tool-name bookkeeping emitted a visible unsupported-content warning.
+        { type: 'tools-used', tools: ['ToolSearch'], sessionId: 'qa-native-session' },
     ])('recognizes observed native bookkeeping without losing transcript continuity: $type', lineValue => {
         expect(projectClaudeJsonlLineRecord({ fileRelPath: 'session.jsonl', lineStartOffsetBytes: 42, lineValue }))
             .toEqual({ disposition: 'known_non_transcript', items: [] });

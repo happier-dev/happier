@@ -42,6 +42,8 @@ export const CLAUDE_NON_TRANSCRIPT_RECORD_TYPES = new Set<string>([
     // neither of which contains a recipient-facing conversation message.
     'cost-state',
     'atis-latch',
+    // Native tool-name accounting carries no conversation content.
+    'tools-used',
     // Claude 2.1.302 API input bookkeeping, observed in c11's native JSONL.
     // Blobs may repeat prior prompts; none of these records is new conversation.
     'api-request-shape',
