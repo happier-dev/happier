@@ -1,7 +1,7 @@
 // @happier-test-preparation source
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdir, readFile, writeFile, readdir, rm } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile, readdir, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import childProcess from 'node:child_process';
@@ -23,6 +23,7 @@ test('source author runtime emits the 18-package closure without native declarat
   const runtimeDir = fixture.path('runtime');
   await mkdir(projectDir, { recursive: true });
   await mkdir(runtimeDir);
+  await writeFile(join(runtimeDir, 'package.json'), JSON.stringify({ name: '@fixture/runtime' }));
   const workspaceOwner = fixture.path('workspaces.mjs');
   await build({ entryPoints: [fileURLToPath(new URL('../../../../packages/cli-common/src/workspaces/index.ts', import.meta.url))],
     outfile: workspaceOwner, bundle: true, platform: 'node', format: 'esm', conditions: ['happier-source'], logLevel: 'silent' });
@@ -39,7 +40,7 @@ test('source author runtime emits the 18-package closure without native declarat
     await writeFile(join(directory, 'package.json'), JSON.stringify({ name: `@happier-dev/${name}`,
       version: '0.0.0', type: 'module', main: './dist/index.js', types: './dist/index.d.ts',
       exports: { '.': { 'happier-source': './src/index.ts', types: './dist/index.d.ts', default: './dist/index.js' } },
-      ...(dependency ? { dependencies: { [dependency]: '0.0.0' }, bundledDependencies: index === 17 ? [...Array.from({ length: 17 }, (_, index) => `@happier-dev/author-${index}`), '@happier-dev/author-private'] : [dependency] } : {
+      ...(dependency ? { dependencies: { [dependency]: '0.0.0', ...(index === 17 ? { 'author-external': '1.0.0' } : {}) }, bundledDependencies: index === 17 ? [...Array.from({ length: 17 }, (_, index) => `@happier-dev/author-${index}`), '@happier-dev/author-private', 'author-external'] : [dependency] } : {
         dependencies: { zod: '4.6.7' }, optionalDependencies: { 'happier-author-fixture-absent-optional': '1.0.0' },
       }),
       ...(index === 17 ? { happier: { publicSdkRelease: { posture: 'developer_preview' } } } : {}) }));
@@ -66,6 +67,18 @@ test('source author runtime emits the 18-package closure without native declarat
     target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', declaration: true, strict: true,
     rootDir: 'src', outDir: 'dist' }, include: ['src/**/*.ts'] }));
   await writeFile(join(privateDirectory, 'src/index.ts'), 'export const value = "private";\n');
+  await mkdir(join(runtimeDir, 'node_modules'), { recursive: true });
+  await cp(join(repoDir, 'packages', 'author-0', 'node_modules', 'zod'), join(runtimeDir, 'node_modules', 'zod'), { recursive: true });
+  const externalSource = fixture.path('retained-install/node_modules/author-external');
+  await mkdir(externalSource, { recursive: true });
+  await writeFile(join(externalSource, 'package.json'), JSON.stringify({ name: 'author-external', version: '1.0.0', main: './index.js' }));
+  await writeFile(join(externalSource, 'index.js'), 'export const external = "captured-external";\n');
+  await mkdir(join(repoDir, 'packages', 'plugin-sdk', 'node_modules'), { recursive: true });
+  await symlink(externalSource, join(repoDir, 'packages', 'plugin-sdk', 'node_modules', 'author-external'));
+  const runtimeExternal = join(runtimeDir, 'node_modules', 'author-external');
+  await mkdir(runtimeExternal, { recursive: true });
+  await writeFile(join(runtimeExternal, 'package.json'), JSON.stringify({ name: 'author-external', version: '1.0.0', main: './index.js' }));
+  await writeFile(join(runtimeExternal, 'index.js'), 'export const external = "captured-external";\n');
   captureRuntimeDependencies({
     imports: [
       { path: '@typescript/native', resolveFrom: fileURLToPath(new URL('../../../../package.json', import.meta.url)) },
@@ -102,6 +115,7 @@ test('source author runtime emits the 18-package closure without native declarat
   assert.match(await readFile(join(sdk, 'dist/index.js'), 'utf8'), /author-16/);
   const privateBundle = join(runtimeDir, 'authoring/node_modules/@happier-dev/author-private');
   assert.match(await readFile(join(privateBundle, 'dist/index.js'), 'utf8'), /private/);
+  assert.equal(await readFile(join(sdk, 'node_modules/author-external/index.js'), 'utf8'), 'export const external = "captured-external";\n');
   assert.match(await readFile(join(sdk, 'dist/.happier-source/src/index.ts'), 'utf8'), /author-16/);
   assert.ok((await readdir(join(sdk, 'dist/.happier-source'))).includes('tsconfig.json'),
     'the existing author materializer can produce declarations later from captured inputs');

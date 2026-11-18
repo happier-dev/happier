@@ -139,8 +139,12 @@ export async function emitSourceAuthorPackages({ repoDir, sourceRepoDir, project
         console.error(`[source-author] phase=javascript package=${bundle.packageName} elapsedMs=${Math.round(performance.now()-compilerStarted)}`);
         javascriptEmissions++;
         owner.bundleWorkspacePackageWithRuntimeDependencies({...bundle,destDir,
-          resolveFromPackageJsonPath: join(sourceRepoDir, relative(repoDir, bundle.srcDir), 'package.json'),
-          dereferenceRootDir: sourceRepoDir,distDir:outputDir});
+          // Resolve external author dependencies from the runtime's captured
+          // installation. Source package node_modules may point at the retained
+          // install outside this source-runtime root, which the physical author
+          // bundle must never capture directly.
+          resolveFromPackageJsonPath: join(runtimeDir, 'package.json'),
+          dereferenceRootDir: runtimeDir,distDir:outputDir});
         removeOwnedDirectorySync(join(destDir, 'src'));
         // The author materializer owns declaration work. Retain its production
         // inputs within the existing physical package, so authoring later uses
