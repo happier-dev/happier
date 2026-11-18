@@ -1,4 +1,5 @@
 import type { ReviewArtifactTransportV1, ReviewMetadataWriteV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import tweetnacl from 'tweetnacl';
 import axios from '@/api/client/credentialAxios';
 import { readSettledApprovalInputCustodyV1 } from '@happier-dev/protocol/approvals/approvalInputCustody';
 import type { ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
@@ -12,7 +13,7 @@ import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, encodeArtifac
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
-import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { computeCanonicalDomainSeparatedDigest, computeCanonicalDomainSeparatedKeyedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { resolveInboxItemAttentionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { type UsageNoticeArtifactHeaderV1,
@@ -60,7 +61,6 @@ import {
   encodeBase64,
   encryptWithDataKey,
   getRandomBytes,
-  libsodiumPublicKeyFromSecretKey,
 } from '@/api/encryption';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { logger } from '@/ui/logger';
@@ -269,7 +269,7 @@ function privateNoticeArtifactId(params: Readonly<{ occurrence: string; mode: 'p
   } else {
     const material = requireCredentials(params.credentials).encryption;
     // This is the Account content private key, not the per-machine data key.
-    const accountKey = material.type === 'dataKey' ? material.machineKey : deriveAccountMachineKeyFromRecoverySecret(material.secret);
+    const accountKey = resolveAccountContentSecretKey(material);
     bytes = createHmac('sha256', accountKey).update(params.occurrence).digest().subarray(0, 16);
   }
   bytes[6] = (bytes[6]! & 0x0f) | 0x50;
@@ -1196,8 +1196,7 @@ export function createAccountArtifactStore(params: Readonly<{
           if (!contentAccountId || mode !== 'plain' && mode !== 'e2ee') throw new ArtifactEncryptionMaterialUnavailableError();
           if (mode === 'plain') return { accountId: contentAccountId, mode, contentPublicKey: null };
           const encryption = requireCredentials(contentCredentials).encryption;
-          const contentPublicKey = encryption.type === 'dataKey' ? encryption.publicKey
-            : libsodiumPublicKeyFromSecretKey(deriveAccountMachineKeyFromRecoverySecret(encryption.secret));
+          const contentPublicKey = tweetnacl.box.keyPair.fromSecretKey(resolveAccountContentSecretKey(encryption)).publicKey;
           return { accountId: contentAccountId, mode, contentPublicKey };
         },
       })(args),

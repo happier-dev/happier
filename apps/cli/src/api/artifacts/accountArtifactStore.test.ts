@@ -10,6 +10,8 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, decod
   workflowDefinitionArtifactSharingAdapterV1, readLaunchProfileArtifactV1,
   launchProfileArtifactSharingAdapterV1, prepareArtifactWorkspaceFileV1 } from '@happier-dev/protocol';
 import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { sealPublicShareDataKeyV1 } from '@happier-dev/protocol/crypto/publicShareEncryptedDataKeyEnvelopeV0';
 import { ArtifactBlobWriteV1Schema, type ArtifactBlobReadResponseV1 } from '@happier-dev/protocol';
 import { decryptWithDataKeyResult, decryptWithDataKey, encryptWithDataKey } from '@/api/encryption';
 import { createCliArtifactActions } from '@/session/actions/artifactActions';
@@ -1643,6 +1645,34 @@ describe('createAccountArtifactStore', () => {
     })).rejects.toMatchObject({ code: 'artifact_access_unavailable', status: 404 });
     expect(mockGet.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/v1/artifact-signed-in-links/lookup/join']);
     expect(mockPost).not.toHaveBeenCalled();
+  });
+  it.each(['legacy', 'dataKey'] as const)('joins an encrypted signed-in link with the real Account content key (%s credentials)', async credentialType => {
+    const recoverySecret = new Uint8Array(randomBytes(32));
+    const dataKeyPair = x25519.utils.randomSecretKey();
+    const encryption = credentialType === 'legacy' ? { type: 'legacy' as const, secret: recoverySecret }
+      : { type: 'dataKey' as const, machineKey: dataKeyPair, publicKey: x25519.getPublicKey(dataKeyPair) };
+    const contentSecret = credentialType === 'legacy' ? deriveAccountMachineKeyFromRecoverySecret(recoverySecret) : dataKeyPair;
+    const contentPublic = x25519.getPublicKey(contentSecret);
+    const signingSecret = new Uint8Array(randomBytes(32));
+    const signingPublic = ed25519.getPublicKey(signingSecret);
+    const recipientContentKey = { status: 'available', accountSigningPublicKey: Buffer.from(signingPublic).toString('hex'),
+      contentPublicKey: encodeBase64(contentPublic), contentPublicKeySignature: encodeBase64(signAccountContentKeyBindingV1({
+        accountSigningSecretKey: new Uint8Array([...signingSecret, ...signingPublic]), contentPublicKey: contentPublic })) };
+    const dataKey = new Uint8Array(randomBytes(32)), secret = 'a'.repeat(43);
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'recipient' })).toString('base64url')}.signature`;
+    const store = createAccountArtifactStore({ credentials: { token, encryption }, getAccountEncryptionMode: async () => 'e2ee' });
+    mockGet.mockResolvedValue({ status: 200, data: { subject: { kind: 'artifact', id: 'artifact-1' }, artifactId: 'artifact-1',
+      authorAccountId: 'author', recipientAccountId: 'recipient', recipientContentKey, encryptionMode: 'e2ee',
+      encryptedDataKey: sealPublicShareDataKeyV1({ dataKey, secret, randomBytes: length => new Uint8Array(randomBytes(length)) }),
+      keyDerivation: 'fragment_v1', isConsentRequired: false, networkOff: false,
+      content: { kind: 'artifact', header: encodeBase64(encryptWithDataKey({}, dataKey)),
+        body: encodeBase64(encryptWithDataKey({ body: 'release' }, dataKey)), headerVersion: 1, bodyVersion: 1 } } });
+    mockPost.mockResolvedValue({ status: 200, data: { artifactId: 'artifact-1', ownerAccountId: 'author', access: 'view' } });
+    await expect(store.joinSignedInLink({ input: { lookupId: 'lookup' } }, { consumeSecret: async () => secret, onOpened: () => undefined }))
+      .resolves.toEqual({ artifactId: 'artifact-1', authorAccountId: 'author', follow: true });
+    const body = mockPost.mock.calls[0]![1] as { keyEnvelope: { encryptedDataKey: string } };
+    expect(openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(body.keyEnvelope.encryptedDataKey), recipientSecretKeyOrSeed: contentSecret }))
+      .toEqual(dataKey);
   });
   it.each([
     { error: 'public_share_isolation_unavailable', expected: 'public_share_isolation_unavailable' },
