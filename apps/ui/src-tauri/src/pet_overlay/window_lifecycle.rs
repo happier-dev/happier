@@ -266,7 +266,21 @@ pub(crate) fn park_pet_overlay_window_offscreen<R: Runtime>(
         1.0,
         1.0,
     )?;
-    window.show().map_err(|error| error.to_string())
+    show_pet_overlay_window_if_hidden(window)
+}
+
+pub(crate) fn show_pet_overlay_window_if_hidden<R: Runtime>(
+    window: &WebviewWindow<R>,
+) -> Result<(), String> {
+    let is_visible = window.is_visible().map_err(|error| error.to_string())?;
+    if should_show_pet_overlay_window(is_visible) {
+        crate::desktop_panel::show_without_activation(window)?;
+    }
+    Ok(())
+}
+
+fn should_show_pet_overlay_window(is_visible: bool) -> bool {
+    !is_visible
 }
 
 pub(crate) fn set_pet_overlay_window_frame<R: Runtime>(
