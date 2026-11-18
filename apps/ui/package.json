@@ -134,6 +134,7 @@
     "preset": "jest-expo"
   },
   "dependencies": {
+    "@babel/runtime": "7.29.2",
     "@react-native/normalize-colors": "0.83.5",
     "@codemirror/autocomplete": "6.20.0",
     "@codemirror/commands": "6.10.2",

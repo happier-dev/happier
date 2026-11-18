@@ -1297,6 +1297,9 @@ importers:
 
   apps/ui:
     dependencies:
+      '@babel/runtime':
+        specifier: 7.29.2
+        version: 7.29.2
       '@codemirror/autocomplete':
         specifier: 6.20.0
         version: 6.20.0

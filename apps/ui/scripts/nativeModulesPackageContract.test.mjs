@@ -1324,6 +1324,15 @@ test('iroh-native is composed into the UI and every EAS native install scope', a
     }
 });
 
+test('Expo Widgets native bundle declares Babel runtime at the UI dependency boundary', async () => {
+    const uiPackageJson = await readJson(join(appRoot, 'package.json'));
+    assert.match(
+        String(uiPackageJson.dependencies?.['@babel/runtime'] ?? ''),
+        /^7\./,
+        'The generated Expo Widgets bundle imports @babel/runtime directly; it must be installed as an app dependency rather than relying on Expo tooling transitivity.',
+    );
+});
+
 test('Expo autolinking discovers iroh-native on iOS and Android', async () => {
     for (const platform of ['ios', 'android']) {
         const autolinkedModules = await searchAutolinkedModules(platform);
