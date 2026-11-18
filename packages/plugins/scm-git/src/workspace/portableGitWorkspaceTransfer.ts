@@ -8,7 +8,7 @@ import type {
     ScmWorkspaceIntegrationWorkspaceTransferInput,
     ScmWorkspaceIntegrationWorkspaceTransferResult,
 } from '../types.js';
-import { runScmCommand } from '../runtime.js';
+import { getScmCommandIndeterminateErrorCode, runScmCommand } from '../runtime.js';
 import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { resolveGitWorkspaceTransferSelection } from '../operations/resolveGitWorkspaceTransferEntries.js';
@@ -101,6 +101,21 @@ export async function preparePortableGitWorkspaceTransfer(
         },
     };
 
+    const metadata = await resolveGitWorkspaceTransferMetadata(repositoryInput);
+    if (metadata?.checkoutKind === 'branch' && !metadata.headRevision) {
+        const branch = await runScmCommand({ bin: 'git', cwd: repositoryRoot,
+            args: ['show-ref', '--verify', '--quiet', `refs/heads/${metadata.branchName}`],
+            env: buildScmNonInteractiveEnv() });
+        // Only a completed absent-ref result proves an unborn branch; damaged
+        // objects and unavailable commands must retain the normal bundle refusal.
+        if (!branch.success && branch.exitCode === 1 && !getScmCommandIndeterminateErrorCode(branch)) {
+            return createScmWorkspaceIntegrationWorkspaceTransferResult({
+                ...await resolveGitWorkspaceTransferSelection(repositoryInput),
+                metadata: { ...metadata, sessionRelativeCwd },
+            });
+        }
+    }
+
     await mkdir(input.artifactDirectory, { recursive: true });
     const bundleDirectory = await mkdtemp(join(input.artifactDirectory, 'git-workspace-bundle-'));
     const bundlePath = join(bundleDirectory, 'git.bundle');
@@ -115,10 +130,7 @@ export async function preparePortableGitWorkspaceTransfer(
             repositoryRoot,
             bundlePath,
         });
-        const [selection, metadata] = await Promise.all([
-            resolveGitWorkspaceTransferSelection(repositoryInput),
-            resolveGitWorkspaceTransferMetadata(repositoryInput),
-        ]);
+        const selection = await resolveGitWorkspaceTransferSelection(repositoryInput);
         const { entries, excludedPaths } = selection;
         if (!metadata) {
             throw selectionUnavailable('Git workspace has no portable checkout metadata');
@@ -161,7 +173,14 @@ export async function materializePortableGitWorkspaceBundle(input: Readonly<{
     const metadata = isGitWorkspaceTransferMetadata(input.workspaceIntegrationMetadata)
         ? input.workspaceIntegrationMetadata
         : null;
-    if (!metadata?.portableBundle) return;
+    if (!metadata) return;
+    if (!metadata.portableBundle) {
+        if (metadata.checkoutKind === 'branch' && !metadata.headRevision) {
+            await runGitOrThrow(input.targetPath, ['init', '--quiet']);
+            await runGitOrThrow(input.targetPath, ['symbolic-ref', 'HEAD', `refs/heads/${metadata.branchName}`]);
+        }
+        return;
+    }
     const headRevision = metadata.headRevision;
     if (!headRevision) {
         throw selectionUnavailable('Portable Git bundle metadata has no HEAD revision');

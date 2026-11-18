@@ -104,6 +104,63 @@ describe('portable Git workspace transfer', () => {
         }
     });
 
+    it('copies an unborn Git checkout with staged and untracked bytes without source administration', async () => {
+        const repositoryRoot = await mkdtemp(join(tmpdir(), 'portable-git-unborn-'));
+        const artifactDirectory = await mkdtemp(join(tmpdir(), 'portable-git-artifacts-'));
+        const targetPath = await mkdtemp(join(tmpdir(), 'portable-git-target-'));
+        try {
+            await runGit(repositoryRoot, ['init', '--quiet']);
+            await runGit(repositoryRoot, ['symbolic-ref', 'HEAD', 'refs/heads/fresh-copy']);
+            await runGit(repositoryRoot, ['config', 'credential.helper', 'source-only-helper']);
+            await writeFile(join(repositoryRoot, 'staged.txt'), 'not committed yet\n');
+            await runGit(repositoryRoot, ['add', 'staged.txt']);
+            const binary = Buffer.from([0, 255, 4]);
+            await writeFile(join(repositoryRoot, 'sentinel.bin'), binary);
+            const prepared = await runWithRealGitScmRuntime(() => preparePortableGitWorkspaceTransfer({
+                context: { cwd: repositoryRoot, projectKey: `test:${repositoryRoot}`,
+                    detection: { isRepo: true, rootPath: repositoryRoot, mode: '.git' } },
+                workspaceTransfer: { strategy: 'transfer_snapshot', includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [] },
+                artifactDirectory,
+            }));
+            expect(prepared.metadata).toMatchObject({ provider: 'git', checkoutKind: 'branch', branchName: 'fresh-copy' });
+            expect(prepared.metadata).not.toHaveProperty('headRevision');
+            expect(prepared.entries.every(entry => entry.relativePath !== '.git' && !entry.relativePath.startsWith('.git/'))).toBe(true);
+            await copyTransferEntries(prepared.entries, targetPath);
+            await runWithRealGitScmRuntime(() => materializePortableGitWorkspaceBundle({ targetPath,
+                workspaceIntegrationMetadata: prepared.metadata }));
+            await expect(runGit(targetPath, ['rev-parse', '--is-inside-work-tree'])).resolves.toBe('true');
+            await expect(runGit(targetPath, ['symbolic-ref', '--short', 'HEAD'])).resolves.toBe('fresh-copy');
+            await expect(runGit(targetPath, ['rev-parse', '--verify', 'HEAD'])).rejects.toThrow();
+            await expect(readFile(join(targetPath, 'staged.txt'), 'utf8')).resolves.toBe('not committed yet\n');
+            await expect(readFile(join(targetPath, 'sentinel.bin'))).resolves.toEqual(binary);
+            await expect(runGit(targetPath, ['config', '--local', '--get', 'credential.helper'])).rejects.toThrow();
+            await expect(runGit(repositoryRoot, ['rev-parse', '--verify', 'HEAD'])).rejects.toThrow();
+        } finally {
+            await rm(repositoryRoot, { recursive: true, force: true });
+            await rm(artifactDirectory, { recursive: true, force: true });
+            await rm(targetPath, { recursive: true, force: true });
+        }
+    });
+
+    it.each(['named branch', 'detached HEAD'] as const)('refuses a %s whose HEAD object is missing instead of exporting an unborn checkout', async kind => {
+        const repositoryRoot = await createRepositoryFixture();
+        const artifactDirectory = await mkdtemp(join(tmpdir(), 'portable-git-artifacts-'));
+        try {
+            const head = await runGit(repositoryRoot, ['rev-parse', '--verify', 'HEAD']);
+            if (kind === 'detached HEAD') await runGit(repositoryRoot, ['update-ref', '--no-deref', 'HEAD', head]);
+            await rm(join(repositoryRoot, '.git', 'objects', head.slice(0, 2), head.slice(2)));
+            await expect(runWithRealGitScmRuntime(() => preparePortableGitWorkspaceTransfer({
+                context: { cwd: repositoryRoot, projectKey: `test:${repositoryRoot}`,
+                    detection: { isRepo: true, rootPath: repositoryRoot, mode: '.git' } },
+                workspaceTransfer: { strategy: 'transfer_snapshot', includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [] },
+                artifactDirectory,
+            }))).rejects.toMatchObject({ code: 'git_selection_unavailable' });
+        } finally {
+            await rm(repositoryRoot, { recursive: true, force: true });
+            await rm(artifactDirectory, { recursive: true, force: true });
+        }
+    });
+
     it('fails closed when the staged bundle does not advertise one unambiguous HEAD', async () => {
         const repositoryRoot = await createRepositoryFixture();
         const artifactDirectory = await mkdtemp(join(tmpdir(), 'portable-git-artifacts-'));

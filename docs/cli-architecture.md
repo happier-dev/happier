@@ -1790,6 +1790,9 @@ exports and prepared entry imports stage through host temp space and reuse the
 existing ZIP and confined capture/apply owners. Language servers of a target Session start inside the target through the source's long-lived `spawn` (`apps/cli/src/lsp/sourceProtocol.ts`); LSP sessions and roots are keyed by source. Machine members working in a target Session are served by the target's source: no per-member OS identity exists inside the container, so the container boundary, the source's workspace-root confinement and the member's Session access admitted at ingress gate the request (owner ruling 2026-11-12); without admitted Session access a member is refused, and this Machine's disk keeps the requester-isolated native channel. No Session selects a target source yet: the placement owner has not wired
 `resolveWorkspaceTarget`.
 
+In 0.3 development, Copy once supports unborn Git repositories, copying the
+named branch and working files without requiring a first commit.
+
 ### Project definitions and guarded files (0.3 development)
 
 `.happier/project.json` is a user-authored repository file. Protocol's
