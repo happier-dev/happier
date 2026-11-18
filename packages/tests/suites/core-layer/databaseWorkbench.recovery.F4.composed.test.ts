@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -72,7 +72,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         if (!opened.ok) throw new Error(`R6 setup Project Open refused (${opened.errorCode})`);
         const acceptedProject = OpenProjectResultV1Schema.parse(opened.result);
         if (acceptedProject.kind === 'refused') throw new Error(`R6 setup Project Open refused (${acceptedProject.code})`);
-        expect(acceptedProject).toMatchObject({ kind: 'opened', directory: machine.workspaceDir });
+        expect(acceptedProject).toMatchObject({ kind: 'opened', directory: await realpath(machine.workspaceDir) });
         const installation = MachineInstallationIdentityV1Schema.parse(JSON.parse(
             await readFile(join(machine.homeDir, 'installation-identity.json'), 'utf8')));
 
