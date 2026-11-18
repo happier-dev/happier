@@ -787,7 +787,7 @@ describe("Session server-start Automation ingress", () => {
         }
     });
 
-    it("uses direct stamped dispatch only after server derivation for the source machine and otherwise reuses the closed Socket bridge", async () => {
+    it("routes source-machine starts through the closed Socket bridge before Run retention", async () => {
         const forward = vi.fn(async () => ({
             type: "error" as const,
             code: "target_unavailable" as const,
@@ -825,8 +825,16 @@ describe("Session server-start Automation ingress", () => {
             if (dispatch === null) return { kind: 'unavailable' as const };
             return { kind: 'available' as const, dispatch };
         });
+        const localForward = vi.fn(async () => ({
+            type: "success" as const,
+            disposition: "created" as const,
+            sessionId: "session-local-retained",
+            executionTarget: { serverId: "server-1", machineId: "machine-1" },
+            organizationPlacement: { folderId: null, tagIds: [] },
+            initialInput: { status: "notRequested" as const },
+        }));
         const localIngress = createSessionServerStartAutomationIngress({
-            forward,
+            forward: localForward,
             resolveDispatch: localResolve,
             retainProducedSession,
         });
@@ -836,11 +844,17 @@ describe("Session server-start Automation ingress", () => {
             request: ingressRequest,
         })).resolves.toEqual(expect.objectContaining({
             v: 1,
-            kind: "local",
-            dispatch: expect.objectContaining({ target: expect.objectContaining({ machineId: "machine-1" }) }),
+            kind: "result",
+            result: expect.objectContaining({ type: "success", sessionId: "session-local-retained" }),
         }));
-        expect(forward).toHaveBeenCalledOnce();
-        expect(retainProducedSession).not.toHaveBeenCalled();
+        expect(localForward).toHaveBeenCalledOnce();
+        expect(retainProducedSession).toHaveBeenCalledWith(expect.objectContaining({
+            accountId: "account-1",
+            machineId: "machine-1",
+            runId: "run-1",
+            attempt: 3,
+            result: expect.objectContaining({ type: "success", sessionId: "session-local-retained" }),
+        }));
     });
 
     it("awaits Run-produced Session retention before acknowledging a cross-machine success", async () => {

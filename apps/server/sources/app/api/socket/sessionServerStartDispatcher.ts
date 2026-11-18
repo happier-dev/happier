@@ -505,8 +505,10 @@ async function resolveSessionServerStartDispatchFromServer(params: Readonly<{
 /**
  * The one server ingress for Automation Session starts. It receives no caller
  * authority beyond the machine-authenticated socket, derives a stamped request
- * from durable state, then chooses local direct dispatch or the pre-existing
- * exact-machine closed Socket bridge.
+ * from durable state, then uses the pre-existing exact-machine closed Socket
+ * bridge for every target, including the source machine. Keeping one bridge
+ * path ensures the canonical Run owner observes every committed Session
+ * identity before acknowledging the start.
  */
 export function createSessionServerStartAutomationIngress(params: Readonly<{
     forward?: (
@@ -562,9 +564,6 @@ export function createSessionServerStartAutomationIngress(params: Readonly<{
         const dispatch = resolution.dispatch;
         if (input.signal?.aborted) {
             return { v: 1, kind: "result", result: cancelled() };
-        }
-        if (dispatch.target.machineId === input.sourceMachineId) {
-            return { v: 1, kind: "local", dispatch };
         }
         if (!forward) {
             return { v: 1, kind: "result", result: unavailable() };
