@@ -831,6 +831,12 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
       if (options.mutateRoot) authorization.binding.requestId = 'different-request';
       return respond(authorization);
     }
+    // The Action delivery oracle only observes the Action POST. The Account
+    // observer's transport requests are independent of private dispatch.
+    if (request.method !== 'POST' || request.url !== `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${actionId}`) {
+      response.statusCode = 404;
+      return respond({ error: 'not_found' });
+    }
     events.push('dispatch');
     received = body;
     if (options.scopedManagedController) {
@@ -1835,6 +1841,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
       expect(terminal.prompts, JSON.stringify({ events, output: output.text() })).toHaveLength(0);
       expect(output.text()).toContain('needs Manage on this Machine');
       expect(events).not.toContain('dispatch');
+      expect(target.readReceived()).toBeUndefined();
     } finally { output.restore(); }
   });
 
