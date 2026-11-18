@@ -557,14 +557,6 @@ export type SessionLifecycleActionInputById = {
         managedTargetPlacement?: undefined | {
             managedId: string;
             workspaceRoot: string;
-        };
-        isolationOverride?: 'directly' | undefined;
-        sessionPlacement?: undefined | {
-            kind: 'machine';
-            target: {
-                serverId: string;
-                machineId: string;
-            };
             projectFiles?: undefined | {
                 kind: 'copy_once';
                 contentPolicy?: undefined | {
@@ -595,6 +587,76 @@ export type SessionLifecycleActionInputById = {
                     protocol: 'auto' | 'https' | 'ssh';
                 };
                 branch: string;
+                gitAccount?: undefined | {
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    accountId: string;
+                };
+            } | {
+                kind: 'sync';
+                mode: 'keep_both_in_sync' | 'keep_synced';
+                contentPolicy?: undefined | {
+                    v: 1;
+                    selection: 'all_files' | 'git_worktree';
+                    extraIgnorePatterns: readonly string[];
+                    extraIncludePatterns: readonly string[];
+                    policyDigest: string;
+                    contentOnly?: true | undefined;
+                };
+            };
+            projectFilesSource?: undefined | {
+                target: {
+                    serverId: string;
+                    machineId: string;
+                };
+                directory: string;
+            };
+            projectFilesSourceWorkspace?: undefined | {
+                serverId: string;
+                workspaceId: string;
+                machineId: string;
+                rootPath: string;
+            };
+        };
+        isolationOverride?: 'directly' | undefined;
+        sessionPlacement?: undefined | {
+            kind: 'machine';
+            target: {
+                serverId: string;
+                machineId: string;
+            };
+            projectFiles?: undefined | {
+                kind: 'copy_once';
+                contentPolicy?: undefined | {
+                    v: 1;
+                    selection: 'all_files' | 'git_worktree';
+                    extraIgnorePatterns: readonly string[];
+                    extraIncludePatterns: readonly string[];
+                    policyDigest: string;
+                    contentOnly?: true | undefined;
+                };
+            } | {
+                kind: 'git_clone';
+                source?: undefined | {
+                    provider: {
+                        id: string;
+                        kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                        displayName: string;
+                        baseUrl: string;
+                    };
+                    repository: {
+                        nameWithOwner: string;
+                        defaultBranch?: null | string | undefined;
+                        visibility?: 'internal' | 'private' | 'public' | undefined;
+                        webUrl?: string | undefined;
+                        cloneUrl?: string | undefined;
+                        sshUrl?: string | undefined;
+                    };
+                    protocol: 'auto' | 'https' | 'ssh';
+                };
+                branch?: string | undefined;
                 gitAccount?: undefined | {
                     service: {
                         pluginId: string;
@@ -645,7 +707,7 @@ export type SessionLifecycleActionInputById = {
                 };
             } | {
                 kind: 'git_clone';
-                source: {
+                source?: undefined | {
                     provider: {
                         id: string;
                         kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -662,7 +724,7 @@ export type SessionLifecycleActionInputById = {
                     };
                     protocol: 'auto' | 'https' | 'ssh';
                 };
-                branch: string;
+                branch?: string | undefined;
                 gitAccount?: undefined | {
                     service: {
                         pluginId: string;
@@ -705,7 +767,7 @@ export type SessionLifecycleActionInputById = {
                 };
             } | {
                 kind: 'git_clone';
-                source: {
+                source?: undefined | {
                     provider: {
                         id: string;
                         kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -722,7 +784,7 @@ export type SessionLifecycleActionInputById = {
                     };
                     protocol: 'auto' | 'https' | 'ssh';
                 };
-                branch: string;
+                branch?: string | undefined;
                 gitAccount?: undefined | {
                     service: {
                         pluginId: string;

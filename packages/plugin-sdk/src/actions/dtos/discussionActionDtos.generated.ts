@@ -690,7 +690,7 @@ export type DiscussionActionInputById = {
                     };
                 } | {
                     kind: 'git_clone';
-                    source: {
+                    source?: undefined | {
                         provider: {
                             id: string;
                             kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -707,7 +707,7 @@ export type DiscussionActionInputById = {
                         };
                         protocol: 'auto' | 'https' | 'ssh';
                     };
-                    branch: string;
+                    branch?: string | undefined;
                     gitAccount?: undefined | {
                         service: {
                             pluginId: string;
@@ -758,7 +758,7 @@ export type DiscussionActionInputById = {
                     };
                 } | {
                     kind: 'git_clone';
-                    source: {
+                    source?: undefined | {
                         provider: {
                             id: string;
                             kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -775,7 +775,7 @@ export type DiscussionActionInputById = {
                         };
                         protocol: 'auto' | 'https' | 'ssh';
                     };
-                    branch: string;
+                    branch?: string | undefined;
                     gitAccount?: undefined | {
                         service: {
                             pluginId: string;
@@ -818,7 +818,7 @@ export type DiscussionActionInputById = {
                     };
                 } | {
                     kind: 'git_clone';
-                    source: {
+                    source?: undefined | {
                         provider: {
                             id: string;
                             kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -835,7 +835,7 @@ export type DiscussionActionInputById = {
                         };
                         protocol: 'auto' | 'https' | 'ssh';
                     };
-                    branch: string;
+                    branch?: string | undefined;
                     gitAccount?: undefined | {
                         service: {
                             pluginId: string;

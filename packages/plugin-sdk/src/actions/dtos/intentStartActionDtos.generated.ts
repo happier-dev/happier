@@ -6462,7 +6462,7 @@ export type IntentStartActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -6479,7 +6479,7 @@ export type IntentStartActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -6530,7 +6530,7 @@ export type IntentStartActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -6547,7 +6547,7 @@ export type IntentStartActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -6590,7 +6590,7 @@ export type IntentStartActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -6607,7 +6607,7 @@ export type IntentStartActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;

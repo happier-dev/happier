@@ -163,7 +163,7 @@ export type HomeGovernanceActionInputById = {
                     };
                 } | {
                     kind: 'git_clone';
-                    source: {
+                    source?: undefined | {
                         provider: {
                             id: string;
                             kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -180,7 +180,7 @@ export type HomeGovernanceActionInputById = {
                         };
                         protocol: 'auto' | 'https' | 'ssh';
                     };
-                    branch: string;
+                    branch?: string | undefined;
                     gitAccount?: undefined | {
                         service: {
                             pluginId: string;
@@ -223,7 +223,7 @@ export type HomeGovernanceActionInputById = {
                     };
                 } | {
                     kind: 'git_clone';
-                    source: {
+                    source?: undefined | {
                         provider: {
                             id: string;
                             kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -240,7 +240,7 @@ export type HomeGovernanceActionInputById = {
                         };
                         protocol: 'auto' | 'https' | 'ssh';
                     };
-                    branch: string;
+                    branch?: string | undefined;
                     gitAccount?: undefined | {
                         service: {
                             pluginId: string;
@@ -455,7 +455,7 @@ export type HomeGovernanceActionResultById = {
                     };
                 } | {
                     kind: 'git_clone';
-                    source: {
+                    source?: undefined | {
                         provider: {
                             id: string;
                             kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -472,7 +472,7 @@ export type HomeGovernanceActionResultById = {
                         };
                         protocol: 'auto' | 'https' | 'ssh';
                     };
-                    branch: string;
+                    branch?: string | undefined;
                     gitAccount?: undefined | {
                         service: {
                             pluginId: string;
@@ -515,7 +515,7 @@ export type HomeGovernanceActionResultById = {
                     };
                 } | {
                     kind: 'git_clone';
-                    source: {
+                    source?: undefined | {
                         provider: {
                             id: string;
                             kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -532,7 +532,7 @@ export type HomeGovernanceActionResultById = {
                         };
                         protocol: 'auto' | 'https' | 'ssh';
                     };
-                    branch: string;
+                    branch?: string | undefined;
                     gitAccount?: undefined | {
                         service: {
                             pluginId: string;
@@ -753,7 +753,7 @@ export type HomeGovernanceActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -770,7 +770,7 @@ export type HomeGovernanceActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -813,7 +813,7 @@ export type HomeGovernanceActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -830,7 +830,7 @@ export type HomeGovernanceActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -2187,7 +2187,7 @@ export type HomeGovernanceActionResultById = {
                     };
                 } | {
                     kind: 'git_clone';
-                    source: {
+                    source?: undefined | {
                         provider: {
                             id: string;
                             kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -2204,7 +2204,7 @@ export type HomeGovernanceActionResultById = {
                         };
                         protocol: 'auto' | 'https' | 'ssh';
                     };
-                    branch: string;
+                    branch?: string | undefined;
                     gitAccount?: undefined | {
                         service: {
                             pluginId: string;
@@ -2247,7 +2247,7 @@ export type HomeGovernanceActionResultById = {
                     };
                 } | {
                     kind: 'git_clone';
-                    source: {
+                    source?: undefined | {
                         provider: {
                             id: string;
                             kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -2264,7 +2264,7 @@ export type HomeGovernanceActionResultById = {
                         };
                         protocol: 'auto' | 'https' | 'ssh';
                     };
-                    branch: string;
+                    branch?: string | undefined;
                     gitAccount?: undefined | {
                         service: {
                             pluginId: string;

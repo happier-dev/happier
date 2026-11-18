@@ -134,7 +134,7 @@ export type WorkflowsActionInputById = {
             };
         } | {
             kind: 'git_clone';
-            source: {
+            source?: undefined | {
                 provider: {
                     id: string;
                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -151,7 +151,7 @@ export type WorkflowsActionInputById = {
                 };
                 protocol: 'auto' | 'https' | 'ssh';
             };
-            branch: string;
+            branch?: string | undefined;
             gitAccount?: undefined | {
                 service: {
                     pluginId: string;
@@ -3946,7 +3946,7 @@ export type WorkflowsActionInputById = {
                     };
                 } | {
                     kind: 'git_clone';
-                    source: {
+                    source?: undefined | {
                         provider: {
                             id: string;
                             kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -3963,7 +3963,7 @@ export type WorkflowsActionInputById = {
                         };
                         protocol: 'auto' | 'https' | 'ssh';
                     };
-                    branch: string;
+                    branch?: string | undefined;
                     gitAccount?: undefined | {
                         service: {
                             pluginId: string;
@@ -4014,7 +4014,7 @@ export type WorkflowsActionInputById = {
                     };
                 } | {
                     kind: 'git_clone';
-                    source: {
+                    source?: undefined | {
                         provider: {
                             id: string;
                             kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -4031,7 +4031,7 @@ export type WorkflowsActionInputById = {
                         };
                         protocol: 'auto' | 'https' | 'ssh';
                     };
-                    branch: string;
+                    branch?: string | undefined;
                     gitAccount?: undefined | {
                         service: {
                             pluginId: string;
@@ -4074,7 +4074,7 @@ export type WorkflowsActionInputById = {
                     };
                 } | {
                     kind: 'git_clone';
-                    source: {
+                    source?: undefined | {
                         provider: {
                             id: string;
                             kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -4091,7 +4091,7 @@ export type WorkflowsActionInputById = {
                         };
                         protocol: 'auto' | 'https' | 'ssh';
                     };
-                    branch: string;
+                    branch?: string | undefined;
                     gitAccount?: undefined | {
                         service: {
                             pluginId: string;
@@ -5182,7 +5182,7 @@ export type WorkflowsActionInputById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -5199,7 +5199,7 @@ export type WorkflowsActionInputById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -5250,7 +5250,7 @@ export type WorkflowsActionInputById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -5267,7 +5267,7 @@ export type WorkflowsActionInputById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -5310,7 +5310,7 @@ export type WorkflowsActionInputById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -5327,7 +5327,7 @@ export type WorkflowsActionInputById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -6825,7 +6825,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -6842,7 +6842,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -6893,7 +6893,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -6910,7 +6910,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -6953,7 +6953,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -6970,7 +6970,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -7264,7 +7264,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -7281,7 +7281,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -7332,7 +7332,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -7349,7 +7349,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -7392,7 +7392,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -7409,7 +7409,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -7772,7 +7772,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -7789,7 +7789,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -7840,7 +7840,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -7857,7 +7857,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -7900,7 +7900,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -7917,7 +7917,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -8317,7 +8317,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -8334,7 +8334,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -8385,7 +8385,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -8402,7 +8402,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -8445,7 +8445,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -8462,7 +8462,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -10083,7 +10083,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -10100,7 +10100,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -10151,7 +10151,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -10168,7 +10168,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -10211,7 +10211,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -10228,7 +10228,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -10268,7 +10268,7 @@ export type WorkflowsActionResultById = {
                     };
                 } | {
                     kind: 'git_clone';
-                    source: {
+                    source?: undefined | {
                         provider: {
                             id: string;
                             kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -10285,7 +10285,7 @@ export type WorkflowsActionResultById = {
                         };
                         protocol: 'auto' | 'https' | 'ssh';
                     };
-                    branch: string;
+                    branch?: string | undefined;
                     gitAccount?: undefined | {
                         service: {
                             pluginId: string;
@@ -11935,7 +11935,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -11952,7 +11952,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -12003,7 +12003,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -12020,7 +12020,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -12063,7 +12063,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -12080,7 +12080,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -12120,7 +12120,7 @@ export type WorkflowsActionResultById = {
                     };
                 } | {
                     kind: 'git_clone';
-                    source: {
+                    source?: undefined | {
                         provider: {
                             id: string;
                             kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -12137,7 +12137,7 @@ export type WorkflowsActionResultById = {
                         };
                         protocol: 'auto' | 'https' | 'ssh';
                     };
-                    branch: string;
+                    branch?: string | undefined;
                     gitAccount?: undefined | {
                         service: {
                             pluginId: string;
@@ -12908,7 +12908,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -12925,7 +12925,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -12976,7 +12976,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -12993,7 +12993,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -13036,7 +13036,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -13053,7 +13053,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -13347,7 +13347,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -13364,7 +13364,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -13415,7 +13415,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -13432,7 +13432,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -13475,7 +13475,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -13492,7 +13492,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -13785,7 +13785,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -13802,7 +13802,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -13853,7 +13853,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -13870,7 +13870,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -13913,7 +13913,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -13930,7 +13930,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -14224,7 +14224,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -14241,7 +14241,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -14292,7 +14292,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -14309,7 +14309,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -14352,7 +14352,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -14369,7 +14369,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -14663,7 +14663,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -14680,7 +14680,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -14731,7 +14731,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -14748,7 +14748,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -14791,7 +14791,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -14808,7 +14808,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -15106,7 +15106,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -15123,7 +15123,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -15174,7 +15174,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -15191,7 +15191,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -15234,7 +15234,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -15251,7 +15251,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -15544,7 +15544,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -15561,7 +15561,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -15612,7 +15612,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -15629,7 +15629,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -15672,7 +15672,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -15689,7 +15689,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -15982,7 +15982,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -15999,7 +15999,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -16050,7 +16050,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -16067,7 +16067,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -16110,7 +16110,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -16127,7 +16127,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -17753,7 +17753,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -17770,7 +17770,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -17821,7 +17821,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -17838,7 +17838,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -17881,7 +17881,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -17898,7 +17898,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -18871,7 +18871,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -18888,7 +18888,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -18939,7 +18939,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -18956,7 +18956,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -18999,7 +18999,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -19016,7 +19016,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -21351,7 +21351,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -21368,7 +21368,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -21419,7 +21419,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -21436,7 +21436,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -21479,7 +21479,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -21496,7 +21496,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -21547,7 +21547,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -21564,7 +21564,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -21615,7 +21615,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -21632,7 +21632,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -21675,7 +21675,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -21692,7 +21692,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -23524,7 +23524,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -23541,7 +23541,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -23592,7 +23592,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -23609,7 +23609,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -23652,7 +23652,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -23669,7 +23669,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -23720,7 +23720,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -23737,7 +23737,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -23788,7 +23788,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -23805,7 +23805,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -23848,7 +23848,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -23865,7 +23865,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -25355,7 +25355,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -25372,7 +25372,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -25423,7 +25423,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -25440,7 +25440,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -25483,7 +25483,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -25500,7 +25500,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -25551,7 +25551,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -25568,7 +25568,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -25619,7 +25619,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -25636,7 +25636,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -25679,7 +25679,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -25696,7 +25696,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -27190,7 +27190,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -27207,7 +27207,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -27258,7 +27258,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -27275,7 +27275,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -27318,7 +27318,7 @@ export type WorkflowsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -27335,7 +27335,7 @@ export type WorkflowsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -27386,7 +27386,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -27403,7 +27403,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -27454,7 +27454,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -27471,7 +27471,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -27514,7 +27514,7 @@ export type WorkflowsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -27531,7 +27531,7 @@ export type WorkflowsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;

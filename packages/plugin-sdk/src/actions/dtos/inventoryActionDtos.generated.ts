@@ -807,6 +807,7 @@ export type InventoryActionInputById = {
         };
         ref?: string | undefined;
         subdir?: string | undefined;
+        cloneSource?: true | undefined;
     };
     readonly "machines.presence.read": {
         serverId: string;
@@ -1201,7 +1202,7 @@ export type InventoryActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -1218,7 +1219,7 @@ export type InventoryActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -1261,7 +1262,7 @@ export type InventoryActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -1278,7 +1279,7 @@ export type InventoryActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -1436,7 +1437,7 @@ export type InventoryActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -1453,7 +1454,7 @@ export type InventoryActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -1496,7 +1497,7 @@ export type InventoryActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -1513,7 +1514,7 @@ export type InventoryActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -1677,7 +1678,7 @@ export type InventoryActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -1694,7 +1695,7 @@ export type InventoryActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -1737,7 +1738,7 @@ export type InventoryActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -1754,7 +1755,7 @@ export type InventoryActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -1919,7 +1920,7 @@ export type InventoryActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -1936,7 +1937,7 @@ export type InventoryActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -1979,7 +1980,7 @@ export type InventoryActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -1996,7 +1997,7 @@ export type InventoryActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -2152,7 +2153,7 @@ export type InventoryActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -2169,7 +2170,7 @@ export type InventoryActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -2212,7 +2213,7 @@ export type InventoryActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -2229,7 +2230,7 @@ export type InventoryActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -2387,7 +2388,7 @@ export type InventoryActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -2404,7 +2405,7 @@ export type InventoryActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -2447,7 +2448,7 @@ export type InventoryActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -2464,7 +2465,7 @@ export type InventoryActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -2621,7 +2622,7 @@ export type InventoryActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -2638,7 +2639,7 @@ export type InventoryActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -2681,7 +2682,7 @@ export type InventoryActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -2698,7 +2699,7 @@ export type InventoryActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -2861,7 +2862,7 @@ export type InventoryActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -2878,7 +2879,7 @@ export type InventoryActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -2921,7 +2922,7 @@ export type InventoryActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -2938,7 +2939,7 @@ export type InventoryActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -3105,7 +3106,7 @@ export type InventoryActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -3122,7 +3123,7 @@ export type InventoryActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -3165,7 +3166,7 @@ export type InventoryActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -3182,7 +3183,7 @@ export type InventoryActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -3882,6 +3883,26 @@ export type InventoryActionResultById = {
                 sourceId: string;
                 revision: number;
             };
+        };
+        cloneSource?: undefined | {
+            source: null | {
+                provider: {
+                    id: string;
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    displayName: string;
+                    baseUrl: string;
+                };
+                repository: {
+                    nameWithOwner: string;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
+                    webUrl?: string | undefined;
+                    cloneUrl?: string | undefined;
+                    sshUrl?: string | undefined;
+                };
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            branch: null | string;
         };
         copyOnceBaseline?: undefined | {
             entries: ({

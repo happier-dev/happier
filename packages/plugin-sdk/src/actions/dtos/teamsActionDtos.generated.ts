@@ -614,7 +614,7 @@ export type TeamsActionInputById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -631,7 +631,7 @@ export type TeamsActionInputById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -674,7 +674,7 @@ export type TeamsActionInputById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -691,7 +691,7 @@ export type TeamsActionInputById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -847,7 +847,7 @@ export type TeamsActionInputById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -864,7 +864,7 @@ export type TeamsActionInputById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -907,7 +907,7 @@ export type TeamsActionInputById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -924,7 +924,7 @@ export type TeamsActionInputById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -1083,7 +1083,7 @@ export type TeamsActionInputById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -1100,7 +1100,7 @@ export type TeamsActionInputById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -1143,7 +1143,7 @@ export type TeamsActionInputById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -1160,7 +1160,7 @@ export type TeamsActionInputById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -3806,7 +3806,7 @@ export type TeamsActionResultById = {
                                 };
                             } | {
                                 kind: 'git_clone';
-                                source: {
+                                source?: undefined | {
                                     provider: {
                                         id: string;
                                         kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -3823,7 +3823,7 @@ export type TeamsActionResultById = {
                                     };
                                     protocol: 'auto' | 'https' | 'ssh';
                                 };
-                                branch: string;
+                                branch?: string | undefined;
                                 gitAccount?: undefined | {
                                     service: {
                                         pluginId: string;
@@ -3866,7 +3866,7 @@ export type TeamsActionResultById = {
                                 };
                             } | {
                                 kind: 'git_clone';
-                                source: {
+                                source?: undefined | {
                                     provider: {
                                         id: string;
                                         kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -3883,7 +3883,7 @@ export type TeamsActionResultById = {
                                     };
                                     protocol: 'auto' | 'https' | 'ssh';
                                 };
-                                branch: string;
+                                branch?: string | undefined;
                                 gitAccount?: undefined | {
                                     service: {
                                         pluginId: string;
@@ -4039,7 +4039,7 @@ export type TeamsActionResultById = {
                                 };
                             } | {
                                 kind: 'git_clone';
-                                source: {
+                                source?: undefined | {
                                     provider: {
                                         id: string;
                                         kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -4056,7 +4056,7 @@ export type TeamsActionResultById = {
                                     };
                                     protocol: 'auto' | 'https' | 'ssh';
                                 };
-                                branch: string;
+                                branch?: string | undefined;
                                 gitAccount?: undefined | {
                                     service: {
                                         pluginId: string;
@@ -4099,7 +4099,7 @@ export type TeamsActionResultById = {
                                 };
                             } | {
                                 kind: 'git_clone';
-                                source: {
+                                source?: undefined | {
                                     provider: {
                                         id: string;
                                         kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -4116,7 +4116,7 @@ export type TeamsActionResultById = {
                                     };
                                     protocol: 'auto' | 'https' | 'ssh';
                                 };
-                                branch: string;
+                                branch?: string | undefined;
                                 gitAccount?: undefined | {
                                     service: {
                                         pluginId: string;
@@ -4274,7 +4274,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -4291,7 +4291,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -4334,7 +4334,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -4351,7 +4351,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -4582,7 +4582,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -4599,7 +4599,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -4642,7 +4642,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -4659,7 +4659,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -4815,7 +4815,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -4832,7 +4832,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -4875,7 +4875,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -4892,7 +4892,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -5050,7 +5050,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -5067,7 +5067,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -5110,7 +5110,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -5127,7 +5127,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -5386,7 +5386,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -5403,7 +5403,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -5446,7 +5446,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -5463,7 +5463,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -5619,7 +5619,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -5636,7 +5636,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -5679,7 +5679,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -5696,7 +5696,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -5854,7 +5854,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -5871,7 +5871,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -5914,7 +5914,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -5931,7 +5931,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -6160,7 +6160,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -6177,7 +6177,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -6220,7 +6220,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -6237,7 +6237,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -6393,7 +6393,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -6410,7 +6410,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -6453,7 +6453,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -6470,7 +6470,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -6628,7 +6628,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -6645,7 +6645,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -6688,7 +6688,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -6705,7 +6705,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -6934,7 +6934,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -6951,7 +6951,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -6994,7 +6994,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -7011,7 +7011,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -7167,7 +7167,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -7184,7 +7184,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -7227,7 +7227,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -7244,7 +7244,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -7402,7 +7402,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -7419,7 +7419,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -7462,7 +7462,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -7479,7 +7479,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -7708,7 +7708,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -7725,7 +7725,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -7768,7 +7768,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -7785,7 +7785,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -7941,7 +7941,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -7958,7 +7958,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -8001,7 +8001,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -8018,7 +8018,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -8176,7 +8176,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -8193,7 +8193,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -8236,7 +8236,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -8253,7 +8253,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -8482,7 +8482,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -8499,7 +8499,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -8542,7 +8542,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -8559,7 +8559,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -8715,7 +8715,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -8732,7 +8732,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -8775,7 +8775,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -8792,7 +8792,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -8950,7 +8950,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -8967,7 +8967,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -9010,7 +9010,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -9027,7 +9027,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -9256,7 +9256,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -9273,7 +9273,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -9316,7 +9316,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -9333,7 +9333,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -9489,7 +9489,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -9506,7 +9506,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -9549,7 +9549,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -9566,7 +9566,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -9724,7 +9724,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -9741,7 +9741,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -9784,7 +9784,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -9801,7 +9801,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -10030,7 +10030,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -10047,7 +10047,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -10090,7 +10090,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -10107,7 +10107,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -10263,7 +10263,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -10280,7 +10280,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -10323,7 +10323,7 @@ export type TeamsActionResultById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -10340,7 +10340,7 @@ export type TeamsActionResultById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -10498,7 +10498,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -10515,7 +10515,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -10558,7 +10558,7 @@ export type TeamsActionResultById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -10575,7 +10575,7 @@ export type TeamsActionResultById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;

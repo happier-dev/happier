@@ -1186,7 +1186,7 @@ export type SessionAuthoringActionInputById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -1203,7 +1203,7 @@ export type SessionAuthoringActionInputById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -1254,7 +1254,7 @@ export type SessionAuthoringActionInputById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -1271,7 +1271,7 @@ export type SessionAuthoringActionInputById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -1314,7 +1314,7 @@ export type SessionAuthoringActionInputById = {
                             };
                         } | {
                             kind: 'git_clone';
-                            source: {
+                            source?: undefined | {
                                 provider: {
                                     id: string;
                                     kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -1331,7 +1331,7 @@ export type SessionAuthoringActionInputById = {
                                 };
                                 protocol: 'auto' | 'https' | 'ssh';
                             };
-                            branch: string;
+                            branch?: string | undefined;
                             gitAccount?: undefined | {
                                 service: {
                                     pluginId: string;
@@ -3904,7 +3904,7 @@ export type SessionAuthoringActionInputById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -3921,7 +3921,7 @@ export type SessionAuthoringActionInputById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -3972,7 +3972,7 @@ export type SessionAuthoringActionInputById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -3989,7 +3989,7 @@ export type SessionAuthoringActionInputById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
@@ -4032,7 +4032,7 @@ export type SessionAuthoringActionInputById = {
                         };
                     } | {
                         kind: 'git_clone';
-                        source: {
+                        source?: undefined | {
                             provider: {
                                 id: string;
                                 kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -4049,7 +4049,7 @@ export type SessionAuthoringActionInputById = {
                             };
                             protocol: 'auto' | 'https' | 'ssh';
                         };
-                        branch: string;
+                        branch?: string | undefined;
                         gitAccount?: undefined | {
                             service: {
                                 pluginId: string;
