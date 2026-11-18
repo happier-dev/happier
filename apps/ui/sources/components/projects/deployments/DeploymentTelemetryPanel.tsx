@@ -36,7 +36,6 @@ import { Text } from '@/components/ui/text/Text';
 import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
 import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
 import { Typography } from '@/constants/Typography';
-import { Modal } from '@/modal';
 import { isMachineOnline } from '@/sync/domains/machines/reachability/machinePresence';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -55,7 +54,7 @@ import {
 /**
  * An Environment's Telemetry tab (P7 J1, P6 F14d). Not set up, it says what telemetry is for and opens the one setup
  * sheet. Set up, it shows what the collector kept for the chosen window: Endpoints, Traces (a row opens its request),
- * Logs and Queries, each one admitted read on the collector while it is open. Settings and Clear sit in its "…".
+ * Logs and Queries, each one admitted read on the collector while it is open. Settings is in its "…".
  */
 export function DeploymentTelemetryPanel(
   props: Readonly<{
@@ -113,7 +112,6 @@ export function DeploymentTelemetryPanel(
     <DeploymentTelemetryTabs
       detail={detail}
       lifetime={lifetime}
-      environmentName={props.environmentName}
       collectorId={collectorId}
       savedThisVisit={savedThisVisit}
       onOpenSettings={canManage && lifetime ? open : null}
@@ -209,7 +207,6 @@ function useTelemetryCaptureList(reads: TelemetryCaptureReads | null, list: Tele
 function DeploymentTelemetryTabs(props: Readonly<{
   detail: DeploymentEnvironmentDetailV1;
   lifetime: ServerAccountScopeLifetime | null;
-  environmentName: string;
   collectorId: string;
   savedThisVisit: boolean;
   onOpenSettings: (() => void) | null;
@@ -235,23 +232,6 @@ function DeploymentTelemetryTabs(props: Readonly<{
   const retry = React.useCallback(() => setAttempt(value => value + 1), []);
   const offline = collectorOnline === false;
   const readLogBody = React.useCallback((id: string) => reads ? reads.logBody(id) : Promise.reject(new Error('telemetry_unavailable')), [reads]);
-
-  const clear = React.useCallback(async () => {
-    if (!reads) return;
-    const confirmed = await Modal.confirm(
-      t('deploymentTelemetry.clear.title', { name: props.environmentName }),
-      t('deploymentTelemetry.clear.body', { machine }),
-      { confirmText: t('deploymentTelemetry.clear.confirm'), destructive: true },
-    );
-    if (!confirmed) return;
-    try {
-      await reads.clear();
-      setOpenTrace(null);
-      retry();
-    } catch {
-      Modal.alert(t('deploymentTelemetry.clear.failed'));
-    }
-  }, [reads, props.environmentName, machine, retry]);
 
   // Checks are set up by the Environment's managers, in the same editor Settings → Checks and alerts opens.
   const canAddCheck = environment.capabilities.role === 'manager' && lifetime !== null;
@@ -334,7 +314,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
               { id: 'week', label: t('deploymentTelemetry.window.week') }]}
             onSelectTab={(id) => { setWindowId(id); setOpenTrace(null); }}
           />
-          <TelemetryMenu onOpenSettings={props.onOpenSettings} onClear={canAddCheck || props.onOpenSettings ? clear : null} />
+          {props.onOpenSettings ? <TelemetryMenu onOpenSettings={props.onOpenSettings} /> : null}
         </View>
       </View>
       </View>
@@ -360,14 +340,9 @@ function DeploymentTelemetryTabs(props: Readonly<{
   );
 }
 
-/** The tab's "…": the setup sheet, and Clear (destructive, last). */
-function TelemetryMenu(props: Readonly<{ onOpenSettings: (() => void) | null; onClear: (() => void) | null }>) {
+function TelemetryMenu(props: Readonly<{ onOpenSettings: () => void }>) {
   const [open, setOpen] = React.useState(false);
-  const items = React.useMemo(() => [
-    ...(props.onOpenSettings ? [{ id: 'settings', testID: 'project-deployments.telemetry.menu.settings', title: t('deploymentTelemetry.menu.settings') }] : []),
-    ...(props.onClear ? [{ id: 'clear', testID: 'project-deployments.telemetry.menu.clear', title: t('deploymentTelemetry.menu.clear'), destructive: true }] : []),
-  ], [props.onOpenSettings, props.onClear]);
-  if (items.length === 0) return null;
+  const items = [{ id: 'settings', testID: 'project-deployments.telemetry.menu.settings', title: t('deploymentTelemetry.menu.settings') }];
   return (
     <DropdownMenu
       open={open}
@@ -376,10 +351,9 @@ function TelemetryMenu(props: Readonly<{ onOpenSettings: (() => void) | null; on
       matchTriggerWidth={false}
       placement="bottom"
       popoverAccessibilityLabel={t('common.more')}
-      onSelect={(id) => {
+      onSelect={() => {
         setOpen(false);
-        if (id === 'settings') props.onOpenSettings?.();
-        if (id === 'clear') props.onClear?.();
+        props.onOpenSettings();
       }}
       trigger={({ toggle }) => (
         <IconButton testID="project-deployments.telemetry.menu" iconName="dots-three" variant="plain"

@@ -1,13 +1,11 @@
 import * as React from 'react';
 import {
-  DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
   DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1,
   DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1,
   DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1,
-  DatabaseCaptureClearResultV1Schema,
   DatabaseCaptureEndpointsListResultV1Schema,
   DatabaseCaptureLogsListResultV1Schema,
   DatabaseCaptureQueriesListResultV1Schema,
@@ -36,8 +34,7 @@ export type TelemetryCaptureActionId =
   | typeof DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1
   | typeof DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1
   | typeof DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1
-  | typeof DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1
-  | typeof DATABASE_CAPTURE_CLEAR_ACTION_ID_V1;
+  | typeof DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1;
 
 export type TelemetryCaptureInvoke = (
   request: Readonly<{
@@ -46,8 +43,6 @@ export type TelemetryCaptureInvoke = (
     actionId: TelemetryCaptureActionId;
     input: unknown;
     signal?: AbortSignal;
-    /** The person already confirmed this exact operation in place (Clear). */
-    confirmed?: true;
   }>,
 ) => Promise<unknown>;
 
@@ -68,7 +63,6 @@ const invokeThroughFrontDoor: TelemetryCaptureInvoke = (request) =>
         machineId: request.collectorMachineId,
       },
       ...(request.signal ? { signal: request.signal } : {}),
-      ...(request.confirmed ? { confirmed: true as const } : {}),
     },
   );
 
@@ -128,7 +122,6 @@ export function createTelemetryCaptureReads(
     actionId: TelemetryCaptureActionId,
     input: unknown,
     signal?: AbortSignal,
-    confirmed?: true,
   ) =>
     invoke({
       scope: environment.scope,
@@ -136,7 +129,6 @@ export function createTelemetryCaptureReads(
       actionId,
       input,
       ...(signal ? { signal } : {}),
-      ...(confirmed ? { confirmed } : {}),
     });
   const window = (since: number, until: number) => ({ since, until });
   return {
@@ -233,21 +225,6 @@ export function createTelemetryCaptureReads(
       const body = read.detail?.body;
       if (body === undefined || body === null) return null;
       return typeof body === 'string' ? body : JSON.stringify(body);
-    },
-    /** Deletes everything the collector kept for this Environment; the person confirmed it in place. */
-    async clear(): Promise<void> {
-      settle(
-        DatabaseCaptureClearResultV1Schema.safeParse(
-          await call(
-            DATABASE_CAPTURE_CLEAR_ACTION_ID_V1,
-            {
-              source: source(environment),
-            },
-            undefined,
-            true,
-          ),
-        ),
-      );
     },
   };
 }

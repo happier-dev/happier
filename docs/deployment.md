@@ -2798,9 +2798,9 @@ The Environment Telemetry tab is the deployment host's reader for this retained
 data. Its Endpoints, Traces, Logs and Queries tabs use the selected time window
 and the Environment's collector assignment. Trace selection opens the shared
 request view, which follows the trace into query and correlated log details.
-Settings uses the Environment binding owner. Clear uses the scoped capture
-Action after confirmation and refreshes the selected view. The host represents
-an unreachable collector as unavailable.
+Settings uses the Environment binding owner. The capture owner supports Clear
+for the caller's Machine worktree and refuses it for an Environment source.
+The Environment tab shows an unreachable collector as unavailable.
 
 In the Services Apps list, the optional [Requests column](collection-presentation.md#model-and-presentation)
 reads the same collector assignment. Its 24-hour number is scoped to the

@@ -27,13 +27,7 @@ export type Copy = Readonly<{
     queries: string;
   }>;
   window: Readonly<{ label: string; hour: string; day: string; week: string }>;
-  menu: Readonly<{ settings: string; clear: string }>;
-  clear: Readonly<{
-    title: (p: Name) => string;
-    body: (p: MachineName) => string;
-    confirm: string;
-    failed: string;
-  }>;
+  menu: Readonly<{ settings: string }>;
   offline: Readonly<{
     title: (p: MachineName) => string;
     reason: string;
@@ -104,14 +98,7 @@ const en: Copy = {
     queries: 'Queries',
   },
   window: { label: 'Time window', hour: '1 h', day: '24 h', week: '7 d' },
-  menu: { settings: 'Telemetry settings…', clear: 'Clear telemetry…' },
-  clear: {
-    title: ({ name }) => `Clear telemetry for ${name}?`,
-    body: ({ machine }) =>
-      `${machine} deletes the requests, logs and queries it kept for this Environment. New data keeps arriving.`,
-    confirm: 'Clear',
-    failed: 'Telemetry couldn’t be cleared. Try again.',
-  },
+  menu: { settings: 'Telemetry settings…' },
   offline: {
     title: ({ machine }) => `${machine} isn’t answering`,
     reason: 'your app keeps running; this is what Happier last read',

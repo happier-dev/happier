@@ -260,7 +260,6 @@ export function createTelemetryCaptureFixtureInvoke(
           body: "TypeError: Cannot read properties of undefined (reading 'total')\n    at formatTotal (receipt.ts:42:18)\n    at buildReceipt (receipt.ts:88:5)",
         },
       };
-    if (actionId.endsWith('/capture/clear')) return { ok: true };
     throw new Error(`Unexpected collector read ${actionId}`);
   };
 }

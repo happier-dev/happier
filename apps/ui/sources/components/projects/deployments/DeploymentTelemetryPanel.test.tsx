@@ -29,7 +29,6 @@ vi.mock('@/components/ui/popover', async (importOriginal) => (await import('@/de
 const modal = await vi.hoisted(async () =>
   (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
     renderCustomModals: true,
-    confirmResult: true,
   }),
 );
 vi.mock('@/modal', () => modal.module);
@@ -39,7 +38,6 @@ const { DeploymentTelemetryPanel } = await import('./DeploymentTelemetryPanel');
 const { TelemetryCaptureInvokeContext } =
   await import('./telemetryCaptureReads');
 const { ModalProvider } = await import('@/modal');
-const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 // The app root's shared presentation theme, which the capture views draw with.
 const { AppPresentationPlatformProvider } = await import('@/components/ui/presentation/AppPresentationPlatformProvider');
 
@@ -102,7 +100,6 @@ type Call = Readonly<{
   collectorMachineId: string;
   actionId: string;
   input: unknown;
-  confirmed?: true;
 }>;
 
 /** The collector's answers at the Action front door: the one network edge of the tab's reads. */
@@ -191,7 +188,6 @@ const answers = (call: Call) => {
     return { ok: true, source, items: [] };
   if (call.actionId.endsWith('/capture/queries/list'))
     return { ok: true, source, items: [] };
-  if (call.actionId.endsWith('/capture/clear')) return { ok: true };
   throw new Error(`unexpected ${call.actionId}`);
 };
 
@@ -299,31 +295,14 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
-  it('clears what the collector kept only after the person confirms, then reads again', async () => {
-    const { invoke, calls } = collector(answers);
+  it('offers Telemetry settings without Clear to an Environment manager', async () => {
+    const { invoke } = collector(answers);
     const screen = await mount(invoke);
     try {
       await screen.pressByTestIdAsync('project-deployments.telemetry.menu');
-      // The menu opens on its scheduled tick.
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 60)); });
-      // The tab's "…" offers Clear last; choosing it is the menu owner's selection.
-      const menu = screen.findAllByType(DropdownMenu)[0]!;
-      expect(menu.props.items.map((item: { id: string }) => item.id)).toEqual(['settings', 'clear']);
-      await act(async () => { menu.props.onSelect('clear'); });
-      await settle();
-      expect(modal.spies.confirm).toHaveBeenCalledTimes(1);
-      expect(
-        calls.find((call) => call.actionId.endsWith('/capture/clear')),
-      ).toEqual(
-        expect.objectContaining({
-          collectorMachineId: 'collector',
-          input: { source },
-          confirmed: true,
-        }),
-      );
-      expect(calls.at(-1)?.actionId).toBe(
-        'happier.telemetry/actions/capture/endpoints/list',
-      );
+      expect(screen.findByTestId('project-deployments.telemetry.menu.settings')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.telemetry.menu.clear')).toBeNull();
     } finally {
       await screen.unmount();
     }
