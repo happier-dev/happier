@@ -1,23 +1,23 @@
 import * as React from 'react';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
-import { useThemeLibraryInventory } from '@/sync/store/useThemeProfiles';
+import { useThemeLibraryArtifactInventory } from '@/sync/store/useThemeProfiles';
 import type { InstalledScopeAdmission, StoreScopeFailure } from './storeAccountAdmission';
 import type { InstalledFamilyResult, StoreDemand, StoreInstalledInput } from './storeKinds';
-import { projectInstalledStoreThemeRows, type InstalledThemeRow } from './storeThemes';
+import { projectInstalledStoreThemeRows, selectInstalledStoreThemeEntries, type InstalledThemeRow } from './storeThemes';
 
-type ThemeInventory = ReturnType<typeof useThemeLibraryInventory>;
+type ThemeInventory = ReturnType<typeof useThemeLibraryArtifactInventory>;
 type InstalledThemesResult = InstalledFamilyResult<InstalledThemeRow, StoreScopeFailure | ThemeInventory, () => void>
     & Readonly<{ appliesToScope: boolean }>;
 const EMPTY_ROWS: readonly InstalledThemeRow[] = Object.freeze([]);
 
-/** Account-owned faces consume the canonical header library, never Machine inventory or selected bodies. */
+/** Installed Store themes come from the Account's saved theme headers. */
 export function useInstalledThemes(input: StoreInstalledInput, demand: StoreDemand, admitted: InstalledScopeAdmission): InstalledThemesResult {
     const currentScope = useAccountSettingsScope();
     const matchesScope = admitted.scope !== null && areAccountSettingsScopesEqual(admitted.scope, currentScope);
     const appliesToScope = !input.machine && !input.projectKey;
     const presented = demand.presented && appliesToScope && matchesScope;
-    const native = useThemeLibraryInventory(presented);
+    const native = useThemeLibraryArtifactInventory(presented, selectInstalledStoreThemeEntries);
     const rows = React.useMemo(() => presented && admitted.scope
         ? projectInstalledStoreThemeRows(native.entries, admitted.scope) : EMPTY_ROWS,
     [presented, admitted.scope, native.entries]);

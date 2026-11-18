@@ -91,7 +91,7 @@ async function createRegistryThemeListingFixture(options: Readonly<{ failAcquisi
     return { sourceId, preview, artifacts, state };
 }
 
-it('browses an admitted plugin theme through the joined library and keeps its reference from the shared Store listing', async () => {
+it('browses an admitted plugin theme and keeps its reference from the shared Store listing', async () => {
     const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
     const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
     const { createThemeProfileDraft } = await import('@/theme/profiles/createThemeProfileDraft');
@@ -129,14 +129,35 @@ it('browses an admitted plugin theme through the joined library and keeps its re
         { initialProps: browseInput, wrapper: ({ children }) => wrap(children) });
     await vi.waitFor(() => expect(browse.getCurrent().items).toHaveLength(1));
     expect(storeKinds.theme.summary(browse.getCurrent().items[0]!).title).toBe('Night sky');
+    await fixture.settleInventory();
+    expect(fixture.pages).toEqual([]);
     const item = browse.getCurrent().items[0]!;
     const { themeSummaryMatchesMode } = await import('./catalog/storeThemes');
     const { storeRowFacts } = await import('./catalog/storeColumnAdapter');
     expect(themeSummaryMatchesMode(item, 'dark')).toBe(true);
     expect(themeSummaryMatchesMode(item, 'light')).toBe(false);
     expect(storeRowFacts([{ key: 'night', kind: 'theme', summary: storeKinds.theme.summary(item) }], [], true)[0]?.fields.source).toEqual([reference.pluginId]);
-    const { StoreSearch } = await import('./StoreSearch');
+    const { StoreSearch, useStoreDirectorySources } = await import('./StoreSearch');
     const { useStoreFilterFields } = await import('./catalog/useStoreFilterFields');
+    const filters = { source: { include: [reference.pluginId], exclude: [] } };
+    const curation = [] as const;
+    const catalogs = await renderHook(() => ({
+        ids: useStoreDirectorySources(filters, true).sourceIds,
+        fields: useStoreFilterFields(curation, true),
+    }), { wrapper: ({ children }) => wrap(children) });
+    await vi.waitFor(() => expect(catalogs.getCurrent().ids).toEqual([reference.pluginId]));
+    expect(catalogs.getCurrent().fields.source.valueLabel(reference.pluginId)).toBe('Palette studio');
+    const originalCatalogs = catalogs.getCurrent();
+    const contribution = projected.themesById['sample.palette/night'];
+    admitted = { ...projected, themesById: { [contribution.id]: { ...contribution,
+        definition: { ...contribution.definition, theme: { ...contribution.definition.theme, name: 'Night lights' } },
+    } } };
+    await catalogs.rerender();
+    expect(catalogs.getCurrent().ids).toBe(originalCatalogs.ids);
+    expect(catalogs.getCurrent().fields.source).toBe(originalCatalogs.fields.source);
+    admitted = projected;
+    await catalogs.rerender();
+
     let searchRows: readonly unknown[] = [];
     function SearchHarness() {
         const fields = useStoreFilterFields([], true);
@@ -183,6 +204,37 @@ it('browses an admitted plugin theme through the joined library and keeps its re
     await search.update(wrap(<SearchHarness />));
     await vi.waitFor(() => expect(searchRows).toHaveLength(0));
     expect(externalReads).toEqual([]);
+});
+
+it('keeps Installed themes stable across plugin theme arrivals', async () => {
+    const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    const { createThemeProfileDraft } = await import('@/theme/profiles/createThemeProfileDraft');
+    const fixture = await createArtifactInventoryDemandHarness();
+    fixture.inventory = [];
+    onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+
+    const scope = storage.getState().settingsScope;
+    if (!scope) throw new Error('Expected an active Account');
+    const input = { scope, machine: null, projectKey: null };
+    const admission = { scope, failure: null, coverage: 'available', binding: null } as const;
+    let projection = EMPTY_PLUGIN_UI_PROJECTION;
+    const installed = await renderHook(() => storeKinds.theme.useInstalled(input, { presented: true }, admission), {
+        wrapper: ({ children }) => <AppShellPluginUiProjectionValueProvider value={{
+            pluginUiProjection: projection, pluginBrowserProjection: null, phase: 'current',
+            interactionEnabled: true, machineId: null, serverId: null, platform: 'web', accountLifetime: null,
+            connectedAccountProjectionRevision: 0, reloadConnectedAccountProjection() {},
+            clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {},
+        }}>{children}</AppShellPluginUiProjectionValueProvider>,
+    });
+    await vi.waitFor(() => expect(installed.getCurrent().coverage).toBe('available'));
+    const originalRows = installed.getCurrent().rows;
+    projection = { ...EMPTY_PLUGIN_UI_PROJECTION, themesById: { 'sample.palette/paper': {
+        id: 'sample.palette/paper', pluginId: 'sample.palette', pluginVersion: '1.0.0',
+        definition: { id: 'paper', theme: createThemeProfileDraft({ id: 'paper', name: 'Paper', now: '2026-11-16' }) },
+    } } };
+    await installed.rerender();
+    expect(installed.getCurrent().rows).toBe(originalRows);
 });
 
 it.each([
@@ -337,6 +389,11 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     const installedHeader = Object.values(storage.getState().artifacts).find((artifact): artifact is Extract<DecryptedArtifact, { isDecrypted: true }> =>
         artifact.isDecrypted && ThemeProfileArtifactHeaderSchema.safeParse(artifact.rawHeader).success);
     if (!installedHeader) throw new Error('Expected an admitted installed theme header');
+    const installedScope = storage.getState().settingsScope!;
+    const installedThemes = await renderHook(() => storeKinds.theme.useInstalled({ scope: installedScope, machine: null, projectKey: null },
+        { presented: true }, { scope: installedScope, failure: null, coverage: 'available', binding: null }));
+    await vi.waitFor(() => expect(installedThemes.getCurrent().rows).toHaveLength(1));
+    const originalInstalledRows = installedThemes.getCurrent().rows;
     listingCommits = 0;
     for (let index = 1; index <= 10; index++) {
         await act(async () => { storage.getState().applyArtifacts([{ ...installedHeader, id: `unrelated-theme-${index}`,
@@ -344,6 +401,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
                 title: `Unrelated ${index}`, themeSource: { kind: 'yours' } } }]); });
     }
     expect(listingCommits, 'the listing ignores unrelated theme library headers').toBe(0);
+    expect(installedThemes.getCurrent().rows, 'Installed ignores unrelated saved themes').toBe(originalInstalledRows);
     expect(view()?.installed).toBe(true);
     const selected = ThemeReferenceSchema.parse(storage.getState().localSettings.themeProfileSelection?.light);
     if (selected.kind !== 'artifact') throw new Error('Expected the selected installed artifact');

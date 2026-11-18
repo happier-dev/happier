@@ -3,7 +3,7 @@ import type { SettingsCollectionFilter } from '@/components/settings/shell/setti
 import { useSettingsColumnFilter, type SettingsColumnFilterField } from '@/components/settings/shell/useSettingsColumnFilter';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { useRegistrySources } from '@/registries/useRegistrySources';
-import { usePluginThemeList } from '@/theme/profiles/usePluginThemeList';
+import { usePluginThemeSources } from '@/theme/profiles/usePluginThemeList';
 import type { RegistryCuration } from '@/registries/useRegistrySuggestions';
 import { useStoreDirectoryState } from '@/components/settings/plugins/model/usePluginsOpenItem';
 import { StoreAppKind, StoreThemeKind, StorePetKind, StoreStarterKind, StoreBrowserExtensionKind, StoreMcpKind, StoreSkillKind, StoreAgentKind, StoreProviderKind, StorePluginKind, StoreSoftwareKind,
@@ -45,11 +45,11 @@ const EMPTY_CURATION: RegistryCuration['curation'] = [];
 /** All Store directories compile catalog conditions before admitting registry reads. */
 export function useStoreDirectorySources(filters: SettingsCollectionFilter, presented: boolean, allowed?: readonly string[]) {
     const sources = useRegistrySources(undefined, presented);
-    const pluginThemes = usePluginThemeList(presented);
+    const pluginSources = usePluginThemeSources(presented && filters.source !== undefined);
     const sourceIds = React.useMemo(() => filters.source === undefined ? allowed : [...new Set([
-        ...sources.sources.filter(source => source.enabled).map(source => source.id), ...pluginThemes.map(theme => theme.pluginId),
+        ...sources.sources.filter(source => source.enabled).map(source => source.id), ...pluginSources.keys(),
     ])].filter(id => (allowed === undefined || allowed.includes(id)) && storeDemandMatches(filters, { source: [id] })),
-    [filters.source, allowed, sources.sources, pluginThemes]);
+    [filters.source, allowed, sources.sources, pluginSources]);
     return { ...sources, sourceIds };
 }
 

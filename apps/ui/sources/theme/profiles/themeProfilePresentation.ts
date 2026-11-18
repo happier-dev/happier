@@ -71,13 +71,15 @@ type PluginLibraryInput = Pick<Extract<ThemeProfileSource, { kind: 'plugin' }>, 
 const pluginEntries = new WeakMap<PluginLibraryInput, ThemeLibraryEntry>();
 
 /** Admitted plugin declarations join as references, never persisted Artifact copies. */
+export function projectPluginThemeLibraryEntry(item: PluginLibraryInput): ThemeLibraryEntry {
+    const previous = pluginEntries.get(item);
+    if (previous) return previous;
+    const entry = projectThemeLibraryEntry(projectPluginThemeProfileDocument(item.theme,
+        { kind: 'plugin', pluginId: item.pluginId, contributionId: item.contributionId }));
+    pluginEntries.set(item, entry);
+    return entry;
+}
+
 export function projectPluginThemeLibraryEntries(items: readonly PluginLibraryInput[]): readonly ThemeLibraryEntry[] {
-    return items.map(item => {
-        const previous = pluginEntries.get(item);
-        if (previous) return previous;
-        const entry = projectThemeLibraryEntry(projectPluginThemeProfileDocument(item.theme,
-            { kind: 'plugin', pluginId: item.pluginId, contributionId: item.contributionId }));
-        pluginEntries.set(item, entry);
-        return entry;
-    });
+    return items.map(projectPluginThemeLibraryEntry);
 }

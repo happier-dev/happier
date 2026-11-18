@@ -7,14 +7,19 @@ import { storeEditorialGroupKey, type StoreColumnField } from './storeColumnAdap
 import { storeKinds, type StoreKind } from './storeKinds';
 import { kindCopy } from './storeKindCopy';
 import { useAppShellPluginUiProjection, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { usePluginThemeList } from '@/theme/profiles/usePluginThemeList';
+import { usePluginThemeSources } from '@/theme/profiles/usePluginThemeList';
 
 /** Labels for the shared condition owner, from the admitted sources and editorial facts. */
 export function useStoreFilterFields(curation: RegistryCuration['curation'], presented: boolean): Readonly<Record<StoreColumnField, SettingsColumnFilterField>> {
     const sources = useRegistrySources(undefined, presented).sources;
-    const pluginThemes = usePluginThemeList(presented);
+    const pluginSources = usePluginThemeSources(presented);
     const contributedKinds = useAppShellPluginUiProjection(value => value.pluginUiProjection?.storeKindsById);
     const localize = useProjectedPluginLocalizedTextResolver();
+    const sourceLabel = t('capabilities.store.catalogLabel');
+    const source = React.useMemo<SettingsColumnFilterField>(() => ({
+        label: sourceLabel, icon: 'cloud', valueLabel: value => sources.find(candidate => candidate.id === value)?.title
+            ?? pluginSources.get(value) ?? value,
+    }), [sourceLabel, sources, pluginSources]);
     return React.useMemo(() => {
         const categories = new Map<string, string>();
         const jobs = new Map<string, string>();
@@ -28,10 +33,9 @@ export function useStoreFilterFields(curation: RegistryCuration['curation'], pre
                 const contribution = contributedKinds?.[value];
                 return contribution ? localize(contribution.pluginId, contribution.definition.title) : value;
             } },
-            source: { label: t('capabilities.store.catalogLabel'), icon: 'cloud' as const, valueLabel: value => sources.find(source => source.id === value)?.title
-                ?? pluginThemes.find(theme => theme.pluginId === value)?.pluginName ?? value },
+            source,
             category: { label: t('capabilities.store.search.category'), icon: 'stack' as const, valueLabel: value => categories.get(value) ?? value },
             job: { label: t('capabilities.store.discover.jobsTitle'), icon: 'list-checks' as const, valueLabel: value => jobs.get(value) ?? value },
         };
-    }, [curation, sources, pluginThemes, contributedKinds, localize]);
+    }, [curation, source, contributedKinds, localize]);
 }

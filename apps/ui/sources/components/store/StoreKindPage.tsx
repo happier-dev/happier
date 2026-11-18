@@ -74,7 +74,7 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { THEME_MINIATURE_CARD_MIN_WIDTH } from '@/components/settings/appearance/ThemeModePreview';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { StoreMachineScopeContext, StoreMachineSelectionContext, useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
-import { usePluginThemeList } from '@/theme/profiles/usePluginThemeList';
+import { usePluginThemeSources } from '@/theme/profiles/usePluginThemeList';
 import { accountPetRegistryKey, collectAddedRegistryPets, projectStorePetCard, type StorePetCardView, type StorePetItem } from './catalog/storePets';
 import { STORE_PET_CARD_MIN_WIDTH, STORE_PET_CARD_MIN_WIDTH_PHONE, useStorePetCardAnatomy } from './storePetCardAnatomy';
 import { useCreatePetSession } from '@/components/pets/useCreatePetSession';
@@ -350,9 +350,9 @@ function CatalogSelect(
   }>,
 ): React.ReactNode {
   const registry = useRegistrySources(props.kind, props.presented);
-  const pluginThemes = usePluginThemeList(props.presented && props.kind === 'theme');
+  const pluginSources = usePluginThemeSources(props.presented && props.kind === 'theme');
   const sources = [...registry.sources.filter((source) => source.enabled),
-    ...new Map(pluginThemes.map(item => [item.pluginId, { id: item.pluginId, title: item.pluginName }])).values()];
+    ...Array.from(pluginSources, ([id, title]) => ({ id, title }))];
   // Held in place while the catalogs load, so the search beside it never changes width on arrival.
   if (registry.hasValue && sources.length < 2 && props.sourceId === null) return null;
   return (
@@ -366,7 +366,7 @@ function CatalogSelect(
       ],
       selectedId: props.sourceId ?? 'all',
       onChange: (id) => props.onSourceChange(id === 'all' ? null : id),
-      disabled: !registry.hasValue && pluginThemes.length === 0,
+      disabled: !registry.hasValue && pluginSources.size === 0,
     }} />
   );
 }

@@ -1,9 +1,23 @@
 import * as React from 'react';
-import { useAppShellPluginUiProjectionSubscription } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjection, useAppShellPluginUiProjectionSubscription } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { resolvePluginThemeList } from './pluginThemeCatalog';
 import type { PluginThemeListItem } from './pluginThemeCatalog';
 import type { ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+
+const noSources: ReadonlyMap<string, string> = new Map();
+
+/** Store catalog controls read contributor labels without observing the theme entries themselves. */
+export function usePluginThemeSources(enabled: boolean): ReadonlyMap<string, string> {
+    return useAppShellPluginUiProjection(({ pluginUiProjection }) => {
+        if (!enabled || !pluginUiProjection) return noSources;
+        const sources = new Map<string, string>();
+        for (const { pluginId, pluginName } of resolvePluginThemeList(pluginUiProjection)) {
+            if (!sources.has(pluginId)) sources.set(pluginId, pluginName);
+        }
+        return sources;
+    }, enabled);
+}
 
 /** Subscribes only to the admitted theme family, through the existing projection owner. */
 export function usePluginThemeList(): readonly PluginThemeListItem[];

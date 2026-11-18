@@ -69,6 +69,11 @@ export type InstalledStoreThemeEntry = ThemeLibraryEntry & Readonly<{
 function isStoreThemeEntry(entry: ThemeLibraryEntry): entry is InstalledStoreThemeEntry {
     return entry.source.kind === 'store';
 }
+
+export function selectInstalledStoreThemeEntries(entries: readonly ThemeLibraryEntry[]): readonly InstalledStoreThemeEntry[] {
+    return entries.filter(isStoreThemeEntry);
+}
+
 export type InstalledStoreThemeGroup = Readonly<{
     key: string;
     listing: ThemeRegistryItemKey;

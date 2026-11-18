@@ -20,7 +20,7 @@ import { useInstalledApps } from './storeApps';
 import { useInstalledBrowserExtensions } from './storeBrowserExtensions';
 import { useInstalledThemes } from './storeThemesInstalled';
 import { APP_STORE_KIND } from './storeKindContributions';
-import { useThemeLibraryInventory } from '@/sync/store/useThemeProfiles';
+import { projectPluginThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
 import { usePluginThemeList } from '@/theme/profiles/usePluginThemeList';
 import { storeThemeSummary, type StoreThemeItem } from './storeThemes';
 import { storeBuiltInPets, storePetSummary, type StorePetItem } from './storePets';
@@ -62,20 +62,16 @@ function useAppList(input: StoreListInput, demand: StoreDemand): RegistryList {
 }
 function useThemeList(input: StoreListInput, demand: StoreDemand): Omit<RegistryList, 'items'> & Readonly<{ items: readonly StoreThemeItem[] }> {
     const registry = useRegistryItems({ kind: 'theme', query: input.query, sourceIds: input.sourceIds }, demand.presented);
-    const library = useThemeLibraryInventory(demand.presented);
     const plugins = usePluginThemeList(demand.presented);
     const items = React.useMemo<readonly StoreThemeItem[]>(() => {
-        const metadata = new Map(plugins.map(item => [JSON.stringify([item.pluginId, item.contributionId]), item]));
         const query = input.query.trim().toLocaleLowerCase();
-        return [...registry.items, ...library.entries.flatMap((entry): StoreThemeItem[] => {
-            const source = entry.source;
-            if (source.kind !== 'plugin' || input.sourceIds !== undefined && !input.sourceIds.includes(source.pluginId)) return [];
-            const plugin = metadata.get(JSON.stringify([source.pluginId, source.contributionId]));
-            if (!plugin || !`${entry.name} ${plugin.pluginName}`.toLocaleLowerCase().includes(query)) return [];
-            return [{ kind: 'pluginTheme', entry, pluginId: source.pluginId, contributionId: source.contributionId,
-                pluginName: plugin.pluginName }];
+        return [...registry.items, ...plugins.flatMap((plugin): StoreThemeItem[] => {
+            if (input.sourceIds !== undefined && !input.sourceIds.includes(plugin.pluginId)) return [];
+            if (!`${plugin.theme.name} ${plugin.pluginName}`.toLocaleLowerCase().includes(query)) return [];
+            return [{ kind: 'pluginTheme', entry: projectPluginThemeLibraryEntry(plugin), pluginId: plugin.pluginId,
+                contributionId: plugin.contributionId, pluginName: plugin.pluginName }];
         })];
-    }, [registry.items, library.entries, plugins, input.query, input.sourceIds]);
+    }, [registry.items, plugins, input.query, input.sourceIds]);
     return { ...registry, items };
 }
 /** Built-in pets lead (they need no catalog); registry pets follow from every pet catalog the Account holds. */
