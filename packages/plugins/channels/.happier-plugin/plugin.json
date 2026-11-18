@@ -6476,7 +6476,9 @@
                                                       "book",
                                                       "heart",
                                                       "shield",
-                                                      "edit"
+                                                      "edit",
+                                                      "pulse",
+                                                      "chart"
                                                     ],
                                                     "type": "string"
                                                   },
@@ -7156,6 +7158,42 @@
                                           "required": [
                                             "selector",
                                             "filter"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "addresses": {
+                                              "items": {
+                                                "additionalProperties": false,
+                                                "properties": {
+                                                  "serverId": {
+                                                    "minLength": 1,
+                                                    "type": "string"
+                                                  },
+                                                  "sessionId": {
+                                                    "minLength": 1,
+                                                    "type": "string"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "serverId",
+                                                  "sessionId"
+                                                ],
+                                                "type": "object"
+                                              },
+                                              "minItems": 1,
+                                              "type": "array"
+                                            },
+                                            "selector": {
+                                              "const": "sessions",
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "selector",
+                                            "addresses"
                                           ],
                                           "type": "object"
                                         }
@@ -21637,6 +21675,42 @@
                             "filter"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
+                          ],
+                          "type": "object"
                         }
                       ]
                     }
@@ -22680,6 +22754,42 @@
                           "required": [
                             "selector",
                             "filter"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
                           ],
                           "type": "object"
                         }
@@ -23747,6 +23857,42 @@
                             "filter"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
+                          ],
+                          "type": "object"
                         }
                       ]
                     }
@@ -24759,6 +24905,42 @@
                             "filter"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
+                          ],
+                          "type": "object"
                         }
                       ]
                     }
@@ -25692,6 +25874,42 @@
                           "required": [
                             "selector",
                             "filter"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
                           ],
                           "type": "object"
                         }
@@ -26712,6 +26930,42 @@
                             "filter"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
+                          ],
+                          "type": "object"
                         }
                       ]
                     }
@@ -27655,6 +27909,42 @@
                           "required": [
                             "selector",
                             "filter"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
                           ],
                           "type": "object"
                         }
@@ -28618,6 +28908,42 @@
                             "filter"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
+                          ],
+                          "type": "object"
                         }
                       ]
                     }
@@ -29551,6 +29877,42 @@
                           "required": [
                             "selector",
                             "filter"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
                           ],
                           "type": "object"
                         }
@@ -30506,6 +30868,42 @@
                           "required": [
                             "selector",
                             "filter"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
                           ],
                           "type": "object"
                         }
@@ -31870,6 +32268,42 @@
                             "filter"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
+                          ],
+                          "type": "object"
                         }
                       ]
                     }
@@ -32913,6 +33347,42 @@
                           "required": [
                             "selector",
                             "filter"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
                           ],
                           "type": "object"
                         }
@@ -33980,6 +34450,42 @@
                             "filter"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
+                          ],
+                          "type": "object"
                         }
                       ]
                     }
@@ -34992,6 +35498,42 @@
                             "filter"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
+                          ],
+                          "type": "object"
                         }
                       ]
                     }
@@ -35925,6 +36467,42 @@
                           "required": [
                             "selector",
                             "filter"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
                           ],
                           "type": "object"
                         }
@@ -36945,6 +37523,42 @@
                             "filter"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
+                          ],
+                          "type": "object"
                         }
                       ]
                     }
@@ -37888,6 +38502,42 @@
                           "required": [
                             "selector",
                             "filter"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
                           ],
                           "type": "object"
                         }
@@ -38851,6 +39501,42 @@
                             "filter"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
+                          ],
+                          "type": "object"
                         }
                       ]
                     }
@@ -39784,6 +40470,42 @@
                           "required": [
                             "selector",
                             "filter"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
                           ],
                           "type": "object"
                         }
@@ -40739,6 +41461,42 @@
                           "required": [
                             "selector",
                             "filter"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
                           ],
                           "type": "object"
                         }
@@ -41963,6 +42721,42 @@
                             "filter"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
+                          ],
+                          "type": "object"
                         }
                       ]
                     }
@@ -42965,6 +43759,42 @@
                             "filter"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
+                          ],
+                          "type": "object"
                         }
                       ]
                     }
@@ -43913,6 +44743,42 @@
                             "filter"
                           ],
                           "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
+                          ],
+                          "type": "object"
                         }
                       ]
                     }
@@ -44064,7 +44930,9 @@
                                       "book",
                                       "heart",
                                       "shield",
-                                      "edit"
+                                      "edit",
+                                      "pulse",
+                                      "chart"
                                     ],
                                     "type": "string"
                                   },
@@ -45209,6 +46077,42 @@
                           "required": [
                             "selector",
                             "filter"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "addresses": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "serverId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "sessionId": {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "serverId",
+                                  "sessionId"
+                                ],
+                                "type": "object"
+                              },
+                              "minItems": 1,
+                              "type": "array"
+                            },
+                            "selector": {
+                              "const": "sessions",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "selector",
+                            "addresses"
                           ],
                           "type": "object"
                         }

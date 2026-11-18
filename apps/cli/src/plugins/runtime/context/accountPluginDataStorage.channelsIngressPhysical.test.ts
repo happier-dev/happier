@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import tweetnacl from 'tweetnacl';
 import {
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
@@ -14,7 +15,6 @@ import {
     type PluginInvocationContext,
     type PluginServices,
 } from '@happier-dev/plugin-sdk';
-import { normalizePluginAccountCollectionMigrationRuntimeProjection } from '@/plugins/authoring/registrationProjections';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { ConversationProviderObservationIngestInputV1 } from '@happier-dev/channels-protocol/v1';
@@ -26,6 +26,7 @@ import { createHttpCollectionBoundary } from './accountPluginDataStorage.testkit
 
 const CHANNELS_PLUGIN_ID = 'happier.channels';
 const CHANNEL_STATE_COLLECTION_ID = 'channel-state';
+const CONNECTION_AUTHORITY_EPOCH = 4;
 /** The shipped deployment policy every unpublished-capability client assumes. */
 const INGRESS_PREPARATION_BATCH_LIMIT_BYTES = 16 * 1024 * 1024;
 const INGRESS_PREPARATION_OPERATION_LIMIT = 100;
@@ -89,13 +90,13 @@ function jsonRecord(value: unknown): Readonly<Record<string, JsonValue>> {
 
 async function loadCurrentChannelsSources(): Promise<CurrentChannelsSources> {
     const sourceRoot = '../../../../../../packages/plugins/channels/src/';
-    const [manifestNamespace, ingressNamespace, fixtureNamespace] = await Promise.all([
-        import(/* @vite-ignore */ new URL(`${sourceRoot}manifest.ts`, import.meta.url).href),
+    const [collectionNamespace, ingressNamespace, fixtureNamespace] = await Promise.all([
+        import(/* @vite-ignore */ new URL(`${sourceRoot}collections.ts`, import.meta.url).href),
         import(/* @vite-ignore */ new URL(`${sourceRoot}ingress.ts`, import.meta.url).href),
         import(/* @vite-ignore */ new URL(`${sourceRoot}testkit/currentConnectionFixture.ts`, import.meta.url).href),
     ]);
     if (
-        !isRecord(manifestNamespace)
+        !isRecord(collectionNamespace)
         || !isRecord(ingressNamespace)
         || !isRecord(fixtureNamespace)
     ) {
@@ -108,7 +109,12 @@ async function loadCurrentChannelsSources(): Promise<CurrentChannelsSources> {
         || typeof poll !== 'function') {
         throw new Error('Expected the current Channels ingress fixtures and handler.');
     }
-    const parsedManifest = parsePluginManifest(manifestNamespace.PLUGIN_MANIFEST);
+    // Source daemon admission reads the published catalog declaration, while
+    // the plugin binds its executable definition. Reconstructing both from one
+    // source manifest hides declaration drift and plugin_collection_undeclared.
+    const parsedManifest = parsePluginManifest(JSON.parse(readFileSync(new URL(
+        '../../../../assets/bundled-plugin-manifests/channels.json', import.meta.url,
+    ), 'utf8')));
     if (!parsedManifest.ok) throw new Error('Expected the current Channels manifest to parse.');
     const rawChannelStateCollectionDeclaration = parsedManifest.manifest.contributes.accountCollections.find(
         (collection) => collection.id === CHANNEL_STATE_COLLECTION_ID,
@@ -119,20 +125,11 @@ async function loadCurrentChannelsSources(): Promise<CurrentChannelsSources> {
     const channelStateCollectionDeclaration = PluginAccountCollectionContributionV1Schema.parse(
         rawChannelStateCollectionDeclaration,
     );
-    // The executable migration half now comes from the same `definePlugin`
-    // owner as the declaration above, not from a second map beside the
-    // Collection definitions.
-    const channelStateMigrations = normalizePluginAccountCollectionMigrationRuntimeProjection(
-        manifestNamespace.collectionMigrations,
-        parsedManifest.manifest.contributes.accountCollections,
-    )[channelStateCollectionDeclaration.id];
-    if (!channelStateMigrations) {
-        throw new Error('Expected the current Channels Collection migration callbacks.');
+    const definition = collectionNamespace.CHANNEL_STATE_COLLECTION;
+    if (!isRecord(definition) || definition.id !== CHANNEL_STATE_COLLECTION_ID || !isRecord(definition.schema)) {
+        throw new Error('Expected the current executable Channels Collection definition.');
     }
-    const channelStateCollection = {
-        ...channelStateCollectionDeclaration,
-        migrations: channelStateMigrations,
-    } satisfies PluginAccountCollectionDefinition;
+    const channelStateCollection = definition as PluginAccountCollectionDefinition;
     return Object.freeze({
         channelStateCollectionDeclaration,
         channelStateCollection,
@@ -164,7 +161,7 @@ function createCurrentConnection(
             providerConfig: { botUsername: 'happier_bot' },
             routingIdentityKey: 'r'.repeat(43),
             integrationPrincipal: { id: 'telegram:bot:12345', label: 'Happier' },
-            authorityEpoch: 4,
+            authorityEpoch: CONNECTION_AUTHORITY_EPOCH,
         },
         transport: { kind: 'socket' },
         overlapSafety: 'safe',
@@ -210,6 +207,7 @@ function createCurrentBinding(bindingId: string): Readonly<Record<string, JsonVa
 function createIngress(now: number): ConversationProviderObservationIngestInputV1 {
     return {
         connectionId: 'connection-1',
+        authorityEpoch: CONNECTION_AUTHORITY_EPOCH,
         entry: {
             observation: {
                 kind: 'fullText',
@@ -417,7 +415,11 @@ describe('Channels C3 physical E2EE ingress batches', () => {
             },
             invokedAtMs: 1,
             signal: new AbortController().signal,
-            services: { storage: { account } } as PluginServices,
+            services: {
+                storage: { account },
+                // Notification delivery is a separate host boundary from Data custody.
+                notifications: { send: async () => ({ deliveries: [], replayed: false }) },
+            } as PluginServices,
         } satisfies PluginInvocationContext;
         const now = Date.now();
         const ingress = createIngress(now);
