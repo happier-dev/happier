@@ -8998,14 +8998,14 @@ const enNewSession = {
   selectModelTitle: 'Choose a model',
   selectModelDescription: 'Choose the model used by this session.',
   checkout: {
-    selectTitle: 'Select Worktree',
-    noWorktree: 'No Worktree',
+    selectTitle: 'Select worktree',
+    noWorktree: 'No worktree',
     noWorktreeSubtitle:
       'Start in the selected folder without creating or using a Git worktree.',
-    noWorktreeSectionTitle: 'No Worktree',
-    existingWorktreesSectionTitle: 'Existing Worktrees',
+    noWorktreeSectionTitle: 'No worktree',
+    existingWorktreesSectionTitle: 'Existing worktrees',
     actionsSectionTitle: 'Actions',
-    newWorktree: 'New Worktree',
+    newWorktree: 'New worktree',
     newWorktreeSubtitle: 'Create and use a new Git worktree for this session.',
     pendingWorktreeSubtitle: ({
       branch,
@@ -9014,17 +9014,17 @@ const enNewSession = {
       branch: string;
       path: string;
     }) => `From ${branch} · ${path}`,
-    existingWorktree: 'Existing Worktree',
+    existingWorktree: 'Existing worktree',
     existingWorktreeSubtitle: 'Pick an existing Git worktree for this session.',
     existingWorktreeEmptyTitle: 'No existing worktrees',
     existingWorktreeEmptySubtitle:
-      'Create a Git worktree first, or choose New Worktree.',
+      'Create a Git worktree first, or choose New worktree.',
     newWorktreeDetailWorkspace:
       'Create a new Git worktree for this repository.',
     newWorktreeDetailBranch:
       'Start from the current repository state and choose a new branch/worktree name.',
-    branchPickerTitle: 'Start From',
-    branchPickerCurrentHead: 'Current Branch',
+    branchPickerTitle: 'Start from',
+    branchPickerCurrentHead: 'Current branch',
     branchPickerCurrentHeadDescription:
       'Start from the branch currently checked out in this repository.',
     branchPickerEmpty: 'No branches available for this repository.',

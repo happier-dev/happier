@@ -424,7 +424,7 @@ export const en = {
         accountChangedBody: 'This workflow was opened by the previous account and cannot be carried over. Open it again from Workflows.',
         loadFailedTitle: 'Could not open this workflow',
         loadFailedBody: 'The saved workflow could not be read just now.',
-        timeoutTitle: 'Result wait (ms)',
+        timeoutTitle: 'Time limit',
         noDeadline: 'No deadline',
         timeoutExplain: 'Milliseconds to wait for this step’s result before it needs attention. Leave empty for no deadline.',
         wholeNumberRequired: 'Enter a whole number of at least 1.',
