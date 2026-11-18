@@ -231,18 +231,18 @@ export async function connectUiPersonActionClient(params: Readonly<{
                 }
             }
         };
-        const execute: typeof client.execute = async (...args) => {
+        const execute: typeof client.execute = Object.assign(async (...args: Parameters<typeof client.execute>) => {
             await waitForRegistry(args[0], args[1]);
             return client.execute(...args);
-        };
+        }, { prepare: client.execute.prepare, confirmed: client.execute.confirmed });
         const executeConfirmed: typeof client.executeConfirmed = async (...args) => {
             await waitForRegistry(args[0], args[1]);
             return client.executeConfirmed(...args);
         };
-        const executePresented: typeof client.executePresented = async (...args) => {
+        const executePresented: typeof client.executePresented = Object.assign(async (...args: Parameters<typeof client.executePresented>) => {
             await waitForRegistry(args[0], args[1]);
             return client.executePresented(...args);
-        };
+        }, { prepare: client.executePresented.prepare, confirmed: client.executePresented.confirmed });
         return { ...client, execute, executeConfirmed, executePresented, async close() {
             try { await unmount?.(); } finally { await client.close(); }
         } };

@@ -116,7 +116,9 @@ export function createMachineListByServerIdFixture(
 }
 
 /** A Home census row, not an already-opened client projection. */
-export function createPlainMachineRowFixture(input: Readonly<{ id: string; accountId: string; machine?: Machine }>): FetchedMachineRow {
+export function createPlainMachineRowFixture(input: Readonly<{ id: string; accountId: string; machine?: Machine }>): FetchedMachineRow & {
+    access: ReturnType<typeof AccessibleMachineAccessV1Schema.parse>;
+} {
     const machine = input.machine ?? createMachineFixture({ id: input.id, activeAt: Date.now() });
     return {
         id: machine.id, kind: 'persistent', seq: machine.seq,
