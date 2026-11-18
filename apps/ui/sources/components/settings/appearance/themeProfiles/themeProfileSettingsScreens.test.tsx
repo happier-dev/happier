@@ -16,7 +16,7 @@ import type { ThemeProfilesLocalStateV1, ThemeProfileV1 } from '@/theme/profiles
 import { exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExport';
 import { isBuiltInThemeProfilePresetId } from '@/theme/profiles/builtInThemeProfiles';
 import { parseThemeProfilesLocalState, readThemeProfileReferenceSelection } from '@/theme/profiles/themeProfilePersistence';
-import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { parseThemeProfileDocument, ThemeProfileV1Schema } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { THEME_ARTIFACT_KIND, ThemeProfileArtifactHeaderSchema } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { ThemeProfileRuntimeSync } from '@/theme/ThemeProfileRuntimeSync';
@@ -41,6 +41,24 @@ import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection
 
 const testGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean };
 testGlobal.IS_REACT_ACT_ENVIRONMENT = true;
+
+function observeProjectionSubscriptions() {
+    let activeSubscribers = 0;
+    function ObserveProjectionSubscriptions() {
+        const projection = useAppShellPluginUiProjectionSubscription();
+        React.useLayoutEffect(() => {
+            const subscribe = projection.subscribe;
+            const observation = vi.spyOn(projection, 'subscribe').mockImplementation(listener => {
+                activeSubscribers++;
+                const unsubscribe = subscribe(listener);
+                return () => { activeSubscribers--; unsubscribe(); };
+            });
+            return () => observation.mockRestore();
+        }, [projection]);
+        return null;
+    }
+    return { ObserveProjectionSubscriptions, count: () => activeSubscribers };
+}
 
 const baseProfile = (id: string, overrides: ThemeProfileV1['overrides'] = { light: {}, dark: {} }): ThemeProfileV1 => ({
     schemaVersion: 1,
@@ -558,20 +576,7 @@ describe('Theme profile settings screen', () => {
             platform: 'web', accountLifetime: null, clientExecutableActivation: { status: 'ready' },
             reloadClientExecutables() {}, reloadConnectedAccountProjection() {},
         };
-        let activeSubscribers = 0;
-        function ObserveProjectionSubscriptions() {
-            const projection = useAppShellPluginUiProjectionSubscription();
-            React.useLayoutEffect(() => {
-                const subscribe = projection.subscribe;
-                const observation = vi.spyOn(projection, 'subscribe').mockImplementation(listener => {
-                    activeSubscribers++;
-                    const unsubscribe = subscribe(listener);
-                    return () => { activeSubscribers--; unsubscribe(); };
-                });
-                return () => observation.mockRestore();
-            }, [projection]);
-            return null;
-        }
+        const { ObserveProjectionSubscriptions, count } = observeProjectionSubscriptions();
         const screen = await renderSettingsView(<AppShellPluginUiProjectionValueProvider value={value}>
             <ObserveProjectionSubscriptions />
             <ThemeProfilesSettingsScreen />
@@ -583,7 +588,7 @@ describe('Theme profile settings screen', () => {
             const text = tile!.findAll(node => typeof node.type === 'string').flatMap(node => node.children).join(' ');
             expect(text).toContain('Studio Palette');
         }
-        expect(activeSubscribers).toBe(2); // One library family and one addressed selection.
+        expect(count()).toBe(2); // One library family and one addressed selection.
     });
 
     it('adds a theme from the section menu through creation, import or Store Themes', async () => {
@@ -730,11 +735,26 @@ describe('Theme profile editor', () => {
         await act(async () => { await typefaceMenu!.props.onSelect(choice.id); });
         await saveEditor(screen);
         expect(saved().style).toEqual({ ...raw.style, fontFamily: choice.id });
-        await act(async () => { await typefaceMenu!.props.onSelect(''); });
+        let clearTypefaceAdmissions = 0;
+        await act(async () => {
+            const admission = vi.spyOn(ThemeProfileV1Schema, 'safeParse');
+            try {
+                typefaceMenu!.props.onSelect('');
+                clearTypefaceAdmissions = admission.mock.calls.length;
+            } finally { admission.mockRestore(); }
+        });
         await saveEditor(screen);
         expect(saved().style).toEqual({ radius: 'round', futureInset: 12 });
         const reset = await findHeaderMenuAction(screen, 'reset');
-        await act(async () => { await reset!.onSelect(); });
+        let resetAdmissions = 0;
+        await act(async () => {
+            const admission = vi.spyOn(ThemeProfileV1Schema, 'safeParse');
+            try {
+                void reset!.onSelect();
+                resetAdmissions = admission.mock.calls.length;
+            } finally { admission.mockRestore(); }
+        });
+        expect({ clearTypefaceAdmissions, resetAdmissions }).toEqual({ clearTypefaceAdmissions: 1, resetAdmissions: 1 });
         await saveEditor(screen);
         expect(saved().style).toEqual({ futureInset: 12 });
         expect(saved().seeds).toEqual({ futureTone: 0.4 });
@@ -1183,8 +1203,19 @@ describe('Theme profile editor', () => {
 
     it('treats built-in presets as read-only and cloneable', async () => {
         storage.getState().applyLocalSettings({ themePreference: 'dark' });
-        const screen = await renderEditorScreen('premiumDark');
+        shared.params = { profileId: 'premiumDark' };
+        const { ObserveProjectionSubscriptions, count } = observeProjectionSubscriptions();
+        const screen = await renderSettingsView(<AppShellPluginUiProjectionValueProvider value={{
+            pluginUiProjection: null, pluginBrowserProjection: null, phase: 'current',
+            interactionEnabled: true, machineId: null, serverId: null, platform: 'web', accountLifetime: null,
+            connectedAccountProjectionRevision: 0, reloadConnectedAccountProjection() {},
+            clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {},
+        }}>
+            <ObserveProjectionSubscriptions />
+            <ThemeProfileEditorScreen />
+        </AppShellPluginUiProjectionValueProvider>);
 
+        expect(count()).toBe(0);
         expect(screen.findByTestId('settings-theme-profile-save')).toBeNull();
         expect(await findHeaderMenuAction(screen, 'delete')).toBeUndefined();
         expect(await findHeaderMenuAction(screen, 'duplicate')).toBeDefined();

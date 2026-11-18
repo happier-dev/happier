@@ -107,12 +107,10 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     const router = useRouter();
     const params = useLocalSearchParams();
     const themePreference = useLocalSetting('themePreference');
-    const entries = useThemeLibraryEntries(presented);
     const selection = useThemeProfileReferenceSelection(presented);
     const scope = useAccountSettingsScope();
     const { execute } = useMountedActionExecution(scope);
     const executeTheme = useThemeActionExecution();
-    const share = useThemePluginShare(executeTheme, entries);
     const editorActions = React.useMemo(() => createThemeProfileEditorActions(executeTheme), [executeTheme]);
     const profileId = getProfileIdParam(params.profileId);
     const isNewProfile = profileId === createNewProfileRouteId;
@@ -139,6 +137,8 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     const builtInPresetId = initialSource.current.reference?.kind === 'built-in' ? initialSource.current.reference.presetId : null;
     const builtInDefinition = BUILT_IN_THEME_PROFILES.find(definition => definition.presetId === builtInPresetId);
     const readonly = !isNewProfile && sourceProfile?.source !== undefined && sourceProfile.source.kind !== 'yours';
+    const entries = useThemeLibraryEntries(presented && (isNewProfile || sourceProfile !== null && !readonly));
+    const share = useThemePluginShare(executeTheme, entries);
     const persisted = !isNewProfile && sourceDocument !== null;
     const presetOptions = React.useMemo(() => buildThemePresetSourceOptions(entries), [entries]);
     const initialPresetId = initialSource.current.reference ? getThemePresetSourceReferenceId(initialSource.current.reference) : initialMode;
@@ -177,11 +177,12 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         setDraft(next);
         if (sourceDocument) setMode(resolveThemePresetSourcePreferredMode(sourceDocument.profile));
     }, [presented, entries, initialMode, isNewProfile, routeKey, previewRef, previewSource, sourceDocument, sourceProfile, sourceRead.state]);
-    const draftDocument = React.useCallback((profile: ThemeProfileV1): ThemeProfileDocument => {
+    const draftDocument = React.useCallback((profile: ThemeProfileV1,
+        removeKnownFields?: NonNullable<Parameters<typeof mergeThemeProfileDocumentEdit>[2]>['removeKnownFields']): ThemeProfileDocument => {
         const retained = retainedDocument.current;
         if (retained) {
             // A full editor draft replaces supported optional fields; canonical merge retains unknown children.
-            return mergeThemeProfileDocumentEdit(retained, profile, { replaceKnownPresentation: true });
+            return mergeThemeProfileDocumentEdit(retained, profile, { replaceKnownPresentation: true, removeKnownFields });
         }
         const parsed = parseThemeProfileDocument(profile);
         if (!parsed.ok) throw new Error(parsed.error);
@@ -276,7 +277,8 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
 
     const resetMode = React.useCallback(() => {
         if (readonly || !draft) return;
-        const cleared = mergeThemeProfileDocumentEdit(draftDocument(draft), {}, { removeKnownFields: ['seeds', 'style', 'css'] });
+        const { seeds: _seeds, style: _style, css: _css, ...profile } = draft;
+        const cleared = draftDocument(profile, ['seeds', 'style', 'css']);
         retainedDocument.current = cleared;
         setInvalidByToken((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${mode}:`))));
         setDraft(resetThemeProfileDraftMode(cleared.profile, mode, nowThemeProfileTimestamp()));
@@ -398,10 +400,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         if (readonly || !draft) return;
         const { fontFamily: _previous, ...style } = draft.style ?? {};
         const next = { ...draft, style: { ...style, ...(fontFamily ? { fontFamily } : {}) }, updatedAt: nowThemeProfileTimestamp() };
-        if (fontFamily === null) {
-            const cleared = mergeThemeProfileDocumentEdit(draftDocument(next), {}, { removeKnownFields: ['style'] });
-            retainedDocument.current = mergeThemeProfileDocumentEdit(cleared, { style });
-        }
+        if (fontFamily === null) retainedDocument.current = draftDocument(next, ['style.fontFamily']);
         setDraft(next);
     }, [draft, draftDocument, readonly]);
     const updateCss = React.useCallback((css: string) => {

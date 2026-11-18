@@ -250,7 +250,7 @@ function isUnchangedThemeEdit(document: ThemeProfileDocument, edit: ThemeProfile
 /** Overlay deliberate edits, retaining presentation this build cannot interpret. */
 export function mergeThemeProfileDocumentEdit(document: ThemeProfileDocument, edit: ThemeProfileKnownEdit,
     options?: Readonly<{ retainedPresentation?: ThemeProfileDocument; replaceKnownPresentation?: true;
-        removeKnownFields?: readonly ('seeds' | 'style' | 'css')[] }>): ThemeProfileDocument {
+        removeKnownFields?: readonly ('seeds' | 'style' | 'css' | 'style.fontFamily')[] }>): ThemeProfileDocument {
     const retained = options?.retainedPresentation ?? (options?.replaceKnownPresentation ? document : undefined);
     const plainEdit = !retained && !options?.removeKnownFields?.length;
     if (plainEdit && edit && typeof edit === 'object'
@@ -305,6 +305,17 @@ export function mergeThemeProfileDocumentEdit(document: ThemeProfileDocument, ed
     const cleared: Record<string, JsonValue> = { __proto__: null, ...result.document.raw };
     const profile = { ...result.document.profile };
     for (const field of options.removeKnownFields) {
+        if (field === 'style.fontFamily') {
+            if (profile.style) {
+                const { fontFamily: _fontFamily, ...style } = profile.style;
+                profile.style = style;
+            }
+            if (isJsonObject(cleared.style)) {
+                const { fontFamily: _fontFamily, ...style } = cleared.style;
+                cleared.style = Object.freeze({ __proto__: null, ...style });
+            }
+            continue;
+        }
         delete profile[field];
         const value = cleared[field];
         if (field === 'css' || !isJsonObject(value)) {
