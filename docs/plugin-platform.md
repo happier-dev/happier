@@ -3811,6 +3811,11 @@ result cells and staged edits stay out of that record. Staged changes, filters,
 location and widths belong to the workbench instance; its unsaved-change flag
 uses the page navigation guard above.
 
+The database Overview uses the same size, activity and statement readings as
+Insights. Its Automations section takes the resource subject supplied by the
+admitted database read and delegates to the host's subject automation surface.
+Schemas and tables come from the workbench catalog.
+
 ### Database and telemetry widgets (unreleased 0.3)
 
 The Home Check widget binds one saved Monitoring check and renders its

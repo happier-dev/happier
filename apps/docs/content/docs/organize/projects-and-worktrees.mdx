@@ -104,12 +104,19 @@ target can resolve a selected variable before the service starts. The picker can
 show the database endpoint and the Machine that runs the workbench. Managed
 databases open from the deployment's Database page.
 
+On a database's **Overview**, check its size, connections, and statement
+statistics where the engine shares them. Expand a schema to see its tables.
+When the database has an **Automations** section, it shows automations for that
+target.
+
 - In a table, open a row and use **Referenced by** to jump to rows in another
   table that point to it. The destination opens with the selected row's key
   values as filters.
 - In the **Console**, enter SQL with placeholders for the selected engine.
   Happier adds a field for each bind slot it finds. Each field starts as Text.
-  Choose a different type when the query needs one.
+  Choose a different type when the query needs one. The Console identifies the
+  database where the query runs. **History** keeps the SQL on this device for
+  that target. A query that returns zero rows still shows its result columns.
 
 When an Environment has a collector, its **Telemetry** tab shows **Endpoints**,
 **Traces**, **Logs**, and **Queries** for the selected time window. Open a trace
