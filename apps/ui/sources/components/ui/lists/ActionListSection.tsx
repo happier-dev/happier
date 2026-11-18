@@ -59,10 +59,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     separator: {
         height: StyleSheet.hairlineWidth,
-        // Edge to edge like the rows it parts: popovers are full-bleed (MENU_ROW_METRICS, LAB-P8 r2).
-        marginHorizontal: 0,
+        // A group separator stands on the menu's text edge, inset like the words it parts, in the list-row rule's
+        // ink so it reads in dark too (cscomp C2plus, LABPARITY-ACCEPT-C fix 4). The rows' fills stay edge to edge.
+        marginHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
         marginTop: -MENU_ROW_METRICS.sectionPaddingVerticalPx,
-        backgroundColor: theme.colors.border.default,
+        backgroundColor: theme.colors.border.divider,
     },
     sectionAfterSeparator: {
         paddingTop: 0,

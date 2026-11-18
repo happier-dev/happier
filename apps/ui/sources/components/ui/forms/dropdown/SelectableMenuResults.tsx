@@ -466,10 +466,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     categorySeparator: {
         height: StyleSheet.hairlineWidth,
-        // Edge to edge like the rows it parts: popovers are full-bleed (MENU_ROW_METRICS).
-        marginHorizontal: 0,
+        // The menu's one group separator (as `ActionListSection` draws it): on the text edge, in the list-row rule's ink.
+        marginHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
         marginVertical: MENU_ROW_METRICS.sectionPaddingVerticalPx,
-        backgroundColor: theme.colors.border.subtle,
+        backgroundColor: theme.colors.border.divider,
     },
     itemRowPressable: {
         alignSelf: 'stretch',
