@@ -15,12 +15,37 @@ import (
 	"strconv"
 	"strings"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 var (
 	procGetNamedPipeClientProcessId = kernel32.NewProc("GetNamedPipeClientProcessId")
+	procGetNamedPipeServerProcessId = kernel32.NewProc("GetNamedPipeServerProcessId")
 	procGetStartupInfoW             = kernel32.NewProc("GetStartupInfoW")
 )
+
+// A connected client proves the pipe server is this OS user before sending
+// private input. The connection, rather than a mutable descriptor path, owns
+// the server PID. Keep the process handle open while inspecting its token.
+func namedPipeServerSameUserPid(handle uintptr) (int, error) {
+	var serverPid uint32
+	result, _, callErr := procGetNamedPipeServerProcessId.Call(handle, uintptr(unsafe.Pointer(&serverPid)))
+	if result == 0 || serverPid == 0 {
+		return 0, fmt.Errorf("GetNamedPipeServerProcessId failed: %v", callErr)
+	}
+	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, serverPid)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseHandle(process)
+	principal, err := censusWindowsPrincipal(process)
+	own, ownErr := censusWindowsPrincipal(windows.CurrentProcess())
+	if err != nil || ownErr != nil || principal == nil || own == nil || principal.Value != own.Value {
+		return 0, fmt.Errorf("named-pipe server principal is not the current principal")
+	}
+	return int(serverPid), nil
+}
 
 // namedPipeClientPid asks the kernel for the client process of one pipe
 // handle. A zero pid is refused rather than reported.
@@ -83,11 +108,20 @@ func inheritedPipeHandle(args []string) (uintptr, error) {
 }
 
 func peerIdentityCommand(args []string) error {
+	server := len(args) > 0 && args[0] == "--server"
+	if server {
+		args = args[1:]
+	}
 	handle, err := inheritedPipeHandle(args)
 	if err != nil {
 		return err
 	}
-	pid, err := namedPipeClientPid(handle)
+	var pid int
+	if server {
+		pid, err = namedPipeServerSameUserPid(handle)
+	} else {
+		pid, err = namedPipeClientPid(handle)
+	}
 	if err != nil {
 		return err
 	}

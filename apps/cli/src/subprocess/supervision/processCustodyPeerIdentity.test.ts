@@ -157,6 +157,18 @@ function makeSocket(): SocketType {
 }
 
 describe('local IPC peer identity invocation boundary', () => {
+    it('asks the native boundary to prove a connected Windows pipe server belongs to this user', async () => {
+        const calls: Array<{ executablePath: string; args: readonly string[]; stdio: readonly unknown[] }> = [];
+        const identity = await observeLocalIpcPeerIdentity({
+            socket: makeSocket(), executablePath: 'custody', peer: 'server',
+            spawn: fakeSpawnFactory({ calls,
+                outcome: { stdout: '{"pid":4242,"t":"peer-identity","uid":null,"v":1}\n', code: 0 },
+            }),
+        });
+        expect(identity).toEqual({ pid: 4242, uid: null });
+        expect(calls[0].args).toEqual(['peer-identity', '--server']);
+    });
+
     it('passes the accepted socket as the fixed extra descriptor and parses the identity', async () => {
         const socket = makeSocket();
         const calls: Array<{ executablePath: string; args: readonly string[]; stdio: readonly unknown[] }> = [];

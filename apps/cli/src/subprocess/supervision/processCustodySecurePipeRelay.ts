@@ -4,6 +4,11 @@ import { createServer, type Server, type Socket } from 'node:net';
 
 import { resolveProcessCustodyPeerIdentityExecutable } from './processCustody';
 
+export const OWNER_ONLY_LOCAL_PIPE_PREFIXES = [
+    'happier-workspace-sync-', 'happier-session-rpc-', 'happier-session-target-',
+] as const;
+export type OwnerOnlyLocalPipePrefix = typeof OWNER_ONLY_LOCAL_PIPE_PREFIXES[number];
+
 const RELAY_SECRET_BYTES = 32;
 const RELAY_NONCE_BYTES = 16;
 const RELAY_MAC_BYTES = 32;
@@ -162,8 +167,10 @@ export async function startProcessCustodySecurePipeRelay(input: Readonly<{
     onConnection(socket: Socket, peerPid: number): void;
 }>): Promise<ProcessCustodySecurePipeRelay> {
     if (process.platform !== 'win32') throw new Error('secure named-pipe relay is Windows-only');
-    if (!/^\\\\\.\\pipe\\happier-workspace-sync-[A-Za-z0-9-]+$/u.test(input.pipeName)) {
-        throw new TypeError('invalid workspace-sync named-pipe path');
+    // The native relay implements this same closed command contract.
+    const prefix = OWNER_ONLY_LOCAL_PIPE_PREFIXES.find(prefix => input.pipeName.startsWith(`\\\\.\\pipe\\${prefix}`));
+    if (!prefix || !/^[A-Za-z0-9-]+$/u.test(input.pipeName.slice(`\\\\.\\pipe\\${prefix}`.length))) {
+        throw new TypeError('invalid owner-only named-pipe path');
     }
     const executablePath = resolveProcessCustodyPeerIdentityExecutable('win32');
     if (!executablePath) throw new Error('process-custody runtime is unavailable');

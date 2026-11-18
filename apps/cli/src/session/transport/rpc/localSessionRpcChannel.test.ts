@@ -78,6 +78,7 @@ import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision
 import { captureProcessBirthWitness, type ProcessBirthWitness } from '@/daemon/processIdentity';
 import type { RpcLocalActionContext } from '@/api/rpc/types';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
+import { logger } from '@/ui/logger';
 import { join, resolve as resolvePath } from 'node:path';
 
 // This test process plays the daemon: the only caller its Session hosts admit (its published birth).
@@ -237,6 +238,8 @@ describe('same-machine Session RPC channel (callSessionRpc router)', () => {
 
   it('admits only the daemon that spawned or adopted the host: another same-user process is refused', async () => {
     const live = await host();
+    // Logging is an output boundary; peer identity and admission remain real.
+    const diagnostics = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     try {
       const [file] = await findDescriptors(`${testHome}/servers`);
       const socketPath = JSON.parse(await readFile(file!, 'utf8')).endpoint.path;
@@ -255,7 +258,8 @@ describe('same-machine Session RPC channel (callSessionRpc router)', () => {
       // The daemon itself (this process) is admitted on the same socket.
       await expect(call(SESSION_RPC_METHODS.EXECUTION_RUN_LIST)).resolves.toMatchObject({ runs: [] });
       expect([live.seen.length, relay.calls]).toEqual([1, 0]);
-    } finally { await live.retire(); }
+      expect(diagnostics.mock.calls).toContainEqual(['[SESSION LOCAL RPC] Caller peer refused', { reason: 'daemon_pid_mismatch' }]);
+    } finally { diagnostics.mockRestore(); await live.retire(); }
   }, 60_000);
 
   it('refuses a peer holding a recycled daemon pid (stale state after an unclean daemon exit): served through the server', async () => {

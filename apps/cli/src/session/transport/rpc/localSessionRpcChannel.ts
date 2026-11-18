@@ -3,7 +3,7 @@ import { SessionSpawnLaunchErrorV1Schema, type SessionSpawnLaunchErrorV1 } from 
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
-import { Agent, createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer, request as httpRequest, type Agent, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { createServer as createNetServer, type Server as NetServer, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { readAuthTokenProvenance, type AuthTokenKind } from '@happier-dev/protocol/auth/authToken';
@@ -27,6 +27,7 @@ import type { ProcessBirthWitness } from '@/daemon/processIdentity';
 import type { RpcLocalActionContext } from '@/api/rpc/types';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { AgentRuntimeRunnerBootstrapV1Schema, type AgentRuntimeRunnerBootstrapV1 } from '@/agent/runtime/session/process/agentRuntimeRunnerProtocol';
+import { createLocalSessionRpcAgent } from './localSessionRpcAgent';
 
 /**
  * Same-machine Session RPC channel.
@@ -45,7 +46,7 @@ import { AgentRuntimeRunnerBootstrapV1Schema, type AgentRuntimeRunnerBootstrapV1
  * directory (0600 files); the endpoint is a 0600 unix socket inside a private 0700 directory under
  * an owner-only root (never shared temp), and the caller verifies both before connecting. The
  * caller must be the daemon's published process generation (kernel peer pid + birth). Windows hosts serve a named pipe with an owner-SID-only DACL, but
- * callers keep the server path there until the client can verify the pipe server's user SID.
+ * clients verify the connected pipe server's user SID before sending private input.
  */
 
 const DESCRIPTOR_VERSION = 1;
@@ -156,11 +157,15 @@ const LOCAL_SESSION_PEER_REFUSED = 'local_session_peer_refused';
 type CallerPeer = ProcessCustodyPeerIdentity & Readonly<{ birth: ProcessBirthWitness | null }>;
 const peerIdentities = new WeakMap<Socket, CallerPeer | null>();
 
-async function observeCallerPeer(socket: Socket): Promise<CallerPeer | null> {
-  const executablePath = resolveProcessCustodyPeerIdentityExecutable(process.platform);
-  if (!executablePath) return null;
-  const identity = await observeLocalIpcPeerIdentity({ socket, executablePath }).catch(() => null);
-  if (!identity || identity.uid !== process.getuid?.()) return null;
+async function observeCallerPeer(socket: Socket, endpoint: OwnerOnlyLocalEndpoint): Promise<CallerPeer | null> {
+  // The Windows relay owns the SID-only pipe and authenticates its kernel client
+  // PID before handing us the loopback stream; querying that stream sees the relay.
+  const relayPid = endpoint.peerPid(socket);
+  const executablePath = process.platform === 'win32' ? null : resolveProcessCustodyPeerIdentityExecutable(process.platform);
+  const identity = process.platform === 'win32'
+    ? relayPid === undefined ? null : { pid: relayPid, uid: null }
+    : executablePath ? await observeLocalIpcPeerIdentity({ socket, executablePath }).catch(() => null) : null;
+  if (!identity || (process.platform !== 'win32' && identity.uid !== process.getuid?.())) return null;
   // Read right after accept: a pid recycled after an unclean daemon exit carries another birth.
   const { captureProcessBirthWitness } = await import('@/daemon/processIdentity');
   return { ...identity, birth: await captureProcessBirthWitness(identity.pid).catch(() => null) };
@@ -185,12 +190,19 @@ async function isTrustedCaller(
 ): Promise<boolean> {
   const socket = request.socket as Socket;
   if (admittedConnections.get(socket)?.has(owner.readTrustedCaller)) return true;
+  const refuse = (reason: string): false => {
+    logger.warnLocalFile('[SESSION LOCAL RPC] Caller peer refused', { reason });
+    return false;
+  };
   const peer = peerIdentities.get(socket);
-  if (!peer?.birth || peer.uid !== process.getuid?.()) return false;
+  if (!peer) return refuse('peer_identity_unproven');
+  if (!peer.birth) return refuse('peer_birth_unproven');
+  if (process.platform !== 'win32' && peer.uid !== process.getuid?.()) return refuse('peer_uid_mismatch');
   const trusted = await owner.readTrustedCaller().catch(() => null);
-  if (!trusted || trusted.pid !== peer.pid) return false;
+  if (!trusted) return refuse('daemon_birth_unpublished');
+  if (trusted.pid !== peer.pid) return refuse('daemon_pid_mismatch');
   const { compareProcessBirth } = await import('@/daemon/processIdentity');
-  if (compareProcessBirth(trusted, { status: 'same', witness: peer.birth }).status !== 'same') return false;
+  if (compareProcessBirth(trusted, { status: 'same', witness: peer.birth }).status !== 'same') return refuse('daemon_birth_mismatch');
   const admitted = admittedConnections.get(socket) ?? new Set();
   admitted.add(owner.readTrustedCaller);
   admittedConnections.set(socket, admitted);
@@ -320,7 +332,7 @@ async function startIngress(): Promise<Ingress> {
     const front = createNetServer(socket => {
       current.sockets.add(socket);
       socket.once('close', () => current.sockets.delete(socket));
-      void observeCallerPeer(socket).then(identity => {
+      void observeCallerPeer(socket, endpoint).then(identity => {
         if (socket.destroyed) return;
         peerIdentities.set(socket, identity);
         server.emit('connection', socket);
@@ -362,9 +374,6 @@ async function writeDescriptor(path: string, descriptor: LocalSessionRpcDescript
  * retirement that removes the descriptor and, after the last Session, closes the endpoint.
  */
 export async function registerLocalSessionRpcTarget(target: LocalSessionRpcTarget): Promise<() => Promise<void>> {
-  // Callers cannot yet verify a Windows pipe server's user SID, so they never route there; serving
-  // a pipe nobody may use would only add a listener.
-  if (process.platform === 'win32') return async () => {};
   // Only a host holding a full Account/terminal credential of the Session owner serves locally; a
   // restricted host (ephemeral runner, API token) keeps every call on the server's admission.
   const hostKind = readCredentialKind(target.credentialToken);
@@ -426,7 +435,7 @@ const endpointAgents = new Map<string, Agent>();
 function keepAliveAgent(endpointPath: string): Agent {
   let agent = endpointAgents.get(endpointPath);
   if (!agent) {
-    agent = new Agent({ keepAlive: true });
+    agent = createLocalSessionRpcAgent(endpointPath);
     endpointAgents.set(endpointPath, agent);
   }
   return agent;
@@ -443,7 +452,6 @@ const inFlightLocalCalls = new Map<string, Set<Readonly<{ pid: number; abort: ()
 export async function retireGoneLocalSessionRpcHost(input: Readonly<{ sessionId: string; pid: number }>): Promise<void> {
   // Only calls to that host process: a successor already serving the Session keeps its calls.
   for (const call of inFlightLocalCalls.get(input.sessionId) ?? []) if (call.pid === input.pid) call.abort();
-  if (process.platform === 'win32') return;
   const descriptor = readDescriptor(input.sessionId);
   if (descriptor?.pid === input.pid) {
     endpointAgents.get(descriptor.endpoint.path)?.destroy();
@@ -455,10 +463,16 @@ export async function retireGoneLocalSessionRpcHost(input: Readonly<{ sessionId:
 /** An owner-only descriptor file naming an endpoint whose directory is still ours, or null. */
 function readVerifiedDescriptorFile(path: string): Record<string, unknown> | null {
   try {
-    if (!isOwnerOnlyPath(resolveDescriptorDirectory()) || !isOwnerOnlyPath(path)) return null;
+    if (process.platform !== 'win32' && (!isOwnerOnlyPath(resolveDescriptorDirectory()) || !isOwnerOnlyPath(path))) return null;
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown> | null;
     const endpoint = parsed?.endpoint as Partial<LocalSessionRpcDescriptorV1['endpoint']> | undefined;
-    if (!parsed || parsed.v !== DESCRIPTOR_VERSION || !endpoint || typeof endpoint.path !== 'string' || endpoint.kind !== 'unix') return null;
+    if (!parsed || parsed.v !== DESCRIPTOR_VERSION || !endpoint || typeof endpoint.path !== 'string') return null;
+    if (process.platform === 'win32') {
+      // No POSIX ownership bits on Windows: these are routing hints only. Each
+      // actual connection proves the server SID before HTTP sends any bytes.
+      return endpoint.kind === 'named_pipe' && /^\\\\\.\\pipe\\happier-session-rpc-[A-Za-z0-9-]+$/u.test(endpoint.path) ? parsed : null;
+    }
+    if (endpoint.kind !== 'unix') return null;
     // The endpoint's own directory must still be ours, and so must its parent (an owner-only socket
     // root): in a shared world-writable directory (sticky or not) another user could recreate a
     // crashed host's leaf, or swap it between this check and connect. Hosts never place endpoints there.
@@ -534,8 +548,6 @@ export function resolveLocalSessionRpcRoute(input: Readonly<{
   authorityCeiling?: 'account_automation';
   localActionContext?: LocalSessionRpcActionContext;
 }>): LocalSessionRpcRoute | null {
-  // Windows: callers cannot yet verify the pipe server's user SID (relay follow-up), so never local.
-  if (process.platform === 'win32') return null;
   // Hosts admit only their daemon (kernel peer identity); other processes keep the server path.
   if (!localSessionRpcCallerEnabled) return null;
   if (!resolveSocketRpcSameAccountSessionAuthorizationV1(input.method, input.sessionId,
@@ -781,8 +793,6 @@ async function handleSessionHostRequest(current: Ingress, request: IncomingMessa
  * retirement that stops admitting Sessions (and closes the endpoint when nothing else is served).
  */
 export async function serveLocalSessionHost(admission: LocalSessionHostAdmission): Promise<() => Promise<void>> {
-  // Windows callers cannot yet verify a pipe server's user SID (see the Session RPC router).
-  if (process.platform === 'win32') throw new Error('A session host needs a peer-verified local endpoint');
   ingress ??= startIngress().catch(error => { ingress = null; throw error; });
   const current = await ingress;
   if (current.host) throw new Error('This process already serves a session host');
@@ -878,7 +888,8 @@ function openLocalSessionHostSession(input: Readonly<{ hostPid: number; path: st
   }
   // Its own connection: the request lives as long as the Session.
   const outgoing = httpRequest({
-    socketPath: descriptor.endpoint.path, path: input.path, method: 'POST', agent: false,
+    socketPath: descriptor.endpoint.path, path: input.path, method: 'POST',
+    agent: process.platform === 'win32' ? createLocalSessionRpcAgent(descriptor.endpoint.path, 'win32', false) : false,
     headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) },
   }, incoming => {
     if (incoming.statusCode !== 200) {
@@ -921,7 +932,8 @@ export function holdLocalSessionHost(input: Readonly<{ hostPid: number }>): Read
   let resolveHeld!: (held: boolean) => void;
   const held = new Promise<boolean>(resolve => { resolveHeld = resolve; });
   const outgoing = httpRequest({
-    socketPath: descriptor.endpoint.path, path: HOST_HOLD_PATH, method: 'POST', agent: false,
+    socketPath: descriptor.endpoint.path, path: HOST_HOLD_PATH, method: 'POST',
+    agent: process.platform === 'win32' ? createLocalSessionRpcAgent(descriptor.endpoint.path, 'win32', false) : false,
     headers: { 'content-type': 'application/json', 'content-length': 2 },
   }, incoming => {
     resolveHeld(incoming.statusCode === 200);
@@ -960,7 +972,8 @@ async function callLocalSessionHost(hostPid: number, path: string, body: unknown
   const text = JSON.stringify(body);
   return await new Promise<Record<string, unknown> | null>(resolve => {
     const outgoing = httpRequest({
-      socketPath: descriptor.endpoint.path, path, method: 'POST', agent: false,
+      socketPath: descriptor.endpoint.path, path, method: 'POST',
+      agent: process.platform === 'win32' ? createLocalSessionRpcAgent(descriptor.endpoint.path, 'win32', false) : false,
       headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(text) },
     }, incoming => {
       readBody(incoming).then(raw => {

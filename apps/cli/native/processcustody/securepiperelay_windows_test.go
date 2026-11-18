@@ -47,6 +47,14 @@ func TestSecurePipeListenerUsesUserOnlyDACLAndWitnessesExactClientPID(t *testing
 		t.Fatalf("dial secured pipe: %v", err)
 	}
 	defer client.Close()
+	clientDescriptor, ok := client.(fileDescriptor)
+	if !ok {
+		t.Fatal("pipe client did not expose its native handle")
+	}
+	serverPID, err := namedPipeServerSameUserPid(clientDescriptor.Fd())
+	if err != nil || serverPID != os.Getpid() {
+		t.Fatalf("same-user server PID = %d, want %d: %v", serverPID, os.Getpid(), err)
+	}
 	var server net.Conn
 	select {
 	case server = <-accepted:

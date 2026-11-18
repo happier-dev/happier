@@ -97,4 +97,24 @@ describe('process-custody secure named-pipe relay contract', () => {
         expect(targetPort).not.toBeNull();
         await expect(canConnectToLoopbackPort(targetPort!)).resolves.toBe(false);
     });
+    it('admits only the closed owner-only pipe prefixes before launching the helper', async () => {
+        vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+        const launched: string[] = [];
+        spawnMock.mockImplementation((_executablePath: string, args: readonly string[]) => {
+            launched.push(args.find((argument) => argument.startsWith('--pipe-name=')) ?? '');
+            throw Object.assign(new Error('helper launch observed'), { code: 'ENOENT' });
+        });
+        await expect(startProcessCustodySecurePipeRelay({
+            pipeName: '\\\\.\\pipe\\happier-session-rpc-test', onConnection: () => undefined,
+        })).rejects.toThrow();
+        expect(launched).toEqual(['--pipe-name=\\\\.\\pipe\\happier-session-rpc-test']);
+        await expect(startProcessCustodySecurePipeRelay({
+            pipeName: '\\\\.\\pipe\\happier-session-target-test', onConnection: () => undefined,
+        })).rejects.toThrow();
+        expect(launched.at(-1)).toBe('--pipe-name=\\\\.\\pipe\\happier-session-target-test');
+        await expect(startProcessCustodySecurePipeRelay({
+            pipeName: '\\\\.\\pipe\\happier-other-test', onConnection: () => undefined,
+        })).rejects.toThrow(TypeError);
+        expect(launched).toHaveLength(2);
+    });
 });

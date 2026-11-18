@@ -35,11 +35,18 @@ func parseSecurePipeRelayOptions(args []string) (securePipeRelayOptions, error) 
 			return securePipeRelayOptions{}, fmt.Errorf("invalid secure pipe relay argument")
 		}
 	}
-	if !strings.HasPrefix(options.pipeName, `\\.\pipe\happier-workspace-sync-`) || len(options.pipeName) > 256 {
-		return securePipeRelayOptions{}, fmt.Errorf("invalid workspace-sync named-pipe path")
+	if !hasSecurePipeRelayPrefix(options.pipeName) || len(options.pipeName) > 256 {
+		return securePipeRelayOptions{}, fmt.Errorf("invalid owner-only named-pipe path")
 	}
 	if options.targetPort == 0 {
 		return securePipeRelayOptions{}, fmt.Errorf("secure pipe relay target port is required")
 	}
 	return options, nil
+}
+
+// Closed prefix set shared with the TypeScript owner (OwnerOnlyLocalPipePrefix).
+func hasSecurePipeRelayPrefix(pipeName string) bool {
+	return strings.HasPrefix(pipeName, `\\.\pipe\happier-workspace-sync-`) ||
+		strings.HasPrefix(pipeName, `\\.\pipe\happier-session-rpc-`) ||
+		strings.HasPrefix(pipeName, `\\.\pipe\happier-session-target-`)
 }

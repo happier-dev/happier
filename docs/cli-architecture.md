@@ -8071,7 +8071,8 @@ to add the Session; the host is started on first use through the same launch own
 as runners (`launchDetachedHappierProcess.ts`: binary-safe command, Linux user scope,
 OOM score, sanitized stderr) as `happier session-host`. TTY-bound launches (tmux,
 Windows terminal, adapter hosts) and every Windows spawn keep one runner process per
-Session: Windows callers cannot yet verify the local pipe server's identity.
+Session under the current launch placement rule. Windows local RPC clients verify
+the connected pipe server's same-user SID before sending input.
 
 The daemon adds and ends Sessions on the host's owner-only local endpoint, the same
 peer-checked endpoint as the local Session RPC channel
@@ -10646,21 +10647,20 @@ This mechanism allows the server and mobile clients to drive local actions witho
 ### Same-machine Session RPC channel (0.3 development)
 
 `callSessionRpc` (`src/session/transport/rpc/sessionRpc.ts`) is the one router for Session RPCs, with about 25 production callers. Only the **daemon** process takes the same-machine local channel (`enableLocalSessionRpcCalls()` at daemon start), and only when all of these hold:
-- the platform is not Windows;
 - the method's Session context is mintable through `resolveSocketRpcSameAccountSessionAuthorizationV1`; Agent starts additionally require the daemon's admitted private context and a receiver that supports it;
 - the caller's credential kind is `account`, `account_directory` or `terminal` (a routing filter for honest callers, not a security control);
-- an owner-only descriptor for the sessionId names the caller's Account and an owner-only endpoint directory whose parent is owner-only (a shared world-writable directory, sticky or not, is refused).
+- a descriptor for the sessionId names the caller's Account; POSIX descriptors and endpoint directories are owner-only, including the parent directory, while Windows clients prove the connected pipe server's same-user SID before sending bytes.
 
 Ordinary requests outside these conditions use the server path. An already-admitted
 Agent start with private depth, selection context or workspace-write policy requires
 the trusted local route; an unavailable route returns a typed failure before Resume
 or Start instead of dropping those facts on the relay.
 
-**The security boundary is on the host side.** A Session host (`ApiSessionClient` with owner authority and a full Account/terminal credential, via `registerLocalSessionRpcTarget`) admits a connection only if the kernel-proven peer is the daemon that spawned or adopted it, under the same OS user. The peer comes from SO_PEERCRED on Linux and LOCAL_PEERPID+LOCAL_PEERCRED on macOS, read through the shipped `happier-process-custody peer-identity` helper once per connection. The daemon is identified by its process generation in the daemon's own published state (`processBirth`: pid plus native start identity, stamped by the lifecycle-lock owner on every publication), re-read per request, which also covers a daemon restart or adoption. The host reads the peer pid's birth once per connection; a pid recycled after an unclean daemon exit carries another birth and is refused.
+**The security boundary is on the host side.** A Session host (`ApiSessionClient` with owner authority and a full Account/terminal credential, via `registerLocalSessionRpcTarget`) admits a connection only if the kernel-proven peer is the daemon that spawned or adopted it, under the same OS user. The peer comes from SO_PEERCRED on Linux and LOCAL_PEERPID+LOCAL_PEERCRED on macOS, read through the shipped `happier-process-custody peer-identity` helper once per connection. Windows uses the existing owner-SID-only named-pipe relay's authenticated client PID; clients verify the relay server's same-user SID through `peer-identity --server`. The daemon is identified by its process generation in the daemon's own published state (`processBirth`: pid plus native start identity, stamped by the lifecycle-lock owner on every publication). The host reads the peer pid's birth and admits that daemon generation once per connection; a pid recycled after an unclean daemon exit carries another birth and is refused.
 
 Any other same-user process gets `403 local_session_peer_refused` before dispatch; for example, a sandboxed agent shell posting directly to the socket. This holds even for a sandbox that can read the descriptor. No secret exists in files, env or argv. The router treats that refusal, connect-refused and 404 as "not dispatched" and uses the server.
 
-Endpoint: a 0600 unix socket in a 0700 directory under this user's owner-only socket root (`resolveOwnerOnlySocketRoot` in `utils/ipc/ownerOnlyLocalEndpoint.ts`, shared with the session holder). The root is the first that fits the socket-path limit: `$XDG_RUNTIME_DIR`, else the Happier home's private `run/`, else a private `~/.happier-run`, else a per-user `happier-<uid>` under the system temp dir. That last one is created 0700; if it already exists it must be ours, not a symlink and exactly 0700, or it is refused (never repaired). The shared temp directory itself is never used, and callers refuse an endpoint whose parent is not owner-only.
+On POSIX the endpoint is a 0600 unix socket in a 0700 directory under this user's owner-only socket root (`resolveOwnerOnlySocketRoot` in `utils/ipc/ownerOnlyLocalEndpoint.ts`, shared with the session holder). The root is the first that fits the socket-path limit: `$XDG_RUNTIME_DIR`, else the Happier home's private `run/`, else a private `~/.happier-run`, else a per-user `happier-<uid>` under the system temp dir. That last one is created 0700; if it already exists it must be ours, not a symlink and exactly 0700, or it is refused (never repaired). The shared temp directory itself is never used, and callers refuse an endpoint whose parent is not owner-only. Windows uses an owner-SID-only `happier-session-rpc-` named pipe; its descriptor is only a routing hint, with identity verified on the connected pipe before private input is sent.
 
 The local hop carries the plain codec. Both ends hold the Session key, the hop never leaves the machine, and only the daemon is admitted. Callers therefore read no Session record (`{ mode: 'deferred' }` via `deferSessionRpcEncryption` / `withTrackedSessionRpcContext`). Server-path packets stay sealed.
 
@@ -10671,8 +10671,8 @@ context separately from the public RPC packet. Only the existing peer-authentica
 local ingress supplies it to the Session's host-private Action context. The Run stays
 attached to the selected Session, and its depth and workspace-write ceiling come
 from the Workflow admission rather than the Session's active Turn. This local
-extension does not make private context available over the server transport or on
-Windows, where the local caller route is currently disabled.
+extension does not make private context available over the server transport.
+Windows uses the same private local context after pipe peer admission.
 
 Session marker removal (the daemon's runner-liveness owner) calls `retireGoneLocalSessionRpcHost`. It deletes the descriptor only if it still names that runner's pid, and ends this process's in-flight calls to that pid.
 

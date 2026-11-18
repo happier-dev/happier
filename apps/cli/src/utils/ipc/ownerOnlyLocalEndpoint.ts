@@ -8,6 +8,7 @@ import { configuration } from '@/configuration';
 
 import {
   startProcessCustodySecurePipeRelay,
+  type OwnerOnlyLocalPipePrefix,
   type ProcessCustodySecurePipeRelay,
   type ProcessCustodySecurePipeRelayStart,
 } from '@/subprocess/supervision/processCustodySecurePipeRelay';
@@ -17,7 +18,7 @@ import {
  * directory), or on Windows a named pipe whose owner-SID-only DACL is applied by the native secure
  * relay (`processcustody secure-pipe-relay`). Never a network listener for callers.
  */
-export type OwnerOnlyLocalPipePrefix = 'happier-workspace-sync-' | 'happier-session-rpc-';
+export type { OwnerOnlyLocalPipePrefix } from '@/subprocess/supervision/processCustodySecurePipeRelay';
 
 export interface OwnerOnlyLocalEndpoint {
   readonly endpointPath: string;

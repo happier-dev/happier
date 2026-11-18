@@ -640,13 +640,15 @@ function spawnProcessCustodyPeerIdentityChild(input: Readonly<{
 export async function observeLocalIpcPeerIdentity(input: Readonly<{
     socket: Socket;
     executablePath: string;
+    /** Windows clients verify the connected pipe server before writing. */
+    peer?: 'server';
     timeoutMs?: number;
     spawn?: ProcessCustodyPeerIdentitySpawn;
 }>): Promise<ProcessCustodyPeerIdentity | null> {
     const spawnChild = input.spawn ?? spawnProcessCustodyPeerIdentityChild;
     if (input.socket.destroyed) return null;
     const restoreFlowing = input.socket.readableFlowing === true;
-    const args = ['peer-identity'] as const;
+    const args = input.peer === 'server' ? ['peer-identity', '--server'] as const : ['peer-identity'] as const;
     const stdio = ['ignore', 'pipe', 'pipe', input.socket] as const;
     let child: ProcessCustodyPeerIdentityChild;
     try {

@@ -15,6 +15,26 @@ func TestParseSecurePipeRelayOptions(t *testing.T) {
 	}
 }
 
+func TestParseSecurePipeRelayOptionsAdmitsSessionRpcPrefix(t *testing.T) {
+	options, err := parseSecurePipeRelayOptions([]string{
+		`--pipe-name=\\.\pipe\happier-session-rpc-test`,
+		"--target-port=43127",
+	})
+	if err != nil || options.pipeName != `\\.\pipe\happier-session-rpc-test` {
+		t.Fatalf("session-rpc prefix: %#v %v", options, err)
+	}
+}
+
+func TestParseSecurePipeRelayOptionsAdmitsSessionTargetPrefix(t *testing.T) {
+	options, err := parseSecurePipeRelayOptions([]string{
+		`--pipe-name=\\.\pipe\happier-session-target-test`,
+		"--target-port=43127",
+	})
+	if err != nil || options.pipeName != `\\.\pipe\happier-session-target-test` {
+		t.Fatalf("session-target prefix: %#v %v", options, err)
+	}
+}
+
 func TestParseSecurePipeRelayOptionsRejectsUnsafeInputs(t *testing.T) {
 	for _, args := range [][]string{
 		{"--target-port=43127"},
