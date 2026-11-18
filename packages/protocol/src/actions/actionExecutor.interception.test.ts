@@ -47,6 +47,41 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor execution interception', () => {
+  it.each(['skipped', 'unavailable'] as const)('settles a before-wait admission with no Run as %s', async outcome => {
+    const actionId = 'example.fixture/actions/write';
+    let effects = 0;
+    let stored: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'] | null = null;
+    const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [
+      { automationId: 'review', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
+        ownerAccountId: 'actor', actionIds: [actionId], phase: 'before', mode: 'wait', onFailure: 'refuse' },
+    ] }), start: async () => ({ runs: [], notices: outcome === 'skipped'
+      ? [{ code: 'action_automation_skipped', reason: 'causeSuppressed', automationId: 'review', triggerId: 'before', workflowId: 'workflow' }]
+      : [] }) });
+    // Approval persistence and the contributed effect host are external boundaries.
+    const executor = createActionExecutor({ actionAutomations: port,
+      approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'approval' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => { stored = request; return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+      invokeContributedAction: async () => { effects++; return { ok: true, result: { applied: true } }; },
+    });
+    try {
+      const context: ActionExecutorContext = {
+        surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, bypassApprovals: true,
+        serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'actor', actionRequestId: 'no-run-request',
+        defaultSessionMachineId: 'machine',
+      };
+      const selection = await port.select({ actionId, input: {}, context });
+      expect(selection.before).toHaveLength(1);
+      const result = await executor.execute('action.invoke', {
+        action: { pluginId: 'example.fixture', localId: 'write' }, input: {},
+      }, { ...context, actionAutomationAdmission: createActionAutomationInvocationV1({ actionId, context, selection, port })
+      });
+      expect(result).toMatchObject(outcome === 'skipped' ? { ok: true } : { ok: false, errorCode: 'target_unavailable' });
+      expect(effects).toBe(outcome === 'skipped' ? 1 : 0);
+    } finally { port.dispose(); }
+  });
+
   it.each([
     ['builtin', 'wait'], ['contributed', 'wait'], ['builtin', 'notify'], ['contributed', 'notify'],
   ] as const)('publishes one settlement after a prepared %s before-%s check resumes', async (kind, mode) => {

@@ -176,9 +176,9 @@ export function createApprovalAutomaticContinuationV1<Read extends AutomaticAppr
     if ('ok' in admitted) return admitted;
     const started = await owner.actionAutomations.start({ selected, ...admitted, context, approvalArtifactId: artifactId });
     const waiting = selected.filter(row => row.phase === 'before' && row.mode !== 'notify');
-    const settled = waiting.filter(row => started.runs.some(run => actionAutomationTriggerKeyV1(run) === actionAutomationTriggerKeyV1(row)
+    const settled = waiting.filter(row => started.runs.some(run => actionAutomationTriggerKeyV1(run) === actionAutomationTriggerKeyV1(row))
       || started.notices.some(notice => notice.code === 'action_automation_skipped'
-        && notice.automationId === row.automationId && notice.triggerId === row.triggerId)));
+        && notice.automationId === row.automationId && notice.triggerId === row.triggerId));
     // A selected wait check must settle at admission. An empty start result is
     // not an automatic skip: only an explicit notice can explain no Run.
     if (settled.length !== waiting.length) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
