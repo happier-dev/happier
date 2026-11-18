@@ -124,7 +124,7 @@ import {
   type ConnectedServiceProfileListResult,
 } from './client/connectedServiceCredentialApi';
 export { ConnectedServiceCredentialUnsupportedFormatError } from './client/connectedServiceCredentialApi';
-import { createHttpStatusError, HttpStatusError, readHttpStatus } from './client/httpStatusError';
+import { createAuthenticationHttpStatusError, createHttpStatusError, HttpStatusError, readHttpStatus } from './client/httpStatusError';
 import { readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import {
   createConnectedServiceQuotaApiError,
@@ -549,8 +549,11 @@ export class ApiClient {
       // branding is not a reliable discriminator here.
       const terminalAuthStatus = readHttpStatus(error);
       if (terminalAuthStatus === 401 || terminalAuthStatus === 403) {
-        // Preserve status for offline reconnection stop conditions without leaking request config.
-        throw new HttpStatusError(terminalAuthStatus, 'Authentication failed');
+        // The creation transport and currentness preflight already classified this refusal.
+        if (error instanceof HttpStatusError) throw error;
+        // Preserve status and the typed refusal without leaking request config.
+        throw createAuthenticationHttpStatusError(terminalAuthStatus, 'Authentication failed',
+          axios.isAxiosError(error) ? error.response?.data : undefined);
       }
 
       if (

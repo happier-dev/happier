@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { mapUnknownErrorToControlError } from './controlErrorMapping';
+import { createAuthenticationHttpStatusError } from '@/api/client/httpStatusError';
 import { ConnectedServicesDefaultUnavailableError } from '@/session/services/spawnConnectedServicesDefaults';
 
 describe('mapUnknownErrorToControlError', () => {
@@ -49,6 +50,14 @@ describe('mapUnknownErrorToControlError', () => {
     expect(mapUnknownErrorToControlError(Object.assign(new Error('inventory'), { code: 'machine_inventory_unavailable' }))).toMatchObject({ code: 'machine_inventory_unavailable', unexpected: false });
     expect(mapUnknownErrorToControlError(Object.assign(new Error('subcommand'), { code: 'unknown_subcommand' }))).toMatchObject({ code: 'unknown_subcommand', unexpected: false });
     expect(mapUnknownErrorToControlError(Object.assign(new Error('identity'), { code: 'server_identity_unavailable' }))).toMatchObject({ code: 'server_identity_unavailable', unexpected: false });
+  });
+  it('presents a typed server 403 refusal by its code, not as an authentication failure', () => {
+    const refusal = createAuthenticationHttpStatusError(403, 'Unauthorized (403)', { error: 'session-origin-forbidden' });
+    expect(mapUnknownErrorToControlError(refusal)).toEqual({
+      code: 'session-origin-forbidden', unexpected: false, message: refusal.message,
+    });
+    expect(mapUnknownErrorToControlError(createAuthenticationHttpStatusError(403, 'Unauthorized (403)')))
+      .toMatchObject({ code: 'not_authenticated', unexpected: false });
   });
   it('maps an invalid external API token to the canonical authentication error', () => {
     const error = Object.assign(new Error('The Happier API returned HTTP 401.'), {

@@ -7,7 +7,7 @@ import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { SessionSystemRecordCountResponseSchema, type SessionSystemRecordCountResponse } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import type { LegacyHostSessionSystemRecord, LegacyHostSessionSystemRecordLatestQuery, LegacyHostSessionSystemRecordListQuery, LegacyHostSessionSystemRecordLookupQuery, LegacyHostSessionSystemRecordUpsertRequest, SessionSystemRecordAddress, SessionSystemRecordContent, SessionSystemRecordDeleteRequest, SessionSystemRecordKind, SessionSystemRecordListQuery, SessionSystemRecordNamespace, SessionSystemRecordStored, SessionSystemRecordStoredUpsertRequest, LegacyHostSessionSystemRecordPageResponse } from '@happier-dev/protocol';
 
-import { createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
+import { createAuthenticationHttpStatusError, createHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 
@@ -21,8 +21,8 @@ function encodeSessionIdPathSegment(sessionId: string): string {
   return encodeURIComponent(String(sessionId ?? ''));
 }
 
-function throwAuthenticationStatusError(status: number, message = `Unauthorized (${status})`): never {
-  throw createHttpStatusError(status, message, 'not_authenticated');
+function throwAuthenticationStatusError(status: 401 | 403, message = `Unauthorized (${status})`): never {
+  throw createAuthenticationHttpStatusError(status, message);
 }
 
 function throwUnexpectedHttpStatusError(status: number, message: string): never {

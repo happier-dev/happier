@@ -209,7 +209,7 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
     : readSessionInitialAccessServerError(response.data, response.status);
   if (initialAccessServerError) throw initialAccessServerError;
   if (isAuthenticationStatus(response.status)) {
-    throw createAuthenticationHttpStatusError(response.status, `Unauthorized (${response.status})`);
+    throw createAuthenticationHttpStatusError(response.status, `Unauthorized (${response.status})`, response.data);
   }
   if (response.status === 426) {
     const upgradeRequired = readCliClientUpgradeRequired(response.data);

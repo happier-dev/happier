@@ -1,5 +1,6 @@
 import { SessionControlErrorCodeSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { TailscaleCommandError } from '@happier-dev/cli-common/tailscale';
+import { readHttpStatus } from '@/api/client/httpStatusError';
 
 export type ControlCliMappedError = Readonly<{ code: string; unexpected: boolean; message?: string }>;
 
@@ -48,6 +49,11 @@ export function mapUnknownErrorToControlError(error: unknown): ControlCliMappedE
     || rawCode === 'stale_home_descriptor'
     || rawCode === 'home_descriptor_conflict'
   ) {
+    return { code: rawCode, unexpected: false, ...(error instanceof Error && error.message ? { message: error.message } : {}) };
+  }
+
+  // A typed server 403 is a refusal with its own reason (httpStatusError owner), not a sign-in failure.
+  if (rawCode && rawCode !== 'not_authenticated' && readHttpStatus(error) === 403) {
     return { code: rawCode, unexpected: false, ...(error instanceof Error && error.message ? { message: error.message } : {}) };
   }
 

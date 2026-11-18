@@ -37,7 +37,7 @@ import type { SessionTeamCredentialBindingIntentListV1, SessionTeamCredentialBin
 
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { createHttpStatusError, HttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
+import { createAuthenticationHttpStatusError, createHttpStatusError, HttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import {
   buildCurrentAccountStoredContentCompatibilityHttpHeaders,
   readCliClientUpgradeRequired,
@@ -218,8 +218,8 @@ function encodeSessionIdPathSegment(sessionId: string): string {
   return encodeURIComponent(String(sessionId ?? ''));
 }
 
-function throwAuthenticationStatusError(status: number, message = `Unauthorized (${status})`): never {
-  throw createHttpStatusError(status, message, 'not_authenticated');
+function throwAuthenticationStatusError(status: 401 | 403, message = `Unauthorized (${status})`): never {
+  throw createAuthenticationHttpStatusError(status, message);
 }
 
 function throwUnexpectedStatusError(path: string, status: number): never {

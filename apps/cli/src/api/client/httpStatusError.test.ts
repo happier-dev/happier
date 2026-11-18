@@ -72,4 +72,18 @@ describe('httpStatusError', () => {
       code: 'not_authenticated',
     });
   });
+
+  it('presents a typed 403 refusal by its server reason instead of an authentication failure', () => {
+    const typed = createAuthenticationHttpStatusError(403, 'Unauthorized (403)', { error: 'session-origin-forbidden' });
+    expect(typed).toMatchObject({ response: { status: 403 }, code: 'session-origin-forbidden' });
+    expect(typed.message).toContain('session-origin-forbidden');
+    expect(typed.message).not.toMatch(/authenticat|unauthorized/i);
+    // Status-based stop conditions still see the refusal.
+    expect(readAuthenticationStatus(typed)).toBe(403);
+
+    expect(createAuthenticationHttpStatusError(401, 'Unauthorized (401)', { error: 'invalid-token' }))
+      .toMatchObject({ code: 'not_authenticated', message: 'Unauthorized (401)' });
+    expect(createAuthenticationHttpStatusError(403, 'Unauthorized (403)', { error: 'free text with spaces' }))
+      .toMatchObject({ code: 'not_authenticated', message: 'Unauthorized (403)' });
+  });
 });
