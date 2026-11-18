@@ -181,7 +181,7 @@ export function registerPluginAvailabilityRoutes(
             });
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 
@@ -195,7 +195,7 @@ export function registerPluginAvailabilityRoutes(
             });
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 
@@ -209,7 +209,7 @@ export function registerPluginAvailabilityRoutes(
             });
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 
@@ -228,7 +228,7 @@ export function registerPluginAvailabilityRoutes(
             });
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 
@@ -242,7 +242,7 @@ export function registerPluginAvailabilityRoutes(
             });
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 
@@ -257,7 +257,7 @@ export function registerPluginAvailabilityRoutes(
             }));
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 
@@ -271,7 +271,7 @@ export function registerPluginAvailabilityRoutes(
             });
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 
@@ -286,7 +286,7 @@ export function registerPluginAvailabilityRoutes(
             return result;
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 
@@ -300,7 +300,7 @@ export function registerPluginAvailabilityRoutes(
             });
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 
@@ -315,7 +315,7 @@ export function registerPluginAvailabilityRoutes(
             return result;
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 
@@ -329,7 +329,7 @@ export function registerPluginAvailabilityRoutes(
             });
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 
@@ -343,7 +343,7 @@ export function registerPluginAvailabilityRoutes(
             });
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 
@@ -357,7 +357,7 @@ export function registerPluginAvailabilityRoutes(
             });
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 
@@ -378,7 +378,7 @@ export function registerPluginAvailabilityRoutes(
             });
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 
@@ -405,7 +405,7 @@ export function registerPluginAvailabilityRoutes(
             });
         } catch (error) {
             await sendOperationError(reply, error);
-            return;
+            return reply;
         }
     });
 }

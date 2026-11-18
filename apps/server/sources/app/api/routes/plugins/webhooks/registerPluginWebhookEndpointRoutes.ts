@@ -76,7 +76,7 @@ export function registerPluginWebhookEndpointRoutes(
         } catch (error) {
             if (error instanceof PluginWebhookEndpointStoreError) {
                 sendEndpointError(reply, error);
-                return;
+                return reply;
             }
             throw error;
         }
@@ -95,7 +95,7 @@ export function registerPluginWebhookEndpointRoutes(
         } catch (error) {
             if (error instanceof PluginWebhookEndpointStoreError) {
                 sendEndpointError(reply, error);
-                return;
+                return reply;
             }
             throw error;
         }
@@ -114,7 +114,7 @@ export function registerPluginWebhookEndpointRoutes(
         } catch (error) {
             if (error instanceof PluginWebhookEndpointStoreError) {
                 sendEndpointError(reply, error);
-                return;
+                return reply;
             }
             throw error;
         }
@@ -133,7 +133,7 @@ export function registerPluginWebhookEndpointRoutes(
         } catch (error) {
             if (error instanceof PluginWebhookEndpointStoreError) {
                 sendEndpointError(reply, error);
-                return;
+                return reply;
             }
             throw error;
         }
@@ -166,7 +166,7 @@ export function registerPluginWebhookEndpointRoutes(
         } catch (error) {
             if (error instanceof PluginWebhookEndpointStoreError) {
                 sendEndpointError(reply, error);
-                return;
+                return reply;
             }
             throw error;
         }
@@ -188,7 +188,7 @@ export function registerPluginWebhookEndpointRoutes(
         } catch (error) {
             if (error instanceof PluginWebhookEndpointStoreError) {
                 sendEndpointError(reply, error);
-                return;
+                return reply;
             }
             throw error;
         }
