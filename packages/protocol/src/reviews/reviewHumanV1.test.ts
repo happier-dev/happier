@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { openReviewVerdictContentV1, projectReviewNeedsYouV1 } from './reviewHumanV1.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { canRequestPresentUserApprovalForActionInputV1 } from '../actions/decisionAuthority.js';
+import { ReviewListResponseV1Schema } from './reviewListV1.js';
 
 describe('Review human attention', () => {
   const input = {
@@ -10,6 +11,15 @@ describe('Review human attention', () => {
     requests: [{ roundOrdinal: 2, eligibleAccountIds: ['alice', 'bob'] }, { roundOrdinal: 2, eligibleAccountIds: ['alice'] }],
     verdicts: [{ roundOrdinal: 1, accountId: 'alice' }],
   };
+
+  it('carries the admitted person attention fact on Review list rows', () => {
+    const needsYou = projectReviewNeedsYouV1(input);
+    expect(ReviewListResponseV1Schema.parse({ cursor: null, items: [{
+      reviewId: input.reviewId, projectSourceId: null, workflowId: null, subjectKind: 'comparison',
+      sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 2, startedAt: 1, finishedAt: 2,
+      createdAt: 1, updatedAt: 2, counts: { total: 2, needsDecision: 2 }, needsYou,
+    }] }).items[0]?.needsYou).toEqual(needsYou);
+  });
 
   it('joins finding decisions and renewed requests under one stable Review reason', () => {
     const pending = projectReviewNeedsYouV1(input);
