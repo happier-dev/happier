@@ -700,10 +700,12 @@ export function registerLocalServicePublicRoutes(
         },
     }, async (request, reply) => {
         await handleCreateExposure(request as RouteRequest, reply as RouteReply, options);
+        return reply;
     });
 
     controlApp.post(PUBLIC_ADMISSION_ROUTE_PATH, { preHandler: app.authenticate }, async (request, reply) => {
         await handleAdmitViewer(request as RouteRequest, reply as RouteReply, options);
+        return reply;
     });
 
     controlApp.post(PUBLIC_STATUS_ROUTE_PATH, {
@@ -717,6 +719,9 @@ export function registerLocalServicePublicRoutes(
         },
     }, async (request, reply) => {
         await handleGetStatus(request as RouteRequest, reply as RouteReply, options);
+        // Handlers send through `reply`; resolving undefined while streamed compression is
+        // still pending makes Fastify send a second, empty body.
+        return reply;
     });
 
     controlApp.delete(PUBLIC_RESOURCE_ROUTE_PATH, {
@@ -730,6 +735,7 @@ export function registerLocalServicePublicRoutes(
         },
     }, async (request, reply) => {
         await handleRevokeExposure(request as RouteRequest, reply as RouteReply, options);
+        return reply;
     });
 
     app.register(async (dataPlane) => {

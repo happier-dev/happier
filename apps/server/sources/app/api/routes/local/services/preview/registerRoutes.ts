@@ -765,12 +765,14 @@ export function registerLocalServicePreviewRoutes(
         preHandler: app.authenticate,
     }, async (request, reply) => {
         await handleRegisterPreviewRequest(request as RouteRequest, reply as RouteReply, options);
+        return reply;
     });
 
     app.delete(PREVIEW_RESOURCE_ROUTE_PATH, {
         preHandler: app.authenticate,
     }, async (request, reply) => {
         await handleUnregisterPreviewRequest(request as RouteRequest, reply as RouteReply, options);
+        return reply;
     });
 
     app.post(`${PREVIEW_RESOURCE_ROUTE_PATH}/access`, { preHandler: app.authenticate }, async (rawRequest, rawReply) => {
