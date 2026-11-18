@@ -328,6 +328,7 @@ export async function readApprovedDiscussionPublication(params: Readonly<{
         if (params.callerAuthority !== 'present_user') return null;
         const requesterAdmission = await admitApprovalRequesterDecisionV1({ request: approval,
           context: { authority: params.callerAuthority, runtimeAccountId: origin.accountId,
+            serverId: origin.serverId, serverIdentityId: origin.serverIdentityId,
             ...(params.requesterApprovalDecision ? { requesterApprovalDecision: params.requesterApprovalDecision } : {}),
             ...(params.signal ? { signal: params.signal } : {}) } });
         if (!requesterAdmission.ok) return null;
