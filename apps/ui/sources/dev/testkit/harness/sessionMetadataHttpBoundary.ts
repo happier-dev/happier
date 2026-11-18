@@ -10,6 +10,7 @@ import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { SessionInitialAccessMaterializedV1Schema } from '@happier-dev/protocol/sessions';
 import { SessionOrganizationPlacementV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 
 export interface SessionMetadataHttpBoundary {
     writes: string[];
@@ -46,7 +47,8 @@ export function createSessionMetadataHttpBoundary(readSessions: () => Readonly<R
                 displayProjectionV1: z.optional(z.nullable(SessionDisplayProjectionV1Schema)),
                 agentState: z.null(), dataEncryptionKey: z.nullable(z.string()), encryptionMode: z.enum(['plain', 'e2ee']),
                 usageTimingV1: z.optional(UsageSessionTimingV1Schema),
-                organizationPlacement: z.optional(SessionOrganizationPlacementV1Schema), initialAccess: z.optional(SessionInitialAccessMaterializedV1Schema) }).parse(JSON.parse(String(init.body)));
+                organizationPlacement: z.optional(SessionOrganizationPlacementV1Schema), initialAccess: z.optional(SessionInitialAccessMaterializedV1Schema),
+                teamCredentialBindings: z.optional(SessionTeamCredentialBindingIntentsV1Schema) }).parse(JSON.parse(String(init.body)));
             const current = records.get(sessionId);
             if (current?.metadataLayoutVersion === 1) return Response.json({ created: false, session: current });
             if (current) throw new Error('Create/load fixture requires an existing current owner tuple, not a candidate migration');

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { openSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { SessionSpawnNewInputV2Schema, projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionPendingTemplateOnboardingRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -47,6 +48,45 @@ afterEach(() => {
     resetMcpServerCatalogEngineForTests();
     resetMcpServerCatalogSnapshotsForTests();
     standardCleanup();
+});
+
+it('commits the Team model carried by a browser Session birth binding in the recipe and runtime metadata', async () => {
+    const serverId = await homes.addHome({ name: 'Birth Home', serverUrl: 'https://browser-birth.test',
+        serverIdentityId: 'srv_birth', accountId: 'recipient', currentAccount: true, accountEncryptionMode: 'plain' });
+    const team = { teamId: 'team', resourceId: 'team-provider', expectedResourceRevision: 3, deliveryMode: 'brokered' };
+    const model = { agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-bot-model' };
+    const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'browser-bot-copy',
+        executionTarget: { serverId, machineId: 'asleep-machine' }, directory: { kind: 'managed' },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, ...team, providerModelSelection: model }],
+    });
+    const boundary = createSessionMetadataHttpBoundary(() => ({}));
+    let birthRequest: unknown;
+    homes.answer(serverId, 'POST /v1/sessions', { select: async (raw, http) => {
+        birthRequest = raw;
+        if (!http.init) throw new Error('Expected the Session birth request');
+        const response = boundary.createSessionFromPost('browser-bot', http.init);
+        return { status: response.status, body: await response.json(), headers: Object.fromEntries(response.headers) };
+    } });
+    homes.answer(serverId, 'GET /v1/access-keys/browser-bot/asleep-machine', { body: { accessKey: { data: 'bound-key' } } });
+    homes.answer(serverId, '/v2/sessions/browser-bot/pending/template-onboarding', { select: raw => {
+        const { request } = SessionPendingTemplateOnboardingRequestV1Schema.parse(raw);
+        return { body: { v: 1, result: { status: 'accepted', localId: request.localId } } };
+    } });
+    const account = await captureLazyActionAccountContext(serverId);
+    try {
+        const { createUiPreparedSessionBirthV1 } = await import('./preparedSessionBirth');
+        const result = await createUiPreparedSessionBirthV1(account, {
+            ...input, admittedInput: input, actionCaller: { kind: 'host' },
+            sessionCreationTag: SessionCreationTagV1Schema.parse(`create:v1:${'a'.repeat(43)}`),
+        }, { beforeLaunch: async () => {}, hostOnboarding: { templateName: 'Helper', templateVersion: '1.0.0' } });
+        expect(result).toMatchObject({ type: 'success', sessionId: 'browser-bot', initialInput: { status: 'accepted' } });
+        const selection = { v: 2, updatedAt: 0, ref: { source: 'team_resource', ...team, ...model } };
+        expect(birthRequest).toHaveProperty('ownerMetadata.v.system.sessionCreationCorrespondenceV1.recipe.modelSelection', selection);
+        expect(birthRequest).toHaveProperty('ownerMetadata.v.runtime.modelSelectionIntentV2', selection);
+    } finally {
+        account.dispose();
+    }
 });
 
 it.each([

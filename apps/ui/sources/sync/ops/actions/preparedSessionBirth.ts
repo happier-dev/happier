@@ -12,6 +12,7 @@ import { SessionPendingEnqueueByMachineResponseV1Schema, SessionPendingTemplateO
 import { serializeSessionInputRequestEqualityIntentV1, SESSION_INPUT_REQUEST_META_KEY,
     SESSION_MESSAGE_PROVENANCE_META_KEY } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { readAuthoredSessionModelSelection } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { createSessionCreateOrLoad } from '@/sync/domains/session/hostedSystemSession';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
@@ -35,10 +36,11 @@ export async function createUiPreparedSessionBirthV1(
     account.assertCurrent();
     const { accountMode, encryption } = await account.resolveAccountEncryption(args.signal);
     account.assertCurrent();
+    const modelSelection = readAuthoredSessionModelSelection(input) ?? undefined;
     const correspondence = buildSessionCreationCorrespondence({ identity: { sessionCreationTag: args.sessionCreationTag }, recipe: {
         execution: { machineId: input.executionTarget.machineId, directory: input.directory },
         organization: normalizeSessionCreationOrganizationPlacementV1(input.organizationPlacement),
-        agentTarget: input.agentTarget, modelSelection: input.modelSelection ?? null, profileId: input.profileId ?? null,
+        agentTarget: input.agentTarget, modelSelection: modelSelection ?? null, profileId: input.profileId ?? null,
         approvalProfileId: input.approvalProfileId, identity: input.identity, memoryEnabled: input.memoryEnabled,
         promptStack: input.promptStack, secretReferenceOverlay: input.secretReferenceOverlay,
         requestedPermissionMode: input.permissionMode ?? null, agentModeId: input.agentModeId ?? null,
@@ -53,7 +55,7 @@ export async function createUiPreparedSessionBirthV1(
         machineId: input.executionTarget.machineId, sessionCreationCorrespondence: correspondence,
         identity: input.identity, memoryEnabled: input.memoryEnabled, approvalProfileId: input.approvalProfileId,
         promptStack: input.promptStack, initialTitle: input.title, initialSessionRolesV1: args.initialSessionRolesV1,
-        modelSelection: input.modelSelection, connectedServices: input.connectedServices,
+        modelSelection, connectedServices: input.connectedServices,
         capabilitySelection: input.capabilitySelection, allowedTools: input.allowedTools,
         unlistedTools: input.unlistedTools, workspaceWrites: args.context?.workspaceWrites,
         authoringOrigin: input.authoringOrigin, teamCredentialBindings: input.teamCredentialBindings,
