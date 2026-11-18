@@ -12,13 +12,14 @@ const Index = lazyZodSchema(() => z.number().check(z.int(), z.nonnegative()));
 export const PackedProviderAccountUsageDaySummaryV1Schema = lazyZodSchema(() => {
   const summary = ProviderAccountUsageDaySummaryV1Schema.shape;
   const window = ProviderAccountUsageDaySummaryWindowV1Schema.shape;
+  const diagnostic = ProviderAccountUsageSnapshotV1Schema.shape.diagnostics._zod.def.innerType._zod.def.element;
   return z.strictObject({
     v: summary.v, encoding: z.literal(PROVIDER_ACCOUNT_USAGE_DAY_SUMMARY_ENCODING), recordId: summary.recordId,
     dayStartAtMs: summary.dayStartAtMs, observedAtRange: summary.observedAtRange, lastSnapshot: Index,
     snapshots: PackedProviderAccountUsagePageProjectionV1Schema,
     // Page projections intentionally omit HTTP diagnostics. Summary encoding is
     // lossless, so retain those facts separately from the shared snapshot bases.
-    diagnostics: z.array(z.strictObject({ diagnostics: ProviderAccountUsageSnapshotV1Schema.shape.diagnostics })),
+    diagnostics: z.array(z.strictObject({ diagnostics: z.array(diagnostic) })),
     diagnosticRefs: z.array(z.nullable(Index)),
     windows: z.array(z.tuple([window.meterId, window.windowStartAtMs, window.resetAtMs, Index,
       window.peakUsed, window.firstObservedAtMs, window.lastObservedAtMs, window.resets])),
