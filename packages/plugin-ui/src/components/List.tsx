@@ -81,6 +81,7 @@ import {
 } from '../presentation/collection/ItemGroup.js';
 import { HappierItemOverflow } from '../presentation/collection/ItemOverflow.js';
 import { HappierChevron } from '../presentation/collection/DisclosureChevron.js';
+import { resolveHappierIconSize } from '../presentation/content/Icon.js';
 import type { HappierTone } from '../presentation/semantics.js';
 import {
   ListMultiSelectionProvider,
@@ -2574,7 +2575,9 @@ function ListItemRow(props: ListItemProps): ReactElement {
   const resolvedProps = {
     ...authorProps,
     ...(showChevron === true && (props.accessory === undefined || props.accessory === null)
-      ? { accessory: <HappierChevron direction="right" color={theme.colors.mutedText} /> }
+      // The navigation chevron stands in the small icon box in secondary ink, as core page rows draw theirs, not at
+      // the 12 pt disclosure caret's size.
+      ? { accessory: <HappierChevron direction="right" color={theme.colors.secondaryText} size={resolveHappierIconSize('small')} /> }
       : {}),
     secondaryActions: rowProps.secondaryActions,
     onSecondaryAction: rowProps.onSecondaryAction,

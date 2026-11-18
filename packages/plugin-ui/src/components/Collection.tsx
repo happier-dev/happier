@@ -731,6 +731,11 @@ type ResolvedColumn<Item> = HappierCollectionTableColumn & Readonly<{
   title: string;
   /** The header's second line (`CollectionField.subtitle`). */
   subtitle?: string;
+  /**
+   * A data grid's column after the first: it opens with a second gap (inside its width), so an end-aligned figure and
+   * the next column's start-aligned text never read as one value ("4,900 EUR").
+   */
+  gutter?: true;
   align: 'start' | 'end';
   render: ((item: Item) => ReactNode) | null;
   /** The field key a sortable column sorts by, and the key its summary cell is read under. */
@@ -974,10 +979,11 @@ function resolveColumns<Item>(
   for (const field of fields) if (field.leading !== true) declared.push(fieldColumn(field));
   for (const slot of SLOT_KEYS) if (TRAILING_SLOT_KEYS.has(slot)) slotColumn(slot);
   const available = width - TABLE.insetStart - TABLE.insetEnd - tableGlyphWidth(anatomy) - rowAccessoryWidth - leadingWidth;
-  return resolveHappierCollectionTableColumns({
-    columns: declared, availableWidth: available, gap: TABLE.gap,
-    ...(anatomy.columnsOverflow === undefined ? {} : { overflow: anatomy.columnsOverflow }),
-  });
+  if (anatomy.columnsOverflow === 'scroll') {
+    const guttered = declared.map((column, index) => (index === 0 ? column : { ...column, minWidth: column.minWidth + TABLE.gap, gutter: true as const }));
+    return resolveHappierCollectionTableColumns({ columns: guttered, availableWidth: available, gap: TABLE.gap, overflow: 'scroll' });
+  }
+  return resolveHappierCollectionTableColumns({ columns: declared, availableWidth: available, gap: TABLE.gap });
 }
 
 /** A kind whose rows draw no glyph (`loadingGlyph: false`) reserves no glyph column in the table either. */
@@ -1267,6 +1273,7 @@ function cellStyle(column: ResolvedColumn<unknown>): HappierPortableStyle {
     : {
         width: column.minWidth,
         minWidth: 0,
+        ...(column.gutter === true ? { paddingLeft: TABLE.gap } : {}),
         // A control draws its own focus ring past its bounds; only text cells clip.
         overflow: column.control === true ? 'visible' : 'hidden',
         alignItems: column.align === 'end' ? 'flex-end' : 'flex-start',
@@ -3074,7 +3081,9 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const namedOrderHeader = rowGeometry === 'table' && props.sort?.orders !== undefined;
   // A collection resting as a list has no bar at rest, so it draws none beside a detail either: opening an item
   // never moves its rows.
-  const headerBar = (hasRows || loadingFirstWindow || namedOrderHeader) && wide && presentation === 'table';
+  // A data grid that read no rows still names its columns: the result has a shape even when it is empty.
+  const emptyGridHeader = gridScroll && (anatomy.fields?.length ?? 0) > 0;
+  const headerBar = (hasRows || loadingFirstWindow || namedOrderHeader || emptyGridHeader) && wide && presentation === 'table';
   const sortableHeader = props.sort !== undefined && (namedOrderHeader || columns.some((column) => column.sortable));
   // Columns with a second header line (a type under a name) stand in a taller bar.
   const headerHeight = columns.some((column) => column.subtitle !== undefined)

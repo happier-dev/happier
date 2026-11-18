@@ -108,15 +108,16 @@ export function resolveHappierCollectionTableColumns<Column extends HappierColle
   gap: number;
   /**
    * `scroll`: a data grid. Nothing drops and nothing flexes: every column (the title too) stands at its minimum,
-   * the room beyond them is shared in proportion to those minima, and a table wider than its room scrolls sideways.
+   * packed from the start so neighbouring values stay together; the last column takes the room beyond them, and a
+   * table wider than its room scrolls sideways.
    */
   overflow?: 'scroll';
 }>): readonly Column[] {
   if (input.overflow === 'scroll') {
     const total = input.columns.reduce((sum, column) => sum + column.minWidth, 0);
-    const spare = input.availableWidth - total - input.gap * Math.max(0, input.columns.length - 1);
-    const grow = spare > 0 && total > 0 ? spare / total : 0;
-    return input.columns.map((column) => ({ ...column, flex: false, minWidth: Math.floor(column.minWidth * (1 + grow)) }));
+    const spare = Math.max(0, Math.floor(input.availableWidth - total - input.gap * Math.max(0, input.columns.length - 1)));
+    const last = input.columns.length - 1;
+    return input.columns.map((column, index) => ({ ...column, flex: false, minWidth: column.minWidth + (index === last ? spare : 0) }));
   }
   const visible = [...input.columns];
   const width = (): number => visible.reduce((sum, column) => sum + column.minWidth, 0)

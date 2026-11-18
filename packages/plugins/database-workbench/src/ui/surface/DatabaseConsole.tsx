@@ -85,17 +85,20 @@ function ResultRows(
         />
       }
       footer={
-        props.result.completeness.complete ? undefined : (
-          <Text
-            tone="secondary"
-            variant="meta"
-            value={props.translate(
+        // The run's outcome in one quiet line: how many rows came back, or that only the first ones did.
+        <Text
+          tone="secondary"
+          variant="meta"
+          value={props.result.completeness.complete
+            ? rows.length === 1
+              ? props.translate('plugins.database.console.oneRow', '1 row')
+              : props.translate('plugins.database.console.rowCount', '{count} rows', { count: String(rows.length) })
+            : props.translate(
               'plugins.database.console.partial',
               'Showing the first {count} rows',
               { count: String(rows.length) },
             )}
-          />
-        )
+        />
       }
     />
   );
@@ -176,15 +179,17 @@ function HistoryMenu(
     >
       <ItemGroup surface="none">
         {props.history.map((entry, index) => (
+          // A statement is code: it reads in the code face, two lines at most (lab dbConsole/history).
           <Item
             key={`${index}:${entry.sql}`}
-            title={entry.sql}
-            titleNumberOfLines={2}
+            accessibilityLabel={entry.sql}
             onPress={() => {
               props.onPick(entry.sql);
               setOpen(false);
             }}
-          />
+          >
+            <Text variant="code" value={entry.sql} numberOfLines={2} />
+          </Item>
         ))}
       </ItemGroup>
       <Button

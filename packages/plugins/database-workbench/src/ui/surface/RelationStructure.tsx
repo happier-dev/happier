@@ -44,23 +44,26 @@ function ColumnsTable(
     const text = (value: string, tone?: 'secondary') => (
       <Text variant="body" {...(tone ? { tone } : {})} value={value} numberOfLines={1} />
     );
+    const typeLine = (column: StructureColumn) => {
+      const key = props.primaryKey.has(column.name)
+        ? translate('plugins.database.structure.primaryKey', 'Primary key')
+        : props.references.get(column.name);
+      return key ? `${column.type} · ${key}` : column.type;
+    };
     return {
       glyph: () => null,
       loadingGlyph: false,
       title: (column) => column.name,
       titleIdentifier: true,
+      // Narrow (phone), the Type column drops: the row says its type and key under the name (lab structurep).
+      byline: (column, layout) => (layout?.fieldColumns ? null : typeLine(column)),
       fields: [
         {
           key: 'type',
           title: translate('plugins.database.structure.type', 'Type'),
           minWidth: 200,
           priority: 4,
-          render: (column) => {
-            const key = props.primaryKey.has(column.name)
-              ? translate('plugins.database.structure.primaryKey', 'Primary key')
-              : props.references.get(column.name);
-            return text(key ? `${column.type} · ${key}` : column.type, 'secondary');
-          },
+          render: (column) => text(typeLine(column), 'secondary'),
         },
         {
           key: 'null',

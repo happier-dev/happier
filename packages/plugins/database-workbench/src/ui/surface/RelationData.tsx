@@ -8,6 +8,7 @@ import type {
 import {
   Button,
   CodeBlock,
+  EmptyState,
   ErrorState,
   Heading,
   IconButton,
@@ -15,6 +16,7 @@ import {
   Item,
   ItemGroup,
   Row,
+  ScrollArea,
   Stack,
   Text,
   TextField,
@@ -197,8 +199,9 @@ function RowDetail(
     props.row.rowKey,
   ]);
   const identityLine = rowIdentity(props.row, props.columns, props.relation, translate);
+  // The row's name and Close stay put; its fields scroll under them, so a long row (its JSON last) is always reachable.
   return (
-    <Stack gap="medium">
+    <Stack gap="medium" grow>
       {props.inlineHeader ? (
         <Row gap="small" align="center">
           <Stack grow gap="xsmall">
@@ -212,6 +215,8 @@ function RowDetail(
           />
         </Row>
       ) : null}
+      <ScrollArea>
+      <Stack gap="medium">
       <ItemGroup surface="sheet">
         {props.columns.map((column, index) => (
           <RowField
@@ -254,6 +259,8 @@ function RowDetail(
           }
         />
       )}
+      </Stack>
+      </ScrollArea>
     </Stack>
   );
 }
@@ -299,8 +306,13 @@ function JsonValue(
   );
 }
 
-/** A value this long, or on several lines, reads beneath its name rather than beside it. */
-const INLINE_VALUE_MAX_CHARACTERS = 40;
+/**
+ * A value longer than this, or on several lines, reads beneath its name rather than beside it: beside, it would
+ * share a 320 pt pane with a name like `amount_cents` (a timestamp with its zone already doesn't fit).
+ */
+const INLINE_VALUE_MAX_CHARACTERS = 20;
+/** Text this long says its length on the name's line (lab longValue "78 characters"). */
+const LONG_TEXT_CHARACTERS = 40;
 
 /** What the pane names the open row by: its first worded value, then where it lives and its key (lab longValue). */
 function rowIdentity(
@@ -355,27 +367,34 @@ function RowField(
           title={props.column.name}
           subtitle={typeLine}
           accessory={
-            // The value is the way to the row it names (D27 #3).
+            // The value is the way to the row it names (D27 #3): accent ink and the destination arrow, as the
+            // grid header marks a reference column.
             <Button
               variant="plain"
               size="small"
-              title={text}
               accessibilityLabel={props.translate('plugins.database.row.openReferenceValue', 'Open {value} in {table}', { value: text, table: reference.table })}
               onPress={() => props.tools.openReference(props.rowKey, reference.name)}
-            />
+            >
+              <Row gap="xsmall" align="center">
+                <Text value={text} tone="info" numberOfLines={1} />
+                <Icon name="external" size="small" tone="info" />
+              </Row>
+            </Button>
           }
         />
       );
     }
-    const long = json || text.length > INLINE_VALUE_MAX_CHARACTERS || text.includes('\n');
-    if (long) {
+    // One rule places a value: beside its name while it is short, otherwise beneath, with the type kept under the
+    // name. The row never measures its way into a third order (name, value, type).
+    const beneath = json || text.length > INLINE_VALUE_MAX_CHARACTERS || text.includes('\n');
+    if (beneath) {
       return (
         <Item
           title={props.column.name}
           subtitle={typeLine}
-          {...(json ? {} : {
+          {...(props.column.kind === 'text' && text.length > LONG_TEXT_CHARACTERS ? {
             detail: props.translate('plugins.database.row.characters', '{count} characters', { count: String(text.length) }),
-          })}
+          } : {})}
           accessoryBelow
           accessory={json ? (
             <JsonValue rowKey={props.rowKey} column={props.column.name} loaded={text} tools={props.tools} translate={props.translate} />
@@ -559,7 +578,8 @@ export function RelationData(
                 )
         }
       />
-      <Row gap="xsmall">
+      {/* Paging says nothing about a table with no rows and nowhere to go back to. */}
+      {page.rows.length === 0 && previous.length === 0 ? null : <Row gap="xsmall">
         <IconButton
           accessibilityLabel={translate(
             'plugins.database.rows.previous',
@@ -578,7 +598,7 @@ export function RelationData(
           disabled={!page.page.hasNext}
           onPress={next}
         />
-      </Row>
+      </Row>}
     </Row>
   );
   return (
@@ -594,9 +614,13 @@ export function RelationData(
       collapsedGroups={EMPTY_SET}
       loading={page.status === 'loading' && page.rows.length === 0}
       empty={
-        <Text
-          tone="secondary"
-          value={translate('plugins.database.rows.empty', 'No rows')}
+        // One line under the columns, with its mark: a filter that matches nothing says so (lab dbBrowse/empty).
+        <EmptyState
+          layout="line"
+          icon="table"
+          title={location.conditions
+            ? translate('plugins.database.rows.noneMatch', 'No rows match this filter')
+            : translate('plugins.database.rows.empty', 'This table has no rows yet')}
         />
       }
       header={

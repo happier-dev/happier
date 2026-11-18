@@ -115,8 +115,9 @@ function SchemaDirectory(
       ),
     });
     return {
-      // Every relation here is a table (views have no size of their own): each row carries the table mark.
-      glyph: () => <Icon name="table" tone="secondary" />,
+      // Plain views hold no data and are left out; a materialized view stores rows, so it stays, marked as the view
+      // it is (the rail marks it the same way).
+      glyph: (row) => <Icon name={row.kind === 'table' ? 'table' : 'view'} tone="secondary" />,
       title: (row) => row.name,
       titleIdentifier: true,
       // Narrow (phone): the figures drop, so the row says its estimate and total under the name (lab directoryp).

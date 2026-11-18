@@ -25,14 +25,14 @@ describe('table columns', () => {
     expect(visible.map((column) => column.key)).toEqual(['title', 'where', 'reason', 'signal', 'agent', 'age']);
   });
 
-  it('a data grid keeps every column at any width, the title sized like a field, and shares spare room among them', () => {
+  it('a data grid keeps every column at any width, the title sized like a field, packed with the spare room last', () => {
     const narrow = resolveHappierCollectionTableColumns({ columns, availableWidth: 400, gap: 12, overflow: 'scroll' });
     expect(narrow.map((column) => column.key)).toEqual(['title', 'where', 'reason', 'signal', 'agent', 'age']);
     expect(narrow.every((column) => column.flex !== true)).toBe(true);
     expect(narrow.find((column) => column.key === 'title')!.minWidth).toBe(240);
-    // The columns take 876 beside 60 of gaps; 1812 doubles every column, the title no more than the others.
+    // The columns take 876 beside 60 of gaps; at 1812 they stay packed and the last column takes the 876 left over.
     const wide = resolveHappierCollectionTableColumns({ columns, availableWidth: 1812, gap: 12, overflow: 'scroll' });
-    expect(wide.map((column) => column.minWidth)).toEqual([480, 300, 340, 240, 300, 92]);
+    expect(wide.map((column) => column.minWidth)).toEqual([240, 150, 170, 120, 150, 922]);
   });
 
   it('drops the lowest priority first as the width narrows, never by position', () => {
