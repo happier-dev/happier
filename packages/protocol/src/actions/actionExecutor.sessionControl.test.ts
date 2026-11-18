@@ -85,18 +85,24 @@ const canonicalSessionSpawnInput = {
 } as const;
 
 describe('createActionExecutor (session control)', () => {
-  it('delivers an opaque native permission answer through the public Action without a fabricated decision', async () => {
+  it.each(['ui', 'agent'] as const)('delivers the %s native permission answer without a fabricated decision', async surface => {
     const received: unknown[] = [];
     const executor = createExecutor({
-      readActionsSettings: context => context.actionsSettings ?? ActionsSettingsV1Schema.parse({ v: 1,
-        approvalWaivedSurfaces: { 'session.permission.respond': [context.surface] } }),
-       sessionPermissionRespond: async request => {
-      received.push(request);
-      return { ok: true };
-    } });
+      sessionPermissionRespond: async request => {
+        received.push(request);
+        return { ok: true };
+      },
+    });
     const nativeChoice = { requirementId: 'native-requirement', choiceId: 'custom-permit' };
-    const result = await executor.execute('session.permission.respond', { sessionId: 's1', requestId: 'permission', nativeChoice }, { surface: 'ui' });
-    expect(result).toMatchObject({ ok: true });
+    const context: ActionExecutorContext = surface === 'agent'
+      ? {
+        surface, authority: 'account_automation', defaultSessionId: 's1',
+        actionCaller: { kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 },
+        actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.permission.respond': ['agent'] } }),
+      }
+      : { surface, authority: 'present_user', actionCaller: { kind: 'host' } };
+    const result = await executor.execute('session.permission.respond', { sessionId: 's1', requestId: 'permission', nativeChoice }, context);
+    expect(result).toEqual({ ok: true, result: { ok: true } });
     expect(received).toEqual([expect.objectContaining({ sessionId: 's1', requestId: 'permission', nativeChoice })]);
     expect(received[0]).not.toHaveProperty('decision');
   });

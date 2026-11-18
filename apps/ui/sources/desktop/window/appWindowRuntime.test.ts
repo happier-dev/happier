@@ -15,7 +15,8 @@ const host = vi.hoisted(() => ({
     events: new Map<string, (payload: unknown) => void>(),
 }));
 // The real lifecycle and workspace owner run beneath the native IPC boundary.
-vi.mock('@/utils/platform/desktopHost', () => ({
+vi.mock('@/utils/platform/desktopHost', async importOriginal => ({
+    ...await importOriginal<typeof import('@/utils/platform/desktopHost')>(),
     desktopHostKind: () => 'tauri',
     isDesktopHost: () => true,
     getDesktopHostWindowLabel: () => 'main',
@@ -46,6 +47,9 @@ function mountWorkspace(onRestoreError?: (error: unknown) => void, target: Desti
     });
     return { read: () => state, activated, dispose };
 }
+
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 describe('desktop app-window lifecycle', () => {
     it('routes a generic current-context read to the focused full view only within its Home and Account', async () => {
@@ -95,6 +99,45 @@ describe('desktop app-window lifecycle', () => {
             expect(writes[0][1].record).toMatchObject({ chrome: 'full', layoutId: first.windowId });
             expect(writes[0][1].record.sourceTabId).toBeUndefined();
         } finally { host.events.get('desktopAppWindow://records')?.([]); owner.dispose(); }
+    });
+
+    it('opens a second full Home through an Agent Action without changing the primary Home or layout', async () => {
+        const opened: unknown[] = [];
+        host.listen.mockImplementation(async () => () => {});
+        host.invoke.mockImplementation(async (command: string, args: { record?: { windowId: string } }) => {
+            if (command === 'desktop_app_window_restore') return [];
+            if (command === 'desktop_app_window_placement') return { frame: null, previousFrame: null, workArea: null };
+            if (command === 'desktop_app_window_open' && args.record) {
+                opened.push(args.record);
+                return { windowId: args.record.windowId, ready: true, reused: false };
+            }
+        });
+        const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const homes = createHomeGovernanceHarness();
+        installHomeGovernanceBoundaries(homes);
+        const serverUrl = 'https://second-full-home.test';
+        await homes.addHome({ serverUrl, name: 'Second Home', accountId: 'account-b', currentAccount: true });
+        const connection = await restoreServerAccountForTest({ serverUrl, accountId: 'account-b', request: homes.request });
+        const primary = mountWorkspace();
+        const initial = primary.read();
+        try {
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const result = await createDefaultActionExecutor().execute('desktop.windows.open', {
+                chrome: 'full', target: { kind: 'home', serverId: connection.serverId, accountId: 'account-b' },
+            }, { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+                defaultSessionId: 'session' });
+            expect(result).toMatchObject({ ok: true, result: { status: 'opened', windowId: expect.any(String) } });
+            expect(opened).toEqual([expect.objectContaining({
+                chrome: 'full', homeId: connection.serverId, accountId: 'account-b', selectedAddress: { kind: 'home' },
+            })]);
+            expect(primary.read()).toBe(initial);
+            expect(getDesktopAppWindowPlacedTabs()).toEqual([]);
+        } finally {
+            primary.dispose();
+            await connection.dispose();
+            await homes.reset();
+        }
     });
 
     it('opens a blank full Home and restores each saved full layout exactly once', async () => {
@@ -358,7 +401,12 @@ describe('desktop app-window lifecycle', () => {
         } finally { host.events.get('desktopAppWindow://records')?.([]); owner.dispose(); }
     });
 
-    it('sets canonical placement only after ready and routes only the exact Account/Home Session', async () => {
+    it('moves the Session tab with its draft after ready and routes edits only for the exact Account and Home', async () => {
+        const scope = { serverId: 'home', accountId: 'account' };
+        const target = { ...scope, sessionId: 'session' };
+        const { getExistingSessionDraftProjection, writeExistingSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const { resumeSessionDraftWindowPresentation } = await import('@/sync/ops/sessionDrafts/sessionDraftWindowTransfer');
+        writeExistingSessionDraft({ scope, sessionId: target.sessionId, patch: { text: 'Unsent before moving the tab' } });
         let created!: () => void;
         const creation = new Promise<void>(resolve => { created = resolve; });
         host.listen.mockImplementation(async (event: string, handler: (payload: unknown) => void) => {
@@ -379,6 +427,10 @@ describe('desktop app-window lifecycle', () => {
         expect(writable).toBe(false);
         expect(workspace.read().tabs.tab.presentation).toBeUndefined();
         expect(getDesktopAppWindowTransfers()).toEqual(['tab']);
+        const releaseDraft = await resumeSessionDraftWindowPresentation(target);
+        try {
+            expect(getExistingSessionDraftProjection(scope, target.sessionId)?.text).toBe('Unsent before moving the tab');
+        } finally { releaseDraft(); }
         host.events.get('desktopAppWindow://lifecycle')?.({ kind: 'ready', windowId: 'window' });
         expect(await operation).toMatchObject({ status: 'opened', windowId: 'window' });
         await edit;

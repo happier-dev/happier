@@ -1,16 +1,24 @@
+// @vitest-environment jsdom
+
 import * as React from 'react';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { act, renderScreen, standardCleanup } from '@/dev/testkit';
-import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { act, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
 import {
   getActiveServerSnapshot,
   removeServerProfile,
   setActiveServerId,
 } from '@/sync/domains/server/serverProfiles';
-import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { publishAppliedActiveServerRuntimeAvailability, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
+import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
+import { openDesktopAppWindow, registerDesktopAppWindowWorkspace } from '@/desktop/window/appWindowRuntime';
+import { registerDesktopAppWindowReturnHandler } from '@/sync/ops/actions/desktopAppWindowActionDispatch';
 import { WORKSPACE_OPEN_IN_WINDOW_ID } from '@/components/appShell/workspace/useWorkspaceOpenActions';
 import {
   DESKTOP_WINDOW_OPEN_IN_HAPPIER_ID,
@@ -21,27 +29,45 @@ import {
 vi.hoisted(() => {
   (globalThis as { isTauri?: boolean }).isTauri = true;
 });
+const native = vi.hoisted(() => ({
+    opens: [] as Array<{ windowId: string; homeId: string; accountId: string; selectedAddress: unknown }>,
+}));
 vi.mock('@tauri-apps/api/core', async () => {
   const secure = (
     await import('@/dev/testkit/mocks/desktopSecureStorage')
   ).createDesktopSecureStorageBoundary();
   return {
-    invoke: async (command: string, args?: Record<string, unknown>) =>
-      command === 'desktop_host_get_availability'
-        ? {
-            activity: { kind: 'available' },
-            pet: { kind: 'available' },
-            windows: { kind: 'available' },
-          }
-        : secure.invoke(command, args),
+    invoke: async (command: string, args?: Record<string, unknown>) => {
+      if (command === 'desktop_host_get_availability') return {
+        activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' },
+      };
+      if (command === 'desktop_app_window_restore') return [];
+      if (command === 'desktop_app_window_placement') return { frame: null, previousFrame: null, workArea: null };
+      if (command === 'desktop_app_window_open') {
+        const record = args?.record as (typeof native.opens)[number];
+        native.opens.push(record);
+        return { windowId: record.windowId, ready: true, reused: record.windowId === 'window-1' };
+      }
+      return secure.invoke(command, args);
+    },
   };
 });
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
+vi.mock('socket.io-client', async importOriginal =>
+  (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal),
+);
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
 );
 vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
+);
+// The test renderer has no DOM portal or layout, so mount the real menu in place.
+vi.mock('@/components/ui/popover', async importOriginal =>
+  (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal),
 );
 vi.mock('@shopify/react-native-skia', async () => {
   const mock = (
@@ -72,11 +98,19 @@ afterEach(async () => {
 async function seedHome() {
   const before = storage.getState();
   const previousServerId = getActiveServerSnapshot().serverId;
-  const home = await upsertAndActivateServer({
-    serverUrl: 'https://window-bot-rail.test',
-  });
+  await homes.reset();
+  const serverUrl = 'https://window-bot-rail.test';
+  const homeId = await homes.addHome({ serverUrl, name: 'Bot rail Home', accountId: 'account', currentAccount: true });
+  const credentials = await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId: homeId });
+  if (!credentials) throw new Error('Expected test Home credentials');
+  const connection = await restoreServerAccountForTest({ serverUrl, accountId: 'account',
+    credentials, request: homes.request });
+  const home = connection.home;
+  publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
   onTestFinished(async () => {
-    if (previousServerId) await setActiveServerId(previousServerId);
+    await connection.dispose();
+    publishAppliedActiveServerRuntimeAvailability(false);
+    if (previousServerId !== home.id) await setActiveServerId(previousServerId);
     await removeServerProfile(home.id);
     storage.setState(before, true);
   });
@@ -121,6 +155,7 @@ async function seedHome() {
       orderEntries: [],
       labels: [],
     });
+  storage.getState().applySessions(['captain', 'hunter'].map(id => createSessionFixture({ id })));
   return home.id;
 }
 
@@ -136,6 +171,7 @@ async function renderRail(serverId: string, sessionId: string) {
       scope={scope}
       fallback={<Text testID="window-title">title</Text>}
     />,
+    { createNodeMock: () => null },
   );
   await act(async () => {
     await Promise.resolve();
@@ -145,7 +181,32 @@ async function renderRail(serverId: string, sessionId: string) {
 
 describe('Session window Bot rail', () => {
   it('shows the current Bot named among its Home’s rail Bots, each with the shared open menu', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const { mockIPC, clearMocks } = await import('@tauri-apps/api/mocks');
+    mockIPC((command, args) => {
+      if (command === 'plugin:event|listen') return Number((args as { handler: number }).handler);
+      if (command === 'plugin:event|unlisten') return null;
+      return invoke(command, args);
+    });
+    const { __TAURI_INTERNALS__: internals } = window as unknown as {
+      __TAURI_INTERNALS__: { metadata?: { currentWindow: { label: string } } };
+    };
+    internals.metadata = { currentWindow: { label: 'destination_window-1' } };
+    onTestFinished(clearMocks);
     const serverId = await seedHome();
+    onTestFinished(registerDesktopAppWindowReturnHandler(async () => true));
+    const scope = { serverId, accountId: 'account' };
+    const state = createWorkspaceState({
+      id: 'main-home', target: { kind: 'home', params: {} }, pinned: false, preview: false,
+    });
+    onTestFinished(registerDesktopAppWindowWorkspace({ windowId: 'main', scope,
+      getState: () => state, dispatch: () => {}, catalog: [], activateTab: () => {},
+      placementMetrics: { cascadeOffset: 24, screenInset: 24 } }));
+    await openDesktopAppWindow({
+      windowId: 'window-1',
+      target: { ...scope, kind: 'session', sessionId: 'captain' },
+    });
+    native.opens.length = 0;
     const screen = await renderRail(serverId, 'captain');
     const menus = () => screen.tree.findAllByType(DropdownMenu);
     expect(
@@ -173,6 +234,23 @@ describe('Session window Bot rail', () => {
         DESKTOP_WINDOW_OPEN_IN_HAPPIER_ID,
       ]),
     );
+
+    await act(async () => { screen.pressByTestId('desktop-window-bot-rail-hunter'); });
+    await vi.waitFor(() => expect(native.opens).toEqual([expect.objectContaining({
+      windowId: 'window-1', homeId: serverId, accountId: 'account',
+      selectedAddress: { kind: 'session', sessionId: 'hunter' },
+    })]));
+
+    await act(async () => {
+      invokeTestInstanceHandler(screen.findByTestId('desktop-window-bot-rail-captain'), 'onContextMenu',
+        { preventDefault() {} });
+    });
+    await vi.waitFor(() => expect(screen.findByTestId('workspace-open-window')).toBeTruthy());
+    await act(async () => { screen.pressByTestId('workspace-open-window'); });
+    await vi.waitFor(() => expect(native.opens).toHaveLength(2));
+    expect(native.opens[1]).toMatchObject({ homeId: serverId, accountId: 'account',
+      selectedAddress: { kind: 'session', sessionId: 'captain' } });
+    expect(native.opens[1]?.windowId).not.toBe('window-1');
   });
 
   it('keeps the plain title for a Session that is not a Bot', async () => {

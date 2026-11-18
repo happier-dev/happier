@@ -2,15 +2,16 @@
 
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { collectNodeText, createDeferred, flushHookEffects, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
+import { collectNodeText, createDeferred, flushHookEffects, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 
 import type {
     DesktopActivityOverlayPointer,
     DesktopActivityOverlayPresent,
     DesktopActivityOverlayWindowStatePayload,
 } from '../runtime/desktopActivityOverlayBridge';
+import { DesktopActivityOverlayRoute } from './DesktopActivityOverlayRoute';
 import { resolveDesktopActivityOverlayCardActionInstanceTestID } from './shared/desktopActivityOverlaySelectors.mjs';
 
 const isDesktopHostMock = vi.hoisted(() => vi.fn(() => true));
@@ -193,7 +194,6 @@ function createWindowState(
 
 async function renderRoute(state: DesktopActivityOverlayWindowStatePayload, options: Parameters<typeof renderScreen>[1] = {}) {
     getDesktopActivityOverlayWindowStateMock.mockResolvedValue(state);
-    const { DesktopActivityOverlayRoute } = await import('./DesktopActivityOverlayRoute');
     const screen = await renderScreen(<DesktopActivityOverlayRoute />, options);
     await flushHookEffects();
     return screen;
@@ -220,13 +220,16 @@ function createFocusRecorder() {
     const focusedTestIds: string[] = [];
     return {
         focusedTestIds,
-        createNodeMock: (element: Parameters<NonNullable<NonNullable<Parameters<typeof renderScreen>[1]>['createNodeMock']>>[0]) => ({
-            focus: () => {
-                const testID = typeof element.props === 'object' && element.props !== null && 'testID' in element.props
-                    ? element.props.testID : undefined;
-                focusedTestIds.push(String(testID ?? element.type));
-            },
-        }),
+        createNodeMock: (element: Parameters<NonNullable<NonNullable<Parameters<typeof renderScreen>[1]>['createNodeMock']>>[0]) => {
+            if (element.type === 'canvas') return null;
+            return {
+                focus: () => {
+                    const testID = typeof element.props === 'object' && element.props !== null && 'testID' in element.props
+                        ? element.props.testID : undefined;
+                    focusedTestIds.push(String(testID ?? element.type));
+                },
+            };
+        },
     };
 }
 
@@ -235,11 +238,7 @@ function keyEvent(key: string) {
 }
 
 describe('DesktopActivityOverlayRoute', () => {
-    // The route's first import transforms the whole island graph once; later imports reuse it.
-    beforeAll(async () => { await import('./DesktopActivityOverlayRoute'); }, 240_000);
-
     beforeEach(() => {
-        vi.resetModules();
         legendGeometry.contentLength = 0;
         legendGeometry.listeners.clear();
         isDesktopHostMock.mockReturnValue(true);
@@ -249,6 +248,7 @@ describe('DesktopActivityOverlayRoute', () => {
     });
 
     afterEach(() => {
+        standardCleanup();
         draftIpc.nextWriteError = null;
         getDesktopActivityOverlayWindowStateMock.mockReset();
         listenDesktopActivityOverlayWindowStateMock.mockReset();
@@ -263,7 +263,6 @@ describe('DesktopActivityOverlayRoute', () => {
 
     it('renders a loading placeholder before the overlay state arrives', async () => {
         getDesktopActivityOverlayWindowStateMock.mockImplementation(() => new Promise(() => {}));
-        const { DesktopActivityOverlayRoute } = await import('./DesktopActivityOverlayRoute');
         const screen = await renderScreen(<DesktopActivityOverlayRoute />);
         expect(screen.findByTestId('desktop-activity-overlay-loading')).toBeTruthy();
     });
@@ -280,7 +279,6 @@ describe('DesktopActivityOverlayRoute', () => {
         expect(notchForm(tip)).toBe('tip');
         await tip.unmount();
 
-        vi.resetModules();
         const base = createWindowState({ visible: false });
         const hidden = await renderRoute({ ...base, policy: { ...base.policy, idle: 'hidden' } });
         expect(hidden.findByTestId('desktop-activity-overlay-hidden')).toBeTruthy();
@@ -396,7 +394,6 @@ describe('DesktopActivityOverlayRoute', () => {
         expect(notchForm(screen)).toBe('standard');
         await screen.unmount();
 
-        vi.resetModules();
         const asking = await renderRoute(createWindowState({}, {
             rows: [],
             cards: [{
@@ -426,7 +423,7 @@ describe('DesktopActivityOverlayRoute', () => {
         expect(screen.findByTestId('desktop-activity-overlay-pin')).toBeTruthy();
     });
 
-    it('heads a pinned plain Session with its own row and shows its recent turns, yours in your bubble', async () => {
+    it('pins an ordinary Session from its row and shows its recent turns', async () => {
         const base = createWindowState();
         const screen = await renderRoute({ ...base, model: { ...base.model, conversation: {
             serverId: 'server-1', accountId: 'account-1', sessionId: 'session-1', refreshing: false, reachable: true,
@@ -435,9 +432,15 @@ describe('DesktopActivityOverlayRoute', () => {
                 { id: 'm2', role: 'agent', text: 'Passed 40 of 40.' },
             ] },
         } } as unknown as OverlayModel });
-        await act(async () => { presentation.handler?.({ state: 'pinned', focus: false }); });
+        await act(async () => { screen.pressByTestId('desktop-activity-overlay-collapsed'); });
+        expect(screen.findByTestId('desktop-activity-overlay-conversation')).toBeNull();
+        await act(async () => { screen.pressByTestId('desktop-activity-overlay-session-row-session-1'); });
         await flushHookEffects();
 
+        expect(emitDesktopActivityOverlayInteractionMock).toHaveBeenCalledWith({
+            actionIdentifier: 'session.open',
+            data: { sessionId: 'session-1', serverId: 'server-1', presentation: 'overlay' },
+        });
         expect(screen.findByTestId('desktop-activity-overlay-conversation-name')?.props.children).toBe('Session One');
         expect(collectNodeText(screen.findByTestId('desktop-activity-overlay-conversation-state')!).join(' ')).toContain('Repo');
         expect(screen.findByTestId('desktop-activity-overlay-conversation-yours')!.findAllByType('Text')
@@ -573,7 +576,6 @@ describe('DesktopActivityOverlayRoute', () => {
             const docked = await renderRoute(createWindowState());
             expect(docked.findByTestId('desktop-activity-overlay-notch-seam')).toBeNull();
             await docked.unmount();
-            vi.resetModules();
             const camera = await renderRoute(cameraState());
             expect(camera.findByTestId('desktop-activity-overlay-notch-seam')).not.toBeNull();
         });
@@ -630,7 +632,6 @@ describe('DesktopActivityOverlayRoute', () => {
         const intervals = vi.spyOn(globalThis, 'setInterval');
         const commits = vi.fn();
         getDesktopActivityOverlayWindowStateMock.mockResolvedValue(createWindowState({ visible: false }));
-        const { DesktopActivityOverlayRoute } = await import('./DesktopActivityOverlayRoute');
         await renderScreen(<React.Profiler id="notch" onRender={commits}><DesktopActivityOverlayRoute /></React.Profiler>);
         await flushHookEffects();
         const settledCommits = commits.mock.calls.length;
@@ -793,6 +794,30 @@ describe('DesktopActivityOverlayRoute', () => {
             expect(focus.focusedTestIds.at(-1)).toBe('desktop-activity-overlay-bot-row-bot-flake');
         });
 
+        it('moves the attention dot to the face whose Session needs you after a native push', async () => {
+            let push: (state: DesktopActivityOverlayWindowStatePayload) => void = () => {
+                throw new Error('Overlay state listener was not acquired');
+            };
+            listenDesktopActivityOverlayWindowStateMock.mockImplementation(async listener => {
+                push = listener;
+                return () => {};
+            });
+            const state = withBots({ dock: 'left' }, null);
+            const screen = await renderRoute(state);
+            const dot = (id: string) => screen.findByTestId(`desktop-activity-overlay-face-${id}-needs-you`);
+            expect(dot('bot-flake')).toBeTruthy();
+            expect(dot('bot-release')).toBeNull();
+
+            await act(async () => {
+                push({ ...state, model: { ...state.model, faces: { overflowCount: 0, faces: [
+                    { ...flake, activity: 'working' }, { ...release, activity: 'needsYou' },
+                ] } } });
+            });
+
+            expect(dot('bot-flake')).toBeNull();
+            expect(dot('bot-release')).toBeTruthy();
+        });
+
         it('pins the island on a face, asks main for that Bot in the overlay, and releases it on Back', async () => {
             const screen = await renderRoute(withBots());
             expect(screen.findByTestId('desktop-activity-overlay-face-bot-flake')).toBeTruthy();
@@ -833,9 +858,16 @@ describe('DesktopActivityOverlayRoute', () => {
             expect(notchForm(screen)).toBe('standard');
         });
 
-        it('keeps the pinned panel when the window was not opened, and steps back once it is', async () => {
+        it('Extract keeps the Session draft and only closes the pinned panel after its window opens', async () => {
+            draftIpc.drafts = { 'bot-flake': '' };
+            draftIpc.writes = [];
             const screen = await renderRoute(withBots());
             await act(async () => { presentation.handler?.({ state: 'pinned', focus: false }); });
+            await flushHookEffects();
+            const text = 'Keep this unsent in the window';
+            await act(async () => {
+                invokeTestInstanceHandler(screen.findByTestId('desktop-activity-overlay-quick-reply-input'), 'onChangeText', text);
+            });
             await flushHookEffects();
 
             executeDesktopActivityOverlayInteractionWithResultMock.mockResolvedValueOnce({ requestId: 'r', ok: true, result: { status: 'cancelled' } });
@@ -851,6 +883,8 @@ describe('DesktopActivityOverlayRoute', () => {
             await flushHookEffects();
             expect(notchForm(screen)).toBe('standard');
             expect(emitted('overlay-set-expanded')).toContainEqual({ expanded: false, target: null });
+            expect(draftIpc.drafts['bot-flake']).toBe(text);
+            expect(draftIpc.writes).toEqual([{ sessionId: 'bot-flake', text, expectedRevision: 1 }]);
         });
 
         it('flies the panel to the opened window, keeping the flight layer inside the presented envelope', async () => {
@@ -999,9 +1033,11 @@ describe('DesktopActivityOverlayRoute', () => {
             expect(keyboardWanted.calls).toEqual([true]);
         });
 
-        it.each([true, false])('uses the pinned Home for its context and fallback name (face present: %s)', async (hasFace) => {
+        it.each([true, false])('answers the pinned Home’s own choice inline and replies (face present: %s)', async (hasFace) => {
             draftIpc.drafts = { 'bot-flake': '' };
             draftIpc.writes = [];
+            const nativeChoice = { requirementId: 'muse-edit', choiceId: 'grant-once' };
+            const permission = { requestId: 'rq-1', sessionId: 'bot-flake', serverId: 'server-1', nativeChoice };
             const base = withBots();
             const asking = {
                 ...base,
@@ -1013,8 +1049,12 @@ describe('DesktopActivityOverlayRoute', () => {
                     cards: [{
                         id: 'permission:rq-1', kind: 'permission_request', requestId: 'rq-1', sessionId: 'bot-flake', serverId: 'server-1',
                         title: 'Edit a file', summary: 'Edit', toolLabel: 'Edit', questionText: null, count: 1, risk: 'low',
-                        openActionIdentifier: 'open-session:bot-flake', allowActionIdentifier: 'a', denyActionIdentifier: 'd',
-                        actions: [{ id: 'allow', label: 'Allow once', actionIdentifier: 'a', data: {}, tone: 'primary' }],
+                        openActionIdentifier: 'open-session:bot-flake', allowActionIdentifier: 'approve-permission', denyActionIdentifier: 'deny-permission',
+                        actions: [
+                            { id: 'grant-once', label: 'Allow this edit', actionIdentifier: 'approve-permission', data: permission, tone: 'primary' },
+                            { id: 'reject-edit', label: 'Reject this edit', actionIdentifier: 'deny-permission',
+                                data: { ...permission, nativeChoice: { ...nativeChoice, choiceId: 'reject-edit' } }, tone: 'secondary' },
+                        ],
                     }] } },
             } as typeof base;
             const screen = await renderRoute(asking);
@@ -1027,6 +1067,28 @@ describe('DesktopActivityOverlayRoute', () => {
             expect(screen.getTextContent()).toContain('Flake hunter');
             expect(screen.getTextContent()).not.toContain('Wrong Home name');
             expect(screen.getTextContent()).not.toContain('wrong · machine');
+
+            const permit = resolveDesktopActivityOverlayCardActionInstanceTestID('permission:rq-1', 'grant-once');
+            const reject = resolveDesktopActivityOverlayCardActionInstanceTestID('permission:rq-1', 'reject-edit');
+            expect(screen.findByTestId(reject)).toBeTruthy();
+            await act(async () => { screen.pressByTestId(permit); });
+            expect(executeDesktopActivityOverlayInteractionWithResultMock).toHaveBeenCalledWith({
+                actionIdentifier: 'approve-permission', data: permission,
+            });
+            expect(screen.findByTestId(permit)).toBeNull();
+            expect(screen.findByTestId(reject)).toBeNull();
+
+            const message = 'Continue with that edit';
+            await act(async () => {
+                invokeTestInstanceHandler(screen.findByTestId('desktop-activity-overlay-quick-reply-input'), 'onChangeText', message);
+            });
+            await flushHookEffects();
+            await act(async () => { screen.pressByTestId('desktop-activity-overlay-quick-reply-send'); });
+            await flushHookEffects();
+            expect(executeDesktopActivityOverlayInteractionWithResultMock.mock.calls.map(([request]) => request)).toEqual([
+                { actionIdentifier: 'approve-permission', data: permission },
+                { actionIdentifier: 'session.message.send', data: { sessionId: 'bot-flake', serverId: 'server-1', message } },
+            ]);
         });
 
         it('goes back to how a pinned Bot is once it no longer asks', async () => {

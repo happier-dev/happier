@@ -35,7 +35,6 @@ it('desktop.notch.set pinned asks the route owner to focus its first control and
     } });
     const dispose = await listenDesktopActivityOverlayPresentation(payload => delivered.push(payload));
     const executor = createDefaultActionExecutor();
-    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
     const commands = buildCommandPaletteCommands({
         sessionsById: {}, isDev: false, activeSessionId: null,
         features: { executionRunsEnabled: false, voiceEnabled: false },
@@ -45,7 +44,9 @@ it('desktop.notch.set pinned asks the route owner to focus its first control and
     const open = commands.find(command => command.actionSpecId === 'desktop.notch.set');
     expect(open).toBeDefined();
     await open!.action();
-    expect(await executor.execute('desktop.notch.set', { state: 'rest' }, context)).toEqual({ ok: true, result: { applied: true } });
+    const agent = { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+        defaultSessionId: 'background' } as const;
+    expect(await executor.execute('desktop.notch.set', { state: 'rest' }, agent)).toEqual({ ok: true, result: { applied: true } });
     expect(delivered).toEqual([{ state: 'open', focus: true }, { state: 'pinned', focus: true }, { state: 'rest', focus: false }]);
     dispose();
 });
