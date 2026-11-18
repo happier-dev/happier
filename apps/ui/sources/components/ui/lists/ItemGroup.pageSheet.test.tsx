@@ -287,6 +287,24 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
         }).toEqual({ row: -rowInsetPx, contentRow: -rowInsetPx, tiles: 0, note: 0 });
     });
 
+    it('keeps a widget body\'s bare section rows on the body edge: those rows carry no inset to bleed by (ACCEPT-B fix 12)', async () => {
+        const { ItemGroup, Item, ListPresentationProvider, presentation } = await loadModules();
+        const { View } = await import('react-native');
+        // A widget body (the widget frame's list scope over its body edge): the Machines widget's rows sat 12 px
+        // outside the body's content edge, while bare rows beside them (Latest runs) stood on it.
+        const screen = await renderScreen(
+            <presentation.HappierBodyEdgeContext.Provider value>
+                <ListPresentationProvider value="grouped" pageInsets="contained">
+                    <ItemGroup header="none" surface="none" density="compact">
+                        <Item testID="machine-row" title="studio" icon={<View />} />
+                    </ItemGroup>
+                    <Item testID="bare-row" title="Morning triage" density="compact" icon={<View />} />
+                </ListPresentationProvider>
+            </presentation.HappierBodyEdgeContext.Provider>,
+        );
+        expect({ grouped: leadingOffsetPx(screen, 'machine-row'), bare: leadingOffsetPx(screen, 'bare-row') }).toEqual({ grouped: 0, bare: 0 });
+    });
+
     it('stands a bare page section\'s rows on its content edge, where its tiles and its heading stand', async () => {
         const { ItemGroup, Item, ListPresentationProvider, presentation } = await loadModules();
         const { View } = await import('react-native');

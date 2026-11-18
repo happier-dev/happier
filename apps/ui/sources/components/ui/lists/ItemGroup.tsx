@@ -35,7 +35,7 @@ import {
     ITEM_GROUP_HEADER_NO_TITLE_PADDING_TOP_PX,
 } from './itemGroupSpacing';
 import { Text } from '@/components/ui/text/Text';
-import { BareSectionRowsContext, MenuSectionRowsContext, useFloatingListSurface, useListPresentation, usePageListInsets, useSidePaneTextEdge } from './listPresentation';
+import { BareSectionRowsContext, MenuSectionRowsContext, useFloatingListSurface, useListPresentation, usePageListInsets, useSidePaneTextEdge, useWidgetBodyRowEdge } from './listPresentation';
 import { MENU_ROW_METRICS } from './itemDensityMetrics';
 import { SelectionListSectionHeader } from '@/components/ui/selectionList/SelectionListSectionHeader';
 import { SelectionListOptionPresentationContext } from '@/components/ui/selectionList/SelectionListOptionPresentationContext';
@@ -684,8 +684,11 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     const groupedRowPaddingPx = ITEM_ROW_PADDING_HORIZONTAL[useResolvedItemDensity(density)];
     const rowPaddingPx = isPage ? PAGE_LIST_METRICS.rowPaddingHorizontalPx : groupedRowPaddingPx;
     const wantsColumns = (columns ?? 1) > 1;
-    // A column grid's cells are cards of their own: their rows stay in their cells.
-    const bleedRows = contained && surface === 'none' && !wantsColumns;
+    // A column grid's cells are cards of their own: their rows stay in their cells. A widget body's rows already
+    // stand on the body edge with no inset of their own (`useWidgetBodyRowEdge`), so there is nothing to bleed by:
+    // bleeding them put their marks a row inset outside the body (the Machines widget, LABPARITY-ACCEPT-B fix 12).
+    const bodyEdgeRows = useWidgetBodyRowEdge();
+    const bleedRows = contained && surface === 'none' && !wantsColumns && !bodyEdgeRows;
     // A bare page section's rows stand on the section's content edge, where its tiles and collections stand and
     // (by the heading's optical inset) its title: glyphs and chevrons on those edges, fills reaching into the margin,
     // as a flat sheet's rows do. The margin is wider than the bleed, so nothing reaches a clipping edge.
