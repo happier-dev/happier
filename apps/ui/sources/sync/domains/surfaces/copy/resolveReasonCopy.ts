@@ -509,6 +509,14 @@ const PLUGIN_RUNTIME_TITLE_KEYS = {
     account_encryption_mode_unavailable: 'pluginRuntime.homeUnreachableTitle',
 } as const satisfies Record<string, 'pluginRuntime.homeUnreachableTitle'>;
 
+/**
+ * Whether a surface failure's cause lies outside its plugin (the Home itself did not answer). Such a cause is the
+ * canonical sentence for the state: it outranks any host line about the plugin (`claimableSurfaceNotice`).
+ */
+export function isPluginSurfaceCauseOutsidePlugin(reasonCode: string | null | undefined): boolean {
+    return !!reasonCode && Object.hasOwn(PLUGIN_RUNTIME_TITLE_KEYS, reasonCode);
+}
+
 /** A device-viewer cause that names itself in the card's title, in place of the generic stream title. */
 const SIMULATOR_PREVIEW_TITLE_KEYS = {
     webcodecs_unavailable: 'simulatorPreview.device.videoUnsupported',

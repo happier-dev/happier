@@ -188,6 +188,38 @@ describe('WidgetMachineNoticeBoundary', () => {
         expect(cards[0]!.props.action?.label).toBe('settingsPlugins.managePlugin');
         expect(JSON.stringify(screen.getTextContent()).split(sentence)).toHaveLength(2);
     });
+
+    it('says one failure when the Home itself is unreachable: the Home cause outranks the plugin line, which steps aside (ACCEPT-D)', async () => {
+        const { PluginSurfaceFallback } = await import('@/components/sessions/panes/PluginSurfaceFallback');
+        const sentence = 'PRs & Issues is installed but isn’t ready to run on any of your machines.';
+        const notice: WidgetFrameBodyNoticeSource = () => ({ sentence, managePluginId: 'happier.prs' });
+        function UnreachableBody() {
+            const lend = React.useContext(WidgetFrameBodyNoticeContext);
+            React.useEffect(() => { lend?.(notice); }, [lend]);
+            return <PluginSurfaceFallback testID="plugin-surface-unavailable" reasonCode="account_encryption_mode_unavailable" subjectName="PRs & Issues" onRetry={() => {}} />;
+        }
+        const screen = await renderScreen(<WidgetMachineNoticeBoundary testID="widget"><UnreachableBody /></WidgetMachineNoticeBoundary>);
+        await flushHookEffects({ cycles: 3 });
+        expect(screen.findByTestId('widget-machine-notice')).toBeNull();
+        expect(JSON.stringify(screen.getTextContent())).not.toContain(sentence);
+        const card = screen.tree.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'plugin-surface-unavailable');
+        expect(card?.props.title).toBe('pluginRuntime.homeUnreachableTitle');
+    });
+
+    it('says the host line once in the body when the plugin surface fallback fails for the plugin\'s own reason', async () => {
+        const { PluginSurfaceFallback } = await import('@/components/sessions/panes/PluginSurfaceFallback');
+        const sentence = 'PRs & Issues is installed but isn’t ready to run on any of your machines.';
+        const notice: WidgetFrameBodyNoticeSource = () => ({ sentence, managePluginId: 'happier.prs' });
+        function RefusedBody() {
+            const lend = React.useContext(WidgetFrameBodyNoticeContext);
+            React.useEffect(() => { lend?.(notice); }, [lend]);
+            return <PluginSurfaceFallback testID="plugin-surface-unavailable" reasonCode="plugin_resource_unavailable" subjectName="PRs & Issues" onRetry={() => {}} />;
+        }
+        const screen = await renderScreen(<WidgetMachineNoticeBoundary testID="widget"><RefusedBody /></WidgetMachineNoticeBoundary>);
+        await flushHookEffects({ cycles: 3 });
+        expect(screen.findByTestId('widget-machine-notice')).toBeNull();
+        expect(JSON.stringify(screen.getTextContent()).split(sentence)).toHaveLength(2);
+    });
 });
 
 

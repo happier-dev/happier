@@ -9,6 +9,7 @@ import { PluginSurfacePageHeaderContext } from '@/components/plugins/shared/plug
 import { usePublishPluginSurfaceStateTitle } from '@/components/plugins/shared/pluginSurfaceStateTitle';
 import { PageFrame } from '@/components/ui/layout/PageFrame';
 import { usePageSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
+import { useClaimedHostFailureNotice } from '@/components/ui/surfaces/claimableSurfaceNotice';
 import {
     SurfaceStateCard,
     type SurfaceStateAction,
@@ -16,6 +17,7 @@ import {
 } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import {
+    isPluginSurfaceCauseOutsidePlugin,
     resolvePluginSurfaceStatePresentation,
     type PluginSurfacePresentationState,
     type PluginSurfaceStatePresentation,
@@ -127,7 +129,10 @@ export function PluginSurfaceFallback(props: Readonly<{
     if (!card) {
         throw new Error('plugin_surface_unavailable_presentation_missing_card');
     }
-    usePublishPluginSurfaceStateTitle(card.kind === 'loading' ? null : card.title);
+    // The host's line about this body (a widget's Machine notice) and this failure are one failure, said once.
+    const hostNotice = useClaimedHostFailureNotice(card.kind !== 'loading', isPluginSurfaceCauseOutsidePlugin(props.reasonCode));
+    const title = hostNotice?.sentence ?? card.title;
+    usePublishPluginSurfaceStateTitle(card.kind === 'loading' ? null : title);
     if (card.kind === 'loading') {
         const skeleton = (
             <PluginSurfaceLoadingSkeleton
@@ -148,15 +153,15 @@ export function PluginSurfaceFallback(props: Readonly<{
         {pageHeader}
         <SurfaceStateCard
             testID={props.testID}
-            kind={card.kind}
-            size={pageHeader ? pageStateSize : undefined}
-            title={card.title}
-            titleContent={props.renderText?.('title', card.title)}
-            reason={props.reason ?? card.reason}
-            reasonContent={(props.reason ?? card.reason) ? props.renderText?.('reason', (props.reason ?? card.reason)!) : undefined}
+            kind={hostNotice ? 'unavailable' : card.kind}
+            size={hostNotice ? 'line' : pageHeader ? pageStateSize : undefined}
+            title={title}
+            titleContent={props.renderText?.('title', title)}
+            reason={hostNotice ? undefined : props.reason ?? card.reason}
+            reasonContent={!hostNotice && (props.reason ?? card.reason) ? props.renderText?.('reason', (props.reason ?? card.reason)!) : undefined}
             diagnosticCode={presentation.diagnosticCode}
             diagnosticDetail={props.diagnosticDetail}
-            action={resolvePluginSurfaceStateAction({
+            action={hostNotice && hostNotice.action !== undefined ? hostNotice.action ?? undefined : resolvePluginSurfaceStateAction({
                 recoveryAction: presentation.recoveryAction,
                 onRetry: props.onRetry,
                 manageAction: props.action,

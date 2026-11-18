@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { PluginUiSurfaceNoticeContext, type PluginUiSurfaceNotice } from '@happier-dev/plugin-ui/advanced';
+import { PluginUiSurfaceNoticeContext, useClaimedPluginUiSurfaceNotice, type PluginUiSurfaceNotice } from '@happier-dev/plugin-ui/advanced';
 
 import { SurfaceStateContentContext } from './SurfaceStateCard';
 
@@ -65,3 +65,18 @@ export function useClaimableSurfaceNotice(
 }
 
 const NO_CLAIMANTS: ReadonlySet<string> = new Set();
+
+/**
+ * A host failure card (a plugin surface that could not open) and the host's line about the same body: the card
+ * claims the line so the body states one failure. The card says the host's sentence, with the host's way forward,
+ * unless its own cause lies outside the plugin (the Home did not answer): that cause is the canonical sentence for
+ * the state, so the card keeps its own copy and the host's line simply steps aside.
+ */
+export function useClaimedHostFailureNotice(
+  failure: boolean,
+  ownCauseOutranks: boolean,
+): Readonly<{ sentence: string; action: PluginUiSurfaceNotice['action'] }> | null {
+  const notice = React.useContext(PluginUiSurfaceNoticeContext);
+  const sentence = useClaimedPluginUiSurfaceNotice(failure);
+  return sentence === null || ownCauseOutranks ? null : { sentence, action: notice?.action };
+}

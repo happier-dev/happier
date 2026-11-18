@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { PluginUiSurfaceNoticeContext, useClaimedPluginUiSurfaceNotice } from '@happier-dev/plugin-ui/advanced';
 
 import { resolvePluginSurfaceStateAction } from '@/components/sessions/panes/PluginSurfaceFallback';
 import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
-import { resolvePluginSurfaceStatePresentation } from '@/sync/domains/surfaces/copy';
+import { isPluginSurfaceCauseOutsidePlugin, resolvePluginSurfaceStatePresentation } from '@/sync/domains/surfaces/copy';
+import { useClaimedHostFailureNotice } from '@/components/ui/surfaces/claimableSurfaceNotice';
 import { t } from '@/text';
 
 import { PluginSurfaceMachineRecoveryContext, useOfflineSurfaceNotice } from '../shared/pluginSurfaceInteractionAvailability';
@@ -59,11 +59,9 @@ export function PluginReactNativeUnavailable(props: PluginReactNativeUnavailable
             manageAction: props.recoveryAction,
         });
     const offline = props.offline === true && !pending;
-    // The host already knows why this body cannot run (its widget's Machine notice, "installed but isn't ready
-    // anywhere"): the whole body's failure claims that sentence and says it here, once, with the host's way forward,
-    // instead of a generic "can't open" under the host's own line (LABPARITY-ACCEPT-B fix 8).
-    const hostNotice = React.useContext(PluginUiSurfaceNoticeContext);
-    const claimedSentence = useClaimedPluginUiSurfaceNotice(!pending);
+    // The host's line about this body (its widget's Machine notice) and this failure are one failure, said once.
+    const hostNotice = useClaimedHostFailureNotice(!pending, isPluginSurfaceCauseOutsidePlugin(diagnostics[0]));
+    const claimedSentence = hostNotice?.sentence ?? null;
     const title = claimedSentence ?? (offline ? offlineNotice.title : card.title);
     usePublishPluginSurfaceStateTitle(pending ? null : title);
     return (

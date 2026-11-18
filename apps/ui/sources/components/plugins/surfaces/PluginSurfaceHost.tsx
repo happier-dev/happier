@@ -116,6 +116,7 @@ import type { CurrentUiContextMountPublication } from '@/components/appShell/cur
 import type { CurrentUiContextMountedEnrichment } from '@/components/appShell/currentUiContext/currentUiContextModel';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
+import { PluginSurfaceConnectingLine } from './PluginSurfaceConnectingLine';
 import {
     isUiSurfaceRendererKind,
     UiSurfaceRendererHost,
@@ -305,18 +306,6 @@ const surfaceHostStyles = StyleSheet.create({
     },
     targetedReadyDiagnosticFill: {
         flex: 1,
-    },
-    // Host chrome above a pane's plugin content: it sits under the pane title,
-    // on the same inset, never flush against the pane (or phone screen) edge.
-    connectingLine: {
-        position: 'absolute',
-        left: 12,
-        bottom: 5,
-        zIndex: 1,
-        maxWidth: '90%',
-        borderRadius: 10,
-        borderWidth: 1,
-        paddingHorizontal: 8,
     },
     executionOriginBand: {
         paddingVertical: 8,
@@ -1664,19 +1653,6 @@ function resolveHostedWebProjectionMount(params: Readonly<{
 const INLINE_LOADING_MARKER_STYLE = { width: 0, height: 0 } as const;
 
 /** A loading state that reserves nothing: only the hidden marker QA and tests key on. */
-/** Over the surface, not above it: a passing state never pushes the page's header down and back. */
-function PluginSurfaceConnectingLine(): React.ReactElement {
-    const { theme } = useUnistyles();
-    return <View pointerEvents="none" style={[surfaceHostStyles.connectingLine, { backgroundColor: theme.colors.surface.base, borderColor: theme.colors.border.strong }]}>
-        <SurfaceStateCard
-            testID="plugin-surface-execution-preparing" kind="loading" size="line"
-            title={t('pluginSurfaces.state.connecting.title')}
-            reason={t('pluginSurfaces.state.connecting.reason')}
-            accessibilitySemantics="status"
-        />
-    </View>;
-}
-
 function PluginSurfaceLoadingMarker(props: Readonly<{ reason: string }>): React.ReactElement {
     return <View testID={`plugin-surface-unavailable-diagnostic-${props.reason}`} accessibilityElementsHidden
         importantForAccessibility="no-hide-descendants" style={INLINE_LOADING_MARKER_STYLE} />;

@@ -1,5 +1,6 @@
 export {
     isLocalServiceActionRefusedByPolicy,
+    isPluginSurfaceCauseOutsidePlugin,
     resolvePluginExecutionOriginReasonDetail,
     resolvePluginSurfaceStatePresentation,
     resolveReasonCopy,
