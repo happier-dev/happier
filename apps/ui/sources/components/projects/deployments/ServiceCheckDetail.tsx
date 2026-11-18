@@ -13,6 +13,8 @@ import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThem
 import { checkNowConfiguredHealthCheck } from '@/components/store/inventory/configuredHealthResults';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -164,6 +166,11 @@ export function ServiceCheckDetail(
     nowMs?: number;
     /** The Check page says what the Check is in its header's description; the pane says it at the top of the body. */
     metaInHeader?: boolean;
+    /**
+     * The Check page draws its header through this, with the check's actions at its end (lab A3: Check now and ⋯); the
+     * pane keeps them at the top of the body under its own title.
+     */
+    renderHeader?: (actions: React.ReactNode) => React.ReactNode;
   }>,
 ) {
   const { row } = props;
@@ -181,6 +188,7 @@ export function ServiceCheckDetail(
     facts.checks[0] ??
     null;
   const settings = readServiceCheckSettings(seed, shown?.checkId ?? null);
+  const checkNow = useCheckNow(settings?.run ?? null, row.scope);
   const serverIdForSubject = row.scope.serverId;
   const investigateSubject = React.useMemo(
     () => serviceCheckInvestigationSubject(seed, shown?.checkId ?? null, serverIdForSubject),
@@ -304,9 +312,17 @@ export function ServiceCheckDetail(
     : null;
   return (
     <View testID={`services.check.${row.automationId}.${row.triggerId}`}>
-      {/* The head holds the meta line (beside the pane's title) and the check's actions; on the page with neither, it
-          draws nothing, so the bars stand right under the header (lab A3). */}
-      {(props.metaInHeader || meta === null) && !settings && !(failing && investigateSubject) ? null : (
+      {props.renderHeader ? props.renderHeader(
+        <View style={styles.headerActions}>
+          {settings ? <CheckNowButton checkNow={checkNow} /> : null}
+          <CheckMenu onEdit={openEditor} />
+        </View>,
+      ) : null}
+      {/* The head holds the meta line (beside the pane's title) and the check's actions; on the page (whose header holds
+          the actions) it holds only what Check now says while it waits and Investigate, else nothing, so the bars stand
+          right under the header (lab A3). */}
+      {(props.metaInHeader || meta === null)
+        && (props.renderHeader ? checkNow.state === 'idle' : !settings) && !(failing && investigateSubject) ? null : (
       <ItemGroup surface="none" testID="services.check.head">
         {props.metaInHeader || meta === null ? null : (
           <Text
@@ -318,7 +334,12 @@ export function ServiceCheckDetail(
           </Text>
         )}
         <View style={styles.actions}>
-          {settings ? <CheckNow run={settings.run} scope={row.scope} /> : null}
+          {settings ? (
+            <View style={styles.checkNow}>
+              {props.renderHeader ? null : <CheckNowButton checkNow={checkNow} />}
+              <CheckNowStatus checkNow={checkNow} />
+            </View>
+          ) : null}
           {failing && investigateSubject ? (
             <CheckInvestigate subject={investigateSubject} serverId={serverIdForSubject} />
           ) : null}
@@ -586,54 +607,87 @@ function keyFlowRuleText(config: NonNullable<ServiceCheckSettings['keyFlow']>): 
 }
 
 /** Check now runs the saved kind's public Action through the ordinary front door (policy, approval, Machine). */
-function CheckNow(props: Readonly<{ run: ServiceCheckSettings['run']; scope: ManagedConfiguredCheckRow['scope'] }>) {
+type CheckNowControl = Readonly<{ state: 'idle' | 'running' | 'failed'; run: () => void; cancel: () => void }>;
+
+/** One Check now per page: the button (header or body) and what it says while it waits share this state. */
+function useCheckNow(run: ServiceCheckSettings['run'] | null, scope: ManagedConfiguredCheckRow['scope']): CheckNowControl {
   const [state, setState] = React.useState<'idle' | 'running' | 'failed'>('idle');
   const controller = React.useRef<AbortController | null>(null);
   React.useEffect(() => () => controller.current?.abort(), []);
-  const run = React.useCallback(async () => {
+  const start = React.useCallback(async () => {
+    if (!run) return;
     controller.current?.abort();
     const current = new AbortController();
     controller.current = current;
     setState('running');
     try {
       await checkNowConfiguredHealthCheck({
-        subject: props.run.subject,
-        check: props.run.check,
+        subject: run.subject,
+        check: run.check,
         signal: current.signal,
-        serverId: props.scope.serverId,
-        expectedAccountId: props.scope.accountId,
+        serverId: scope.serverId,
+        expectedAccountId: scope.accountId,
       });
       if (!current.signal.aborted) setState('idle');
     } catch {
       if (!current.signal.aborted) setState('failed');
     }
-  }, [props.run, props.scope.accountId, props.scope.serverId]);
+  }, [run, scope.accountId, scope.serverId]);
   // The person can stop waiting: the Action's own signal is aborted; a result its Machine still sends arrives as usual.
   const cancel = React.useCallback(() => {
     controller.current?.abort();
     setState('idle');
   }, []);
+  return React.useMemo(() => ({ state, run: () => void start(), cancel }), [cancel, start, state]);
+}
+
+function CheckNowButton(props: Readonly<{ checkNow: CheckNowControl }>) {
   return (
-    <View style={styles.checkNow}>
-      <RoundButton
-        testID="services.check.checkNow"
-        display="secondary"
-        title={t(`${k}.checkNow`)}
-        loading={state === 'running'}
-        onPress={() => void run()}
-      />
-      {state === 'running' ? (
-        // While it waits it says so, and after a few seconds how long (the loading state's own "Still waiting" clock).
-        <SurfaceStateCard testID="services.check.checkNow.pending" kind="loading" size="line"
-          title={t(`${k}.checkNowRunning`)}
-          action={{ label: t('common.cancel'), onPress: cancel, testID: 'services.check.checkNow.cancel' }} />
-      ) : null}
-      {state === 'failed' ? (
-        <Text variant="meta" style={styles.metaText} testID="services.check.checkNow.failed">
-          {t(`${k}.checkNowFailed`)}
-        </Text>
-      ) : null}
-    </View>
+    <RoundButton
+      testID="services.check.checkNow"
+      display="secondary"
+      title={t(`${k}.checkNow`)}
+      loading={props.checkNow.state === 'running'}
+      onPress={props.checkNow.run}
+    />
+  );
+}
+
+function CheckNowStatus(props: Readonly<{ checkNow: CheckNowControl }>) {
+  const { state, cancel } = props.checkNow;
+  // While it waits it says so, and after a few seconds how long (the loading state's own "Still waiting" clock).
+  if (state === 'running') {
+    return (
+      <SurfaceStateCard testID="services.check.checkNow.pending" kind="loading" size="line"
+        title={t(`${k}.checkNowRunning`)}
+        action={{ label: t('common.cancel'), onPress: cancel, testID: 'services.check.checkNow.cancel' }} />
+    );
+  }
+  return state === 'failed' ? (
+    <Text variant="meta" style={styles.metaText} testID="services.check.checkNow.failed">
+      {t(`${k}.checkNowFailed`)}
+    </Text>
+  ) : null;
+}
+
+/** The Check page's ⋯ (lab A3): the check's own editor, where its target, cadence and alerts change. */
+function CheckMenu(props: Readonly<{ onEdit: () => void }>) {
+  const [open, setOpen] = React.useState(false);
+  const items = React.useMemo(() => [{ id: 'edit', testID: 'services.check.menu.edit', title: t(`${k}.editCheck`) }], []);
+  return (
+    <DropdownMenu
+      open={open}
+      onOpenChange={setOpen}
+      items={items}
+      matchTriggerWidth={false}
+      placement="bottom"
+      popoverAccessibilityLabel={t('common.more')}
+      onSelect={(id) => { if (id === 'edit') props.onEdit(); }}
+      trigger={({ toggle }) => (
+        <IconButton testID="services.check.menu" iconName="dots-three" variant="plain"
+          accessibilityLabel={t('common.more')} onPress={toggle} />
+      )}
+    />
   );
 }
 
@@ -678,6 +732,7 @@ const styles = StyleSheet.create((theme) => ({
   metaText: { color: theme.colors.text.secondary },
   // The button keeps its own width; the waiting line under it takes the room it needs.
   checkNow: { gap: theme.space.s4, alignItems: 'flex-start' },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   investigate: { gap: theme.space.s8, alignItems: 'flex-start' },
   actions: { paddingTop: theme.space.s12, flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8, alignItems: 'flex-start' },
   hero: { gap: theme.space.s8 },

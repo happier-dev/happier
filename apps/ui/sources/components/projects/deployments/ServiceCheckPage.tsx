@@ -101,13 +101,14 @@ export function ServiceCheckPage() {
 export function ServiceCheckPageBody(props: Readonly<{ row: ManagedConfiguredCheckRow }>) {
   return (
     <>
-      <CheckPageHeader row={props.row} />
-      <ServiceCheckDetail row={props.row} metaInHeader />
+      {/* The detail owns the check's actions; it hands them to the header's end (lab A3: Check now and ⋯). */}
+      <ServiceCheckDetail row={props.row} metaInHeader
+        renderHeader={(actions) => <CheckPageHeader row={props.row} actions={actions} />} />
     </>
   );
 }
 
-function CheckPageHeader(props: Readonly<{ row: ManagedConfiguredCheckRow }>) {
+function CheckPageHeader(props: Readonly<{ row: ManagedConfiguredCheckRow; actions: React.ReactNode }>) {
   const meta = useServiceCheckMeta(props.row);
   const title = props.row.definitionFacts.kind === 'loading'
     ? t('projects.deployments.services.checkPageTitle')
@@ -120,6 +121,7 @@ function CheckPageHeader(props: Readonly<{ row: ManagedConfiguredCheckRow }>) {
       // The check's own mark, as its row in Monitoring draws it.
       leading={<PageHeaderMarkIcon name="pulse" />}
       {...(meta ? { description: meta } : {})}
+      actions={props.actions}
     />
   );
 }
