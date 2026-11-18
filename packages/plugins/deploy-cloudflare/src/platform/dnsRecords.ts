@@ -53,7 +53,7 @@ async function records(input: DeploymentDomainDnsRecordInputV1, context: PluginA
 }
 
 function action(write: boolean) {
-  return { ...pagesCommon, hostAccess: ['cloudflare-dns', 'deploy.manage'], surfaces: ['cli', 'plugin', 'ui'] as const,
+  return { ...pagesCommon, hostAccess: ['cloudflare-dns', 'deploy.manage'], surfaces: ['cli', 'plugin', 'ui', 'agent'] as const,
     title: write ? 'Create reviewed Cloudflare DNS records' : 'Check Cloudflare DNS records',
     dangerLevel: write ? 'writesRemote' as const : 'safe' as const, readOnly: !write,
     ...(write ? { confirmation: { title: 'Create these Cloudflare DNS records?' } } : {}),

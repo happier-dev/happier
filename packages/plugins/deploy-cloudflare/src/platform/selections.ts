@@ -182,7 +182,7 @@ export const selectionActions = {
   'workers-domain-zones-read': {
     title: 'Read Workers Domain zones', description: 'List the linked Account zones or read the explicitly selected zone for this address.',
     execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
-    scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], placementBindings: [], dangerLevel: 'safe', readOnly: true,
+    scopes: ['global'], surfaces: ['cli', 'plugin', 'ui', 'agent'], placementBindings: [], dangerLevel: 'safe', readOnly: true,
     inputSchema: selectionsInput, resultSchema: selectionsResult,
     hostAccess: ['deploy.manage', 'cloudflare-api'],
     connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'deploy.manage' }],
@@ -192,7 +192,7 @@ export const selectionActions = {
     title: 'Read named Cloudflare tunnel choices',
     description: 'List Account zones or read complete tunnel choices using connected Account and connector defaults with optional overrides. Connector discovery is unavailable.',
     execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
-    scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], placementBindings: [], dangerLevel: 'safe', readOnly: true,
+    scopes: ['global'], surfaces: ['cli', 'plugin', 'ui', 'agent'], placementBindings: [], dangerLevel: 'safe', readOnly: true,
     inputSchema: selectionsInput, resultSchema: selectionsResult,
     hostAccess: ['tunnel.manage', 'cloudflare-api'],
     connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'tunnel.manage' }],

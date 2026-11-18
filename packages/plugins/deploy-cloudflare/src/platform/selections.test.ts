@@ -116,7 +116,10 @@ it('registers one read-only Account Action producing complete deliberate selecti
     expect(await state.invoke()).toEqual({ kind: 'ready', options: [{ label: tunnel.name, selection }],
       defaults: { ...defaults, accountId: 'c'.repeat(32) }, connectorDiscovery });
     expect(entry.manifest.contributes.actions.find(row => row.id === action)).toMatchObject({ readOnly: true,
-      execution: { target: 'account' }, surfaces: expect.arrayContaining(['ui']), hostAccess: ['tunnel.manage', 'cloudflare-api'] });
+      execution: { target: 'account' }, surfaces: expect.arrayContaining(['ui', 'agent']), hostAccess: ['tunnel.manage', 'cloudflare-api'] });
+    for (const id of ['workers-domain-zones-read', 'cloudflare-named/selections-read', 'records-create', 'records-verify']) {
+      expect(entry.manifest.contributes.actions.find(row => row.id === id)?.surfaces).toEqual(expect.arrayContaining(['ui', 'agent']));
+    }
     expect(state.requests.map(request => new URL(request.url).pathname)).toEqual([
       `/client/v4/zones/${zoneId}`, `/client/v4/accounts/${accountId}/cfd_tunnel`]);
     for (const request of state.requests) {
