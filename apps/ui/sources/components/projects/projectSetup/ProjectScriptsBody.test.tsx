@@ -2657,4 +2657,23 @@ describe('Project setup layers on the Scripts page (plan A L6)', () => {
       props: expect.objectContaining({ sourceId: 'src-acme-web' }),
       chrome: expect.objectContaining({ testID: 'project-shared-setup-update' }) }));
   });
+  it('offers a shared setup this checkout has not taken as a Setup row whose Review opens it for first use (lab L6 hint)', async () => {
+    const { Modal } = await import('@/modal');
+    const show = vi.spyOn(Modal, 'show').mockImplementation(() => 'shared-setup-pending');
+    onTestFinished(() => { show.mockRestore(); });
+    shared.inspection = { definition: { basis: { kind: 'absent' }, document: null }, detection, importCandidates: [],
+      effectiveDefinition: { effectiveManifest: null, origins: [], pendingSharedSetup: {
+        source: { id: 'src-acme-web', name: 'Acme web' },
+        setup: { sourceId: 'src-acme-web', contentRevision: { headerVersion: 1, bodyVersion: 3 }, digest: hash },
+        summary: [{ kind: 'workspaceSetup', count: 2 }, { kind: 'scripts', count: 1 }] } } };
+    const screen = await render('page', 'scripts.pendingShared');
+    expect(textOf(screen, 'scripts.pendingShared')).toContain('projects.scripts.pendingShared.line');
+    // Nothing is read upstream until the person asks to review it.
+    expect(shared.calls.some(call => call.actionId === 'projects.inspect'
+      && (call.input as { reviewSharedSetup?: unknown }).reviewSharedSetup !== undefined)).toBe(false);
+    await act(async () => { await screen.pressByTestIdAsync('scripts.pendingShared.review'); });
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({
+      props: expect.objectContaining({ sourceId: 'src-acme-web', sourceName: 'Acme web', pending: true }),
+      chrome: expect.objectContaining({ title: 'projects.scripts.sharedUpdate.titlePending' }) }));
+  });
 });

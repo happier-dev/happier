@@ -56,6 +56,7 @@ import { useProjectSource } from '@/components/projects/sources/useProjectSource
 import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
 import { readProjectSetupLayers } from './projectSetupLayers';
 import { openProjectSharedSetupUpdate } from './ProjectSharedSetupUpdateSheet';
+import { PendingSharedSetupRow } from './PendingSharedSetupRow';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useServerScopedMachine } from '@/sync/store/hooks';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
@@ -403,10 +404,16 @@ export function ProjectScriptsContent(
       ) : null}
     </>
   ) : null;
+  // A shared setup the Project has and this checkout has not taken (lab L6 hint); never on the Overview glance.
+  const pendingShared = effective.kind === 'available' && !props.glance ? effective.value.pendingSharedSetup ?? null : null;
+  const pendingSharedRow = pendingShared ? (
+    <PendingSharedSetupRow workspace={props.workspace} binding={props.binding ?? null} pending={pendingShared}
+      decide={props.controller.decideSharedSetupUpdate} testID={`${props.testID}.pendingShared`} />
+  ) : null;
   if (document === null) {
     return (
       <>
-        <FirstRun {...props} />
+        <FirstRun {...props} pendingShared={pendingSharedRow} />
         {partial}
       </>
     );
@@ -444,7 +451,8 @@ export function ProjectScriptsContent(
           page lists that; the repository's own bytes belong to the editor. */}
       <DeclaredScripts {...props} manifest={effective.kind === 'available' && effective.value.effectiveManifest
         ? effective.value.effectiveManifest : document.manifest}
-        layersDefinition={effective.kind === 'available' ? effective.value : null}>
+        layersDefinition={effective.kind === 'available' ? effective.value : null}
+        pendingShared={pendingSharedRow}>
         {partial}
         <FoundMore
           {...props}
@@ -469,6 +477,8 @@ function DeclaredScripts(
     manifest: ProjectManifestV1;
     /** The composed definition's origins and shared basis, when the Machine sent them. */
     layersDefinition?: ProjectEffectiveDefinitionV1 | null;
+    /** The Project's shared setup this checkout has not taken: the Setup row the lab's L6 hint shows. */
+    pendingShared?: React.ReactNode;
     binding?: ServerCredentialAccountScopeBinding | null;
     inspection: ProjectDefinitionInspection;
     controller: ScriptsController;
@@ -612,6 +622,7 @@ function DeclaredScripts(
       </>
     ) : (
     <ItemGroup>
+      {props.pendingShared}
       {hasSetup ? (
         <SetupRow
           workspace={props.workspace}
@@ -1163,6 +1174,8 @@ function FirstRun(
     onEdit: ((seed: boolean, mode?: 'form' | 'raw') => void) | null;
     onOpenServices?: () => void;
     onOpenScripts?: () => void;
+    /** The Project's shared setup this checkout has not taken: offered under the hero, before what was found. */
+    pendingShared?: React.ReactNode;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -1271,6 +1284,7 @@ function FirstRun(
       ) : null}
       {/* Provenance only: which Session last wrote toward this checkout. It never says the setup is ready. */}
       <ProjectSetupAuthoredLine workspace={props.workspace} compact={!props.page} />
+      {props.pendingShared ? <ItemGroup>{props.pendingShared}</ItemGroup> : null}
       {!hasDetected ? (
         // On the page the hero above already says nothing was found and offers the next step.
         props.page ? null : (

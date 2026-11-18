@@ -175,6 +175,9 @@ const LAYER_ORIGINS = [
 ];
 const SHARED_BASIS = { sourceId: 'src-specimen-web-setup', contentRevision: { headerVersion: 1, bodyVersion: 3 }, digest: HASH };
 const LAYERED_DEFINITION = ProjectEffectiveDefinitionV1Schema.parse({ effectiveManifest: LAYERED_MANIFEST, origins: LAYER_ORIGINS, sharedBasis: SHARED_BASIS });
+/** A shared setup the Project has and this checkout has not taken (lab L6 hint): counts only, from its owner. */
+const PENDING_SHARED = { source: { id: SHARED_BASIS.sourceId, name: 'Acme web setup' }, setup: SHARED_BASIS,
+  summary: [{ kind: 'workspaceSetup' as const, count: 1 }, { kind: 'scripts' as const, count: 1 }, { kind: 'services' as const, count: 1 }] };
 /** The upstream change the update sheet reviews: seed orders 200 → 500, a redis service added, storybook removed. */
 function sharedUpdateSnapshot(state: string): ProjectSharedSetupReviewSnapshot | null {
   if (state === 'checking') return { kind: 'initial', pending: true };
@@ -182,8 +185,10 @@ function sharedUpdateSnapshot(state: string): ProjectSharedSetupReviewSnapshot |
     change: { kind: 'upstreamUnavailable', code: 'project_setup_review_unavailable' }, request: null };
   const selection = SHARED_BASIS;
   if (state === 'current') return { kind: 'ready', pending: false, change: { kind: 'current', selection }, request: null };
-  const before = { ...LAYERED_DEFINITION, effectiveManifest: { ...LAYERED_MANIFEST,
-    scripts: { ...LAYERED_MANIFEST.scripts, storybook: { source: pkg('storybook') } } } };
+  // First use (lab L6 hint → Review): before is the repository alone, after adds the shared setup.
+  const before = state === 'pending' ? { effectiveManifest: MANIFEST, origins: [] }
+    : { ...LAYERED_DEFINITION, effectiveManifest: { ...LAYERED_MANIFEST,
+      scripts: { ...LAYERED_MANIFEST.scripts, storybook: { source: pkg('storybook') } } } };
   const after = { ...LAYERED_DEFINITION,
     origins: [...LAYERED_DEFINITION.origins, { path: ['services', 'redis'], layer: 'shared' as const, overridden: false }],
     effectiveManifest: { ...LAYERED_MANIFEST,
@@ -224,7 +229,7 @@ function SharedUpdateFrame(props: Readonly<{ state: string }>) {
   return (
     <View style={styles.sheet}>
       <ProjectSharedSetupUpdateView snapshot={snapshot} rows={rows} sourceName="Acme web setup" machineName={MACHINE}
-        scope={scope} onScopeChange={setScope}
+        pending={props.state === 'pending'} scope={scope} onScopeChange={setScope}
         busy={null} failure={null} onRetry={() => {}} onDecide={() => {}} onClose={() => {}} />
     </View>
   );
@@ -404,7 +409,7 @@ export function ScriptsSpecimen(
     definition:
       frame === 'NATIVE'
         ? definition(NATIVE_MANIFEST)
-        : frame === 'FIRST'
+        : frame === 'FIRST' || frame === 'HINTFIRST'
         ? { basis: { kind: 'absent' as const }, document: null }
         : frame === 'STATES'
           ? definition({
@@ -414,12 +419,14 @@ export function ScriptsSpecimen(
             })
           : declared,
     detection: frame === 'NATIVE' ? { ...NATIVE_DETECTION, toolchains: [] }
-      : frame === 'RAIL' ? EMPTY_DETECTION : frame === 'FIRST' ? FIRST_DETECTION : PAGE_DETECTION,
-    ...(frame === 'FIRST' ? { detectionSummary: FIRST_SUMMARY }
+      : frame === 'RAIL' ? EMPTY_DETECTION : frame === 'FIRST' || frame === 'HINTFIRST' ? FIRST_DETECTION : PAGE_DETECTION,
+    ...(frame === 'FIRST' || frame === 'HINTFIRST' ? { detectionSummary: FIRST_SUMMARY }
       : frame !== 'NATIVE' && frame !== 'RAIL' ? { detectionSummary: PAGE_SUMMARY } : {}),
     importCandidates: [],
     ...(frame === 'NATIVE' ? { setupReadiness: { kind: 'needsReview' as const, code: 'setup_changed' } } : {}),
     ...(frame === 'LAYERS' ? { effectiveDefinition: LAYERED_DEFINITION } : {}),
+    ...(frame === 'HINT' ? { effectiveDefinition: { effectiveManifest: MANIFEST, origins: [], pendingSharedSetup: PENDING_SHARED } }
+      : frame === 'HINTFIRST' ? { effectiveDefinition: { effectiveManifest: null, origins: [], pendingSharedSetup: PENDING_SHARED } } : {}),
   };
   const body =
     frame === 'OUTPUT' ? (

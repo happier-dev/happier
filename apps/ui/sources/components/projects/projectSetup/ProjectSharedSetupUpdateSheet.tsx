@@ -55,6 +55,8 @@ export type ProjectSharedSetupUpdateInput = Readonly<{
   sourceName: string | null;
   machineName: string;
   decide: Decide;
+  /** A shared setup the Project has but this checkout has not taken yet: the same review, for first use. */
+  pending?: boolean;
 }>;
 
 /**
@@ -62,13 +64,15 @@ export type ProjectSharedSetupUpdateInput = Readonly<{
  * that the sheet does not know yet, so it names what it checks. The subtitle keeps a slot for who
  * changed it and when, which the accepted-revision owner does not expose yet (owed to TS-IMPL-A).
  */
-function sharedSetupUpdateChrome(sourceName: string | null, changed: boolean): CustomModalChromeCardConfig {
+function sharedSetupUpdateChrome(sourceName: string | null, changed: boolean, pending = false): CustomModalChromeCardConfig {
   const name = sourceName ?? t('projects.scripts.layers.sharedUnnamed');
   return {
     kind: 'card',
     material: 'solid',
-    title: changed ? t('projects.scripts.sharedUpdate.titleChanged') : t('projects.scripts.sharedUpdate.title'),
-    subtitle: changed ? [name, t('projects.scripts.sharedUpdate.usingReviewed')].join(' · ') : name,
+    // First use names the offer, not a change to a copy the person never took (lab L6 "Use a shared setup").
+    title: pending ? t('projects.scripts.sharedUpdate.titlePending')
+      : changed ? t('projects.scripts.sharedUpdate.titleChanged') : t('projects.scripts.sharedUpdate.title'),
+    subtitle: changed && !pending ? [name, t('projects.scripts.sharedUpdate.usingReviewed')].join(' · ') : name,
     subtitleLines: 1,
     testID: 'project-shared-setup-update',
     scrollHost: 'bounded',
@@ -90,7 +94,7 @@ export function openProjectSharedSetupUpdate(
   Modal.show({
     component: ProjectSharedSetupUpdateModal,
     props: input,
-    chrome: sharedSetupUpdateChrome(input.sourceName, false),
+    chrome: sharedSetupUpdateChrome(input.sourceName, false, input.pending),
   });
 }
 
@@ -169,8 +173,8 @@ function ProjectSharedSetupUpdateBody(
   const snapshot = review.snapshot;
   const request = snapshot?.kind === 'ready' ? snapshot.request : null;
   const rows = React.useMemo(() => readProjectSharedSetupUpdateRows(snapshot), [snapshot]);
-  useModalCardChrome(props.setChrome, React.useMemo(() => sharedSetupUpdateChrome(props.sourceName, rows.length > 0),
-    [props.sourceName, rows.length]));
+  useModalCardChrome(props.setChrome, React.useMemo(() => sharedSetupUpdateChrome(props.sourceName, rows.length > 0, props.pending),
+    [props.sourceName, rows.length, props.pending]));
   const { decide, onClose } = props;
   const choose = React.useCallback(
     async (decision: ProjectSharedSetupUpdateDecision) => {
@@ -194,6 +198,7 @@ function ProjectSharedSetupUpdateBody(
       rows={rows}
       sourceName={props.sourceName}
       machineName={props.machineName}
+      pending={props.pending}
       scope={scope}
       onScopeChange={setScope}
       busy={busy}
@@ -211,6 +216,7 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
   rows: readonly ProjectSharedSetupChangeRowV1[];
   sourceName: string | null;
   machineName: string;
+  pending?: boolean;
   scope: ProjectSetupScope;
   onScopeChange: (scope: ProjectSetupScope) => void;
   busy: ProjectSharedSetupUpdateDecision | null;
@@ -250,7 +256,7 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
         testID="project-shared-setup-update.unreadable"
         tone="warning"
         title={t('projects.scripts.sharedUpdate.unreadable')}
-        description={t('projects.scripts.sharedUpdate.keepsReviewed')}
+        description={props.pending ? undefined : t('projects.scripts.sharedUpdate.keepsReviewed')}
         action={{
           label: t('common.retry'),
           onPress: props.onRetry,
@@ -272,7 +278,7 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
     content = (
       <>
         <ItemGroup
-          title={t('projects.scripts.sharedUpdate.whatChanged')}
+          title={props.pending ? t('projects.scripts.sharedUpdate.pendingAdds') : t('projects.scripts.sharedUpdate.whatChanged')}
           testID="project-shared-setup-update.changes"
         >
           {rows.map((entry, index) => (
@@ -285,7 +291,7 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
         </ItemGroup>
         <ItemGroup
           surface="none"
-          title={t('projects.scripts.sharedUpdate.after')}
+          title={props.pending ? t('projects.scripts.sharedUpdate.pendingRuns') : t('projects.scripts.sharedUpdate.after')}
           description={t('projects.scripts.sharedUpdate.afterDescription', { machine: props.machineName })}
           testID="project-shared-setup-update.after"
         >
@@ -311,7 +317,7 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
             <View style={styles.note}>
               <Icon name="lock" size={14} color={theme.colors.text.tertiary} />
               <Text variant="meta" style={[styles.noteText, { color: theme.colors.text.secondary }]}>
-                {t('projects.scripts.sharedUpdate.nothingRuns')}
+                {props.pending ? t('projects.scripts.sharedUpdate.nothingRunsPending') : t('projects.scripts.sharedUpdate.nothingRuns')}
               </Text>
             </View>
           </View>
@@ -329,9 +335,8 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
           display="secondary"
           testID="project-shared-setup-update.keep"
           title={
-            decidable
-              ? t('projects.scripts.sharedUpdate.keep')
-              : t('common.close')
+            !decidable ? t('common.close')
+              : props.pending ? t('projects.scripts.sharedUpdate.notNow') : t('projects.scripts.sharedUpdate.keep')
           }
           disabled={busy !== null}
           onPress={() => {
@@ -343,7 +348,7 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
           <RoundButton
             size="normal"
             testID="project-shared-setup-update.use"
-            title={t('projects.scripts.sharedUpdate.use')}
+            title={props.pending ? t('projects.scripts.sharedUpdate.usePending') : t('projects.scripts.sharedUpdate.use')}
             loading={busy !== null && busy !== 'keep'}
             disabled={busy !== null}
             onPress={() => {
