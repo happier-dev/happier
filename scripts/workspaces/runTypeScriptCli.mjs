@@ -291,6 +291,7 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
     }
   } catch (error) {
     process.stderr.write(`[typecheck-failure] ${typecheckDiagnosticFailureIdentifier(error, failureStep)}\n`);
+    if (Array.isArray(error?.cycle)) process.stderr.write(`[typecheck-reference-cycle] ${error.cycle.join(' -> ')}\n`);
     result = { status: 1, signal: null };
   } finally {
     for (const [signal, handler] of cancellationHandlers) process.off(signal, handler);

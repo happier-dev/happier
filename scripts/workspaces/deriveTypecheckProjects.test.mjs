@@ -9,7 +9,7 @@ import test from 'node:test';
 import ts from 'typescript';
 import { deriveTypecheckProjects, readTypecheckProject } from './deriveTypecheckProjects.mjs';
 import { verifyTypeScriptProjectCoverage } from './prepareTypeScriptProjectBuild.mjs';
-import { prepareReferencedTypecheckDeclarations } from './prepareReferencedTypecheckDeclarations.mjs';
+import { orderTypecheckProjects, prepareReferencedTypecheckDeclarations } from './prepareReferencedTypecheckDeclarations.mjs';
 import { prepareWorkspaceSourceTypecheckProjects } from './workspaceSourceTypecheck.mjs';
 import { deriveUiTypecheckProjects, prepareUiTypecheckProjects } from '../../apps/ui/scripts/deriveTypecheckProjects.mjs';
 import { deriveCliTypecheckProjects, prepareCliTypecheckProjects } from '../../apps/cli/scripts/deriveTypecheckProjects.mjs';
@@ -681,4 +681,20 @@ test('server build scripts keep testkit imports out of the Server declaration pr
   const inventory = await deriveCliTypecheckProjects(cli);
   const projects = inventory.map(item => ({ project: item.configPath, authoredProject: join(cli, `tsconfig.${item.project}.json`) }));
   await prepareReferencedTypecheckDeclarations(projects, cli, inventory);
+});
+
+test('a project reference cycle names every member and its authored owner', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-reference-cycle-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = (name, reference) => writeFile(join(root, `${name}.json`), JSON.stringify({
+    compilerOptions: { composite: true }, files: [], references: [{ path: `./${reference}.json` }] }));
+  await config('consumer', 'generated');
+  await config('generated', 'consumer');
+  const projects = [{ project: join(root, 'consumer.json') },
+    { project: join(root, 'generated.json'), authoredProject: join(root, 'owner/tsconfig.json') }];
+  assert.throws(() => orderTypecheckProjects(projects, root), error => {
+    assert.equal(error.code, 'TYPECHECK_REFERENCE_CYCLE');
+    assert.deepEqual(error.cycle, ['consumer.json', 'generated.json (owner/tsconfig.json)', 'consumer.json']);
+    return true;
+  });
 });

@@ -8,18 +8,28 @@ import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation
 export function orderTypecheckProjects(projects, cwd = process.cwd()) {
   const byPath = new Map(projects.map(project => [resolve(cwd, project.project), project]));
   const visited = new Set();
-  const active = new Set();
+  const active = [];
   const ordered = [];
   const visit = project => {
     if (visited.has(project)) return;
-    if (active.has(project)) throw Object.assign(new Error(`TypeScript project reference cycle at ${project.project}`), { code: 'TYPECHECK_REFERENCE_CYCLE' });
-    active.add(project);
+    if (active.includes(project)) {
+      // Name every project in the loop with its authored owner: the code alone
+      // leaves the caller nothing to attribute the edge to.
+      const cycle = [...active.slice(active.indexOf(project)), project].map(member => {
+        const generated = relative(cwd, resolve(cwd, member.project));
+        const authored = member.authoredProject && relative(cwd, resolve(cwd, member.authoredProject));
+        return authored && authored !== generated ? `${generated} (${authored})` : generated;
+      });
+      throw Object.assign(new Error(`TypeScript project reference cycle: ${cycle.join(' -> ')}`),
+        { code: 'TYPECHECK_REFERENCE_CYCLE', cycle });
+    }
+    active.push(project);
     const path = resolve(cwd, project.project);
     for (const reference of readTypecheckProject(path).config.references ?? []) {
       const dependency = byPath.get(resolve(dirname(path), reference.path));
       if (dependency) visit(dependency);
     }
-    active.delete(project);
+    active.pop();
     visited.add(project);
     ordered.push(project);
   };
