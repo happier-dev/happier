@@ -3,6 +3,7 @@ import { isPluginError, projectActionFailureCauseV1, withActionFailureDiagnostic
 import type { ConnectedAccountAuthenticationContext, ConnectedAccountAuthenticationModeRuntime, ConnectedAccountHealthResult, ConnectedAccountMaterialization, ConnectedAccountPortableRuntime, ConnectedAccountReadContext, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
 import { CLOUDFLARE_API_ORIGIN, diagnostic, validToken, verifyCloudflareToken } from './probe.js';
 import { cloudflareOAuthMode, cloudflareOAuthStatus, refreshCloudflareOAuth, revokeCloudflareOAuth } from './oauth.js';
+import { readCloudflareQuota } from './quota.js';
 
 export const CLOUDFLARE_ACCOUNT_ID = 'cloudflare';
 type Context = ConnectedAccountAuthenticationContext | ConnectedAccountReadContext;
@@ -69,6 +70,7 @@ export const materializeCloudflareAccount: NonNullable<ConnectedAccountPortableR
 export const cloudflareConnectedAccountRuntime: ConnectedAccountRuntime = {
   authentication: { modes: { token: manualMode(), oauth: cloudflareOAuthMode } },
   status: health,
+  quota: readCloudflareQuota,
   // Manual tokens do not rotate. The host's existing refresh lifecycle checks
   // current authority; expiry/revocation requires an explicit replacement.
   async refresh(context, options) {

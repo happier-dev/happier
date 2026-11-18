@@ -5,7 +5,8 @@ import { formatPriceUnit as formatSharedPriceUnit, presentManagedCost as present
 export { formatProviderAmount } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
 import { t } from '@/text';
-import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
+import { formatPriceSource } from '@/components/ui/presentation/providerCostPresentation';
+export { formatPriceSource } from '@/components/ui/presentation/providerCostPresentation';
 import type { ManagedProvisionerRepairFailure } from './useManagedProvisionerPresentation';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import type { ManagedProvisionerReadiness } from './managedProvisionerReadiness';
@@ -156,18 +157,6 @@ export function formatPriceUnit(unit: string): string {
 
 export function presentManagedCost(cost: ManagedCost): Readonly<{ value: string; unit: string }> {
   return presentSharedManagedCost(cost, priceLabels());
-}
-
-/**
- * When a price was read, credited to the provider by name. A price's `source` is the provider's evidence
- * reference (an API URL or an id), never a name to show; without a provider name the line keeps only its time.
- */
-export function formatPriceSource(
-  price: Pick<ProviderPrice, 'observedAt'>,
-  provider: string | null,
-): string {
-  const time = formatAsOfTime(price.observedAt);
-  return provider ? t('managedMachines.price.checked', { provider, time }) : t('surfaceState.asOf', { time });
 }
 
 /**

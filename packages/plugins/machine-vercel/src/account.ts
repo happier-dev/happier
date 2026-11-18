@@ -7,6 +7,7 @@ import type {
   PluginConnectedAccountConfigurationFieldV2,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
+import { readVercelQuota } from './quota.js';
 
 export const ACCOUNT_ID = 'vercel-account';
 const origin = 'https://api.vercel.com';
@@ -300,6 +301,7 @@ export const connectedAccountRuntime: ConnectedAccountRuntime = {
     return await probe(token, scopeOf(context), context, signal);
   } } } },
   status: health,
+  quota: readVercelQuota,
   // Personal tokens do not rotate: the existing host refresh operation probes
   // the retained token; an expired/revoked token requires explicit reconnect.
   refresh: health,
