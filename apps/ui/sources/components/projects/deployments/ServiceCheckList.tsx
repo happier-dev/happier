@@ -30,7 +30,7 @@ import {
   ServicesPageList,
 } from './DeploymentEnvironmentRows';
 import { ServiceCheckBars, type ServiceCheckBarCell } from './ServiceCheckBars';
-import { ServiceCheckDetail } from './ServiceCheckDetail';
+import { ServiceCheckDetail, useServiceCheckMeta } from './ServiceCheckDetail';
 import { ServiceCheckResponseTrend } from './ServiceCheckResponseTrend';
 import {
   NO_OFFLINE_OBSERVERS,
@@ -103,12 +103,15 @@ export function useServiceCheckSelection(active: boolean) {
     active && checkKey !== null && checkRow !== null && besidePage
       ? checkRow
       : null;
+  // What the Check is stands under its name in the pane's band, as on its page (lab A3), not as the body's first line.
+  const meta = useServiceCheckMeta(shown);
   const details = React.useMemo(
     () =>
       shown
         ? {
             header: {
               title: serviceCheckListFacts(shown).title,
+              ...(meta ? { subtitle: meta } : {}),
               actions: (
                 <CorePluginUiPresentationScope>
                   <DetailsPaneOpenAsPageButton
@@ -121,12 +124,12 @@ export function useServiceCheckSelection(active: boolean) {
             },
             content: (
               <ItemList testID="services.checks.detail">
-                <ServiceCheckDetail row={shown} />
+                <ServiceCheckDetail row={shown} metaInHeader />
               </ItemList>
             ),
           }
         : null,
-    [openCheckPage, shown],
+    [meta, openCheckPage, shown],
   );
   return { selection, details, closeCheck };
 }
@@ -325,7 +328,8 @@ export function ServiceCheckList(
           priority: 4,
           align: 'end',
           listColumn: true,
-          render: state,
+          // A long state ("Not checked since Nov 15, 4:26 PM") takes the row's second line, never an ellipsis (R2-D13).
+          render: (row) => settling ? null : <CheckState row={row} facts={factsOf(row)} stale={staleOf(row)} column />,
         },
       ],
       card: {
@@ -497,6 +501,8 @@ const CheckState = React.memo(function CheckState(
     row: ManagedConfiguredCheckRow;
     facts: ServiceCheckListFacts;
     stale: boolean;
+    /** In the State column, which has the row's two lines to hold it. */
+    column?: boolean;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -506,8 +512,9 @@ const CheckState = React.memo(function CheckState(
       style={{
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
+        ...(props.column ? { textAlign: 'right' as const } : null),
       }}
-      numberOfLines={1}
+      numberOfLines={props.column ? 2 : 1}
     >
       {label}
     </Text>

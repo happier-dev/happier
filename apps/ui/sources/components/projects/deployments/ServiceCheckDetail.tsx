@@ -132,14 +132,14 @@ function useCheckSeed(row: ManagedConfiguredCheckRow) {
  * The target is the name and its state stands in the banner and under the bars, so neither repeats here. A named Key
  * flow also says its routes, the service it checks and the Environment it runs in (lab p7Flows detail).
  */
-export function useServiceCheckMeta(row: ManagedConfiguredCheckRow): string | null {
-  const facts = serviceCheckListFacts(row);
-  const observer = useServerScopedMachineLabel(row.scope.serverId, facts.observerMachineId);
-  const head = serviceCheckShownDefinition(row.definitionFacts, null);
-  const definition = head.kind === 'available' ? head.definition : null;
+export function useServiceCheckMeta(row: ManagedConfiguredCheckRow | null): string | null {
+  const facts = row ? serviceCheckListFacts(row) : null;
+  const observer = useServerScopedMachineLabel(row?.scope.serverId ?? null, facts?.observerMachineId ?? null);
+  const head = row ? serviceCheckShownDefinition(row.definitionFacts, null) : null;
+  const definition = head?.kind === 'available' ? head.definition : null;
   const keyFlow = definition?.keyFlow ?? null;
-  const environment = useEnvironmentName(row.scope.serverId, keyFlow?.environmentId ?? null).name;
-  if (row.definitionFacts.kind === 'loading') return null;
+  const environment = useEnvironmentName(row?.scope.serverId ?? null, keyFlow?.environmentId ?? null).name;
+  if (!row || !facts || row.definitionFacts.kind === 'loading') return null;
   const every = facts.every
     ? observer
       ? t(`${k}.checkEvery`, { period: facts.every, machine: observer })
@@ -164,7 +164,7 @@ export function ServiceCheckDetail(
   props: Readonly<{
     row: ManagedConfiguredCheckRow;
     nowMs?: number;
-    /** The Check page says what the Check is in its header's description; the pane says it at the top of the body. */
+    /** Its header (the page's, or the details pane's band) says what the Check is, under the name (lab A3). */
     metaInHeader?: boolean;
     /**
      * The Check page draws its header through this, with the check's actions at its end (lab A3: Check now and ⋯); the
@@ -336,7 +336,12 @@ export function ServiceCheckDetail(
         <View style={styles.actions}>
           {settings ? (
             <View style={styles.checkNow}>
-              {props.renderHeader ? null : <CheckNowButton checkNow={checkNow} />}
+              {props.renderHeader ? null : (
+                <View style={styles.headerActions}>
+                  <CheckNowButton checkNow={checkNow} />
+                  <CheckMenu onEdit={openEditor} />
+                </View>
+              )}
               <CheckNowStatus checkNow={checkNow} />
             </View>
           ) : null}

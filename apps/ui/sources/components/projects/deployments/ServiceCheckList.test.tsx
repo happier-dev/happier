@@ -78,6 +78,8 @@ it('names an opened Check by what it checks, as its row does', async () => {
         <ServiceCheckList testID="monitoring.checks" rows={rows} scope={{ serverId: 'server-1', accountId: 'account-1' } as never}
           selection={selection} accessibilityLabel="Checks" />
         {details ? <Text testID="pane.title">{details.header.title}</Text> : null}
+        {details ? <Text testID="pane.subtitle">{String(details.header.subtitle ?? '')}</Text> : null}
+        {details ? details.content : null}
       </>
     );
   }
@@ -86,6 +88,9 @@ it('names an opened Check by what it checks, as its row does', async () => {
   const title = screen.findHostByTestId('pane.title');
   expect(title).toBeTruthy();
   expect(screen.getTextContent()).not.toContain('n8n.acme.dev availability');
+  // What it is stands under the name in the pane's band (lab A3), never again as the body's first line (R2-D2).
+  expect(screen.findHostByTestId('pane.subtitle')?.props.children).toContain('HTTP');
+  expect(screen.findByTestId('services.check.meta')).toBeNull();
 });
 
 // MONITOR-ACCEPT-1116 F1 (live: "eadc runs this check and is offline" while eadc reported every minute and the Machines
