@@ -150,7 +150,8 @@ function createTestClaudeNativeRuntime(
 }
 
 const context = {
-  services: { exec: createSdkExecFixture().service },
+  // The opener logs its backend decision through the plugin logger (always present at runtime).
+  services: { exec: createSdkExecFixture().service, logger: { info() {}, warn() {}, error() {}, debug() {} } },
   session: {
     services: {
       activeInput: {
@@ -351,6 +352,8 @@ describe('createClaudeNativeRuntime', () => {
     { unifiedTerminalEnabled: true, requestedHost: 'tmux' as const, placement: 'managed_terminal', nativeModel: 'claude-haiku-4-5' },
     { unifiedTerminalEnabled: false, requestedHost: 'herdr' as const, placement: 'runner', nativeModel: 'claude-opus-5-5', nativeEffort: 'medium' },
     { unifiedTerminalEnabled: true, requestedHost: 'tmux' as const, placement: 'managed_terminal', nativeModel: 'claude-opus-5-5', nativeEffort: 'medium' },
+    // A2(a): a unified Windows hidden-console Session's TUI runs in the holder-held PTY; the runner only views it.
+    { unifiedTerminalEnabled: true, requestedHost: 'windows_console' as const, placement: 'managed_terminal' },
   ])('captures selected Claude presentation before opening the same Session ($placement, unified=$unifiedTerminalEnabled, $requestedHost, $nativeModel)', async ({ unifiedTerminalEnabled, requestedHost, placement, nativeModel, nativeEffort }) => {
     const terminal = createTerminalHostFixture();
     const hooks = createSessionHooksFixture();

@@ -227,6 +227,8 @@ export function createClaudeNativeSessionOpener(openers: Readonly<{
         features: input.context.session.services.features,
         settings: input.context.services.settings.forScope({ kind: 'account' }),
       },
+      onDecision: decision => input.context.services.logger.info('[claude] backend selection', {
+        backend: decision.selected ? 'unifiedTerminal' : 'agentSdk', reason: decision.reason }),
     });
     const operations = await (selected
       ? openers.openUnifiedTerminalSession(input)
@@ -1384,14 +1386,17 @@ export function createClaudeNativeRuntime(
       goals: goals.control,
       catalog: skillCatalog.control,
       async resolveTerminalPresentation(selection, context) {
+        const host = selection.requestedHost ?? readClaudeTerminalRuntimeSelection(selection.runtimeDescriptorV1)?.host;
         const unified = await isClaudeUnifiedTerminalSelected({
           runtimeDescriptorV1: selection.runtimeDescriptorV1,
+          ...(host ? { requestedHost: host } : {}),
           context: { features: context.features, settings: context.settings.forScope({ kind: 'account' }) },
         });
-        const host = selection.requestedHost ?? readClaudeTerminalRuntimeSelection(selection.runtimeDescriptorV1)?.host;
         const source = selection.runtimeDescriptorV1;
         return {
-          kind: unified && (host === 'tmux' || host === 'zellij') ? 'managed_terminal' : 'runner',
+          // A unified Windows hidden-console TUI runs in the Session holder's PTY (HOLDER-PTY A2), so
+          // the runner views it like a tmux/zellij pane instead of owning it on its own console.
+          kind: unified && (host === 'tmux' || host === 'zellij' || host === 'windows_console') ? 'managed_terminal' : 'runner',
           startingMode: unified ? 'terminal' : 'remote',
           compaction: readClaudeSessionCompactionCapability(unified ? 'unifiedTerminal' : 'agentSdk'),
           ...(unified ? { retainedTerminalRecovery: 'adopt' as const } : {}),

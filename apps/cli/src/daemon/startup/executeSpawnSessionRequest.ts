@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { resolveSpawnTerminalPresentationHost } from '@/daemon/platform/windows/windowsSessionConsoleMode';
 import type { OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { SESSION_PROJECT_FILES_OPEN_CHILDREN_V1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
 import { invokeReviewedProjectOpen } from '@/workspaces/activation/invokeReviewedProjectOpen';
@@ -896,7 +897,10 @@ export async function executeSpawnSessionRequest(
             }).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
             const terminalPresentation = await resolveDaemonSessionTerminalPresentation(executionSurfaces, {
                 cwd: directory,
-                requestedHost: selectedTerminalRequest.requested ?? 'plain',
+                requestedHost: resolveSpawnTerminalPresentationHost({ requested: selectedTerminalRequest.requested,
+                    platform: process.platform,
+                    windowsLaunchMode: options.windowsRemoteSessionLaunchMode ?? options.windowsRemoteSessionConsole,
+                    env: params.processEnv ?? process.env }),
                 runtimeDescriptorV1: options.runtimeDescriptorV1,
                 // This is the admitted selection context, before native auth
                 // materialization. The child-environment owner prepares and

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveWindowsRemoteSessionLaunchMode } from './windowsSessionConsoleMode';
+import { resolveSpawnTerminalPresentationHost, resolveWindowsRemoteSessionLaunchMode } from './windowsSessionConsoleMode';
 
 describe('resolveWindowsRemoteSessionLaunchMode', () => {
   it('defaults to hidden on non-Windows platforms', () => {
@@ -42,5 +42,16 @@ describe('resolveWindowsRemoteSessionLaunchMode', () => {
         HAPPIER_WINDOWS_REMOTE_SESSION_CONSOLE: 'visible',
       },
     })).toBe('console');
+  });
+});
+
+describe('resolveSpawnTerminalPresentationHost (HOLDER-PTY A2)', () => {
+  it('presents a Windows hidden Session on its PTY terminal host and keeps every other request', () => {
+    expect(resolveSpawnTerminalPresentationHost({ requested: null, platform: 'win32', env: {} })).toBe('windows_console');
+    // Visible Windows windows keep their TUI in that window (the runner's console).
+    expect(resolveSpawnTerminalPresentationHost({ requested: null, platform: 'win32', windowsLaunchMode: 'console', env: {} })).toBe('plain');
+    expect(resolveSpawnTerminalPresentationHost({ requested: null, platform: 'win32', windowsLaunchMode: 'windows_terminal', env: {} })).toBe('plain');
+    expect(resolveSpawnTerminalPresentationHost({ requested: null, platform: 'linux', env: {} })).toBe('plain');
+    expect(resolveSpawnTerminalPresentationHost({ requested: 'tmux', platform: 'win32', env: {} })).toBe('tmux');
   });
 });

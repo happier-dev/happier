@@ -26,3 +26,20 @@ export function resolveWindowsRemoteSessionLaunchMode(params: {
 }
 
 export const resolveWindowsRemoteSessionConsoleMode = resolveWindowsRemoteSessionLaunchMode;
+
+/**
+ * The terminal host a fresh spawn's presentation is resolved for. A Windows hidden Session (no
+ * visible window, no multiplexer request) runs on the PTY terminal host, whose Agent the Session
+ * holder keeps in a ConPTY (HOLDER-PTY A2). Visible console and Windows Terminal windows keep
+ * their TUI in that window; every explicit request is kept.
+ */
+export function resolveSpawnTerminalPresentationHost(params: Readonly<{
+  requested: 'plain' | 'tmux' | 'zellij' | 'herdr' | null;
+  platform: string;
+  windowsLaunchMode?: WindowsRemoteSessionLaunchMode | 'visible' | null;
+  env: NodeJS.ProcessEnv;
+}>): 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_console' {
+  if (params.requested) return params.requested;
+  return resolveWindowsRemoteSessionLaunchMode({ platform: params.platform, requested: params.windowsLaunchMode, env: params.env })
+    === 'hidden' && params.platform === 'win32' ? 'windows_console' : 'plain';
+}
