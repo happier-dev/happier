@@ -125,6 +125,18 @@ describe('Agent chart exact data targets', () => {
     } finally { chart.unmount(); }
   });
 
+  it.each([720, 390])('draws only the supplied calendar dates at width %s', (width) => {
+    const chart = mount(<UsageScore {...common} width={width} model={{ weekStart: '2026-11-12', dayCount: 2, encoding: 'minutes',
+      rows: [{ agentId: 'claude', hours: [[12], [null]] }] }}
+      labels={{ day: (day) => `Day ${day}`, clock: String, unknownAgent: 'Unknown',
+        key: { light: 'Light', medium: 'Medium', strong: 'Strong', presence: 'Present', presenceNote: '' },
+        values: { ...values, agentColumn: 'Agent', dayColumn: 'Day', hoursColumn: 'Hours', formatHours: () => '' } }} />);
+    try {
+      const dates = [...chart.container.querySelectorAll('svg text')].map(node => node.textContent).filter(label => label?.startsWith('Day '));
+      expect(dates).toEqual(['Day 0', 'Day 1']);
+    } finally { chart.unmount(); }
+  });
+
   it.each([720, 390])('exposes Score hour values at width %s without exposing unrecorded hours', (width) => {
     const chart = mount(<UsageScore {...common} width={width} model={{ weekStart: '2026-10-26', encoding: 'minutes', rows: [
       { agentId: 'claude', hours: [[12.345, null]] },

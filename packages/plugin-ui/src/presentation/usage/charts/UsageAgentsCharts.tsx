@@ -24,8 +24,10 @@ const exactPercent = (share: number) => formatHappierDataExactShare(share);
 /* ═════ Score (new body): the selected week, a staff line per Agent, equal round dots ═════ */
 
 export type UsageScoreModel = Readonly<{
-  /** Monday of the week, ISO date. */
+  /** First displayed local date, or Monday for a weekday profile, as an ISO date. */
   weekStart: string;
+  /** The supplied date span, including in-period days with unavailable hours. Defaults to the legacy week view. */
+  dayCount?: number;
   /** `minutes`: dot strength = busy minutes in that hour (private). `presence`: busy in the hour only. */
   encoding: 'minutes' | 'presence';
   rows: readonly Readonly<{ agentId: string | null; hours: readonly (readonly (number | null)[])[] }>[];
@@ -47,6 +49,7 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
   const svgText = useUsageChartSvgText(props.theme);
   const phone = width !== null && width < 560;
   const rows = props.model.rows;
+  const dayCount = props.model.dayCount ?? 7;
   const colour = (id: string | null) => agentOf(props.agents, id)?.color ?? ink.neutral;
   const datum = (row: UsageScoreModel['rows'][number], day: number, hour: number, minutes: number) => ({ keyboard: false,
     // A minutes value already names its hour ("10:00 18 min"), so its title stops at the day.
@@ -65,9 +68,9 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
     props.labels.values.formatHours(hours)] as const)).filter((row) => row[2] !== '');
   let chart: ReactNode = <View style={{ height: rows.length * 26 + 26 }} />;
   if (width !== null && !phone) {
-    const label = 92, plot = width - label, step = plot / 168, rowHeight = 26, height = rows.length * rowHeight + 26, radius = Math.min(2.5, step * 0.4);
+    const label = 92, plot = width - label, step = plot / (24 * dayCount), rowHeight = 26, height = rows.length * rowHeight + 26, radius = Math.min(2.5, step * 0.4);
     chart = <ChartDrawing style={{ height }} accessibilityLabel={props.label}><Svg width={width} height={height}>
-      {Array.from({ length: 8 }, (_, day) => <Path key={`v${day}`} d={`M${r1(label + day * 24 * step)},2V${height - 18}`} stroke={ink.grid} strokeWidth={1} />)}
+      {Array.from({ length: dayCount + 1 }, (_, day) => <Path key={`v${day}`} d={`M${r1(label + day * 24 * step)},2V${height - 18}`} stroke={ink.grid} strokeWidth={1} />)}
       {rows.map((row, index) => {
         const y = index * rowHeight + rowHeight / 2 + 2;
         return <G key={JSON.stringify(row.agentId)}>
@@ -77,7 +80,7 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
             r={r1(radius)} fill={colour(row.agentId)} fillOpacity={scoreOpacity(props.model.encoding, minutes)} /> : null))}
         </G>;
       })}
-      {Array.from({ length: 7 }, (_, day) => svgText.draw({ x: label + day * 24 * step + 3, y: height - 4, text: props.labels.day(day) }, `d${day}`))}
+      {Array.from({ length: dayCount }, (_, day) => svgText.draw({ x: label + day * 24 * step + 3, y: height - 4, text: props.labels.day(day) }, `d${day}`))}
     </Svg>{rows.flatMap((row, index) => row.hours.flatMap((hours, day) => hours.map((minutes, hour) => minutes ? <ChartMark key={`${index}-${day}-${hour}`}
       datum={datum(row, day, hour, minutes)} testID={`${props.testID}.hour.${index}.${day}.${hour}`}
       bounds={{ x: label + (day * 24 + hour) * step, y: index * rowHeight + 2, width: step, height: rowHeight }} /> : null)))}</ChartDrawing>;
@@ -85,9 +88,9 @@ export function UsageScore(props: AgentsProps & Readonly<{ model: UsageScoreMode
     // A phone recomposes the week into seven day strips: the day's name on its own line, then one row of 24 dots
     // per Agent across the full width (a side gutter cannot hold "Wed 11" at body size; native N5).
     const step = width / 24, head = svgText.styles.body.lineHeight ?? (svgText.styles.body.fontSize ?? 13) + 4;
-    // Days outside the read period (the rest of this week, a period that starts mid-week) have no hour at all: a
-    // phone leaves them out instead of drawing empty strips (USAGE-ACCEPT #14: ~200 px of blank Sat/Sun).
-    const read = Array.from({ length: 7 }, (_, day) => rows.some((row) => (row.hours[day] ?? []).some((minutes) => minutes !== null)));
+    // An explicit span keeps each in-period date. Legacy week callers omit unread days at either end.
+    const read = Array.from({ length: dayCount }, (_, day) => props.model.dayCount !== undefined
+      || rows.some((row) => (row.hours[day] ?? []).some((minutes) => minutes !== null)));
     const first = read.indexOf(true), last = read.lastIndexOf(true);
     const days = first < 0 ? [] : Array.from({ length: last - first + 1 }, (_, index) => first + index);
     chart = <ChartDrawing accessibilityLabel={props.label} style={{ gap: 4 }}>
