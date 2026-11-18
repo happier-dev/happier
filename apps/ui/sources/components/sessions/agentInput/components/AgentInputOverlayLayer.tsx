@@ -140,7 +140,8 @@ export function AgentInputOverlayLayer(props: Readonly<{
     onPermissionSelect: (mode: PermissionMode) => void;
     agentId: string;
     permissionModeOptions: readonly PermissionModePickerOption[];
-    effectivePermissionMode: PermissionMode;
+    /** Null: the targets differ and nothing is chosen yet, so no row is selected. */
+    effectivePermissionMode: PermissionMode | null;
     effectivePermissionLabel: string;
     effectivePermissionPolicy: EffectivePermissionModeDescription;
     // FR4-16: typed style contract forwarded to `PermissionModePicker`.

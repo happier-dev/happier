@@ -35,4 +35,23 @@ describe('AgentInput fixed engine', () => {
             voiceAffordance="none" engineControls="none" />);
         expect(screen.findHostByTestId('agent-input-agent-chip')).toBeNull();
     });
+
+    // Bulk compose aimed at sessions running different Agents: the picker offers the Agents they share, but no
+    // one of them is chosen, so the chip wears the control's own glyph and opens on no row.
+    it('opens an unselected engine picker under the control glyph when no one Agent is chosen', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const { Icon } = await import('@/components/ui/icons/Icon');
+        const options = [
+            { id: 'claude', label: 'Claude', icon: <Icon name="star" size={12} testID="claude-mark" /> },
+            { id: 'codex', label: 'Codex', icon: <Icon name="circle" size={12} testID="codex-mark" /> },
+        ];
+        const screen = await renderScreen(<AgentInput value="" placeholder="Message" onChangeText={() => undefined}
+            onSend={() => undefined} autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+            voiceAffordance="none" engineLabel="Mixed" engineUnselected agentPickerOptions={options}
+            agentPickerSelectedOptionId={null} onAgentPickerSelect={() => undefined} />);
+        expect(screen.findHostByTestId('agent-input-agent-chip'), 'the engine chip is drawn').not.toBeNull();
+        const logo = screen.findByTestId('agent-input-agent-chip-logo');
+        expect(logo, 'the chip has a mark').toBeTruthy();
+        expect(logo?.props.name, 'the chip wears the control glyph, not the first row\'s mark').toBe('sparkle');
+    });
 });

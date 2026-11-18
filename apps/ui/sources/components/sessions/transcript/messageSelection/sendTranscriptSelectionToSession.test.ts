@@ -10,6 +10,24 @@ const selectedMessages: ReadonlyArray<TranscriptSelectionToolbarMessage> = [
 ];
 
 describe('sendTranscriptSelectionToSession', () => {
+    it('hands several chosen Sessions and the formatted text to the bulk composer without touching any draft', async () => {
+        const targets = [{ serverId: 'server-a', sessionId: 'one' }, { serverId: 'server-b', sessionId: 'two' }];
+        const appendToDraft = vi.fn(async () => undefined);
+        const navigateToSession = vi.fn();
+        const openBulkComposer = vi.fn();
+        const result = await sendTranscriptSelectionToSession({
+            sourceSessionId: 'source', sourceServerId: 'server-a', sourceMachineId: null, sourceSessionName: 'Source session',
+            selectedMessages, bulkCopyFormat: 'plain', template: '{{MESSAGES}}',
+            roleLabels: { user: 'You', assistant: 'Assistant' },
+            chooseDestinationSessionId: vi.fn(async (): Promise<SendTranscriptSelectionDestination> => ({ kind: 'bulk', targets })),
+            appendToDraft, openNewSession: vi.fn(async () => true), openBulkComposer, navigateToSession,
+        });
+        expect(result).toBe(true);
+        expect(openBulkComposer).toHaveBeenCalledWith({ targets, text: expect.stringContaining('Question') });
+        expect(appendToDraft).not.toHaveBeenCalled();
+        expect(navigateToSession).not.toHaveBeenCalled();
+    });
+
     it('formats messages, appends to the destination draft, and then navigates', async () => {
         const chooseDestinationSessionId = vi.fn(async (): Promise<SendTranscriptSelectionDestination> => ({ kind: 'existingSession', sessionId: 'dest', serverId: 'server-b' }));
         const appendToDraft = vi.fn(async () => undefined);
@@ -28,6 +46,7 @@ describe('sendTranscriptSelectionToSession', () => {
             chooseDestinationSessionId,
             appendToDraft,
             openNewSession,
+            openBulkComposer: vi.fn(),
             navigateToSession,
         });
 
@@ -37,6 +56,7 @@ describe('sendTranscriptSelectionToSession', () => {
             sourceSessionId: 'source',
             sourceServerId: 'server-a',
             previewText: expectedPromptText,
+            selectedCount: 2,
         });
         expect(appendToDraft).toHaveBeenCalledWith({
             sessionId: 'dest',
@@ -64,6 +84,7 @@ describe('sendTranscriptSelectionToSession', () => {
             chooseDestinationSessionId: vi.fn(async () => null),
             appendToDraft,
             openNewSession: vi.fn(async () => true),
+            openBulkComposer: vi.fn(),
             navigateToSession,
         });
 
@@ -90,6 +111,7 @@ describe('sendTranscriptSelectionToSession', () => {
             chooseDestinationSessionId,
             appendToDraft,
             openNewSession,
+            openBulkComposer: vi.fn(),
             navigateToSession,
         });
 
@@ -122,6 +144,7 @@ describe('sendTranscriptSelectionToSession', () => {
             chooseDestinationSessionId: vi.fn(async () => ({ kind: 'newSession' as const })),
             appendToDraft: vi.fn(async () => undefined),
             openNewSession,
+            openBulkComposer: vi.fn(),
             navigateToSession: vi.fn(),
         });
 

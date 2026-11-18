@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { BULK_SESSION_COMPOSE_PATHNAME } from '@/components/sessions/bulkCompose/bulkSessionComposeRoute';
 import { reconcilePluginUiProjectionValue } from '@/sync/domains/plugins/ui/projection';
 import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 import { readWorkflowRunTarget } from '@/sync/domains/workflows/workflowRunRoute';
@@ -373,6 +374,13 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         activation: 'navigate', routePath: '/artifacts', currentRoutePatterns: ['/artifacts/[...rest]'],
     },
     {
+        // The bulk composer's page (opened from a selection, never from navigation): catalogued only so its tab
+        // and title read as Compose beside the Sessions column instead of as a session.
+        id: 'sessions.compose', titleKey: 'session.participants.bulk.pageTitle', icon: 'pencil-simple',
+        placement: { kind: 'column', column: 'sessions' }, activation: 'navigate',
+        routePath: BULK_SESSION_COMPOSE_PATHNAME, visibility: 'hidden',
+    },
+    {
         id: BROWSE_EXISTING_SESSIONS_DESTINATION_ID, titleKey: 'externalSessions.browseOpenExisting', icon: 'folder-open',
         placement: { kind: 'column', column: 'sessions' }, activation: 'navigate', routePath: '/external/browse',
         available: (availability) => availability.externalSessions,
@@ -395,7 +403,6 @@ function readBuiltinDestinationRows(): readonly BuiltinDestinationRow[] {
         // this destination's control (its popover), so no second rail icon is drawn.
         id: 'machines', titleKey: 'settings.machines', icon: 'desktop', placement: { kind: 'rail', region: 'account' },
         column: 'machines', activation: 'navigate', routePath: '/machines',
-        currentRoutePatterns: ['/machines/[...rest]'], railControl: 'footer',
         currentRoutePatterns: ['/machines/[...rest]'], mainScreenRoutePaths: ['/machines/updates', '/machines/activity'], railControl: 'footer',
         workspaceNavigationIdentity: { resourceParam: 'id', scopeParams: ['serverId'] },
     },

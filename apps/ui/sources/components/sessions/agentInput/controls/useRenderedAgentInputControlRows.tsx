@@ -83,13 +83,14 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
     sourceControlWrapperStyle: any;
 }>): Readonly<{
     controlNodes: ReadonlyArray<React.ReactNode>;
+    headerControls: ReadonlyArray<React.ReactNode>;
     hasPermissionControl: boolean;
     secondaryLeadingControls: ReadonlyArray<React.ReactNode>;
     secondaryTrailingControls: ReadonlyArray<React.ReactNode>;
     extraChipAnchorRefsByKey: Readonly<Record<string, React.RefObject<View | null>>>;
 }> {
     return React.useMemo(() => {
-        const placementIds = [...params.resolvedControls.primary, ...params.resolvedControls.secondary];
+        const placementIds = [...params.resolvedControls.header, ...params.resolvedControls.primary, ...params.resolvedControls.secondary];
         const extraControlNodesById = resolveRenderedExtraActionChipNodes({
             placementIds,
             chips: params.chips,
@@ -188,6 +189,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
 
         return {
             controlNodes: renderedControls.chips,
+            headerControls: renderedControls.headerControls,
             hasPermissionControl: renderedControls.hasPermissionControl,
             secondaryLeadingControls: renderedControls.secondaryLeadingControls,
             secondaryTrailingControls: renderedControls.secondaryTrailingControls,

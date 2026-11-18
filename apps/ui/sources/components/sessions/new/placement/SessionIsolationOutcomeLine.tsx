@@ -197,10 +197,14 @@ function usePreset(
 /** The meta line's mark: one step under the row mark, the size of the line's own glyphs. */
 const OUTCOME_MARK_SIZE = 14;
 
-function OutcomeRow(
+/**
+ * The composer's outcome line anatomy (lab sbx-outcome): one quiet meta sentence under the composer saying what
+ * Send will do, with its mark and an optional link. Shared by the isolation outcome and bulk compose.
+ */
+export function OutcomeRow(
   props: Readonly<{
     testID: string;
-    text: string;
+    text: React.ReactNode;
     /** A control that reads as the sentence's first words (the Project files verb phrase). */
     lead?: React.ReactNode;
     glyph: IconName;

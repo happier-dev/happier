@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -156,6 +157,51 @@ describe('TranscriptSendToSessionModal', () => {
         expect(renderedText).not.toContain('Unknown server');
         expect(renderedText).not.toContain('Other server');
         expect(renderedText).not.toContain('Source');
+    });
+
+    it('Select switches to checkbox rows, and Compose resolves with every chosen Session for the bulk composer', async () => {
+        sessionsRef.current = [
+            createSessionFixture({ id: 'source', serverId: 'server-a', metadata: createNamedMetadata('Source') }),
+            createSessionFixture({ id: 'first', serverId: 'server-a', accessLevel: 'edit', metadata: createNamedMetadata('First') }),
+            createSessionFixture({ id: 'second', serverId: 'server-a', accessLevel: 'edit', metadata: createNamedMetadata('Second') }),
+        ];
+        const onResolve = vi.fn();
+        const onClose = vi.fn();
+        const setChrome = vi.fn();
+        const screen = await renderScreen(<TranscriptSendToSessionModal sourceSessionId="source" sourceServerId="server-a"
+            previewText="Preview" selectedCount={2} onResolve={onResolve} onClose={onClose} setChrome={setChrome} />);
+        const select = setChrome.mock.lastCall?.[0]?.actions as React.ReactElement<{ onPress: () => void }>;
+        await act(async () => { select.props.onPress(); });
+        expect(setChrome.mock.lastCall?.[0]).toEqual(expect.objectContaining({
+            subtitle: t('transcript.selection.sendTo.multipleSubtitle', { count: 2 }) }));
+        // Null clears Select from the merged card chrome; an absent key would keep it drawn.
+        expect(setChrome.mock.lastCall?.[0]?.actions).toBeNull();
+        expect(screen.findAllByTestId('transcript-send-to-session-option-new-session')).toHaveLength(0);
+        await screen.pressByTestIdAsync('transcript-send-to-session-option-first');
+        await screen.pressByTestIdAsync('transcript-send-to-session-option-second');
+        expect(onResolve).not.toHaveBeenCalled();
+        const compose = screen.findByProps({ testID: 'transcript-send-to-session-selection-submit' });
+        await act(async () => { compose.props.onPress(); });
+        expect(onResolve).toHaveBeenCalledWith({ kind: 'bulk', targets: [
+            { serverId: 'server-a', sessionId: 'first' }, { serverId: 'server-a', sessionId: 'second' },
+        ] });
+        expect(onClose).toHaveBeenCalled();
+    });
+
+    it('Cancel in the selection bar returns to tap-to-choose', async () => {
+        sessionsRef.current = [
+            createSessionFixture({ id: 'source', serverId: 'server-a', metadata: createNamedMetadata('Source') }),
+            createSessionFixture({ id: 'first', serverId: 'server-a', accessLevel: 'edit', metadata: createNamedMetadata('First') }),
+        ];
+        const onResolve = vi.fn();
+        const setChrome = vi.fn();
+        const screen = await renderScreen(<TranscriptSendToSessionModal sourceSessionId="source" sourceServerId="server-a"
+            previewText="Preview" onResolve={onResolve} onClose={vi.fn()} setChrome={setChrome} />);
+        await act(async () => { (setChrome.mock.lastCall?.[0]?.actions as React.ReactElement<{ onPress: () => void }>).props.onPress(); });
+        const cancel = screen.findByProps({ testID: 'transcript-send-to-session-selection-cancel' });
+        await act(async () => { cancel.props.onPress(); });
+        await screen.pressByTestIdAsync('transcript-send-to-session-option-first');
+        expect(onResolve).toHaveBeenCalledWith({ kind: 'existingSession', serverId: 'server-a', sessionId: 'first' });
     });
 
     it('names the card in the shared title band instead of a line inside the body', async () => {

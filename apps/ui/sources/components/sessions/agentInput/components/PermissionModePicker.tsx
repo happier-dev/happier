@@ -21,7 +21,8 @@ export type PermissionModePickerOption = Readonly<{
 export function PermissionModePicker(props: {
     title: string;
     options: readonly PermissionModePickerOption[];
-    selected: PermissionMode;
+    /** Null chooses no row: several targets differ ("Mixed"). */
+    selected: PermissionMode | null;
     onSelect: (mode: PermissionMode) => void;
     styles: Readonly<{
         overlaySection: any;
@@ -39,6 +40,7 @@ export function PermissionModePicker(props: {
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
     const selected = React.useMemo(() => {
+        if (props.selected === null) return null;
         if (props.options.some((option) => option.value === props.selected)) {
             return props.selected;
         }

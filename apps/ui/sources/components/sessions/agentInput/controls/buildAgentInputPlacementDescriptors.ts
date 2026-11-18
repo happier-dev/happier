@@ -16,7 +16,7 @@ import {
 import { getCapabilitiesActionChipPlacement } from '@/components/sessions/capabilities/capabilitiesActionChipPlacement';
 import { getNewSessionSpaceActionChipPlacement, getNewSessionTriggersActionChipPlacement } from '@/components/sessions/new/newSessionActionChipPlacements';
 import { getExecutionRunReportChipPlacement, getExecutionRunStartChipDefinitions } from '@/components/sessions/runs/launcher/executionRunStartChipPlacements';
-import { getWorkflowContextChipDefinitions, getWorkflowStartVisibilityChipPlacement, getWorkflowStartFolderChipPlacement, getWorkflowStartWhereChipPlacement, getWorkflowStepOptionsChipPlacement } from '@/components/workflows/workflowComposerControlPlacements';
+import { getWorkflowContextChipDefinitions, getWorkflowStartVisibilityChipPlacement, getWorkflowStartFolderChipPlacement, getWorkflowStartWhereChipPlacement } from '@/components/workflows/workflowComposerControlPlacements';
 
 import { AGENT_INPUT_CONTROL_REGISTRY, AGENT_INPUT_FIELD_ACCESSORY_REGISTRY, findAgentInputControlDescriptor, getAgentInputFieldAccessoryPlacement } from './agentInputControlRegistry';
 import {
@@ -71,7 +71,7 @@ function projectDescriptors(params: ProjectionInput, definitions: readonly Admit
             ...placement,
             ...(menu ? { menu } : {}),
             controlId,
-            line: registry?.line ?? 'primary',
+            line: placement.line ?? registry?.line ?? 'primary',
             slot,
             defaultPlacement: (params.phone ? registry?.phoneDefaultPlacement : undefined)
                 ?? placement.defaultPlacement
@@ -134,7 +134,6 @@ function getStaticFactoryDefinitions(context: AgentInputPlacementContext): reado
         { controlId: 'shortcuts', placement: getMentionActionChipPlacement(), contexts: ['discussion'] },
         { controlId: 'shortcuts', placement: getBrowserContextActionChipPlacement(), contexts: ['session', 'newSession'] },
         { controlId: 'shortcuts', placement: getSessionSourceContextActionChipPlacement(), contexts: ['session'] },
-        { controlId: 'shortcuts', placement: getWorkflowStepOptionsChipPlacement(), contexts: ['workflow'] },
         { controlId: 'sessionAccess', placement: getTemporaryComputerTeamAccessActionChipPlacement(), contexts: ['newSession'] },
         { controlId: 'sessionAccess', placement: getWorkflowStartVisibilityChipPlacement(), contexts: ['workflow'] },
         { controlId: 'organization', placement: getNewSessionSpaceActionChipPlacement(), contexts: ['newSession'] },

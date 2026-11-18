@@ -35,6 +35,7 @@ import {
     resolveAppRailBand,
     resolveCompactAppDestinations,
     resolveCurrentAppDestination,
+    isCompactAppDestinationVisible,
     isAppDestinationRootPath,
     resolveDestinationRefFromHref,
     hrefForDestinationRef,
@@ -301,7 +302,10 @@ vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({
         pathname: '/',
-        router: { push: (href: unknown) => { activationBoundary.pushed.push(String(href)); } },
+        router: {
+            push: (href: unknown) => { activationBoundary.pushed.push(String(href)); },
+            navigate: (href: unknown) => { activationBoundary.pushed.push(String(href)); },
+        },
     }).module;
 });
 
@@ -475,6 +479,8 @@ describe('resolveCompactAppDestinations', () => {
             ['boards', { kind: 'rail', region: 'app' }],
             // Artifacts (RU2 §9.6): a full page over the Account Artifact store, after Boards.
             ['artifacts', { kind: 'rail', region: 'app' }],
+            // The bulk composer's page: hidden, catalogued for its tab and title (BULK-COMPOSE-1117).
+            ['sessions.compose', { kind: 'column', column: 'sessions' }],
             ['browseExistingSessions', { kind: 'column', column: 'sessions' }],
             ['store.bots', { kind: 'column', column: 'plugins' }],
             ['plugins', { kind: 'rail', region: 'plugins' }],
@@ -494,7 +500,7 @@ describe('resolveCompactAppDestinations', () => {
         expect(destinations.find((destination) => destination.id === 'artifacts')).not.toHaveProperty('column');
         // Feature-disabled built-ins are omitted, including the Bots roster.
         expect(ids(resolveCompactAppDestinations({ builtins: CORE_BUILTINS, pages: [] })))
-            .toEqual(['sessions', 'search', 'projects', 'deployments', 'boards', 'artifacts', 'store.bots', 'plugins', 'machines', 'settings', 'personalize', 'bot-template']);
+            .toEqual(['sessions', 'search', 'projects', 'deployments', 'boards', 'artifacts', 'sessions.compose', 'store.bots', 'plugins', 'machines', 'settings', 'personalize', 'bot-template']);
         const everything = resolveCompactAppDestinations({ builtins: { ...ALL_BUILTINS, friends: true, discussions: true }, pages: [pageWith('notes', { requestedPlacement: { kind: 'rail' } })] });
         expect(everything.filter(destination => destination.placement.kind === 'rail')
             .map(destination => [destination.id, resolveAppRailBand(destination)])).toEqual([
@@ -626,12 +632,21 @@ describe('resolveCompactAppDestinations', () => {
         const plugins = destinations.filter((destination) => destination.placement.kind === 'rail' && destination.placement.region === 'plugins');
         expect(ids(plugins)).toEqual(['plugins', 'plugin:acme.eager:eager', 'plugin:acme.late:late']);
         const sessionsColumn = destinations.filter((destination) => destination.placement.kind === 'column' && destination.placement.column === 'sessions');
-        expect(ids(sessionsColumn)).toEqual(['browseExistingSessions', 'plugin:acme.prompts:prompts']);
+        expect(ids(sessionsColumn)).toEqual(['sessions.compose', 'browseExistingSessions', 'plugin:acme.prompts:prompts']);
     });
 });
 
 describe('catalog destination instances', () => {
     const catalog = resolveCompactAppDestinations({ builtins: ALL_BUILTINS, pages: [page] });
+
+    it('reads the bulk composer as Compose beside the Sessions column, never as a session, and lists it nowhere', () => {
+        const compose = resolveCurrentAppDestination(catalog, '/session/compose');
+        expect(compose).toMatchObject({ id: 'sessions.compose', icon: 'pencil-simple', placement: { kind: 'column', column: 'sessions' } });
+        expect(isCompactAppDestinationVisible(compose!)).toBe(false);
+        expect(resolveCurrentAppDestination(catalog, '/session/sess-a')?.id).toBe('sessions');
+        // The tab opened on the composer is a Compose tab, not a session called "compose".
+        expect(resolveDestinationRefFromHref(catalog, '/session/compose?dataId=seed-1')?.kind).toBe('sessions.compose');
+    });
 
     it('round-trips distinct session, project, workflow, settings, and qualified plugin page identities', () => {
         const hrefs = [
@@ -741,6 +756,9 @@ describe('catalog destination instances', () => {
         // The destination's own pages are not workflow identities.
         expect(resolveDestinationRefFromHref(catalog, '/workflows/settings')?.kind).not.toBe('workflow');
         expect(resolveDestinationRefFromHref(catalog, '/workflows/runs')?.kind).not.toBe('workflow');
+        // P04 U1: Events belongs to the collection, never a saved definition named "events".
+        expect(resolveDestinationRefFromHref(catalog, '/workflows/events')?.kind).toBe('workflows');
+        expect(resolveDestinationRefFromHref(catalog, '/workflows/%65vents')?.kind).toBe('workflows');
         expect(hrefForDestinationRef(catalog, resolveDestinationRefFromHref(catalog, workflow)!)).toBe(workflow);
     });
 

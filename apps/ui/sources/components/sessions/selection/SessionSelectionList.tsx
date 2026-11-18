@@ -7,6 +7,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { SelectionList, type SelectionListKeyboardHint, type SelectionListOption, type SelectionListSectionDescriptor, type SelectionListStep, type SelectionListPagination } from '@/components/ui/selectionList';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { SessionListSelectionCheckbox } from '@/components/sessions/shell/selection/SessionListSelectionCheckbox';
 import type { SessionSelectionRow } from './projectSessionSelectionRows';
 
 const styles = StyleSheet.create(theme => ({
@@ -16,7 +17,17 @@ const styles = StyleSheet.create(theme => ({
     statusRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, minWidth: 0 },
     statusLine: { color: theme.colors.text.secondary, flexShrink: 1 },
     attentionDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: theme.colors.status.actionRequired },
+    // The checkbox takes the identity mark's square, so titles keep one left edge in both modes.
+    checkbox: { width: 20, height: 20 },
 }));
+
+/**
+ * Single: a tap chooses one Session (every caller's default). Multiple: lists of Sessions you act on lead each
+ * row with the session list's round checkbox (owner 2026-11-17 decision 1), and a tap toggles that row.
+ */
+export type SessionSelectionListMode =
+    | Readonly<{ kind: 'single' }>
+    | Readonly<{ kind: 'multiple'; selectedIds: ReadonlySet<string>; onToggle: (address: SessionAddress) => void }>;
 
 function RowMeta({ row, testID }: Readonly<{ row: SessionSelectionRow; testID: string }>) {
     const { theme } = useUnistyles();
@@ -71,6 +82,8 @@ export type SessionSelectionListProps = Readonly<{
     inputValue?: string;
     onChangeInputValue?: (query: string) => void;
     pagination?: SelectionListPagination;
+    /** Defaults to single. Row ids are `SessionSelectionRow.id`. */
+    selectionMode?: SessionSelectionListMode;
     onSelectSession: (address: SessionAddress) => void;
     onSelectOption?: (id: string) => void;
     onRequestClose: () => void;
@@ -80,12 +93,20 @@ export type SessionSelectionListProps = Readonly<{
 export const SessionSelectionList = React.memo(function SessionSelectionList(props: SessionSelectionListProps) {
     const { theme } = useUnistyles();
     const inline = props.rowPresentation === 'inline';
+    const multiple = props.selectionMode?.kind === 'multiple' ? props.selectionMode : null;
+    const multipleSelectedIds = multiple?.selectedIds ?? null;
+    const onToggle = multiple?.onToggle;
+    const isMultiple = multiple !== null;
     const toOption = React.useCallback((row: SessionSelectionRow): SelectionListOption => ({
         id: row.id, testID: `${props.testID}-option-${row.address.sessionId}`,
         label: row.label, disabled: Boolean(row.disabledReason),
-        icon: <SessionAgentCatalogIdentityIcon agentId={row.agentId} machineId={row.machineId}
-            serverId={row.address.serverId} size={20} color={theme.colors.text.secondary}
-            testID={`${props.testID}-agent-logo-${row.address.sessionId}`} />,
+        icon: multipleSelectedIds && onToggle
+            ? <SessionListSelectionCheckbox sessionId={row.address.sessionId} selectionKey={row.id}
+                selected={multipleSelectedIds.has(row.id)} style={styles.checkbox}
+                onPress={() => onToggle(row.address)} />
+            : <SessionAgentCatalogIdentityIcon agentId={row.agentId} machineId={row.machineId}
+                serverId={row.address.serverId} size={20} color={theme.colors.text.secondary}
+                testID={`${props.testID}-agent-logo-${row.address.sessionId}`} />,
         ...(inline ? {
             subtitle: [readRowStatusLine(row), row.place].filter(Boolean).join(' · '),
             subtitleContent: <RowStatusLine row={row} />,
@@ -94,10 +115,10 @@ export const SessionSelectionList = React.memo(function SessionSelectionList(pro
             subtitle: row.disabledReason ?? row.subtitle,
             rightAccessory: <RowMeta row={row} testID={props.testID} />,
         }),
-    }), [inline, props.testID, theme.colors.text.secondary]);
+    }), [inline, multipleSelectedIds, onToggle, props.testID, theme.colors.text.secondary]);
     const sections = React.useMemo<readonly SelectionListSectionDescriptor[]>(() => {
         const { groupTitles } = props;
-        const leading = props.leadingOptions ?? [];
+        const leading = isMultiple ? [] : props.leadingOptions ?? [];
         if (!groupTitles) {
             return [{ kind: 'static', id: 'sessions', options: [...leading, ...props.rows.map(toOption)], virtualization: 'auto' }];
         }
@@ -109,14 +130,16 @@ export const SessionSelectionList = React.memo(function SessionSelectionList(pro
             kind: 'static', id: group.id, title: group.title, virtualization: 'auto',
             options: [...(index === 0 ? leading : []), ...group.rows.map(toOption)],
         }));
-    }, [props.groupTitles, props.leadingOptions, props.rows, toOption]);
+    }, [isMultiple, props.groupTitles, props.leadingOptions, props.rows, toOption]);
     const rootStep = React.useMemo<SelectionListStep>(() => ({
         id: `${props.testID}-root`, title: props.title, inputPlaceholder: props.searchPlaceholder,
         emptyStateLabel: props.emptyStateLabel, sections,
         ...(props.footerHints ? { footerHints: props.footerHints } : {}),
     }), [props.emptyStateLabel, props.footerHints, props.searchPlaceholder, props.testID, props.title, sections]);
+    const selection = React.useMemo(() => multipleSelectedIds
+        ? { kind: 'multiple' as const, selectedIds: multipleSelectedIds } : undefined, [multipleSelectedIds]);
     return <SelectionList testID={`${props.testID}-list`} rootStep={rootStep}
-        selectedOptionId={props.selectedOptionId}
+        {...(selection ? { selection, selectionMark: 'none' as const } : { selectedOptionId: props.selectedOptionId })}
         inputSuffix={props.inputSuffix}
         footerAction={props.footerAction}
         pinnedRow={props.pinnedRow}
@@ -124,7 +147,8 @@ export const SessionSelectionList = React.memo(function SessionSelectionList(pro
         pagination={props.pagination}
         onSelect={id => {
             const row = props.rows.find(candidate => candidate.id === id);
-            if (row) props.onSelectSession(row.address);
+            if (row && onToggle) onToggle(row.address);
+            else if (row) props.onSelectSession(row.address);
             else props.onSelectOption?.(id);
         }} onRequestClose={props.onRequestClose} autoFocusInputOnWeb keyboardHintsEnabled
         maxHeight={props.maxHeight} heightBehavior="fixedToMaxHeight" showsVerticalScrollIndicator />;

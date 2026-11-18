@@ -35,6 +35,13 @@ vi.mock('react-native-safe-area-context', async (importOriginal) => {
     };
 });
 
+const routerBoundary = vi.hoisted(() => ({ push: null as null | ((href: unknown) => void) }));
+vi.mock('expo-router', async () => {
+    const mock = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: '/' });
+    routerBoundary.push = mock.spies.push;
+    return mock.module;
+});
+
 vi.mock('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry', () => ({
     useSessionCockpitBottomChromeHeight: vi.fn(() => 0),
 }));
@@ -103,6 +110,21 @@ async function pressByTestId(screen: Awaited<ReturnType<typeof renderScreen>>, t
 }
 
 describe('SessionListSelectionActionBarHost', () => {
+    it('leads with Compose, which opens the bulk composer aimed at the selected Sessions', async () => {
+        const { takeBulkSessionComposerSeed } = await import('@/components/sessions/authoring/bulk/bulkSessionComposerHandoff');
+        const screen = await renderScreen(<ActionBarHarness />);
+        await pressByTestId(screen, 'select-all-sessions');
+        const compose = screen.findByProps({ testID: 'session-list-selection-action-compose' });
+        expect(compose.props.accessibilityLabel ?? compose.props.label ?? 'Compose').toBeTruthy();
+        await act(async () => { compose.props.onPress(); });
+        const href = vi.mocked(routerBoundary.push!).mock.calls.at(-1)?.[0] as { pathname: string; params: { dataId: string } };
+        expect(href.pathname).toBe('/session/compose');
+        expect(takeBulkSessionComposerSeed(href.params.dataId)?.targets).toEqual([
+            { serverId: 'server-a', sessionId: 'session-a' },
+            { serverId: 'server-a', sessionId: 'session-b' },
+        ]);
+    });
+
     afterEach(() => {
         vi.mocked(useWindowDimensions).mockReturnValue({ width: 390, height: 840, scale: 1, fontScale: 1 });
         vi.mocked(useSessionCockpitBottomChromeHeight).mockReturnValue(0);

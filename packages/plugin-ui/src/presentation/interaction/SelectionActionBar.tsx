@@ -134,6 +134,20 @@ export function resolveHappierSelectionActionBarLayout(input: Readonly<{
   };
 }
 
+/**
+ * Whether a folded bar still cannot hold its label. The count is what the bar is about, so it never truncates:
+ * the bar then draws its kept action as a glyph alone. A status line beside the label shrinks instead.
+ */
+export function isHappierSelectionActionBarLabelSqueezed(input: Readonly<{
+  folded: boolean;
+  hasStatus: boolean;
+  labelNaturalWidth: number;
+  labelSlotWidth: number;
+}>): boolean {
+  return input.folded && !input.hasStatus && input.labelNaturalWidth > 0 && input.labelSlotWidth > 0
+    && input.labelSlotWidth - LABEL_PADDING * 2 < input.labelNaturalWidth - FILL_EPSILON_PX;
+}
+
 /** The pill's measures (collab lab D1 `.cb-selbar`): 12 radius, 4 inset, 30-tall actions, 2 apart. */
 const BAR_RADIUS = 12;
 const BAR_INSET = 4;
@@ -145,6 +159,7 @@ const ACTION_HIT_REACH = { left: ACTION_GAP / 2, right: ACTION_GAP / 2 } as cons
 const PRIMARY_FILL_OPACITY = 0.14;
 const DIVIDER_OPACITY = 0.2;
 const GLYPH_SIZE = 14;
+const LABEL_PADDING = 8;
 const ENTER_OFFSET_Y = 8;
 
 const labelTextStyle: HappierPortableStyle = { fontSize: 13, lineHeight: 18, fontWeight: '600' };
@@ -216,6 +231,28 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
     // The natural width is read only while nothing is folded; a folded bar is narrower by design.
     if (!layout.folded) setNaturalWidth(event.nativeEvent.layout.width);
   }, [layout.folded]);
+  // The count is what the bar is about, so it never truncates ("5 sel…"). When even the folded bar cannot hold
+  // it, the kept action draws its glyph alone (its name stays its accessible label). Decided once per column
+  // width: the compact bar is wider for the label, which must not flip it back.
+  const [labelNaturalWidth, setLabelNaturalWidth] = useState(0);
+  const [labelSlotWidth, setLabelSlotWidth] = useState(0);
+  const [compactAtWidth, setCompactAtWidth] = useState<number | null>(null);
+  const onLabelMeasure = useCallback((event: LayoutChangeEvent) => {
+    setLabelNaturalWidth(event.nativeEvent.layout.width);
+  }, []);
+  const onLabelSlotLayout = useCallback((event: LayoutChangeEvent) => {
+    setLabelSlotWidth(event.nativeEvent.layout.width);
+  }, []);
+  const labelSqueezed = isHappierSelectionActionBarLabelSqueezed({
+    folded: layout.folded,
+    hasStatus: Boolean(presentedRef.current?.status),
+    labelNaturalWidth,
+    labelSlotWidth,
+  });
+  useEffect(() => {
+    if (labelSqueezed && compactAtWidth !== containerWidth) setCompactAtWidth(containerWidth);
+  }, [compactAtWidth, containerWidth, labelSqueezed]);
+  const compact = layout.folded && compactAtWidth === containerWidth;
 
   if (!presented) return null;
   const { background, foreground } = props.colors;
@@ -246,7 +283,10 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
           flexDirection: 'row', alignItems: 'center', justifyContent: layout.folded ? 'space-between' : 'flex-start', gap: ACTION_GAP,
           maxWidth: '100%', padding: BAR_INSET, borderRadius: BAR_RADIUS, backgroundColor: background,
         }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 8, paddingRight: 8, flexShrink: 1, minWidth: 0 }}>
+        <View onLayout={onLabelSlotLayout} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: LABEL_PADDING, paddingRight: LABEL_PADDING, flexShrink: 1, minWidth: 0 }}>
+          <View pointerEvents="none" aria-hidden onLayout={onLabelMeasure} style={{ position: 'absolute', left: 0, top: 0, opacity: 0 }}>
+            <Text numberOfLines={1} tabularNumbers style={labelTextStyle}>{presented.label}</Text>
+          </View>
           <Text
             testID={presented.labelTestID}
             accessibilityLabel={presented.labelAccessibilityLabel}
@@ -292,7 +332,9 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
                 />
               ) : null}
               {action.renderIcon?.(actionColor(action)) ?? null}
-              <Text numberOfLines={1} style={{ ...actionTextStyle, color: actionColor(action) }}>{action.label}</Text>
+              {compact && action.renderIcon ? null : (
+                <Text numberOfLines={1} style={{ ...actionTextStyle, color: actionColor(action) }}>{action.label}</Text>
+              )}
             </HappierPressable>
           ))}
           {layout.overflow.length > 0 ? (

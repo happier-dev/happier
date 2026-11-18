@@ -22,10 +22,12 @@ export function resolveAgentInputControlLines(params: Readonly<{
     singleRow?: boolean;
 }>): AgentInputResolvedControlLines {
     const resolved = resolveNavigationPlacements(params.controls, params.preferences);
-    const row = resolved.pinned.filter(control => control.slot === 'chip');
+    const pinned = resolved.pinned.filter(control => control.slot === 'chip');
+    const row = pinned.filter(control => control.line !== 'header');
     return {
         layout: params.layout,
         controls: params.controls,
+        header: pinned.filter(control => control.line === 'header').map(control => control.id),
         primary: row.filter(control => params.singleRow || control.line === 'primary').map(control => control.id),
         secondary: params.singleRow ? [] : row.filter(control => control.line === 'secondary').map(control => control.id),
         collapsed: resolved.overflow.map(control => control.id),

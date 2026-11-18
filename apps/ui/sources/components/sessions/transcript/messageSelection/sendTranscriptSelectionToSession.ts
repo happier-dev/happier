@@ -1,4 +1,5 @@
 import type { SessionDraftTextAppend } from '@/components/sessions/composer/sessionDraftAppendAction';
+import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 
 import { applySendToSessionTemplate } from './applySendToSessionTemplate';
 import { formatSelectedMessagesForClipboard } from './formatSelectedMessagesForClipboard';
@@ -9,6 +10,8 @@ export type SendTranscriptSelectionChooseDestinationInput = Readonly<{
     sourceSessionId: string;
     sourceServerId: string;
     previewText: string;
+    /** How many messages travel, for the picker's "these N messages" sentence. */
+    selectedCount: number;
 }>;
 
 export type SendTranscriptSelectionDestination =
@@ -19,6 +22,11 @@ export type SendTranscriptSelectionDestination =
     }>
     | Readonly<{
         kind: 'newSession';
+    }>
+    /** Several Sessions chosen with Select: one bulk composer owns sending to them. */
+    | Readonly<{
+        kind: 'bulk';
+        targets: readonly SessionAddress[];
     }>;
 
 export type SendTranscriptSelectionOpenNewSessionInput = Readonly<{
@@ -44,6 +52,8 @@ export async function sendTranscriptSelectionToSession(params: Readonly<{
     appendToDraft: (input: SessionDraftTextAppend) => Promise<void>;
     /** Opens New Session through its canonical seed/hydration owner. */
     openNewSession: (input: SendTranscriptSelectionOpenNewSessionInput) => Promise<boolean>;
+    /** Opens the bulk composer aimed at the chosen Sessions with the formatted text as its message. */
+    openBulkComposer: (input: Readonly<{ targets: readonly SessionAddress[]; text: string }>) => void;
     navigateToSession: (input: Readonly<{ sessionId: string; serverId: string }>) => void;
 }>): Promise<boolean> {
     if (params.selectedMessages.length === 0) return false;
@@ -63,8 +73,15 @@ export async function sendTranscriptSelectionToSession(params: Readonly<{
         sourceSessionId: params.sourceSessionId,
         sourceServerId: params.sourceServerId,
         previewText: promptText,
+        selectedCount: params.selectedMessages.length,
     });
     if (!destination) return false;
+
+    if (destination.kind === 'bulk') {
+        if (destination.targets.length === 0) return false;
+        params.openBulkComposer({ targets: destination.targets, text: promptText });
+        return true;
+    }
 
     if (destination.kind === 'newSession') {
         return params.openNewSession({

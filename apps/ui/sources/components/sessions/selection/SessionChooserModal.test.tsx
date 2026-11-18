@@ -6,7 +6,7 @@ import { createDeferred, createSessionFixture, flushHookEffects, pressTestInstan
 import { storage } from '@/sync/domains/state/storage';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { SessionSelectionModal } from './SessionSelectionModal';
+import { SessionChooserModal } from './SessionChooserModal';
 import { ReportSessionSelectionModal } from './ReportSessionSelectionModal';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -50,7 +50,7 @@ afterEach(() => {
     storage.setState(initialStorage, true);
 });
 
-describe('SessionSelectionModal', () => {
+describe('SessionChooserModal', () => {
     it('hides chosen tags for deliberate screen sharing on web and restores mounted rows when it ends', async () => {
         seedPicker({ 'server-a': [namedSession('private', 'Private sharing session'), namedSession('ordinary', 'Ordinary session')] });
         storage.setState({
@@ -60,7 +60,7 @@ describe('SessionSelectionModal', () => {
             },
         });
         const executor = createActionExecutor({ screenCaptureAction: createNativeScreenCaptureAction() });
-        const screen = await renderScreen(<SessionSelectionModal title="Sessions" searchPlaceholder="Search"
+        const screen = await renderScreen(<SessionChooserModal title="Sessions" searchPlaceholder="Search"
             emptyStateLabel="Empty" testID="sharing-picker" onSelectSession={vi.fn()} onClose={vi.fn()} onDismiss={vi.fn()} />);
         expect(screen.getTextContent()).toContain('Private sharing session');
         await act(async () => {
@@ -85,7 +85,7 @@ describe('SessionSelectionModal', () => {
             },
         });
         vi.stubGlobal('__TAURI_INTERNALS__', { invoke: vi.fn(async () => ({ status: 'idle' })) });
-        const screen = await renderScreen(<SessionSelectionModal title="Sessions" searchPlaceholder="Search"
+        const screen = await renderScreen(<SessionChooserModal title="Sessions" searchPlaceholder="Search"
             emptyStateLabel="Empty" testID="recording-picker" onSelectSession={vi.fn()} onClose={vi.fn()} onDismiss={vi.fn()} />);
         await flushHookEffects();
         expect(screen.getTextContent()).toContain('Private recording session');
@@ -99,7 +99,7 @@ describe('SessionSelectionModal', () => {
 
     it('preserves the caller title and modal identity when publishing responsive card chrome', async () => {
         const setChrome = vi.fn();
-        await renderScreen(<SessionSelectionModal
+        await renderScreen(<SessionChooserModal
             title="Picker title" searchPlaceholder="Search" emptyStateLabel="Empty" testID="session-picker"
             setChrome={setChrome} onSelectSession={vi.fn()} onClose={vi.fn()} onDismiss={vi.fn()}
         />);
@@ -115,7 +115,7 @@ describe('SessionSelectionModal', () => {
         });
         const onSelectSession = vi.fn();
         const onClose = vi.fn();
-        const screen = await renderScreen(<SessionSelectionModal
+        const screen = await renderScreen(<SessionChooserModal
             title="Related session" searchPlaceholder="Search sessions" emptyStateLabel="No sessions"
             testID="session-picker" onSelectSession={onSelectSession} onClose={onClose} onDismiss={vi.fn()}
         />);
@@ -144,7 +144,9 @@ describe('SessionSelectionModal', () => {
         expect(text).not.toContain('Hidden system session');
         expect(text).not.toContain('New session');
         expect(text.indexOf('Other server session')).toBeLessThan(text.indexOf('Current read-only session'));
-        expect(screen.tree.root.findAll(node => node.props.title === 'Current read-only session' && typeof node.props.onPress === 'function')).toHaveLength(1);
+        // One pressable row for the Session; the row owner's composite layers forward the same identity.
+        expect(new Set(screen.tree.root.findAll(node => node.props.title === 'Current read-only session'
+            && typeof node.props.onPress === 'function').map(node => node.props.testID))).toEqual(new Set(['report-session-selection-option-current']));
         await screen.pressByTestIdAsync('report-session-selection-list:report-session-selection-root:option:no-related-session');
         expect(onResolve).toHaveBeenLastCalledWith(null);
         const row = screen.tree.root.findAll(node => node.props.title === 'Current read-only session' && typeof node.props.onPress === 'function')[0];

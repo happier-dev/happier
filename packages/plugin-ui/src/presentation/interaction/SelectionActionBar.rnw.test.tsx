@@ -10,6 +10,7 @@ import { hitAreaClippingAncestors, readHitAreaReach } from './hitArea.testSuppor
 import {
   HappierSelectionActionBar,
   resolveHappierSelectionActionBarLayout,
+  isHappierSelectionActionBarLabelSqueezed,
   type HappierSelectionActionBarAction,
   type HappierSelectionActionBarHost,
 } from './SelectionActionBar.js';
@@ -224,6 +225,15 @@ describe('resolveHappierSelectionActionBarLayout', () => {
     const folded = resolveHappierSelectionActionBarLayout({ actions: withRare, containerWidth: 300, naturalWidth: 520 });
     expect(folded.inline.map((action) => action.id)).toEqual(['ask']);
     expect(folded.overflow.map((action) => action.id)).toEqual(['copy', 'send', 'side-run']);
+  });
+
+  it('never truncates the count: a folded bar whose label is squeezed draws its kept action as a glyph', () => {
+    // "5 selected" needs 68 px; the narrow sidebar's folded bar leaves it 40 (plus its 8 + 8 padding).
+    expect(isHappierSelectionActionBarLabelSqueezed({ folded: true, hasStatus: false, labelNaturalWidth: 68, labelSlotWidth: 56 })).toBe(true);
+    expect(isHappierSelectionActionBarLabelSqueezed({ folded: true, hasStatus: false, labelNaturalWidth: 68, labelSlotWidth: 84 })).toBe(false);
+    // An unfolded bar fits by definition, and nothing is known before both widths are measured.
+    expect(isHappierSelectionActionBarLabelSqueezed({ folded: false, hasStatus: false, labelNaturalWidth: 68, labelSlotWidth: 20 })).toBe(false);
+    expect(isHappierSelectionActionBarLabelSqueezed({ folded: true, hasStatus: false, labelNaturalWidth: 0, labelSlotWidth: 20 })).toBe(false);
   });
 
   it('has nothing to fold before either width is known', () => {

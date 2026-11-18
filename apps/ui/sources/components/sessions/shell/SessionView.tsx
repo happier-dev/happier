@@ -33,6 +33,7 @@ import { FindComposerSlotHost, FindComposerSlotProvider } from "@/components/ui/
 import type { TranscriptSelectionToolbarMessage } from "@/components/sessions/transcript/messageSelection/TranscriptSelectionToolbar";
 import { openOrdinaryNewSessionSeed } from "@/components/sessions/new/newSessionSeedNavigation";
 import { openTranscriptSendToSessionModal } from "@/components/sessions/transcript/messageSelection/openTranscriptSendToSessionModal";
+import { openBulkSessionComposer } from '@/components/sessions/bulkCompose/bulkSessionComposeRoute';
 import { sendTranscriptSelectionToSession } from "@/components/sessions/transcript/messageSelection/sendTranscriptSelectionToSession";
 import { useTranscriptSelectionEligibleMessageIds } from "@/components/sessions/transcript/messageSelection/useTranscriptSelectionEligibleMessageIds";
 import { EmptyMessages } from "@/components/ui/empty/EmptyMessages";
@@ -2343,6 +2344,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     const transcriptMessageSendToSessionTemplate = useSetting('transcriptMessageSendToSessionTemplate');
     const transcriptBulkCopyFormat = useSetting('transcriptBulkCopyFormat');
     const navigateToSession = useNavigateToSession();
+    const bulkComposeRouter = useNewSessionEntryRouter();
 
     const canReleaseLocalControl = shouldOfferLocalControlRelease(session, cliAuthState, currentSessionAgentCatalogEntry);
 
@@ -2572,6 +2574,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                     });
                     return outcome.kind === 'opened';
                 },
+                openBulkComposer: ({ targets, text }) => openBulkSessionComposer(bulkComposeRouter, { targets, text }),
                 navigateToSession: ({ sessionId: destinationSessionId, serverId }) => {
                     void navigateToSession(destinationSessionId, { serverId });
                 },
@@ -2584,6 +2587,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
         sessionAccountScope,
         machineId,
         navigateToSession,
+        bulkComposeRouter,
         session,
         sessionRouteServerId,
         sessionId,

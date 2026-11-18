@@ -71,6 +71,33 @@ function composerControlMenuId(control: PluginProjectedComposerControlEntryV1): 
     return `plugin-composer-control:${control.id}`;
 }
 
+/**
+ * A Composer that cannot bind plugin controls (one aimed at several Sessions, whose control state is per Session)
+ * still names each admitted control in the + menu, disabled, with why as its subtitle.
+ */
+export function createUnavailablePluginComposerControlChip(params: Readonly<{
+    control: PluginProjectedComposerControlEntryV1;
+    localize: PluginLocalizedTextResolver;
+    reason: string;
+}>): AgentInputExtraActionChip {
+    const { controlId, placement } = createPluginComposerControlPlacement(params.control, params.localize);
+    return {
+        key: composerControlKey(params.control),
+        controlId,
+        placement: { ...placement, defaultPlacement: 'overflow' },
+        composerPreview: () => ({ absent: true }),
+        collapsedAction: ({ tint }) => ({
+            id: composerControlMenuId(params.control),
+            label: placement.title,
+            subtitle: params.reason,
+            disabled: true,
+            icon: <Icon name={placement.icon} size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />,
+            onPress: () => {},
+        }),
+        render: () => null,
+    };
+}
+
 function createComposerActionChip(params: Readonly<{
     action: PluginContributedActionDescriptor;
     openAction: (action: PluginContributedActionDescriptor, anchor?: PopoverAnchor) => void;

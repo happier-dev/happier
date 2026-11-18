@@ -25,6 +25,8 @@ export type AgentInputControlPlacement = Readonly<{
     defaultPlacement?: NavigationDefaultPlacement;
     hasContent?: boolean;
     pending?: boolean;
+    /** Overrides the registry line: a multi-recipient To chip sits on the header line above the input. */
+    line?: AgentInputControlLine;
 }>;
 
 export type AgentInputPlacementDescriptor = Readonly<{
@@ -91,7 +93,8 @@ export function isAgentInputPluginControlId(controlId: AgentInputControlId | str
     return controlId.startsWith('plugin:') && controlId.length > 'plugin:'.length;
 }
 
-export type AgentInputControlLine = 'primary' | 'secondary';
+/** `header` is the placement line above the input (owner 2026-11-17: every multi-recipient composer's To chip). */
+export type AgentInputControlLine = 'header' | 'primary' | 'secondary';
 
 export type AgentInputControlDescriptor = Readonly<{
     id: AgentInputControlId;
@@ -101,6 +104,7 @@ export type AgentInputControlDescriptor = Readonly<{
 export type AgentInputResolvedControlLines = Readonly<{
     layout?: AgentInputActionBarLayout;
     controls: readonly AgentInputPlacementDescriptor[];
+    header: readonly string[];
     primary: readonly string[];
     secondary: readonly string[];
     /** Effective overflow, retained at the existing + menu boundary. */

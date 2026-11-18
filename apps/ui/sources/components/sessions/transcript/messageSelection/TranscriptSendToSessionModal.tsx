@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { SessionSelectionModal, type SessionSelectionCandidate } from '@/components/sessions/selection/SessionSelectionModal';
+import { SessionChooserModal, type SessionSelectionCandidate } from '@/components/sessions/selection/SessionChooserModal';
 import { Icon } from '@/components/ui/icons/Icon';
 import type { SelectionListOption } from '@/components/ui/selectionList';
 import type { CustomModalInjectedProps } from '@/modal';
@@ -16,10 +16,10 @@ export type TranscriptSendToSessionModalProps = CustomModalInjectedProps & Reado
     sourceServerId: string;
     sessionCandidates?: readonly ActionSessionAddressV1[];
     onResolve: (destination: SendTranscriptSelectionDestination | null) => void;
-}> & (Readonly<{ selectionOnly: true; sourceSessionId?: never; previewText?: never;
+}> & (Readonly<{ selectionOnly: true; sourceSessionId?: never; previewText?: never; selectedCount?: never;
     /** A destination picker excludes its source and asks for edit access; a reference picker asks for reading. */
     destination?: Readonly<{ excludedSessionId: string; capability: 'editSessionRecords'; title: string }> }>
-    | Readonly<{ selectionOnly?: false; sourceSessionId: string; previewText: string; destination?: never }>);
+    | Readonly<{ selectionOnly?: false; sourceSessionId: string; previewText: string; selectedCount?: number; destination?: never }>);
 
 export const TranscriptSendToSessionModal = React.memo(function TranscriptSendToSessionModal(
     props: TranscriptSendToSessionModalProps,
@@ -45,8 +45,15 @@ export const TranscriptSendToSessionModal = React.memo(function TranscriptSendTo
             <Icon name="plus-circle" size={20} color={theme.colors.text.secondary} />
         </View>,
     }], [props.selectionOnly, theme.colors.text.secondary]);
+    // Select (owner 2026-11-17 decision 3): only transcript "Send to session" can address several Sessions.
+    const { onResolve } = props;
+    const multipleSelect = React.useMemo(() => props.selectionOnly ? undefined : {
+        subtitle: t('transcript.selection.sendTo.multipleSubtitle', { count: props.selectedCount ?? 1 }),
+        submitLabel: t('sessionsList.selectionCompose'),
+        onSubmit: (targets: readonly ActionSessionAddressV1[]) => onResolve({ kind: 'bulk', targets }),
+    }, [onResolve, props.selectedCount, props.selectionOnly]);
 
-    return <SessionSelectionModal
+    return <SessionChooserModal
         {...props}
         setChrome={props.selectionOnly ? undefined : props.setChrome}
         testID="transcript-send-to-session"
@@ -57,6 +64,7 @@ export const TranscriptSendToSessionModal = React.memo(function TranscriptSendTo
         searchPlaceholder={t('transcript.selection.sendTo.searchPlaceholder')}
         emptyStateLabel={t('transcript.selection.sendTo.noResults')}
         leadingOptions={leadingOptions}
+        multipleSelect={multipleSelect}
         onSelectSession={(selection) => props.onResolve({ kind: 'existingSession', ...selection })}
         onSelectOption={(optionId) => props.onResolve(optionId === 'new-session' ? { kind: 'newSession' } : null)}
         onDismiss={() => props.onResolve(null)}

@@ -15,6 +15,7 @@ export async function openTranscriptSendToSessionModal(params: Readonly<{
     sourceSessionId: string;
     sourceServerId: string;
     previewText: string;
+    selectedCount?: number;
     webPortalTarget?: ModalPortalTarget | null;
 }>): Promise<SendTranscriptSelectionDestination | null> {
     const deferred = createDeferredOnce<SendTranscriptSelectionDestination | null>();
@@ -25,6 +26,7 @@ export async function openTranscriptSendToSessionModal(params: Readonly<{
             sourceSessionId: params.sourceSessionId,
             sourceServerId: params.sourceServerId,
             previewText: params.previewText,
+            ...(params.selectedCount === undefined ? {} : { selectedCount: params.selectedCount }),
             onResolve: deferred.resolve,
         },
         onRequestClose: () => deferred.resolve(null),

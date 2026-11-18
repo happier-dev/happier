@@ -1,7 +1,22 @@
+import type * as React from 'react';
+
 /** Controlled data for the shared Send to chip; inventories and persistence stay caller-owned. */
-export type RecipientMultiSelectTarget<T> = Readonly<{ id: string; label: string; recipient: T }>;
+export type RecipientMultiSelectTarget<T> = Readonly<{
+    id: string;
+    label: string;
+    recipient: T;
+    /** One quiet line under the name (a session's agent and Machine). */
+    subtitle?: string;
+    /** The recipient's mark in the row's leading slot (an agent mark). */
+    icon?: React.ReactNode;
+}>;
+/** A recipient the composer cannot reach, listed after the others with why (bulk compose skips). */
+export type RecipientMultiSelectSkipped = Readonly<{ id: string; label: string; reason: string; icon?: React.ReactNode }>;
 export type RecipientMultiSelectModel<T> = Readonly<{
     targets: readonly RecipientMultiSelectTarget<T>[];
+    skipped?: readonly RecipientMultiSelectSkipped[];
+    /** Replaces the names on the chip when a count reads better ("To: 6 sessions · 1 skipped"). */
+    summaryLabel?: string;
     selectedIds: readonly string[];
     selectedRecipients: readonly T[];
     removedRecipients: readonly T[];

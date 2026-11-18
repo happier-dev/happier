@@ -499,6 +499,8 @@ interface AgentInputProps {
     nativeSandbox?: SessionAuthoringControlsInput['nativeSandbox'];
     /** An embed's allowed permission modes; the mode picker offers only these. */
     allowedPermissionModes?: readonly PermissionMode[] | null;
+    /** Shown on the permission chip, with no row chosen, while `permissionMode` is undefined (targets differ). */
+    permissionModeUnselectedLabel?: string;
     onPermissionModeChange?: (mode: PermissionMode) => void;
     /** Where the current permission mode comes from (a Team or Group default); the picker names it on that option. */
     permissionModeAttribution?: string | null;
@@ -654,6 +656,11 @@ interface AgentInputProps {
     engineLabel?: string;
     /** The Agent a fixed `engineLabel` belongs to, for the chip's mark. */
     engineAgentId?: string;
+    /**
+     * No one Agent is chosen (bulk compose aimed at sessions running different Agents): the engine chip wears
+     * the control's own glyph beside `engineLabel` ("Mixed") and its picker opens with no row chosen.
+     */
+    engineUnselected?: boolean;
     /** Already-demanded picker facts; the closed chip shares the picker's label owner without discovery. */
     modelPickerPresentation?: Parameters<typeof buildSessionModelSelectedTriggerPresentation>[0];
     /** Current machine-qualified catalog identity for the running/preflight Agent. */
@@ -946,6 +953,13 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     // Match the cockpit tab bar that sits beside the composer: same level, softened.
     panelShadowGlass: {
         ...buildGlassCastShadowStyle(theme.colors.shadowLevels[4], theme.colors.glass.castShadow, true),
+    },
+    headerControlsLine: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        columnGap: theme.space.s6,
+        minWidth: 0,
     },
     inputContainer: {
         flexDirection: 'row',
@@ -1605,8 +1619,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         permissionModeOptions,
         permissionModeOrder,
         effectivePermissionPolicy,
-        effectivePermissionLabel,
-        permissionChipLabel,
+        effectivePermissionLabel: authoringEffectivePermissionLabel,
+        permissionChipLabel: authoringPermissionChipLabel,
         effectiveModelPolicy,
         selectedModelLabel,
         appliedModelPresentation,
@@ -1649,6 +1663,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         acpConfigOptionOverridesOverride: props.acpConfigOptionOverridesOverride ?? null,
         modelCatalogNames: props.modelOptionsOverrideProbe ?? null,
     });
+
+    // Several targets that differ and no pending choice: the chip says so and the picker chooses no row
+    // (bulk compose, owner 2026-11-17). The host passes the label only while that is true.
+    const permissionModeMixed = props.permissionMode === undefined && Boolean(props.permissionModeUnselectedLabel);
+    const permissionChipLabel = permissionModeMixed ? props.permissionModeUnselectedLabel! : authoringPermissionChipLabel;
+    const effectivePermissionLabel = permissionModeMixed ? props.permissionModeUnselectedLabel! : authoringEffectivePermissionLabel;
 
     // Profile data
     const profiles = useAiLaunchProfilesForLegacyUi();
@@ -2920,6 +2940,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     );
 
     const effectiveAgentLabel = React.useMemo(() => {
+        // No one Agent is chosen: the chip is named by the host's label ("Mixed").
+        if (props.engineUnselected === true && props.engineLabel) return props.engineLabel;
         if (engineChipMarkAgentId === null) return t('status.unknown');
         if (typeof props.agentLabel === 'string' && props.agentLabel.length > 0) {
             return props.agentLabel;
@@ -2927,7 +2949,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return props.agentType && isBundledAgentId(props.agentType)
             ? resolveAgentCatalogTitle(props.agentType)
             : '';
-    }, [engineChipMarkAgentId, props.agentLabel, props.agentType]);
+    }, [engineChipMarkAgentId, props.agentLabel, props.agentType, props.engineLabel, props.engineUnselected]);
 
     const currentAgentPickerRow = React.useMemo<AgentInputChipPickerOption | null>(() => (
         props.agentType
@@ -2995,11 +3017,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         props.engineControls,
     ]);
 
-    const effectiveAgentPickerSelectedOptionId = React.useMemo(() => resolveAgentInputEngineOptionId({
-        options: agentPickerOptions,
-        selectedOptionId: props.agentPickerSelectedOptionId,
-        agentType: props.agentType,
-    }), [agentPickerOptions, props.agentPickerSelectedOptionId, props.agentType]);
+    const effectiveAgentPickerSelectedOptionId = React.useMemo(() => props.engineUnselected === true ? null
+        : resolveAgentInputEngineOptionId({
+            options: agentPickerOptions,
+            selectedOptionId: props.agentPickerSelectedOptionId,
+            agentType: props.agentType,
+        }), [agentPickerOptions, props.agentPickerSelectedOptionId, props.agentType, props.engineUnselected]);
 
     const hasAgentPickerOptions = agentPickerOptions.length > 0;
 
@@ -3236,6 +3259,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
      * what is running — only this one control is about what runs next.
      */
     const engineChipIdentityIcon = React.useMemo(() => {
+        // A named engine with no one Agent behind it (bulk compose's "Mixed") wears the control's own glyph,
+        // never a default Agent's mark.
+        if ((fixedEngine && !fixedEngineAgentId && !props.agentType) || props.engineUnselected === true) {
+            return <Icon name="sparkle" size={16} color={theme.colors.composer.chipTint} testID="agent-input-agent-chip-logo" />;
+        }
         if (engineChipMarkAgentId === null) {
             return <AgentIcon agentId={null} size={16} color={theme.colors.composer.chipTint} testID="agent-input-agent-chip-logo" />;
         }
@@ -3272,7 +3300,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         effectiveAgentPickerSelectedOptionId,
         engineChipAgentId,
         engineChipMarkAgentId,
+        fixedEngine,
+        fixedEngineAgentId,
+        props.agentType,
         props.agentCatalogIdentity,
+        props.engineUnselected,
         theme.colors.composer.chipTint,
     ]);
     const armedContinuationIdentityMark = React.useMemo(() => {
@@ -3497,7 +3529,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     : activeSelectionOverlay.id === 'envVars' ? 'env' : activeSelectionOverlay.id;
         const placement = id ? resolvedControls.effectivePlacements[id] : undefined;
         const rowAnchorExists = id !== undefined && (
-            resolvedControls.primary.includes(id) || resolvedControls.secondary.includes(id)
+            resolvedControls.header.includes(id) || resolvedControls.primary.includes(id) || resolvedControls.secondary.includes(id)
         );
         if (placement && placement !== 'hidden' && (activeSelectionOverlay.anchor !== 'chip' || rowAnchorExists)) return;
         closeSelectionOverlay(activeSelectionOverlay.id);
@@ -3519,7 +3551,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             setExternalChipAnchorRef(openActionChipRequest.anchorRef ?? null);
             const chip = extraActionChips.find(candidate => candidate.key === openActionChipRequest.chipKey);
             const id = chip?.placement?.id;
-            const inRow = id !== undefined && (resolvedControls.primary.includes(id) || resolvedControls.secondary.includes(id));
+            const inRow = id !== undefined && (resolvedControls.header.includes(id) || resolvedControls.primary.includes(id) || resolvedControls.secondary.includes(id));
             if (!inRow) chip?.onIntent?.();
             openSelectionOverlay('collapsedExtra', inRow ? 'chip' : 'actionMenu', openActionChipRequest.chipKey);
         }, [extraActionChips, openActionChipRequest, openSelectionOverlay, resolvedControls]),
@@ -3817,6 +3849,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const {
         controlNodes: renderedActionControlNodes,
+        headerControls: headerControlNodes,
         hasPermissionControl,
         secondaryLeadingControls: secondaryLeadingControlsForWrap,
         secondaryTrailingControls: secondaryTrailingControlsForWrap,
@@ -4027,6 +4060,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         return enterToSendEnabled ? 'submit' : 'newline';
     }, [enterToSendEnabled]);
 
+    // The placement line above the input: a multi-recipient composer's To chip (owner 2026-11-17), fixed while
+    // the input scrolls, on the same left edge as the chip rail below.
+    const headerControlsLine = headerControlNodes.length > 0 ? (
+        <View testID="agent-input-header-line" style={styles.headerControlsLine}>{headerControlNodes}</View>
+    ) : null;
+
     const renderVariableContentBeforeInput = () => {
         if (!hasVariableContentBeforeInput) return null;
 
@@ -4096,7 +4135,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             onPermissionSelect={handlePermissionSelect}
             agentId={armedComposerTarget?.agentId ?? sessionAgentId}
             permissionModeOptions={attributedPermissionModeOptions}
-            effectivePermissionMode={effectivePermissionPolicy.effectiveMode}
+            effectivePermissionMode={permissionModeMixed ? null : effectivePermissionPolicy.effectiveMode}
             effectivePermissionLabel={effectivePermissionLabel}
             effectivePermissionPolicy={effectivePermissionPolicy}
             styles={styles}
@@ -4204,6 +4243,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     {instrumentStrip}
                     <GlassSurface testID="agent-input-material-surface" themeSurface={{ surface: 'composer', part: 'root', state: props.disabled ? 'disabled' : 'default' }} {...panelMaterialProps} style={[styles.unifiedPanel, isMobileLayoutWidth(screenWidth) ? styles.unifiedPanelPhone : null, props.panelStyle, styles.readOnlyPanel, embeddedPanel ? styles.embeddedPanel : null]}>
                         {composerPresentationFeedback}
+                        {headerControlsLine}
                         <AgentInputAttachmentsRow items={attachmentRowItems} />
                         <View dataSet={themeSurfaceDataSet('composer', 'input', composerSurfaceState)} style={[styles.inputContainer, styles.readOnlyInputContent, documentPanel ? styles.readOnlyDocumentContent : null, inputSurfaceStyle]}>
                             {/* A reading document's card is calm: about three lines, then More (DESIGN-4 M4). */}
@@ -4449,6 +4489,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     {Platform.OS === 'web' ? (
                         <>
                             {fixedComposerAttentionRequestsNode}
+                            {headerControlsLine}
                             {controlsOnly ? null : (
                             <ScrollView
                                 style={[
@@ -4532,6 +4573,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     ) : (
                         <View style={styles.nativeKeyboardPanelContent}>
                             {fixedComposerAttentionRequestsNode}
+                            {headerControlsLine}
                             {controlsOnly ? null : (
                             <View
                                 style={[

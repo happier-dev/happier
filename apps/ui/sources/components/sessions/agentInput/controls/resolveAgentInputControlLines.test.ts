@@ -36,6 +36,20 @@ describe('composer placement projection', () => {
             .toEqual(['delivery:second', 'delivery:first']);
         expect(preferences.placements['delivery:second']).toBe('hidden');
     });
+    it('seats a multi-recipient placement on the header line above the input, never on a rail', () => {
+        const recipient: AgentInputExtraActionChip = {
+            key: 'participants-recipient', controlId: 'recipient',
+            placement: { id: 'recipient', title: 'Send to', defaultPlacement: 'pinned', line: 'header' },
+            render: () => null,
+        };
+        const descriptors = buildAgentInputPlacementDescriptors({ coreControls: [{ id: 'engine' }], chips: [recipient] });
+        for (const singleRow of [false, true]) {
+            const lines = resolveAgentInputControlLines({ controls: descriptors, singleRow });
+            expect(lines.header).toEqual(['recipient']);
+            expect(lines.primary).toEqual(['engine']);
+            expect(lines.secondary).toEqual([]);
+        }
+    });
     it('keeps wrap and scroll membership identical and combines only pinned session rails', () => {
         const wrap = resolveAgentInputControlLines({ controls, layout: 'wrap' });
         const scroll = resolveAgentInputControlLines({ controls, layout: 'scroll' });

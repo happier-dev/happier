@@ -13,10 +13,10 @@ import {
     type SessionBulkActionRequest,
     type SessionBulkActionTarget,
 } from '@/components/sessions/actions/sessionBulkActionExecution';
-import {
-    listSessionBulkActionDescriptors,
-    type SessionBulkActionDescriptor,
-} from '@/components/sessions/actions/sessionBulkActionPresentation';
+import { type SessionBulkActionDescriptor } from '@/components/sessions/actions/sessionBulkActionPresentation';
+import { listSessionSelectionBarDescriptors } from '@/components/sessions/authoring/bulk/bulkSessionComposerEntry';
+import { buildBulkSessionComposeHref } from '@/components/sessions/bulkCompose/bulkSessionComposeRoute';
+import { useRouter } from 'expo-router';
 import { buildSessionBulkActionResultSummary } from '@/components/sessions/actions/sessionActionResultMessages';
 import { SelectionActionBar } from '@/components/ui/selection/SelectionActionBar';
 import { useSessionCockpitBottomChromeHeight } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
@@ -199,11 +199,21 @@ export function SessionListSelectionActionBarHost(props: SessionListSelectionAct
         }
         return targets;
     }, [props.targetsByKey, selection.selectedKeys, selection.visibleOrderedKeys]);
-    const actionDescriptors = React.useMemo(() => listSessionBulkActionDescriptors({
+    const router = useRouter();
+    // Compose leads the bar as its one primary action; the shipped mutations follow and fold under ⋯.
+    const actionDescriptors = React.useMemo(() => listSessionSelectionBarDescriptors({
         targets: selectedTargets,
         tagsEnabled: props.tagsEnabled === true,
         moveEnabled: typeof props.onRequestMoveToFolder === 'function',
-    }), [props.onRequestMoveToFolder, props.tagsEnabled, selectedTargets]);
+        composeTitle: t('sessionsList.selectionCompose'),
+        seed: { targets: selectedTargets.flatMap(target => target.serverId
+            ? [{ serverId: target.serverId, sessionId: target.sessionId }] : []) },
+        // The composer froze its targets; the list returns to browsing (lab bc compose frames).
+        onNavigate: (dataId) => {
+            router.push(buildBulkSessionComposeHref(dataId) as never);
+            selectionActions?.exit();
+        },
+    }), [props.onRequestMoveToFolder, props.tagsEnabled, router, selectedTargets, selectionActions]);
     const visible = selection.isSelectionMode || runningAction !== null || result !== null || confirmAction !== null;
     const presentedCountRef = React.useRef(selection.count);
     if (selection.isSelectionMode) {
@@ -431,10 +441,10 @@ export function SessionListSelectionActionBarHost(props: SessionListSelectionAct
                             id: descriptor.id,
                             testID: `session-list-selection-action-${safeActionTestId(descriptor.id)}`,
                             label: descriptor.title,
-                            emphasis: descriptor.destructive ? 'destructive' : 'secondary',
+                            emphasis: 'kind' in descriptor ? 'primary' : descriptor.destructive ? 'destructive' : 'secondary',
                             disabled: selectedTargets.length === 0,
                             renderIcon: (color) => <Icon name={descriptor.icon} size={14} color={color} />,
-                            onPress: () => handleActionPress(descriptor),
+                            onPress: () => 'kind' in descriptor ? descriptor.onPress() : handleActionPress(descriptor),
                         })),
                         ...(hasUnselectedVisibleTargets ? [{
                             id: 'select-all-visible',

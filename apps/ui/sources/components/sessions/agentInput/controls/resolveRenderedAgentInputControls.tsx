@@ -10,6 +10,7 @@ export function resolveRenderedAgentInputControls(params: Readonly<{
     extraControlNodesById: ControlNodesById;
 }>): Readonly<{
     chips: readonly React.ReactNode[];
+    headerControls: readonly React.ReactNode[];
     secondaryLeadingControls: readonly React.ReactNode[];
     secondaryTrailingControls: readonly React.ReactNode[];
     hasPermissionControl: boolean;
@@ -20,7 +21,7 @@ export function resolveRenderedAgentInputControls(params: Readonly<{
     };
     const resolveNodes = (ids: readonly string[]) =>
         ids.flatMap((id) => controlNodesById[id] ?? []).filter(Boolean);
-    const { primary, secondary } = params.resolvedControls;
+    const { header, primary, secondary } = params.resolvedControls;
 
     return {
         chips: [
@@ -28,6 +29,7 @@ export function resolveRenderedAgentInputControls(params: Readonly<{
             ...resolveNodes(primary),
             ...(controlNodesById.stop ?? []),
         ].filter(Boolean),
+        headerControls: resolveNodes(header),
         secondaryLeadingControls: resolveNodes(secondary),
         secondaryTrailingControls: [],
         hasPermissionControl: [...primary, ...secondary].includes('permission')

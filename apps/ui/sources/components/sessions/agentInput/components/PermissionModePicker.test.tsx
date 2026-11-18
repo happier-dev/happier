@@ -34,7 +34,7 @@ function buildStyles(overrides?: Partial<{
 }
 
 async function renderPicker(params: {
-    selected: PermissionMode;
+    selected: PermissionMode | null;
     onSelect?: ReturnType<typeof vi.fn<(mode: PermissionMode) => void>>;
     styles?: ReturnType<typeof buildStyles>;
     effectivePermissionPolicy?: EffectivePermissionModeDescription;
@@ -43,7 +43,7 @@ async function renderPicker(params: {
 }) {
     const onSelect = params.onSelect ?? vi.fn<(mode: PermissionMode) => void>();
     const effectivePermissionPolicy: EffectivePermissionModeDescription =
-        params.effectivePermissionPolicy ?? { effectiveMode: params.selected, reasons: [], notes: [] };
+        params.effectivePermissionPolicy ?? { effectiveMode: params.selected ?? 'default', reasons: [], notes: [] };
     const effectivePermissionLabel = params.effectivePermissionLabel ?? 'Effective';
     return {
         screen: await renderScreen(
@@ -77,6 +77,13 @@ describe('PermissionModePicker', () => {
         });
         expect(screen.getTextContent()).toContain(t('agentInput.permissionMode.nativeSandboxUnavailable'));
         expect(screen.findByTestId('permission-mode-default')?.props.accessibilityState).toEqual({ checked: true });
+    });
+    it('chooses no row while several targets differ (Mixed) and still applies a choice', async () => {
+        const { screen, onSelect } = await renderPicker({ selected: null, effectivePermissionLabel: 'Mixed' });
+        expect(screen.findByTestId('permission-mode-default')?.props.accessibilityState).toEqual({ checked: false });
+        expect(screen.findByTestId('permission-mode-yolo')?.props.accessibilityState).toEqual({ checked: false });
+        screen.pressByTestId('permission-mode-yolo');
+        expect(onSelect).toHaveBeenCalledWith('yolo');
     });
     it('renders option descriptions', async () => {
         const { screen } = await renderPicker({ selected: 'default' });

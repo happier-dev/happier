@@ -6,7 +6,7 @@ import { t } from '@/text';
 import type { BugReportSessionTarget } from '@/components/settings/bugReports/bugReportDiagnostics';
 import { resolveBugReportAccountIdForServer } from '@/components/settings/bugReports/bugReportSessionTarget';
 
-import { SessionSelectionModal } from './SessionSelectionModal';
+import { SessionChooserModal } from './SessionChooserModal';
 
 export type ReportSessionSelection = (BugReportSessionTarget & Readonly<{ accountId: string | null }>) | null | undefined;
 
@@ -21,7 +21,7 @@ export function ReportSessionSelectionModal(props: ReportSessionSelectionModalPr
         label: t('bugReports.noRelatedSession'),
     }], [props.allowNoSession]);
 
-    return <SessionSelectionModal
+    return <SessionChooserModal
         {...props}
         testID="report-session-selection"
         title={t('bugReports.sessionPickerTitle')}

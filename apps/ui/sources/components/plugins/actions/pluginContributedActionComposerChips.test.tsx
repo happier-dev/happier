@@ -29,6 +29,7 @@ import type {
 } from './pluginContributedActionController';
 import {
     createPluginContributedActionComposerChips,
+    createUnavailablePluginComposerControlChip,
     type PluginComposerControlHost,
 } from './pluginContributedActionComposerChips';
 
@@ -136,6 +137,21 @@ function unwrapDiagnosticContent<Props extends object>(node: React.ReactNode): R
     if (!React.isValidElement<Props>(content)) throw new Error('expected diagnostic content node');
     return content;
 }
+
+describe('unavailable plugin composer controls', () => {
+    it('names the control in the + menu, disabled, with why, and never opens or acts', () => {
+        const chip = createUnavailablePluginComposerControlChip({
+            control: composerControl({ localId: 'linear-issue' }),
+            localize: (_pluginId, text) => typeof text === 'string' ? text : '',
+            reason: 'Plugin controls work in one session at a time',
+        });
+        expect(chip.placement).toMatchObject({ id: 'plugin:control:acme.channels/linear-issue', defaultPlacement: 'overflow' });
+        const row = chip.collapsedAction?.({ tint: 'ink', dismiss: vi.fn(), blurInput: vi.fn(), openCollapsedPopover: vi.fn() });
+        expect(row).toMatchObject({ label: 'linear-issue', subtitle: 'Plugin controls work in one session at a time', disabled: true });
+        expect(chip.collapsedOptionsPopover).toBeUndefined();
+        expect(chip.collapsedContentPopover).toBeUndefined();
+    });
+});
 
 describe('plugin contributed composer Action chips', () => {
     it('uses the incumbent content, list, and split popover shells for each declared surface layout', () => {

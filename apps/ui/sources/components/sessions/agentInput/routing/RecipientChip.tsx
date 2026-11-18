@@ -63,7 +63,8 @@ export function RecipientChip(props: RecipientChipProps) {
 }
 
 /** The chip text for several recipients: none is plain "To"; two read whole; more read "Ana +2". */
-export function resolveRecipientMultiSelectLabel(model: Pick<RecipientMultiSelectModel<unknown>, 'targets' | 'selectedIds'>): string {
+export function resolveRecipientMultiSelectLabel(model: Pick<RecipientMultiSelectModel<unknown>, 'targets' | 'selectedIds' | 'summaryLabel'>): string {
+    if (model.summaryLabel) return model.summaryLabel;
     const selected = new Set(model.selectedIds);
     const labels = model.targets.filter((target) => selected.has(target.id)).map((target) => target.label);
     if (labels.length === 0) return t('session.participants.to');

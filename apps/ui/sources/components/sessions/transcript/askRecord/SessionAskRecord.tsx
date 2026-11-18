@@ -5,7 +5,7 @@ import type { Message } from '@happier-dev/session-core/messages';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
-import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { useOptionalSessionTranscriptSource, useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
 import {
   UserMessageBubble,
@@ -28,11 +28,12 @@ import {
 } from '@/components/ui/status/StatusPill';
 import { RowActionRevealSlot } from '@/components/ui/lists/RowActionRevealSlot';
 import { Text } from '@/components/ui/text/Text';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { t } from '@/text';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierListRowRule, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const EVENT_ICON_CONTAINER_SIZE = 20;
 /** The header's first line: the state chip's height, so the icon centres on the sentence beside it. */
@@ -52,6 +53,8 @@ type TargetState = Readonly<{
   label: string;
   icon: IconName;
   failed: boolean;
+  /** Work is still moving (a Machine waking, a send in flight): a spinner stands in for the icon. */
+  spinning?: boolean;
 }>;
 
 /** The facts one target's chip reads; a reply-less send needs no reply read. */
@@ -203,16 +206,79 @@ function TargetStatePill(
       variant={props.state.variant}
       label={props.state.label}
       labelVariant="phrase"
-      leading={
+      leading={props.state.spinning ? (
+        <ActivitySpinner size={ICON_SIZE.xs} color={color ?? theme.colors.text.secondary} />
+      ) : (
         <Icon
           name={props.state.icon}
           size={ICON_SIZE.xs}
           color={color ?? theme.colors.text.secondary}
         />
-      }
+      )}
       {...(color ? { foregroundColor: color } : {})}
     />
   );
+}
+
+/** A host-supplied state for a target whose result is a control-plane effect, not a message admission. */
+export type SessionAskTargetRowState = Omit<TargetState, 'failed'>;
+
+/**
+ * One target of a send drawn as a full row (bulk compose results, lab bc results): the agent mark and name,
+ * one reason line under it, the state chip in a fixed column and an optional action. Rows reserve their chip and
+ * action columns from the first render so every chip shares one right edge. `compact` (a phone) keeps the chip
+ * on the title line and moves the action under the reason.
+ */
+export function SessionAskTargetRow(props: Readonly<{
+  target: SessionMessageInvocationTarget;
+  serverId: string | null;
+  reply: 'none' | 'wait' | 'return';
+  /** Overrides the chip for a state the invocation read cannot express (waking, switched, skipped). */
+  state?: SessionAskTargetRowState;
+  reason?: string | null;
+  action?: React.ReactNode;
+  reserveActionColumn?: boolean;
+  compact?: boolean;
+  navigate?: ((href: string) => void) | null;
+  /**
+   * Another row follows in the same list: a row with a reason line under its name is ruled from its text column,
+   * a one-line row parts by spacing alone (the one list-row rule, owner 2026-11-17 23:52Z).
+   */
+  followed?: boolean;
+  testID?: string;
+}>) {
+  const { theme } = useUnistyles();
+  const state: TargetState = props.state ? { ...props.state, failed: false } : describeTargetState(props.target, props.reply);
+  const chip = <TargetStatePill state={state} testID={props.testID ? `${props.testID}-state` : undefined} />;
+  return (
+    <View testID={props.testID} style={styles.targetRow}>
+      <View style={styles.targetRowMark}>
+        <TargetMark target={props.target} serverId={props.serverId} />
+      </View>
+      <View style={styles.targetRowBody}>
+        <View style={styles.targetRowTitle}>
+          <View style={styles.targetRowName}><TargetName target={props.target} serverId={props.serverId} navigate={props.navigate} /></View>
+          {props.compact ? chip : null}
+        </View>
+        {props.reason ? (
+          <Text variant="meta" style={{ color: theme.colors.text.secondary }}>{props.reason}</Text>
+        ) : null}
+        {props.compact && props.action ? <View style={styles.targetRowCompactAction}>{props.action}</View> : null}
+      </View>
+      {props.compact ? null : <View style={styles.targetRowState}>{chip}</View>}
+      {props.compact || !(props.reserveActionColumn || props.action) ? null : (
+        <View style={styles.targetRowAction}>{props.action}</View>
+      )}
+      {props.followed && props.reason ? (
+        <HappierListRowRule startPx={EVENT_ICON_CONTAINER_SIZE + theme.space.s12} color={theme.colors.border.divider} />
+      ) : null}
+    </View>
+  );
+}
+
+function TargetMark(props: Readonly<{ target: SessionMessageInvocationTarget; serverId: string | null }>) {
+  const identity = useTranscriptSessionIdentity(props.target.target.sessionId, props.target.target.serverId ?? props.serverId);
+  return <AgentIcon agentId={identity.agentId} size={ICON_SIZE.sm} />;
 }
 
 /** The target's name; opens the actual result message when it exists, else the Session. */
@@ -223,10 +289,12 @@ function TargetName(
     /** A line under a group header: the agent mark and a step smaller than the header's name. */
     mark?: boolean;
     testID?: string;
+    /** Outside a transcript (bulk compose results) the host says how a name opens its Session. */
+    navigate?: ((href: string) => void) | null;
   }>,
 ) {
   const { theme } = useUnistyles();
-  const navigate = useSessionTranscriptSource().navigate;
+  const navigate = useOptionalSessionTranscriptSource()?.navigate ?? props.navigate ?? null;
   const identity = useTranscriptSessionIdentity(
     props.target.target.sessionId,
     props.target.target.serverId ?? props.serverId,
@@ -641,6 +709,46 @@ const styles = StyleSheet.create((theme) => ({
   },
   grow: {
     flex: 1,
+  },
+  targetRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    columnGap: theme.space.s12,
+    paddingVertical: theme.space.s12,
+    minWidth: 0,
+  },
+  targetRowMark: {
+    width: EVENT_ICON_CONTAINER_SIZE,
+    minHeight: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  targetRowBody: {
+    flex: 1,
+    minWidth: 0,
+    gap: theme.space.s2,
+  },
+  targetRowTitle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    columnGap: theme.space.s8,
+    minWidth: 0,
+  },
+  targetRowName: {
+    flex: 1,
+    minWidth: 0,
+  },
+  targetRowState: {
+    width: 128,
+    alignItems: 'flex-end',
+  },
+  targetRowAction: {
+    width: 72,
+    alignItems: 'flex-end',
+  },
+  targetRowCompactAction: {
+    marginTop: theme.space.s6,
+    alignItems: 'flex-start',
   },
   snippet: {
     flex: 1,

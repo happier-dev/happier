@@ -79,8 +79,20 @@ export function buildRecipientMultiSelectRootStep(model: RecipientMultiSelectMod
         sections: [{
             kind: 'static',
             id: 'recipients',
-            options: model.targets.map((target) => ({ id: target.id, label: target.label, onSelect: () => model.toggle(target.id) })),
-        }],
+            options: model.targets.map((target) => ({
+                id: target.id, label: target.label, onSelect: () => model.toggle(target.id),
+                ...(target.subtitle ? { subtitle: target.subtitle } : {}),
+                ...(target.icon ? { icon: target.icon } : {}),
+            })),
+        }, ...(model.skipped?.length ? [{
+            kind: 'static' as const,
+            id: 'skipped',
+            title: t('session.participants.skippedGroupTitle'),
+            options: model.skipped.map((skipped) => ({
+                id: `skipped:${skipped.id}`, label: skipped.label, subtitle: skipped.reason, disabled: true,
+                ...(skipped.icon ? { icon: skipped.icon } : {}),
+            })),
+        }] : [])],
     };
 }
 
@@ -100,7 +112,8 @@ export function createRecipientMultiSelectActionChip(params: Readonly<{
     return {
         key: SESSION_RECIPIENT_CHIP_KEY,
         controlId: 'recipient',
-        placement: { ...getRecipientActionChipPlacement('discussion'), pending: model.selectedIds.length > 0 },
+        // Every multi-recipient composer seats its To chip on the line above the input (owner 2026-11-17).
+        placement: { ...getRecipientActionChipPlacement('discussion'), line: 'header', pending: model.selectedIds.length > 0 },
         stabilityKey: JSON.stringify([model.selectedIds, model.targets.map((target) => [target.id, target.label])]),
         collapsedOptionsPopover: {
             presentation: 'list',
