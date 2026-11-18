@@ -279,11 +279,19 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string; scope: Work
           showLineNumbers
         />
       </Stack>
-      <ConsoleParameters
-        inputs={sql.parameterInputs[0] ?? NO_PARAMETERS}
-        engine={descriptor.engine}
-        onChange={(inputs) => sql.setParameterInputs([inputs])}
-      />
+      {/* One field per placeholder of each selected statement, from the dialect lexer (D41). */}
+      {sql.parameterSlots.map((slots, statement) => (
+        <ConsoleParameters
+          key={statement}
+          slots={slots}
+          inputs={sql.parameterInputs[statement] ?? NO_PARAMETERS}
+          onChange={(inputs) =>
+            sql.setParameterInputs(
+              sql.parameterSlots.map((_slots, at) => (at === statement ? inputs : sql.parameterInputs[at] ?? NO_PARAMETERS)),
+            )
+          }
+        />
+      ))}
       <Row gap="small" align="center">
         <Select
           label={translate('plugins.database.console.mode', 'Mode')}

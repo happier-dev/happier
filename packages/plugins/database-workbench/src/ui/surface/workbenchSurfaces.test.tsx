@@ -143,6 +143,8 @@ function daemonAnswers(targets: readonly DatabaseDescriptorV1[], editableTextRef
                   primaryKey: ['id'],
                   foreignKeys: editableTextReference ? [{ name: 'invoice_customer', columns: ['number'],
                     target: { schema: 'public', name: 'customers' }, targetColumns: ['code'] }] : [],
+                  incomingForeignKeys: [{ name: 'invoice_lines_invoice', source: { schema: 'public', name: 'invoice_lines' },
+                    sourceColumns: ['invoice_id'], targetColumns: ['id'] }],
                   indexes: [],
                   capabilities: editableTextReference ? [{ operation: 'edits.apply', available: true }] : [],
                 },
@@ -315,6 +317,48 @@ describe('Database workbench surfaces', () => {
       await fixture.press(await fixture.getByRole('button', { name: 'Open in customers' }));
       await settle(20);
       expect(replacePageLocation).toHaveBeenCalledWith(expect.objectContaining({ subPath: 'data/public/customers' }));
+    } finally { await fixture.dispose(); }
+  });
+  it('names the tables that point at an open row and opens their rows filtered to it', async () => {
+    const replacePageLocation = vi.fn(async ({ subPath }: { subPath: string }) => subPath);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'incoming-reference', mountNonce: 'incoming-reference' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'data/public/invoices',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ detailsPane: { available: true } }),
+      handlers: { ...connectionResourceHandlers(), executeAction: daemonAnswers([descriptor]), replacePageLocation },
+    });
+    try {
+      await settle(20);
+      await act(async () => { await fixture.press(await fixture.getByRole('button', { name: '48212' })); });
+      await settle(20);
+      await fixture.press(await fixture.getByRole('button', { name: 'Open invoice_lines rows that point here' }));
+      await settle(20);
+      expect(replacePageLocation).toHaveBeenCalledWith(expect.objectContaining({ subPath: 'data/public/invoice_lines' }));
+    } finally { await fixture.dispose(); }
+  });
+  it('offers one typed field per placeholder in the Console statement, text by default', async () => {
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'console-slots', mountNonce: 'console-slots' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'console',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-workbench' }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        ...connectionResourceHandlers(), executeAction: daemonAnswers([descriptor]), replacePageLocation: async ({ subPath }) => subPath,
+        deviceState: (request: { operation: string; key?: string }) => ({
+          status: 'ready',
+          value: request.operation === 'read' && request.key?.includes('database-console')
+            ? { sql: 'select number from invoices where customer_id = $1 and status = $2', history: [] }
+            : null,
+        }),
+      },
+    });
+    try {
+      await settle(20);
+      expect(await fixture.getByRole('textbox', { name: 'Value of $1' })).toBeTruthy();
+      expect(await fixture.getByRole('textbox', { name: 'Value of $2' })).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
   it('lists the checkout’s databases on Dev servers and opens the chosen one in the workbench', async () => {

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type {
   DatabaseCellV1,
+  DatabaseIncomingForeignKeyV1,
   DatabaseNamedCellV1,
   DatabaseRelationV1,
   DatabaseValueV1,
@@ -48,6 +49,7 @@ type PageColumn = ReturnType<typeof useRelationPage>['columns'][number];
 type PageRow = ReturnType<typeof useRelationPage>['rows'][number];
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
+const NO_INCOMING: readonly DatabaseIncomingForeignKeyV1[] = Object.freeze([]);
 
 
 function StagedCell(
@@ -114,6 +116,8 @@ function RowDetail(
     editable: boolean;
     reason?: string;
     tools: ValueTools;
+    /** The other tables whose rows point at this table (D41). */
+    incoming: readonly DatabaseIncomingForeignKeyV1[];
     /** Beside the table the pane draws its own identity and Close; pushed or in the host pane the band does. */
     inlineHeader: Readonly<{ onClose: () => void }> | null;
   }>,
@@ -232,6 +236,7 @@ function RowDetail(
           />
         ))}
       </ItemGroup>
+      <ReferencedBy rowKey={props.row.rowKey} incoming={props.incoming} tools={props.tools} />
       {props.editable && identity ? (
         <Row gap="small">
           <Button
@@ -270,6 +275,8 @@ type ForeignKey = NonNullable<PageColumn['foreignKey']>;
 type ValueTools = Readonly<{
   inspectJson: (rowKey: string, column: string) => Promise<JsonCellInspection>;
   openReference: (rowKey: string, constraintName: string) => void;
+  /** The rows of another table that point at this row (D41): opened through the same location and Back. */
+  openIncoming: (rowKey: string, reference: DatabaseIncomingForeignKeyV1) => void;
 }>;
 type JsonCellInspection = Awaited<ReturnType<NonNullable<ReturnType<typeof useRelationPage>['inspectJson']>>>;
 
@@ -303,6 +310,35 @@ function JsonValue(
       />
       {note ? <Text tone="secondary" variant="meta" value={note} /> : null}
     </Stack>
+  );
+}
+
+/**
+ * "Referenced by" (lab longValue): each table whose rows point at this row, one press from those rows, filtered to
+ * this row's key by the existing rows read. No counts (D41): naming a table costs nothing, counting it would.
+ */
+function ReferencedBy(props: Readonly<{ rowKey: string; incoming: readonly DatabaseIncomingForeignKeyV1[]; tools: ValueTools }>) {
+  const translate = usePluginTranslation();
+  if (props.incoming.length === 0) return null;
+  const tables = props.incoming.map((reference) => `${reference.source.schema}.${reference.source.name}`);
+  return (
+    <ItemGroup title={translate('plugins.database.row.referencedBy', 'Referenced by')}>
+      {props.incoming.map((reference, index) => (
+        <Item
+          key={`${tables[index]}:${reference.name}`}
+          title={reference.source.name}
+          identifier
+          icon={<Icon name="table" tone="secondary" />}
+          // Two references from one table say which columns each follows.
+          {...(tables.indexOf(tables[index]!) !== tables.lastIndexOf(tables[index]!)
+            ? { subtitle: translate('plugins.database.row.referencedVia', 'by {columns}', { columns: reference.sourceColumns.join(', ') }) }
+            : {})}
+          showChevron
+          accessibilityLabel={translate('plugins.database.row.openIncoming', 'Open {table} rows that point here', { table: reference.source.name })}
+          onPress={() => props.tools.openIncoming(props.rowKey, reference)}
+        />
+      ))}
+    </ItemGroup>
   );
 }
 
@@ -474,6 +510,10 @@ export function RelationData(
       const target = page.foreignKey?.(rowKey, constraintName);
       if (target?.status === 'ready') void location.navigate(target.location);
     },
+    openIncoming: (rowKey, reference) => {
+      const target = page.incomingForeignKey?.(rowKey, reference);
+      if (target?.status === 'ready') void location.navigate(target.location);
+    },
   }), [location, page]);
   const model = useHappierCollection({
     items: page.rows,
@@ -578,6 +618,21 @@ export function RelationData(
                 )
         }
       />
+      {/* One row on screen (a reference opened here): the tables pointing at it are one press away (lab dbBrowse/fk). */}
+      {page.rows.length === 1 && (page.incomingForeignKeys?.length ?? 0) > 0 ? (
+        <Row gap="small" align="center" wrap>
+          {(page.incomingForeignKeys ?? NO_INCOMING).map((reference) => (
+            <Button
+              key={`${reference.source.schema}.${reference.source.name}:${reference.name}`}
+              variant="plain"
+              size="small"
+              icon={<Icon name="forward" size="small" tone="secondary" />}
+              title={translate('plugins.database.rows.referencedBy', 'Referenced by {table}', { table: reference.source.name })}
+              onPress={() => tools.openIncoming(page.rows[0]!.rowKey, reference)}
+            />
+          ))}
+        </Row>
+      ) : null}
       {/* Paging says nothing about a table with no rows and nowhere to go back to. */}
       {page.rows.length === 0 && previous.length === 0 ? null : <Row gap="xsmall">
         <IconButton
@@ -652,6 +707,7 @@ export function RelationData(
               columns={page.columns}
               relation={props.relation}
               tools={tools}
+              incoming={page.incomingForeignKeys ?? NO_INCOMING}
               inlineHeader={detailContext.headerHosted ? null : { onClose: closeRow }}
               editable={page.capabilities.edit}
               {...(page.capabilities.reason

@@ -1,8 +1,5 @@
 import * as React from 'react';
 import {
-  Button,
-  IconButton,
-  Icon,
   Row,
   Select,
   Stack,
@@ -14,6 +11,7 @@ import {
   readConsoleParameter,
   type ConsoleParameterInput,
 } from '../consoleParameters.js';
+import type { ConsoleParameterSlot } from '../consoleSelection.js';
 
 const TYPES: readonly ConsoleParameterInput['type'][] = [
   'text',
@@ -24,14 +22,15 @@ const TYPES: readonly ConsoleParameterInput['type'][] = [
 ];
 
 /**
- * Console parameter inputs (D27 #8): typed values bound to the statement's placeholders and sent separately from
- * it, so a query can be rerun with new values without editing the SQL. The controller owns the values; this edits
- * the first statement's list in place.
+ * Console parameters (D27 #8, D41): one typed field per placeholder the statement holds, in its native bind order,
+ * sent separately from the SQL so a query reruns with new values without editing it. The slots come from the
+ * dialect lexer (`useDatabaseConsole().parameterSlots`); the person picks each type, text by default, and nothing is
+ * inferred. Values stay index-ordered by bind (`$3` is the third value), so a numbered gap keeps its place.
  */
 export function ConsoleParameters(
   props: Readonly<{
+    slots: readonly ConsoleParameterSlot[];
     inputs: readonly ConsoleParameterInput[];
-    engine: string;
     onChange: (inputs: readonly ConsoleParameterInput[]) => void;
   }>,
 ) {
@@ -44,52 +43,43 @@ export function ConsoleParameters(
       })),
     [],
   );
-  const placeholder = (index: number) =>
-    props.engine === 'postgresql' ? `$${index + 1}` : `? ${index + 1}`;
-  const replace = (index: number, next: ConsoleParameterInput) =>
-    props.onChange(
-      props.inputs.map((input, at) => (at === index ? next : input)),
-    );
-  const add = (
-    <Button
-      variant="plain"
-      size="small"
-      title={translate(
-        'plugins.database.console.addParameter',
-        'Add parameter',
-      )}
-      onPress={() =>
-        props.onChange([...props.inputs, { type: 'text', text: '' }])
-      }
-    />
-  );
-  if (props.inputs.length === 0) return <Row>{add}</Row>;
+  if (props.slots.length === 0) return null;
+  const inputAt = (slot: ConsoleParameterSlot) => props.inputs[slot.index - 1] ?? slot.defaultInput;
+  const replace = (slot: ConsoleParameterSlot, next: ConsoleParameterInput) => {
+    const length = Math.max(props.inputs.length, ...props.slots.map((candidate) => candidate.index));
+    props.onChange(Array.from({ length }, (_unused, at) => {
+      if (at === slot.index - 1) return next;
+      return props.inputs[at] ?? props.slots.find((candidate) => candidate.index === at + 1)?.defaultInput
+        ?? { type: 'text' as const, text: '' };
+    }));
+  };
   // One wrapping line of compact typed fields, each named by its placeholder (lab p7AddNow/params); what they are
   // for is said once under them.
   return (
     <Stack gap="xsmall">
       <Row gap="medium" align="center" wrap>
-        {props.inputs.map((input, index) => {
+        {props.slots.map((slot) => {
+          const input = inputAt(slot);
           const invalid =
             input.type !== 'null' &&
             input.text !== '' &&
             readConsoleParameter(input) === undefined;
           return (
             // A narrow pane wraps a parameter's value under its type rather than past the edge.
-            <Row key={index} gap="xsmall" align="center" wrap>
-              <Text variant="code" tone="secondary" value={placeholder(index)} />
+            <Row key={`${slot.index}:${slot.placeholder}`} gap="xsmall" align="center" wrap>
+              <Text variant="code" tone="secondary" value={slot.placeholder} />
               <Select
                 label={translate(
                   'plugins.database.console.parameterType',
                   'Type of {placeholder}',
-                  { placeholder: placeholder(index) },
+                  { placeholder: slot.placeholder },
                 )}
                 presentation="field"
                 options={typeOptions}
                 value={input.type}
                 onChange={(next) => {
                   const type = TYPES.find((candidate) => candidate === next);
-                  if (type) replace(index, { ...input, type });
+                  if (type) replace(slot, { ...input, type });
                 }}
               />
               {input.type === 'null' ? null : (
@@ -97,28 +87,15 @@ export function ConsoleParameters(
                   label={translate(
                     'plugins.database.console.parameterValue',
                     'Value of {placeholder}',
-                    { placeholder: placeholder(index) },
+                    { placeholder: slot.placeholder },
                   )}
                   placeholder={translate('plugins.database.console.parameterPlaceholder', 'Value')}
                   value={input.text}
-                  onChange={(text) => replace(index, { ...input, text })}
+                  onChange={(text) => replace(slot, { ...input, text })}
                   autoCorrect={false}
                   autoCapitalize="none"
                 />
               )}
-              <IconButton
-                accessibilityLabel={translate(
-                  'plugins.database.console.removeParameter',
-                  'Remove {placeholder}',
-                  { placeholder: placeholder(index) },
-                )}
-                icon={<Icon name="close" tone="secondary" />}
-                onPress={() =>
-                  props.onChange(
-                    props.inputs.filter((_input, at) => at !== index),
-                  )
-                }
-              />
               {invalid ? (
                 <Text
                   variant="meta"
@@ -133,7 +110,6 @@ export function ConsoleParameters(
             </Row>
           );
         })}
-        {add}
       </Row>
       <Text
         variant="meta"
