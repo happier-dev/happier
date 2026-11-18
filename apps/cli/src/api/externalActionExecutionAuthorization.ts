@@ -1323,6 +1323,43 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     ...(input.signal ? { signal: input.signal } : {}), isCurrent });
 }
 
+/**
+ * A Home-minted root whose receiver is another Machine and has no RPC binding
+ * re-enters Home's admitted-root relay, the same ingress UI and CLI roots use.
+ * Home re-admits it at presentation and the receiver verifies it again; this
+ * only carries the signed root and its exact envelope.
+ */
+export async function deliverAdmittedExternalActionRoot(input: Readonly<{
+  authorization: ExternalActionExecutionAuthorizationV1;
+  envelope: ExternalActionRequestEnvelope;
+  credentials: StoredCredentials;
+  serverHttpBaseUrl: string;
+  signal?: AbortSignal;
+  isCurrent(): Promise<boolean>;
+}>): Promise<ActionExecuteResult> {
+  const fail = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode, effectAttempted: false });
+  const root = input.authorization.binding;
+  if (!('authentication' in root)) return fail('admission_unavailable');
+  let material: Extract<AccountScopedCryptoMaterial, { type: 'dataKey' }> | undefined;
+  if (input.envelope.v === 2) {
+    try {
+      const keyed = requireAccountEncryptionCredentials(input.credentials).encryption;
+      material = { type: 'dataKey', machineKey: keyed.type === 'dataKey'
+        ? keyed.machineKey : deriveAccountMachineKeyFromRecoverySecret(keyed.secret) };
+    } catch { return fail('content_unavailable'); }
+  }
+  const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: root.machineId,
+    envelope: input.envelope, executionAuthorization: { v: 1, token: input.authorization.token, binding: root } });
+  return await deliverExternalActionRequest({ actionId: root.actionId,
+    serverHttpBaseUrl: normalizeServerHttpBaseUrl(input.serverHttpBaseUrl), body, envelope: input.envelope,
+    headers: { Authorization: `Bearer ${input.credentials.token}`, 'Content-Type': 'application/json',
+      [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' },
+    ...(material ? { material, binding: { serverIdentityId: root.serverIdentityId, accountId: root.accountId,
+      authentication: { kind: root.authentication.kind, tokenEpoch: root.authentication.tokenEpoch },
+      actionId: root.actionId, requestId: root.requestId, target: root.target } } : {}),
+    ...(input.signal ? { signal: input.signal } : {}), isCurrent: input.isCurrent });
+}
+
 export function createExternalActionMachineRpcExecution(input: Readonly<{
   context: ActionExecutorContext | undefined;
   effectActionId: string;

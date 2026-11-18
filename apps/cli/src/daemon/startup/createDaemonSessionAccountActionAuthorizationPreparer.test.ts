@@ -67,19 +67,14 @@ function prepareFrom(machineId: string) {
 describe('createDaemonSessionAccountActionAuthorizationPreparer deployment read placement', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('settles a controller health read from a Session on another Machine with a typed placement reason, before Home', async () => {
+  it('lets a Session on another Machine continue to the Home mint for a read served by the controller', async () => {
+    // The read is minted for its receiver and delivered through Home's admitted-root relay.
     const { run, isCallerCurrent } = prepareFrom(sessionMachineId);
     await expect(run()).resolves.toMatchObject({
       ok: false,
-      errorCode: 'target_unavailable',
-      details: {
-        reason: 'read_receiver_placement',
-        receiverMachineId: controllerMachineId,
-        sessionMachineId,
-        remedy: expect.stringContaining(controllerMachineId),
-      },
+      details: { requiredFact: 'active_session_action' },
     });
-    expect(isCallerCurrent).not.toHaveBeenCalled();
+    expect(isCallerCurrent).toHaveBeenCalledTimes(1);
   });
 
   it('lets a Session on the controller continue to the Home mint', async () => {
