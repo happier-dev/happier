@@ -117,6 +117,24 @@ test('refuses a lockfile that names a workspace package whose package.json is un
   assert.match(f.git('show', 'HEAD:pnpm-lock.yaml'), /packages\/ghost/);
 });
 
+test('refuses a packet whose changed source does not parse, judged from the packet tree, without advancing HEAD', async (t) => {
+  const f = fixture(t);
+  fs.mkdirSync(path.join(f.cwd, 'src'));
+  // 5346aa3091c (11-17) landed a spec that failed to parse through this path; the wrapper's gate refuses the same packet.
+  f.write('src/broken.spec.ts', "describe('x', () => {\n  it('y', () => {});\n  });\n});\n");
+  f.write('src/fine.tsx', 'export const View = () => <div/>;');
+  const before = f.git('rev-parse', 'HEAD');
+  await assert.rejects(commitFromPrivateIndex({ ...f, paths: ['src/broken.spec.ts', 'src/fine.tsx'] }), (error) => {
+    assert.match(error.message, /refused/);
+    assert.match(error.message, /src\/broken\.spec\.ts:4:/);
+    assert.ok(!error.message.includes('src/fine.tsx'));
+    return true;
+  });
+  assert.equal(f.git('rev-parse', 'HEAD'), before);
+  await commitFromPrivateIndex({ ...f, paths: ['src/fine.tsx'] });
+  assert.match(f.git('show', '--name-only', '--format=', 'HEAD'), /src\/fine\.tsx/);
+});
+
 test('commits a consumer with its producer while an unchanged pre-existing break and ignored generated output never block', async (t) => {
   const f = fixture(t);
   fs.mkdirSync(path.join(f.cwd, 'src/generated'), { recursive: true });

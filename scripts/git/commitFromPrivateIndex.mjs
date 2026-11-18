@@ -84,6 +84,14 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
       if (!committed.length) throw new Error('Refusing an empty commit');
       if (committed.some((name) => name === '.project' || name.startsWith('.project/'))) throw new Error('Never stage .project paths');
       const tree = git('write-tree');
+      // Blocking syntax check of the packet's changed sources, the same function the commit wrapper's gate runs
+      // (P03 GATE-PARITY 2026-11-18: 5346aa3091c landed an unparsable spec through this path).
+      const { commitSourceSyntax } = await import('../workspaces/commitSourceSyntax.mjs');
+      const syntax = await commitSourceSyntax({ repo: cwd, base: head, tree });
+      if (syntax.findings.length) {
+        throw new Error([`Commit refused: ${syntax.findings.length} syntax error(s) in the packet's changed sources:`,
+          ...syntax.findings.map(finding => `  ${finding}`)].join('\n'));
+      }
       // Blocking producer closure (owner 2026-11-15, supersedes the 11-07 warn-only rule for this
       // check): the commit checker's textual scan runs on every packet, at every CAS attempt.
       const { commitProducerClosure } = await import('../workspaces/checkCommitTypeCoherence.mjs');
