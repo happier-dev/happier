@@ -112,7 +112,7 @@ export const WorkflowEventDetailPage = React.memo(
     const router = useRouter();
     const automate = useWorkflowEventAutomate(presentation, presented);
     // A picked row the feed hasn't settled is waiting or unreachable, not gone: say that, with the feed's Retry.
-    if (presentation === null && props.eventKey !== null && feed.status !== 'live') {
+    if (presentation === null && props.eventKey !== null && (feed.status !== 'live' || feed.retained === null)) {
       return (
         <View style={styles.pick} testID="workflow-events:pick">
           <SurfaceStateCard

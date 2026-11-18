@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import * as React from 'react';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 
 import { ExecutionRunGetResponseSchema, ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -6,7 +7,7 @@ import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema } from '@happier-dev/protocol/sessions';
 import { socketRpcCodec } from '@happier-dev/sync-client';
-import { act, renderHook, standardCleanup } from '@/dev/testkit';
+import { act, createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createWorkflowActionHttpTransport } from '@/dev/testkit/fixtures/workflowActionHttpTransport';
 import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -24,11 +25,15 @@ import { t } from '@/text';
 
 import { useWorkflowEventPresentation } from './useWorkflowEventPresentation';
 
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+
 await initializeRealAppRuntimeForTests();
 
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let disposeExecutor: (() => void) | undefined;
 let reads: unknown[] = [];
+let workflowResponse: (actionId: string) => Promise<unknown>;
 let run = executionRun('Review the deployment changes');
 const source = { kind: 'execution_run', machineId: 'event-machine', runId: 'native-event-run' } as const;
 const fact = {
@@ -48,6 +53,7 @@ beforeAll(async () => { disposeExecutor = await installRealActionExecutorModuleL
 afterAll(() => disposeExecutor?.());
 beforeEach(async () => {
   reads = [];
+  workflowResponse = async actionId => { throw new Error(`Unexpected Workflow HTTP request: ${actionId}`); };
   run = executionRun('Review the deployment changes');
   // Only Home HTTP and the Machine Socket SDK are fixtures; lifetime, Action admission and header reads stay real.
   const relay = await createExternalActionAccountHttpBoundary({ serverUrl: 'http://event-native-run.test',
@@ -55,7 +61,7 @@ beforeEach(async () => {
     actionId: 'execution.run.get', tokenEpoch: 0, execute: async () => { throw new Error('Detached header reads use Machine RPC'); } });
   const http = createWorkflowActionHttpTransport({ accountId: () => 'event-account',
     machineRows: () => [relay.machine],
-    fixtureResponse: async actionId => { throw new Error(`Unexpected Workflow HTTP request: ${actionId}`); } });
+    fixtureResponse: actionId => workflowResponse(actionId) });
   connection = await restoreServerAccountForTest({ serverUrl: 'http://event-native-run.test',
     serverIdentityId: 'srv_event_native_run', accountId: 'event-account',
     credentials: { token: createAccountTokenForTests('event-account', { currentAccount: true }) },
@@ -132,4 +138,44 @@ it('says what happened to a Machine in the title and names the Machine beneath, 
     title: t('workflows.events.machineOnline', { machine: t('workflows.events.someMachine') }),
     subtitle: machine.getCurrent(),
   });
+});
+
+it('waits for the selected event read despite a connected socket, then distinguishes failure from settled absence', async () => {
+  const page = createDeferred<void>();
+  let failed = false;
+  workflowResponse = async actionId => {
+    expect(actionId).toBe('workflow.run.list');
+    await page.promise;
+    if (failed) throw new Error('fixture activity read unavailable');
+    return { ok: true, result: { runs: [], metadataByRunId: {}, projection: 'membership' } };
+  };
+  const lifetime = captureActiveServerAccountScopeLifetime()!;
+  const { storage } = await import('@/sync/domains/state/storageStore');
+  await act(async () => { storage.getState().setSocketStatus('connected'); });
+  const { useWorkflowActivityFeed } = await import('@/sync/domains/workflows/useWorkflowActivityFeed');
+  const feed = await renderHook(() => useWorkflowActivityFeed({ lifetime, active: true }));
+  expect(feed.getCurrent()).toMatchObject({ status: 'live', retained: null });
+  const { WorkflowEventDetailPage } = await import('./WorkflowEventDetail');
+  const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+  const { EmptyState } = await import('@/components/ui/empty/EmptyState');
+  const screen = await renderScreen(<WorkflowEventDetailPage eventKey="not-yet-read" />);
+  try {
+    expect(screen.findAllByType(EmptyState).filter(node => node.props.title === t('workflows.events.gone'))).toHaveLength(0);
+    expect(screen.findByType(SurfaceStateCard).props.kind).toBe('loading');
+    await act(async () => { page.resolve(); });
+    await expect.poll(() => feed.getCurrent().retained).not.toBeNull();
+    expect(screen.findByType(EmptyState).props.title).toBe(t('workflows.events.gone'));
+    failed = true;
+    await act(async () => { await feed.getCurrent().retry().catch(() => {}); });
+    await expect.poll(() => feed.getCurrent().status).toBe('failed');
+    expect(screen.findAllByType(EmptyState).filter(node => node.props.title === t('workflows.events.gone'))).toHaveLength(0);
+    const state = screen.findByType(SurfaceStateCard);
+    expect(state.props.kind).toBe('error');
+    failed = false;
+    await act(async () => { await state.props.action.onPress(); });
+    await expect.poll(() => feed.getCurrent().status).toBe('live');
+    expect(screen.findByType(EmptyState).props.title).toBe(t('workflows.events.gone'));
+  } finally {
+    page.resolve();
+  }
 });
