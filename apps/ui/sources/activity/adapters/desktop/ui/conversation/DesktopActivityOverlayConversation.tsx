@@ -35,7 +35,7 @@ import type {
   DesktopActivityOverlayExpandedCard,
 } from '../shared/desktopActivityOverlayUiModel';
 
-/** The last reply is a glance, not a transcript (lab `.nt-reply`): four lines, then Extract reads the rest. */
+/** Each recent message is shown as a short excerpt. */
 const REPLY_MAX_LINES = 4;
 
 /** "Needs you · 6 min": the Bot's state word in the attention owner's words, then its age, ticking in this leaf only. */
@@ -76,10 +76,8 @@ function BotStateLine(
 }
 
 /**
- * A Bot's conversation pinned in the island (lab `ntconvo-T`/`-S`): who it is and how it is, its last
- * reply, what it asks of you through the existing inline cards, and a reply to that Session. The
- * chrome (Back, Extract, pin) stays put; only the content below it is keyed by the Bot, so switching
- * Bots cross-fades the body in place.
+ * A Session pinned in the notch, with its recent messages, asks and reply field.
+ * The chrome stays mounted as the content changes to the selected Session.
  */
 export function DesktopActivityOverlayConversation(
   props: Readonly<{
@@ -225,16 +223,17 @@ export function DesktopActivityOverlayConversation(
             size="line"
             title={t('common.loading')}
           />
-        ) : reply.state === 'ready' && reply.text ? (
+        ) : reply.state === 'ready' ? reply.messages.map(message => (
           <Text
+            key={message.id}
             testID="desktop-activity-overlay-conversation-reply"
             variant="body"
             numberOfLines={REPLY_MAX_LINES}
             style={styles.reply}
           >
-            {reply.text}
+            {message.text}
           </Text>
-        ) : (
+        )) : (
           <Text variant="body" style={styles.secondary}>
             {t('settingsDesktop.overlay.notchNoReply')}
           </Text>

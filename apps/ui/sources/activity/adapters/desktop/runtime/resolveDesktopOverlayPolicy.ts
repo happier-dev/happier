@@ -15,8 +15,8 @@ export type DesktopOverlayPolicy = Readonly<{
     hoverExpandDelayMs: number;
     dock: DesktopOverlayDock;
     idle: DesktopOverlayIdle;
-    /** Where a face or Bot-row click opens that Bot's conversation (N4's "Open Bot conversations"). */
-    botConversationPresentation: 'overlay' | 'window';
+    /** Where a face or Session-row press opens the conversation. */
+    notchConversationPresentation: 'overlay' | 'window';
     displayMode?: DesktopOverlayDisplayMode;
     quickReplyPhrases: readonly string[];
 }>;
@@ -55,7 +55,7 @@ export function resolveDesktopOverlayPolicy(settings: Readonly<Record<string, un
         hoverExpandDelayMs: readHoverExpandDelayMs(desktopOverlayOverrides.hoverExpandDelay),
         dock: readEnum(settings.desktopOverlayDock, ['top', 'left', 'right', 'floating'] as const, 'top'),
         idle: readEnum(settings.desktopOverlayIdle, ['tip', 'full', 'hidden'] as const, 'tip'),
-        botConversationPresentation: readEnum(settings.desktopBotConversationPresentation, ['overlay', 'window'] as const, 'overlay'),
+        notchConversationPresentation: readEnum(settings.desktopNotchConversationPresentation, ['overlay', 'window'] as const, 'overlay'),
         displayMode: typeof settings.desktopOverlayDisplayMode === 'string'
             && settings.desktopOverlayDisplayMode.startsWith('named:')
             && settings.desktopOverlayDisplayMode.length > 'named:'.length

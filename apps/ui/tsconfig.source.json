@@ -119,7 +119,7 @@
     "sources/activity/adapters/ios/widgets/HappierFocusWidget.tsx",
     "sources/activity/adapters/ios/widgets/HappierSessionsWidget.tsx",
     "sources/activity/attention/activityCompletionTiming.ts",
-    "sources/activity/attention/readLatestActivityAgentReply.ts",
+    "sources/activity/attention/readRecentActivityMessages.ts",
     "sources/activity/attention/runtime/SessionAttentionReminderRuntime.tsx",
     "sources/activity/attention/runtime/sessionAttentionReminderScheduler.ts",
     "sources/activity/attention/sessionAttentionSignatureLedger.ts",

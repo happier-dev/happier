@@ -44,7 +44,7 @@ export const DESKTOP_SETTINGS = defineSettingsPage({
                 display: {},
                 idle: {},
                 visibilityMode: {},
-                botConversationPresentation: {},
+                notchConversationPresentation: {},
                 alwaysOnTop: {},
             },
         },

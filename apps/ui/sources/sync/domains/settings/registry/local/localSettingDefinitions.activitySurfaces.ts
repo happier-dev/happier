@@ -26,10 +26,10 @@ function serializePetCompanionSizeScaleBucket(value: number): 'small' | 'default
 }
 
 export const ACTIVITY_SURFACE_LOCAL_SETTING_DEFINITIONS = {
-    desktopBotConversationPresentation: {
+    desktopNotchConversationPresentation: {
         schema: z.catch(z.enum(['overlay', 'window']), 'overlay'),
         default: 'overlay',
-        description: 'Open Bot conversations in the overlay or an app window on this device',
+        description: 'Open notch conversations in the notch or a Happier window on this device',
         storageScope: 'local',
     },
     desktopWindowBotRailEnabled: {

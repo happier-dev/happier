@@ -16,7 +16,7 @@ function createPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): DesktopOve
 
         dock: 'top',
         idle: 'tip',
-        botConversationPresentation: 'overlay',
+        notchConversationPresentation: 'overlay',
 
         quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
         ...overrides,

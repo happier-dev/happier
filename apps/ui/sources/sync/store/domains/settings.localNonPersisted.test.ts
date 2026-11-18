@@ -138,14 +138,14 @@ describe('local settings applied without persisting', () => {
             uiSurfaceFinishOverrides: { composer: 'flat' },
             desktopWindowBotRailEnabled: false,
         });
-        staleRealm.getState().applyLocalSettings({ uiFontScale: 1.2, desktopBotConversationPresentation: 'window' });
+        staleRealm.getState().applyLocalSettings({ uiFontScale: 1.2, desktopNotchConversationPresentation: 'window' });
 
         expect(loadLocalSettings()).toMatchObject({
             themePreference: 'dark',
             uiSurfaceFinishOverrides: { composer: 'flat' },
             uiFontScale: 1.2,
             desktopWindowBotRailEnabled: false,
-            desktopBotConversationPresentation: 'window',
+            desktopNotchConversationPresentation: 'window',
         });
         expect(staleRealm.getState().localSettings).toEqual(loadLocalSettings());
     });
@@ -248,12 +248,12 @@ describe('local settings applied without persisting', () => {
         expect(realm.getState().localSettings.attentionDeviceOverridesV1).toBe(attentionPreferences);
         const beforeComposerChange = realm.getState().localSettings;
         const composerUpdate = JSON.stringify({
-            ...externalSettings, uiSurfaceFinishOverrides: { composer: 'soft' }, desktopBotConversationPresentation: 'window',
+            ...externalSettings, uiSurfaceFinishOverrides: { composer: 'soft' }, desktopNotchConversationPresentation: 'window',
         });
         store.set('local-settings', composerUpdate);
         emit('mmkv.default\\local-settings', localStorage, newValue, composerUpdate);
         expect(realm.getState().localSettings.uiSurfaceFinishOverrides.composer).toBe('soft');
-        expect(realm.getState().localSettings.desktopBotConversationPresentation).toBe('window');
+        expect(realm.getState().localSettings.desktopNotchConversationPresentation).toBe('window');
         expect(realm.getState().localSettings.attentionDeviceOverridesV1).toBe(attentionPreferences);
         expect(realm.getState().localSettings.themePreference).toBe(beforeComposerChange.themePreference);
         const previous = realm.getState().localSettings;
@@ -272,7 +272,7 @@ describe('local settings applied without persisting', () => {
         expect(boundary.capture).not.toHaveBeenCalled();
         expect(changes).toEqual([
             { themePreference: 'dark', desktopWindowBotRailEnabled: false },
-            { uiSurfaceFinishOverrides: { composer: 'soft' }, desktopBotConversationPresentation: 'window' },
+            { uiSurfaceFinishOverrides: { composer: 'soft' }, desktopNotchConversationPresentation: 'window' },
             { deviceRemoteAlertsEnabled },
         ]);
         unsubscribe();

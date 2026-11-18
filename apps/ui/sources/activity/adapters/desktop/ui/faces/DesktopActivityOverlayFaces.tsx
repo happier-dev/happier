@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { BotFaceMarker } from '@/components/sessions/bots/BotFaceMarker';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { useWorkspaceOpenActions, WORKSPACE_OPEN_IN_WINDOW_ID } from '@/components/appShell/workspace/useWorkspaceOpenActions';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -28,18 +29,19 @@ export const NOTCH_FACES_SHOWN = 4;
 export const NOTCH_FACE_WING_SIZE = 20;
 export const NOTCH_FACE_PANEL_SIZE = DESKTOP_ACTIVITY_OVERLAY_ROW_LEADING_SIZE;
 
-export type NotchBotOpenPresentation = 'overlay' | 'window';
-export type NotchBotHandlers = Readonly<{
-  /** A click, Enter or Space: the person's "Open Bot conversations" preference decides where. */
-  onOpen: (face: BotFaceSnapshot) => void;
+export type NotchConversationPresentation = 'overlay' | 'window';
+export type NotchConversationTarget = Readonly<{ sessionId: string; serverId: string | null }>;
+export type NotchConversationHandlers = Readonly<{
+  /** A click, Enter or Space: the person's notch preference decides where. */
+  onOpen: (target: NotchConversationTarget) => void;
   /** A menu choice: the presentation is explicit. */
   onOpenIn: (
-    face: BotFaceSnapshot,
-    presentation: NotchBotOpenPresentation,
+    target: NotchConversationTarget,
+    presentation: NotchConversationPresentation,
   ) => void;
 }>;
 
-const OPEN_IN_OVERLAY_ID = 'notch.bot.open.overlay';
+const OPEN_IN_OVERLAY_ID = 'notch.conversation.open.overlay';
 
 /** The accessible name the rail pins use: the Bot's name, plus its state when it speaks. */
 export function readBotFaceLabel(face: BotFaceSnapshot): string {
@@ -51,13 +53,13 @@ export function readBotFaceLabel(face: BotFaceSnapshot): string {
 }
 
 /**
- * The Bot opener menu (lab `ntwin-R`, notch side): the shared "Open in window" and "Open in the overlay".
- * Pointer right-click, Shift+F10 and the Menu key open it at its trigger, from faces and Bot rows alike.
+ * The conversation opener menu (lab `ntwin-R`, notch side): the shared "Open in window" and "Open in the overlay".
+ * Pointer right-click, Shift+F10 and the Menu key open it at its trigger, from faces and Session rows alike.
  */
-export function NotchBotMenu(
+export function NotchConversationMenu(
   props: Readonly<{
-    face: BotFaceSnapshot;
-    handlers: NotchBotHandlers;
+    target: NotchConversationTarget;
+    handlers: NotchConversationHandlers;
     testID: string;
     placement?: 'bottom' | 'right' | 'left' | 'top';
     trigger: (
@@ -71,10 +73,8 @@ export function NotchBotMenu(
 ): React.ReactElement {
   const { theme } = useUnistyles();
   const [open, setOpen] = React.useState(false);
-  const { face, handlers } = props;
+  const { target, handlers } = props;
   // The shared builder decides "Open in window" (and whether this computer can); the notch adds the overlay.
-  const windowTarget = React.useMemo(() => ({ kind: 'session' as const, serverId: face.serverId,
-    accountId: face.accountId, sessionId: face.sessionId }), [face.accountId, face.serverId, face.sessionId]);
   const presentationAction = React.useMemo(() => ({
     item: {
       id: OPEN_IN_OVERLAY_ID,
@@ -82,9 +82,9 @@ export function NotchBotMenu(
       title: t('settingsDesktop.overlay.notchOpenInOverlay'),
       icon: <Icon name="push-pin" size={16} color={theme.colors.text.secondary} />,
     },
-    onSelect: () => handlers.onOpenIn(face, 'overlay'),
-  }), [face, handlers, props.testID, theme.colors.text.secondary]);
-  const openActions = useWorkspaceOpenActions(null, undefined, { windowTarget, presentationAction });
+    onSelect: () => handlers.onOpenIn(target, 'overlay'),
+  }), [target, handlers, props.testID, theme.colors.text.secondary]);
+  const openActions = useWorkspaceOpenActions(createActivitySurfaceSessionRoute(target.sessionId, target.serverId), undefined, { presentationAction });
   return (
     <DropdownMenu
       testID={props.testID}
@@ -93,7 +93,7 @@ export function NotchBotMenu(
       items={openActions.presentationItems}
       onSelect={(id) => {
         // The island has no Sync of its own: its window request reaches main as the same session.open.
-        if (id === WORKSPACE_OPEN_IN_WINDOW_ID) handlers.onOpenIn(face, 'window');
+        if (id === WORKSPACE_OPEN_IN_WINDOW_ID) handlers.onOpenIn(target, 'window');
         else openActions.select(id);
       }}
       placement={props.placement ?? 'bottom'}
@@ -145,7 +145,7 @@ export const DesktopActivityOverlayFaces = React.memo(
     props: Readonly<{
       faces: NotchBotFaces;
       orientation: 'row' | 'column';
-      handlers: NotchBotHandlers;
+      handlers: NotchConversationHandlers;
       /** "+N": opens the list, where every member is reachable. */
       onMore: () => void;
     }>,
@@ -265,7 +265,7 @@ const styles = StyleSheet.create((theme) => ({
 export const DesktopActivityOverlayBotRow = React.memo(function DesktopActivityOverlayBotRow(
     props: Readonly<{
         face: BotFaceSnapshot;
-        handlers: NotchBotHandlers;
+        handlers: NotchConversationHandlers;
         pressableRef?: React.Ref<View>;
         /** How many asks it heads (0: none); it then says where it runs, its Session's context line. */
         askCount?: number;
@@ -281,8 +281,8 @@ export const DesktopActivityOverlayBotRow = React.memo(function DesktopActivityO
     );
     const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, face.meaningfulActivityAt > 0);
     return (
-        <NotchBotMenu
-            face={face}
+        <NotchConversationMenu
+            target={face}
             handlers={props.handlers}
             testID={`desktop-activity-overlay-bot-row-menu-${face.sessionId}`}
             trigger={(menu) => (

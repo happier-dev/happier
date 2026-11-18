@@ -73,7 +73,7 @@ export function findChoiceOptionById<T extends string | number>(
     return choices.find((choice) => String(choice.value) === id) ?? null;
 }
 
-export const BOT_CONVERSATION_OPTIONS: readonly ChoiceOption<'overlay' | 'window'>[] = [
-    { value: 'overlay', titleKey: 'settingsDesktop.overlay.botConversationOverlayTitle' },
-    { value: 'window', titleKey: 'settingsDesktop.overlay.botConversationWindowTitle' },
+export const NOTCH_CONVERSATION_OPTIONS: readonly ChoiceOption<'overlay' | 'window'>[] = [
+    { value: 'overlay', titleKey: 'settingsDesktop.overlay.notchConversationOverlayTitle' },
+    { value: 'window', titleKey: 'settingsDesktop.overlay.notchConversationWindowTitle' },
 ];

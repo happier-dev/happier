@@ -1,3 +1,4 @@
+import type { RecentActivityMessage } from '@/activity/attention/readRecentActivityMessages';
 import type { BotActivity } from '@/components/sessions/bots/botActivity';
 import type { SessionBotFaceFacts } from '@/components/sessions/bots/face/sessionBotFaceFacts';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -18,7 +19,7 @@ export type BotFaceSnapshot = SessionAddress & Readonly<{
 export type NotchBotFaces = Readonly<{ faces: readonly BotFaceSnapshot[]; overflowCount: number }>;
 export type PinnedDesktopOverlayConversation = SessionAddress & Readonly<{
     accountId: string;
-    reply: Readonly<{ state: 'loading' | 'ready' | 'none' | 'hidden'; text: string | null }>;
+    reply: Readonly<{ state: 'loading' | 'ready' | 'none' | 'hidden'; messages: readonly RecentActivityMessage[] }>;
     refreshing: boolean;
     reachable: boolean;
 }>;

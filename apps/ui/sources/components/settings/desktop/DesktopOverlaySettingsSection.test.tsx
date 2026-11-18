@@ -179,7 +179,7 @@ describe('DesktopOverlaySettingsSection', () => {
         await flushHookEffects();
         expect(screen.findRow('settings-desktop-overlay-loading')).toBeNull();
         expect(screen.findRow('settings-desktop-overlay-unavailable')).toBeNull();
-        for (const key of ['enabled', 'dock', 'display', 'idle', 'visibilityMode', 'alwaysOnTop', 'botConversationPresentation']) {
+        for (const key of ['enabled', 'dock', 'display', 'idle', 'visibilityMode', 'alwaysOnTop', 'notchConversationPresentation']) {
             expect(screen.findRowByTitle(`settingsDesktop.overlay.${key}Title`)).toBeTruthy();
         }
     });
@@ -188,7 +188,7 @@ describe('DesktopOverlaySettingsSection', () => {
         const screen = await render();
         expect(screen.findGroup('settingsDesktop.overlay.title')).toBeTruthy();
         expect(screen.findRow('settings-desktop-overlay-enabled')).toBeTruthy();
-        expect(screen.findAll(node => node.props.testID === 'settings-desktop-bot-conversation-presentation').length).toBeGreaterThan(0);
+        expect(screen.findAll(node => node.props.testID === 'settings-desktop-notch-conversation-presentation').length).toBeGreaterThan(0);
         for (const key of ['showWhenRunning', 'showWhenAttentionRequired', 'showWhenReady', 'autoHideEnabled',
             'autoHideDelay', 'interactiveCollapsed', 'collapsedClickAction', 'expandedBehavior', 'density',
             'compactStyle', 'showSessionCount', 'placementMode', 'anchorPreset', 'allowRepositioning', 'lockPosition', 'resetPosition']) {
@@ -226,7 +226,7 @@ describe('DesktopOverlaySettingsSection', () => {
         storage.getState().applyLocalSettings({ desktopOverlayEnabled: false });
         const screen = await render();
         expect(screen.findRow('settings-desktop-overlay-enabled')).toBeTruthy();
-        for (const key of ['dock', 'idle', 'display', 'visibilityMode', 'alwaysOnTop', 'botConversationPresentation']) {
+        for (const key of ['dock', 'idle', 'display', 'visibilityMode', 'alwaysOnTop', 'notchConversationPresentation']) {
             expect(screen.findRowByTitle(`settingsDesktop.overlay.${key}Title`)).toBeNull();
         }
     });

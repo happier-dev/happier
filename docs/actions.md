@@ -6870,8 +6870,11 @@ Session. An absent handler, including a non-desktop client, returns
 the admitted Session target, then calls `desktop.notch.set {state:'pinned'}`.
 The presentation interaction's `target:null` releases that target and its one
 transcript consumer; retargeting, delivery withdrawal and disable also release
-it. The existing effective privacy mode covers both reply and ask before
-publication. Pinned-panel UI composition and N4's addressed draft transport have
+it. Faces and ordinary Session rows use this same action path. The device-local
+`desktop.notchConversationPresentation` setting selects the overlay by default or
+the existing Session window for **Open in Happier**. The previous Bot-only value
+migrates with its destination intact. The existing effective privacy mode covers
+the pinned Session’s recent message excerpts and asks before publication. Pinned-panel UI composition and N4's addressed draft transport have
 separate owners in development source.
 
 The overlay's person-initiated pinned-field edits use the existing draft owner's
@@ -7525,7 +7528,7 @@ anchors are removed from discovery along with their controls. Writes to retired
 anchors return the existing unknown/unavailable declaration result. Neither old
 pet mode seeds Show Bots; an explicit stored Show Bots value wins, otherwise its
 existing default applies. The removed preview preference never broadens admitted
-Home/device privacy. Dock, Display, When idle, Open Bot conversations, the
+Home/device privacy. Dock, Display, When idle, conversation presentation, the
 full-screen preference and the Session window Bot rail (`desktop.windowBotRail`,
 local key `desktopWindowBotRailEnabled`) share these existing Settings Actions; no
 overlay- or window-specific settings Action family is introduced.

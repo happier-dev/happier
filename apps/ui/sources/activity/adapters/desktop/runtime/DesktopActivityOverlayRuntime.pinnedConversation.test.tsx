@@ -12,7 +12,7 @@ const { createEmptyAccountBootstrapHttpResponse } = await import('@/dev/testkit/
 const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
-const { registerSessionRealtimeTranscriptConsumer, readMountedSessionRealtimeTranscriptConsumerSessionIds, clearMountedSessionRealtimeTranscriptConsumers } = await import('@/sync/runtime/sessionRealtimeTranscriptConsumers');
+const { registerSessionRealtimeTranscriptConsumer, readMountedSessionRealtimeTranscriptConsumerSessionIds, clearMountedSessionRealtimeTranscriptConsumers, subscribeSessionRealtimeTranscriptConsumers } = await import('@/sync/runtime/sessionRealtimeTranscriptConsumers');
 const { usePinnedDesktopOverlayConversation } = await import('./usePinnedDesktopOverlayConversation');
 
 afterEach(() => { standardCleanup(); clearMountedSessionRealtimeTranscriptConsumers(); });
@@ -56,22 +56,22 @@ describe('notch.N3.F3.pin conversation demand', () => {
                 content: { t: 'plain', v: { role: 'agent', content: { type: 'acp', agentId: 'claude',
                     data: { type: 'message', message: 'Home B own reply' } }, meta: { source: 'cli' } } } }],
                 hasMore: false, nextBeforeSeq: null, nextAfterSeq: null } }) });
-        const seen: Array<string | null> = [];
+        const seen: string[] = [];
         const hook = await renderHook(() => {
             const value = usePinnedDesktopOverlayConversation({ target, hidden: false, reachable: true });
-            seen.push(value.reply.text);
+            seen.push(...value.reply.messages.map(message => message.text));
             return value;
         });
         try {
-            expect(hook.getCurrent()).toMatchObject({ reply: { state: 'loading', text: null } });
+            expect(hook.getCurrent()).toMatchObject({ reply: { state: 'loading', messages: [] } });
             await vi.waitFor(() => expect(storage.getState().sessions[sessionId]?.serverId).toBe(pinnedHome));
             await React.act(async () => { settleOldPage(); await oldRead; });
             expect(seen).not.toContain('Home A private reply');
             expect(seen).not.toContain('Home A late private reply');
-            expect(hook.getCurrent().reply.text).toBeNull();
+            expect(hook.getCurrent().reply.messages).toEqual([]);
             await vi.waitFor(() => expect(homes.requests.filter(request => request.serverId === pinnedHome && request.path.includes('/messages'))).toHaveLength(1));
             await React.act(async () => { settlePage(); });
-            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ reply: { state: 'ready', text: 'Home B own reply' }, refreshing: false }));
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ reply: { state: 'ready', messages: [{ role: 'agent', text: 'Home B own reply' }] }, refreshing: false }));
             expect(seen).not.toContain('Home A private reply');
             expect(seen).not.toContain('Home A late private reply');
             expect(homes.requests.filter(request => request.serverId === pinnedHome && request.path.includes('/messages'))).toHaveLength(1);
@@ -101,6 +101,10 @@ describe('notch.N3.F3.pin conversation demand', () => {
             createSessionFixture({ id, serverId: target.serverId, encryptionMode: 'plain' })])), sessionMessages: {
             'bot-b': createSessionMessagesFixture({ isLoaded: true }),
         } });
+        const demandChanges: string[][] = [];
+        const stopObservingDemand = subscribeSessionRealtimeTranscriptConsumers(() => {
+            demandChanges.push(readMountedSessionRealtimeTranscriptConsumerSessionIds(target.serverId));
+        });
         const slices: unknown[] = [];
         const renderedReplyStates: string[] = [];
         const hook = await renderHook((props: { target: typeof target; hidden: boolean; reachable: boolean }) => {
@@ -113,9 +117,9 @@ describe('notch.N3.F3.pin conversation demand', () => {
             expect(renderedReplyStates[0]).toBe('loading');
             await vi.waitFor(() => expect(requests).toHaveLength(1));
             expect(readMountedSessionRealtimeTranscriptConsumerSessionIds(target.serverId)).toEqual(['bot-a']);
-            expect(hook.getCurrent()).toMatchObject({ ...target, reply: { state: 'loading', text: null }, refreshing: true });
+            expect(hook.getCurrent()).toMatchObject({ ...target, reply: { state: 'loading', messages: [] }, refreshing: true });
             await React.act(async () => { settlePage!(Response.json({ messages: [], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null })); });
-            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ reply: { state: 'none', text: null }, refreshing: false }));
+            await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ reply: { state: 'none', messages: [] }, refreshing: false }));
             const settledCount = slices.length;
             for (let index = 0; index < 50; index++) await React.act(async () => {
                 storage.setState(state => ({ sessionMessages: { ...state.sessionMessages,
@@ -123,19 +127,31 @@ describe('notch.N3.F3.pin conversation demand', () => {
                 } }));
             });
             expect(slices).toHaveLength(settledCount);
-            const reply: Message = { kind: 'agent-text', id: 'reply', localId: null, createdAt: 1, text: 'The reply' };
+            const [older, prompt, reply, followup, thinking]: Message[] = [
+                { kind: 'agent-text', id: 'older', localId: null, createdAt: 1, text: 'Older reply' },
+                { kind: 'user-text', id: 'prompt', localId: null, createdAt: 2, text: '  The prompt ' },
+                { kind: 'agent-text', id: 'reply', localId: null, createdAt: 3, text: 'The reply' },
+                { kind: 'user-text', id: 'followup', localId: null, createdAt: 4, text: 'Follow up' },
+                { kind: 'agent-text', id: 'thinking', localId: null, createdAt: 5, text: 'Private reasoning', isThinking: true },
+            ];
+            const recent = [older, prompt, reply, followup, thinking].filter(value => value !== undefined);
             await React.act(async () => { storage.setState(state => ({ sessionMessages: { ...state.sessionMessages,
-                'bot-a': createSessionMessagesFixture({ isLoaded: true, messageIdsOldestFirst: ['reply'], messagesById: { reply } }),
+                'bot-a': createSessionMessagesFixture({ isLoaded: true, messageIdsOldestFirst: recent.map(message => message.id), messagesById: Object.fromEntries(recent.map(message => [message.id, message])) }),
             } })); });
-            expect(hook.getCurrent()).toMatchObject({ reply: { state: 'ready', text: 'The reply' } });
+            expect(hook.getCurrent()).toMatchObject({ reply: { state: 'ready', messages: [
+                { id: 'prompt', role: 'user', text: 'The prompt' },
+                { id: 'reply', role: 'agent', text: 'The reply' },
+                { id: 'followup', role: 'user', text: 'Follow up' },
+            ] } });
             expect(slices).toHaveLength(settledCount + 1);
             await hook.rerender({ target, hidden: true, reachable: true });
-            expect(hook.getCurrent()).toMatchObject({ reply: { state: 'hidden', text: null } });
+            expect(hook.getCurrent()).toMatchObject({ reply: { state: 'hidden', messages: [] } });
             await hook.rerender({ target: { ...target, sessionId: 'bot-b' }, hidden: false, reachable: true });
             expect(readMountedSessionRealtimeTranscriptConsumerSessionIds(target.serverId)).toEqual(['bot-b']);
             expect(requests).toHaveLength(1);
             await hook.unmount();
             expect(readMountedSessionRealtimeTranscriptConsumerSessionIds(target.serverId)).toEqual([]);
-        } finally { await hook.unmount(); await environment.dispose(); }
+            expect(demandChanges).toEqual([['bot-a'], [], ['bot-b'], []]);
+        } finally { stopObservingDemand(); await hook.unmount(); await environment.dispose(); }
     });
 });

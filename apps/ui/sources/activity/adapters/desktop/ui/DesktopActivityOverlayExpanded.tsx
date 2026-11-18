@@ -44,6 +44,7 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
     onFocusWithinChange?: (focusWithin: boolean) => void;
     onDismissKey?: () => void;
     onOpenSession: (sessionId: string, serverId?: string | null) => void;
+    conversationHandlers?: React.ComponentProps<typeof DesktopActivityOverlayExpandedCards>['conversationHandlers'];
     onAction?: DesktopActivityOverlayActionHandler;
     /** The opened list's Bot section (faces' members, each with its ask). */
     bots?: React.ComponentProps<typeof DesktopActivityOverlayExpandedCards>['bots'];
@@ -165,7 +166,7 @@ export function DesktopActivityOverlayExpanded(props: Readonly<{
                 </ScrollView>
             ) : (
                 <DesktopActivityOverlayExpandedCards bots={props.bots} model={props.model} visualMode={props.visualMode}
-                    onOpenSession={props.onOpenSession} onAction={props.onAction}
+                    onOpenSession={props.onOpenSession} conversationHandlers={props.conversationHandlers} onAction={props.onAction}
                     completionAutoDismissPaused={completionAutoDismissPaused} initialFocusTarget={initialFocusTarget}
                     initialFocusRef={props.initialFocusRef} onDismissKey={props.onDismissKey}
                     scroll={{

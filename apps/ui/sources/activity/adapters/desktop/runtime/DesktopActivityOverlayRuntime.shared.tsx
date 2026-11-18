@@ -301,7 +301,7 @@ const DESKTOP_OVERLAY_SETTING_KEYS = [
     'activitySurfacesEnabled', 'activitySurfaceTapTarget', 'activitySurfacePrivacyMode',
     'attentionDeviceOverridesV1', 'desktopOverlayEnabled', 'desktopOverlayVisibilityMode',
     'desktopOverlayAlwaysOnTop', 'desktopOverlayDisplayMode',
-    'desktopOverlayDock', 'desktopOverlayIdle', 'desktopBotConversationPresentation',
+    'desktopOverlayDock', 'desktopOverlayIdle', 'desktopNotchConversationPresentation',
 ] as const;
 
 type ProducerContext = Readonly<{
@@ -421,7 +421,7 @@ function DesktopActivityOverlayProducer({ detailAddresses, contextRef, published
     // Consume the already-decided privacy mode before any content crosses the bridge.
     const conversation = React.useMemo(() => pinnedCandidate && pinnedScope && pinnedConversation?.accountId === pinnedScope.accountId
         && areSessionAddressesEqual(pinnedConversation, pinnedCandidate.address)
-        ? pinnedHidden && pinnedConversation ? { ...pinnedConversation, reply: { state: 'hidden' as const, text: null } }
+        ? pinnedHidden && pinnedConversation ? { ...pinnedConversation, reply: { state: 'hidden' as const, messages: [] } }
             : pinnedConversation
         : null, [pinnedCandidate, pinnedScope, pinnedConversation, pinnedHidden]);
     React.useEffect(() => {

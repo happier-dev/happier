@@ -469,9 +469,9 @@ it('exposes the Session window Bot rail as one device-local switch', () => {
 it('offers the contracted Notch controls and retires competing preference Actions', () => {
     const controls = BUILT_IN_SETTINGS_DECLARATIONS_V1.filter(value => value.sectionId === 'desktop.overlay');
     expect(controls.map(value => value.anchor)).toEqual(['desktop.enabled', 'desktop.dock', 'desktop.display', 'desktop.idle',
-        'desktop.visibilityMode', 'desktop.botConversationPresentation', 'desktop.alwaysOnTop']);
-    expect(readBuiltInSettingDeclarationV1('desktop.botConversationPresentation')).toMatchObject({ storage: {
-        scope: 'local', key: 'desktopBotConversationPresentation', allowedValues: ['overlay', 'window'],
+        'desktop.visibilityMode', 'desktop.notchConversationPresentation', 'desktop.alwaysOnTop']);
+    expect(readBuiltInSettingDeclarationV1('desktop.notchConversationPresentation')).toMatchObject({ storage: {
+        scope: 'local', key: 'desktopNotchConversationPresentation', allowedValues: ['overlay', 'window'],
     } });
     for (const anchor of ['desktop.showWhenRunning', 'desktop.showWhenAttentionRequired', 'desktop.showWhenReady',
         'desktop.autoHideEnabled', 'desktop.autoHideDelay', 'desktop.showPreviewText', 'pets.desktopOverlayVisibilityMode']) {

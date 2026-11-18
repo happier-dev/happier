@@ -120,7 +120,7 @@ function createPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): DesktopOve
 
         dock: 'top',
         idle: 'tip',
-        botConversationPresentation: 'overlay',
+        notchConversationPresentation: 'overlay',
 
         quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
     };
@@ -135,7 +135,7 @@ describe('buildDesktopActivityOverlayModel', () => {
     it('keeps an explicit conversation visible when privacy removes every ambient Session', () => {
         const snapshot = createSnapshot({ primary: null, sessions: [], state: 'idle', conversation: {
             serverId: 'server-1', accountId: 'account-1', sessionId: 'private', reachable: true, refreshing: false,
-            reply: { state: 'ready', text: 'Explicitly opened content' },
+            reply: { state: 'ready', messages: [{ id: 'reply', role: 'agent', text: 'Explicitly opened content' }] },
         } });
         const model = buildDesktopActivityOverlayModel({ snapshot, policy: createPolicy() });
         expect(model.visible).toBe(true);

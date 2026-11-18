@@ -31,7 +31,7 @@ function createDesktopPolicy(overrides: Partial<DesktopOverlayPolicy> = {}): Des
 
         dock: 'top',
         idle: 'tip',
-        botConversationPresentation: 'overlay',
+        notchConversationPresentation: 'overlay',
 
         quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
         ...overrides,
@@ -178,14 +178,14 @@ describe('buildDesktopActivityOverlaySnapshot', () => {
             sourceOverview: { candidates: [candidate], counts: { unread: 0, permissionRequired: 1, actionRequired: 0, thinking: 0, totalAttention: 1 } },
             activityPolicy: resolveActivitySurfacePolicy({}),
             desktopPolicy: createDesktopPolicy(),
-            conversation: { serverId: 'server-1', accountId: 'account-server-1', sessionId: session.id, reply: { state: 'none' as const, text: null }, refreshing: false, reachable: true },
+            conversation: { serverId: 'server-1', accountId: 'account-server-1', sessionId: session.id, reply: { state: 'none' as const, messages: [] }, refreshing: false, reachable: true },
             nowMs: 1_000,
         };
         const snapshot = buildDesktopActivityOverlaySnapshot({ ...params, resolveCandidatePrivacyMode: () => 'include_preview' });
         expect(snapshot.sessions).toEqual([expect.objectContaining({ serverId: 'server-1', sessionId: 'pinned' })]);
         expect(snapshot.permissionRequests.map(request => request.requestId)).toEqual(['ask']);
         const hidden = buildDesktopActivityOverlaySnapshot({ ...params,
-            conversation: { ...params.conversation, reply: { state: 'hidden', text: null } },
+            conversation: { ...params.conversation, reply: { state: 'hidden', messages: [] } },
             resolveCandidatePrivacyMode: () => 'status_only' });
         expect(hidden.permissionRequests).toHaveLength(0);
         expect(hidden.conversation?.reply).toEqual({ state: 'hidden', text: null });

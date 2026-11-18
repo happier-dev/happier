@@ -9,7 +9,7 @@ import { t } from '@/text';
 import { getDesktopActivityOverlayWindowState, listenDesktopActivityOverlayWindowState } from '@/activity/adapters/desktop/runtime/desktopActivityOverlayBridge';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { useDesktopHostRoleAvailability } from '@/utils/platform/desktopHost';
-import { DOCK_OPTIONS, IDLE_OPTIONS, BOT_CONVERSATION_OPTIONS, VISIBILITY_MODE_OPTIONS,
+import { DOCK_OPTIONS, IDLE_OPTIONS, NOTCH_CONVERSATION_OPTIONS, VISIBILITY_MODE_OPTIONS,
     findChoiceOptionById, toSegmentedChoiceOptions } from './DesktopOverlaySettingsSection.options';
 import { DesktopNotchDisplayRow, type DesktopNotchDisplayInUse } from './DesktopNotchDisplayRow';
 import { DESKTOP_SETTINGS } from './desktopSettings';
@@ -77,14 +77,14 @@ function NotchShowBotsRow() {
 }
 
 function NotchConversationRow() {
-    const presentation = useLocalSetting('desktopBotConversationPresentation');
+    const presentation = useLocalSetting('desktopNotchConversationPresentation');
     const { setSetting } = useSettingActionFeedback();
-    return <SettingAnchor setting={DESKTOP_SETTINGS.settings.botConversationPresentation}>
-        <SegmentedChoiceItem testID="settings-desktop-bot-conversation-presentation" testIDPrefix="settings-desktop-bot-conversation-presentation"
-            title={t('settingsDesktop.overlay.botConversationPresentationTitle')} subtitle={t('settingsDesktop.overlay.botConversationPresentationSubtitle')}
-            options={toSegmentedChoiceOptions(BOT_CONVERSATION_OPTIONS)} value={presentation} onChange={id => {
-                const choice = findChoiceOptionById(BOT_CONVERSATION_OPTIONS, id);
-                return choice ? setSetting(DESKTOP_SETTINGS.settings.botConversationPresentation, choice.value) : undefined;
+    return <SettingAnchor setting={DESKTOP_SETTINGS.settings.notchConversationPresentation}>
+        <SegmentedChoiceItem testID="settings-desktop-notch-conversation-presentation" testIDPrefix="settings-desktop-notch-conversation-presentation"
+            title={t('settingsDesktop.overlay.notchConversationPresentationTitle')} subtitle={t('settingsDesktop.overlay.notchConversationPresentationSubtitle')}
+            options={toSegmentedChoiceOptions(NOTCH_CONVERSATION_OPTIONS)} value={presentation} onChange={id => {
+                const choice = findChoiceOptionById(NOTCH_CONVERSATION_OPTIONS, id);
+                return choice ? setSetting(DESKTOP_SETTINGS.settings.notchConversationPresentation, choice.value) : undefined;
             }} />
     </SettingAnchor>;
 }

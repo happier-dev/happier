@@ -30,7 +30,7 @@ import { DesktopActivityOverlayPermissionRequestCard } from './DesktopActivityOv
 import { DesktopActivityOverlayQuotaSummaryCard } from './DesktopActivityOverlayQuotaSummaryCard';
 import { DesktopActivityOverlayUserQuestionCard } from './DesktopActivityOverlayUserQuestionCard';
 import type { BotFaceSnapshot } from '../../presentation/notchBotTypes';
-import { DesktopActivityOverlayBotRow, type NotchBotHandlers } from '../faces/DesktopActivityOverlayFaces';
+import { DesktopActivityOverlayBotRow, NotchConversationMenu, type NotchConversationHandlers, type NotchConversationTarget } from '../faces/DesktopActivityOverlayFaces';
 
 function wrapCard(
     card: DesktopActivityOverlayExpandedCard,
@@ -79,10 +79,23 @@ function DesktopActivityOverlayAutoDismissCompletionCard(props: React.PropsWithC
     return <>{props.children}</>;
 }
 
+function ConversationRow(props: React.ComponentProps<typeof DesktopActivityOverlaySessionRow> & Readonly<{
+    target: NotchConversationTarget;
+    conversationHandlers?: NotchConversationHandlers;
+}>): React.ReactElement {
+    const { target, conversationHandlers, ...row } = props;
+    if (!conversationHandlers) return <DesktopActivityOverlaySessionRow {...row} />;
+    return <NotchConversationMenu target={target} handlers={conversationHandlers}
+        testID={`desktop-activity-overlay-session-menu-${target.sessionId}`}
+        trigger={menu => <DesktopActivityOverlaySessionRow {...row}
+            onContextMenu={menu.onContextMenu} onKeyDown={menu.onKeyDown} />} />;
+}
+
 function renderCard(params: Readonly<{
     card: Exclude<DesktopActivityOverlayExpandedCard, { kind: 'multi_session_list' }>;
     visualMode: DesktopActivityOverlayVisualMode;
     onOpenSession: (sessionId: string, serverId?: string | null) => void;
+    conversationHandlers?: NotchConversationHandlers;
     onAction?: DesktopActivityOverlayActionHandler;
     onDismissKey?: () => void;
     initialFocusTarget: DesktopActivityOverlayInitialFocusTarget | null;
@@ -164,7 +177,9 @@ function renderCard(params: Readonly<{
             return wrapCard(
                 card,
                 <View testID={instanceTestID}>
-                    <DesktopActivityOverlaySessionRow
+                    <ConversationRow
+                        target={card}
+                        conversationHandlers={params.conversationHandlers}
                         testID={`desktop-activity-overlay-session-row-${card.sessionId}`}
                         visualMode={params.visualMode}
                         pressableRef={resolveRowFocusRef(card.sessionId, card.serverId)}
@@ -199,6 +214,7 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
     model: Pick<DesktopActivityOverlayUiModel, 'expanded'>;
     visualMode: DesktopActivityOverlayVisualMode;
     onOpenSession: (sessionId: string, serverId?: string | null) => void;
+    conversationHandlers?: NotchConversationHandlers;
     onAction?: DesktopActivityOverlayActionHandler;
     completionAutoDismissPaused?: boolean;
     initialFocusTarget?: DesktopActivityOverlayInitialFocusTarget | null;
@@ -208,7 +224,7 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
      * The opened list's Bot section (N3 F8): every Show-Bots member first, each followed by its own
      * pending ask, then the Sessions that are not Bots. Absent, the list is Sessions only.
      */
-    bots?: Readonly<{ faces: readonly BotFaceSnapshot[]; handlers: NotchBotHandlers }> | null;
+    bots?: Readonly<{ faces: readonly BotFaceSnapshot[]; handlers: NotchConversationHandlers }> | null;
     /** The expanded panel owns the scroll viewport; a conversation renders its own few ask cards inline. */
     scroll?: Omit<VirtualizedListProps<ExpandedRow>, 'data' | 'renderItem' | 'keyExtractor'> & Readonly<{ maxHeight: number }>;
 
@@ -306,6 +322,7 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
         card,
         visualMode: props.visualMode,
         onOpenSession: props.onOpenSession,
+        conversationHandlers: props.conversationHandlers,
         onAction: props.onAction,
         initialFocusTarget: props.initialFocusTarget ?? null,
         initialFocusRef: props.initialFocusRef,
@@ -327,7 +344,9 @@ export function DesktopActivityOverlayExpandedCards(props: Readonly<{
             : undefined;
     };
     const sessionRow = (row: DesktopActivityOverlaySessionRowModel, asking?: number) => (
-        <DesktopActivityOverlaySessionRow
+        <ConversationRow
+            target={row}
+            conversationHandlers={props.conversationHandlers}
             testID={`desktop-activity-overlay-session-row-${row.sessionId}`}
             visualMode={props.visualMode}
             pressableRef={resolveRowFocusRef(row.sessionId, row.serverId)}

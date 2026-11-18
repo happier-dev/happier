@@ -3,7 +3,6 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { ScopedTheme, StyleSheet } from 'react-native-unistyles';
 
-import { createActivitySurfaceSessionTarget } from '@/activity/actions/activitySurfaceTargets';
 import {
     emitDesktopActivityOverlayInteraction,
     enterDesktopActivityOverlayPointer,
@@ -36,8 +35,9 @@ import { DesktopActivityOverlayListPanel } from './DesktopActivityOverlayListPan
 import { DesktopActivityOverlayPinnedPanel } from './conversation/DesktopActivityOverlayPinnedPanel';
 import {
     DesktopActivityOverlayFaces,
-    type NotchBotHandlers,
-    type NotchBotOpenPresentation,
+    type NotchConversationHandlers,
+    type NotchConversationPresentation,
+    type NotchConversationTarget,
 } from './faces/DesktopActivityOverlayFaces';
 import type { BotFaceSnapshot } from '../presentation/notchBotTypes';
 import { composeDesktopActivityOverlayAccessibilityLabel } from './desktopActivityOverlayAccessibilityLabel';
@@ -376,19 +376,18 @@ function DesktopActivityOverlayIsland(props: Readonly<{ policy: DesktopOverlayPo
         dispatch({ type: 'escape' });
     }, [dispatch]);
 
-    // A face or Bot row opens where the person's "Open Bot conversations" says; the menu names the place.
+    // A face or Session row follows the notch preference; the menu names the place.
     const pinnedPanelShown = presentation.surface === 'pinned' && hasConversation;
-    const botHandlers = React.useMemo((): NotchBotHandlers => {
-        const openIn = (face: BotFaceSnapshot, where: NotchBotOpenPresentation) => {
-            // Each Bot keeps its own draft, so switching Bots never carries typed text across.
+    const conversationHandlers = React.useMemo((): NotchConversationHandlers => {
+        const openIn = (target: NotchConversationTarget, where: NotchConversationPresentation) => {
             if (where === 'overlay') dispatch({ type: 'set', state: 'pinned' });
-            emitInteraction('session.open', { sessionId: face.sessionId, serverId: face.serverId, presentation: where });
+            emitInteraction('session.open', withOptionalServerId({ sessionId: target.sessionId, presentation: where }, target.serverId));
         };
         return {
-            onOpen: (face) => openIn(face, policy.botConversationPresentation),
+            onOpen: (target) => openIn(target, policy.notchConversationPresentation),
             onOpenIn: openIn,
         };
-    }, [dispatch, policy.botConversationPresentation]);
+    }, [dispatch, policy.notchConversationPresentation]);
 
     // The list's pin keeps the island open (lab ntdock-T "Pinned"); the Bot conversation carries its own.
     const listPinned = presentation.surface === 'pinned';
@@ -397,16 +396,16 @@ function DesktopActivityOverlayIsland(props: Readonly<{ policy: DesktopOverlayPo
         onToggle: () => dispatch({ type: 'set', state: listPinned ? 'open' : 'pinned' }),
     }), [dispatch, listPinned]);
     const word = readStatusWord(collapsed);
-    const botSection = React.useMemo(() => (faces && faces.faces.length > 0 ? { faces: faces.faces, handlers: botHandlers } : null),
-        [botHandlers, faces]);
+    const botSection = React.useMemo(() => (faces && faces.faces.length > 0 ? { faces: faces.faces, handlers: conversationHandlers } : null),
+        [conversationHandlers, faces]);
     const renderFaces = React.useCallback((orientation: 'row' | 'column') => (faces ? (
         <DesktopActivityOverlayFaces
             faces={faces}
             orientation={orientation}
-            handlers={botHandlers}
+            handlers={conversationHandlers}
             onMore={() => onCollapsedPress('pointer')}
         />
-    ) : null), [botHandlers, faces, onCollapsedPress]);
+    ) : null), [conversationHandlers, faces, onCollapsedPress]);
     const slots: DesktopActivityOverlayStatusSlots = { faces: faces && faces.faces.length > 0 ? renderFaces : null, word };
     const extractPinned = React.useCallback(async (target: Readonly<{ sessionId: string; serverId: string | null }>) => {
         try {
@@ -511,13 +510,8 @@ function DesktopActivityOverlayIsland(props: Readonly<{ policy: DesktopOverlayPo
                             initialFocusRef={expandedFocusTargetRef}
                             onFocusWithinChange={setExpandedFocusWithin}
                             onDismissKey={requestKeyboardDismiss}
-                            onOpenSession={(sessionId, serverId) => {
-                                emitInteraction(
-                                    createActivitySurfaceSessionTarget(sessionId, serverId),
-                                    withOptionalServerId({ sessionId }, serverId),
-                                );
-                                dispatch({ type: 'rest' });
-                            }}
+                            conversationHandlers={conversationHandlers}
+                            onOpenSession={(sessionId, serverId) => conversationHandlers.onOpen({ sessionId, serverId: serverId ?? null })}
                             onAction={performAction}
                         />
                     )}

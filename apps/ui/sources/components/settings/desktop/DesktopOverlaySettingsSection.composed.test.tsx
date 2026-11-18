@@ -59,7 +59,7 @@ describe('Notch declared settings composition', () => {
             const choices = () => screen.tree.findAllByType(SegmentedChoiceItem);
             expect(choices().map(row => row.props.testID)).toEqual([
                 'settings-desktop-overlay-dock', 'settings-desktop-overlay-idle',
-                'settings-desktop-overlay-visibility-mode', 'settings-desktop-bot-conversation-presentation',
+                'settings-desktop-overlay-visibility-mode', 'settings-desktop-notch-conversation-presentation',
             ]);
             const mode = () => choices().find(row => row.props.testID === 'settings-desktop-overlay-visibility-mode')!;
             await act(async () => { await mode().props.onChange('active_sessions'); });
@@ -79,15 +79,15 @@ describe('Notch declared settings composition', () => {
             expect(localWrites()).toHaveLength(1);
             await act(async () => { account.replaceSettings(settingsParse({ ...baseline, actionsSettingsV1: { v: 1,
                 approvalWaivedSurfaces: { 'settings.set': ['ui', 'agent'] } } })); });
-            await act(async () => { await choices().find(row => row.props.testID === 'settings-desktop-bot-conversation-presentation')!
+            await act(async () => { await choices().find(row => row.props.testID === 'settings-desktop-notch-conversation-presentation')!
                 .props.onChange('window'); });
-            expect(storage.getState().localSettings.desktopBotConversationPresentation).toBe('window');
+            expect(storage.getState().localSettings.desktopNotchConversationPresentation).toBe('window');
             expect(localWrites()).toHaveLength(2);
             const uiPolicy = resolveDesktopOverlayPolicy(storage.getState().localSettings);
             const executor = createDefaultActionExecutor();
             for (const value of ['overlay', 'window']) {
                 await act(async () => { expect(await executor.execute('settings.set', {
-                    anchor: 'desktop.botConversationPresentation', value,
+                    anchor: 'desktop.notchConversationPresentation', value,
                 }, { surface: 'agent', authority: 'account_automation', serverId: account.scope.serverId,
                     actionCaller: { kind: 'host' } })).toMatchObject({ ok: true }); });
             }

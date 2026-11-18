@@ -544,7 +544,7 @@ describe('DesktopActivityOverlayRuntime', () => {
             setScreenSharingPrivacyActive(true);
         });
         expect(syncDesktopActivityOverlayMock.mock.calls.at(-1)?.[0]).toMatchObject({ model: {
-            conversation: { sessionId: 'session-1', reply: { state: 'ready', text: 'Explicit conversation body' } },
+            conversation: { sessionId: 'session-1', reply: { state: 'ready', messages: [{ id: 'reply', role: 'agent', text: 'Explicit conversation body' }] } },
             expanded: { rows: [] }, faces: { faces: [] },
         } });
         expect(syncDesktopActivityOverlayMock.mock.calls.at(-1)?.[0]).toMatchObject({ visible: true });
@@ -575,7 +575,7 @@ describe('DesktopActivityOverlayRuntime', () => {
         });
         expect(notchPresentationRequests).toEqual(['pinned', 'pinned']);
         expect(syncDesktopActivityOverlayMock.mock.calls.at(-1)?.[0]).toMatchObject({ model: {
-            conversation: { ...target, accountId: 'account-server-1', reply: { state: 'ready', text: 'Pinned reply' }, refreshing: false },
+            conversation: { ...target, accountId: 'account-server-1', reply: { state: 'ready', messages: [{ id: 'reply', role: 'agent', text: 'Pinned reply' }] }, refreshing: false },
         } });
         expect(readMountedSessionRealtimeTranscriptConsumerSessionIds(target.serverId)).toEqual([target.sessionId]);
         await act(async () => { dispatchDesktopInteraction({ actionIdentifier: 'overlay-set-expanded',
@@ -621,7 +621,7 @@ describe('DesktopActivityOverlayRuntime', () => {
         expect(syncDesktopActivityOverlayMock).toHaveBeenCalled();
         for (const [payload] of syncDesktopActivityOverlayMock.mock.calls) {
             expect(payload).toMatchObject({ model: {
-                conversation: { sessionId: 'session-2', reply: { state: 'hidden', text: null } },
+                conversation: { sessionId: 'session-2', reply: { state: 'hidden', messages: [] } },
             } });
             const cards = (payload as DesktopActivityOverlaySyncPayload).model.expanded.cards ?? [];
             expect(cards.some(card => card.kind === 'permission_request' || card.kind === 'user_question')).toBe(false);

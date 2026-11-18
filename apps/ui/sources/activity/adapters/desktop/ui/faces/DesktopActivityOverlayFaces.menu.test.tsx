@@ -5,7 +5,6 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { WORKSPACE_OPEN_IN_WINDOW_ID } from '@/components/appShell/workspace/useWorkspaceOpenActions';
-import type { BotFaceSnapshot } from '../../presentation/notchBotTypes';
 
 // Native host acquisition is the real external boundary; role selection and the shared builder stay real.
 vi.hoisted(() => {
@@ -42,34 +41,22 @@ vi.mock(
     }).module,
 );
 
-const { NotchBotMenu } = await import('./DesktopActivityOverlayFaces');
+const { NotchConversationMenu } = await import('./DesktopActivityOverlayFaces');
 
 afterEach(() => {
   standardCleanup();
 });
 
-const face: BotFaceSnapshot = {
-  serverId: 'home',
-  accountId: 'account',
-  sessionId: 'bot-1',
-  face: { seed: 'bot-1' } as BotFaceSnapshot['face'],
-  name: 'Release captain',
-  activity: 'quiet',
-  currentLine: null,
-  meaningfulActivityAt: 0,
-  live: true,
-  agentId: null,
-  machineId: null,
-};
+const target = { serverId: 'home', sessionId: 'session-1' };
 
-describe('Notch Bot menu', () => {
+describe('Notch conversation menu', () => {
   it('takes its window item from the shared open builder and adds the overlay as its second presentation', async () => {
     const onOpenIn = vi.fn();
     const screen = await renderScreen(
-      <NotchBotMenu
-        face={face}
+      <NotchConversationMenu
+        target={target}
         handlers={{ onOpen: vi.fn(), onOpenIn }}
-        testID="face-menu"
+        testID="session-menu"
         trigger={() => <React.Fragment />}
       />,
     );
@@ -88,8 +75,8 @@ describe('Notch Bot menu', () => {
       menu().props.onSelect(ids[1]);
     });
     expect(onOpenIn.mock.calls).toEqual([
-      [face, 'window'],
-      [face, 'overlay'],
+      [target, 'window'],
+      [target, 'overlay'],
     ]);
   });
 });

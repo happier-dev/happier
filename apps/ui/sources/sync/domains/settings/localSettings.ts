@@ -36,6 +36,7 @@ export const localSettingsDefaults: LocalSettings = localSettingsDefaultsRecord;
 Object.freeze(localSettingsDefaults);
 
 export const RETIRED_DESKTOP_OVERLAY_SETTING_KEYS = [
+    'desktopBotConversationPresentation',
     'desktopOverlayPresentationMode',
     'desktopOverlayPlacementMode',
     'desktopOverlayAnchor',
@@ -177,6 +178,10 @@ function syncStringAliasDelta<T extends string>(
 function migrateLegacyDesktopOverlayParseInput(
     settings: LocalSettingsParseRecord,
 ): LocalSettingsParseRecord {
+    const legacyConversationPresentation = settings.desktopBotConversationPresentation;
+    if (settings.desktopNotchConversationPresentation === undefined && legacyConversationPresentation !== undefined) {
+        settings.desktopNotchConversationPresentation = legacyConversationPresentation;
+    }
     if (settings.desktopOverlayDock === undefined) {
         const anchor = settings.desktopOverlayAnchor;
         settings.desktopOverlayDock = settings.desktopOverlayPresentationMode === 'floating_overlay'

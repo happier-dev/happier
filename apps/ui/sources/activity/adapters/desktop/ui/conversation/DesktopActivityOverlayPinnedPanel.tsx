@@ -16,7 +16,7 @@ const NO_CARDS: NonNullable<
   DesktopActivityOverlayUiModel['expanded']['cards']
 > = [];
 
-/** The pinned Bot's own asks, from the cards the island already has (no second request reader). */
+/** The pinned Session's own asks, from the cards the island already has (no second request reader). */
 function selectConversationCards(
   listDetail: DesktopActivityOverlayUiModel['expanded'] | null,
   target: SessionAddress | null,
@@ -64,7 +64,7 @@ export function DesktopActivityOverlayPinnedPanel(
   );
   const { onDraftDirtyChange, onExtract } = props;
   const dirty = draft.text.length > 0;
-  // A draft that arrives with text (a Bot's saved draft) holds Esc like a typed one; leaving releases it.
+  // A draft that arrives with text (a saved Session draft) holds Esc like a typed one; leaving releases it.
   React.useEffect(() => {
     onDraftDirtyChange(dirty);
   }, [dirty, onDraftDirtyChange]);

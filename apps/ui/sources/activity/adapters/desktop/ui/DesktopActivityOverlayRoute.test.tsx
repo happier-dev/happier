@@ -67,6 +67,7 @@ vi.mock('@/text', async () => {
 });
 vi.mock('@/utils/platform/desktopHost', () => ({
     desktopHostKind: () => null,
+    useDesktopHostRoleAvailability: () => ({ kind: 'available' }),
     isDesktopHost: () => isDesktopHostMock(),
 }));
 // The OS preference is the environment boundary; everything under it stays real.
@@ -172,7 +173,7 @@ function createWindowState(
         model,
         policy: {
             enabled: true, visibilityMode: 'attention_only', alwaysOnTop: true, hoverExpandDelayMs: 500, dock: 'top', idle: 'tip',
-            botConversationPresentation: 'overlay', quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
+            notchConversationPresentation: 'overlay', quickReplyPhrases: ['Continue', 'OK', 'Explain', 'Retry'],
         },
         ...overrides,
     };
@@ -485,6 +486,21 @@ describe('DesktopActivityOverlayRoute', () => {
         expect(focus.focusedTestIds.at(-1)).toBe('desktop-activity-overlay-session-row-session-1');
     });
 
+    it.each(['overlay', 'window'] as const)('opens a plain Session with the notch conversation preference %s', async (where) => {
+        const state = createWindowState();
+        const screen = await renderRoute({ ...state, policy: { ...state.policy, notchConversationPresentation: where } });
+        await act(async () => { screen.pressByTestId('desktop-activity-overlay-collapsed'); });
+        await flushHookEffects();
+        emitDesktopActivityOverlayInteractionMock.mockClear();
+        await act(async () => { screen.pressByTestId('desktop-activity-overlay-session-row-session-1'); });
+        await flushHookEffects();
+        const calls = emitDesktopActivityOverlayInteractionMock.mock.calls.map(([call]) => call);
+        expect(calls.filter(call => call.actionIdentifier === 'session.open')).toEqual([
+            { actionIdentifier: 'session.open', data: { sessionId: 'session-1', serverId: 'server-1', presentation: where } },
+        ]);
+        expect(calls.some(call => call.actionIdentifier.startsWith('open-session:'))).toBe(false);
+    });
+
     describe('the island material', () => {
         const flat = (style: unknown): Record<string, unknown> => Array.isArray(style)
             ? Object.assign({}, ...style.map(flat)) : (style as Record<string, unknown>) ?? {};
@@ -710,7 +726,7 @@ describe('DesktopActivityOverlayRoute', () => {
                 ...base.model,
                 faces: { faces: [flake, release], overflowCount: 0 },
                 conversation: pinned ? { serverId: pinned.serverId, accountId: 'account-1', sessionId: pinned.sessionId,
-                    reply: { state: 'ready', text: 'sync/reconnect.test.ts failed 3 of 40 runs.' }, refreshing: false, reachable: true } : null,
+                    reply: { state: 'ready', messages: [{ id: 'reply', role: 'agent', text: 'sync/reconnect.test.ts failed 3 of 40 runs.' }] }, refreshing: false, reachable: true } : null,
             } as unknown as OverlayModel;
             return { ...base, model, policy: { ...base.policy, ...policy } };
         }
@@ -751,8 +767,8 @@ describe('DesktopActivityOverlayRoute', () => {
             expect(emitted('overlay-set-expanded')).toContainEqual({ expanded: false, target: null });
         });
 
-        it('opens a Bot in its window when Open Bot conversations says so, and offers both places on right-click', async () => {
-            const screen = await renderRoute(withBots({ botConversationPresentation: 'window' }, null));
+        it('opens a Bot in its window when Open in Happier is selected', async () => {
+            const screen = await renderRoute(withBots({ notchConversationPresentation: 'window' }, null));
             await act(async () => { screen.pressByTestId('desktop-activity-overlay-face-bot-release'); });
             await flushHookEffects();
             expect(emitted('session.open')).toEqual([{ sessionId: 'bot-release', serverId: 'server-1', presentation: 'window' }]);
@@ -840,7 +856,7 @@ describe('DesktopActivityOverlayRoute', () => {
             const conversation = (state.model as unknown as { conversation: Record<string, unknown> }).conversation;
             await act(async () => {
                 pushState?.({ ...state, model: { ...state.model,
-                    conversation: { ...conversation, reply: { state: 'ready', text: 'Quarantined; filing the wait fix next.' } } } as typeof state.model });
+                    conversation: { ...conversation, reply: { state: 'ready', messages: [{ id: 'reply', role: 'agent', text: 'Quarantined; filing the wait fix next.' }] } } } as typeof state.model });
             });
             await flushHookEffects();
             expect(screen.findByTestId('desktop-activity-overlay-conversation-reply')?.props.children).toBe('Quarantined; filing the wait fix next.');

@@ -27,6 +27,17 @@ describe('localSettingsParse', () => {
         expect(localSettingsParse({ ...legacy, desktopOverlayDock: 'right' }).desktopOverlayDock).toBe('right');
     });
 
+    it.each(['overlay', 'window'] as const)('migrates the old Bot conversation choice %s', (value) => {
+        const migrated = localSettingsParse({ desktopBotConversationPresentation: value });
+        expect(migrated).toMatchObject({ desktopNotchConversationPresentation: value });
+        expect(migrated).not.toHaveProperty('desktopBotConversationPresentation');
+        expect(localSettingsParse(migrated)).toMatchObject({ desktopNotchConversationPresentation: value });
+        expect(localSettingsParse({
+            desktopBotConversationPresentation: value,
+            desktopNotchConversationPresentation: 'overlay',
+        })).toMatchObject({ desktopNotchConversationPresentation: 'overlay' });
+    });
+
     it('retires legacy placement preferences from parsed and newly applied settings', () => {
         const retired = {
             desktopOverlayPresentationMode: 'floating_overlay', desktopOverlayPlacementMode: 'custom',
@@ -37,14 +48,14 @@ describe('localSettingsParse', () => {
             for (const key of Object.keys(retired)) expect(settings).not.toHaveProperty(key);
         }
     });
-    it('restores local Bot window choices and defaults older or malformed records without losing theme', () => {
+    it('restores notch conversation choices and defaults older or malformed records without losing theme', () => {
         expect(localSettingsParse({ themePreference: 'dark' })).toMatchObject({
-            desktopBotConversationPresentation: 'overlay', desktopWindowBotRailEnabled: true, themePreference: 'dark',
+            desktopNotchConversationPresentation: 'overlay', desktopWindowBotRailEnabled: true, themePreference: 'dark',
         });
-        const saved = localSettingsParse({ desktopBotConversationPresentation: 'window', desktopWindowBotRailEnabled: false });
-        expect(localSettingsParse(saved)).toMatchObject({ desktopBotConversationPresentation: 'window', desktopWindowBotRailEnabled: false });
-        expect(localSettingsParse({ desktopBotConversationPresentation: 'future', desktopWindowBotRailEnabled: 'off', themePreference: 'dark' }))
-            .toMatchObject({ desktopBotConversationPresentation: 'overlay', desktopWindowBotRailEnabled: true, themePreference: 'dark' });
+        const saved = localSettingsParse({ desktopNotchConversationPresentation: 'window', desktopWindowBotRailEnabled: false });
+        expect(localSettingsParse(saved)).toMatchObject({ desktopNotchConversationPresentation: 'window', desktopWindowBotRailEnabled: false });
+        expect(localSettingsParse({ desktopNotchConversationPresentation: 'future', desktopWindowBotRailEnabled: 'off', themePreference: 'dark' }))
+            .toMatchObject({ desktopNotchConversationPresentation: 'overlay', desktopWindowBotRailEnabled: true, themePreference: 'dark' });
     });
     it('retains a deliberate named display preference when that display is disconnected', () => {
         const saved = localSettingsParse({ desktopOverlayDisplayMode: 'named:edid-610-41056-12345678' });
