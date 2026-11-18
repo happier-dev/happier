@@ -160,11 +160,14 @@ type ModelSelection = Extract<ExecutableParticipantSelectionV1, { kind: 'model' 
  * Shared fields only; the host retains its existing admission controller and typed result adapter.
  * Lab dpRev: one Who list of what exists (Sessions, Bots, People, each naming its type); agents the
  * person adds lead it, checked, their recipe as the row's line with Change. "Add an agent" is the last
- * row and "+ Add agent" sits at the label's end; both open the same composer chips under the list.
+ * row and "+ Add agent" sits at the label's end (owner ruling: both stay); both open the same composer chips
+ * under the list.
  * Change opens that recipe there too and sets the question aside until it closes.
  */
-export function ContextualStartComposerBody({ model, whoHint, question, whoContent, whoAccessory, details }: Readonly<{
+export function ContextualStartComposerBody({ model, whoLabel, whoHint, question, whoContent, whoAccessory, details }: Readonly<{
     model: ContextualStartComposerModel;
+    /** The host's word for the list ("Who reviews" on a Reviews start); "Who answers" otherwise. */
+    whoLabel?: string;
     /** A quiet note at the Who label's trailing edge ("Pick two or more to run Fresh opinions"). */
     whoHint?: string | null;
     /** A host's rich draft editor occupies the same question position as the plain text field. */
@@ -345,7 +348,7 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
     return <View testID="contextual-start-composer" style={styles.root}>
         <View>
             <View style={[styles.groupRow, styles.hang]}>
-                <CollectionListGroupLabel title={t('agentStart.chips.engineTitle')} presentation="menu" />
+                <CollectionListGroupLabel title={whoLabel ?? t('agentStart.chips.engineTitle')} presentation="menu" />
                 {whoHint ? <Text style={styles.groupNote} numberOfLines={1}>{whoHint}</Text> : null}
                 {hasChosen ? <TextLinkButton testID={`contextual-start-${choosingWho ? 'done' : 'change'}-who`}
                     tone="strong" size="meta" label={t(choosingWho ? 'common.done' : 'common.change')}
@@ -358,14 +361,14 @@ export function ContextualStartComposerBody({ model, whoHint, question, whoConte
                     disabled={busy || openRecipe !== null} onPress={startAdd} /> : null}
             </View>
             <View style={styles.hang}>
-                    inputAccessoryRow={choosingWho && whoFilters.length > 0
-                        ? <SelectionListFilterChips filters={whoFilters} placement="row" testID="contextual-start-who-filters" /> : undefined}
                 <SelectionList testID="contextual-start-who" rootStep={choosingWho ? choosingStep : chosenStep}
                     inputValue={choosingWho ? source.search?.value : undefined}
                     onChangeInputValue={choosingWho ? source.search?.onChange : undefined}
+                    inputAccessoryRow={choosingWho && whoFilters.length > 0
+                        ? <SelectionListFilterChips filters={whoFilters} placement="row" testID="contextual-start-who-filters" /> : undefined}
                     selection={{ kind: 'multiple', selectedIds: display.selectedIds }}
                     onSelect={() => undefined} onRequestClose={() => undefined}
-                    listAccessibilityLabel={t('agentStart.chips.engineTitle')}
+                    listAccessibilityLabel={whoLabel ?? t('agentStart.chips.engineTitle')}
                     optionsHostInlineControls selectionMark="check" surface="none" disableTransitions
                 />
             </View>

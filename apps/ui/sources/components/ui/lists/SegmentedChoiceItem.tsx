@@ -64,7 +64,8 @@ export function SegmentedChoiceItem<T extends string>(props: SegmentedChoiceItem
         disabled: segment.disabled,
         unavailableReason: segment.unavailableReason,
     })), [options, row.segments]);
-    const title = typeof itemProps.title === 'string' ? itemProps.title : undefined;
+    // A composed title (a label node) names the group through the row's accessible name.
+    const title = typeof itemProps.title === 'string' ? itemProps.title : itemProps.accessibilityLabel;
     const description = row.description ?? itemProps.subtitle;
     const unavailableReasons = row.unavailableReasons;
     const subtitle = unavailableReasons.length === 0

@@ -67,6 +67,38 @@ export type ReviewWalkthroughTranslations = {
         walkMeThroughAfter: string;
         findingsOnlyChoice: string;
     };
+    start: {
+        whoReviews: string;
+        step: (params: Readonly<{ n: number; title: string }>) => string;
+        kindReview: string;
+        kindVerify: string;
+        checksFindingsOf: (params: Readonly<{ n: number }>) => string;
+        reviewsSameChanges: string;
+        stepNew: string;
+        stepOptions: (params: Readonly<{ n: number }>) => string;
+        removeStep: string;
+        addStep: string;
+        addStepLine: (params: Readonly<{ n: number }>) => string;
+        focus: string;
+        focusPlaceholder: string;
+        focusVerifyPlaceholder: string;
+        moreReviewers: (params: Count) => string;
+        noReviewers: string;
+        then: string;
+        reportOnly: string;
+        fixInSession: string;
+        walkMeThrough: string;
+        walkMeThroughLine: string;
+        advanced: string;
+        advancedContents: string;
+        advancedContentsWithCost: string;
+        keysAndAccounts: string;
+        costEstimate: string;
+        acceptEstimate: (params: Readonly<{ engine: string; estimate: string }>) => string;
+        billedTo: (params: Readonly<{ engine: string }>) => string;
+        includeTranscript: string;
+        includeTranscriptLine: string;
+    };
     generated: {
         continues: (params: Readonly<{ model: string }>) => string;
         seeded: (params: Readonly<{ model: string }>) => string;
@@ -163,6 +195,38 @@ export const en: ReviewWalkthroughTranslations = {
         footerHandover: ({ reviewer, narrator }) => `${reviewer} reviews · ${narrator} writes`,
         walkMeThroughAfter: 'Walk me through after',
         findingsOnlyChoice: 'Findings only',
+    },
+    start: {
+        whoReviews: 'Who reviews',
+        step: ({ n, title }) => `Step ${n} · ${title}`,
+        kindReview: 'Review the changes',
+        kindVerify: 'Double-check',
+        checksFindingsOf: ({ n }) => `Checks the findings from step ${n}`,
+        reviewsSameChanges: 'Reviews the same changes',
+        stepNew: 'New',
+        stepOptions: ({ n }) => `Step ${n} options`,
+        removeStep: 'Remove this step',
+        addStep: 'Add a step',
+        addStepLine: ({ n }) => `Runs after step ${n}, on its findings or the same changes`,
+        focus: 'Focus',
+        focusPlaceholder: 'Anything the reviewers should look at first',
+        focusVerifyPlaceholder: 'How to check them (optional)',
+        moreReviewers: ({ count }) => `+${count}`,
+        noReviewers: 'No reviewers yet',
+        then: 'Then',
+        reportOnly: 'Report only',
+        fixInSession: 'Fix in this session',
+        walkMeThrough: 'Walk me through it',
+        walkMeThroughLine: 'A guided tour of the changes, in reading order.',
+        advanced: 'Advanced',
+        advancedContents: 'Narrator, keys and accounts',
+        advancedContentsWithCost: 'Narrator, keys and accounts, cost estimate',
+        keysAndAccounts: 'Keys and accounts',
+        costEstimate: 'Cost estimate',
+        acceptEstimate: ({ engine, estimate }) => `Accept ${engine}’s ${estimate} estimate`,
+        billedTo: ({ engine }) => `Billed to your ${engine} account, not to Happier.`,
+        includeTranscript: 'Include the session’s transcript',
+        includeTranscriptLine: 'Review engines in this step read the conversation as well as the changes.',
     },
     generated: {
         continues: ({ model }) => `${model} · continues the review`,
