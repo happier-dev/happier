@@ -236,7 +236,7 @@ describe('native Voice permission input', () => {
     { label: 'Codex offered Yes after carrier settlement', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true },
     { label: 'Codex offered No', enabled: true, answer: "NO DON'T", approved: false, end: false, replaceRequest: false, delegated: true, nativeOffer: true },
     { label: 'RUN107 No with Stop as the only negative option', enabled: true, answer: "NO DON'T", approved: false, end: false, replaceRequest: false, delegated: true, nativeOffer: true, nativeStop: true },
-    { label: 'RUN107 No after carrier settlement', enabled: true, answer: "NO DON'T", approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, nativeStop: true },
+    { label: 'R1117q2 spoken No retains cancellation for the next question', enabled: true, answer: 'NO I', approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, nativeStop: true },
     { label: 'RUN111 command refusal', enabled: true, answer: 'NO DO NOT ALLOW THE COMMAND', approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, nativeStop: true, run111: true },
     { label: 'RUN111 short refusal transcript', enabled: true, answer: 'NO BUT', approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, nativeStop: true, run111: true },
     { label: 'RUN114 ordinary question while a request remains pending', enabled: true, answer: 'WHAT IS THE CAPITAL OF FRANCE', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, run111: true, ordinaryQuestion: true },
@@ -394,13 +394,16 @@ describe('native Voice permission input', () => {
         const nextRecordingUri = 'file:///tmp/native-voice-followup.m4a';
         new File(nextRecordingUri).write(new Uint8Array([1, 2, 3]));
         setRecorderUri(nextRecordingUri);
-        const nextQuestion = nativeStop ? 'What is two plus two?' : 'Continue the conversation.';
+        const nextQuestion = nativeStop ? 'Tell me what you cancelled and whether you created any files.' : 'Continue the conversation.';
         const speechBeforeNextQuestion = expoSpeechSpeak.mock.calls.length;
         localVoiceSpeechTranscription.mockResolvedValueOnce(nextQuestion);
         expect(await executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} }))
           .toMatchObject({ status: 'completed' });
         await expect(localVoiceSpeechTranscription.mock.results.at(-1)?.value).resolves.toBe(nextQuestion);
         if (nativeStop) {
+          const nextTurn = sessionRpcWithServerScope.mock.calls.filter(([request]) =>
+            request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2).at(-1)?.[0];
+          expect(nextTurn?.payload).toMatchObject({ message: expect.stringContaining('"decision":"abort"') });
           expect(expoSpeechSpeak.mock.calls.slice(speechBeforeNextQuestion).map(([text]) => text))
             .toContain('Daemon reply');
           expect(storage.getState().sessions[requestSessionId]?.agentState?.requests?.['native-write']).toBeUndefined();

@@ -26,7 +26,7 @@ import { createVoiceWelcomePolicy } from './voiceWelcomePolicy';
 
 export type VoiceExecutionTransport = Readonly<{
     readVoiceAgentHandle: (sessionId: string) => VoiceAgentHandle | undefined;
-    /** Explicit context scoped to the current Voice attempt (QA/manual injection only). */
+    /** Explicit host context scoped to the current Voice attempt. */
     appendAttemptContextUpdate: (sessionId: string, update: string) => void;
     appendAutomaticUiContextUpdate: (sessionId: string, update: string) => void;
     commitUserTranscript: (sessionId: string, text: string, localId: string) => Promise<void>;

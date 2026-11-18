@@ -955,6 +955,10 @@ function startNativePermissionInput(admission: LocalVoiceCaptureAdmission, captu
       const stopped = result.ok && result.decision === 'abort';
       const acknowledgement = stopped ? t('voice.readiness.permissionCommandStopped')
         : t(result.ok && result.decision === 'approved' ? 'approvals.status.approved' : 'approvals.status.rejected');
+      if (result.ok) {
+        voiceAgentSessions.appendAttemptContextUpdate(sessionId,
+          `Native permission response: ${JSON.stringify({ decision: result.decision })}. ${acknowledgement}`);
+      }
       const pendingTurn = activeTurnAbortSessionId === sessionId ? inFlight : null;
       if (pendingTurn && !failure) {
         // A settled permission response must not wait for the Agent's turn.
