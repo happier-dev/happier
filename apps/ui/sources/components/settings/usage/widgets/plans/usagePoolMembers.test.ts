@@ -1,13 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import { ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 
-import { readUsagePoolMembers } from './UsagePoolOrder';
+import { readUsagePoolMembers, readUsagePoolFirstResetAtMs } from './UsagePoolOrder';
 import type { UsagePlanPool } from './usagePlansModel';
 
 const service = { pluginId: 'dev.happier.codex', localId: 'codex' };
 const pool: UsagePlanPool = { key: 'pool', service, groupId: 'pool', accountKeys: [] };
 
 describe('readUsagePoolMembers', () => {
+    it('skips the exhausted persisted account and exposes the first witnessed reset of a spent pool', () => {
+        const retryAtMs = 300;
+        const response = ConnectedServicePoolSelectionGetResponseV1Schema.parse({
+            group: { service, groupId: pool.groupId }, observedAtMs: 100,
+            activeAccountRef: { service, accountId: 'current' }, activeSince: null,
+            selection: {
+                selected: null, reason: 'no_eligible_members', excluded: [
+                    { profileId: 'current', reason: 'quota_exhausted', retryAtMs: 500 },
+                    { profileId: 'backup', reason: 'quota_exhausted', retryAtMs },
+                ],
+                decisionTrace: { activeProfileId: 'current', reason: 'no_eligible_members', strategy: 'priority',
+                    selectionBasis: 'no_eligible_members', sticky: false, orderedEligibleCandidates: [], candidates: [] },
+            },
+        });
+        if ('status' in response) throw new Error('Expected a selection read');
+        expect(readUsagePoolMembers(pool, [], response.selection, response.activeAccountRef).map(member =>
+            [member.accountId, member.rank, member.selected, member.exclusion?.reason],
+        )).toEqual([['current', null, false, 'quota_exhausted'], ['backup', null, false, 'quota_exhausted']]);
+        expect(readUsagePoolFirstResetAtMs(response.selection, 100)).toBe(retryAtMs);
+        expect(readUsagePoolFirstResetAtMs(response.selection, 500)).toBeNull();
+    });
     it.each([
         { activeAccountId: null, inUse: [] },
         { activeAccountId: 'current', inUse: ['current'] },

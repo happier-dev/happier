@@ -59,7 +59,7 @@ export type UsagePoolMember = Readonly<{
   account: UsagePlanAccount | null;
   /** Place in the selector's eligible order, or null when it is not eligible. */
   rank: number | null;
-  /** The persisted active account, independent of the selector's proposed candidate. */
+  /** The persisted active account when the selector still admits it. */
   selected: boolean;
   candidate: Trace['orderedEligibleCandidates'][number] | null;
   evidence: Trace['candidates'][number] | null;
@@ -93,20 +93,23 @@ export function readUsagePoolMembers(
   ].filter(
     (id, index, all) => !ordered.includes(id) && all.indexOf(id) === index,
   );
-  return [...ordered, ...rest].map((accountId) => ({
-    accountId,
-    account: accountOf(accountId),
-    rank: ordered.includes(accountId) ? ordered.indexOf(accountId) + 1 : null,
-    selected: accountId === selectedId,
-    candidate:
-      trace.orderedEligibleCandidates.find(
-        (candidate) => candidate.profileId === accountId,
-      ) ?? null,
-    evidence:
-      trace.candidates.find((entry) => entry.profileId === accountId) ?? null,
-    exclusion:
-      selection.excluded.find((entry) => entry.profileId === accountId) ?? null,
-  }));
+  return [...ordered, ...rest].map((accountId, index) => {
+    const exclusion = selection.excluded.find((entry) => entry.profileId === accountId) ?? null;
+    return { accountId, account: accountOf(accountId), rank: index < ordered.length ? index + 1 : null,
+      selected: accountId === selectedId && exclusion === null,
+      candidate: trace.orderedEligibleCandidates[index] ?? null,
+      evidence: trace.candidates.find((entry) => entry.profileId === accountId) ?? null, exclusion };
+  });
+}
+
+/** Earliest witnessed retry when the selector says the pool is blocked by exhaustion. */
+export function readUsagePoolFirstResetAtMs(selection: Selection, nowMs: number): number | null {
+  if (selection.reason !== 'no_eligible_members' || selection.excluded.some(entry => entry.reason !== 'quota_exhausted')) return null;
+  let first: number | null = null;
+  for (const { retryAtMs } of selection.excluded) {
+    if (retryAtMs != null && retryAtMs > nowMs) first = Math.min(first ?? retryAtMs, retryAtMs);
+  }
+  return first;
 }
 
 const BASIS_KEYS = {
@@ -131,7 +134,7 @@ function memberReason(
   nowMs: number,
   nextRank: number | null,
 ): string {
-  if (member.exclusion && !member.selected) {
+  if (member.exclusion) {
     return [
       planExclusionText(
         member.exclusion.reason,

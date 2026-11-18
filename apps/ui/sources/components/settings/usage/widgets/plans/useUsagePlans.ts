@@ -57,6 +57,7 @@ const NO_GROUPS: readonly QualifiedConnectedAccountGroupV4[] = [];
  */
 export function useUsagePlans(slice: UsageQueryResultSlice, refresh: UsageWidgetBodyModel['refresh']): Readonly<{
   projection: UsagePlansProjection;
+  selectionPools: UsagePlansProjection['pools'];
   nameOf(account: UsagePlanAccount): UsagePlanAccountName;
   inUse: ReadonlySet<string>;
   refresh: UsageWidgetBodyModel['refresh'];
@@ -157,6 +158,7 @@ export function useUsagePlans(slice: UsageQueryResultSlice, refresh: UsageWidget
   );
   return {
     projection,
+    selectionPools: baseProjection.pools,
     nameOf,
     inUse,
     refresh,

@@ -47,7 +47,7 @@ import {
   usePlanText,
   UsagePlanDisclosure,
 } from './plans/UsagePlanParts';
-import { UsagePoolQueue, UsagePoolSteps } from './plans/UsagePoolOrder';
+import { readUsagePoolFirstResetAtMs, readUsagePoolMembers, UsagePoolQueue, UsagePoolSteps } from './plans/UsagePoolOrder';
 import { formatMoment } from '@/utils/datetime/formatMoment';
 
 /**
@@ -119,44 +119,24 @@ function buildRuns(
       // A member that is not drawn (never read) is said once in the collapsed line, not as a segment.
       const members = pool.accountKeys.flatMap((key) => byKey.get(key) ?? []);
       if (members.length === 0) continue;
-      let cells: Cell[] = members.map((member) => ({
+      const unreadCell = (member: UsagePlanAccount): Cell => ({
         account: member,
         rank: null,
         selected: false,
         excluded: null,
-      }));
+      });
+      let cells = members.map(unreadCell);
       if (
         selection &&
         typeof selection === 'object' &&
         !('status' in selection)
       ) {
-        const ordered =
-          selection.selection.decisionTrace.orderedEligibleCandidates.map(
-            (entry) => entry.profileId,
-          );
-        const selectedId = selection.selection.selected?.profileId ?? null;
-        const excluded = new Map(
-          selection.selection.excluded.map((entry) => [
-            entry.profileId,
-            planExclusionText(entry.reason, entry.retryAtMs ?? null, nowMs),
-          ]),
-        );
-        const position = (accountId: string) => {
-          const index = ordered.indexOf(accountId);
-          return index < 0 ? Number.POSITIVE_INFINITY : index;
-        };
-        cells = [...members]
-          .sort(
-            (left, right) => position(left.accountId) - position(right.accountId),
-          )
-          .map((member) => ({
-            account: member,
-            rank: ordered.includes(member.accountId)
-              ? ordered.indexOf(member.accountId) + 1
-              : null,
-            selected: member.accountId === selectedId,
-            excluded: excluded.get(member.accountId) ?? null,
-          }));
+        const ordered = readUsagePoolMembers(pool, members, selection.selection, selection.activeAccountRef);
+        cells = ordered.flatMap(member => member.account ? [{ account: member.account, rank: member.rank,
+          selected: member.selected, excluded: member.exclusion
+            ? planExclusionText(member.exclusion.reason, member.exclusion.retryAtMs ?? null, nowMs) : null }] : []);
+        const traced = new Set(ordered.map(member => member.accountId));
+        cells.push(...members.filter(member => !traced.has(member.accountId)).map(unreadCell));
       }
       emitted.add(pool.key);
       runs.push({ pool, cells });
@@ -165,29 +145,21 @@ function buildRuns(
   return runs;
 }
 
-/**
- * The account the next session will use, as the selector has decided it: its current pick in the pools' order, else
- * the only drawn account, else the selector's first eligible member. `null` when the selector has not decided.
- */
+/** Limits follows a selection, or the single available account when no pool governs it. */
 function readNextLimitsAccount(
+  pools: readonly UsagePlanPool[],
   selections: ReadonlyMap<string, UsagePoolSelectionState>,
-  drawn: readonly UsagePlanAccount[],
+  accounts: readonly UsagePlanAccount[],
 ): UsagePlanAccount | null {
-  const decided = [...selections.entries()].flatMap(([poolKey, state]) =>
-    typeof state === 'object' && !('status' in state) ? [{ poolKey, selection: state.selection }] : []);
-  const member = (poolKey: string, profileId: string | undefined) => profileId === undefined ? null
-    : drawn.find((account) => account.accountId === profileId
-      && poolKey.startsWith(`${account.service.pluginId}/${account.service.localId}:`)) ?? null;
-  for (const { poolKey, selection } of decided) {
-    const picked = member(poolKey, selection.selected?.profileId);
+  for (const pool of pools) {
+    const state = selections.get(pool.key);
+    if (!state || typeof state === 'string' || 'status' in state || !state.selection.selected) continue;
+    const { profileId } = state.selection.selected;
+    const picked = accounts.find(account => pool.accountKeys.includes(account.key) && account.accountId === profileId);
     if (picked) return picked;
   }
-  if (drawn.length === 1) return drawn[0]!;
-  for (const { poolKey, selection } of decided) {
-    const first = member(poolKey, selection.decisionTrace.orderedEligibleCandidates[0]?.profileId);
-    if (first) return first;
-  }
-  return null;
+  const solo = accounts.length === 1 ? accounts[0] : undefined;
+  return solo && !pools.some(pool => pool.accountKeys.includes(solo.key)) && (solo.headline?.remainingFraction ?? 0) > 0 ? solo : null;
 }
 
 /** A run's identity as a list key: an account can belong to several pools, so the account's own key alone repeats across runs. */
@@ -203,7 +175,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   const tile = presentation?.size === 'small';
   const text = usePlanText();
   const plans = useUsagePlans(props.slice, props.model.refresh);
-  const { projection, nameOf, nowMs } = plans;
+  const { projection, selectionPools, nameOf, nowMs } = plans;
   const selections = useUsagePoolSelections(props.slice);
   const router = useRouter();
   const pooled = POOLED_SIZES.has(presentation?.size ?? '');
@@ -238,13 +210,18 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       ),
     [projection.accounts, nameOf],
   );
-  // The headline is the account the next session will use (owner 2026-11-11), at every size: the selector's current
-  // pick, else the only account, else the selector's first eligible one. Without any of these the tightest account
-  // stands in, said as the tightest. At full width every plan's cell still follows it for comparison.
-  const next = readNextLimitsAccount(selections, drawn);
+  const next = readNextLimitsAccount(selectionPools, selections, projection.accounts);
+  const selectedResets = selectionPools.map(pool => {
+    const state = selections.get(pool.key);
+    return state && typeof state === 'object' && !('status' in state) && state.memberStatus === 'all_excluded'
+      ? readUsagePoolFirstResetAtMs(state.selection, nowMs) : null;
+  });
+  const firstPoolReset = selectedResets.length > 0 && selectedResets.every(time => time !== null)
+    && projection.accounts.every(account => selectionPools.some(pool => pool.accountKeys.includes(account.key)))
+    ? Math.min(...selectedResets) : null;
   // Until the selector answers, which account leads is not known: the headline's room is held and no caption is said,
   // so the tightest standing in never turns into the next account after arrival (acceptance 11-13 #2).
-  const deciding = next === null && drawn.length > 1 && [...selections.values()].some(state => state === 'loading');
+  const deciding = next === null && [...selections.values()].some(state => state === 'loading');
   // Beside other widgets the headline account is one figure and one meter and the rest one line: the next account
   // always, the tightest standing in when the pooled bar has no room for a label per segment. Listing them instead
   // grew the column ~240 px past the Daily chart beside it (R6 N12); their figures are Plans' to compare.
@@ -313,6 +290,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
     : next !== null && (pooled || !lone) ? t('usage.board.plans.limitsNextUnit', { name: tightestName.title })
     : lone ? t('usage.board.plans.capacityLoneUnit')
     : t('usage.board.plans.capacityTightestUnit', { name: tightestName.title });
+  const shownReset = firstPoolReset ?? tightest?.window.resetAtMs ?? null;
   // Equal cells while they fit; a narrow frame (a phone) lists them a row each rather than shrinking them.
   const listed = !pooled && width !== null && width / Math.max(1, cellCount) < CELL_MIN_WIDTH_PX;
   const renderCells = (run: Run) => run.cells.map((cell) => (
@@ -354,9 +332,9 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
           </View>
           <Text style={[styles.subline, text.detail]} testID={provisionalReading ? `${props.testID}.reading` : undefined}>
             {[
-              tightest.window.resetAtMs !== null
+              shownReset !== null
                 ? t('usage.board.plans.capacityResets', {
-                    time: formatMoment(tightest.window.resetAtMs, nowMs),
+                    time: formatMoment(shownReset, nowMs),
                   })
                 : null,
               provisionalReading
