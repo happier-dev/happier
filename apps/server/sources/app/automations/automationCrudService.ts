@@ -4403,7 +4403,8 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
         } else {
             reachesOthers = await resolveAutomationActionReachInTx(params.tx, { accountId: params.accountId,
                 authentication: params.authentication,
-                definition: { mode: 'e2ee', claimedReachesOthers: structural.reachesOthers } });
+                definition: { mode: 'e2ee', subjectKind: structural.subjectKind, subjectKey: structural.subjectKey,
+                    claimedReachesOthers: structural.reachesOthers } });
         }
         return { isEvent: false, data: { ...common, kind: 'action',
             actionId: structural.actionIds.length === 1 ? structural.actionIds[0] : null,
@@ -4921,7 +4922,7 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
             ? { sourceTriggerWhere: { automationId: params.input.automationId },
                 automationDefinitionWrite: { id: params.input.automationId, accountId: params.accountId,
                     workflowDefinitionId: params.input.workflowDefinitionId, scopeSessionId: params.input.scopeSessionId,
-                    executionRecipe: params.input.executionRecipe } } : {}),
+                    executionRecipe: params.input.executionRecipe, triggers: triggerInputs.map(item => item.trigger) } } : {}),
         ...requestedLifecycleSourceScope(triggerInputs.map(item => item.trigger), params.input.scopeSessionId),
         machineIds: (params.input.assignments ?? []).map(assignment => assignment.machineId),
     });
@@ -5638,7 +5639,8 @@ export async function reconcileAutomationDefinition(params: Readonly<{
             ...requestedLifecycleSourceScope(params.input.triggers.map(item => item.trigger), params.input.scopeSessionId),
             automationDefinitionWrite: { id: params.automationId, accountId: params.accountId,
                 workflowDefinitionId: params.input.workflowDefinitionId, scopeSessionId: params.input.scopeSessionId,
-                executionRecipe: params.input.executionRecipe },
+                executionRecipe: params.input.executionRecipe,
+                triggers: params.input.triggers.flatMap(item => item.trigger ? [item.trigger] : []) },
             machineIds: params.input.assignments.map(assignment => assignment.machineId) });
         const accountFence = await acquireAccountEncryptionTransitionFenceInTx(
             tx,
@@ -5912,7 +5914,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                         data.reachesOthers = await resolveAutomationActionReachInTx(tx, { accountId: params.accountId,
                             authentication: params.authentication, definition: actionDefinition
                                 ? { mode: 'plain', subject: actionDefinition.subject }
-                                : { mode: 'e2ee', claimedReachesOthers: trigger.reachesOthers } });
+                                : { mode: 'e2ee', subjectKind: trigger.subjectKind, subjectKey: trigger.subjectKey } });
                     }
                     const binding = readAutomationTriggerDefinitionBinding({
                         automationId: existing.id,
@@ -6235,7 +6237,7 @@ export async function updateAutomationTrigger(params: Readonly<{
                     data.reachesOthers = await resolveAutomationActionReachInTx(tx, { accountId: params.accountId,
                         authentication: params.authentication, definition: actionDefinition
                             ? { mode: 'plain', subject: actionDefinition.subject }
-                            : { mode: 'e2ee', claimedReachesOthers: existing.reachesOthers } });
+                            : { mode: 'e2ee', subjectKind: existing.subjectKind, subjectKey: existing.subjectKey } });
                 }
                 if (accountCurrentness.mode === "e2ee") {
                     if (!params.triggerDefinitionEnvelope) {
