@@ -134,7 +134,8 @@ export async function loadUsageEventsForQuery(tx: Tx, accountId: string,
     for (let index = 0; index < dayPartitions.length; index++) {
         const selected = selectedDays?.slice(index * daysPerPartition, (index + 1) * daysPerPartition);
         if (postgres) {
-            rows.push(...await tx.$queryRaw<UsageQueryEvent[]>(usageEventReadSql(accountId, endMs, usageEventSelect, eventIds, selected)));
+            const page = await tx.$queryRaw<UsageQueryEvent[]>(usageEventReadSql(accountId, endMs, usageEventSelect, eventIds, selected));
+            for (const row of page) rows.push(row);
             reads++;
             continue;
         }
@@ -144,8 +145,9 @@ export async function loadUsageEventsForQuery(tx: Tx, accountId: string,
             values: eventIds, bindingsPerValue: 1, fixedBindings: fixedBindings + 2 * (selected?.length ?? 0),
         });
         for (const ids of idPartitions) {
-            rows.push(...await tx.usageEvent.findMany({ where: { ...where, ...(ids === undefined ? {} : { id: { in: [...ids] } }) },
-                orderBy: { observedAt: 'asc' }, select: usageEventSelect }));
+            const page = await tx.usageEvent.findMany({ where: { ...where, ...(ids === undefined ? {} : { id: { in: [...ids] } }) },
+                orderBy: { observedAt: 'asc' }, select: usageEventSelect });
+            for (const row of page) rows.push(row);
             reads++;
         }
     }
