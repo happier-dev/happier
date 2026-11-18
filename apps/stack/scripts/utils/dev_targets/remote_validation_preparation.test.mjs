@@ -1457,3 +1457,32 @@ test('remote validation preparation rejects paths outside the synchronized repos
     /inside the synchronized repository/i,
   );
 });
+
+// TRIAGE-JOURNEY-E2E 2026-11-18: a packages/tests E2E imports UI source through
+// the UI production hooks, so its replica needs the generated atmosphere core
+// (backdropWorkletCore.generated) just like an apps/ui test.
+test('a component whose Vitest configs load UI source prepares the UI source assets', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-ui-assets-consumer-' });
+  const native = await installWorkspaceAdmissionProcessFixture(t, fixture.root);
+  const generator = fixture.path('apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs');
+  const observed = fixture.path('atmosphere-consumer.log');
+  mkdirSync(join(generator, '..'), { recursive: true });
+  writeFileSync(generator, `import { appendFileSync } from 'node:fs';
+export async function buildAtmosphereRenderers(options) { appendFileSync(${JSON.stringify(observed)}, JSON.stringify(options) + '\\n'); }
+`);
+  mkdirSync(fixture.path('packages/tests'), { recursive: true });
+  writeFileSync(fixture.path('packages/tests/vitest.core.config.ts'),
+    "import { createUiProductionHooksVitestConfig } from './vitest.uiProductionHooks';\nexport default createUiProductionHooksVitestConfig();\n");
+  mkdirSync(fixture.path('packages/other'), { recursive: true });
+  writeFileSync(fixture.path('packages/other/vitest.config.ts'), 'export default {};\n');
+  // Workspace package publication has its own owner tests; this case isolates the UI asset decision.
+  const loadWorkspaceBuildOwner = async () => ({ ensureWorkspacePackagesBuiltForComponent: async () => ({ ok: true, built: [] }) });
+  for (const validationKind of ['source-test', 'runtime']) {
+    await prepareRemoteValidationWorkspace({ repoDir: fixture.root, componentRelativeDir: 'packages/tests',
+      validationKind, focusedTest: true, env: native.env, loadWorkspaceBuildOwner });
+    await prepareRemoteValidationWorkspace({ repoDir: fixture.root, componentRelativeDir: 'packages/other',
+      validationKind, focusedTest: true, env: native.env, loadWorkspaceBuildOwner });
+  }
+  assert.deepEqual(readFileSync(observed, 'utf8').trim().split('\n'), ['{"web":false}', '{"web":false}'],
+    'packages/tests prepares once per validation kind; a component without UI source consumers does not');
+});

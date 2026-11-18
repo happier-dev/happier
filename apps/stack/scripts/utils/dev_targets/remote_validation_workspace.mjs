@@ -1,5 +1,5 @@
 import { withDependencyConsumption } from '../proc/dependency_refresh.mjs';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -80,6 +80,19 @@ async function prepareUiSourceAssets(repoDir, env, signal, focusedTest = false) 
   }
 }
 
+// A component whose Vitest configurations load UI source through the UI
+// production hooks (packages/tests/vitest.uiProductionHooks.ts) imports the
+// modules these producers generate, like apps/ui's own tests
+// (TRIAGE-JOURNEY-E2E 2026-11-18: backdropWorkletCore.generated).
+function componentLoadsUiSource(repoDir, componentPath) {
+  if (componentPath === 'apps/ui') return true;
+  const componentDir = resolve(repoDir, componentPath);
+  let names;
+  try { names = readdirSync(componentDir); } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  return names.some(name => /^vitest(?:\.[\w-]+)*\.config\.[cm]?ts$/u.test(name)
+    && /\bfrom\s*['"][^'"]*\/vitest\.uiProductionHooks(?:\.ts)?['"]/u.test(readFileSync(join(componentDir, name), 'utf8')));
+}
+
 function resolveComponentDir(repoDir, componentRelativeDir) {
   const repositoryRoot = resolve(repoDir);
   const raw = String(componentRelativeDir ?? '.').trim() || '.';
@@ -123,7 +136,7 @@ export async function prepareRemoteValidationWorkspace({
     if (normalizedComponentPath === 'apps/cli' && requiredTools.split(/\s+/u).includes('go')) {
       await prepareCliSourceNativeCustody(repoDir, env, { sessionTargets: preparationScope !== 'host-native' });
     }
-    if (normalizedComponentPath === 'apps/ui') await prepareUiSourceAssets(repoDir, env, signal, focusedTest);
+    if (componentLoadsUiSource(repoDir, normalizedComponentPath)) await prepareUiSourceAssets(repoDir, env, signal, focusedTest);
     return { ok: true, built: [], skipped: ['workspace-source-test'] };
   }
   if (validationKind === 'typecheck') {
@@ -174,6 +187,9 @@ export async function prepareRemoteValidationWorkspace({
       join(repoDir, 'apps/ui/scripts/generateBundledPluginUiArtifacts.mjs'),
     ).href);
     await generateBundledPluginUiArtifacts({ repoRoot: resolve(repoDir), mode: 'write', publicationMode: 'live' });
+  }
+  if (normalizedComponentPath !== 'apps/ui' && componentLoadsUiSource(repoDir, normalizedComponentPath)) {
+    await prepareUiSourceAssets(repoDir, env, signal, focusedTest);
   }
   return result;
 }
