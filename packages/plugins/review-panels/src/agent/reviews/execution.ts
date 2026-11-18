@@ -26,11 +26,24 @@ export function createPanelExecutionRunFactory(): AgentExecutionRunRuntimeFactor
           if (input.scope === 'repository') return { status: 'failed', diagnostic: {
             code: 'panel_scope_unsupported', severity: 'error', message: 'The native reviewer supports changes rather than repository-wide reviews.',
           } };
+          if (input.selectedPaths?.length || input.selectedFiles?.length) return { status: 'failed', diagnostic: {
+            code: 'panel_scope_unsupported', severity: 'error', message: 'The native reviewer cannot restrict a review to selected files. Choose another reviewer for this selection.',
+          } };
+          // Capture produces trees for working-tree and session snapshots.
+          // Native --sha ranges use git log and require commit endpoints.
+          if (comparison?.source.kind === 'workingTree' || comparison?.source.kind === 'session') return { status: 'failed', diagnostic: {
+            code: 'panel_scope_unsupported', severity: 'error', message: 'The native reviewer cannot consume captured working-tree or session snapshots. Choose another reviewer for this comparison.',
+          } };
           let scopeArgs: string[];
           if (range) scopeArgs = ['--sha', `${range.baseOid}..${range.headOid}`];
+          else if (comparison?.source.kind === 'commit' && !comparison.source.parent && comparison.endpoints.after) {
+            // Native single-commit review also handles a root commit, whose
+            // captured before endpoint is the empty tree rather than a commit.
+            scopeArgs = ['--sha', comparison.endpoints.after];
+          }
           else if (comparison?.endpoints.before && comparison.endpoints.after) {
             scopeArgs = ['--sha', `${comparison.endpoints.before}..${comparison.endpoints.after}`];
-          } else if (comparison && comparison.source.kind !== 'workingTree') {
+          } else if (comparison) {
             // Native review cannot consume an absent captured endpoint or a
             // checkpoint body. Never substitute the currently checked-out HEAD.
             return { status: 'failed', diagnostic: { code: 'panel_scope_unsupported', severity: 'error', message: 'The native reviewer requires committed endpoints or uncommitted working-tree changes.' } };

@@ -22,6 +22,11 @@ model and reasoning options; panel mode consumes the repository's native panel
 configuration. The selected backend needs working model access on that Machine.
 Real provider authentication remains release validation.
 
+This integration cannot pass captured working-tree or session snapshots, or an
+explicit selected-file list, to the native reviewer. Those subjects are refused
+before the native process starts; choose another reviewer for them. Committed
+comparisons and pull requests retain their captured base and head.
+
 Each run starts its own native daemon with an isolated data directory beneath
 the plugin's durable storage. The plugin submits one review, reads that selected
 job's structured result, and stops the daemon when the run finishes. It does not

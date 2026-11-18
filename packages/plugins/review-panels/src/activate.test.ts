@@ -11,7 +11,7 @@ function completed(stdout = '', exitCode = 0): PluginProcessResult {
     termination: { observed: { kind: 'exit', exitCode }, requestedBy: { kind: 'none' } } };
 }
 
-async function runFixture(options: { failedMember?: boolean; unableToReview?: boolean; cancel?: boolean; missingDocument?: boolean; captured?: boolean; cleanupFailure?: boolean } = {}) {
+async function runFixture(options: { failedMember?: boolean; unableToReview?: boolean; cancel?: boolean; missingDocument?: boolean; captured?: boolean; pullRequest?: boolean; selectedPaths?: string[]; selectedFiles?: string[]; workingTreeCapture?: boolean; sessionCapture?: boolean; commitCapture?: boolean; turnCapture?: boolean; cleanupFailure?: boolean } = {}) {
   const activation = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
   const factory = activation.registration('agents', 'panels')?.factory;
   if (!factory) throw new Error('Expected panel reviewer Agent registration');
@@ -44,13 +44,20 @@ async function runFixture(options: { failedMember?: boolean; unableToReview?: bo
   const request: Extract<AgentExecutionRunOpenRequest, { kind: 'create' }> = {
     kind: 'create', runId: 'test', cwd: '/workspace', profile: { pluginId: PLUGIN_MANIFEST.id, localId: 'review' },
     launchEnvironment: { values: { SELECTED_OVERLAY: 'value' }, unset: ['SELECTED_OVERLAY'] },
-    input: { text: 'Review this change.', structuredInput: { engineIds: ['panels'], instructions: 'Review this change.',
+    input: { text: 'Review this change.', structuredInput: { reviewers: [{ kind: 'engine', engineId: 'panels' }], instructions: 'Review this change.',
+      ...(options.selectedPaths ? { selectedPaths: options.selectedPaths } : {}),
+      ...(options.selectedFiles ? { selectedFiles: options.selectedFiles } : {}),
       scope: 'changes', changeType: 'uncommitted', base: { kind: 'none' }, engines: { panels: { panel: 'fixture', reviewType: 'security', agent: 'codex', reasoning: 'high' } },
       scmReviewScope: { kind: 'review_scm_scope.v1', status: 'supported', scmBackendId: 'git', scmMode: '.git',
         repositoryRoot: '/workspace', worktreeRoot: '/workspace', baseRef: { source: 'unavailable', ref: null },
         selectedPaths: [], committedPaths: [], uncommittedPaths: [], changedPaths: [], diagnostics: [],
         diff: { committedAvailable: false, uncommittedAvailable: true },
         ...(options.captured ? { comparison: { id: 'captured', source: { kind: 'branch', head: 'feature', base: 'main' }, endpoints: { before: 'base-oid', after: 'head-oid' } } } : {}),
+        ...(options.workingTreeCapture ? { comparison: { id: 'captured-worktree', source: { kind: 'workingTree' }, endpoints: { before: 'base-oid', after: 'snapshot-tree-oid' } } } : {}),
+        ...(options.sessionCapture ? { comparison: { id: 'captured-session', source: { kind: 'session', sessionId: 'source-session' }, endpoints: { before: 'checkpoint-commit-oid', after: 'snapshot-tree-oid' } } } : {}),
+        ...(options.commitCapture ? { comparison: { id: 'captured-root-commit', source: { kind: 'commit', commit: 'captured-commit-oid' }, endpoints: { before: 'empty-tree-oid', after: 'captured-commit-oid' } } } : {}),
+        ...(options.turnCapture ? { comparison: { id: 'captured-turn', source: { kind: 'turnCheckpoint', sessionId: 'source-session', turnId: 'source-turn' }, endpoints: { before: 'start-checkpoint-commit-oid', after: 'final-checkpoint-commit-oid' } } } : {}),
+        ...(options.pullRequest ? { revisionRange: { kind: 'revisionRange', baseOid: 'pr-base-oid', headOid: 'pr-head-oid' } } : {}),
       } } },
   };
   const runtime = await agent.executionRuns?.open(request, context);
@@ -60,7 +67,7 @@ async function runFixture(options: { failedMember?: boolean; unableToReview?: bo
   if (options.cancel) { await waiting; await runtime.stop(); }
   await vi.waitFor(() => expect(['run-complete', 'run-failed', 'run-cancelled']).toContain(events.at(-1)?.kind));
   // The finite runtime must not settle before native cleanup finishes.
-  expect(run.mock.calls.at(-1)?.[0].args).toEqual(['daemon', 'stop']);
+  if (run.mock.calls.length) expect(run.mock.calls.at(-1)?.[0].args).toEqual(['daemon', 'stop']);
   const output = events.filter(event => event.kind === 'output-delta').map(event => event.text).join('');
   await runtime.dispose();
   await activation.dispose();
@@ -68,8 +75,21 @@ async function runFixture(options: { failedMember?: boolean; unableToReview?: bo
 }
 
 describe('activated panel reviewer', () => {
+  it.each([
+    { selectedPaths: ['selected.ts'] },
+    { selectedFiles: ['selected.ts'] },
+    { captured: true, selectedPaths: ['selected.ts'] },
+    { pullRequest: true, selectedPaths: ['selected.ts'] },
+    { workingTreeCapture: true },
+    { sessionCapture: true },
+  ])('refuses subjects the native whole-worktree command cannot preserve: %j', async options => {
+    const result = await runFixture(options);
+    expect(result.events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'panel_scope_unsupported' } });
+    expect(result.run).not.toHaveBeenCalled();
+    expect(result.output).toBeNull();
+  });
   it('runs selected native panel/type and exposes attributed findings through the shared result schema', async () => {
-    const result = await runFixture();
+    const result = await runFixture({ selectedPaths: [], selectedFiles: [] });
     expect(result.events.at(-1)?.kind).toBe('run-complete');
     expect(result.output).toMatchObject({ reviewOutcome: 'complete', findings: [{ extensions: { 'happier.review.panels': {
       verdict: 'fail', sources: [1], members: [{ name: 'first' }, { name: 'second' }],
@@ -85,6 +105,24 @@ describe('activated panel reviewer', () => {
     expect(result.output?.comparisonId).toBe('captured');
     expect(result.run.mock.calls.find(([request]) => request.args?.[0] === 'review')?.[0].args)
       .toEqual(['review', '--sha', 'base-oid..head-oid', '--panel', 'fixture', '--type', 'security', '--agent', 'codex', '--reasoning', 'high', '--quiet']);
+  });
+  it('translates the admitted pull-request range without using checkout HEAD', async () => {
+    const result = await runFixture({ pullRequest: true });
+    expect(result.events.at(-1)?.kind).toBe('run-complete');
+    expect(result.run.mock.calls.find(([request]) => request.args?.[0] === 'review')?.[0].args)
+      .toEqual(['review', '--sha', 'pr-base-oid..pr-head-oid', '--panel', 'fixture', '--type', 'security', '--agent', 'codex', '--reasoning', 'high', '--quiet']);
+  });
+  it('preserves a captured root commit without sending its empty-tree base to native git log', async () => {
+    const result = await runFixture({ commitCapture: true });
+    expect(result.events.at(-1)?.kind).toBe('run-complete');
+    expect(result.run.mock.calls.find(([request]) => request.args?.[0] === 'review')?.[0].args)
+      .toEqual(['review', '--sha', 'captured-commit-oid', '--panel', 'fixture', '--type', 'security', '--agent', 'codex', '--reasoning', 'high', '--quiet']);
+  });
+  it('retains the committed checkpoint endpoints of a captured turn', async () => {
+    const result = await runFixture({ turnCapture: true });
+    expect(result.events.at(-1)?.kind).toBe('run-complete');
+    expect(result.run.mock.calls.find(([request]) => request.args?.[0] === 'review')?.[0].args)
+      .toEqual(['review', '--sha', 'start-checkpoint-commit-oid..final-checkpoint-commit-oid', '--panel', 'fixture', '--type', 'security', '--agent', 'codex', '--reasoning', 'high', '--quiet']);
   });
   it.each([
     { options: { failedMember: true }, outcome: 'partial', secondMemberStatus: 'failed' },
