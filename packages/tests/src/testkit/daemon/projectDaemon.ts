@@ -115,7 +115,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
             actionRequestId: randomUUID(), ...context, signal });
         } finally { lifetime.abort(); }
       }
-      return { name, auth, credentials,
+      const account = { name, auth, credentials,
         uiCredentials: buildTestAccountCliAuthCredentials({ auth, mode: 'dataKey' }),
         replayApprovedApprovalRequest(artifactId: string) {
           return executor.replayApprovedApprovalRequest({ artifactId, callerAuthority: 'present_user' });
@@ -132,10 +132,13 @@ export async function startProjectDaemonFixture(params: Readonly<{
         },
         execute,
         executeWithApproval,
-        /** This fixture person approves the real Inbox request; the retained
+        /** This fixture person approves the real Inbox request through the UI
+         * person client, as in the app; the terminal credential is automation
+         * and never a reviewer (isApprovalDecisionReviewerBindingV1). The retained
          * execution, including any child Ask, supplies the final typed result. */
         async executeReviewed(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) {
-          return await executeWithApproval(actionId, input, (_artifactId, _signal, decide) => decide('approve'), context);
+          return await executeWithApproval(actionId, input, async (artifactId): ReturnType<typeof execute> =>
+            await account.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' }), context);
         },
         async executeAsPerson(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) {
           const ui = await connectUiPersonActionClient({ serverUrl: actionServerApiUrl,
@@ -147,6 +150,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
           } finally { await ui.close(); }
         },
       };
+      return account;
     }
     return { server, serverId, sourceOptions, actionServerApiUrl, requestProxy, createAccount,
       takeRequestObservations() {
