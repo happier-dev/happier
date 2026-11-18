@@ -29,6 +29,7 @@ import { Text } from '@/components/ui/text/Text';
 import { useWidgetFrameBodyMeta, useWidgetFrameSubjectStateSaidAbove } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { machineGuardStore } from '@/sync/domains/machines/guard/machineGuardStore';
 import { DEFAULT_MACHINE_GUARD_ACTIVITY_QUERY, keepMachineGuardWorkRunningViaAction } from '@/sync/domains/machines/guard/machineGuardRpc';
 import { useMachineGuardActivity, useMachineGuardView } from '@/sync/domains/machines/guard/useMachineGuardView';
@@ -291,7 +292,7 @@ function GuardWarning(
   }>,
 ) {
   const { theme } = useUnistyles();
-  const { key } = useMachineDaemonReadTarget(props.target);
+  const { key, accountBinding } = useMachineDaemonReadTarget(props.target);
   const [keeping, setKeeping] = React.useState(false);
   const { pending } = props;
   const keepRunning = React.useCallback(() => {
@@ -305,15 +306,15 @@ function GuardWarning(
         );
         setKeeping(false);
         machineGuardStore.refreshMachine(key);
-        if (!kept.ok)
+        if (!kept.ok && accountBinding?.isCurrent())
           Modal.alert(
             t('machines.widgets.body.guard.keepRunning'),
-            t('machines.widgets.body.guard.keepRunningFailed'),
+            resolveActionExecutionErrorMessage(kept, t('machines.widgets.body.guard.keepRunningFailed')),
           );
       })(),
       { tag: 'MachineGuardWidget.keepRunning' },
     );
-  }, [key, pending]);
+  }, [accountBinding, key, pending]);
   const attention = theme.colors.state.attention.textForeground;
   const duration = formatGuardDuration(pending.idleMs);
   return (

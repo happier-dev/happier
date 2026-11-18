@@ -4,6 +4,7 @@ import { formatMachineCountdown } from '@/components/machines/durationWords';
 import { useGuardRemainingMs } from '@/components/machines/guard/GuardCountdown';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { machineGuardStore } from '@/sync/domains/machines/guard/machineGuardStore';
 import { keepMachineGuardWorkRunningViaAction } from '@/sync/domains/machines/guard/machineGuardRpc';
 import { useMachineGuardView } from '@/sync/domains/machines/guard/useMachineGuardView';
@@ -28,7 +29,7 @@ export function MachineTerminalGuardWarning(
 const TerminalGuardWarningLine = React.memo(function TerminalGuardWarningLine(
   props: Readonly<{ serverId: string; machineId: string; terminalKey: string; stopAt: number }>,
 ) {
-  const { key } = useMachineDaemonReadTarget({ serverId: props.serverId, machineId: props.machineId });
+  const { key, accountBinding } = useMachineDaemonReadTarget({ serverId: props.serverId, machineId: props.machineId });
   const [keeping, setKeeping] = React.useState(false);
   const duration = formatMachineCountdown(useGuardRemainingMs(props.stopAt));
   const keepRunning = React.useCallback(() => {
@@ -37,9 +38,12 @@ const TerminalGuardWarningLine = React.memo(function TerminalGuardWarningLine(
       const kept = await keepMachineGuardWorkRunningViaAction({ ...key, terminalKey: props.terminalKey });
       setKeeping(false);
       machineGuardStore.refreshMachine(key);
-      if (!kept.ok) Modal.alert(t('machineGuard.session.keepRunning'), t('machineGuard.session.keepRunningFailed'));
+      if (!kept.ok && accountBinding?.isCurrent()) {
+        Modal.alert(t('machineGuard.session.keepRunning'),
+          resolveActionExecutionErrorMessage(kept, t('machineGuard.session.keepRunningFailed')));
+      }
     })(), { tag: 'MachineTerminalGuardWarning.keepRunning' });
-  }, [key, props.terminalKey]);
+  }, [accountBinding, key, props.terminalKey]);
   const reason = t('machineGuard.terminals.closesIn', { duration });
   return (
     <SurfaceFreshnessLine

@@ -16,6 +16,7 @@ import {
   createHomeGovernanceHarness,
   installHomeGovernanceBoundaries,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createMachineGuardViewFixture } from '@/sync/domains/machines/guard/guardViewFixtures';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -24,6 +25,7 @@ import { t } from '@/text';
 
 installDisconnectedServerSocketBoundary();
 const transport = vi.hoisted(() => ({ rpc: vi.fn() }));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 // Only the Machine network is replaced; credential binding, the Actions front door, the guard store and the body run for real.
 vi.mock(
   '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc',
@@ -34,6 +36,7 @@ installHomeGovernanceBoundaries(home);
 const { machineGuardStore } =
   await import('@/sync/domains/machines/guard/machineGuardStore');
 const { storage } = await import('@/sync/domains/state/storageStore');
+const { Modal } = await import('@/modal');
 const { MachineGuardWidget, guardHeaderStateText } = await import('./MachineGuardWidget');
 const { withdrawMachinePresenceForScope, clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
 const { useGuardFreshness, useGuardActivityFreshness } = await import('../guard/useGuardFreshness');
@@ -82,6 +85,8 @@ async function mount(
     activity?: MachineGuardActivityRowV1[];
     overrides?: Partial<Machine>;
     rpc?: (method: string, payload: Record<string, unknown>) => unknown;
+    active?: boolean;
+    keepRunningOff?: boolean;
   }> = {},
 ) {
   const serverId = await home.addHome({
@@ -89,15 +94,18 @@ async function mount(
     serverUrl: `https://guard-widget-${Math.random().toString(36).slice(2)}.test`,
     serverIdentityId: 'srv_guard_widget',
     accountId: 'owner',
+    active: options.active,
   });
   home.answer(serverId, '/v2/account/settings', {
     body: { content: { t: 'plain', v: {} }, version: 1 },
   });
+  if (options.keepRunningOff) await home.setActionPolicy(serverId, 'machines.guard.idleStop.keepRunning', 'ui', 'off');
   storage.setState({
     machines: {},
-    machineListByServerId: { [serverId]: [machine(options.overrides)] },
-    machineListStatusByServerId: { [serverId]: 'idle' },
+    machineListByServerId: {},
+    machineListStatusByServerId: {},
   });
+  await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine(options.overrides)]);
   transport.rpc.mockImplementation(
     async ({
       method,
@@ -254,7 +262,7 @@ describe('MachineGuardWidget', () => {
     expect(screen.findByTestId('guard-widget.state')?.props.children).toBe('Off');
   });
 
-  it('warns before an idle stop and keeps that session running through its own Action', async () => {
+  it.each(['allowed', 'off'] as const)('warns before an idle stop and honors Keep running policy %s', async policy => {
     const kept: unknown[] = [];
     const view = createMachineGuardViewFixture({
       policy: MachineGuardPolicyV1Schema.parse({
@@ -273,6 +281,7 @@ describe('MachineGuardWidget', () => {
     });
     const { screen } = await mount({
       view,
+      keepRunningOff: policy === 'off',
       rpc: (method, payload) => {
         if (method !== RPC_METHODS.MACHINES_GUARD_IDLE_STOP_KEEP_RUNNING)
           return undefined;
@@ -288,9 +297,18 @@ describe('MachineGuardWidget', () => {
     expect(screen.getTextContent()).toContain('Stopping Docs link sweep');
     expect(screen.getTextContent()).toMatch(/in 4:3\d/);
     expect(screen.getTextContent()).toContain('It wakes on your next message.');
+    vi.mocked(Modal.alert).mockClear();
     await act(async () => {
       screen.pressByTestId('guard-widget.keepRunning');
     });
+    if (policy === 'off') {
+      await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith(
+        t('machines.widgets.body.guard.keepRunning'), t('actionConfirmations.turnedOffUnnamedMessage'),
+      ));
+      expect(kept).toHaveLength(0);
+      expect(screen.findByTestId('guard-widget.warning')).not.toBeNull();
+      return;
+    }
     await act(async () => {
       await vi.waitFor(() => expect(kept).toHaveLength(1));
     });
@@ -393,6 +411,7 @@ describe('MachineGuardWidget', () => {
     transport.rpc.mockClear();
     const offline = await mount({
       overrides: { active: false, activeAt: Date.now() - 2 * 86_400_000 },
+      active: false,
     });
     await act(async () => {
       await vi.waitFor(() =>
