@@ -89,17 +89,21 @@ function focusIsElsewhere(): boolean {
   return active !== null && active !== document.body;
 }
 
-// A press anywhere legitimately takes focus away from a row (to the page or a control); only a blur no
-// pointer caused can be the host moving the row's node. The flag lasts for the press's own task.
-let pointerPressing = false;
-let pointerTrackerInstalled = false;
-function installPointerPressTracker() {
-  if (pointerTrackerInstalled || typeof document === 'undefined') return;
-  pointerTrackerInstalled = true;
-  document.addEventListener('pointerdown', () => {
-    pointerPressing = true;
-    setTimeout(() => { pointerPressing = false; }, 0);
-  }, true);
+// A press or a Tab legitimately takes focus away from a row (to the page or the next control); only a blur
+// neither caused can be the host moving the row's node. A Tab's blur runs while focus still sits on the page,
+// before the next control takes it, so without this the row pulled focus back: a keyboard trap. The flag
+// lasts for the press's or key's own task.
+let userMovingFocus = false;
+let userFocusTrackerInstalled = false;
+function installUserFocusMoveTracker() {
+  if (userFocusTrackerInstalled || typeof document === 'undefined') return;
+  userFocusTrackerInstalled = true;
+  const mark = () => {
+    userMovingFocus = true;
+    setTimeout(() => { userMovingFocus = false; }, 0);
+  };
+  document.addEventListener('pointerdown', mark, true);
+  document.addEventListener('keydown', (event: { key?: string }) => { if (event.key === 'Tab') mark(); }, true);
 }
 
 /** A row's place among its siblings, for `aria-posinset`/`aria-setsize` (1-based). */
@@ -111,12 +115,12 @@ export type HappierTreePosition = Readonly<{ positionInSet: number; setSize: num
  * - A keyboard move to a row that is not mounted calls `onRevealIndex` (a windowed host scrolls it into
  *   view); focus lands on the row when it binds, even if the row it left is recycled meanwhile.
  * - On web, a focused row whose node the host recycles or reorders keeps focus. Focus that moved to
- *   another control, a press, or any blur on native is never pulled back.
+ *   another control, a press, a Tab, or any blur on native is never pulled back.
  * - `positionOf(key)` gives the row's position and set size among its siblings in the whole tree, for
  *   rows a windowed host builds out of order or only in part.
  */
 export function useHappierTreeInteraction(input: HappierTreeInteraction) {
-  installPointerPressTracker();
+  installUserFocusMoveTracker();
   const inputRef = useRef(input);
   inputRef.current = input;
   const previousNodes = useRef<readonly HappierTreeNode[]>([]);
@@ -140,9 +144,9 @@ export function useHappierTreeInteraction(input: HappierTreeInteraction) {
       // On native a blur always means focus moved on (a TextInput, another control) and is left alone.
       const web = typeof document !== 'undefined';
       pendingFocus.current = revealing.current ?? (web && !target ? pendingFocus.current : null);
-      // A row that stays bound but loses focus to nothing, without a press, had its node moved (a
+      // A row that stays bound but loses focus to nothing, without a press or a Tab, had its node moved (a
       // windowed host reordering its cells, which blurs in the browser): it keeps focus where it is.
-      if (web && target && revealing.current === null && !pointerPressing) {
+      if (web && target && revealing.current === null && !userMovingFocus) {
         queueMicrotask(() => {
           // The move re-renders the row, which may rebind it: focus whatever target the row has now.
           const current = targets.current.get(key);
