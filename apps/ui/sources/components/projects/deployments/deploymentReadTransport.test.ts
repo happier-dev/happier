@@ -152,8 +152,14 @@ describe('deployment scoped read transport', () => {
         if (!stored) throw new Error('Expected the Account Environment Artifact');
         // The selected Environment is not on the first Account page. Its own read must not depend on that page.
         const inventory = nativeKind ? [{ environment: detail.environment }] : ['managed-a', 'managed-b', 'managed-c']
-            .map(id => ({ environment: { ...detail.environment, id } }));
+            .map((id, index) => ({ environment: { ...detail.environment, id,
+                projectSourceId: index === 1 ? 'another-project' : detail.environment.projectSourceId } }));
+        const projectSources = [
+            { id: 'another-project', name: 'Second Project' },
+            { id: detail.environment.projectSourceId, name: 'Saved Project name' },
+        ];
         homes.answer(serverId, '/v1/deployments/data-services', { body: { ok: true, items: exactEnvironment ? [] : inventory,
+            ...(kind === 'deployment_service_disabled' ? {} : { projectSources }),
             artifacts: [projectArtifactBoundaryReadRow(stored)], nextCursor: null } });
         const listLocalId = databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1);
         const projection = { ...EMPTY_PLUGIN_UI_PROJECTION,
@@ -236,6 +242,14 @@ describe('deployment scoped read transport', () => {
                 expect(page).toMatchObject({ ok: true, value: { items: inventory.map(({ environment }) => ({
                     environment: { id: environment.id }, databaseSizes: [],
                 })) } });
+            }
+            if (!exactEnvironment) {
+                expect(page).toMatchObject({ ok: true, value: { items: inventory.map(({ environment }) => ({
+                    projectSourceName: disabled ? null : projectSources.find(source => source.id === environment.projectSourceId)?.name,
+                })) } });
+                expect(homes.requests.filter(request => new URL(request.path, 'https://home.invalid').pathname
+                    === '/v1/deployments/data-services')).toHaveLength(1);
+                expect(homes.requests.filter(request => request.path.startsWith('/v1/projects/sources'))).toHaveLength(0);
             }
             const workbenchRequests = homes.requests.filter(request => request.path === '/v1/actions/action.invoke');
             expect(workbenchRequests).toHaveLength(exactEnvironment ? 1 : 0);

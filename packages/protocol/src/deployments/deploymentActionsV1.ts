@@ -713,6 +713,7 @@ export const DeploymentDomainPageSuccessV1Schema = lazyZodSchema(() => z.strictO
 export const DeploymentDataPageSuccessV1Schema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(true), items: z.array(z.strictObject({ environment: DeploymentEnvironmentHeaderV1Schema })),
   artifacts: z.array(ArtifactHttpReadV1Schema), nextCursor: z.nullable(DeploymentIdentifierV1Schema),
+  projectSources: z.optional(z.array(deploymentProjectSourcePresentationV1Schema)),
   coverage: z.optional(z.enum(['complete', 'partial'])),
 }));
 export type DeploymentDomainPageSuccessV1 = z.infer<typeof DeploymentDomainPageSuccessV1Schema>;

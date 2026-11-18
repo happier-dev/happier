@@ -154,7 +154,7 @@ export function ServicesDatabasesView(
         key: `${item.environment.id}:${database.service}`,
         environmentId: item.environment.id,
         projectSourceId: item.environment.projectSourceId,
-        projectName: null,
+        projectName: item.projectSourceName ?? null,
         environmentTitle: item.title,
         service: database.service,
         engine: declared ? databaseEngineTitle(declared) : null,

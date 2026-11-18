@@ -50,18 +50,18 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('a
             { teamId: team.id, accountId: owner.id, role: 'owner' },
             { teamId: team.id, accountId: reader.id, role: 'member' },
         ] });
-        const source = async (actorAccountId: string, audience: { principal: { kind: 'account'; accountId: string }; level: 'view' }[],
+        const source = async (name: string, actorAccountId: string, audience: { principal: { kind: 'account'; accountId: string }; level: 'view' }[],
             teamOwner = false) => {
             const result = await inTx(tx => createProjectSourceInTx(tx, actorAccountId, { serverId,
-                requestKey: randomUUID(), name: 'Page source', audience,
+                requestKey: randomUUID(), name, audience,
                 ...(teamOwner ? { owner: { kind: 'team', teamId: team.id } } : {}) }));
             if (!result.ok) throw new Error(result.error);
             return result.source;
         };
-        const ownSource = await source(reader.id, []);
-        const sharedSource = await source(owner.id, [{ principal: { kind: 'account', accountId: reader.id }, level: 'view' }]);
-        const teamSource = await source(owner.id, [], true);
-        const privateSource = await source(owner.id, []);
+        const ownSource = await source('Owned Project', reader.id, []);
+        const sharedSource = await source('Shared Project', owner.id, [{ principal: { kind: 'account', accountId: reader.id }, level: 'view' }]);
+        const teamSource = await source('Team Project', owner.id, [], true);
+        const privateSource = await source('Private Project', owner.id, []);
         async function content(accountId: string, kind: string, teamOwned = false) {
             const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId,
                 kind: `v1:other:${kind}`, headerVersion: 1, bodyVersion: 1,
@@ -104,7 +104,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('a
                 const first = await read(reader.id);
                 expect(dataStatements(), `${kind} includes every access read`).toHaveLength(1);
                 expect(first).toMatchObject({ ok: true, items: [{ environment: { id: environments[0]!.id } },
-                    { environment: { id: environments[1]!.id } }], nextCursor: expect.any(String) });
+                    { environment: { id: environments[1]!.id } }],
+                    projectSources: [{ id: ownSource.id, name: ownSource.name }, { id: sharedSource.id, name: sharedSource.name }],
+                    nextCursor: expect.any(String) });
                 if (!first.ok || !first.nextCursor) throw new Error('Expected page continuation');
                 if (kind === 'domains') {
                     statements.length = 0;
@@ -115,13 +117,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('a
                 statements.length = 0;
                 const second = await read(reader.id, first.nextCursor);
                 expect(dataStatements()).toHaveLength(1);
-                expect(second).toMatchObject({ ok: true, items: [{ environment: { id: environments[2]!.id } }], nextCursor: null });
+                expect(second).toMatchObject({ ok: true, items: [{ environment: { id: environments[2]!.id } }],
+                    projectSources: [{ id: teamSource.id, name: teamSource.name }], nextCursor: null });
                 if (!second.ok) throw new Error(second.error);
                 expect(second.artifacts.some(item => item.id === environments[3]!.contentArtifactId)).toBe(false);
                 if (kind === 'domains') DeploymentDomainPageSuccessV1Schema.parse(second);
                 else DeploymentDataPageSuccessV1Schema.parse(second);
                 statements.length = 0;
-                expect(await read(outsider.id)).toMatchObject({ ok: true, items: [], nextCursor: expect.any(String) });
+                expect(await read(outsider.id)).toMatchObject({ ok: true, items: [], projectSources: [], nextCursor: expect.any(String) });
                 expect(dataStatements()).toHaveLength(1);
                 statements.length = 0;
                 expect(await read(outsider.id, first.nextCursor)).toMatchObject({ ok: false, error: 'deployment_invalid' });
@@ -163,6 +166,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('a
                     expect(response.statusCode, response.body).toBe(200);
                     const page = schema.parse(response.json());
                     expect(page.items).toHaveLength(2);
+                    expect(page.projectSources).toEqual([{ id: ownSource.id, name: ownSource.name },
+                        { id: sharedSource.id, name: sharedSource.name }]);
                     expect(page.artifacts.length).toBeGreaterThan(0);
                 }
             } finally { await app.close(); }

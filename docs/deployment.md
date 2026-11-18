@@ -1250,8 +1250,8 @@ Joining hooks borrow an already-active Environment's current snapshot without
 re-reading it. Once all demand closes, reopening retains the existing fresh-read
 behavior; pushed changes and explicit recovery still refresh the shared owner.
 
-Demanded inventory pages also carry `projectSources:[{id,name}]`, projected from
-the Sources already loaded by admission and deduplicated for the visible page.
+Demanded Environments, Domains and data-services pages carry `projectSources:[{id,name}]`, projected
+from the Sources already loaded by admission and deduplicated for the visible page.
 The opened collection exposes `item.projectSourceName`, without a local checkout,
 Source-catalog crawl or extra Source read. Source names retain their existing
 disclosed metadata exception for both Account modes (see [encryption](encryption.md));

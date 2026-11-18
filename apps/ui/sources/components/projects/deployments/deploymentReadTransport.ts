@@ -153,7 +153,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             return { ok: true, value: { items, nextCursor: page.nextCursor, ...(coverage === undefined ? {} : { coverage }) } };
         }),
         listDataServicePage: (scope, query, options) => scoped(scope, options, async account => {
-            let page: Pick<DeploymentDataPageSuccessV1, 'items' | 'nextCursor' | 'coverage'>;
+            let page: Pick<DeploymentDataPageSuccessV1, 'items' | 'nextCursor' | 'coverage' | 'projectSources'>;
             let byId: Map<string, Awaited<ReturnType<LazyActionAccountContext['readArtifactContents']>>[number] | undefined>;
             let selectedMetadata: Awaited<ReturnType<typeof readEnvironmentMetadata>> | undefined;
             if (query.environmentId !== undefined) {
@@ -176,6 +176,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             }
             const items = [];
             let coverage = page.coverage;
+            const sourceNames = new Map(page.projectSources?.map(source => [source.id, source.name]));
             const previousById = new Map(options.previousItems?.map(item => [item.environment.id, item]));
             for (const { environment } of page.items) {
                 const artifact = byId.get(environment.contentArtifactId);
@@ -236,7 +237,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     }
                     return [];
                 }));
-                items.push({ environment, title: row.title, content: row.content, databaseSizes, databaseSubjects });
+                items.push({ environment, title: row.title, content: row.content,
+                    projectSourceName: sourceNames.get(environment.projectSourceId) ?? null, databaseSizes, databaseSubjects });
             }
             return { ok: true, value: { items, nextCursor: page.nextCursor, ...(coverage === undefined ? {} : { coverage }) } };
         }),

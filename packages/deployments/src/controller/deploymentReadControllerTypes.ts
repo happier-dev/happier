@@ -97,6 +97,7 @@ export type DeploymentAccountDomainReadItemV1 = DeploymentDomainReadItemV1 & Rea
 }>;
 export type DeploymentDataServiceReadItemV1 = Readonly<{
     environment: DeploymentEnvironmentHeaderV1; title: string; content: DeploymentEnvironmentContentV1;
+    projectSourceName?: string | null;
     databaseSizes?: readonly DeploymentDatabaseSizeV1[];
     /** Keys are the incumbent database page's service or data-link address. */
     databaseSubjects?: Readonly<Record<string, AutomationDatabaseSubjectReadV1>>;
