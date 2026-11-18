@@ -1,3 +1,5 @@
+import { providerAccountUsageResetIdentityAtMs } from '@happier-dev/protocol/connect/deriveProviderAccountUsagePace';
+
 /**
  * The one moment the kit celebrates (lab `kitmotion` reset): a window the viewer had used up is read
  * again, in a later cycle, with room in it — while they were looking. It compares two consecutive
@@ -22,7 +24,8 @@ export function detectWitnessedResets(
         const was = before.get(entry.key);
         return was !== undefined
             && was.remainingFraction !== null && was.remainingFraction <= 0
-            && was.resetAtMs !== null && entry.resetAtMs !== null && entry.resetAtMs > was.resetAtMs
+            && was.resetAtMs !== null && entry.resetAtMs !== null
+            && providerAccountUsageResetIdentityAtMs(entry.resetAtMs) > providerAccountUsageResetIdentityAtMs(was.resetAtMs)
             && entry.remainingFraction !== null && entry.remainingFraction > 0;
     });
 }
@@ -42,7 +45,7 @@ export function createWitnessedResetWatch() {
                 return [];
             }
             const witnessed = detectWitnessedResets(previous, next).filter((entry) => {
-                const id = `${entry.key}\u0000${entry.resetAtMs}`;
+                const id = `${entry.key}\u0000${providerAccountUsageResetIdentityAtMs(entry.resetAtMs!)}`;
                 if (reported.has(id)) return false;
                 reported.add(id);
                 return true;

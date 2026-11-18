@@ -81,6 +81,11 @@ export function resolveProviderAccountUsagePaceWindow(snapshot: ProviderAccountU
     windowStartAtMs: window.windowStartAtMs, windowDurationMs: window.windowDurationMs } : null;
 }
 
+/** The clock component of quota-window identity, also used by reset-only readings. */
+export function providerAccountUsageResetIdentityAtMs(resetAtMs: number): number {
+  return Math.round(resetAtMs / 1000) * 1000;
+}
+
 /**
  * Canonical quota-window identity. Providers commonly vary reset clocks by
  * milliseconds while referring to the same second-level window. Keep the
@@ -88,7 +93,7 @@ export function resolveProviderAccountUsagePaceWindow(snapshot: ProviderAccountU
  * and comparability everywhere else.
  */
 export function deriveProviderAccountUsagePaceWindowIdentity(window: ProviderAccountUsagePaceWindowV1): ProviderAccountUsagePaceWindowV1 {
-  const resetAtMs = Math.round(window.resetAtMs / 1000) * 1000;
+  const resetAtMs = providerAccountUsageResetIdentityAtMs(window.resetAtMs);
   return { ...window, resetAtMs, windowStartAtMs: resetAtMs - window.windowDurationMs };
 }
 

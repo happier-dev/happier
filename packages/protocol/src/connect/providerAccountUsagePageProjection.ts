@@ -6,7 +6,7 @@ import { deriveProviderAccountUsageDayQuotaHistoryV1, type ProviderAccountUsageD
 import { ConnectedServiceQuotaMeterV1Schema, ConnectedServiceQuotaMeterDetailsV1Schema } from './connectedServiceSchemas.js';
 import type { ConnectedServiceQuotaGetResultV1 } from './providerAccountUsageHistorySchemasV1.js';
 import { deriveProviderAccountUsageEarlierWindowCurves, hasProviderAccountUsageWitnessedReset,
-  ProviderAccountUsageDerivationOperands, resolveProviderAccountUsagePaceWindow } from './deriveProviderAccountUsagePace.js';
+  ProviderAccountUsageDerivationOperands, providerAccountUsagePaceWindowIdentityKey, resolveProviderAccountUsagePaceWindow } from './deriveProviderAccountUsagePace.js';
 
 const RangeSchema = lazyZodSchema(() => z.strictObject({ startAtMs: z.number().check(z.int(), z.nonnegative()), endAtMs: z.number().check(z.int(), z.nonnegative()) }).check(z.refine(value => value.endAtMs > value.startAtMs)));
 const EntrySchema = lazyZodSchema(() => z.strictObject({ id: z.string().check(z.minLength(1)), observedAtMs: z.number().check(z.int(), z.nonnegative()), snapshot: ProviderAccountUsageSnapshotV1Schema }));
@@ -269,7 +269,10 @@ export function getProviderAccountUsageQuotaHistoryV1(read: Readonly<{
 
 /** The page consumes these facts, never the observations used to derive them. */
 export function getProviderAccountUsageQuotaPageFactsV1(read: ConnectedServiceQuotaGetResultV1, operands = new ProviderAccountUsageDerivationOperands(), daySummaries?: readonly ProviderAccountUsageDaySummaryV1[], range?: Readonly<{ startAtMs: number; endAtMs: number }>): ConnectedServiceQuotaGetResultV1['pageFacts'] {
-  if (read.pageFacts) return read.pageFacts;
+  const inRange = (resetAtMs: number) => !range || (resetAtMs >= range.startAtMs && resetAtMs < range.endAtMs);
+  if (read.pageFacts) return range
+    ? { ...read.pageFacts, witnessedResets: read.pageFacts.witnessedResets.filter(window => inRange(window.resetAtMs)) }
+    : read.pageFacts;
   const history = getProviderAccountUsageQuotaHistoryV1(read);
   if (!history) return undefined;
   const snapshots = history.entries.map(entry => entry.snapshot);
@@ -278,29 +281,31 @@ export function getProviderAccountUsageQuotaPageFactsV1(read: ConnectedServiceQu
     .filter(snapshot => snapshot.state === 'loaded_data' && snapshot.recordId === current?.recordId)
     .sort((left, right) => left.observedAtMs - right.observedAtMs);
   const witnessedResets: NonNullable<ConnectedServiceQuotaGetResultV1['pageFacts']>['witnessedResets'] = [];
+  const resetKeys = new Set<string>();
+  const addReset = (window: typeof witnessedResets[number]) => {
+    const key = providerAccountUsagePaceWindowIdentityKey(window);
+    if (resetKeys.has(key)) return;
+    resetKeys.add(key);
+    witnessedResets.push(window);
+  };
   for (const meter of current?.meters ?? []) {
-    const resets = new Set<number>();
     for (let index = 1; index < observations.length; index++) {
       const previous = observations[index - 1]!;
       const next = observations[index]!;
       const window = resolveProviderAccountUsagePaceWindow(previous, meter.meterId, operands);
-      if (!window || resets.has(window.resetAtMs) || !hasProviderAccountUsageWitnessedReset({ previous, current: next,
+      if (!window || !inRange(window.resetAtMs) || !hasProviderAccountUsageWitnessedReset({ previous, current: next,
         meterId: meter.meterId, nowMs: next.observedAtMs }, operands)) continue;
-      resets.add(window.resetAtMs); witnessedResets.push(window);
+      addReset(window);
     }
   }
   // Summaries retain the reset facts, never the exact observation identity used
   // for reset-start admission. Their window bounds follow the canonical meter.
-  const resetKeys = new Set(witnessedResets.map(value => JSON.stringify([value.recordId, value.meterId, value.resetAtMs])));
   for (const day of daySummaries ?? []) for (const window of day.windows) {
     const basis = resolveProviderAccountUsagePaceWindow(window.lastSnapshot, window.meterId, operands);
     if (!basis) continue;
     for (const reset of window.resets) {
-      if (range && (reset.resetAtMs < range.startAtMs || reset.resetAtMs >= range.endAtMs)) continue;
-      const key = JSON.stringify([day.recordId, window.meterId, reset.resetAtMs]);
-      if (resetKeys.has(key)) continue;
-      resetKeys.add(key);
-      witnessedResets.push({ ...basis, resetAtMs: reset.resetAtMs, windowStartAtMs: reset.resetAtMs - basis.windowDurationMs });
+      if (!inRange(reset.resetAtMs)) continue;
+      addReset({ ...basis, resetAtMs: reset.resetAtMs, windowStartAtMs: reset.resetAtMs - basis.windowDurationMs });
     }
   }
   witnessedResets.sort((left, right) => left.resetAtMs - right.resetAtMs || left.meterId.localeCompare(right.meterId));

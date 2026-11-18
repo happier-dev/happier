@@ -6,6 +6,20 @@ const HOUR = 3_600_000;
 const reading = (key: string, resetAtMs: number | null, remainingFraction: number | null): UsageWindowReading => ({ key, resetAtMs, remainingFraction });
 
 describe('witnessed reset', () => {
+    it('ignores a same-second counter correction and celebrates a later second on its raw clock', () => {
+        const watch = createWitnessedResetWatch();
+        const key = 'test:short';
+        const later = reading(key, 3100, 1);
+        expect(watch.observe([reading(key, 2000, 0)], true)).toEqual([]);
+        expect(watch.observe([reading(key, 2400, 1)], true)).toEqual([]);
+        expect(watch.observe([reading(key, 2450, 0)], true)).toEqual([]);
+        expect(watch.observe([later], true)).toEqual([later]);
+        expect(watch.observe([reading(key, 2400, 0)], true)).toEqual([]);
+        expect(watch.observe([reading(key, 3400, 1)], true)).toEqual([]);
+        expect(detectWitnessedResets([reading(key, null, 0)], [later])).toEqual([]);
+        expect(detectWitnessedResets([reading(key, 2400, 0)], [reading(key, null, 1)])).toEqual([]);
+    });
+
     it('never celebrates a first read, a window that was not used up, or a reading that is unknown', () => {
         const after = [reading('claude:5h', 15 * HOUR, 1)];
         // Hydration: there is nothing before it to have witnessed.

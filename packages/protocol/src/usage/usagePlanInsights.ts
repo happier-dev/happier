@@ -134,17 +134,17 @@ function accountInsights(read: ConnectedServiceQuotaGetResultV1, input: Paramete
       : headroom?.status === 'available' ? { ...base, modelId: meter.modelId, status: 'available', remainingFraction: headroom.remainingFraction,
         resetAtMs: headroom.window.resetAtMs, method: 'model_specific_quota_meter', coverage: 'current_meter', qualification: headroom.qualification }
         : { ...base, modelId: meter.modelId, status: 'insufficient_basis', reason: headroom?.reason ?? 'unknown_observation_time' });
-    const resets = new Set<number>();
+    let recordedResetCount = 0;
     if (selectedPrice && fresh && window) for (const ended of witnessedResets) {
-      // Count only the adjacent actual cycles witnessed by B, not timestamp churn or inferred gap cycles.
+      // Page facts already identify each witnessed cycle once.
       if (ended.meterId !== meter.meterId || ended.windowStartAtMs < selectedPrice.period.startAtMs
         || ended.resetAtMs > Math.min(nowMs!, selectedPrice.period.endAtMs)) continue;
-      resets.add(ended.resetAtMs);
+      recordedResetCount += 1;
     }
-    pricePerReset.push(selectedPrice && fresh && resets.size > 0 ? { ...base, status: 'available', amount: selectedPrice.amount / resets.size,
+    pricePerReset.push(selectedPrice && fresh && recordedResetCount > 0 ? { ...base, status: 'available', amount: selectedPrice.amount / recordedResetCount,
       currency: selectedPrice.currency, priceKind: selectedPrice.kind, priceAmount: selectedPrice.amount, priceAsOfMs: selectedPrice.asOfMs,
       priceSource: `${selectedPrice.source.kind}:${selectedPrice.source.id}:${selectedPrice.source.version}`,
-      period: selectedPrice.period, recordedResetCount: resets.size, coverage: 'recorded_subset', method: 'period_price_divided_by_recorded_resets' }
+      period: selectedPrice.period, recordedResetCount, coverage: 'recorded_subset', method: 'period_price_divided_by_recorded_resets' }
       : { ...base, status: 'insufficient_basis', reason: !fresh ? 'stale' : !selectedPrice ? 'period_price_unavailable' : 'recorded_resets_unavailable' });
   }
   return { source: read.source, value: accountValue(read, input, price), weather, modelHeadroom, pricePerReset };

@@ -75,8 +75,7 @@ export function projectProviderAccountUsageQuotaReadV1(input: Readonly<{ input: 
           // Earlier curves consume only the separately requested exact history.
           earlierCurves: (input.current?.meters ?? []).map(meter => ({ meterId: meter.meterId,
             value: deriveProviderAccountUsageEarlierWindowCurves({ current: input.current!, meterId: meter.meterId, history: requestedSnapshots }, operands) })),
-          ...(range ? { witnessedResets: result.pageFacts.witnessedResets.filter(window => window.resetAtMs >= range.startAtMs && window.resetAtMs < range.endAtMs),
-            dayQuotaHistory: result.pageFacts.dayQuotaHistory?.filter(day => day.dayStartAtMs < range.endAtMs && day.dayStartAtMs + PROVIDER_ACCOUNT_USAGE_DAY_MS > range.startAtMs) } : {}),
+          ...(range ? { dayQuotaHistory: result.pageFacts.dayQuotaHistory?.filter(day => day.dayStartAtMs < range.endAtMs && day.dayStartAtMs + PROVIDER_ACCOUNT_USAGE_DAY_MS > range.startAtMs) } : {}),
         } : {}),
       };
     }

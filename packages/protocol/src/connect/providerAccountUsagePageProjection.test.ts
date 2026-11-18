@@ -6,10 +6,11 @@ import { openProviderAccountUsagePageProjectionV1, openProviderAccountUsagePageP
 import { sealAccountScopedBlobCiphertext } from '../crypto/accountScopedCipher.js';
 import { deriveProviderAccountUsagePace, deriveProviderAccountUsageUnusedCapacity, deriveProviderAccountUsageEarlierWindowCurves, hasProviderAccountUsageWitnessedReset } from './deriveProviderAccountUsagePace.js';
 import { projectProviderAccountUsageQuotaReadV1 } from './providerAccountUsageHistory.js';
+import { buildProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummary.js';
 import * as pageProjection from './providerAccountUsagePageProjection.js';
 
 const recordKey = { providerId: 'test', accountSubjectId: 'account', subjectKind: 'account' as const, quotaScope: 'account' as const };
-const sample = (at: number, used: number, reset = 1000) => ProviderAccountUsageSnapshotV1Schema.parse({
+const sample = (at: number, used: number, reset: number | null = 1000) => ProviderAccountUsageSnapshotV1Schema.parse({
   v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: 'test',
   accountSubject: { kind: 'providerSubject', id: 'account' }, observedAtMs: at, fetchedAtMs: at,
   staleAfterMs: 5000, source: 'providerHttp', confidence: 'confirmed', planLabel: 'Standard',
@@ -23,6 +24,44 @@ const range = { startAtMs: 0, endAtMs: 1200 };
 const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
 
 describe('B page projection', () => {
+  it('joins retained and exact reset witnesses without dropping the next second or rounding display clocks', () => {
+    const previous = sample(1100, 20, 2100);
+    const current = sample(2200, 10, 3100);
+    const day = buildProviderAccountUsageDaySummaryV1({ recordId: current.recordId, dayStartAtMs: 0,
+      snapshots: [sample(100, 1, null), sample(1500, 20, 2400), sample(2500, 10, 3400), sample(3500, 5, 4400)] });
+    const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+    const exactHistory = { entries: [{ id: 'previous', observedAtMs: previous.observedAtMs, snapshot: previous }], nextCursor: null };
+    const project = (startAtMs: number) => projectProviderAccountUsageQuotaReadV1({ input: { source, projection: {
+      range: { startAtMs, endAtMs: 4000 }, resolution: 'accepted_observations' } },
+      current, recentHistory: exactHistory, nowMs: current.observedAtMs, daySummaries: [day] });
+
+    const all = project(0).pageFacts;
+    expect(all?.witnessedResets).toEqual([
+      { recordId: current.recordId, meterId: 'week', resetAtMs: 2100, windowStartAtMs: 1100, windowDurationMs: 1000 },
+      { recordId: current.recordId, meterId: 'week', resetAtMs: 3400, windowStartAtMs: 2400, windowDurationMs: 1000 },
+    ]);
+    // The exact representative is outside this display range. Its in-range
+    // counterpart from retention must survive.
+    expect(project(2300).pageFacts?.witnessedResets.map(window => window.resetAtMs)).toEqual([2400, 3400]);
+    const rebuilt = buildProviderAccountUsageDaySummaryV1({ recordId: day.recordId, dayStartAtMs: day.dayStartAtMs,
+      previous: day, snapshots: [] });
+    expect(rebuilt.windows.find(window => window.resetAtMs === null)).toMatchObject({ windowStartAtMs: null, resets: [] });
+    expect(JSON.stringify(rebuilt)).toBe(JSON.stringify(day));
+  });
+
+  it('reports one history reset when successive readings return to an earlier reset clock', () => {
+    const snapshots = [sample(1500, 20, 2100), sample(2150, 10, 3100), sample(2250, 25, 2400), sample(2500, 15, 3400)];
+    const current = snapshots.at(-1)!;
+    const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+    const result = projectProviderAccountUsageQuotaReadV1({ input: { source, projection: {
+      range: { startAtMs: 0, endAtMs: 3000 }, resolution: 'accepted_observations' } },
+      current, history: { entries: snapshots.slice(0, -1).map(snapshot => ({
+        id: String(snapshot.observedAtMs), observedAtMs: snapshot.observedAtMs, snapshot,
+      })), nextCursor: null }, nowMs: current.observedAtMs });
+
+    expect(result.pageFacts?.witnessedResets.map(window => window.resetAtMs)).toEqual([2100]);
+  });
+
   it('admits consecutive bounded pages without reopening prior witnesses or copying unchanged material', () => {
     const open = pageProjection.createProviderAccountUsagePageProjectionOpenerV1();
     const pages = Array.from({ length: 4 }, (_, page) => packProviderAccountUsagePageProjectionV1(
