@@ -205,6 +205,31 @@ describe('createActionExecutor (review.start)', () => {
     }, { surface: 'ui' })).toMatchObject({ ok: true, result: { results: [{ ok: true }, { ok: true }] } });
     expect(requests.map(request => request.retentionPolicy)).toEqual(['resumable', 'ephemeral']);
   });
+  it.each([true, false])('admits only the explicitly selected profile availability with no default reviewer (enabled: %s)', async enabled => {
+    const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
+    const profileSourceCustody = { kind: 'managed', immutableGenerationId: 'authored-review', installSource: 'archive' } as const;
+    const records = createInMemoryReviewRecordPortV1();
+    const executor = createCoreActionExecutor({
+      reviewRecords: () => records,
+      executionRunStart: async (_sessionId, input) => {
+        requests.push(ExecutionRunStartRequestSchema.parse(input));
+        return { runId: 'authored-review', callId: 'call', sidechainId: 'call' };
+      },
+      reviewEnginesList: async () => ({ items: [], selectionItems: [
+        { value: 'codex', label: 'Authored', profileId: 'authored-review', enabled, retentionPolicy: 'ephemeral' },
+        { value: 'codex', label: 'Neighbor', profileId: 'neighbor-review', enabled: !enabled },
+      ] }),
+    } as ActionExecutorDeps);
+    const result = await executor.execute('review.start', {
+      sessionId: 's1', scope: 'repository', instructions: 'Review the repository.',
+      reviewers: [{ kind: 'engine', engineId: 'codex', profileId: 'authored-review', profileSourceCustody }],
+    }, { surface: 'ui' });
+    expect(result).toMatchObject({ ok: true, result: { results: [enabled
+      ? { ok: true }
+      : { ok: false, errorCode: 'review_engine_unavailable' }] } });
+    expect(requests.map(request => ({ profileId: request.profileId, retentionPolicy: request.retentionPolicy })))
+      .toEqual(enabled ? [{ profileId: 'authored-review', retentionPolicy: 'ephemeral' }] : []);
+  });
   it('uses the explicitly selected profile retention instead of the same Agent default', async () => {
     const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
     const profileSourceCustody = { kind: 'managed', immutableGenerationId: 'one-shot-review', installSource: 'archive' } as const;
@@ -576,7 +601,7 @@ describe('createActionExecutor (review.start)', () => {
       } },
     });
     expect(result).toMatchObject({ ok: true, result: { intent: 'review', sessionId: null } });
-    expect(reviewEnginesList.mock.calls[0]?.[0]).toEqual({ sessionId: null, machineId: 'machine-1', includeDisabled: false });
+    expect(reviewEnginesList.mock.calls[0]?.[0]).toEqual({ sessionId: null, machineId: 'machine-1', includeDisabled: false, scope: 'worktree' });
     expect(executionRunStart).toHaveBeenCalledWith(null, expect.objectContaining({ intent: 'review', cwd: '/repo' }),
       expect.objectContaining({ workflowRunId: 'workflow-1', targetMachineId: 'machine-1', actionRequestId: 'review-request',
         actionCaller: expect.objectContaining({ kind: 'workflowRun', runId: 'workflow-1' }) }));

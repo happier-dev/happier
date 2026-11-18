@@ -10,7 +10,7 @@ import { ReviewCommentGetResponseV1Schema } from '../../../reviews/comments/acti
 import { buildAcceptedReviewFindingsForVerifyV1, REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsForVerifyV1 } from '../../../reviews/reviewFindingsApplyInputV1.js';
 import { ReviewWalkthroughRequestSchema, ReviewExplainFindingsRequestSchema, ReviewExplainFindingsRefinementSchema } from '../../../reviews/reviewNarration.js';
 import { resolveSessionIdFromInput, resolveServerIdForExecutionRunScope } from '../sessionScope.js';
-import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, buildAvailableExecutionBackendOptionKeys, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, classifyExecutionRunStartFailure } from '../executionRuns.js';
+import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, classifyExecutionRunStartFailure } from '../executionRuns.js';
 import { readRecord, hasOwn } from '../../../inputs/inputRecords.js';
 import { requiresReviewWorkflowCompositionV1, reviewReviewerIdForSelectionV1, reviewReviewerIdsForStartV1, type ReviewStartInput, type ReviewTranscriptEvidence } from '../../../reviews/reviewStart.js';
 import { SESSION_TRANSCRIPT_GET_MAX_LIMIT, SessionTranscriptGetResultSchema } from '../../specs/session/transcript.js';
@@ -424,7 +424,6 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const transcript = transcriptRequested && reviewInput.sourceSession
           ? await readReviewTranscriptEvidence(reviewInput.sourceSession, executeHostChild, ctx) : null;
         if (transcript && !transcript.ok) return transcript;
-        const availableReviewEngineKeys = buildAvailableExecutionBackendOptionKeys(reviewEngineInventory);
         const narrationRequested = reviewInput.outputs?.includes('walkthrough') === true;
         const narrationPolicy = resolveReviewNarratorPolicy({
           selectedEngineIds: engineSelections.map(entry => entry.reviewerId),
@@ -472,12 +471,8 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           startOne: async (reviewerId) => {
             const { selection, engineInput, connectedSelection, teamCredentialModel } = selectedById.get(reviewerId)!;
             const engineId = selection.engineId;
-            const normalizedBackendTargetKey = normalizeExecutionBackendOptionValue(engineId);
-            const rawEngineId = normalizeId(engineId);
-            if (
-              !availableReviewEngineKeys.has(normalizedBackendTargetKey)
-              && (!rawEngineId || !availableReviewEngineKeys.has(rawEngineId))
-            ) {
+            const selectedItem = selectedReviewEngineItems.get(reviewerId);
+            if (!selectedItem || selectedItem.disabled === true) {
               return {
                 ok: false,
                 errorCode: 'review_engine_unavailable',
