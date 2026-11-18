@@ -750,9 +750,10 @@ async function readCreateSource(tx: Tx, binding: ExternalActionExecutionAuthoriz
         const template = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId,
             admission.preview.templateEnvironmentId, authentication);
         if (!template.ok || !template.admission.canManage || template.row.deletedAt || template.row.purpose !== 'standard'
-            || template.row.projectSourceId !== admission.source?.id
-            || template.row.revision !== admission.preview.expectedTemplateRevision
-            || template.row.runtimeTargetLinkId !== admission.preview.runtimeTargetLinkId) return { ok: false, code: 'credential_scope_denied' };
+            || template.row.projectSourceId !== admission.source?.id) return { ok: false, code: 'credential_scope_denied' };
+        // A template that moved since the caller read it is the same recoverable conflict as a stale copy source.
+        if (template.row.revision !== admission.preview.expectedTemplateRevision
+            || template.row.runtimeTargetLinkId !== admission.preview.runtimeTargetLinkId) return { ok: false, code: 'source_changed' };
     }
     if (admission.previewCompanionOfEnvironmentId && (!admission.preview || !admission.source
         || admission.purpose !== 'standard' || admission.protection !== 'nonProduction'

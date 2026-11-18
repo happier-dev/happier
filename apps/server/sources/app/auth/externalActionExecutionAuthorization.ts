@@ -84,7 +84,7 @@ import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, Deploym
     DeploymentPromoteAdmissionInputV1Schema, DeploymentTeardownActionAdmissionInputV1Schema,
     DeploymentTransitionInputV1Schema,
     DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1,
-    DeploymentEnvironmentGetInputV1Schema, DeploymentEnvironmentAccessInputV1Schema, DeploymentDeployIntentInputV1Schema, DeploymentActionInputSchemasV1,
+    DeploymentEnvironmentGetInputV1Schema, DeploymentReceiptGetInputV1Schema, DeploymentEnvironmentAccessInputV1Schema, DeploymentDeployIntentInputV1Schema, DeploymentActionInputSchemasV1,
     DeploymentChildRoutingV1Schema, readDeploymentChildRpcV1, projectDeploymentChildRoutingV1, doesDeploymentChildInputMatchRootV1,
     readDeploymentArchiveRpcEffectV1, type DeploymentChildRoutingV1 } from '@happier-dev/protocol';
 import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
@@ -2673,7 +2673,8 @@ async function isAdmittedDeclaredDeploymentReadInScope(
 /**
  * A provider-role admission host (createDeploymentTargetRoleAdmissionHost) reads the Environment a
  * contributed provider read names (a Neon project list), then opens its content Artifact and, for a
- * linked read (Neon branches), the named target link's content Artifact, with its
+ * linked read (Neon branches), the named target link's content Artifact, or (a database target list) the
+ * Environment's receipt metadata, with its
  * admitted contributed root; that root carries no deployment read admission. The Environment and
  * Artifact routes keep the requester's own access, as for the requester's bearer read. A foreign
  * custodian (a Team member's Machine) chose the operand itself, so it names only an Environment its own
@@ -2690,6 +2691,15 @@ async function isContributedRootEnvironmentRead(verified: VerifiedSignedChildReq
         const read = DeploymentEnvironmentGetInputV1Schema.safeParse(proof.routeInput);
         if (!read.success || read.data.serverId !== binding.serverIdentityId) return false;
         environmentId = read.data.environmentId;
+    } else if (isAccountActionHttpOperation(DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, proof)) {
+        // A database target list reads its Environment's active receipt metadata; private evidence stays on the host.
+        const read = DeploymentReceiptGetInputV1Schema.safeParse(proof.routeInput);
+        if (!read.success || read.data.serverId !== binding.serverIdentityId || read.data.projection !== undefined) return false;
+        if (binding.custodianAccountId === binding.accountId) return true;
+        const receipt = await db.deployment.findFirst({ where: { id: read.data.deploymentId,
+            ...(read.data.environmentId === undefined ? {} : { environmentId: read.data.environmentId }) }, select: { environmentId: true } });
+        if (!receipt) return false;
+        environmentId = receipt.environmentId;
     } else {
         // The content Artifact is the Environment's own, or a current target link's that it names.
         const artifactId = readArtifactGetHttpPurpose(proof);
@@ -3806,6 +3816,10 @@ function isWorkflowRunActionHttpPurpose(verified: VerifiedSignedChildRequest,
             && operands.serverId === verified.binding.serverIdentityId;
     }
     if (verified.binding.actionId === WORKFLOW_RUN_START_ACTION_ID_V1 && isManagedCreationChildHttpPurpose(verified, proof)) return true;
+    // A Run's Machine service and reboot steps read the requester's Environment access with the Run carrier
+    // (machineResources canReadServiceEnvironments). The route answers only the requester's own access.
+    if (verified.binding.actionId === WORKFLOW_RUN_START_ACTION_ID_V1 && isRequesterOwnMachineRequest(verified)
+        && readDeploymentEnvironmentAccessPurpose(verified, proof)) return true;
     const reads = ['get', 'run-key.census', 'run-key.commit'];
     const invocationReads = [...reads, 'invocations.list', 'invocations.get', 'invocations.current'];
     const purposes: Readonly<Record<string, readonly string[]>> = {

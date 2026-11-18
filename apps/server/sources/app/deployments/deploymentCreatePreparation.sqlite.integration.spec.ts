@@ -195,6 +195,29 @@ describe('reviewed create preparation authority', () => {
         else await expect(minted).rejects.toMatchObject({ code: state === 'stale' ? 'source_changed' : 'credential_scope_denied' });
     });
 
+    // QA-SWEEP-172 #175: a preview Create with a stale template revision refused as credential_scope_denied,
+    // hiding a recoverable CAS conflict. A stale template is the same conflict as a stale copy source.
+    it.each(['current', 'stale-revision', 'moved-runtime', 'foreign-template'] as const)('preserves the %s preview template admission cause at mint', async state => {
+        const preview = await previewFixture();
+        const f = preview.f;
+        const { copyFrom: _copy, ...base } = f.input;
+        const repository = { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' };
+        const templateEnvironmentId = state === 'foreign-template' ? f.original.id : preview.template.id;
+        const input = DeploymentEnvironmentCreateIntentInputV1Schema.parse({ ...base, purpose: 'preview',
+            preview: { templateEnvironmentId, expectedTemplateRevision: preview.template.revision + (state === 'stale-revision' ? 1 : 0),
+                runtimeTargetLinkId: state === 'moved-runtime' ? crypto.randomUUID() : preview.runtime.id,
+                pullRequestId: '17', headSha: 'a'.repeat(40),
+                provenance: { v: 1, templateEnvironmentId, runtimeTargetLinkId: preview.runtime.id,
+                    repository, headRepository: repository, pullRequestId: '17', pullRequestNumber: 17,
+                    author: { id: 'owner', login: 'owner' } } } });
+        const envelope = { v: 1 as const, requestId: f.binding.requestId, target: f.binding.target, input };
+        const minted = auth.mintExternalActionExecutionAuthorization({ ...f.binding,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+            deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(f.binding.actionId, input) }, { input });
+        if (state === 'current') await expect(minted).resolves.toMatchObject({ binding: { actionId: f.binding.actionId } });
+        else await expect(minted).rejects.toMatchObject({ code: state === 'foreign-template' ? 'credential_scope_denied' : 'source_changed' });
+    });
+
     it('returns the stale source conflict through the public Create authorization HTTP contract', async () => {
         const f = await fixture();
         await db.deploymentEnvironment.update({ where: { id: f.original.id }, data: { revision: { increment: 1 } } });

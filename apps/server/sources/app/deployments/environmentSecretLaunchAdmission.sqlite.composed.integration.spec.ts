@@ -61,7 +61,7 @@ import { managedDataQueryPostgresAvailable, managedQueryProviderHttp, managedQue
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { createConnectedAccountPurposeBindingOwner } from '../../../../cli/src/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
@@ -958,6 +958,64 @@ describe('private installed Environment secret launch transport', () => {
             expect(deleted.statusCode, deleted.body).toBe(401);
         }, { authentication: 'real' });
     });
+    it('admits the database target list receipt read of its own Environment under the contributed root (AUTHZ-FLUSH-176)', async () => {
+        // Opening an own-server database lists its targets (createDeploymentDatabasesServiceForHost); the role
+        // admission host reads the active receipt with the admitted action.invoke root, which carries no read admission.
+        const f = await admittedTeamDelivery('plain');
+        const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+        const deploymentId = f.payload.materialization.kind === 'deployment' ? f.receipt.deploymentId : '';
+        const machine = await db.machine.findUniqueOrThrow({ where: { id: f.controller.machineId }, select: { accountId: true } });
+        await db.machine.update({ where: { id: f.controller.machineId }, data: { accountId: f.owner.id } });
+        const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const actionId = 'action.invoke' as const;
+        const action = parseQualifiedPluginActionId(DATABASE_TARGETS_LIST_ACTION_ID_V1);
+        if (!action) throw new Error('The canonical database Action has a qualified identity');
+        const receiptPath = (id: string, environmentId?: string) => `/v1/deployments/receipts/${id}?serverId=${serverId}`
+            + (environmentId ? `&environmentId=${environmentId}` : '');
+        const read = async (accountId: string, tokenEpoch: number, path: string,
+            signer: Readonly<{ machineId: string; installationId: string; keys: nacl.SignKeyPair }> = f.controller) => {
+            const target = { kind: 'machine' as const, machineId: signer.machineId };
+            const actionInput = { action, input: { scope: { kind: 'environment', environment: { serverId,
+                projectSourceId: row.projectSourceId, environmentId: row.id } } } };
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: actionInput };
+            expect(projectDeploymentReadAdmissionV1(actionId, actionInput)).toBeUndefined();
+            const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId, serverIdentityId: serverId,
+                authentication: { kind: 'account', tokenEpoch }, actionId, machineId: target.machineId, target,
+                requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) });
+            return { method: 'GET' as const, url: path, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target, installationId: signer.installationId, requestId: envelope.requestId,
+                    method: 'GET', path, privateKey: signer.keys.secretKey }),
+            } };
+        };
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); }, async app => {
+            for (const path of [receiptPath(deploymentId, row.id), receiptPath(deploymentId)]) {
+                const manager = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, path));
+                expect(manager.statusCode, manager.body).toBe(200);
+                expect(manager.json()).toMatchObject({ ok: true });
+            }
+            // An outsider's valid root on its own Machine passes the verifier; the receipt route keeps its own access.
+            const outsiderMachine = await ownInstalledMachine(outsider.id);
+            const foreign = await app.inject(await read(outsider.id, outsider.tokenEpoch, receiptPath(deploymentId, row.id), outsiderMachine));
+            expect(foreign.statusCode, foreign.body).not.toBe(200);
+            expect(foreign.statusCode, foreign.body).not.toBe(401);
+            // A foreign custodian that cannot read this Environment itself cannot name its receipt under the requester's root.
+            await db.machine.update({ where: { id: f.controller.machineId }, data: { accountId: machine.accountId } });
+            for (const path of [receiptPath(deploymentId, row.id), receiptPath(deploymentId)]) {
+                const custodian = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, path));
+                expect(custodian.statusCode, custodian.body).toBe(401);
+            }
+            await db.machine.update({ where: { id: f.controller.machineId }, data: { accountId: f.owner.id } });
+            // The read opens metadata only: the private investigation projection and a missing receipt never cross.
+            for (const path of [`${receiptPath(deploymentId, row.id)}&projection=investigation`, receiptPath(crypto.randomUUID(), row.id)]) {
+                const refused = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, path));
+                expect(refused.statusCode, refused.body).not.toBe(200);
+            }
+        }, { authentication: 'real' });
+    });
     it('admits a person-started Workflow Run approval-scope Environment read under its workflow.run.start root (MOVE-WORKFLOW item 10)', async () => {
         // A Run's steps execute with the accepted workflow.run.start authorization as their carrier
         // (buildWorkflowActionContext). Each deployment step's approval scope reads its Environment first.
@@ -1000,6 +1058,50 @@ describe('private installed Environment secret launch transport', () => {
             expect(foreign.statusCode, foreign.body).not.toBe(401);
             await db.machine.update({ where: { id: f.controller.machineId }, data: { accountId: machine.accountId } });
             const custodian = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, 'deployments.environments.get'));
+            expect(custodian.statusCode, custodian.body).toBe(401);
+        }, { authentication: 'real' });
+    });
+
+    it('admits a person-started Workflow Run Machine service step Environment access read under its workflow.run.start root (AUTHZ-FLUSH-176)', async () => {
+        // A Run's Machine service and reboot steps (machineResources canReadServiceEnvironments) read the requester's
+        // Environment access with the Run's carrier root before disclosing or touching a deployment-owned service.
+        const f = await admittedTeamDelivery('plain');
+        const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+        const machine = await db.machine.findUniqueOrThrow({ where: { id: f.controller.machineId }, select: { accountId: true } });
+        await db.machine.update({ where: { id: f.controller.machineId }, data: { accountId: f.owner.id } });
+        const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const rootActionId = 'workflow.run.start' as const;
+        const path = '/v1/deployments/environments/access';
+        const access = async (accountId: string, tokenEpoch: number, body: unknown = { serverId, environmentIds: [row.id] },
+            signer: Readonly<{ machineId: string; installationId: string; keys: nacl.SignKeyPair }> = f.controller) => {
+            const target = { kind: 'machine' as const, machineId: signer.machineId };
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: { workflowId: 'machine-restart-when-needed' } };
+            const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId, serverIdentityId: serverId,
+                authentication: { kind: 'account', tokenEpoch }, actionId: rootActionId, machineId: target.machineId, target,
+                requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) });
+            return { method: 'POST' as const, url: path, payload: body as Record<string, unknown>, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: rootActionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: rootActionId, target, installationId: signer.installationId, requestId: envelope.requestId,
+                    method: 'POST', path, body, privateKey: signer.keys.secretKey }),
+            } };
+        };
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); }, async app => {
+            const manager = await app.inject(await access(f.owner.id, f.owner.tokenEpoch));
+            expect(manager.statusCode, manager.body).toBe(200);
+            expect(manager.json()).toMatchObject({ ok: true, items: [{ environmentId: row.id, read: true }] });
+            // Only the access read crosses: another Home's operand is refused at the verifier.
+            expect((await app.inject(await access(f.owner.id, f.owner.tokenEpoch,
+                { serverId: 'srv_another_home', environmentIds: [row.id] }))).statusCode).toBe(401);
+            // An outsider's valid Run root on its own Machine passes the verifier; the route answers its own access only.
+            const foreign = await app.inject(await access(outsider.id, outsider.tokenEpoch, undefined, await ownInstalledMachine(outsider.id)));
+            expect(foreign.statusCode, foreign.body).not.toBe(401);
+            expect(JSON.stringify(foreign.json())).not.toContain('"read":true');
+            // A foreign custodian Machine gains no requester read under the requester's Run root.
+            await db.machine.update({ where: { id: f.controller.machineId }, data: { accountId: machine.accountId } });
+            const custodian = await app.inject(await access(f.owner.id, f.owner.tokenEpoch));
             expect(custodian.statusCode, custodian.body).toBe(401);
         }, { authentication: 'real' });
     });
