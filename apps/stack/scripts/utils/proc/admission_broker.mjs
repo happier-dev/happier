@@ -45,6 +45,9 @@ const HEAD_PRIORITY_RANKS = new Map([
   ['validation apps/stack/scripts/build/build_source_web_ui.mjs', 2],
   ['compilation scripts/workspaces/checkCommitTypeCoherence.mjs', 1],
   ['compilation scripts/workspaces/commitPackageTypecheck.mjs', FOCUSED_TEST_PRIORITY_RANK],
+  // P03-GATE-TC 2026-11-18: the commit gate's typecheck delta (its worker compile) holds a committing lane and decides
+  // whether a type error reaches every other lane's build, so it takes the top rank with the shared producers.
+  ['compilation scripts/workspaces/commitGateTypecheck.mjs', 2],
 ]);
 const FOCUSED_TEST_CLASSES = new Set(FOCUSED_TEST_ADMISSION_CLASSES);
 const PRODUCER_RANK = 2;

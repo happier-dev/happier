@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { attributeRollingRange, commitPackageTypecheckRefuses, nextRollingScope, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
+import { attributeRollingRange, commitGateTypecheck, commitGateTypecheckPlan, commitPackageTypecheckRefuses, nextRollingScope, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
 
 async function workspace(t) {
   const repo = await mkdtemp(join(tmpdir(), 'happier-commit-package-typecheck-'));
@@ -234,6 +234,37 @@ test('a red range records its verdict before attribution compiles any intermedia
   assert.equal(await attributeRollingRange(options), null, 'an attributed range is cleared');
 });
 
+// P03-GATE-TC 2026-11-18: touched apps are checked by the rolling owner after the commit lands. A red range of one commit
+// needs no bisection (the verdict's own head compile names it), so its URGENT goes out with the verdict.
+test('a red range of a single commit is attributed and posted with its verdict, compiling nothing more', async t => {
+  const { repo } = await workspace(t);
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const state = await mkdtemp(join(tmpdir(), 'happier-rolling-typecheck-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  t.after(() => { try { git('worktree', 'unlock', join(state, 'worktree')); git('worktree', 'remove', '--force', join(state, 'worktree')); } catch {} });
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const step = async (label, files) => {
+    for (const [path, content] of Object.entries(files)) await writeFile(join(repo, path), content);
+    await writeFile(join(repo, '.tree-marker'), `${label}\n`);
+    git('add', '-A');
+    git('commit', '--quiet', '-m', label);
+    return git('rev-parse', 'HEAD');
+  };
+  const compiled = [];
+  const posts = [];
+  const options = { repo, env, scope: 'apps/cli', compile: fakeCompiler(compiled), bootstrap: () => {}, remote: null, post: entry => posts.push(entry), boardPaths: [], log: () => {} };
+  await step('c0', { 'apps/cli/src/index.ts': 'export const a = 0;\n', 'apps/cli/errors.txt': '10:2322:old a\n' });
+  await rollingHeadTypecheckPass({ ...options, attribute: false });
+  const c1 = await step('c1', { 'apps/cli/src/index.ts': 'export const a = 1;\n', 'apps/cli/errors.txt': '10:2322:old a\n20:2322:new b\n' });
+  compiled.length = 0;
+  const verdict = await rollingHeadTypecheckPass({ ...options, attribute: false });
+  assert.deepEqual(compiled, ['c1'], 'only the verdict compile');
+  assert.deepEqual(verdict.attributions.map(entry => entry.commit), [c1]);
+  assert.equal(posts.length, 1);
+  assert.match(posts[0], new RegExp(`URGENT — new type errors from ${c1.slice(0, 11)}`, 'u'));
+  assert.equal(await attributeRollingRange(options), null, 'nothing left to attribute');
+});
+
 test('a scope without a recorded baseline compiles its whole scope instead of recording an unchecked skip', async t => {
   // 2026-11-17 08:33Z: apps/server's first rolling pass compared HEAD^..HEAD, which didn't touch the app,
   // and recorded ROLLING-skipped as its baseline without ever compiling apps/server.
@@ -376,4 +407,58 @@ test('the rolling loop runs packages before every app pass and rotates the app s
   assert.equal(nextRollingScope({ pending: ['apps/ui', 'apps/server'], lastScope: 'packages', lastApp: 'apps/server' }), 'apps/ui');
   assert.equal(nextRollingScope({ pending: ['packages'], lastScope: 'packages' }), 'packages');
   assert.equal(nextRollingScope({ pending: [], lastApp: 'apps/ui' }), undefined);
+});
+
+// P03-GATE-TC 2026-11-18: 5f6edbb072d (Protocol TS4104) and e3f191e6bc4 (scm-gitlab TS2322) passed the commit gate and
+// broke their package's build for 3-4 h; the rolling HEAD typecheck never follows packages/plugins/* and reached
+// Protocol hours later. The gate checks the touched workspaces themselves, plugins included, before the commit lands.
+test('the commit gate checks every touched packages/* and packages/plugins/* workspace, without dependents; touched apps go after the commit lands', async t => {
+  const { repo, commit } = await workspace(t);
+  const plugin = await commit('packages/plugins/codex/src/index.ts', 'export const value = 7;\n');
+  assert.deepEqual(commitGateTypecheckPlan({ repo, base: `${plugin}^`, tree: plugin }), { blocking: ['packages/plugins/codex'], detached: [] });
+  const producer = await commit('packages/protocol/src/index.ts', 'export const value = 8;\n');
+  assert.deepEqual(commitGateTypecheckPlan({ repo, base: `${producer}^`, tree: producer }), { blocking: ['packages/protocol'], detached: [] },
+    'dependents (sdk, ui-kit, the codex plugin, apps/cli) stay with the rolling HEAD typecheck');
+  const app = await commit('apps/cli/src/index.ts', 'export const value = 9;\n');
+  assert.deepEqual(commitGateTypecheckPlan({ repo, base: `${app}^`, tree: app }), { blocking: [], detached: ['apps/cli'] });
+  const untyped = await commit('packages/untyped/src/index.ts', 'export const value = 10;\n');
+  assert.deepEqual(commitGateTypecheckPlan({ repo, base: `${untyped}^`, tree: untyped }), { blocking: [], detached: [] });
+});
+
+test('the commit gate refuses only diagnostics the packet adds over its parent; base errors are never blamed and an unjudged worker never refuses', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-commit-gate-typecheck-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  // The worker boundary (tree push + the worker's compile) returns rows per package for a tree; here a table per tree.
+  const rowsByTree = new Map();
+  const requests = [];
+  let reachable = true;
+  const remote = (treeId, dirs) => {
+    requests.push(treeId);
+    return new Map(dirs.map(dir => [dir, reachable ? rowsByTree.get(treeId) ?? [] : undefined]));
+  };
+  const known = { file: 'packages/plugins/codex/src/index.ts', line: 1, column: 1, code: 2339, text: 'known at the base' };
+  const base = await commit('packages/plugins/codex/src/index.ts', 'export const value = 11;\n');
+  rowsByTree.set(git('rev-parse', `${base}^{tree}`), [known]);
+  const broken = await commit('packages/plugins/codex/src/index.ts', 'export const value = 11;\nexport const broken: string = 1;\n');
+  rowsByTree.set(git('rev-parse', `${broken}^{tree}`), [known, { file: 'packages/plugins/codex/src/index.ts', line: 2, column: 14, code: 2322, text: "Type 'number' is not assignable to type 'string'." }]);
+  const refused = await commitGateTypecheck({ repo, base: `${broken}^`, tree: broken, env, remote, log: () => {} });
+  assert.equal(commitPackageTypecheckRefuses(refused), true);
+  assert.deepEqual(refused.fresh.map(row => `${row.file}:${row.line}:TS${row.code}`), ['packages/plugins/codex/src/index.ts:2:TS2322'], 'the known base error is not blamed');
+  assert.match(readFileSync(join(state, 'verdicts.log'), 'utf8'), /GATE-REFUSED .*packages=packages\/plugins\/codex new=1 /u);
+  // A packet that only moves the known error is accepted.
+  const moved = await commit('packages/plugins/codex/src/index.ts', '// moved\nexport const value = 11;\n');
+  rowsByTree.set(git('rev-parse', `${moved}^{tree}`), [{ ...known, line: 2 }]);
+  assert.equal(commitPackageTypecheckRefuses(await commitGateTypecheck({ repo, base: `${moved}^`, tree: moved, env, remote, log: () => {} })), false);
+  // The parent's rows come from the result cache when this host judged that tree before.
+  const cachedBase = requests.filter(tree => tree === git('rev-parse', `${broken}^{tree}`)).length;
+  assert.equal(cachedBase, 1, 'a tree is fetched from the worker once');
+  // No worker could judge: unavailable, printed, not refused (the rolling owner still covers it).
+  reachable = false;
+  const later = await commit('packages/plugins/codex/src/index.ts', '// moved\nexport const value = 12;\n');
+  const unjudged = await commitGateTypecheck({ repo, base: `${later}^`, tree: later, env, remote, log: () => {} });
+  assert.deepEqual(unjudged.unavailable, ['packages/plugins/codex']);
+  assert.equal(commitPackageTypecheckRefuses(unjudged), false);
 });

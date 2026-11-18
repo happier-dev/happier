@@ -23,6 +23,10 @@
 // on, once per range (never per commit). Apps carry thousands of known errors, so their baseline is
 // per file and error code: only a count increase is new, and it is bisected to the raising commit.
 //
+// The commit gate (commitGateTypecheck, entry commitGateTypecheck.mjs; P03-GATE-TC 2026-11-18) reuses this owner per
+// packet: the packages/* and packages/plugins/* workspaces the packet itself touches (no dependents), its tree against
+// its parent, rows from a worker lane of its own (`--lane=gate`) so it never waits behind a rolling app compile.
+//
 // Exit status: 0 no new diagnostics, nothing to check, or warn-only mode (COMMIT_PACKAGE_TYPECHECK_BLOCKING
 // false: would-be refusals print `WARN`); when blocking, 1 for new diagnostics or a candidate compile that
 // did not complete while its parent did, 2 for usage or runtime failure (fail closed).
@@ -58,14 +62,9 @@ function gitAt(repo) {
   return (args, options = {}) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', maxBuffer: 2 ** 31 - 1, env: gitEnv(), ...options });
 }
 
-/** The packages/<name> workspaces whose source typecheck a packet can change, producers first. */
-export function commitTypecheckPackages({ repo, base, tree }) {
-  const git = gitAt(repo);
-  const changed = nulList(git(['diff-tree', '-r', '-z', '--name-only', '--no-renames', base, tree]));
-  if (!changed.some(path => path.startsWith('packages/'))) return { touched: [], packages: [] };
-  const names = nulList(git(['ls-tree', '-z', '--name-only', `${tree}:packages`]));
-  const specs = names.flatMap(name => [`${tree}:packages/${name}/package.json`, `${tree}:packages/${name}/tsconfig.json`]);
-  // One batched object read: `<spec> missing` for absent paths, otherwise header + blob.
+/** One batched object read: `undefined` for an absent spec, otherwise the blob text. */
+function readBlobs(repo, specs) {
+  if (!specs.length) return [];
   const batch = execFileSync('git', ['cat-file', '--batch'], { cwd: repo, env: gitEnv(), input: `${specs.join('\n')}\n`, maxBuffer: 2 ** 31 - 1 });
   const blobs = [];
   for (let offset = 0; offset < batch.length;) {
@@ -76,6 +75,16 @@ export function commitTypecheckPackages({ repo, base, tree }) {
     blobs.push(batch.subarray(headerEnd + 1, headerEnd + 1 + size).toString('utf8'));
     offset = headerEnd + 1 + size + 1;
   }
+  return blobs;
+}
+
+/** The packages/<name> workspaces whose source typecheck a packet can change, producers first. */
+export function commitTypecheckPackages({ repo, base, tree }) {
+  const git = gitAt(repo);
+  const changed = nulList(git(['diff-tree', '-r', '-z', '--name-only', '--no-renames', base, tree]));
+  if (!changed.some(path => path.startsWith('packages/'))) return { touched: [], packages: [] };
+  const names = nulList(git(['ls-tree', '-z', '--name-only', `${tree}:packages`]));
+  const blobs = readBlobs(repo, names.flatMap(name => [`${tree}:packages/${name}/package.json`, `${tree}:packages/${name}/tsconfig.json`]));
   const packages = new Map();
   for (const [index, name] of names.entries()) {
     const [manifestText, config] = [blobs[index * 2], blobs[index * 2 + 1]];
@@ -114,6 +123,37 @@ export function commitTypecheckPackages({ repo, base, tree }) {
     touched: [...touched].map(name => packages.get(name).dir).sort(),
     packages: ordered.map(name => packages.get(name).dir),
   };
+}
+
+/** The compile scopes whose own compiler inputs a packet changes, without dependents (the commit gate's selection):
+ * packages/<name> and packages/plugins/<name> with a typecheck script and tsconfig.json, and the rolling app scopes. */
+export function commitTouchedScopes({ repo, base, tree }) {
+  const changed = nulList(gitAt(repo)(['diff-tree', '-r', '-z', '--name-only', '--no-renames', base, tree])).filter(path => COMPILER_INPUT.test(path));
+  const candidates = new Set();
+  for (const path of changed) {
+    const app = ROLLING_APP_SCOPES.find(dir => path.startsWith(`${dir}/`));
+    const match = /^packages\/(plugins\/[^/]+|[^/]+)\//u.exec(path);
+    if (app) candidates.add(app);
+    else if (match && match[1] !== 'plugins') candidates.add(`packages/${match[1]}`);
+  }
+  const dirs = [...candidates].sort();
+  const packages = dirs.filter(dir => !isAppScope(dir));
+  const blobs = readBlobs(repo, packages.flatMap(dir => [`${tree}:${dir}/package.json`, `${tree}:${dir}/tsconfig.json`]));
+  const typed = new Set(packages.filter((dir, index) => {
+    const [manifest, config] = [blobs[index * 2], blobs[index * 2 + 1]];
+    try { return config !== undefined && Boolean(JSON.parse(manifest).scripts?.typecheck); } catch { return false; }
+  }));
+  return dirs.filter(dir => isAppScope(dir) || typed.has(dir));
+}
+
+/**
+ * The commit gate's typecheck plan (P03-GATE-TC 2026-11-18, measured on the commits' own trees): every touched
+ * packages/* and packages/plugins/* workspace is checked before the commit lands (blocking); a touched app
+ * (apps/server, apps/cli, apps/ui: tens of minutes per compile) is checked by the rolling owner right after it lands.
+ */
+export function commitGateTypecheckPlan({ repo, base, tree }) {
+  const scopes = commitTouchedScopes({ repo, base, tree });
+  return { blocking: scopes.filter(dir => !isAppScope(dir)), detached: scopes.filter(isAppScope) };
 }
 
 /** The rolling app scopes a range can change: the app's own compiler inputs, or a packages/* workspace
@@ -294,7 +334,8 @@ function treeTypechecker({ repo, state, env, log, compile = compileScope, bootst
       const ms = Date.now() - started;
       timings.push({ side, step: 'worker', ms });
       for (const dir of missing) {
-        const workerRows = fetched?.get(dir) ?? null;
+        // undefined: no worker judged the tree (unreachable, no rows); null: its compile did not complete.
+        const workerRows = fetched?.get(dir);
         log(`[commit-package-typecheck] ${side} ${dir} worker ${(ms / 1000).toFixed(1)}s ${workerRows ? `${workerRows.length} diagnostics` : 'incomplete'}`);
         rows.set(dir, workerRows);
         if (workerRows) store(dir, { rows: workerRows, ms });
@@ -379,23 +420,28 @@ function freshBetween(git, baseTree, headTree, packages, baseRows, headRows) {
  * Typechecks the packages a packet touches in the warm worktree and returns the diagnostics the
  * candidate adds. The caller must already hold compiler admission (the CLI acquires it).
  */
-export async function commitPackageTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`) }) {
+export async function commitPackageTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`),
+  packages, remote = null }) {
   const started = Date.now();
   const git = gitAt(repo);
-  const selection = commitTypecheckPackages({ repo, base, tree });
+  const selection = packages ? { touched: packages, packages } : commitTypecheckPackages({ repo, base, tree });
   if (!selection.packages.length) return { ...selection, skipped: true, fresh: [], incomplete: [], unavailable: [], timings: [], ms: Date.now() - started };
   const trees = { base: git(['rev-parse', `${base}^{tree}`]).trim(), head: git(['rev-parse', `${tree}^{tree}`]).trim() };
   const state = commitPackageTypecheckStateDir(repo, env);
-  const locked = async action => env.HAPPIER_COMMIT_TYPECHECK_LOCKED === '1' ? await action()
+  // Rows from a worker never touch this host's warm worktree, so they need no lock on it.
+  const locked = async action => remote || env.HAPPIER_COMMIT_TYPECHECK_LOCKED === '1' ? await action()
     : await withWorkspaceBundleLock(action, { lockPath: join(state, 'worktree.lock'), timeoutMs: null });
   return await locked(async () => {
     const lockWaitMs = Date.now() - started;
-    const { rowsAt, timings } = treeTypechecker({ repo, state, env, log });
+    const { rowsAt, timings } = treeTypechecker({ repo, state, env, log, remote });
     const baseRows = rowsAt(trees.base, selection.packages, 'base');
     const headRows = rowsAt(trees.head, selection.packages, 'head');
     const compared = freshBetween(git, trees.base, trees.head, selection.packages, baseRows, headRows);
     const fresh = compared.fresh.map(({ dir, row }) => ({ ...row, package: dir }));
-    return { ...selection, skipped: false, trees, fresh, incomplete: compared.incomplete, unavailable: compared.unavailable, timings, lockWaitMs, ms: Date.now() - started };
+    // A candidate no worker judged (unreachable, no rows) is not the candidate's doing: unavailable, never refused.
+    const unjudged = compared.incomplete.filter(dir => headRows.get(dir) === undefined);
+    return { ...selection, skipped: false, trees, fresh, incomplete: compared.incomplete.filter(dir => !unjudged.includes(dir)),
+      unavailable: [...compared.unavailable, ...unjudged], timings, lockWaitMs, ms: Date.now() - started };
   });
 }
 
@@ -422,6 +468,31 @@ export function formatCommitPackageTypecheck(result) {
 }
 
 export const commitPackageTypecheckRefuses = result => !result.skipped && (result.fresh.length > 0 || result.incomplete.length > 0);
+
+/** The commit gate's worker lane: its own warm worktree beside the rolling one (sharing its bare repository), so a gate
+ * never waits behind a rolling app compile (up to hours) for the worktree, and its own admission identity. */
+const GATE_LANE = 'gate';
+/** The gate's admitted entry: the broker ranks admissions by script, and this one takes the top rank. */
+export const COMMIT_GATE_TYPECHECK_ENTRY = 'scripts/workspaces/commitGateTypecheck.mjs';
+
+/**
+ * The commit gate's blocking typecheck (gate.sh and commitFromPrivateIndex.mjs call this one function): the delta of
+ * every packages/* and packages/plugins/* workspace the packet touches, its own tree against its parent's, rows from
+ * the gate's worker lane. Only diagnostics new against the parent count (freshBetween). A worker that cannot judge
+ * leaves the scope `unavailable`, which never refuses: the rolling HEAD typecheck still covers it. Touched apps are
+ * returned as `detached`; the rolling owner checks them once the commit lands (kickRollingHeadTypecheck).
+ */
+export async function commitGateTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`), remote }) {
+  const plan = commitGateTypecheckPlan({ repo, base, tree });
+  const state = commitPackageTypecheckStateDir(repo, env);
+  const result = await commitPackageTypecheck({ repo, base, tree, env, log, packages: plan.blocking,
+    remote: remote ?? workerTreeRows({ repo, state, env, log, lane: GATE_LANE, entry: COMMIT_GATE_TYPECHECK_ENTRY }) });
+  if (!result.skipped) {
+    mkdirSync(state, { recursive: true });
+    appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} GATE-${commitPackageTypecheckRefuses(result) ? 'REFUSED' : 'ok'} base=${result.trees.base} tree=${result.trees.head} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} ${(result.ms / 1000).toFixed(1)}s\n`);
+  }
+  return { ...result, detached: plan.detached };
+}
 
 const ROLLING_HEAD = 'rolling-head';
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -537,7 +608,12 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
   // The verdict is decided here. Attribution compiles intermediate commits and can take hours on a
   // long range, so the rolling loop records every scope's verdict first and attributes afterwards
   // (2026-11-16: one packages bisection held every verdict, apps/* included, for 16 h).
-  if (!attribute) {
+  // One commit in the range: the verdict's head compile already names it, so attribution compiles nothing and posts now
+  // (a touched app's URGENT goes out with its verdict, not after every other scope's).
+  const commits = git(['rev-list', '--first-parent', '--reverse', `${base}..${head}`]).split('\n').filter(Boolean);
+  // An earlier unattributed range still pending coalesces with this one instead.
+  const single = commits.length === 1 && !existsSync(rollingPendingPath(state, scope));
+  if (!attribute && !single) {
     result.fresh = compared.fresh.length;
     // An unattributed earlier range coalesces with this one: attribution runs once, from the oldest
     // unattributed base to the newest RED head, for the errors still present there.
@@ -549,7 +625,6 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
     return result;
   }
   // Bisect, only when red. A diagnostic exists at a commit when it is not new at HEAD relative to that commit.
-  const commits = git(['rev-list', '--first-parent', '--reverse', `${base}..${head}`]).split('\n').filter(Boolean);
   // A probe compiles only the packages that still carry an unattributed error; the green ones
   // cannot change an attribution (2026-11-16: 23 packages per probe kept apps/* unreached for hours).
   const presentAt = (commit, items) => {
@@ -620,32 +695,50 @@ exit 4`, 'sh', projection, repo, name], { encoding: 'utf8' });
  * Unreachable or failed: every package is null (INCOMPLETE in verdicts.log); never a controller compile.
  */
 export function workerTreeRows({ repo, state, env = process.env, log = message => process.stderr.write(`${message}\n`), scope = 'packages',
-  workers = (env.HAPPIER_COMMIT_TYPECHECK_WORKERS || ROLLING_WORKERS.join(' ')).split(/\s+/u).filter(Boolean) }) {
+  workers = (env.HAPPIER_COMMIT_TYPECHECK_WORKERS || ROLLING_WORKERS.join(' ')).split(/\s+/u).filter(Boolean),
+  lane = '', entry = 'scripts/workspaces/commitPackageTypecheck.mjs' }) {
   const slug = basename(state);
   const remoteRepo = `${WORKER_STATE}/${slug}/repo.git`;
+  const ref = lane ? `rolling-${lane}` : 'rolling';
   const git = gitAt(repo);
+  const commitEnv = { ...gitEnv(), GIT_AUTHOR_NAME: 'rolling-typecheck', GIT_AUTHOR_EMAIL: 'rolling-typecheck@invalid', GIT_AUTHOR_DATE: '1970-01-01T00:00:00Z',
+    GIT_COMMITTER_NAME: 'rolling-typecheck', GIT_COMMITTER_EMAIL: 'rolling-typecheck@invalid', GIT_COMMITTER_DATE: '1970-01-01T00:00:00Z' };
   return (treeId, dirs, side) => {
-    const none = new Map(dirs.map(dir => [dir, null]));
-    // Deterministic: one commit id per tree, so a repeated tree pushes nothing.
-    const commit = git(['commit-tree', treeId, '-m', `rolling typecheck tree ${treeId}`], { env: { ...gitEnv(),
-      GIT_AUTHOR_NAME: 'rolling-typecheck', GIT_AUTHOR_EMAIL: 'rolling-typecheck@invalid', GIT_AUTHOR_DATE: '1970-01-01T00:00:00Z',
-      GIT_COMMITTER_NAME: 'rolling-typecheck', GIT_COMMITTER_EMAIL: 'rolling-typecheck@invalid', GIT_COMMITTER_DATE: '1970-01-01T00:00:00Z' } }).trim();
+    const none = new Map(dirs.map(dir => [dir, undefined]));
     for (const worker of workers) {
       const ssh = workerSsh(repo, worker, env);
       if (!ssh) { log(`[rolling-head-typecheck] worker ${worker}: no SSH target in this checkout's execution projection`); continue; }
       const sshCommand = `ssh -F '${ssh.config.replaceAll("'", "'\\''")}' -o BatchMode=yes -o ConnectTimeout=20`;
-      // Every tree is a parentless commit, so each push replaces the ref. A worker whose system git sets
+      // Each tree is pushed as a child of the last commit this worker accepted on the ref. A parentless commit made
+      // the push enumerate and send the whole tree (71,501 objects, 155-300 s per tree on 2026-11-18); a child of a
+      // commit the worker has sends only the changed objects (14 objects, 3.5 KB, under a second, for 5f6edbb072d).
+      const tipPath = join(state, `worker-${worker}-${ref}.tip`);
+      let parent = '';
+      try { parent = readFileSync(tipPath, 'utf8').trim(); } catch {}
+      const known = rev => spawnSync('git', ['cat-file', '-e', `${rev}^{commit}`], { cwd: repo, env: gitEnv() }).status === 0;
+      if (parent && !known(parent)) parent = '';
+      if (!parent) {
+        // No recorded tip (a new state or lane): any commit the worker's refs already name and this repository holds.
+        const listed = spawnSync('git', ['ls-remote', `${ssh.alias}:${remoteRepo}`, `refs/heads/${ref}`, 'refs/heads/rolling'],
+          { cwd: repo, encoding: 'utf8', env: { ...gitEnv(), GIT_SSH_COMMAND: sshCommand } });
+        parent = (listed.status === 0 ? listed.stdout : '').split('\n').map(line => line.split('\t')[0]).find(rev => rev && known(rev)) ?? '';
+      }
+      const commit = parent && git(['rev-parse', `${parent}^{tree}`]).trim() === treeId ? parent
+        : git(['commit-tree', treeId, ...(parent ? ['-p', parent] : []), '-m', `rolling typecheck tree ${treeId}`], { env: commitEnv }).trim();
+      // A push may replace the ref with an unrelated chain (another controller state). A worker whose system git sets
       // core.sharedRepository makes init write receive.denyNonFastForwards=true, which rejected every push
       // after the first (nl3, 2026-11-17 14:18Z onward: ~60 s lost per tree before falling back to nl1).
       const init = spawnSync('sh', ['-c', `${sshCommand} "$1" "git init --quiet --bare -b rolling '${remoteRepo}' >/dev/null && git -C '${remoteRepo}' config receive.denyNonFastForwards false"`, 'sh', ssh.alias], { encoding: 'utf8' });
-      const push = init.status === 0 && spawnSync('git', ['push', '--quiet', '--force', `${ssh.alias}:${remoteRepo}`, `${commit}:refs/heads/rolling`],
+      const push = init.status === 0 && spawnSync('git', ['push', '--quiet', '--force', `${ssh.alias}:${remoteRepo}`, `${commit}:refs/heads/${ref}`],
         { cwd: repo, encoding: 'utf8', env: { ...gitEnv(), GIT_SSH_COMMAND: sshCommand } });
       if (!push || push.status !== 0) {
         log(`[rolling-head-typecheck] worker ${worker} unreachable for ${side}: ${((init.status === 0 ? push?.stderr : init.stderr) || '').trim().split('\n').at(-1) ?? ''}`);
         continue;
       }
-      const run = spawnSync(join(repo, 'apps/stack/bin/hstack-exec'), [`--target=${worker}`, '--', 'node', 'scripts/workspaces/commitPackageTypecheck.mjs',
-        '--worker-rows', `--slug=${slug}`, `--scope=${scope}`, `--tree=${treeId}`, `--packages=${dirs.join(',')}`, `--side=${side}`],
+      writeFileSync(`${tipPath}.${process.pid}`, commit);
+      renameSync(`${tipPath}.${process.pid}`, tipPath);
+      const run = spawnSync(join(repo, 'apps/stack/bin/hstack-exec'), [`--target=${worker}`, '--', 'node', entry,
+        '--worker-rows', `--slug=${slug}`, ...(lane ? [`--lane=${lane}`] : []), `--ref=${ref}`, `--scope=${scope}`, `--tree=${treeId}`, `--packages=${dirs.join(',')}`, `--side=${side}`],
       { cwd: repo, encoding: 'utf8', maxBuffer: 2 ** 31 - 1, stdio: ['ignore', 'pipe', 'inherit'] });
       const line = (run.stdout ?? '').split('\n').find(entry => entry.startsWith(WORKER_ROWS));
       if (!line) { log(`[rolling-head-typecheck] worker ${worker} returned no rows for ${side} (exit ${run.status ?? run.signal})`); return none; }
@@ -656,18 +749,22 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
   };
 }
 
-/** Worker side of workerTreeRows: compile the shipped tree in this host's warm worktree under its own broker. */
-async function workerRows(argv) {
+/** Worker side of workerTreeRows: compile the shipped tree in this host's warm worktree under its own broker. A lane
+ * (`--lane=gate`) has its own worktree, lock and incremental state under the slug, beside the shared bare repository. */
+async function workerRows(argv, entry) {
   if (process.env.HAPPIER_DEV_TARGET_EXECUTION !== '1') {
     console.error('[rolling-head-typecheck] --worker-rows runs only on an execution host (hstack-exec --target=<worker>)');
     return 2;
   }
   const option = name => argv.find(arg => arg.startsWith(`--${name}=`))?.slice(name.length + 3) ?? '';
-  const state = join(homedir(), WORKER_STATE, option('slug'));
-  const request = { tree: option('tree'), packages: option('packages').split(',').filter(Boolean), side: option('side') };
+  const slugState = join(homedir(), WORKER_STATE, option('slug'));
+  if (option('lane') && !/^[a-z]+$/u.test(option('lane'))) { console.error('[rolling-head-typecheck] --lane must be lowercase letters'); return 2; }
+  const state = option('lane') ? join(slugState, `lane-${option('lane')}`) : slugState;
+  const request = { tree: option('tree'), packages: option('packages').split(',').filter(Boolean), side: option('side'), repo: join(slugState, 'repo.git'), ref: option('ref') || 'rolling' };
   const scope = option('scope') || 'packages';
   if (!option('slug') || !request.tree || !request.packages.length) { console.error('[rolling-head-typecheck] --worker-rows needs --slug, --tree and --packages'); return 2; }
-  const payload = [process.execPath, ...process.execArgv, fileURLToPath(import.meta.url), '--compiler-admitted'];
+  const payload = [process.execPath, ...process.execArgv, entry, '--compiler-admitted'];
+  mkdirSync(state, { recursive: true });
   return await withWorkspaceBundleLock(async () => {
     const command = admittedCommand(state, payload, false, scope === 'packages' ? undefined : scope);
     const result = spawnSync(command[0], command.slice(1), { env: { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state,
@@ -800,15 +897,16 @@ async function rolling(repo) {
   }
 }
 
-async function main(argv) {
+/** CLI; `entry` is the script the worker admits (commitGateTypecheck.mjs runs the same CLI under its own identity). */
+export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(import.meta.url)) {
   for (const name of ['GIT_INDEX_FILE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR']) delete process.env[name];
-  if (argv.includes('--worker-rows')) return await workerRows(argv);
+  if (argv.includes('--worker-rows')) return await workerRows(argv, entry);
   if (argv.includes('--compiler-admitted') && process.env.HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST) {
     // Admitted on the worker: rows for one shipped tree, compiled in the worker's warm worktree.
     const state = process.env.HAPPIER_COMMIT_TYPECHECK_DIR;
     const request = JSON.parse(process.env.HAPPIER_COMMIT_TYPECHECK_WORKER_REQUEST);
-    const { rowsAt } = treeTypechecker({ repo: join(state, 'repo.git'), state, env: process.env,
-      log: message => process.stderr.write(`${message}\n`), worktreeRev: 'rolling' });
+    const { rowsAt } = treeTypechecker({ repo: request.repo ?? join(state, 'repo.git'), state, env: process.env,
+      log: message => process.stderr.write(`${message}\n`), worktreeRev: request.ref ?? 'rolling' });
     const rows = rowsAt(request.tree, request.packages, request.side);
     process.stdout.write(`${WORKER_ROWS}${JSON.stringify(Object.fromEntries(rows))}\n`);
     return 0;
@@ -873,7 +971,7 @@ async function main(argv) {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   try {
-    process.exitCode = await main(process.argv.slice(2));
+    process.exitCode = await commitPackageTypecheckMain(process.argv.slice(2));
   } catch (error) {
     console.error(error?.stderr?.toString?.() || error?.message || error);
     process.exitCode = 2;

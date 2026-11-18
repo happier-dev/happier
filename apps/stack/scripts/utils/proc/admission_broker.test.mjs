@@ -550,6 +550,9 @@ const priorityIdentity = (root, kind) => ({
   devUi: { className: 'validation', component: '.', entry: `node ${root}/apps/stack/scripts/build/build_source_web_ui.mjs` },
   rolling: { className: 'compilation', component: '../../cache/commit-typecheck/wt',
     entry: `node ${root}/scripts/workspaces/commitPackageTypecheck.mjs` },
+  // P03-GATE-TC: the commit gate's typecheck delta, admitted on a worker from its lane worktree.
+  gate: { className: 'compilation', component: '../../cache/commit-typecheck-worker/slug/lane-gate/worktree',
+    entry: `node ${root}/scripts/workspaces/commitGateTypecheck.mjs` },
   // Owner ruling 2026-11-16: a focused test run (class named by the command policy).
   focused: { className: 'validation', resourceClass: 'focused-validation-ui', component: 'apps/ui', entry: 'pnpm exec vitest' },
   // P03 ORCH 2026-11-17: a native-custody preparation is a step of the run it prepares
@@ -563,6 +566,8 @@ const priorityIdentity = (root, kind) => ({
 for (const [scenario, earlier, later, laterFirst] of [
   ['commit compiler before an earlier ordinary job', 'ordinary', 'commit', true],
   ['rolling HEAD typecheck before an earlier ordinary job', 'ordinary', 'rolling', true],
+  ['commit gate typecheck before an earlier focused test run', 'focused', 'gate', true],
+  ['commit gate typecheck before an earlier rolling HEAD typecheck', 'rolling', 'gate', true],
   ['shared web export before an earlier commit compiler', 'commit', 'export', true],
   ['dev-startup web UI build before an earlier commit compiler', 'commit', 'devUi', true],
   ['reload preparation before an earlier ordinary job', 'ordinary', 'reload', true],
@@ -588,7 +593,7 @@ for (const [scenario, earlier, later, laterFirst] of [
     const pledged = await requestAdmissionSample(root);
     assert.equal(pledged.head.headPriority > 0, pledging, 'the sample names a priority head');
     assert.equal(pledged.head.reservationActive, pledging, 'a priority head pledges releases at once, without the aging bound');
-    const producerHead = ['producer', 'export', 'devUi', 'reload'].includes(laterFirst ? later : earlier);
+    const producerHead = ['producer', 'export', 'devUi', 'reload', 'gate'].includes(laterFirst ? later : earlier);
     assert.equal(pledged.head.reservationKiB, !pledging ? 0 : producerHead ? 60 : 30,
       'a producer head holds its whole floor; other priority heads hold released memory');
     assert.equal(pledged.waitingCount, 2, 'floors still apply: neither 60-unit waiter starts in 30 free units');

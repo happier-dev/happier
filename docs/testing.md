@@ -674,7 +674,10 @@ gate). The rolling HEAD typecheck
 (`scripts/workspaces/commitPackageTypecheck.mjs`, the compiler check for every
 `packages/*` commit since 2026-11-16) shares the focused-test rank below, so it and
 focused runs are served in arrival order and later focused runs cannot starve it
-(P03 ORCH, 2026-11-17). The broker derives the rank from the admitted command identity that the
+(P03 ORCH, 2026-11-17). The commit gate's typecheck delta (`compilation` running
+`scripts/workspaces/commitGateTypecheck.mjs`, the worker compile of the `packages/*` and
+`packages/plugins/*` workspaces a packet touches, while the committing lane waits) ranks
+with the shared producers (P03-GATE-TC, 2026-11-18). The broker derives the rank from the admitted command identity that the
 canonical client builds from the payload argv; a request field claiming priority is
 ignored. Priority waiters keep arrival order within their rank, a priority head
 pledges releases at once instead of after the 22m24s bound, and ordinary source
