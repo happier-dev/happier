@@ -101,7 +101,7 @@ export const ManagedGitHubAppEditorContent = React.memo(function ManagedGitHubAp
     const { owner, scope } = props.surface;
     const settings = owner.kind === "home" ? HOME_GITHUB_APP_EDITOR_SETTINGS : TEAM_GITHUB_APP_EDITOR_SETTINGS;
     const client = useManagedGitHubAppsClient(scope);
-    const apps = useManagedGitHubApps(scope, owner);
+    const apps = useManagedGitHubApps(scope, owner, props.registrationId);
     const refreshApps = apps.refresh;
     const registration = props.registrationId && apps.state.kind === 'ready'
         ? apps.state.registrations.find((item) => item.id === props.registrationId) ?? null

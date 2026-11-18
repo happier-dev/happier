@@ -4,6 +4,7 @@ import { homeDomainActionInputSchemaV1 } from '@happier-dev/protocol/actions/hom
 import { type ManagedGitHubAppActionIdV1, MANAGED_GITHUB_APP_ACTION_INPUT_SCHEMAS_V1, MANAGED_GITHUB_APP_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/identity/githubApps';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
@@ -85,7 +86,7 @@ function isManagedGitHubAppApprovalFailedCallback(
 export type ManagedGitHubAppsActionResult<TValue> =
     | Readonly<{ kind: 'succeeded'; value: TValue }>
     | Readonly<{ kind: 'approval_pending'; artifactId: string; approval: ActionApprovalContinuation }>
-    | Readonly<{ kind: 'failed'; failure: Readonly<{ code: string; retryable: boolean }> }>;
+    | Readonly<{ kind: 'failed'; failure: Readonly<{ code: string; retryable: boolean; withdrawsObservation?: true }> }>;
 
 export type ManagedGitHubAppsClient = Readonly<{
     execute: {
@@ -158,6 +159,7 @@ export function createManagedGitHubAppsClient(scope: ServerAccountScope): Manage
                 failure: {
                     code: homeDomainFailureCode(outcome.failure),
                     retryable: outcome.failure.retryable,
+                    ...(isAuthoritativeScopedSnapshotRefusalKind(outcome.failure.kind) ? { withdrawsObservation: true as const } : {}),
                 },
             };
         }

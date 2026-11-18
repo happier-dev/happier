@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { homeAdministrationGitHubAppCreatePath, homeAdministrationGitHubAppPath, homeAdministrationGitHubAppEditPath, homeAdministrationPoliciesPath } from '../governance/homeAdministrationRoutes';
 import { teamGitHubAppPath, teamGitHubAppEditPath, teamAuthenticationPath, teamDirectoryPath, teamIdentityProviderSetupPath } from '../../teams/teamsRoutes';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -63,7 +64,7 @@ beforeEach(async () => {
 
 describe('ManagedGitHubAppsSection', () => {
     it('keeps retained registrations reachable while policy disables only creation', async () => {
-        const screen = await renderScreen(<ManagedGitHubAppsSection
+        const section = <ManagedGitHubAppsSection
             surface={{
                 scope: { serverId, accountId: 'account-1' },
                 owner: { kind: 'team', teamId: 'team-1' },
@@ -77,7 +78,8 @@ describe('ManagedGitHubAppsSection', () => {
             }}
             createPath={teamIdentityProviderSetupPath({ serverId, teamId: 'team-1' }, 'github_app_identity')}
             createAvailable={false}
-        />, { wrapper: SettingsPage });
+        />;
+        const screen = await renderScreen(section, { wrapper: SettingsPage });
 
         await vi.waitFor(() => expect(screen.findByTestId('home-github-app:registration-1')).not.toBeNull());
         expect(screen.findByTestId('home-github-app-add')?.props.disabled).toBe(true);
@@ -88,6 +90,26 @@ describe('ManagedGitHubAppsSection', () => {
             serverId,
             input: { owner: { kind: 'team', teamId: 'team-1' } },
         })]);
+        await act(async () => screen.tree.unmount());
+
+        let releaseRefusal = () => {};
+        const respondAfter = new Promise<void>(resolve => { releaseRefusal = resolve; });
+        harness.answer(serverId, listPath, { status: 403, respondAfter });
+        const returned = await renderScreen(section, { wrapper: SettingsPage });
+        expect(returned.findByTestId('home-github-app:registration-1')).not.toBeNull();
+        await vi.waitFor(() => expect(harness.requestsFor(listPath)).toHaveLength(2));
+        await act(async () => releaseRefusal());
+        await vi.waitFor(() => expect(returned.findByTestId('managed-github-apps-unavailable')).not.toBeNull());
+        expect(returned.findByTestId('home-github-app:registration-1')).toBeNull();
+        await act(async () => returned.tree.unmount());
+
+        harness.answer(serverId, listPath, {
+            body: { registrations: [], installations: [] }, respondAfter: new Promise<void>(() => {}),
+        });
+        const afterRefusal = await renderScreen(section, { wrapper: SettingsPage });
+        expect(afterRefusal.findByTestId('home-github-app:registration-1')).toBeNull();
+        await vi.waitFor(() => expect(harness.requestsFor(listPath)).toHaveLength(3));
+        await act(async () => afterRefusal.tree.unmount());
     });
 
     it('presents a failed list read as a read, never as a change that did not go through', async () => {

@@ -32,7 +32,7 @@ export function settleManagedGitHubAppsRefresh(
         const failure = result.kind === 'failed'
             ? result.failure
             : { code: 'invalid_action_output', retryable: false };
-        return state.kind === 'ready'
+        return state.kind === 'ready' && !(result.kind === 'failed' && result.failure.withdrawsObservation)
             ? Object.freeze({ ...state, refreshing: false, stale: true, failure })
             : Object.freeze({ kind: 'unavailable' as const, failure });
     }

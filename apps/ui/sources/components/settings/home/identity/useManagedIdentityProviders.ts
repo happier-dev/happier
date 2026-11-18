@@ -1,20 +1,11 @@
 import * as React from 'react';
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { ManagedIdentityProviderOwnerV1 } from '@happier-dev/protocol/identity/providers';
 
-import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
-import {
-    applyManagedIdentityProviderObservation,
-    getManagedIdentityProviderObservation,
-    managedIdentityProviderQueryKey,
-} from '@/sync/store/home/governance/homeGovernanceSnapshots';
-import {
-    isHomeAdministrationAccountChange,
-    subscribeHomeAccountChange,
-} from '@/sync/runtime/orchestration/homeAccountChange';
+import { managedIdentityProviderObservations } from '@/sync/store/home/governance/homeGovernanceSnapshots';
 
+import { useManagedIdentityObservationTarget, useManagedIdentityWake } from './useManagedIdentityObservationTarget';
 import {
     createManagedIdentityProviderClient,
     executeManagedIdentityProviderRead,
@@ -34,6 +25,12 @@ export function useManagedIdentityProviderClient(scope: ServerAccountScope) {
     );
 }
 
+function retainedState(data: ReturnType<typeof managedIdentityProviderObservations.get>): ManagedIdentityProviderState {
+    return data === undefined ? INITIAL_MANAGED_IDENTITY_PROVIDER_STATE : beginManagedIdentityProviderRefresh(
+        settleManagedIdentityProviderRefresh(INITIAL_MANAGED_IDENTITY_PROVIDER_STATE, { kind: 'succeeded', value: data }),
+    );
+}
+
 export function useManagedIdentityProviders(
     scope: ServerAccountScope,
     owner: ManagedIdentityProviderOwnerV1 = { kind: 'home' },
@@ -45,23 +42,16 @@ export function useManagedIdentityProviders(
 }> {
     const client = useManagedIdentityProviderClient(scope);
     const ownerTeamId = owner.kind === 'team' ? owner.teamId : null;
-    const queryKey = managedIdentityProviderQueryKey(scope, ownerTeamId);
-    const credential = useServerCredentialAccountScopeBinding(scope.serverId);
-    const binding = credential.binding?.isCurrent() && areServerAccountScopesEqual(credential.binding.scope, scope)
-        ? credential.binding : null;
-    const resolving = credential.resolution.kind === 'resolving';
+    const { queryKey, binding, resolving } = useManagedIdentityObservationTarget(scope, ownerTeamId);
     const [observation, setObservation] = React.useState(() => ({
-        queryKey, binding, state: INITIAL_MANAGED_IDENTITY_PROVIDER_STATE,
+        queryKey, binding,
+        state: retainedState(binding ? managedIdentityProviderObservations.get(queryKey) : undefined),
     }));
     const [generation, setGeneration] = React.useState(0);
     const hasMountedObservation = !resolving && observation.queryKey === queryKey && observation.binding === binding;
     const retained = !hasMountedObservation && (binding || resolving)
-        ? getManagedIdentityProviderObservation(queryKey) : undefined;
-    const seed = React.useMemo(() => retained === undefined
-        ? INITIAL_MANAGED_IDENTITY_PROVIDER_STATE
-        : beginManagedIdentityProviderRefresh(settleManagedIdentityProviderRefresh(
-            INITIAL_MANAGED_IDENTITY_PROVIDER_STATE, { kind: 'succeeded', value: retained },
-        )), [retained]);
+        ? managedIdentityProviderObservations.get(queryKey) : undefined;
+    const seed = React.useMemo(() => retainedState(retained), [retained]);
     const projected = hasMountedObservation ? observation.state : seed;
     // An older list can show a known row, but cannot establish that a newly
     // opened provider is missing while its current list is arriving.
@@ -78,10 +68,11 @@ export function useManagedIdentityProviders(
     React.useEffect(() => {
         if (resolving) return;
         const controller = new AbortController();
+        const stored = binding ? managedIdentityProviderObservations.get(queryKey) : undefined;
         setObservation(current => ({
             queryKey, binding,
             state: current.queryKey === queryKey && current.binding === binding
-                ? beginManagedIdentityProviderRefresh(current.state) : seed,
+                ? beginManagedIdentityProviderRefresh(current.state) : retainedState(stored),
         }));
         const exactOwner: ManagedIdentityProviderOwnerV1 = ownerTeamId === null
             ? { kind: 'home' }
@@ -94,34 +85,18 @@ export function useManagedIdentityProviders(
             },
         ).then(result => {
             if (controller.signal.aborted || (binding && !binding.isCurrent())) return;
-            if (binding && result.kind === 'succeeded') applyManagedIdentityProviderObservation(queryKey, binding, result.value);
+            if (binding && result.kind === 'succeeded') managedIdentityProviderObservations.apply(queryKey, binding, result.value);
             if (binding && result.kind === 'failed' && result.failure.withdrawsObservation) {
-                applyManagedIdentityProviderObservation(queryKey, binding, null);
+                managedIdentityProviderObservations.apply(queryKey, binding, null);
             }
             setObservation(current => ({
                 queryKey, binding, state: settleManagedIdentityProviderRefresh(current.state, result),
             }));
         });
         return () => controller.abort();
-        // The retained answer supplies the first view and never triggers a request.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [binding, client, generation, ownerTeamId, queryKey, resolving]);
 
-    React.useEffect(() => {
-        return subscribeHomeAccountChange((event) => {
-            if (event.serverId !== scope.serverId) return;
-            if (ownerTeamId === null) {
-                if (
-                    !isHomeAdministrationAccountChange(event)
-                    && !(event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) ?? false)
-                ) return;
-            } else if (
-                event.entityIds !== undefined
-                && !event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)
-            ) return;
-            refresh();
-        }, { reconnect: 'refresh' });
-    }, [ownerTeamId, refresh, scope.serverId]);
+    useManagedIdentityWake(scope.serverId, ownerTeamId, refresh);
 
     return React.useMemo(() => ({ state, refresh }), [refresh, state]);
 }

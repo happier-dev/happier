@@ -50,7 +50,7 @@ export const ManagedGitHubAppDetailContent = React.memo(function ManagedGitHubAp
     const { owner, scope } = props.surface;
     const settings = owner.kind === 'home' ? HOME_GITHUB_APP_SETTINGS : TEAM_GITHUB_APP_SETTINGS;
     const client = useManagedGitHubAppsClient(scope);
-    const { state, refresh } = useManagedGitHubApps(scope, owner);
+    const { state, refresh } = useManagedGitHubApps(scope, owner, props.registrationId);
     const [installationId, setInstallationId] = React.useState('');
     const [organizationId, setOrganizationId] = React.useState('');
     const [pending, setPending] = React.useState<string | null>(null);

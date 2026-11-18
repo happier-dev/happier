@@ -1,4 +1,5 @@
 import type { HomeAdministrationEventV1, HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance';
+import type { ManagedGitHubAppsListOutputV1 } from '@happier-dev/protocol/identity/githubApps';
 import type { ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
 import { snapshotReferenceSelectionKey } from '@/sync/domains/scope/snapshotReferenceSelectionKey';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
@@ -82,29 +83,35 @@ type ManagedIdentityProviderObservation = Readonly<{
     unreadableCount: number;
 }>;
 
-const managedIdentityProviderObservations = new Map<string, Readonly<{
-    lifetime: ServerAccountScopeLifetime;
-    data: ManagedIdentityProviderObservation;
-}>>();
-
-export function managedIdentityProviderQueryKey(scope: ServerAccountScope, teamId: string | null): string {
+export function managedIdentityQueryKey(scope: ServerAccountScope, teamId: string | null): string {
     return JSON.stringify([scope.serverId, scope.accountId, teamId]);
 }
 
-export function getManagedIdentityProviderObservation(key: string): ManagedIdentityProviderObservation | undefined {
-    const observed = managedIdentityProviderObservations.get(key);
-    return observed?.lifetime.isCurrent() ? observed.data : undefined;
+function createManagedIdentityObservations<Data>() {
+    const observations = new Map<string, Readonly<{ lifetime: ServerAccountScopeLifetime; data: Data }>>();
+    return {
+        get(key: string): Data | undefined {
+            const observation = observations.get(key);
+            return observation?.lifetime.isCurrent() ? observation.data : undefined;
+        },
+        apply(key: string, lifetime: ServerAccountScopeLifetime, data: Data | null): void {
+            if (!lifetime.isCurrent()) return;
+            if (data === null) observations.delete(key);
+            else observations.set(key, { lifetime: readServerAccountScopeOwnerLifetime(lifetime), data });
+        },
+        clearForServer(serverId: string): void {
+            for (const [key, observation] of observations) {
+                if (observation.lifetime.scope.serverId === serverId) observations.delete(key);
+            }
+        },
+        clear(): void {
+            observations.clear();
+        },
+    };
 }
 
-export function applyManagedIdentityProviderObservation(
-    key: string,
-    lifetime: ServerAccountScopeLifetime,
-    data: ManagedIdentityProviderObservation | null,
-): void {
-    if (!lifetime.isCurrent()) return;
-    if (data === null) managedIdentityProviderObservations.delete(key);
-    else managedIdentityProviderObservations.set(key, { lifetime: readServerAccountScopeOwnerLifetime(lifetime), data });
-}
+export const managedIdentityProviderObservations = createManagedIdentityObservations<ManagedIdentityProviderObservation>();
+export const managedGitHubAppsObservations = createManagedIdentityObservations<ManagedGitHubAppsListOutputV1>();
 
 function notify(): void {
     for (const listener of [...listeners]) {
@@ -253,9 +260,8 @@ export function clearHomeGovernanceSnapshotsForServer(serverIdRaw: string): void
         snapshots.delete(key);
         changed = true;
     }
-    for (const [key, observation] of managedIdentityProviderObservations) {
-        if (observation.lifetime.scope.serverId === serverId) managedIdentityProviderObservations.delete(key);
-    }
+    managedIdentityProviderObservations.clearForServer(serverId);
+    managedGitHubAppsObservations.clearForServer(serverId);
     for (const [key, observation] of activityObservations) {
         if (observation.lifetime.scope.serverId === serverId) activityObservations.delete(key);
     }
@@ -267,5 +273,6 @@ export function resetHomeGovernanceSnapshotsForTests(): void {
     snapshots.clear();
     activityObservations.clear();
     managedIdentityProviderObservations.clear();
+    managedGitHubAppsObservations.clear();
     listeners.clear();
 }
