@@ -260,7 +260,10 @@ function buildRowFacts(
  * A machine-meaningful string is omitted rather than shortened. A truncated URL or repository path
  * is not a shorter destination, it is a wrong one.
  */
-function buildLocator(entry: BitbucketPullRequestEntry): TriageEntryLocatorV1 {
+export function buildBitbucketEntryLocator(entry: Readonly<{
+  webUrl: string | null;
+  repository: Readonly<{ repositoryKey: string | null }>;
+}>): TriageEntryLocatorV1 {
   const webUrl = projectLine(entry.webUrl, MAX_TRIAGE_LOCATION_UTF8_BYTES_V1);
   const displayPath = projectLine(entry.repository.repositoryKey, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
   const routingToken = projectLine(
@@ -427,7 +430,7 @@ export function toBitbucketPresentObservation(
   return {
     kind: 'present',
     localRef: buildBitbucketLocalRef(entry),
-    locator: buildLocator(entry),
+    locator: buildBitbucketEntryLocator(entry),
     ...(repository === null ? {} : { repository }),
     snapshot,
     viewer: buildViewerFacts(entry, { ...input, verdict }),

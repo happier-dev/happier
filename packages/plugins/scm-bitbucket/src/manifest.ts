@@ -19,6 +19,11 @@ export { BITBUCKET_NETWORK_HOST_ACCESS_ID } from './accountActions.js';
  */
 
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { PluginEventAutomationHistoryGapResetActionInputV1Schema, PluginEventAutomationHistoryGapResetActionInputV1JsonSchema, PluginEventAutomationHistoryGapResetActionResultV1JsonSchema, createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
+import { PluginWebhookActionInputSchema, PluginWebhookActionResultSchema } from '@happier-dev/plugin-sdk/webhooks';
+import { BITBUCKET_EVENT_ACTION_IDS } from './eventActionIds.js';
+import { BITBUCKET_EVENT_CATALOG, BITBUCKET_WEBHOOK_CONTRIBUTION_ID, BitbucketEventSetupInputSchema, BitbucketEventSourceConfigSchema } from './events.js';
+import { setupBitbucketRepositoryEvent, receiveBitbucketWebhook } from './eventActions.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 
 
@@ -130,6 +135,23 @@ export const BITBUCKET_PLUGIN = definePlugin({
     }],
     optional: [],
   },
+  events: Object.fromEntries(BITBUCKET_EVENT_CATALOG.map(event => [event.localId, { declaration: {
+    kind: 'event', title: event.title, description: event.description, payloadSchema: event.payloadSchema,
+    automation: { v: 1, eligible: true, source: { sourceContractVersion: 1,
+      supportedObservationTransports: ['durablePush'], sourceConfigSchema: BitbucketEventSourceConfigSchema.jsonSchema,
+      setupActionRef: { pluginId: BITBUCKET_PLUGIN_ID, localId: BITBUCKET_EVENT_ACTION_IDS.setup },
+      historyGapResetActionRef: { pluginId: BITBUCKET_PLUGIN_ID, localId: BITBUCKET_EVENT_ACTION_IDS.resetHistoryGap },
+      webhookContributionRef: { pluginId: BITBUCKET_PLUGIN_ID, localId: BITBUCKET_WEBHOOK_CONTRIBUTION_ID },
+      connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE }],
+    } },
+  } }])),
+  webhooks: {
+    [BITBUCKET_WEBHOOK_CONTRIBUTION_ID]: { title: 'Bitbucket webhook delivery',
+      description: 'Receives Bitbucket pull request lifecycle events through host HMAC verification.',
+      verifier: { kind: 'bitbucket_hmac_sha256_v1', routing: 'accountEndpoint' },
+      handlerAction: { localId: BITBUCKET_EVENT_ACTION_IDS.receive },
+    },
+  },
   ui: {
     views: [],
     renderers: [{
@@ -182,6 +204,27 @@ export const BITBUCKET_PLUGIN = definePlugin({
     ],
   },
   actions: {
+    [BITBUCKET_EVENT_ACTION_IDS.setup]: {
+      title: 'Set up Bitbucket repository Event source',
+      description: 'Resolves a repository through the exact selected Connected Account. Configure its Created, Pushed, Merged and Declined webhook events with the generated secret.',
+      surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'safe',
+      inputSchema: BitbucketEventSetupInputSchema.jsonSchema,
+      resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, BitbucketEventSourceConfigSchema.jsonSchema),
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE }],
+      run: setupBitbucketRepositoryEvent,
+    },
+    [BITBUCKET_EVENT_ACTION_IDS.receive]: {
+      title: 'Receive Bitbucket webhook', description: 'Admits one host-authenticated Bitbucket delivery.',
+      surfaces: ['plugin'], dangerLevel: 'safe', inputSchema: PluginWebhookActionInputSchema.jsonSchema,
+      resultSchema: PluginWebhookActionResultSchema.jsonSchema, run: receiveBitbucketWebhook,
+    },
+    [BITBUCKET_EVENT_ACTION_IDS.resetHistoryGap]: {
+      title: 'Check Bitbucket Event baseline', description: 'Durable webhook recovery belongs to webhook delivery administration.',
+      surfaces: ['plugin'], dangerLevel: 'safe', inputSchema: PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
+      resultSchema: PluginEventAutomationHistoryGapResetActionResultV1JsonSchema,
+      run: async (input, context) => { context.signal.throwIfAborted(); PluginEventAutomationHistoryGapResetActionInputV1Schema.parse(input); return { kind: 'noHistoryGap' as const }; },
+    },
     ...BITBUCKET_HOSTING_OPERATION_ACTIONS_V1,
     ...BITBUCKET_ACCOUNT_ACTIONS,
     [BITBUCKET_TRIAGE_ACTION_IDS.prepareReviewWorkspace]: {

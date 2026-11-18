@@ -5,6 +5,7 @@ import {
   ScmPullRequestOpenOrReuseRequestSchema,
   ScmPullRequestOpenOrReuseResponseSchema,
   ScmPullRequestListResponseSchema,
+  ScmPullRequestSummarySchema,
   ScmPullRequestStatusProjectionSchema,
   resolveScmHostingProviderFollowupAllowedBaseUrl,
 } from './pullRequests.js';
@@ -19,6 +20,17 @@ const provider = {
 };
 
 describe('SCM pull-request freshness protocol', () => {
+  it('accepts full merge commit OIDs and rejects abbreviated or malformed publication evidence', () => {
+    const summary = { provider, number: 1, title: 'Merged', url: 'https://github.com/happier-dev/happier/pull/1',
+      baseBranch: 'main', headBranch: 'feature', state: 'merged' };
+    for (const mergeCommitSha of ['a'.repeat(40), 'b'.repeat(64)]) {
+      expect(ScmPullRequestSummarySchema.parse({ ...summary, mergeCommitSha })).toMatchObject({ mergeCommitSha });
+    }
+    expect(ScmPullRequestSummarySchema.safeParse(summary).success).toBe(true);
+    for (const mergeCommitSha of ['abc123', 'g'.repeat(40), 'a'.repeat(41), null]) {
+      expect(ScmPullRequestSummarySchema.safeParse({ ...summary, mergeCommitSha }).success).toBe(false);
+    }
+  });
   it('validates canonical forge retry metadata while retaining PR-only failure fields', () => {
     const failure = { success: false, error: 'Forge rate limit reached', errorCode: 'REMOTE_RATE_LIMITED',
       retryNotBeforeMs: 1900000000000, remediation: { kind: 'retry' } };

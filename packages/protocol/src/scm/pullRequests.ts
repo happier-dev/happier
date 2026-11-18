@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { ScmOperationOutcomeSchema } from './operationOutcome.js';
-import { ScmCommitPublicationSchema } from './commitPublication.js';
+import { ScmCommitOidSchema, ScmCommitPublicationSchema } from './commitPublication.js';
 import { ScmRepositoryProvisioningFailureResponseSchema } from './repositoryProvisioning.js';
 
 import {
@@ -269,6 +269,8 @@ export const ScmPullRequestSummarySchema = lazyZodSchema(() => z.looseObject({
     isCrossRepository: z.optional(z.boolean()),
     headSha: z.optional(z.nullable(z.string().check(z.minLength(1)))),
     baseSha: z.optional(z.nullable(z.string().check(z.minLength(1)))),
+    /** Published target commit after merge/squash/rebase; never a pre-merge test commit. */
+    mergeCommitSha: z.optional(ScmCommitOidSchema),
     state: ScmPullRequestStateSchema,
     createdAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
     closedAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
