@@ -1,4 +1,4 @@
-import { readServerAccountScopeOwnerLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, readServerAccountScopeOwnerLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { buildManagedMachineAcquireInput, runManagedMachineCreation } from './managedMachineCreation';
 import * as React from 'react';
 import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/machines/managed/provisioners';
@@ -11,14 +11,15 @@ import type { OpenedMachinePresetActionOutputV1 } from '@/sync/ops/machines/mach
 type PresetMutationResultV1 = OpenedMachinePresetActionOutputV1<'machines.presets.update'>;
 import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { machinePresetEditContinuationDraft, type MachinePresetEditContinuation, type MachinePresetEditDraft } from './machinePresetEditDraft';
-import { createManagedCredentialSelectionV1, readManagedCredentialSelectionValueV1, type ManagedControllerV1, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { createManagedCredentialSelectionV1, readManagedCredentialSelectionValueV1, type ManagedControllerV1, type ManagedCredentialSelectionV1, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ExternalActionManagedAdmissionReceiptV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ManagedAcquireInputV1, ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectManagedProvisionerFailure, type ManagedProvisionerFailure } from './managedProvisionerClient';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { isMachineProvisionerCredentialPurposeRequiredV1, readMachineProvisionerCredentialPurposeSelectorPathsV1, readMachineProvisionerPrerequisitesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import { type QualifiedConnectedAccountRef, sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import { buildConnectedAccountSettingsRoute } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
 import { ConnectedAccountActionFormSelectionV1Schema, qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readInputPath } from '@happier-dev/protocol/inputs';
@@ -149,6 +150,20 @@ export function isManagedPoolUnavailableAtReview(view: Pick<MachinePoolViewV1, '
     return reviewable && view?.availability.state === 'known' && view.availability.connectedCount === 0;
 }
 
+function findProvisionerRepairAccount(remediation: ManagedProvisionerFailure['remediation'],
+    credentials: readonly ManagedCredentialSelectionV1[] | undefined): QualifiedConnectedAccountRef | undefined {
+    if (remediation?.kind !== 'selectAccount' || !credentials) return undefined;
+    let account: QualifiedConnectedAccountRef | undefined;
+    for (const selection of credentials) {
+        if (!('account' in selection)) continue;
+        const candidate = selection.account;
+        if (candidate.service.pluginId !== remediation.service.pluginId || candidate.service.localId !== remediation.service.localId) continue;
+        if (account && !sameQualifiedConnectedAccountRef(account, candidate)) return undefined;
+        account = candidate;
+    }
+    return account;
+}
+
 export function ManagedMachineConfigurationView(props: ManagedMachineConfigurationViewProps) {
     // "Start from" is chosen above the per-preset draft below, so its own list stays while that draft is re-read.
     const offersStartFrom = !props.presetOnly && (!props.onUse || props.createOnUse === true) && !!props.provisioner;
@@ -233,10 +248,18 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const [teamId, setTeamId] = React.useState('');
     const [limit, setLimit] = React.useState<number | undefined>();
     // One failure line for the page; it names the operation that failed so a refused Create or Save isn't told as a read.
-    const [error, setErrorState] = React.useState<Readonly<{ code: string; during: 'read' | 'create' | 'save'; reason?: string; diagnosticDetail?: string }> | null>(null);
-    const setError = React.useCallback((code: string | null, during: 'read' | 'create' | 'save' = 'read', reason?: string, diagnosticDetail?: string) =>
-        setErrorState(current => current?.code === code && current.during === during && current.reason === reason && current.diagnosticDetail === diagnosticDetail ? current
-            : code === null ? null : { code, during, ...(reason ? { reason } : {}), ...(diagnosticDetail ? { diagnosticDetail } : {}) }), []);
+    const [error, setErrorState] = React.useState<(Readonly<{ code: string; during: 'read' | 'create' | 'save'; reason?: string; diagnosticDetail?: string; repairAccount?: QualifiedConnectedAccountRef }>
+        & Pick<ManagedProvisionerFailure, 'optionsRefusal'>) | null>(null);
+    const setError = React.useCallback((code: string | null, during: 'read' | 'create' | 'save' = 'read', reason?: string,
+        diagnosticDetail?: string, failure?: Pick<ManagedProvisionerFailure, 'remediation' | 'optionsRefusal'>,
+        credentials?: readonly ManagedCredentialSelectionV1[]) => {
+        const repairAccount = findProvisionerRepairAccount(failure?.remediation, credentials);
+        const optionsRefusal = failure?.optionsRefusal;
+        setErrorState(current => current?.code === code && current.during === during && current.reason === reason
+            && current.diagnosticDetail === diagnosticDetail && pluginJsonValuesEqual(current.repairAccount ?? null, repairAccount ?? null)
+            && pluginJsonValuesEqual(current.optionsRefusal ?? null, optionsRefusal ?? null) ? current
+            : code === null ? null : { code, during, reason, diagnosticDetail, repairAccount, optionsRefusal });
+    }, []);
     const [readRevision, bumpReadRevision] = React.useReducer((value: number) => value + 1, 0);
     const [saved, setSaved] = React.useState<Readonly<{ id: string; name: string; serverId: string }> | null>(null);
     const continuation = props.presetContinuation;
@@ -576,7 +599,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 : optionsInput.kind === 'unavailable' ? optionsInput.error : null, 'read', result.failure
                     ? resolveActionExecutionFailureMessage({ ...result.failure, ok: false, errorCode: result.failure.code },
                         result.failure.code === 'controller_unavailable' ? t('managedMachines.controller.requiredUnnamed')
-                            : t('managedMachines.options.unavailable')) ?? undefined : undefined);
+                            : t('managedMachines.options.unavailable')) ?? undefined : undefined, undefined, result.failure, credentials);
         });
     }, [props.presetOnly, catalogCurrent, presetQuery.sameScope, catalog.binding, catalog.homeId, catalog.client, catalogProvisioner, catalogController, catalogPlacementAvailable, controller?.machineId, controller?.installationId,
         draft?.credentials, draft?.provisioner, credentialsReady, optionsInput, readSelectorKey, delegatedPreset, pooledDraft, poolUnavailableAtReview, accountHostPending, accountHostUnreadable, needsApp]);
@@ -724,16 +747,17 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         else if (value.kind === 'refused' && props.presetId && isMachinePresetAccessLost(value.code)) presetQuery.withdraw(value.code);
         else setError(value.kind === 'conflict' ? 'conflict' : value.code, 'save');
     };
-    const failed = (code: string, during: 'read' | 'create' | 'save', diagnosticDetail?: string, failure?: ManagedProvisionerFailure) => { if (activeBinding?.isCurrent()) {
+    const failed = (code: string, during: 'read' | 'create' | 'save', diagnosticDetail?: string, failure?: ManagedProvisionerFailure,
+        credentials?: readonly ManagedCredentialSelectionV1[]) => { if (activeBinding?.isCurrent()) {
         if (props.presetId && isMachinePresetAccessLost(code)) presetQuery.withdraw(code);
         else { setBusy(false); setError(code, during, failure
             ? resolveActionExecutionFailureMessage({ ...failure, ok: false, errorCode: code }, '') || undefined
-            : undefined, diagnosticDetail); }
+            : undefined, diagnosticDetail, failure, credentials); }
     } };
     const repair = async (action: NonNullable<ManagedPrerequisiteV1['repairAction']>) => {
         if (!catalogCurrent || !activeBinding?.isCurrent() || !catalogController && !accountAcquire || !catalogProvisioner || busy) return;
         const abort = new AbortController(); mutationAbort.current = abort;
-        setBusy(true); setError(null); setRepairFailure(null);
+        setBusy(true); setRepairFailure(null);
         try {
             const outcome = await presentation.repair(action, activeBinding, abort.signal);
             if (abort.signal.aborted || !activeBinding.isCurrent()) return;
@@ -848,9 +872,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         const result = await catalog.client.execute('machines.managed.acquire', input, { signal: abort.signal,
             ...(input.selection.kind === 'preset' && creationPreset ? { managedPresetOrigin: creationPreset } : {}),
             onApprovalPending, onApprovalSucceeded: created, onApprovalAdmitted: admitted,
-            onApprovalFailed: (code, failure) => failed(code, 'create', describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId, failure?.failureCause), projectManagedProvisionerFailure(code, failure?.details, failure?.requestId, failure?.failureCause)) });
+            onApprovalFailed: (code, failure) => failed(code, 'create', describeManagedActionFailureDiagnostic(code, failure?.details, failure?.requestId, failure?.failureCause), projectManagedProvisionerFailure(code, failure?.details, failure?.requestId, failure?.failureCause), facts?.launch.credentials) });
         if (!abort.signal.aborted) { if (result.kind === 'succeeded') await created(result.value); else if (result.kind === 'admitted') admitted(result.receipt); else if (result.kind === 'failed')
-            failed(result.code, 'create', describeManagedActionFailureDiagnostic(result.code, result.details, result.requestId, result.failureCause), result); }
+            failed(result.code, 'create', describeManagedActionFailureDiagnostic(result.code, result.details, result.requestId, result.failureCause), result, facts?.launch.credentials); }
         } catch { if (!abort.signal.aborted) failed('unavailable', 'create'); }
     };
     const rename = async () => {
@@ -958,6 +982,34 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // A saved preset must load before its provisioner catalog is enabled; that disabled catalog is not a refusal.
     const loadingCatalog = !!props.presetId && presetQuery.state.loading || catalog.loading || controllerAwaitsMachineList;
     // One failure line for the page, shared by the setup-only and creation forms.
+    const repairAccount = error?.repairAccount;
+    const accountRepairRoute = repairAccount && buildConnectedAccountSettingsRoute(repairAccount.service,
+        { kind: 'account', accountId: repairAccount.accountId }, { configure: true });
+    const openRepairAccount = accountRepairRoute ? () => {
+        if (activeBinding?.isCurrent() && areServerAccountScopesEqual(activeBinding.scope, captureActiveServerAccountScopeLifetime()?.scope)) {
+            router.push(accountRepairRoute);
+        }
+    } : undefined;
+    const repairRows = (prerequisites: readonly ManagedPrerequisiteV1[], openAccount?: () => void) => {
+        const rows: { id: string; title: string; subtitle?: string; onPress?: () => void; disabled?: boolean }[] = [
+            ...(openAccount ? [{ id: 'managed-config.account-repair', title: t('managedMachines.add.action.setUp'), onPress: openAccount }] : []),
+            ...prerequisites.filter(prerequisite => prerequisite.status !== 'available' && (prerequisite.repairAction || prerequisite.status === 'unknown'))
+                .map(prerequisite => {
+                    const id = typeof prerequisite.requirement.id === 'string' ? prerequisite.requirement.id
+                        : buildQualifiedPluginContributionKey(prerequisite.requirement.id);
+                    const action = prerequisite.repairAction;
+                    return { id: `managed-config.repair:${prerequisite.requirement.kind}:${id}`,
+                        title: action ? t('managedMachines.add.action.setUp') : id,
+                        subtitle: prerequisite.reason ?? (prerequisite.status === 'unknown' ? t('machinePools.notVerified') : id),
+                        disabled: !!action && (!catalogController && !accountAcquire || !catalogProvisioner),
+                        onPress: action ? () => { void repair(action); } : undefined };
+                }),
+        ];
+        return rows.map(row => <Item key={row.id} testID={row.id} title={row.title}
+            subtitle={row.subtitle} mode={row.onPress ? undefined : 'info'} showChevron={!!row.onPress}
+            disabled={!!row.onPress && (busy || row.disabled)} onPress={row.onPress} />);
+    };
+    const failurePrerequisites = error?.optionsRefusal?.prerequisites ?? [];
     const errorNotice = error && !(poolUnavailableAtReview && error.during === 'read') ? <ItemGroup>
         {/* A read retries its read; a refused Create or Save is retried from the receipt's own action, which stays in view. */}
         <SurfaceStateCard kind="error" size="line" title={error.reason ?? (error.code === 'conflict' ? t('machinePresets.conflict')
@@ -967,6 +1019,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             diagnosticCode={error.code === 'conflict' || error.code === 'machine_setup_conflict' ? undefined : error.code} diagnosticDetail={error.diagnosticDetail} testID="managed-config.error"
             {...(error.code === 'conflict' || error.during === 'read' ? { action: { label: t(error.code === 'conflict' ? 'managedMachines.actions.review'
                 : 'managedMachines.actions.tryAgain'), onPress: error.code === 'conflict' ? presetQuery.refresh : retry } } : {})} />
+        {repairRows(failurePrerequisites, openRepairAccount)}
     </ItemGroup> : null;
     if (delegatedPreset && creationPreset && presetQuery.sameScope) {
         const name = delegatedName ?? creationPreset.launch.name;
@@ -1087,8 +1140,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const controllerReadUnavailable = error?.during === 'read' && error.code === 'controller_unavailable';
     const choicesBlocked = poolUnavailableAtReview || controllerReadUnavailable;
     const retainedChoice = !choicesBlocked && facts?.optionStatus === 'unavailable' && !refusalOnField ? draft?.selected : undefined;
-    const repairs = (receiptFacts?.prerequisites ?? readMachineProvisionerPrerequisitesV1(draft?.check, draft?.options))
-        .filter(prerequisite => prerequisite.status !== 'available' && (prerequisite.repairAction || prerequisite.status === 'unknown'));
+    const repairs = failurePrerequisites.length ? [] : repairRows(
+        receiptFacts?.prerequisites ?? readMachineProvisionerPrerequisitesV1(draft?.check, draft?.options));
     // Nothing to choose from yet is not "no choices" while the launch still waits on a required field: the field says what it needs.
     const awaitsRequiredInput = !!missingLaunchField;
     // A failed read leaves nothing to fill a blank required field from: the failure takes the fields' place, not a column of empty boxes.
@@ -1255,7 +1308,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         {draft && showLaunchFields && primaryFields.length ? <ItemGroup title={t(hasDimensionChoices ? 'managedMachines.detail.launchTitle' : 'managedMachines.config.launchForm')}>
             {launchForm(primaryFields, true)}
         </ItemGroup> : null}
-        {draft && (retainedChoice || choiceState || repairs.length) ? <ItemGroup title={retainedChoice ? t('managedMachines.config.otherChoices') : undefined}>
+        {draft && (retainedChoice || choiceState || repairs.length || repairFailure) ? <ItemGroup title={retainedChoice ? t('managedMachines.config.otherChoices') : undefined}>
             {retainedChoice ? <Item testID="managed-config.retained-choice" mode="info" title={localized(provisioner.contribution.pluginId, retainedChoice.title)}
                 subtitle={t('managedMachines.options.unavailable')} selected showChevron={false} /> : null}
             {choiceState}
@@ -1263,16 +1316,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 && repairFailure.controller?.machineId === catalogController?.machineId
                 && repairFailure.controller?.installationId === catalogController?.installationId
                 ? <ManagedProvisionerRepairFailureNotice failure={repairFailure.outcome} testID="managed-config.repairFailure" /> : null}
-            {repairs.map(prerequisite => {
-                const id = typeof prerequisite.requirement.id === 'string' ? prerequisite.requirement.id
-                    : buildQualifiedPluginContributionKey(prerequisite.requirement.id);
-                return <Item key={`${prerequisite.requirement.kind}:${id}`}
-                    testID={`managed-config.repair:${prerequisite.requirement.kind}:${id}`}
-                    title={prerequisite.repairAction ? t('managedMachines.add.action.setUp') : id}
-                    subtitle={prerequisite.reason ?? (prerequisite.status === 'unknown' ? t('machinePools.notVerified') : id)}
-                    mode={prerequisite.repairAction ? undefined : 'info'} showChevron={!!prerequisite.repairAction}
-                    disabled={!!prerequisite.repairAction && (!catalogController && !accountAcquire || !catalogProvisioner || busy)} onPress={prerequisite.repairAction ? () => { if (prerequisite.repairAction) void repair(prerequisite.repairAction); } : undefined} />;
-            })}
+            {repairs}
         </ItemGroup> : null}
         {/* Drawn once the form is known: before that a form-sized host's one size echo would show and then be replaced. */}
         {draft && !props.presetOnly && !choicesBlocked && !launchPresentationPending ? <ManagedConfiguratorNativeChoices serverId={props.serverId} draft={draft} localized={localized} compact={compact} computer={controllerSentence} disabled={!catalogProvisioner || !catalogController && !accountAcquire || busy || !!preset && !props.presetOnly}

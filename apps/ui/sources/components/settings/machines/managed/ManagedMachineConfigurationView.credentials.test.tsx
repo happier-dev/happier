@@ -82,7 +82,7 @@ beforeEach(async () => {
     await loadSyncSingletonForTests();
     const viewport = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1280, height: 844, scale: 1, fontScale: 1 });
     restoreViewport = () => viewport.mockRestore();
-    const action = PluginProjectedActionV2Schema.parse({ id: 'options', pluginId: contribution.pluginId, occurrenceId: 'options-occurrence',
+    const action = PluginProjectedActionV2Schema.parse({ id: 'options', pluginId: contribution.pluginId, occurrenceId: provisioner.occurrenceId,
         title: 'Native options', scopes: ['machine'], surfaces: ['cli', 'plugin'], execution: { target: 'daemon' }, available: true, dangerLevel: 'safe' });
     const projection = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: {
         ...PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, agentsById: {}, diagnostics: [],
@@ -883,6 +883,46 @@ describe('managed provisioner credential purposes', () => {
             }));
             expect(route.replace).toHaveBeenCalledWith(expect.stringContaining('/settings/machines/managed/created?'));
         });
+        await screen.unmount();
+    });
+
+    it.each(['options', 'acquire'] as const)('opens the exact selected Connected Account from an authored provisioning refusal during %s', async phase => {
+        const serverId = await setupHome();
+        const { PluginError } = await import('@happier-dev/plugin-sdk/errors');
+        const reason = 'Choose a Vercel project for Sandboxes';
+        const error = new PluginError({ code: 'vercel_project_required', message: reason,
+            remediation: { kind: 'selectAccount', service: cloud.service } });
+        const refuse = () => ({ errorCode: error.code, error: error.message, details: error.data });
+        await answerExternalActionAccountForHome(harness, serverId, {
+            ...controller, actionId: 'machines.provisioners.check', tokenEpoch: 0,
+            execute: () => ({ available: true }),
+        });
+        await answerExternalActionAccountForHome(harness, serverId, {
+            ...controller, actionId: 'machines.provisioners.options', tokenEpoch: 0,
+            execute: () => createManagedCpuOptionsFixture([{ id: 'native', title: 'Native compute', cpu: 2 }]),
+            ...(phase === 'options' ? { failure: refuse } : {}),
+        });
+        if (phase === 'acquire') await answerExternalActionAccountForHome(harness, serverId, {
+            ...controller, actionId: 'machines.managed.acquire', tokenEpoch: 0,
+            execute: () => ({ refused: true }), failure: refuse,
+        });
+        const { buildConnectedAccountSettingsRoute } = await import('@/sync/domains/connectedServices/connectedAccountSettingsRoute');
+        const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
+        const screen = await renderAccountScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
+            initialController={controller} />);
+        await waitForHomeGovernance(() => expect(credentialControl(screen, 'cloud-account')).toBeDefined());
+        if (phase === 'acquire') {
+            await selectCredentials(screen);
+            await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+            await act(async () => screen.pressByTestId('managed-config.create'));
+        } else {
+            await pressCredentialOption(screen, 'cloud-account', 'Cloud work');
+            await pressCredentialOption(screen, 'computer-access', 'Computer access');
+        }
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(reason));
+        await screen.pressByTestIdAsync('managed-config.account-repair');
+        expect(route.push).toHaveBeenCalledWith(buildConnectedAccountSettingsRoute(cloud.service,
+            { kind: 'account', accountId: cloud.accountId }, { configure: true }));
         await screen.unmount();
     });
 

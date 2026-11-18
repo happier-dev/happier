@@ -41,7 +41,8 @@ export class ManagedMachineControllerError extends Error {
         const authored = isPluginErrorData(failure.details) && failure.details.code === failure.errorCode ? failure.details : undefined;
         const message = authored?.message?.trim();
         const remediation = PluginDiagnosticRemediationV1Schema.safeParse(authored && 'remediation' in authored ? authored.remediation : undefined);
-        const optionsRefusal = phase === 'machines.provisioners.options' && authored && 'details' in authored
+        const optionsRefusal = (phase === 'machines.provisioners.options' || phase === 'machines.managed.acquire')
+            && authored && 'details' in authored
             ? readMachineProvisionerOptionsRefusalV1(failure.errorCode, authored.details) : undefined;
         // Keep native-only diagnostics in their existing closed shape. Authored
         // repairs travel as the existing public Action failure in Error.cause.

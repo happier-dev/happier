@@ -2116,6 +2116,35 @@ describe('mounted managed configurator', () => {
       });
     } finally { await screen.unmount(); }
   });
+  it('offers the same provider repair from a refused acquire', async () => {
+    const screen = await mountAddRoute('native-acquire-repair');
+    const serverId = route.params.serverId!;
+    const { PluginError } = await import('@happier-dev/plugin-sdk/errors');
+    const { ManagedMachineControllerError } = await import('@happier-dev/cli-common/machines/managed');
+    const { normalizeActionExecutorThrownError } = await import('@happier-dev/protocol/actions/executor/resultProjection');
+    const pluginId = provisioner.contribution.pluginId;
+    const requirement = { pluginId, localId: 'docker-sandboxes-cli' };
+    const failure = new PluginError({ code: 'credential_unavailable', message: 'Sign in to Docker',
+      details: { available: false, code: 'credential_unavailable',
+        prerequisites: [{ requirement: { kind: 'managedDependency', id: requirement },
+          status: 'unavailable', reason: 'Sign in to Docker', repairAction: { action: { pluginId, localId: 'sign-in' }, input: {} } }] } });
+    const actionId = 'machines.managed.acquire';
+    const error = ManagedMachineControllerError.fromActionFailure({ ok: false, errorCode: failure.code,
+      error: failure.message, details: failure.data }, actionId);
+    const execution = { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
+    harness.answer(serverId, 'POST /v1/actions/machines.managed.acquire', { select: value => {
+      const { envelope: request } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(value);
+      return { body: { v: 1, actionId, requestId: request.requestId, execution } };
+    } });
+    try {
+      await waitForHomeGovernance(() => expect(createDisabled(screen)).toBe(false));
+      await screen.pressByTestIdAsync('managed-config.create');
+      await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Sign in to Docker'));
+      expect(screen.findByTestId(`managed-config.repair:managedDependency:${buildQualifiedPluginContributionKey(requirement)}`)?.props.onPress)
+        .toEqual(expect.any(Function));
+    } finally { await screen.unmount(); }
+  });
+
   it('returns the admitted managed resource to its retained creation host without navigating away', async () => {
     const initial = await mountAddRoute('retained-create');
     const serverId = route.params.serverId!;

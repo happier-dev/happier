@@ -936,8 +936,8 @@ describe('ConnectedAccountSetupController real ownership', () => {
         await screen.unmount();
     });
 
-    async function focusedScreen(withAccountCredentials = false) {
-        platform.params = { ...description.service, accountId: 'account-1' };
+    async function focusedScreen(withAccountCredentials = false, configure = false) {
+        platform.params = { ...description.service, accountId: 'account-1', ...(configure ? { configure: '1' } : {}) };
         return renderScreen(<InjectedAuthProvider credentials={withAccountCredentials ? account.credentials : null}><ConnectedAccountServiceView /></InjectedAuthProvider>);
     }
 
@@ -3443,12 +3443,11 @@ describe('ConnectedAccountSetupController real ownership', () => {
         ]);
     });
 
-    it.each(['account'] as const)('edits established %s configuration without inferring reconnect or revealing configured secrets', async (scope) => {
+    it.each(['manual', 'repair'] as const)('opens established Account configuration through %s without reconnecting or revealing secrets', async (entry) => {
         waiveConfigurationConfirmation();
         const ref = { service, accountId: 'account-1' };
-        const mode: PluginConnectedAccountAuthenticationModeV2 = { ...configuredMode, configuration: { ...configuredMode.configuration!, scope, changeBehavior: 'refresh' } };
-        const target = scope === 'account' ? { kind: 'account' as const, account: ref, modeId: 'oauth' }
-            : { kind: 'service' as const, service, modeId: 'oauth' };
+        const mode: PluginConnectedAccountAuthenticationModeV2 = { ...configuredMode, configuration: { ...configuredMode.configuration!, scope: 'account', changeBehavior: 'refresh' } };
+        const target = { kind: 'account' as const, account: ref, modeId: 'oauth' };
         const reply = { ...configurationReply, target, mode, configuration: { ...configurationReply.configuration, status: 'ready' as const } };
         installDescription({ ...described, accounts: [{ ref, status: 'connected', authenticationModeId: 'oauth',
             revisionSemantics: 'revisioned', credentialRevision, configurationReady: true, configurationRevision: 'config-1', scopes: [] }],
@@ -3460,10 +3459,12 @@ describe('ConnectedAccountSetupController real ownership', () => {
                 : command.operation === 'replaceConfiguration'
                     ? { ...reply, status: 'configurationCommitted', configuration: { ...reply.configuration, revision: 'config-2' } }
                     : description;
-        const screen = await focusedScreen();
-        const configureId = scope === 'account' ? 'qualified-account-detail:configuration' : 'connected-service-configuration-settings:oauth';
-        await vi.waitFor(() => expect(screen.findHostByTestId(configureId)).not.toBeNull());
-        await screen.pressByTestIdAsync(configureId);
+        const screen = await focusedScreen(false, entry === 'repair');
+        if (entry === 'manual') {
+            const configureId = 'qualified-account-detail:configuration';
+            await vi.waitFor(() => expect(screen.findHostByTestId(configureId)).not.toBeNull());
+            await screen.pressByTestIdAsync(configureId);
+        }
         await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-configuration:endpoint')).not.toBeNull());
         expect(screen.findHostByTestId('connected-account-configuration:secret')!.props.value).toBe('');
         await act(async () => {
@@ -3471,7 +3472,7 @@ describe('ConnectedAccountSetupController real ownership', () => {
             screen.changeTextByTestId('connected-account-configuration:secret', 'explicit-replacement');
         });
         await screen.pressByTestIdAsync('connected-account-configuration:save');
-        const controlTarget = scope === 'account' ? { kind: 'account', account: ref } : target;
+        const controlTarget = { kind: 'account', account: ref };
         await vi.waitFor(() => expect(controlCommands).toContainEqual({ operation: 'replaceConfiguration', target: controlTarget,
             expectedRevision: 'config-1', values: { endpoint: 'https://new.example' }, secretValues: { secret: 'explicit-replacement' } }));
         expect(authenticationCommands).toEqual([]);

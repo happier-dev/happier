@@ -137,6 +137,11 @@ function resolveRouteFocus(params: Readonly<{
 
 /** Released ingress flag translated to the collection's setup request. */
 const CONNECTED_ACCOUNT_ADD_PARAM = 'add';
+const CONNECTED_ACCOUNT_CONFIGURE_PARAM = 'configure';
+
+export function readConnectedAccountConfigureRequest(params: Readonly<Record<string, unknown>>): boolean {
+    return readSingleRouteParam(params[CONNECTED_ACCOUNT_CONFIGURE_PARAM]) === '1';
+}
 
 /** Whether a service page was opened to add an account (`?add=1`). */
 export function readConnectedAccountAddRequest(params: Readonly<Record<string, unknown>>): boolean {
@@ -158,7 +163,7 @@ export function buildNewConnectedAccountPoolRoute(service: PluginContributionIde
 export function buildConnectedAccountSettingsRoute(
     service: PluginContributionIdentityV1,
     focus: ConnectedAccountSettingsRouteFocus | null = null,
-    options: Readonly<{ add?: boolean }> = {},
+    options: Readonly<{ add?: boolean; configure?: boolean }> = {},
 ) {
     const parsed = ConnectedAccountServiceIdentityV1Schema.safeParse(service);
     if (!parsed.success) return null;
@@ -180,7 +185,7 @@ export function buildConnectedAccountSettingsRoute(
             pluginId: parsed.data.pluginId,
             localId: parsed.data.localId,
             ...(parsedFocus.kind === 'account'
-                ? { accountId: parsedFocus.accountId }
+                ? { accountId: parsedFocus.accountId, ...(options.configure ? { [CONNECTED_ACCOUNT_CONFIGURE_PARAM]: '1' } : {}) }
                 : {}),
             ...(parsedFocus.kind === 'group'
                 ? { groupId: parsedFocus.groupId }

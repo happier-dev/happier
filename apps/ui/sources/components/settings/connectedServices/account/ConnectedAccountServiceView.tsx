@@ -48,6 +48,7 @@ import { Modal } from '@/modal';
 import { getPreferredLanguage, t } from '@/text';
 import {
     readConnectedAccountAddRequest,
+    readConnectedAccountConfigureRequest,
     CONNECTED_ACCOUNTS_SETTINGS_ROUTE,
     resolveQualifiedConnectedAccountSettingsRoute,
 } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
@@ -1482,6 +1483,73 @@ const ConnectedAccountServiceController = React.memo(
         && !activeMode.callbackUrl && activeMode.setup !== undefined && activeMode.clientConfiguration !== undefined });
     const homeWebappUrl = homeFeatures.status === 'ready' ? homeFeatures.features.capabilities.server?.webappUrl : undefined;
 
+    // ONE projection of the daemon transport (the `accountPeer` memo) answers
+    // every peer-capability question on this route, so a second copy cannot drift
+    // into a different peer-class answer.
+    const peerTransport = accountPeer.transport;
+    const supportsOperation = (
+        operation: BuiltInLegacyConnectedAccountOperation,
+    ): boolean => {
+        if (!peerTransport || !service) return false;
+        if (peerTransport.protocol === 'v4') return true;
+        return isQualifiedConnectedAccountLegacyOperationSupported({
+            service,
+            legacyServiceId: peerTransport.legacyServiceId,
+            peerClass: peerTransport.peerClass,
+            operation,
+        });
+    };
+    const transport = description?.operationTransport;
+    const descriptorModes =
+        description?.descriptor.authentication.modes ?? declaredAuthentication?.modes ?? registryEntry?.authenticationModes ?? [];
+    const mutationModes = hasAccountDirectSetup || hasPortableAuthenticationModes || transport?.kind === 'v4'
+        ? descriptorModes
+        : transport?.kind === 'legacy'
+            && transport.peerClass === 'revisioned_v2_v3'
+            && descriptorModes.length === 1
+            ? descriptorModes.filter((mode) => {
+                const compatibility =
+                    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
+                        transport.serviceId
+                    ];
+                return compatibility
+                    ? (
+                        Object.values(
+                            compatibility.authenticationModeByCredentialKind,
+                        ) as readonly string[]
+                    ).includes(mode.id)
+                    : false;
+            })
+            : [];
+    const legacyMutationModeIds = new Set(
+        mutationModes.map((mode) => mode.id),
+    );
+    const credentialWriteAllowed = hasAccountDirectSetup || selectedModeIsPortable || supportsOperation('credential_write')
+        && focusedAccountHasMachineAugmentation
+        && (
+            transport?.kind === 'v4'
+            || legacyMutationModeIds.size === 1
+        );
+
+    const configureAccount = React.useCallback((account: QualifiedConnectedAccountRef) => {
+        const modeId = visibleAccounts.find(candidate => sameQualifiedConnectedAccountRef(candidate.ref, account))?.authenticationModeId;
+        const mode = description?.descriptor.authentication.modes.find(candidate => candidate.id === modeId);
+        if (!mode?.configuration) return false;
+        setAttempt(null);
+        setPendingIntent(null);
+        setConfigurationContinuationAttemptId(null);
+        setActiveModeId(mode.id);
+        void readConfiguration({ kind: 'account', account, modeId: mode.id });
+        return true;
+    }, [visibleAccounts, description, readConfiguration]);
+    const configureRequested = !controllerProps.panel && readConnectedAccountConfigureRequest(params);
+    const configureOpened = React.useRef(false);
+    React.useEffect(() => {
+        if (!configureRequested || configureOpened.current || !service || !focusedAccountId
+            || !credentialWriteAllowed || machineRequired && !machineId || !isControllerCurrent()) return;
+        configureOpened.current = configureAccount({ service, accountId: focusedAccountId });
+    }, [configureRequested, service, focusedAccountId, credentialWriteAllowed, machineRequired, machineId, isControllerCurrent, configureAccount]);
+
     if (controllerProps.panel && (!exactRoute || !service)) {
         return <ConnectedServiceSetupFlowBody state={connectedServicesRegistry.status === 'loading' ? 'preparing' : 'unknownService'} />;
     }
@@ -1565,53 +1633,6 @@ const ConnectedAccountServiceController = React.memo(
         );
     }
 
-    // ONE projection of the daemon transport (the `accountPeer` memo) answers
-    // every peer-capability question on this route, so a second copy cannot drift
-    // into a different peer-class answer.
-    const peerTransport = accountPeer.transport;
-    const supportsOperation = (
-        operation: BuiltInLegacyConnectedAccountOperation,
-    ): boolean => {
-        if (!peerTransport) return false;
-        if (peerTransport.protocol === 'v4') return true;
-        return isQualifiedConnectedAccountLegacyOperationSupported({
-            service,
-            legacyServiceId: peerTransport.legacyServiceId,
-            peerClass: peerTransport.peerClass,
-            operation,
-        });
-    };
-    const transport = description?.operationTransport;
-    const descriptorModes =
-        description?.descriptor.authentication.modes ?? declaredAuthentication?.modes ?? registryEntry?.authenticationModes ?? [];
-    const mutationModes = hasAccountDirectSetup || hasPortableAuthenticationModes || transport?.kind === 'v4'
-        ? descriptorModes
-        : transport?.kind === 'legacy'
-            && transport.peerClass === 'revisioned_v2_v3'
-            && descriptorModes.length === 1
-            ? descriptorModes.filter((mode) => {
-                const compatibility =
-                    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
-                        transport.serviceId
-                    ];
-                return compatibility
-                    ? (
-                        Object.values(
-                            compatibility.authenticationModeByCredentialKind,
-                        ) as readonly string[]
-                    ).includes(mode.id)
-                    : false;
-            })
-            : [];
-    const legacyMutationModeIds = new Set(
-        mutationModes.map((mode) => mode.id),
-    );
-    const credentialWriteAllowed = hasAccountDirectSetup || selectedModeIsPortable || supportsOperation('credential_write')
-        && focusedAccountHasMachineAugmentation
-        && (
-            transport?.kind === 'v4'
-            || legacyMutationModeIds.size === 1
-        );
     const attemptId = attempt && 'attemptId' in attempt ? attempt.attemptId : null;
     const accountLabels = Object.fromEntries(visibleAccounts.filter((account) => (
         account.ref.service.pluginId === service.pluginId
@@ -2073,32 +2094,7 @@ const ConnectedAccountServiceController = React.memo(
                     busy={busy}
                     isControllerCurrent={isControllerCurrent}
                     onRenameAccount={'scope' in accountLifetime && profile.id === accountLifetime.scope.accountId ? renameAccount : undefined}
-                    onConfigureAccount={credentialWriteAllowed ? (account) => {
-                        const modeId = visibleAccounts.find((candidate) => (
-                            candidate.ref.accountId === account.accountId
-                            && candidate.ref.service.pluginId
-                                === account.service.pluginId
-                            && candidate.ref.service.localId
-                                === account.service.localId
-                        ))?.authenticationModeId;
-                        if (!modeId) return;
-                        const mode =
-                            description?.descriptor.authentication.modes.find(
-                                (candidate) => candidate.id === modeId,
-                            );
-                        if (!mode?.configuration) return;
-                        setAttempt(null);
-                        setPendingIntent(null);
-                        setConfigurationContinuationAttemptId(null);
-                        setActiveModeId(modeId);
-                        void readConfiguration(
-                            {
-                                kind: 'account',
-                                account,
-                                modeId,
-                            },
-                        );
-                    } : undefined}
+                    onConfigureAccount={credentialWriteAllowed ? configureAccount : undefined}
                     onConfigureService={'scope' in accountLifetime
                         && descriptorModes.some(mode => mode.configuration?.scope === 'service') ? (modeId) => {
                         // Account configuration admission resolves the current declared
@@ -2181,6 +2177,7 @@ export function ConnectedAccountServiceView() {
         asStringParam(params.serviceId),
         asStringParam(params.accountId),
         asStringParam(params.groupId),
+        asStringParam(params.configure),
     ].join('\u0000');
 
     const navigation = useNavigation();
