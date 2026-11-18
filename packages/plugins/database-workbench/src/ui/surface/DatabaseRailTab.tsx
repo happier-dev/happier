@@ -96,6 +96,8 @@ function DatabasePicker(
         id: target.targetKey,
         kind: 'radio' as const,
         radioGroupId: 'database',
+        // Each database carries its mark, as the identity it switches to does (lab dbRail-picker).
+        icon: 'database' as const,
         label: target.name,
         subtitle: databaseFactsOf(target),
       })),

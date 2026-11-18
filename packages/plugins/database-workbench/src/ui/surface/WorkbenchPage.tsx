@@ -68,7 +68,7 @@ export function WorkbenchMain(props: Readonly<{ targetKey: string; scope: Workbe
   const openReview = React.useCallback(() => setReviewing(true), []);
   const relation = location.relation;
   if (location.mode === 'console')
-    return <DatabaseConsole targetKey={props.targetKey} />;
+    return <DatabaseConsole targetKey={props.targetKey} scope={props.scope} />;
   if (location.mode === 'insights')
     return <InsightsPane targetKey={props.targetKey} />;
   if (!relation || location.mode === 'overview')

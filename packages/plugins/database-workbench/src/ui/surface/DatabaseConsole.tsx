@@ -24,7 +24,8 @@ import {
   Collection,
   useHappierCollection,
 } from '@happier-dev/plugin-ui/components';
-import { useDatabaseConsole, useWorkbenchInstance } from '../hooks.js';
+import { useDatabaseConsole, useDatabaseTargets, useWorkbenchInstance } from '../hooks.js';
+import type { WorkbenchLaunchInput } from './mount.js';
 import { projectColumn } from '../projections.js';
 import { CellText } from './cells.js';
 import { ConsoleParameters } from './ConsoleParameters.js';
@@ -179,17 +180,17 @@ function HistoryMenu(
     >
       <ItemGroup surface="none">
         {props.history.map((entry, index) => (
-          // A statement is code: it reads in the code face, two lines at most (lab dbConsole/history).
+          // A statement is code: the row's title in the code face, two lines at most (lab dbConsole/history).
           <Item
             key={`${index}:${entry.sql}`}
-            accessibilityLabel={entry.sql}
+            title={entry.sql}
+            titleNumberOfLines={2}
+            identifier
             onPress={() => {
               props.onPick(entry.sql);
               setOpen(false);
             }}
-          >
-            <Text variant="code" value={entry.sql} numberOfLines={2} />
-          </Item>
+          />
         ))}
       </ItemGroup>
       <Button
@@ -209,11 +210,12 @@ function HistoryMenu(
 }
 
 /** SQL against this database: read by default, write only by choice, Explain beside Run. */
-export function DatabaseConsole(props: Readonly<{ targetKey: string }>) {
+export function DatabaseConsole(props: Readonly<{ targetKey: string; scope: WorkbenchLaunchInput['scope'] }>) {
   const translate = usePluginTranslation();
   const instance = useWorkbenchInstance();
   const sql = useDatabaseConsole(props.targetKey);
   const descriptor = instance.target(props.targetKey);
+  const machineLabel = useDatabaseTargets(props.scope).targets.find((candidate) => candidate.targetKey === props.targetKey)?.machineLabel ?? null;
   const canWrite = descriptor.access?.canWrite === true;
   const run = sql.run();
   const explain = sql.explain();
@@ -245,7 +247,12 @@ export function DatabaseConsole(props: Readonly<{ targetKey: string }>) {
     <Stack gap="medium" grow>
       <PageHeader
         title={translate('plugins.database.console.title', 'Console')}
-        meta={[{ key: 'database', text: descriptor.label }]}
+        // Which database and where it runs: the statement runs on that Machine (lab dbConsole), from the workbench's
+        // projected target facts.
+        meta={[
+          { key: 'database', text: descriptor.label },
+          ...(machineLabel ? [{ key: 'machine', text: translate('plugins.database.console.runsOn', 'runs on {machine}', { machine: machineLabel }) }] : []),
+        ]}
         actions={
           <HistoryMenu
             history={sql.history}
