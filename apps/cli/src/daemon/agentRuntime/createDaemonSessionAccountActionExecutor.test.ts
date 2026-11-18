@@ -1464,6 +1464,7 @@ describe('daemon Session Account authority', () => {
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
       if (path.startsWith('/v1/artifacts/')) {
         const artifact = readRejectedApproval(path.split('/').at(-1)!);
         return artifact ? { status: 200, data: artifact } : { status: 404, data: { error: 'not_found' } };
@@ -1488,6 +1489,8 @@ describe('daemon Session Account authority', () => {
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request),
         } } };
       }
+      if (path === '/v2/sessions/lookup-by-tags') return { status: 200,
+        data: { sessions: [ownedSessionRecord({}, receiverCredentials.token, source.machineId)] } };
       if (path.endsWith('/verify')) {
         const signature = config?.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER];
         expect(typeof signature).toBe('string');
