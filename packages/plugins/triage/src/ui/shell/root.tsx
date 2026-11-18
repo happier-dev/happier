@@ -2170,8 +2170,10 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         'Happier cannot reach your account right now, so pins and saved views cannot be changed.',
       )
     : savedViews.unavailableReason ?? marks.unavailableReason;
-  // Manage sources says the same cause with its own banner and Retry: one message while it is open.
-  const accountNotice = accountNoticeLabel === null || (editingSources && sourcesUnreachable) ? null : (
+  // Manage sources says the same cause with its own banner and Retry: one message while it is open. A whole outage
+  // already names the saved views in the list's own place, and its one Retry re-reads the Account too.
+  const outageSpeaksForAccount = state.kind === 'unavailable' && state.retryable;
+  const accountNotice = accountNoticeLabel === null || (editingSources && sourcesUnreachable) || outageSpeaksForAccount ? null : (
     <Status
       tone="warning"
       label={accountNoticeLabel}
@@ -3015,7 +3017,10 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                         variant="secondary"
                         busy={refreshState.kind === 'running'}
                         disabled={refreshState.kind === 'blocked'}
-                        onPress={refresh}
+                        onPress={() => {
+                          refresh();
+                          if (accountNoticeLabel !== null) executeMountedOperation({ kind: 'retryAccountData' });
+                        }}
                       />
                     ),
                   }

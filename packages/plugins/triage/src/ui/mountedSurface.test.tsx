@@ -80,7 +80,7 @@ import {
     testkitSnapshot,
     testkitViewer,
 } from '../corpus/testkit/observations.test-support.js';
-import { loadMoreTriageListWindow, readTriageListWindowSnapshot, refreshTriageListWindow, subscribeToTriageListWindow } from './window/mountedWindow.js';
+import { loadMoreTriageListWindow, readTriageListWindowReadOwner, readTriageListWindowSnapshot, refreshTriageListWindow, subscribeToTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 import { renderSurface as renderTasksSurface } from './tasksSurface.js';
@@ -215,7 +215,7 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
 
     const scans = new Map<object, ScanFn>();
     const scanCalls = { count: 0 };
-    const state = { sourceAFails: false, sourceBFails: false,
+    const state = { sourceAFails: false, sourceBFails: false, accountReadsUnavailable: false,
         sessionLinksUnavailable: false, savedViewsUnavailable: false, pinsUnavailable: false,
         fixPullRequestsUnavailable: false, resourceUnavailable: false, entryReadUnavailable: false,
         sessionRead: 'ready' as 'ready' | 'missing' | 'failed' | 'pending', sessionReads: 0,
@@ -443,6 +443,7 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
             unroutedActions.push(String(request.action));
             throw new Error(`unrouted Action: ${String(request.action)}`);
         }
+        if (state.accountReadsUnavailable) throw new PluginError({ code: 'server_unavailable', retryable: true });
         const parsed = TriageListEntriesInputV1Schema.parse(request.input);
         const refused = parsed.sources.kind === 'selected' && parsed.sources.sourceInstances.length === 1
             ? state.listInvocationFailure?.(parsed.sources.sourceInstances.map(source => source.sourceInstanceId)[0]!) ?? null : null;
@@ -520,12 +521,14 @@ async function mountSurface(
                 : definition.id === CORPUS_USER_MARKS_COLLECTION.id ? harness.collections.userMarks : null;
             if (collection) return { ...collection, query: (...args: Parameters<typeof collection.query>) => {
                 harness.collectionReadCounts.set(definition.id, (harness.collectionReadCounts.get(definition.id) ?? 0) + 1);
+                if (harness.state.accountReadsUnavailable) throw new PluginError({ code: 'plugin_account_storage_unavailable' });
                 return collection.query(...args);
             } };
             throw new Error(`Unexpected fixture collection ${definition.id}`);
         },
         accountKv: { ...harness.accountKv.kv, get: (...args: Parameters<typeof harness.accountKv.kv.get>) => {
             harness.kvReadCount.count++;
+            if (harness.state.accountReadsUnavailable) throw new PluginError({ code: 'plugin_account_storage_unavailable' });
             return harness.accountKv.kv.get(...args);
         } },
         watchAccountData: (selection: Parameters<PluginUiDataClient['watchAccountData']>[0], listener: () => void) => {
@@ -1778,6 +1781,59 @@ describe('the mounted PRs & Issues surface', () => {
         expect(statusLines, JSON.stringify(statusLines))
             .toContain(`Example forge · ${LABEL_A} and Example forge · ${LABEL_B} could not be reached. Their entries may be missing or out of date.`);
         await expect(shell.queryByText('Showing the last known list')).resolves.toBeUndefined();
+    });
+
+    it('shows one cold outage when both authorities are unavailable and folds sources on readmission', async () => {
+        const harness = createHarness({ quietFirstPage: true });
+        harness.state.accountReadsUnavailable = true;
+        const offline = { ...sourceContextFixture(harness), requesterExecutionReady: true,
+            machineConnectionPending: false, machineExecutionReady: false };
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-all-authorities-offline', offline,
+            { directAccountData: true });
+        await settleWindow('view', shell);
+        const snapshot = () => readTriageListWindowSnapshot(shell.context.hostApi, harness.ephemeralSharedScope);
+        const readOwner = () => readTriageListWindowReadOwner(shell.context.hostApi, harness.ephemeralSharedScope);
+        const listReads = () => harness.actionCalls.filter(action => action === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1).length;
+        const owner = readOwner();
+        expect(owner).not.toBeNull();
+        expect(snapshot()).toMatchObject({ pending: 'idle', error: { code: 'server_unavailable' } });
+        expect(snapshot().window).toBeUndefined();
+        expect(harness.scanCalls.count).toBe(0);
+        expect(harness.collectionReadCounts.get(CORPUS_USER_MARKS_COLLECTION.id)).toBeGreaterThan(0);
+        expect(harness.kvReadCount.count).toBeGreaterThan(0);
+        await expect(shell.getByText('The list could not be read')).resolves.toBeDefined();
+        await expect(shell.getByText('Happier could not reach your sources or your saved views just now. Try again in a moment.'))
+            .resolves.toBeDefined();
+        await expect(shell.queryByText('Reading your sources…')).resolves.toBeUndefined();
+        await expect(shell.queryByText('Nothing needs you')).resolves.toBeUndefined();
+        const retries = (await shell.getAllByRole('button')).filter(button => button.name === 'Retry');
+        expect.soft(retries).toHaveLength(1);
+        await expect.soft(shell.queryByText('Happier cannot reach your account right now, so pins and saved views cannot be changed.'))
+            .resolves.toBeUndefined();
+
+        const attemptsWhileOffline = listReads();
+        const disconnected = { ...offline, requesterExecutionReady: false };
+        await act(async () => { await shell.updateSurface(disconnected); });
+        harness.state.accountReadsUnavailable = false;
+        // Connectivity alone supplies no materialization demand. The same host
+        // admission fact may republish before it actually changes.
+        await act(async () => { await shell.updateSurface({ ...disconnected }); });
+        expect(listReads()).toBe(attemptsWhileOffline);
+        expect(snapshot().window).toBeUndefined();
+
+        const reconnected = { ...offline, machineExecutionReady: true };
+        await act(async () => { await shell.updateSurface(reconnected); });
+        await settleWindow('view', shell);
+        expect(readOwner()).toBe(owner);
+        expect(snapshot().window).toMatchObject({ coverage: 'complete', rows: [expect.anything(), expect.anything()] });
+        expect(harness.scanCalls.count).toBe(2);
+        await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change']);
+        await expect(shell.queryByText('The list could not be read')).resolves.toBeUndefined();
+        expect(document.body.textContent).not.toContain('Happier cannot reach your account');
+        const attemptsAfterReconnect = listReads();
+        await act(async () => { await shell.updateSurface({ ...reconnected }); });
+        expect(listReads()).toBe(attemptsAfterReconnect);
+        expect(harness.accountKv.setCallCount()).toBe(0);
     });
 
     it.each([false, true])('keeps named cold source failure and Retry visible (initially unavailable=%s)', async initiallyUnavailable => {
