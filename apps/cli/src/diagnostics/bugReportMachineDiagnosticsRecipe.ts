@@ -17,7 +17,7 @@ import { readDaemonState, readSettings, readStoredCredentials, type StoredCreden
 import { listDaemonLogFiles } from '@/ui/logger';
 import { listSessionMarkers } from '@/daemon/sessionRegistry';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
-import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { collectBugReportMachineDiagnosticsSnapshot, readBugReportLogTail } from './bugReportMachineDiagnostics';
 import { DIAGNOSTIC_RECENT_DAEMON_LOG_COUNT } from '@/utils/logs/logRetention';
@@ -65,7 +65,11 @@ export async function collectBugReportMachineDiagnosticsSnapshotForBugReport(
         });
         if (transport.ok) {
           sessionDiagnostics.context.sessionId = transport.sessionId;
-          metadata = tryDecryptSessionMetadata({ credentials, rawSession: transport.rawSession });
+          metadata = tryDecryptSessionOwnerMetadataView({
+            credentials,
+            accountEncryptionMode: transport.accountEncryptionCurrentness.mode,
+            rawSession: transport.rawSession,
+          });
         }
       } catch {
         scope.signal?.throwIfAborted();

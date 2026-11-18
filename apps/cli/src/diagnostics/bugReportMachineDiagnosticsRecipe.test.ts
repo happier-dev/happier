@@ -9,6 +9,46 @@ import { collectBugReportMachineDiagnosticsSnapshot } from './bugReportMachineDi
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('selected bug report machine diagnostics', () => {
+  it.each(['plain', 'e2ee'] as const)('collects layout-one %s owner logs without disclosing another Machine', async mode => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-report-owner-layout-' }, async () => {
+      const { default: axios } = await import('axios');
+      const { encrypt, encodeBase64 } = await import('@/api/encryption');
+      const { sealSessionOwnerMetadataEnvelopeV1, SessionOwnerMetadataV1Schema } = await import('@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1');
+      await mkdir(configuration.logsDir, { recursive: true });
+      const selected = join(configuration.logsDir, 'selected-owner.log');
+      const daemonLogPath = join(configuration.logsDir, 'owner-daemon.log');
+      await writeFile(selected, 'LAYOUT_ONE_SESSION_BODY');
+      await writeFile(daemonLogPath, 'LAYOUT_ONE_DAEMON_BODY');
+      writeDaemonState({ pid: process.pid, httpPort: 1, startedAt: 1, startedWithCliVersion: 'fixture', daemonLogPath });
+      const secret = new Uint8Array(32).fill(7);
+      const shared = { v: 1 };
+      const ownerMetadata = SessionOwnerMetadataV1Schema.parse({ v: 1,
+        workspace: { machineId: 'machine-a' }, runtime: { sessionLogPath: selected } });
+      const ownerEnvelope = mode === 'plain' ? { t: 'plain' as const, v: ownerMetadata }
+        : sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'legacy', secret }, ownerMetadata,
+          randomBytes: length => new Uint8Array(length).fill(9) });
+      const sessionId = 'c123456789012345678901234';
+      // Only HTTP is substituted: the admitted layout, owner crypto, locality and file reads stay real.
+      vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200, data: String(url).includes('/encryption/currentness')
+        ? { mode, version: 1, signingKeyFingerprint: mode === 'plain' ? null : 'fixture-signing', contentKeyFingerprint: mode === 'plain' ? null : 'fixture-content', updatedAt: 1 }
+        : { session: { id: sessionId, seq: 0, createdAt: 1, updatedAt: 1, active: false, activeAt: 1, encryptionMode: mode,
+          metadata: mode === 'plain' ? JSON.stringify(shared) : encodeBase64(encrypt(secret, 'legacy', shared), 'base64'),
+          metadataLayoutVersion: 1, ownerMetadata: ownerEnvelope, metadataVersion: 1,
+          agentState: null, agentStateVersion: 0, dataEncryptionKey: null, share: null } } }));
+      vi.stubGlobal('fetch', async () => new Response('{}', { status: 404 }));
+      const credentials = { token: 'fixture-token', credentialProvenance: 'stored_session' as const,
+        encryption: mode === 'plain' ? null : { type: 'legacy' as const, secret } };
+      const request = { sessionId, logSelection: { daemon: true, session: true, provider: false } };
+      const result = await collectBugReportMachineDiagnosticsSnapshotForBugReport(request, { credentials, machineId: 'machine-a' });
+      expect(result.sessionDiagnostics?.context.metadataStatus).toBe('available');
+      expect(result.sessionDiagnostics?.logs.find(entry => entry.kind === 'session')?.artifact?.content).toBe('LAYOUT_ONE_SESSION_BODY');
+      expect(result.sessionDiagnostics?.logs.find(entry => entry.kind === 'daemon')?.artifact?.content).toBe('LAYOUT_ONE_DAEMON_BODY');
+      const foreign = await collectBugReportMachineDiagnosticsSnapshotForBugReport(request, { credentials, machineId: 'machine-b' });
+      expect(foreign.sessionDiagnostics?.context.metadataStatus).toBe('wrong-machine');
+      expect(foreign.sessionDiagnostics?.logs.some(entry => entry.status === 'collected')).toBe(false);
+      expect(JSON.stringify(foreign)).not.toContain('LAYOUT_ONE_SESSION_BODY');
+    });
+  });
   it('uses the artifact owner budget beyond the former selected-log cap', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-selected-log-budget-' }, async () => {
       await mkdir(configuration.logsDir, { recursive: true });
