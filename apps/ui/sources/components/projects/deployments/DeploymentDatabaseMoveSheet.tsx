@@ -22,7 +22,8 @@ import type { createDeploymentActions } from './deploymentActions';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentDatabaseMoveDestination } from './deploymentRestore';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
-import { deploymentEnvironmentRoute } from './deploymentNavigation';
+import { DEPLOYMENT_DATABASE_CATALOG_FILTER, deploymentEnvironmentRoute } from './deploymentNavigation';
+import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useDeploymentEnvironmentRecord } from './useDeploymentReads';
 import { useDeploymentAccountController } from './useDeploymentProject';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
@@ -137,7 +138,12 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
         eligible={row => row.environment.id !== props.source.environment.id && row.environment.capabilities.manage
           && row.databaseMoveCandidate === true}
         loadFailedTitle={t('projects.deployments.promotion.loadFailed')}
-        emptyTitle={t('projects.deployments.databaseMoveEmptyTitle')} emptyBody={t('projects.deployments.databaseMoveEmptyBody')} />
+        emptyTitle={t('projects.deployments.databaseMoveEmptyTitle')} emptyBody={t('projects.deployments.databaseMoveEmptyBody')}
+        // No destination yet leads to Store's databases at Account scope: the new one may run on any Machine (D23).
+        emptyAction={{ label: t('projects.deployments.addOpenStore'), onPress: () => {
+          props.onClose();
+          router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', filters: DEPLOYMENT_DATABASE_CATALOG_FILTER }) as never);
+        } }} />
       {selectedId && !selection ? <SurfaceStateCard testID={`project-deployments.move.destination.${selected.snapshot.status === 'ready'
         ? 'unavailable' : selected.snapshot.status === 'unavailable' ? 'failed' : 'loading'}`} size="line"
         kind={selected.snapshot.status === 'ready' ? 'unavailable' : selected.snapshot.status === 'unavailable' ? 'error' : 'loading'}

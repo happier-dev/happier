@@ -967,6 +967,23 @@ describe('Environment → Database → Move', () => {
       expect(view.effects.filter(effect => getActionSpec(effect.actionId)?.sideEffectClass !== 'read')).toEqual([]);
     } finally { await view.dispose(); }
   });
+
+  it('leads from an empty destination list to Store databases, for any Machine (D23)', async () => {
+    const view = await renderDatabase({ storedDefinition: true, movePickerScope: true });
+    routerMock.spies.push.mockClear();
+    try {
+      await view.settle(`${page}.move`);
+      await view.screen.pressByTestIdAsync(`${page}.move`);
+      expect(await view.settle('project-deployments.move.destination.empty')).not.toBeNull();
+      await view.screen.pressByTestIdAsync('project-deployments.move.destination.empty.action');
+      const href = String(routerMock.spies.push.mock.calls.at(-1)?.[0]);
+      const query = new URLSearchParams(href.split('?')[1]);
+      expect({ view: query.get('view'), kind: query.get('kind'), filters: JSON.parse(query.get('filters') ?? 'null'),
+        machine: query.get('machine') }).toEqual({ view: 'kind', kind: 'app',
+        filters: { category: { include: ['database'], exclude: [] } }, machine: null });
+      expect(view.effects.filter(effect => getActionSpec(effect.actionId)?.sideEffectClass !== 'read')).toEqual([]);
+    } finally { await view.dispose(); }
+  });
 });
 
 describe('Environment → Data → Add (P10)', () => {
