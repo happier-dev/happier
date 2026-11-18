@@ -25,9 +25,23 @@ import {
     createAccountEncryptionMigrateRequestBindingDigestV1,
     type AccountEncryptionMigrateRequest,
     type AccountEncryptionMigrateUnsignedRequest,
+    ComposerAttachmentDraftV1Schema,
+    HappierStructuredInputV1Schema,
+    SessionSharedMetadataV1Schema,
+    createPlainSessionOwnerMetadataEnvelopeV1,
+    encodeSessionOwnerMetadataEnvelopeV1,
+    sealSessionOwnerMetadataEnvelopeV1,
 } from "@happier-dev/protocol";
 import * as privacyKit from "privacy-kit";
 import tweetnacl from "tweetnacl";
+import { sealAccountScopedBlobCiphertext } from "@happier-dev/protocol/crypto/accountScopedCipher";
+import { createSessionDraftPrivatePayloadV2 } from "@happier-dev/protocol/drafts/sessionDraftsV2";
+import { createEmptyPluginAccountKvRowV1, setPluginAccountKvEntryV1, sealPluginAccountStoragePrivatePayloadV1 } from "@happier-dev/protocol/plugins/data/accountKvV1";
+import { buildPluginAccountStoragePhysicalKey } from "@/app/kv/accountScopedKv";
+import { deriveTriageComposerEntryAttachmentKey, TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1 } from "../../../../../../../packages/plugins/triage/src/composer/attachmentValue";
+import { TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1 } from "../../../../../../../packages/plugins/triage/src/settings/savedViews";
+import { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, TriageActionsCatalogValueV1Schema } from "../../../../../../../packages/plugins/triage/src/settings/actions";
+import { TriageSavedViewsCatalogValueV1Schema } from "../../../../../../../packages/plugins/triage/src/actions/savedViewsProtocol";
 
 import { enableErrorHandlers } from "@/app/api/utils/enableErrorHandlers";
 import {
@@ -173,6 +187,7 @@ describe("Account encryption migration exact replay", () => {
         await db.automation.deleteMany().catch(() => {});
         await db.artifact.deleteMany().catch(() => {});
         await db.userKVStore.deleteMany().catch(() => {});
+        await db.sessionMessage.deleteMany().catch(() => {});
         await db.session.deleteMany().catch(() => {});
         await db.machine.deleteMany().catch(() => {});
         await db.account.deleteMany().catch(() => {});
@@ -182,7 +197,7 @@ describe("Account encryption migration exact replay", () => {
         await harness?.close();
     });
 
-    it("returns capable drafts and migrates workspace and Coach rows atomically with exact read-only replay", async () => {
+    it("refuses opaque plugin catalogs and preserves raw Session and Composer references through migration and replay", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
             HAPPIER_FEATURE_ENCRYPTION__ALLOW_ACCOUNT_OPTOUT: "1",
@@ -198,12 +213,34 @@ describe("Account encryption migration exact replay", () => {
         } });
         const address = { kind: "newSession" as const, draftId: randomUUID() };
         const mutationId = randomUUID();
+        const entryRef = { source: { pluginId: "example.forge", localId: "issues" },
+            kindId: "issue", collisionScope: "owner/repository|scope", entryId: "issue|42" };
+        const attachment = ComposerAttachmentDraftV1Schema.parse({
+            v: 1, instanceId: randomUUID(), attachment: TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1,
+            key: deriveTriageComposerEntryAttachmentKey(entryRef),
+            value: { v: 1, entryRef, sourceInstance: { source: entryRef.source, sourceInstanceId: randomUUID() } },
+            presentation: { typeLabel: "Issue", label: "Retain the canonical reference" },
+        });
+        const sessionOwnerMaterial = { type: "legacy", secret: new Uint8Array(32).fill(41) } as const;
+        const sourceOwnerMetadata = sealSessionOwnerMetadataEnvelopeV1({
+            material: sessionOwnerMaterial, ownerMetadata: { v: 1 }, randomBytes: length => new Uint8Array(length).fill(17),
+        });
+        const session = await db.session.create({ data: {
+            accountId: account.id, tag: "raw-ref-session", encryptionMode: "plain",
+            metadata: JSON.stringify(SessionSharedMetadataV1Schema.parse({ v: 1 })), metadataLayoutVersion: 1,
+            ownerMetadata: encodeSessionOwnerMetadataEnvelopeV1(sourceOwnerMetadata),
+        } });
+        const message = await db.sessionMessage.create({ data: {
+            sessionId: session.id, seq: 1, messageRole: "user",
+            content: { t: "plain", v: { role: "user", content: { type: "text", text: "Retain this issue" },
+                meta: { happierStructuredInputV1: HappierStructuredInputV1Schema.parse({ v: 1, composerAttachments: [attachment] }) } } },
+        } });
         const content = { t: "plain" as const, v: { v: 2 as const, address, document: {
             v: 2 as const,
             composer: {
                 text: { mutationId, value: "Preserve this launch" },
                 mentions: { mutationId, value: [] },
-                attachments: { mutationId, value: [] },
+                attachments: { mutationId, value: [attachment] },
             },
             target: { kind: "newSession" as const, authoring: { executionTarget: { mutationId, value: {
                 kind: "temporary_computer", serverId: "home-a", artifactTarget: "linux-x64", workspace: { kind: "endpoint_home" },
@@ -212,7 +249,11 @@ describe("Account encryption migration exact replay", () => {
         } } };
         expect(await mutateSessionDraft({
             accountId: account.id, address, expectedRevision: "absent",
-            content: { t: "encrypted", v: 2, c: "source-ciphertext" },
+            content: { t: "encrypted", v: 2, c: sealAccountScopedBlobCiphertext({
+                kind: "account_session_draft_private_payload", material: sessionOwnerMaterial,
+                payload: createSessionDraftPrivatePayloadV2(address, content.v.document),
+                randomBytes: length => new Uint8Array(length).fill(23),
+            }) },
             authentication,
         })).toMatchObject({ status: "updated", record: { revision: 0 } });
         const workspaceKeys = ['workspace:tabs:v1', 'workspace:handoff-tabs:v1:device:window'];
@@ -231,7 +272,10 @@ describe("Account encryption migration exact replay", () => {
             expectedSettingsVersion: 0, settingsContent: { t: "plain", v: {} },
             connectedServices: { action: "assert_empty" }, automations: { action: "assert_empty" },
             machines: { action: "assert_empty" }, todos: { action: "assert_empty" }, artifacts: { action: "assert_empty" },
-            sessions: { action: "assert_empty" }, reviewComments: { action: "assert_empty" },
+            sessions: { action: "migrate", items: [{ sessionId: session.id, expectedMetadataLayoutVersion: 1,
+                expectedMetadataVersion: session.metadataVersion, expectedAgentStateVersion: session.agentStateVersion,
+                expectedOwnerMetadata: sourceOwnerMetadata, ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1 }) }] },
+            reviewComments: { action: "assert_empty" },
             sessionOrganization: { action: "assert_empty" }, pets: { action: "assert_empty" },
             sessionDrafts: { v: 2, items: [{ address, expectedRevision: 0, content }] },
             workspace: { action: 'migrate', items: [...workspaceKeys.map(key => ({ key, expectedVersion: 4, value: workspaceValue })),
@@ -248,6 +292,28 @@ describe("Account encryption migration exact replay", () => {
                 },
                 payload,
             });
+            // These are SDK logical keys in one opaque plugin row, never public KV keys.
+            const catalogPayload = createEmptyPluginAccountKvRowV1();
+            setPluginAccountKvEntryV1(catalogPayload, TRIAGE_SAVED_VIEWS_ACCOUNT_KV_KEY_V1,
+                TriageSavedViewsCatalogValueV1Schema.parse({ v: 1, views: [] }), undefined);
+            setPluginAccountKvEntryV1(catalogPayload, TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
+                TriageActionsCatalogValueV1Schema.parse({ v: 1, actions: [] }), undefined);
+            const catalog = await db.userKVStore.create({ data: {
+                accountId: account.id, key: buildPluginAccountStoragePhysicalKey(TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1.pluginId),
+                version: 3, value: new TextEncoder().encode(JSON.stringify({ t: "encrypted", c: sealPluginAccountStoragePrivatePayloadV1({
+                    material: sessionOwnerMaterial, payload: catalogPayload, randomBytes: length => new Uint8Array(length).fill(29),
+                }) })),
+            } });
+            const beforeCatalogRefusal = await readSessionDraft({ accountId: account.id, address, epoch: "v2", authentication });
+            const catalogRefusal = await invoke();
+            expect(catalogRefusal.statusCode, catalogRefusal.body).toBe(400);
+            expect(catalogRefusal.json()).toEqual({ error: "migration_too_large" });
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { id: catalog.id } })).toEqual(catalog);
+            expect(await readSessionDraft({ accountId: account.id, address, epoch: "v2", authentication })).toEqual(beforeCatalogRefusal);
+            expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toMatchObject({ encryptionMode: "e2ee", settingsVersion: 0 });
+            // The current generic producer cannot convert opaque plugin KV. Remove only
+            // this isolated fixture row to exercise the independent supported draft control.
+            await db.userKVStore.delete({ where: { id: catalog.id } });
             const omittedInventory = await invoke({ ...request, workspace: { action: 'assert_empty' } });
             expect(omittedInventory.statusCode, omittedInventory.body).toBe(400);
             expect(await db.account.findUnique({ where: { id: account.id } })).toMatchObject({ encryptionMode: 'e2ee', settingsVersion: 0 });
@@ -271,7 +337,14 @@ describe("Account encryption migration exact replay", () => {
                 .toEqual(workspaceKeys.map(() => ({ version: 5, value: privacyKit.decodeBase64(workspaceValue) })));
             expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: account.id, key: tombstoneKey } } })).toMatchObject({ version: 9, value: null });
             expect(await db.userKVStore.findUnique({ where: { accountId_key: { accountId: account.id, key: coachKey } } })).toMatchObject({ version: 7, value: privacyKit.decodeBase64(coachValue) });
+            expect(await db.sessionMessage.findUniqueOrThrow({ where: { id: message.id } })).toEqual(message);
+            expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toMatchObject({
+                id: session.id, encryptionMode: session.encryptionMode, metadata: session.metadata,
+                ownerMetadata: encodeSessionOwnerMetadataEnvelopeV1(createPlainSessionOwnerMetadataEnvelopeV1({ v: 1 })),
+            });
+            expect(await db.pluginCollectionRow.count({ where: { accountId: account.id } })).toBe(0);
             const beforeReplay = await readSessionDraft({ accountId: account.id, address, epoch: "v2", authentication });
+            expect(beforeReplay).toMatchObject({ status: "present", record: { content } });
             socketEmit.mockClear();
             const replay = await invoke();
             expect(replay.statusCode, replay.body).toBe(200);
