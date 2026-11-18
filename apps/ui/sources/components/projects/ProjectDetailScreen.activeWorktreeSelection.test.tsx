@@ -197,6 +197,24 @@ describe('ProjectDetailScreen active worktree selection', () => {
         expect(checkout?.props.fact.split(' · ').slice(0, 2).join(' · ')).toBe(headerName);
         await screen.unmount();
     });
+    it('names no Machine while its name is resolving, never its id (resolving is its own state)', async () => {
+        const { ProjectShellHeader } = await import('./shell/ProjectShellHeader');
+        // Its record has arrived but its content is still opening: no name yet, and no id standing in for one.
+        const machine = createMachineFixture({ id: 'machine-1' });
+        storage.getState().applyMachines([{ ...machine, metadata: null, availability: undefined }], true, { sourceServerId: runtime.serverId });
+        const screen = await renderScreen(<runtime.Wrapper>
+            <ProjectShellHeaderHost workspaceRef={workspaceRef} activeRootPath="/repo" onSelectRootPath={() => {}} page="overview" />
+        </runtime.Wrapper>);
+        const checkout = () => screen.findByType(ProjectShellHeader).props.checkout;
+        expect([checkout().machineName, checkout().machineNameParts.name]).toEqual(['', '']);
+        // The display metadata the Projects tree names it by names the chip too, before its content opens.
+        await act(async () => {
+            storage.getState().replaceMachineDisplays([{ ...machine, metadata: { ...machine.metadata!, displayName: 'Build machine' } }],
+                { sourceServerId: runtime.serverId });
+        });
+        expect(checkout().machineNameParts.name).toBe('Build machine');
+        await screen.unmount();
+    });
     it('renders the comparison-seeded review Start form from phone Project Changes', async () => {
         viewport.width = 390;
         viewport.height = 844;

@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { t } from '@/text';
-import { useActiveServerAccountScope, useWorkspaceRefs, usePinnedWorkspaceRefIds, useMachineDisplayById, useProjectOrganizations, useProjectAccountRows, useIsDataReady, useActiveMachineFacts, useIsActiveMachineListSettled } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useWorkspaceRefs, usePinnedWorkspaceRefIds, useProjectOrganizations, useProjectAccountRows, useIsDataReady, useActiveMachineFacts, useIsActiveMachineListSettled } from '@/sync/domains/state/storage';
 import { isProjectAccountRowsCensusComplete } from '@/sync/store/domains/projectAccountRows';
 import type { WorkspaceRefUnconfirmed } from './detail/useWorkspaceRefById';
 import { projectWorkspaceRefV1, workspaceAddressFromRefV1, type QualifiedProjectKeyV1, type WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces';
@@ -35,7 +35,8 @@ import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/s
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { isWorkspacePathWithinRootV1 } from '@happier-dev/protocol/workspaces';
 import { resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import { isMachineDisplayHydrating, resolveSettledMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { resolveSettledMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { useProjectMachineDisplays } from './useProjectMachineDisplays';
 import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
 import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult,
@@ -122,8 +123,7 @@ export function useProjectsListModel() {
     const composition = useProjectsSourcesComposition(openedSourceIds);
     // Display metadata can already be known while the full Machine content is
     // still opening. Use that canonical projection rather than waiting for it.
-    const machineDisplays = useMachineDisplayById(displays => allMachines.map(machine =>
-        isMachineDisplayHydrating(machine) ? displays[machine.id] ?? machine : machine));
+    const machineDisplays = useProjectMachineDisplays(allMachines);
     // One naming owner for every Machine the tree shows: listed Machines with the same name get the
     // suffix the pickers use, and a checkout on a Machine this Home no longer lists says so. A Machine whose name is still
     // loading has none yet (never "Loading…", owner 11-15): its rows leave it out until the name arrives.

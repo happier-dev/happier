@@ -28,8 +28,8 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { resolveWorkspaceRefById, resolveWorkspaceRefByScope, sameWorkspaceProject } from '@/sync/domains/workspaces/workspaceRefs';
 import { t } from '@/text';
-import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
-import { getMachineDisplayNameParts } from '@/utils/sessions/machineDisplayNames';
+import { resolveMachineDisplayNameParts, resolveSettledMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
+import { useProjectMachineDisplays } from '../useProjectMachineDisplays';
 
 import { resolveWorkspaceRefDisplayName } from '../resolveWorkspaceRefDisplayName';
 import { useOpenProject } from '../useOpenProject';
@@ -107,18 +107,15 @@ export function useProjectShellCheckout(
   // Changes owns its measured read. Its header observes the same branch, worktrees and full counts.
   const changesPresented = props.selection?.kind === 'builtin' && props.selection.page === 'changes';
   const { snapshot } = useWorkspaceScmSnapshotController(scope, { refreshOnMount: props.selection?.kind !== 'plugin' && !changesPresented, detail: 'summary' });
-  const machineName = React.useCallback(
-    (machineId: string) => {
-      const machine =
-        machines.find((candidate) => candidate.id === machineId) ?? null;
-      return getMachineDisplayName(machine, machines) ?? machineId;
-    },
-    [machines],
-  );
-  const selectedMachine = machines.find((candidate) => candidate.id === props.workspaceRef.machineId) ?? null;
-  const machineNameParts = selectedMachine
-    ? getMachineDisplayNameParts(selectedMachine, machines)
-    : { name: props.workspaceRef.machineId, hint: null };
+  // The Projects tree's naming: a Machine whose name is still resolving has none yet, never its id or a placeholder.
+  const machineDisplays = useProjectMachineDisplays(machines);
+  const names = React.useMemo(() => ({
+    settled: resolveSettledMachineDisplayNames(machineDisplays),
+    parts: resolveMachineDisplayNameParts(machineDisplays),
+  }), [machineDisplays]);
+  const machineName = React.useCallback((machineId: string) => names.settled.get(machineId) ?? '', [names]);
+  const machineNameParts = (names.settled.has(props.workspaceRef.machineId) ? names.parts.get(props.workspaceRef.machineId) : null)
+    ?? RESOLVING_MACHINE_NAME;
   // Only a branch the checkout reported: a folder name is not a branch (an unread checkout shows its machine).
   const branch = snapshot?.branch.head ?? null;
   const worktrees = snapshot?.repo.worktrees;
@@ -345,6 +342,7 @@ export const ProjectPhoneHead = React.memo(function ProjectPhoneHead(
 });
 
 const PHONE_HEAD_CHIP_SLOT = { flexShrink: 1, minWidth: 0 } as const;
+const RESOLVING_MACHINE_NAME = Object.freeze({ name: '', hint: null });
 
 export function ProjectPhoneHeadView(props: Readonly<{
   checkout: ProjectShellCheckout;
