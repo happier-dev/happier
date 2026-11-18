@@ -7,6 +7,18 @@ description: Contribution families that a plugin can declare for projection and 
 
 ## Common contribution families
 
+In unreleased 0.3 development source, `ui.listExtensions` can target `service`
+rows and declare a field with `value: { kind: 'number', unit: '{request}' }`.
+Optional `column` metadata supplies `title`, `width`, `align` (`start` or `end`),
+`priority` and `defaultHidden`. It uses the same field identity and held
+declaration projection as filter fields; discovering these choices never
+activates a plugin or reads its Resource. Numbers are display-only, with no
+numeric filter operators. Service-row Resource loading and collector/trend
+binding are separate from this metadata contract and remain unavailable here.
+Matching development hosts are required; an older strict reader can reject the
+added declaration. See the maintained
+[external-author fixture](https://github.com/happier-dev/happier/blob/main/packages/plugin-sdk/fixtures/external-targeted-packages/list-extension-source.ts).
+
 | Family | Purpose | Code-defined author field |
 | --- | --- | --- |
 | `actions` | User, CLI, MCP, and session-agent operations | daemon root: `actions.<id>.run`; client leaf: `activate(api)` → `api.actions.register(...)`. See [Actions, tools, and commands](/plugins/api/actions-tools-commands#invocation-surface-and-execution-target). |

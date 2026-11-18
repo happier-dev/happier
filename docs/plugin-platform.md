@@ -1742,7 +1742,10 @@ catalog, manifest integrity pass and UI projection. It carries P6's canonical
 filter-field constituent and an optional neutral field-reference mark; it grants
 no runtime registration or Resource demand. Public `definePlugin` maps local ids
 to manifest arrays. Existing `activate(api)` registers ordinary declared Actions
-and Resources only. See [collection presentation](collection-presentation.md)
+and Resources only. The same field declaration supports service-entity numeric
+columns with units and optional presentation metadata; number fields remain
+display-only. The declaration path adds no Resource demand or runtime binding.
+See [collection presentation](collection-presentation.md)
 for the held-fact evaluator and deferred host-row loading boundary.
 
 The prepublication `@happier-dev/plugin-ui/components` filter adapter and shared

@@ -101,7 +101,7 @@ ownership, not release availability or completed host-header integration.
 
 In 0.3 development source, `definePlugin({ ui: { listExtensions: { localId:
 descriptor } } })` projects the single `ui.listExtensions` manifest family.
-Each closed descriptor selects `sessionWork`, `workflow`, `discussion`, or a
+Each closed descriptor selects `sessionWork`, `workflow`, `discussion`, `service`, or a
 `plugin:…` entity, with optional `filterFields` and one neutral `rowMark`.
 Protocol's existing UI catalog admits the declaration and Resource references;
 the existing UI projection qualifies field references. A mark can reference a
@@ -111,6 +111,14 @@ saved selections when a plugin is retired. Admission and evaluation acquire no
 Resources and activate no plugin. Resource-backed host-row loading and its
 dependent host filters remain deferred; declaration availability does not make
 that loading path available. Row operations use ordinary plugin Actions.
+
+Fields may declare a display-only `number` value with its `unit` and optional
+`column` presentation (`title`, `width`, `align`, `priority`, `defaultHidden`).
+The same admitted qualified field identity carries this metadata through the
+held projection; listing it never reads the Resource. Numeric ingress preserves
+known zero and rejects missing or non-finite values. Numeric fields do not gain
+time-filter operators or numeric sorting. This metadata contract does not yet
+bind a Services Environment to collector service names or load a trend.
 
 ### Settings column adapters
 

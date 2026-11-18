@@ -8,6 +8,21 @@ import {
 const stage = { id: 'release-stage', title: 'Release stage', source: { factKey: 'releaseStage' }, value: { kind: 'set' } } as const;
 
 describe('plugin list filter fields over held facts', () => {
+    it('admits finite numeric display values without interpreting numbers as time filters', () => {
+        const number = { ...stage, value: { kind: 'number', unit: '{request}' }, column: { defaultHidden: true } } as const;
+        const admitted = admitPluginListFilterFieldV1({ pluginId: 'test.release', field: number, factKeys: new Set(['releaseStage']) });
+        expect(admitted.kind).toBe('admitted');
+        if (admitted.kind !== 'admitted') throw new Error('Expected numeric field admission');
+        expect(admitPluginListFilterFieldValueV1(number, 0)).toEqual({ kind: 'available', value: 0 });
+        expect(admitPluginListFilterFieldValueV1(number, 1.5)).toEqual({ kind: 'available', value: 1.5 });
+        for (const value of [undefined, null, NaN, Infinity, '0']) {
+            expect(admitPluginListFilterFieldValueV1(number, value)).toEqual({ kind: 'invalid' });
+        }
+        const selection: PluginListFilterSelectionV1 = { extensions: { [admitted.field.id]: { kind: 'time', selection: { op: 'after', atMs: 0 } } } };
+        expect(validatePluginListFilterSelectionsV1([admitted.field], selection.extensions)).toBe(false);
+        expect(compileEntityListFilterV1(createPluginListFilterFieldRegistryV1([admitted.field]), selection)({ extensions: { [admitted.field.id]: 0 } })).toBe('unavailable');
+    });
+
     it('admits one closed declarative source and validates values at ingress', () => {
         const admitted = admitPluginListFilterFieldV1({ pluginId: 'test.release', field: stage, factKeys: new Set(['releaseStage']) });
         expect(admitted.kind).toBe('admitted');

@@ -9558,6 +9558,14 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `ui.listExtensions` adds the `service` entity and optional column
+presentation to the existing closed field declaration. Its `number` value kind
+declares a unit and admits finite scalar values; it adds no filter operators.
+Protocol, public SDK types and the retained UI declaration projection use the
+same schema under the unpublished direct cut. Older strict development readers
+reject these declarations. This changes no persisted preference format, wire
+epoch, Resource demand or collector query contract.
+
 Unreleased 0.3 Action operation declarations add optional
 `cancellation: 'unsupported' | 'supported'` to their existing closed envelope.
 Omission retains unsupported cancellation. Matching Protocol, SDK, plugin

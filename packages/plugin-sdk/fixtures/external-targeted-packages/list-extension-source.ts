@@ -23,6 +23,22 @@ export function createListExtensionSource(onResourceRead: () => void = () => {})
     });
 }
 
+/** Service columns use the same cold declaration path as held filter fields. */
+export function createServiceColumnSource(onResourceRead: () => void = () => {}) {
+    return definePlugin({
+        id: 'com.acme.requests', version: '1.0.0',
+        resources: { requests: { source: 'dynamic', kind: 'asset', contentType: 'application/json', scope: 'surface',
+            runtime: { read: () => { onResourceRead(); return 0; }, observe: () => ({ dispose() {} }) } } },
+        ui: { listExtensions: { traffic: {
+            entity: 'service',
+            filterFields: [{ id: 'requests', title: 'Requests · 24 h', source: { resource: 'requests' },
+                value: { kind: 'number', unit: '{request}' },
+                column: { title: 'Requests', width: 112, align: 'end', priority: 20, defaultHidden: true },
+            }],
+        } } },
+    });
+}
+
 /** Session-targeting Account code has no daemon or Machine dependency. */
 export function createAccountSessionRowActionSource(onRun: (sessionId: string) => void, form = false) {
     return definePlugin({

@@ -21,7 +21,16 @@ export const PluginListFilterFieldV1Schema = lazyZodSchema(() => z.strictObject(
         z.strictObject({ kind: z.literal('set'), options: z.optional(z.array(z.strictObject({ value: z.string(), title: PluginLocalizedStringV2Schema }))) }),
         z.strictObject({ kind: z.literal('boolean') }),
         z.strictObject({ kind: z.literal('time') }),
+        // Display-only until the filter selection owner supports numeric operators.
+        z.strictObject({ kind: z.literal('number'), unit: z.string().check(z.minLength(1)) }),
     ]),
+    column: z.optional(z.strictObject({
+        title: z.optional(PluginLocalizedStringV2Schema),
+        width: z.optional(z.number().check(z.gt(0))),
+        align: z.optional(z.enum(['start', 'end'])),
+        priority: z.optional(z.number()),
+        defaultHidden: z.optional(z.boolean()),
+    })),
 }));
 export type PluginListFilterFieldV1 = z.infer<typeof PluginListFilterFieldV1Schema>;
 export type AdmittedPluginListFilterFieldV1 = Readonly<{ id: string; declaration: PluginListFilterFieldV1 }>;
@@ -60,9 +69,10 @@ export function admitPluginListFilterFieldValueV1(field: Pick<PluginListFilterFi
     const valid = field.value.kind === 'set'
         ? value === null || typeof value === 'string' || Array.isArray(value) && value.every(item => typeof item === 'string')
         : field.value.kind === 'boolean' ? typeof value === 'boolean'
-            : typeof value === 'number' && Number.isSafeInteger(value);
+            : field.value.kind === 'number' ? typeof value === 'number' && Number.isFinite(value)
+                : typeof value === 'number' && Number.isSafeInteger(value);
     if (!valid) return { kind: 'invalid' };
-    // The closed scalar/set/time check above is the boundary from untyped Resource or plugin-page data.
+    // The closed value check above is the boundary from untyped Resource or plugin-page data.
     return { kind: 'available', value: value as EntityFilterFactValueV1 };
 }
 
@@ -70,39 +80,43 @@ export function admitPluginListFilterFieldValueV1(field: Pick<PluginListFilterFi
 export function createPluginListFilterFieldRegistryV1<Filter extends PluginListFilterSelectionV1, Facts extends PluginListFilterFactsV1>(
     fields: readonly AdmittedPluginListFilterFieldV1[],
 ): EntityFilterRegistryV1<Filter, Facts> {
-    const known = new Set(fields.map(field => field.id));
-    const registry = fields.map(field => defineEntityFilterFieldV1<Filter, Facts, ExtensionSelectionV1 | null>({
-        id: field.id, kind: field.declaration.value.kind, evaluators: ['list'],
-        readSelection(filter) {
-            if (!filter.extensions || !Object.hasOwn(filter.extensions, field.id)) return undefined;
-            const parsed = ExtensionSelectionV1Schema.safeParse(filter.extensions[field.id]);
-            return parsed.success && parsed.data.kind === field.declaration.value.kind ? parsed.data : null;
-        },
-        replaceSelection(filter, selection) {
-            const extensions = { ...filter.extensions };
-            if (selection == null) delete extensions[field.id];
-            else extensions[field.id] = selection;
-            return { ...filter, extensions };
-        },
-        match: (selection, facts) => selection === null ? 'unavailable' : matchEntityFilterExtensionV1(selection, facts.extensions?.[field.id]),
-        conditions: createEntityFilterConditionCodecV1({
-            encoding: field.declaration.value.kind === 'boolean' ? 'value' : field.declaration.value.kind,
-            valueFromSelection(selection) {
-                if (!selection || selection.kind !== field.declaration.value.kind) throw new TypeError('Unavailable plugin condition');
-                return selection.kind === 'time' ? selection.selection : selection.kind === 'boolean' ? selection.value : selection;
+    const registry = fields.flatMap(field => {
+        const value = field.declaration.value;
+        if (value.kind === 'number') return [];
+        return [defineEntityFilterFieldV1<Filter, Facts, ExtensionSelectionV1 | null>({
+            id: field.id, kind: value.kind, evaluators: ['list'],
+            readSelection(filter) {
+                if (!filter.extensions || !Object.hasOwn(filter.extensions, field.id)) return undefined;
+                const parsed = ExtensionSelectionV1Schema.safeParse(filter.extensions[field.id]);
+                return parsed.success && parsed.data.kind === value.kind ? parsed.data : null;
             },
-            parseValue(value) {
-                const kind = field.declaration.value.kind;
-                const candidate = kind === 'set' && value && typeof value === 'object' && !Array.isArray(value)
-                    ? { ...value, kind } : kind === 'boolean' ? { kind, value } : { kind, selection: value };
-                const parsed = ExtensionSelectionV1Schema.parse(candidate);
-                if (parsed.kind !== kind) throw new TypeError('Mismatched plugin condition');
-                return parsed;
+            replaceSelection(filter, selection) {
+                const extensions = { ...filter.extensions };
+                if (selection == null) delete extensions[field.id];
+                else extensions[field.id] = selection;
+                return { ...filter, extensions };
             },
-            valueOptions: () => field.declaration.value.kind === 'set' ? field.declaration.value.options?.map(option => option.value) ?? []
-                : field.declaration.value.kind === 'boolean' ? [true, false] : [],
-        }),
-    }));
+            match: (selection, facts) => selection === null ? 'unavailable' : matchEntityFilterExtensionV1(selection, facts.extensions?.[field.id]),
+            conditions: createEntityFilterConditionCodecV1({
+                encoding: value.kind === 'boolean' ? 'value' : value.kind,
+                valueFromSelection(selection) {
+                    if (!selection || selection.kind !== value.kind) throw new TypeError('Unavailable plugin condition');
+                    return selection.kind === 'time' ? selection.selection : selection.kind === 'boolean' ? selection.value : selection;
+                },
+                parseValue(conditionValue) {
+                    const kind = value.kind;
+                    const candidate = kind === 'set' && conditionValue && typeof conditionValue === 'object' && !Array.isArray(conditionValue)
+                        ? { ...conditionValue, kind } : kind === 'boolean' ? { kind, value: conditionValue } : { kind, selection: conditionValue };
+                    const parsed = ExtensionSelectionV1Schema.parse(candidate);
+                    if (parsed.kind !== kind) throw new TypeError('Mismatched plugin condition');
+                    return parsed;
+                },
+                valueOptions: () => value.kind === 'set' ? value.options?.map(option => option.value) ?? []
+                    : value.kind === 'boolean' ? [true, false] : [],
+            }),
+        })];
+    });
+    const known = new Set(registry.map(field => field.id));
     return [...registry, defineEntityFilterFieldV1<Filter, Facts, true>({
         id: 'unavailableExtensions', kind: 'domain', evaluators: [],
         readSelection: filter => Object.keys(filter.extensions ?? {}).some(id => !known.has(id)) ? true : undefined,
