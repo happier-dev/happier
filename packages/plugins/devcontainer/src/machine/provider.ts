@@ -44,13 +44,34 @@ function mountArgument(fields: readonly string[]) {
   return fields.map(value => /[,"\r\n]/u.test(value) ? `"${value.replaceAll('"', '""')}"` : value).join(',');
 }
 function commandFailure(result: PluginProcessResult,
-  command: Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }>['command']): MachineProvisionerNativeCauseV1 {
+  command: Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }>['command']): Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }> {
   const observed = result.termination.observed;
   const stderr = projectPluginFailureText(new Error(new TextDecoder().decode(result.stderr))).trim();
   return { localCause: 'native_command_failed', command,
     exitCode: observed.kind === 'exit' && result.termination.requestedBy.kind === 'none' ? observed.exitCode : null,
     ...(stderr ? { stderr: stderr.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
     ...(result.stderrTruncated || stderr.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}) };
+}
+
+function failedSetup(result: PluginProcessResult) {
+  if (result.stdoutTruncated || result.termination.requestedBy.kind !== 'none'
+    || result.termination.observed.kind !== 'exit' || result.termination.observed.exitCode !== 1) return null;
+  let outcome: Record<string, unknown>;
+  try { outcome = record(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.stdout))); }
+  catch { return null; }
+  if (outcome.outcome !== 'error' || typeof outcome.description !== 'string') return null;
+  const failure = /^(.*(?:onCreate|updateContent|postCreate|postStart|postAttach)Command from .+) failed\.$/u.exec(outcome.description);
+  if (!failure) return null;
+  // The Dev Containers CLI reports exit 1 for `up`. The hook's exit code is in
+  // the stderr diagnostic paired with its machine-readable failure description.
+  const prefix = `${failure[1]} failed with exit code `;
+  const diagnostic = new TextDecoder().decode(result.stderr).split(/\r?\n/u)
+    .map(line => line.replace(/^\[\d{4}-\d{2}-\d{2}T[\d:.]+Z\] /u, ''))
+    .findLast(line => line.startsWith(prefix));
+  const exit = diagnostic && /^(\d+)\./u.exec(diagnostic.slice(prefix.length));
+  const exitCode = exit ? Number(exit[1]) : undefined;
+  return { exitCode: exitCode && Number.isSafeInteger(exitCode) ? exitCode : undefined,
+    containerId: typeof outcome.containerId === 'string' && /^[a-f0-9]{64}$/u.test(outcome.containerId) ? outcome.containerId : undefined };
 }
 
 /** One diagnosis for image acquire and clean CLI-image builds on Lima. */
@@ -217,9 +238,38 @@ export function createDevcontainerProvider(input: Readonly<{
       '--format', '{{.ID}}'], undefined, false, managedMachineId, launch?.workspaceFolder))
       .trim().split(/\r?\n/u).filter(Boolean);
   }
+  async function resolveDestroyResource(operation: DevcontainerNativeOperation) {
+    if (!('launch' in operation)) return (await exact(operation)).resource;
+    const { launch, managedMachineId, nativeResourceId } = operation;
+    const ids = nativeResourceId ? [nativeResourceId] : await inventory(launch, managedMachineId);
+    if (ids.length === 0) return null;
+    if (ids.length !== 1 || !/^[a-f0-9]{64}$/u.test(ids[0]!)) fail('resource_mismatch');
+    const containerId = ids[0]!;
+    const native = await inspectContainer(containerId, launch, managedMachineId);
+    if (!native) return null;
+    assertLabels(native, launch, managedMachineId);
+    return { ...launch, managedMachineId, containerId };
+  }
+  async function confirmDestroy(resource: NonNullable<Awaited<ReturnType<typeof resolveDestroyResource>>>) {
+    // No --volumes, Compose down, source cleanup or image deletion. Named
+    // volumes and source bytes are outside this exact container deletion.
+    try { await run(input.docker, ['rm', '--force', resource.containerId], undefined, false, resource.managedMachineId, resource.workspaceFolder); }
+    catch { /* A missing removal reply still permits the exact absence observation. */ }
+    return await inspectContainer(resource.containerId, resource, resource.managedMachineId) === null;
+  }
   async function realize(launch: DevcontainerLaunch, managedMachineId: string, recoveryReference = launch.configPath ?? managedMachineId, guestHome?: MachineProvisionerGuestHomeV1) {
     const homeOnControllerHost = compareMachineHosts(guestHome?.hostIdentity?.homeMachineHost, guestHome?.hostIdentity?.controllerMachineHost);
     let nativeCause: MachineProvisionerNativeCauseV1 | undefined;
+    let setupCleanupConfirmed = false;
+    const settleFailedSetup = async (nativeResourceId?: string): Promise<never> => {
+      recoveryReference = nativeResourceId ?? recoveryReference;
+      try {
+        const resource = await resolveDestroyResource({ launch, managedMachineId, nativeResourceId });
+        if (resource) recoveryReference = resource.containerId;
+        setupCleanupConfirmed = resource === null || await confirmDestroy(resource);
+      } catch { /* Keep the failed acquisition unavailable for enrollment while cleanup is unconfirmed. */ }
+      fail('native_setup_failed');
+    };
     try {
       // Only admitted acquire/rebuild roles reach evaluation of host and child
       // hooks. Discovery and retained-resource inspection never evaluate them.
@@ -245,7 +295,13 @@ export function createDevcontainerProvider(input: Readonly<{
         failureCause: projectActionFailureCauseV1(error, 'exec.run') };
         fail('native_realization_unknown'); }
       if (!completed(result)) {
-        nativeCause = commandFailure(result, command);
+        const cause = commandFailure(result, command);
+        nativeCause = cause;
+        const setup = source ? null : failedSetup(result);
+        if (setup) {
+          if (setup.exitCode !== undefined) nativeCause = { ...cause, exitCode: setup.exitCode };
+          return await settleFailedSetup(setup.containerId);
+        }
         fail('native_realization_unknown');
       }
       if (result.stdoutTruncated) fail('native_observation_unavailable');
@@ -268,13 +324,7 @@ export function createDevcontainerProvider(input: Readonly<{
           if (!completed(ready)) { nativeCause = commandFailure(ready, command); fail('native_setup_failed'); }
         };
         try { await prepare(); }
-        catch {
-          // A failed/uncertain setup must never later reconcile into an enrolled
-          // child. Retain the volume and the exact recovery reference even when
-          // container cleanup itself is unavailable.
-          try { await run(input.docker, ['rm', '--force', id]); } catch { /* Recovery retains the exact container id. */ }
-          fail('native_setup_failed');
-        }
+        catch { return await settleFailedSetup(id); }
         return { outcome: await observe(launch, id, managedMachineId, homeOnControllerHost), homeOnControllerHost };
       }
       const up = record(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(result.stdout)));
@@ -282,7 +332,7 @@ export function createDevcontainerProvider(input: Readonly<{
       if (up.outcome !== 'success' || typeof up.containerId !== 'string' || !/^[a-f0-9]{64}$/u.test(up.containerId)
         || typeof up.remoteUser !== 'string' || typeof up.remoteWorkspaceFolder !== 'string') fail('native_realization_unknown');
       return { outcome: await observe(launch, up.containerId, managedMachineId, homeOnControllerHost), homeOnControllerHost };
-    } catch (error) { return { homeOnControllerHost, outcome: { kind: 'unknown' as const, recovery: { reference: recoveryReference, reason: code(error) },
+    } catch (error) { return { homeOnControllerHost, setupCleanupConfirmed, outcome: { kind: 'unknown' as const, recovery: { reference: recoveryReference, reason: code(error) },
       ...(nativeCause ? { nativeCause } : {}) } }; }
   }
   return {
@@ -309,8 +359,10 @@ export function createDevcontainerProvider(input: Readonly<{
         return { kind: 'rejected' as const, code: code(error) === 'request_conflict' ? 'request_conflict' as const
           : code(error) === 'invalid_request' ? 'invalid_request' as const : 'provider_unavailable' as const };
       }
-      const { outcome: result, homeOnControllerHost } = await realize(launch, managedMachineId, undefined, guestHome);
-      if (result.kind === 'unknown' && result.recovery.reason === 'native_setup_failed') return result;
+      const { outcome: result, homeOnControllerHost, setupCleanupConfirmed } = await realize(launch, managedMachineId, undefined, guestHome);
+      if (result.kind === 'unknown' && result.recovery.reason === 'native_setup_failed') {
+        return setupCleanupConfirmed ? { kind: 'rejected' as const, code: 'native_setup_failed', ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) } : result;
+      }
       return result.kind === 'bound' ? result : { kind: 'pending' as const, ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}), nativeOperationRef: {
         contributionRef, schemaVersion: 1, value: { managedMachineId, launch,
           ...(homeOnControllerHost ? { homeOnControllerHost: true as const } : {}),
@@ -428,23 +480,8 @@ export function createDevcontainerProvider(input: Readonly<{
     },
     async destroy(raw: DevcontainerNativeOperation) {
       try {
-        const operation = DevcontainerNativeOperationSchema.parse(raw);
-        let resource: DevcontainerLaunch & { managedMachineId: string; containerId: string };
-        if ('launch' in operation) {
-          const ids = operation.nativeResourceId ? [operation.nativeResourceId] : await inventory(operation.launch, operation.managedMachineId);
-          if (ids.length === 0) return { kind: 'confirmed' as const };
-          if (ids.length !== 1 || !/^[a-f0-9]{64}$/u.test(ids[0]!)) fail('resource_mismatch');
-          const native = await inspectContainer(ids[0]!, operation.launch, operation.managedMachineId);
-          if (!native) return { kind: 'confirmed' as const };
-          assertLabels(native, operation.launch, operation.managedMachineId);
-          resource = { ...operation.launch, managedMachineId: operation.managedMachineId, containerId: ids[0]! };
-        } else {
-          resource = (await exact(operation)).resource;
-        }
-        // No --volumes, Compose down, source cleanup or image deletion. Named
-        // volumes and source bytes are outside this exact container deletion.
-        if (!completed(await run(input.docker, ['rm', '--force', resource.containerId], undefined, false, resource.managedMachineId, resource.workspaceFolder))) return { kind: 'unknown' as const };
-        return { kind: await inspectContainer(resource.containerId, resource, resource.managedMachineId) === null ? 'confirmed' as const : 'unknown' as const };
+        const resource = await resolveDestroyResource(DevcontainerNativeOperationSchema.parse(raw));
+        return { kind: resource === null || await confirmDestroy(resource) ? 'confirmed' as const : 'unknown' as const };
       } catch (error) {
         if (code(error) === 'native_resource_absent') return { kind: 'confirmed' as const };
         return { kind: code(error) === 'resource_mismatch' ? 'refused' as const : 'unknown' as const, code: code(error) };

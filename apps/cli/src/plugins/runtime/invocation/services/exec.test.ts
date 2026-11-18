@@ -46,6 +46,7 @@ import { readProcessCensus } from '@/processes/census/processCensus';
 import { resolveProcessOwnership } from '@/daemon/processes/ownership/resolveProcessOwnership';
 import type { HappierProcessRoot } from '@/daemon/processes/ownership/types';
 import { captureProcessTree, terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
+import * as processTreeBoundary from '@/processes/terminate/terminateProcessTree';
 import type { PluginFileSystemRoots } from './types';
 import { createDeploymentExecEnvPortForHost } from '@/deployments/secrets/deploymentExecEnvPort';
 import { assemblePluginRuntimeConsumers } from '../../composition/consumerAssembly';
@@ -1960,6 +1961,24 @@ describe('createStablePluginExecService', () => {
             executable,
             args: ['bad\0argument'],
         })).rejects.toMatchObject({ code: 'plugin_exec_spawn_failed' });
+    });
+
+    it('reports a completed native tool failure while Exec retains unverified descendant cleanup', async () => {
+        const service = bindPluginExecProcessOwnerForHost(createService(), { kind: 'run', runId: 'native-tool-failure' });
+        const custody = readPluginExecProcessCustodyForHost(service);
+        const join = vi.spyOn(processTreeBoundary, 'terminateProcessTree')
+            .mockRejectedValueOnce(new PluginError({ code: 'plugin_exec_termination_incomplete' }));
+        try {
+            const result = await service.run({ executable, args: ['-e', 'process.exit(23)'] },
+                { descendantDisposition: 'preserve-on-success' });
+            expect(result.termination).toEqual({ observed: { kind: 'exit', exitCode: 23 }, requestedBy: { kind: 'none' } });
+            expect(join).toHaveBeenCalled();
+            expect(custody.hasUnsettledProcesses()).toBe(true);
+        } finally {
+            join.mockRestore();
+            await custody.requestStop();
+            await custody.waitForSettlement();
+        }
     });
 
     it('attributes occurrenceId retirement separately from caller disposal', async () => {

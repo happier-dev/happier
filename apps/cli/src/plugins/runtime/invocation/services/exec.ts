@@ -9,7 +9,7 @@ import type { AgentLaunchNativeSocketDirectory } from '@/daemon/agentIsolation/a
 import { configuration } from '@/configuration';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
-import type { AgentCliReadinessService as PluginAgentCliReadinessService, ExecService, PluginProcessHandle, SystemToolsService as PluginSystemToolsService } from '@happier-dev/plugin-sdk/exec';
+import type { AgentCliReadinessService as PluginAgentCliReadinessService, ExecService, PluginProcessHandle, PluginProcessResult, SystemToolsService as PluginSystemToolsService } from '@happier-dev/plugin-sdk/exec';
 import type { PluginFramedBytesClient, PluginJsonRpcClient, PluginJsonRpcConnection, PluginJsonRpcConnectionSpec, PluginJsonStreamClient, PluginLoopbackWebSocketJsonClient, PluginProtocolClientHandle, PluginProtocolClientSpec, PluginProtocolClientSpecByKind, ProtocolClientsService } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { PluginPath } from '@happier-dev/plugin-sdk';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -2452,10 +2452,20 @@ export function createStablePluginExecService(params: Readonly<{
                 : selectedRequest,
             options,
         )).handle;
+        let result: PluginProcessResult | undefined;
         try {
-            return await handle.wait();
+            result = await handle.wait();
+            return result;
         } finally {
-            await handle.dispose();
+            try { await handle.dispose(); }
+            catch (error) {
+                // A native launcher can report a completed failure while the
+                // supervisor still holds unverified descendant custody.
+                const termination = result?.termination;
+                if (options?.descendantDisposition !== 'preserve-on-success'
+                    || termination?.requestedBy.kind !== 'none' || termination.observed.kind !== 'exit' || termination.observed.exitCode === 0
+                    || !isPluginError(error) || error.code !== 'plugin_exec_termination_incomplete') throw error;
+            }
         }
     }
 

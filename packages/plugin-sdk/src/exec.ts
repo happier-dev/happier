@@ -96,7 +96,8 @@ export interface ExecService {
             nativeLaunch?: AgentNativeLaunchQualifier;
             /** Leave daemonized descendants to the native tool after an unrequested
              * root exit with code zero. Cancellation, timeout, early disposal and
-             * failed exit still terminate the tree. Default: terminate.
+             * failed exit still request tree cleanup. A completed nonzero exit
+             * is reported even if Exec must retain descendant custody. Default: terminate.
              */
             descendantDisposition?: 'terminate' | 'preserve-on-success';
             /** Select the process carrying an admitted invocation's live output.

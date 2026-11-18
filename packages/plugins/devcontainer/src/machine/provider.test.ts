@@ -667,7 +667,8 @@ describe('Devcontainer native roles', () => {
     const h = imageNative('docker', { setup: { ...result('', 2), stderr: new TextEncoder().encode('setup failed token=private-setup-token') }, cleanupFailure });
     const reviewed = await readDevcontainerEffectReview(h.tools, { configuration: { kind: 'image', image: 'example:latest', setupScript: 'touch /workspace/prepared' } });
     const acquired = DEVCONTAINER_RECONCILIATION_SCHEMAS.result.parse(await h.provider.acquire(reviewed.launch, 'managed-a'));
-    expect(acquired).toMatchObject({ kind: 'unknown', recovery: { reference: containerId, reason: 'native_setup_failed' },
+    expect(acquired).toMatchObject({ kind: cleanupFailure ? 'unknown' : 'rejected',
+      ...(cleanupFailure ? { recovery: { reference: containerId, reason: 'native_setup_failed' } } : { code: 'native_setup_failed' }),
       nativeCause: { command: 'run', exitCode: 2 } });
     expect(acquired).not.toHaveProperty('nativeOperationRef');
     expect(h.requests.find(request => request.args?.[0] === 'rm')?.args).toEqual(['rm', '--force', containerId]);
@@ -699,6 +700,23 @@ describe('Devcontainer native roles', () => {
     const acquired = await h.provider.acquire(launch, 'managed-a');
     expect(acquired).toMatchObject({ kind: 'pending', nativeCause: { localCause: 'native_command_failed', command: 'up', exitCode: 1 } });
     expect(JSON.stringify(acquired)).not.toContain('private-acquisition-token');
+  });
+  it.each(['still present', 'confirmed', 'lost reply'] as const)('keeps the failed setup exit code and verifies exact cleanup (%s)', async cleanup => {
+    const deleteAbsent = cleanup !== 'still present';
+    const h = native({ deleteAbsent, up: { ...result({ outcome: 'error', description: 'postCreateCommand from devcontainer.json failed.' }, 1),
+      stderr: new TextEncoder().encode('[2026-11-18T22:36:01.000Z] postCreateCommand from devcontainer.json failed with exit code 23. Skipping any further user-provided commands.\n') } });
+    const nativeRun = h.tools.exec.run;
+    if (cleanup === 'lost reply') h.tools.exec.run = async (request, options) => {
+      const observed = await nativeRun(request, options);
+      if (request.args?.[0] === 'rm') throw new PluginError({ code: 'plugin_exec_termination_incomplete' });
+      return observed;
+    };
+    const acquired = DEVCONTAINER_RECONCILIATION_SCHEMAS.result.parse(await h.provider.acquire(launch, 'managed-a'));
+    expect(acquired).toMatchObject({ kind: deleteAbsent ? 'rejected' : 'unknown',
+      ...(deleteAbsent ? { code: 'native_setup_failed' } : { recovery: { reference: containerId, reason: 'native_setup_failed' } }),
+      nativeCause: { localCause: 'native_command_failed', command: 'up', exitCode: 23 } });
+    expect(h.requests.filter(request => request.args?.[0] === 'rm').map(request => request.args))
+      .toEqual([['rm', '--force', containerId]]);
   });
   it('retains thrown Exec cleanup uncertainty beside the pending handle and recovers the created container without replay', async () => {
     const h = native();
