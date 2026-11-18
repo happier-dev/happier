@@ -126,10 +126,11 @@ export function MachineIsolationAddSandboxModal(
     kindSetup.review();
   }, [kindSetup, picked, pickedReady]);
 
-  // Authoring a new preset, the configurator's own Save and Cancel are the sheet's one set of actions (judge r8 item 1);
-  // null clears the footer the earlier steps published.
+  // Authoring a new preset, the configurator publishes its Save and Cancel as the sheet's footer (judge r8 item 1, r11
+  // item 3): one set of actions, in the footer, like every other step.
+  const [authorFooter, setAuthorFooter] = React.useState<React.ReactNode | null>(null);
   const footer =
-    step === 'author' ? null : (
+    step === 'author' ? authorFooter : (
       // The note leads; the way out (Cancel, or Back one step in) and the step's primary stand together on the right,
       // so the title never moves for a Back in the head.
       <ModalCardFooterActions note={t('machineDetailPage.isolation.add.footerNote')}>
@@ -220,6 +221,7 @@ export function MachineIsolationAddSandboxModal(
         provisioner={selection.provisioner}
         presetOnly
         presetFor="isolation"
+        sheetFooter={setAuthorFooter}
         initialController={selection.controller ?? props.controller}
         initialConnectPurpose={selection.connectPurpose}
         onCancel={() => setStep('preset')}

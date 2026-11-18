@@ -13,6 +13,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
+import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 
@@ -66,10 +67,24 @@ export const ManagedMachineConfigurator = React.memo(
        * own Create, instead of an aside beside an empty column or a summary bar over an empty phone page (TH MB-4).
        */
       receiptIsBody?: boolean;
+      /**
+       * Authored inside a sheet (Machine Isolation's add flow, lab add frame): one column, the receipt's facts and
+       * rename at its foot, and its Save and the way out published as the sheet's footer through this setter.
+       */
+      sheetFooter?: (footer: React.ReactNode | null) => void;
       testID: string;
     }>,
   ) {
     const channel = useLiveValueChannel(props.receipt);
+    const { sheetFooter, testID } = props;
+    React.useEffect(() => {
+      if (!sheetFooter) return;
+      // One footer element per sheet: it reads the live receipt, so the sheet's chrome is published once.
+      sheetFooter(<ReceiptSheetFooter channel={channel} testID={testID} />);
+      return () => sheetFooter(null);
+    }, [sheetFooter, channel, testID]);
+    const sheetReceipt = React.useMemo(() => sheetFooter ? { ...props.receipt, primary: undefined, secondary: undefined } : null,
+      [sheetFooter, props.receipt]);
     const receiptSheet = React.useRef<string | null>(null);
     React.useEffect(() => () => {
       if (receiptSheet.current) Modal.hide(receiptSheet.current);
@@ -88,6 +103,17 @@ export const ManagedMachineConfigurator = React.memo(
         />
       </ItemGroup>
     ) : props.children;
+    if (sheetReceipt) {
+      return (
+        <ItemList testID={props.testID}>
+          <PageHeader title={props.title} description={props.description} leading={props.mark} actions={props.actions} />
+          {form}
+          <ItemGroup surface="none">
+            <MachineConfigurationReceipt model={sheetReceipt} testID={`${props.testID}.receipt`} />
+          </ItemGroup>
+        </ItemList>
+      );
+    }
     if (props.receiptIsBody) {
       return (
         <ItemList testID={props.testID}>
@@ -193,6 +219,24 @@ function SummaryBar(
         ) : null}
       </View>
     </PagePinnedBar>
+  );
+}
+
+/** The sheet form's footer: the receipt's way out and its one primary, with why the primary is off as the note. */
+function ReceiptSheetFooter(props: Readonly<{ channel: LiveValueChannel<ManagedReceiptModel>; testID: string }>) {
+  const model = useLiveValue(props.channel);
+  const primary = model.primary;
+  return (
+    <ModalCardFooterActions note={primary?.footnote ?? null} noteTestID={`${props.testID}.footer-note`}>
+      {(model.secondary ?? []).map(action => (
+        <RoundButton key={action.testID ?? action.label} testID={action.testID} size="normal" display="secondary"
+          title={action.label} disabled={action.disabled} loading={action.loading} onPress={action.onPress} />
+      ))}
+      {primary ? (
+        <RoundButton testID={primary.testID} size="normal" title={primary.label} disabled={primary.disabled}
+          loading={primary.loading} onPress={primary.onPress} />
+      ) : null}
+    </ModalCardFooterActions>
   );
 }
 

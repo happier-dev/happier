@@ -275,9 +275,11 @@ function machineStatusLine(machine: MachineDisplayRenderable, scope: MachineReac
     // A shared machine's ownership fact already names its platform ("Ben's · Linux"); say it once.
     // Under a group that already names the owner, the row reads like one of your own (FIN-DESIGN-REVIEW L5).
     const ownership = ownerNamedByGroup ? null : describeMachineSharedOwnership(machine);
-    const platform = presence.online && !ownership ? formatOSPlatform(machine.metadata?.platform ?? undefined) : '';
-    // What Send does there ends a reachable row (lab scene 2); an away one keeps its last-seen time alone.
-    return [presence.label, ownership, platform, detail, presence.online ? outcome : null].filter(Boolean).join(' · ');
+    // What Send does there ends a reachable row in the OS fact's place, so the line stays short (lab scene 2); an
+    // away one keeps its last-seen time alone.
+    const clause = presence.online ? outcome : null;
+    const platform = presence.online && !ownership && !clause ? formatOSPlatform(machine.metadata?.platform ?? undefined) : '';
+    return [presence.label, ownership, platform, detail, clause].filter(Boolean).join(' · ');
 }
 
 function buildOptionTestID(testIdPrefix: string | undefined, machine: MachineDisplayRenderable): string | undefined {

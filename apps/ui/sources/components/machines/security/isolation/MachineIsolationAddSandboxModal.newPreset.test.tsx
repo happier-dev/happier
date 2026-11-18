@@ -110,7 +110,8 @@ it('creates a new preset inside the sheet with one footer, then returns to the P
     await waitForHomeGovernance(() => expect(screen.findByTestId('machine-isolation-add.new-preset')).not.toBeNull());
     await screen.pressByTestIdAsync('machine-isolation-add.new-preset');
     await waitForHomeGovernance(() => expect(screen.findAllByType(ManagedMachineConfigurationView).length).toBe(1));
-    // The configurator's own Save and Cancel are the one set of buttons: the sheet drops its footer.
+    // The configurator publishes its own Save and Cancel as the sheet footer once its form reads; until then the
+    // sheet drops the earlier steps' footer, so there is never a second set of actions.
     expect(setChrome.mock.calls.at(-1)![0].footer).toBeNull();
     // Saving the new preset brings the sheet back to its Preset step with that preset chosen; nothing is added yet.
     const configurator = screen.findAllByType(ManagedMachineConfigurationView)[0]!;

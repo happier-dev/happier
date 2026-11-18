@@ -220,21 +220,26 @@ function OutcomeRow(
         {props.mark ?? <Icon name={props.glyph} size={OUTCOME_MARK_SIZE}
           color={props.warning ? theme.colors.state.warning.foreground : theme.colors.text.secondary} />}
       </View>
-      {/* The mark keeps its column; the sentence and its link wrap beside it, so a narrow field (a workflow's
-          Machine) never drops the sentence under a lone mark. */}
+      {/* The mark keeps its column; the sentence wraps in its own column and the link keeps the line's end (lab
+          sbx-outcome: sentence left, action right, on a phone too), so a narrow field (a workflow's Machine) never
+          drops the sentence under a lone mark or the action onto a line of its own. */}
       <View style={styles.body}>
-        {props.lead}
-        <Text style={props.warning ? styles.warning : styles.text}>
-          {props.text}
-        </Text>
+        <View style={styles.sentence}>
+          {props.lead}
+          <Text style={props.warning ? styles.warning : styles.text}>
+            {props.text}
+          </Text>
+        </View>
         {props.link ? (
-          <TextLinkButton
-            testID={`${props.testID}.link`}
-            label={props.link.label}
-            onPress={props.link.onPress}
-            tone="quiet"
-            size="meta"
-          />
+          <View style={styles.link}>
+            <TextLinkButton
+              testID={`${props.testID}.link`}
+              label={props.link.label}
+              onPress={props.link.onPress}
+              tone="quiet"
+              size="meta"
+            />
+          </View>
         ) : null}
       </View>
     </View>
@@ -252,11 +257,20 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     flexDirection: 'row',
+    alignItems: 'flex-start',
+    columnGap: theme.space.s8,
+  },
+  // Both columns size to their words and yield together: the longer sentence wraps first, the link wraps last.
+  sentence: {
+    flexShrink: 1,
+    minWidth: 0,
+    flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
     columnGap: theme.space.s8,
     rowGap: theme.space.s2,
   },
+  link: { flexShrink: 1, minWidth: 0 },
   mark: { height: Typography.variant('meta').lineHeight, justifyContent: 'center' },
   text: { ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 },
   warning: {

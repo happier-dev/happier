@@ -37,7 +37,7 @@ export function readMachineRowIsolation(
   };
 }
 
-/** "runs directly" or "new sessions run in a fresh Node 22 sandbox"; a preset not read yet takes the outcome line's stand-in. */
+/** "runs directly" or "fresh Node 22 sandbox" (the lab's short row words); a preset not read yet takes the outcome line's stand-in. */
 export function describeMachineRowIsolation(
   row: MachineRowIsolation,
   presetName: string | undefined,

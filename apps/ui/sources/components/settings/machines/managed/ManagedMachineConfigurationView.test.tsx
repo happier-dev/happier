@@ -449,8 +449,11 @@ describe('mounted managed configurator', () => {
       return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
         execution: { ok: true, result: { provisioners: [selected] } } } };
     } });
+    // The add-sandbox sheet hosts this form: it takes the published footer as its own (lab add frame).
+    const sheetFooter = vi.fn<(footer: React.ReactNode | null) => void>();
     const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
-      provisioner={buildQualifiedPluginContributionKey(selected.contribution)} presetOnly {...(presetFor ? { presetFor } : {})} />);
+      provisioner={buildQualifiedPluginContributionKey(selected.contribution)} presetOnly
+      {...(presetFor ? { presetFor, sheetFooter } : {})} />);
     try {
       await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.field:configuration.image'), screen.getTextContent()).not.toBeNull());
       const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
@@ -461,6 +464,16 @@ describe('mounted managed configurator', () => {
       // Nor how many run at once: one machine's own sandbox preset leaves that to its Isolation, as its preset page does.
       if (presetFor === 'isolation') expect(screen.findByTestId('managed-config.limit')).toBeNull();
       else expect(screen.findByTestId('managed-config.limit')).not.toBeNull();
+      if (presetFor === 'isolation') {
+        // In a sheet the form is one column, and its Save is the sheet's footer rather than an aside card's.
+        expect(screen.findByTestId('managed-config.receipt-aside')).toBeNull();
+        const footer = sheetFooter.mock.calls.at(-1)?.[0];
+        expect(footer).toBeTruthy();
+        const footerScreen = await renderScreen(<>{footer}</>);
+        try { expect(footerScreen.findByTestId('managed-config.create')).not.toBeNull(); }
+        finally { await footerScreen.unmount(); }
+        expect(screen.findByTestId('managed-config.create')).toBeNull();
+      }
     } finally { await screen.unmount(); }
   });
 

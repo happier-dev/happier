@@ -408,6 +408,9 @@ describe('useMachineSelectionListModel', () => {
             const rows = subtitles(picker.getCurrent());
             expect(rows.get('sandboxed')).toContain('machineDetailPage.isolation.outcome.rowFresh');
             expect(rows.get('direct')).toContain('machineDetailPage.isolation.outcome.rowDirectly');
+            // The clause stands in for the OS fact, so a row's line stays short (lab scene 2).
+            expect(rows.get('sandboxed')).not.toContain('macOS');
+            expect(rows.get('direct')).not.toContain('macOS');
             // An away Machine keeps its last-seen time as its only fact.
             expect(rows.get('away')).not.toContain('machineDetailPage.isolation.outcome');
         } finally { await picker.unmount(); }
@@ -415,6 +418,8 @@ describe('useMachineSelectionListModel', () => {
         const scope = await renderHook(() => useMachineSelectionListModel(params()));
         try {
             expect([...subtitles(scope.getCurrent()).values()].join('\n')).not.toContain('machineDetailPage.isolation.outcome');
+            // Without a clause the row still says what it is.
+            expect(subtitles(scope.getCurrent()).get('direct')).toContain('macOS');
         } finally { await scope.unmount(); }
     });
 

@@ -115,6 +115,8 @@ export type ManagedMachineConfigurationViewProps = Readonly<{
     serverId: string; provisioner: string; presetId?: string; presetOnly?: boolean; initialController?: ManagedControllerV1;
     /** A preset authored for one machine's Isolation (the add-sandbox sheet) is that machine's own: no Who can use it or Running at once. */
     presetFor?: 'isolation';
+    /** Authored inside a sheet: the configurator draws one column and publishes Save as the sheet's footer. */
+    sheetFooter?: (footer: React.ReactNode | null) => void;
     /** Isolation asks the selected launch's canonical declaration for local hosting. */
     sessionPlacement?: 'controller-local';
     /** Exact caller-supplied native query; never inferred from the viewing device's filesystem. */
@@ -1201,7 +1203,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         blocker={needsApp ? { kind: 'needsApp', title: t('managedMachines.add.status.needsApp'),
             reason: t('managedMachines.add.handoff.body', { provider: title }),
             action: { label: t('managedMachines.add.action.getTheApp'), onPress: () => showManagedGetTheAppModal(title) } } : undefined}
-        compact={compact} testID="managed-config" receipt={receipt} summary={{ value: summaryValue,
+        compact={compact} testID="managed-config" receipt={receipt} sheetFooter={props.sheetFooter} summary={{ value: summaryValue,
             unit: summaryCost?.unit ?? '',
             spec: (props.presetOnly ? saveUnavailableReason : creationUnavailableReason) ?? summarySpec }}>
         {approval.approvalId ? <AttentionBanner testID="managed-config.approval" title={t('approvals.title')} description={t('approvals.status.open')}
