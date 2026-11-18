@@ -1810,6 +1810,11 @@ describe('the mounted PRs & Issues surface', () => {
         expect.soft(retries).toHaveLength(1);
         await expect.soft(shell.queryByText('Happier cannot reach your account right now, so pins and saved views cannot be changed.'))
             .resolves.toBeUndefined();
+        // The outage's one Retry re-reads the Account as well as the list.
+        const accountReadsBeforeRetry = harness.kvReadCount.count;
+        await act(async () => { await shell.press(retries[0]!); });
+        await settleWindow('view', shell);
+        expect(harness.kvReadCount.count).toBeGreaterThan(accountReadsBeforeRetry);
 
         const attemptsWhileOffline = listReads();
         const disconnected = { ...offline, requesterExecutionReady: false };

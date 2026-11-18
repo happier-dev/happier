@@ -3019,7 +3019,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                         disabled={refreshState.kind === 'blocked'}
                         onPress={() => {
                           refresh();
-                          if (accountNoticeLabel !== null) executeMountedOperation({ kind: 'retryAccountData' });
+                          executeMountedOperation({ kind: 'retryAccountData' });
                         }}
                       />
                     ),
