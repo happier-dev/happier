@@ -15,7 +15,8 @@ export const DeploySuggestionCatalogV1Schema = lazyZodSchema(() => z.strictObjec
     apps: z.array(z.strictObject({ id: id(), title: z.string(), sourceId: z.optional(id()), itemId: z.optional(id()) })),
     targets: z.array(z.strictObject({ id: id(), title: z.string(), targetClass: z.enum(['ownServer', 'platform']),
         availability: z.enum(['available', 'unavailable', 'unknown']), ...deploymentTargetFitFieldsV1() })),
-    machines: z.array(z.strictObject({ machineId: id(), label: z.string(), online: z.boolean(),
+    // `label` is absent while the Machine owner has no name for it yet (still loading); never its placeholder.
+    machines: z.array(z.strictObject({ machineId: id(), label: z.optional(z.string()), online: z.boolean(),
         homeDir: z.optional(z.string()), readiness: z.enum(['ready', 'needsSetup', 'unknown']) })),
     stores: z.array(z.strictObject({ id: id(), engine: z.string() })),
     forges: z.array(z.strictObject({ providerKind: id(), title: z.string() })),

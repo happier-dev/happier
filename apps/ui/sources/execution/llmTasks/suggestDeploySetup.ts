@@ -18,6 +18,7 @@ import type { InteractionTransientQuestionAnswerV1, InteractionTransientQuestion
 
 import { projectCheckoutParentPath } from '@/components/projects/activation/projectOpenChoices';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveWorkspaceLlmTaskRunner, runLlmTaskInWorkspace, stopLlmTaskRun, type LlmTaskHostV1 } from './runLlmTaskInWorkspace';
 
@@ -32,7 +33,8 @@ export type DeploySuggestionProgress =
 
 export type DeploySuggestionUnavailableMachine = Readonly<{
     machineId: string;
-    label: string;
+    /** Absent while the Machine owner has no name for it yet; the step reads the settled name from that owner. */
+    label?: string;
     online: boolean;
     reason: Extract<LlmTaskRunnerResolutionV1, { ok: false }>['reason'] | 'offline' | 'home_directory_unavailable';
     unavailableAgents: readonly LlmTaskRunnerUnavailableAgentV1[];
@@ -89,7 +91,7 @@ export async function suggestDeploySetup(params: Readonly<{
         for (const machine of catalog.machines) {
             if (params.signal?.aborted) return { kind: 'stopped' };
             if (!machine.online || !machine.homeDir) {
-                unavailable.push({ machineId: machine.machineId, label: machine.label, online: machine.online,
+                unavailable.push({ machineId: machine.machineId, ...(machine.label ? { label: machine.label } : {}), online: machine.online,
                     reason: machine.online ? 'home_directory_unavailable' : 'offline', unavailableAgents: [] });
                 continue;
             }
@@ -102,11 +104,12 @@ export async function suggestDeploySetup(params: Readonly<{
                 if (resolved.errorCode !== 'LLM_TASK_RUNNER_UNAVAILABLE' || !resolved.reason) {
                     return { kind: 'failed', code: resolved.errorCode ?? 'runner_unavailable' };
                 }
-                unavailable.push({ machineId: machine.machineId, label: machine.label, online: true,
+                unavailable.push({ machineId: machine.machineId, ...(machine.label ? { label: machine.label } : {}), online: true,
                     reason: resolved.reason, unavailableAgents: resolved.unavailableAgents ?? [] });
                 continue;
             }
-            const runner = { machineId: machine.machineId, label: machine.label,
+            // The runner is named inside sentences ("Runs on …"); a Machine without a name yet reads as the owner's "this machine".
+            const runner = { machineId: machine.machineId, label: machine.label ?? getMachineSentenceName(null),
                 agentTargetKey: resolved.runner.modelSelection.agentTargetKey,
                 ...(resolved.title ? { agentTitle: resolved.title } : {}) };
             params.onProgress?.({ kind: 'runner', ...runner });

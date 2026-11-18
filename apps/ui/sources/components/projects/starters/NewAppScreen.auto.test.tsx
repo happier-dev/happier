@@ -464,6 +464,33 @@ it('says why no agent can suggest, per Machine, starting no run; Choose a starte
   }
 });
 
+it('a Machine whose name is still loading is never titled with the placeholder in What’s missing', async () => {
+  suggestionBoundary({
+    // The Home's inventory: a second Machine is offline and its name hasn't hydrated, so its label is the owner's placeholder.
+    machinesList: async () => ({
+      items: [
+        { machineId: 'devbox', label: 'devbox', active: false, named: true, presence: 'offline' },
+        { machineId: 'loading', label: 'Loading…', named: false, presence: 'offline' },
+      ],
+    }),
+  });
+  const { fixture, screen } = await openDescribe('auto-name-pending');
+  try {
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'An invoice app'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    await waitForHomeGovernance(() => expect(row(screen, 'newApp.auto.noAgent.loading')).toBeTruthy());
+    expect(row(screen, 'newApp.auto.noAgent.devbox')?.props.title).toBe('devbox');
+    expect(row(screen, 'newApp.auto.noAgent.loading')?.props.title).not.toBe('Loading…');
+    expect(typeof row(screen, 'newApp.auto.noAgent.loading')?.props.title).not.toBe('string');
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
 it('a failed suggestion says so and keeps the owner’s code under Details, never a bare guess at the cause', async () => {
   suggestionBoundary({ deploymentSuggestionTargets: async () => { throw new Error('targets unavailable'); } });
   const { fixture, screen } = await openDescribe('auto-failed');

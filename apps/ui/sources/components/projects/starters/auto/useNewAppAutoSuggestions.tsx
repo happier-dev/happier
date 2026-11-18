@@ -228,6 +228,7 @@ export function useNewAppAutoSuggestions(
     if (outcome.kind === 'noAgent') {
       return {
         kind: 'noAgent',
+        serverId: params.serverId,
         machines: outcome.machines.map((machine) =>
           presentMachine(machine, openMachineSetup),
         ),
@@ -236,7 +237,7 @@ export function useNewAppAutoSuggestions(
     if (outcome.kind === 'questions') return { kind: 'questions', questions: outcome.questions.questions };
     if (outcome.kind === 'failed') return { kind: 'failed', code: outcome.code };
     return { kind: 'nothing' };
-  }, [openMachineSetup, phase, stop, theme.colors.text.secondary]);
+  }, [openMachineSetup, params.serverId, phase, stop, theme.colors.text.secondary]);
 
   const settled = phase.kind === 'settled' ? phase.outcome : phase.kind === 'working' ? lastRecommendations.current : null;
   const chosen = React.useMemo((): NewAppAutoChosen | null => {
@@ -355,7 +356,7 @@ function presentMachine(
   machine: DeploySuggestionUnavailableMachine,
   openSetup: (machineId: string) => void,
 ): NewAppAutoMachine {
-  const base = { machineId: machine.machineId, title: machine.label, glyph: 'hard-drives' as const };
+  const base = { machineId: machine.machineId, title: machine.label ?? null, glyph: 'hard-drives' as const };
   // Each reason in the runner owner's words (Settings' runner picker says the same); its next step is the Machine's setup.
   switch (machine.reason) {
     case 'offline':

@@ -12,6 +12,9 @@ import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { FieldLayout } from '@/components/ui/lists/FieldRow';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
+import { Typography } from '@/constants/Typography';
+import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import {
   type SetupStep,
 } from '@/components/ui/setupBlocks/SetupSteps';
@@ -43,7 +46,8 @@ export type NewAppAutoCard = Readonly<{
 /** A Machine that can't run the suggestion right now, in its owner's words, with that reason's next step. */
 export type NewAppAutoMachine = Readonly<{
   machineId: string;
-  title: string;
+  /** The suggestion snapshot's name; null while the Machine owner had none yet (the row then reads the settled name live). */
+  title: string | null;
   glyph: IconName;
   status: string;
   /** Offline and other states that need the person speak in the attention colour. */
@@ -72,7 +76,7 @@ export type NewAppAutoView =
       cards: readonly NewAppAutoCard[];
       source: string | null;
     }>
-  | Readonly<{ kind: 'noAgent'; machines: readonly NewAppAutoMachine[] }>
+  | Readonly<{ kind: 'noAgent'; serverId: string | null; machines: readonly NewAppAutoMachine[] }>
   /** The suggestion owner needs answers first: the canonical questions, asked in the step (journey-deploy F2). */
   | Readonly<{ kind: 'questions'; questions: readonly InteractionTransientQuestionV1[] }>
   | Readonly<{ kind: 'nothing' }>
@@ -248,45 +252,56 @@ export function NewAppAutoStep(
             testID="newApp.auto.noAgent.machines"
           >
             {view.machines.map((machine) => (
-              <Item
-                key={machine.machineId}
-                testID={`newApp.auto.noAgent.${machine.machineId}`}
-                title={machine.title}
-                subtitle={machine.status}
-                subtitleLines={0}
-                showChevron={false}
-                icon={
-                  <Icon
-                    name={machine.glyph}
-                    size={ICON_SIZE.sm}
-                    color={theme.colors.text.secondary}
-                  />
-                }
-                {...(machine.attention
-                  ? {
-                      subtitleStyle: {
-                        color: theme.colors.state.warning.foreground,
-                      },
-                    }
-                  : {})}
-                rightElement={
-                  machine.action ? (
-                    <RoundButton
-                      testID={`newApp.auto.noAgent.${machine.machineId}.action`}
-                      size="small"
-                      display="inverted"
-                      title={machine.action.label}
-                      onPress={machine.action.onPress}
-                    />
-                  ) : undefined
-                }
-              />
+              <NoAgentMachineRow key={machine.machineId} serverId={view.serverId} machine={machine} />
             ))}
           </ItemGroup>
           )}
         </>
       ) : null}
     </View>
+  );
+}
+
+/** A Machine the suggestion snapshot couldn't name yet holds the loading bar until the Machine owner settles its name. */
+const MACHINE_NAME_PENDING_TITLE = <SkeletonTitle lineHeight={Typography.variant('body').lineHeight as number} testID="newApp.auto.noAgent.namePending" />;
+
+function NoAgentMachineRow(props: Readonly<{ serverId: string | null; machine: NewAppAutoMachine }>) {
+  const { theme } = useUnistyles();
+  const { machine } = props;
+  const settledName = useServerScopedMachineLabel(props.serverId, machine.title === null ? machine.machineId : null);
+  return (
+    <Item
+      testID={`newApp.auto.noAgent.${machine.machineId}`}
+      title={machine.title ?? settledName ?? MACHINE_NAME_PENDING_TITLE}
+      subtitle={machine.status}
+      subtitleLines={0}
+      showChevron={false}
+      icon={
+        <Icon
+          name={machine.glyph}
+          size={ICON_SIZE.sm}
+          color={theme.colors.text.secondary}
+        />
+      }
+      {...(machine.attention
+        ? {
+            subtitleStyle: {
+              color: theme.colors.state.warning.foreground,
+            },
+          }
+        : {})}
+      rightElement={
+        machine.action ? (
+          <RoundButton
+            testID={`newApp.auto.noAgent.${machine.machineId}.action`}
+            size="small"
+            display="inverted"
+            title={machine.action.label}
+            onPress={machine.action.onPress}
+          />
+        ) : undefined
+      }
+    />
   );
 }
 

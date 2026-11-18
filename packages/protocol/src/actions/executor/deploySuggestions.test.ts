@@ -62,6 +62,24 @@ describe('deploy suggestion read Actions', () => {
     expect(calls.filter(call => call === 'forges')).toHaveLength(1);
   });
 
+  it('leaves out a Machine name its owner says is not a name yet, so the placeholder never reaches the model', async () => {
+    const executor = createActionExecutor({
+      registryActionExecute: async () => ({ pages: [] }),
+      // The Home's Machine inventory: one Machine is still hydrating, so its label is the owner's placeholder.
+      machinesList: async () => ({ items: [
+        { machineId: 'named', label: 'Dev box', named: true, presence: 'offline' },
+        { machineId: 'loading', label: 'Loading…', named: false, presence: 'offline' },
+      ] }),
+    });
+    const result = await executor.execute('deployments.suggestions.catalog', {}, context);
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    const catalog = DeploySuggestionCatalogV1Schema.parse(result.result);
+    expect(catalog.machines).toEqual([
+      { machineId: 'named', label: 'Dev box', online: false, readiness: 'unknown' },
+      { machineId: 'loading', online: false, readiness: 'unknown' },
+    ]);
+  });
+
   it('checks the held snapshot without rereading owners and is available only with deployments', async () => {
     const catalog = DeploySuggestionCatalogV1Schema.parse({ starters: [{ id: 'website', title: 'Website', deploy }],
       apps: [], targets, machines: [], stores: [], forges });

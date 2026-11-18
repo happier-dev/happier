@@ -9,7 +9,7 @@ import type { ActionId } from '../actionIds.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from './types.js';
 
 const machineRows = z.looseObject({ items: z.array(z.looseObject({ machineId: z.string(), label: z.string(),
-    active: z.optional(z.boolean()), presence: z.optional(z.enum(['online', 'offline', 'unknown'])), homeDir: z.optional(z.string()) })) });
+    active: z.optional(z.boolean()), named: z.optional(z.boolean()), presence: z.optional(z.enum(['online', 'offline', 'unknown'])), homeDir: z.optional(z.string()) })) });
 type Section = NonNullable<DeploySuggestionCatalogV1['issues']>[number]['section'];
 
 /** One finite read composition. Catalog owners retain their original placement and transport. */
@@ -77,7 +77,8 @@ export async function readDeploySuggestionCatalogV1(context: ActionExecutorConte
                 if (plan.success) readiness = readDeployHostReadiness(plan.data, machine.machineId);
             }
         }
-        return { machineId: machine.machineId, label: machine.label, online, readiness,
+        // `named: false` is the Machine owner saying its label is a placeholder (name still loading), not a name.
+        return { machineId: machine.machineId, ...(machine.named === false ? {} : { label: machine.label }), online, readiness,
             ...(machine.homeDir ? { homeDir: machine.homeDir } : {}) };
     }));
     return catalog;
