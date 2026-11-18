@@ -4437,6 +4437,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
         );
     }
     const contributionId = params.agent.identity?.localId ?? identity.agentId;
+    // The Session's effective starting mode: its explicit preference, else where it was bootstrapped.
+    const startingMode = normalizeStartingMode(params.sessionInput.runtimePreferences.startingMode)
+        ?? (params.sessionInput.bootstrap.source === 'terminal' ? 'terminal' : 'remote');
     let currentTerminalTranscriptFollowService: HostTerminalTranscriptFollowService | null = null;
     let runtimeExecutionSurfaces = params.executionSurfaces;
     let startupPresentation: ReturnType<NonNullable<BackendExecutionSurfaces['resolveTerminalPresentation']>> | undefined;
@@ -5624,9 +5627,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 ...(hasSessionHolderAdoptToken() ? { adoptsHeldAgent: true as const }
                     // A new Session started under remote control gets its first prompt through
                     // this host (the same starting-mode rule as its startup presentation).
-                    : openIntent.kind === 'create'
-                        && (normalizeStartingMode(params.sessionInput.runtimePreferences.startingMode)
-                            ?? (params.sessionInput.bootstrap.source === 'terminal' ? 'terminal' : 'remote')) === 'remote'
+                    : openIntent.kind === 'create' && startingMode === 'remote'
                         ? { startsRemote: true as const } : {}) });
             const acpToolNormalizationSource = {
                 protocol: 'acp' as const,
@@ -6556,11 +6557,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                             topology: localControl.topology ?? 'exclusive',
                             remoteWritable:
                                 localControl.remoteWritable === true,
-                            startingMode:
-                                normalizeStartingMode(params.sessionInput.runtimePreferences.startingMode)
-                                ?? (params.sessionInput.bootstrap.source === 'terminal'
-                                    ? 'terminal'
-                                    : 'remote'),
+                            startingMode,
                             ...(params.generationSignal
                                 ? { generationSignal: params.generationSignal }
                                 : {}),
@@ -6686,9 +6683,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                                 ownsCurrentTerminalDisplay: Boolean(terminal && buildActiveTerminalHostHandleFromMetadata(terminal)),
                             };
                         }
-                        if (presentation.kind === 'provider_attach'
-                            && (normalizeStartingMode(params.sessionInput.runtimePreferences.startingMode)
-                                ?? (params.sessionInput.bootstrap.source === 'terminal' ? 'terminal' : 'remote')) === 'remote') {
+                        if (presentation.kind === 'provider_attach' && startingMode === 'remote') {
                             // Attach metadata does not give this host an exclusive terminal.
                             // A remote start keeps the opened native Session running.
                             return { terminalRemoteModeLoop: null, ownsCurrentTerminalDisplay: false };
