@@ -1,15 +1,12 @@
 import * as React from 'react';
-import { useUnistyles } from 'react-native-unistyles';
 
 import type { PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
-import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
@@ -63,7 +60,8 @@ export type MachinePresetDetailModel = Readonly<{
   description?: string;
   mark: React.ReactNode;
   meta: readonly PageHeaderMetaFact[];
-  audience: Readonly<{
+  /** Who can use it; absent for a local sandbox preset, which only its own machine uses (lab decision 3). */
+  audience?: Readonly<{
     /** The consequence of sharing it (or that it stays personal); the title already says "Who can use it". */
     description?: string;
     leading: React.ReactNode;
@@ -108,34 +106,30 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
     testID: string;
   }>,
 ) {
-  const { theme } = useUnistyles();
   const { model } = props;
-  // Restore lives in the archived notice, beside the state it undoes; only Archive closes the page.
+  // Restore lives in the archived notice, beside the state it undoes. Archive ends the page as one row
+  // (lab files-copy): what archiving leaves in place beneath its name, a quiet Archive beside it.
   const closing = model.onArchive ? (
-        <ItemGroup surface="none" accessibilityLabel={t('machinePresets.archive')}>
-          <SectionButtonRow
-            testID={`${props.testID}.closing`}
-            footnote={model.archiveHelp ?? t('machinePresets.archiveHelp')}
-          >
-            <RoundButton
-              testID={`${props.testID}.archive`}
-              size="normal"
-              display="inverted"
-              title={t('machinePresets.archive')}
-              loading={model.archivePending}
-              disabled={model.archivePending}
-              leading={
-                <Icon
-                  name="archive"
-                  size={14}
-                  color={theme.colors.text.primary}
-                />
-              }
-              onPress={model.onArchive}
-            />
-          </SectionButtonRow>
-        </ItemGroup>
-      ) : null;
+    <ItemGroup testID={`${props.testID}.closing`}>
+      <Item
+        title={t('machinePresets.archive')}
+        subtitle={model.archiveHelp ?? t('machinePresets.archiveHelp')}
+        subtitleLines={0}
+        mode="info"
+        showChevron={false}
+        accessoryLayout="adaptive"
+        rightElement={
+          <SectionActionButton
+            testID={`${props.testID}.archive`}
+            title={t('machinePresets.archiveAction')}
+            loading={model.archivePending}
+            disabled={model.archivePending}
+            onPress={model.onArchive}
+          />
+        }
+      />
+    </ItemGroup>
+  ) : null;
   return (
     <ManagedReceiptPageLayout
       testID={props.testID}
@@ -188,20 +182,22 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
           />
         </ItemGroup>
       ) : null}
-      <ItemGroup
-        title={t('machinePresets.audience')}
-        description={model.audience.description}
-      >
-        <Item
-          testID={`${props.testID}.audience`}
-          title={model.audience.title}
-          subtitle={model.audience.subtitle}
-          subtitleLines={0}
-          icon={model.audience.leading}
-          mode="info"
-          showChevron={false}
-        />
-      </ItemGroup>
+      {model.audience ? (
+        <ItemGroup
+          title={t('machinePresets.audience')}
+          description={model.audience.description}
+        >
+          <Item
+            testID={`${props.testID}.audience`}
+            title={model.audience.title}
+            subtitle={model.audience.subtitle}
+            subtitleLines={0}
+            icon={model.audience.leading}
+            mode="info"
+            showChevron={false}
+          />
+        </ItemGroup>
+      ) : null}
       {model.memberCreate ? (
         <ItemGroup
           title={t('machinePresets.memberCreate')}

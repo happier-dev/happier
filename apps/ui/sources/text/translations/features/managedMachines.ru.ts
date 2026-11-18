@@ -584,6 +584,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         madeFrom: "Созданы из этого пресета",
         noneYet: "Машин из него пока нет",
         archive: "Архивировать пресет",
+        archiveAction: "Архивировать",
         archiveHelp: "Новых машин из него не будет. Работающие продолжают, пока их не удалят.",
         archivePreparedHelp: "Новые машины из него не создаются, а его подготовленный образ удаляется. Запущенные продолжают работать, пока вы их не удалите.",
         preparedImageCleanupRequired: ({ host }: { host: string }) => `Не удалось удалить подготовленный образ на ${host}. Удалите его на этой машине.`,

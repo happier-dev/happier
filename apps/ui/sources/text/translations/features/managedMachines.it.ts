@@ -584,6 +584,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         madeFrom: "Create da questo preset",
         noneYet: "Nessuna macchina creata finora",
         archive: "Archivia preset",
+        archiveAction: "Archivia",
         archiveHelp: "Nessuna nuova macchina. Quelle attive continuano finché non vengono eliminate.",
         archivePreparedHelp: "Nessuna nuova macchina da questo preset, e la sua immagine preparata viene rimossa. Quelle in esecuzione continuano finché non le elimini.",
         preparedImageCleanupRequired: ({ host }: { host: string }) => `Non è stato possibile rimuovere l’immagine preparata su ${host}. Eliminala lì.`,

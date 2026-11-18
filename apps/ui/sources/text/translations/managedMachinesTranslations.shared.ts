@@ -590,6 +590,7 @@ export const managedMachinesEn = {
         madeFrom: "Made from this preset",
         noneYet: "No machines made from it yet",
         archive: "Archive preset",
+        archiveAction: "Archive",
         archiveHelp: "No new machines from it. Running ones keep going until they’re deleted.",
         archivePreparedHelp: "No new machines from it, and its prepared image is removed. Running ones keep going until you delete them.",
         preparedImageCleanupRequired: ({ host }: { host: string }) => `The prepared image on ${host} couldn’t be removed. Delete it there.`,

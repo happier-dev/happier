@@ -8848,6 +8848,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 forSessionTwoWay: ({ preset }: { preset: string }) => `僅限此工作階段。${preset} 預設集雙向同步。`,
                 changeDefault: ({ preset }: { preset: string }) => `變更 ${preset} 預設集的預設值`,
                 yourFolder: "你的資料夾",
+                homeFolder: "你的主資料夾",
                 copies: ({ folder }: { folder: string }) => `複製 ${folder}`,
                 clones: ({ repository, branch }: { repository: string; branch: string }) => `在 ${branch} 複製 ${repository}`,
                 syncsOneWay: ({ folder }: { folder: string }) => `單向同步 ${folder}`,

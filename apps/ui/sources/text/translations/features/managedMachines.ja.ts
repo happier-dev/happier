@@ -584,6 +584,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         madeFrom: "このプリセットから作成",
         noneYet: "まだマシンはありません",
         archive: "プリセットをアーカイブ",
+        archiveAction: "アーカイブ",
         archiveHelp: "新しいマシンは作成されません。実行中のマシンは削除されるまで続きます。",
         archivePreparedHelp: "これから新しいマシンは作成されず、準備済みイメージは削除されます。実行中のものは削除するまで動き続けます。",
         preparedImageCleanupRequired: ({ host }: { host: string }) => `${host} の準備済みイメージを削除できませんでした。そのマシンで削除してください。`,

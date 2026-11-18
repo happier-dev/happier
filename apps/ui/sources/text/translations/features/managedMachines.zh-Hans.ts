@@ -584,6 +584,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         madeFrom: "由此预设创建",
         noneYet: "尚未用它创建机器",
         archive: "归档预设",
+        archiveAction: "归档",
         archiveHelp: "不再用它创建新机器。运行中的机器会持续到被删除。",
         archivePreparedHelp: "不再用它创建新机器，其准备好的镜像也会被移除。正在运行的机器会继续运行，直到你删除它们。",
         preparedImageCleanupRequired: ({ host }: { host: string }) => `无法移除 ${host} 上准备好的镜像。请在该机器上删除它。`,

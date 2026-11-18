@@ -8949,6 +8949,7 @@ const machineDetailPageTranslations = { pt: translated({
                 forSessionTwoWay: ({ preset }: { preset: string }) => `Para esta sessão. O preset ${preset} sincroniza nos dois sentidos.`,
                 changeDefault: ({ preset }: { preset: string }) => `Alterar o padrão no preset ${preset}`,
                 yourFolder: "sua pasta",
+                homeFolder: "a sua pasta pessoal",
                 copies: ({ folder }: { folder: string }) => `Copia ${folder}`,
                 clones: ({ repository, branch }: { repository: string; branch: string }) => `Clona ${repository} em ${branch}`,
                 syncsOneWay: ({ folder }: { folder: string }) => `Sincroniza ${folder} em um sentido`,

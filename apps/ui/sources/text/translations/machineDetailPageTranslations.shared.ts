@@ -149,6 +149,7 @@ export const english = {
             forSessionTwoWay: ({ preset }: { preset: string }) => `For this session. The ${preset} preset syncs both ways.`,
             changeDefault: ({ preset }: { preset: string }) => `Change the default on the ${preset} preset`,
             yourFolder: "your folder",
+            homeFolder: "your home folder",
             copies: ({ folder }: { folder: string }) => `Copies ${folder}`,
             clones: ({ repository, branch }: { repository: string; branch: string }) => `Clones ${repository} at ${branch}`,
             syncsOneWay: ({ folder }: { folder: string }) => `Syncs ${folder} one way`,

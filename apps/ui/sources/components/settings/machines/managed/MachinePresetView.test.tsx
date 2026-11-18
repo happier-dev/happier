@@ -370,14 +370,15 @@ function poolName(poolId: string, name: string) {
   }) };
 }
 
-async function seedPresetDeclaration(serverId: string, image = false) {
+async function seedPresetDeclaration(serverId: string, image = false,
+  descriptorPatch: Partial<typeof provisioner.descriptor> = {}) {
   const { defineProtocolNumber, defineProtocolObject, defineProtocolString } = await import('@happier-dev/protocol/plugins/actions/protocolComposableSchema');
   const cpu = defineProtocolNumber({ integer: true, minimum: 1 });
   const launch = defineProtocolObject({ cpu: image ? cpu : cpu.optional(),
     ...(image ? { image: defineProtocolString() } : {}) }, { policy: 'closed' });
   const resource = defineProtocolObject({}, { policy: 'closed' });
   const manifest = createMachineProvisionerEditorManifestFixture({ pluginId: provisioner.contribution.pluginId,
-    descriptor: { ...provisioner.descriptor, launchSchema: launch.jsonSchema, resourceSchema: resource.jsonSchema } });
+    descriptor: { ...provisioner.descriptor, ...descriptorPatch, launchSchema: launch.jsonSchema, resourceSchema: resource.jsonSchema } });
   return seedAccountProvisioner(serverId, manifest);
 }
 
@@ -439,8 +440,10 @@ async function seed(machinePoolsEnabled?: boolean, teamsEnabled?: boolean) {
   return serverId;
 }
 
-async function seedConfiguration(serverId: string, image = false) {
-  const declaredProvisioner = await seedPresetDeclaration(serverId, image);
+async function seedConfiguration(serverId: string, image = false,
+  descriptorPatch: Partial<typeof provisioner.descriptor> = {}) {
+  const declaredProvisioner = await seedPresetDeclaration(serverId, image, descriptorPatch);
+  const listedProvisioner = { ...provisioner, descriptor: { ...provisioner.descriptor, ...descriptorPatch } };
   seedOptionsDeclaration(
     provisioner,
     PluginJsonSchemaV2Schema.parse({
@@ -459,7 +462,7 @@ async function seedConfiguration(serverId: string, image = false) {
   for (const [actionId, result] of [
     [
       'machines.provisioners.list',
-      { controller: preset.controller, provisioners: [provisioner] },
+      { controller: preset.controller, provisioners: [listedProvisioner] },
     ],
     ['machines.provisioners.check', { available: true }],
     [
@@ -3021,6 +3024,28 @@ describe('reachable preset detail', () => {
       await act(async () => field('machine-preset.project-files.content-content-selection-trigger')!.props.onSelect('all_files'));
       await waitForHomeGovernance(() => expect(saved()).toHaveLength(3));
       expect(saved()[2]).toMatchObject({ projectFiles: { kind: 'copy_once', contentPolicy: { selection: 'all_files' } } });
+    } finally { await screen.unmount(); }
+  });
+
+  it('a local sandbox preset leaves out the cloud-only sections, and Archive is a row with its own button (lab decision 3)', async () => {
+    const serverId = await seed();
+    await seedConfiguration(serverId, false, { enrollmentRole: 'sandbox', billing: { location: 'local', stoppedBilling: 'not-billed' } });
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(preset) } });
+    const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId={preset.id} />);
+    const model = () => screen.tree.findByType(MachinePresetDetail).props.model as MachinePresetDetailModel;
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.project-files')).not.toBeNull());
+      // Who can use it, Running at once and Create one belong to presets that make machines for others.
+      await waitForHomeGovernance(() => {
+        expect(model().audience).toBeUndefined();
+        expect(model().limit).toBeUndefined();
+        expect(model().onCreateOne).toBeUndefined();
+      });
+      expect(screen.findByTestId('machine-preset.detail.createOne')).toBeNull();
+      // "Archive preset" is a row: its consequence beneath, a quiet Archive button beside.
+      const archiveRow = screen.findRowByTitle(t('machinePresets.archive'));
+      expect(archiveRow?.props.subtitle).toBeTruthy();
+      expect(screen.findByTestId('machine-preset.detail.archive')).not.toBeNull();
     } finally { await screen.unmount(); }
   });
 

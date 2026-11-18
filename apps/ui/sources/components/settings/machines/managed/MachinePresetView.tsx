@@ -380,6 +380,10 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         ? t('machinePresets.memberCreateHelpLocal', { controller: managingComputer })
         : credentialAccount ? t('machinePresets.memberCreateHelpAccount', { controller: managingComputer, account: credentialAccount })
             : t('machinePresets.memberCreateHelp', { controller: managingComputer });
+    // A local sandbox kind (its declaration enrolls a sandbox that runs on the managing machine and bills nobody) is
+    // used by that machine's Isolation, not made for others: Create one, Who can use it and Running at once belong
+    // to the other presets (lab decision 3).
+    const sessionSandbox = provisioner?.descriptor.enrollmentRole === 'sandbox' && presentation.billing?.location === 'local';
     const model: MachinePresetDetailModel = {
         name: visiblePreset.name, mark, setup,
         // The page says what this preset makes and who may make it; the edit rule sits under Edit choices.
@@ -387,19 +391,19 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         description: archived ? undefined : visiblePreset.owner.kind === 'account' ? t('machinePresets.purposePersonal', { what })
             : teamState ? t(memberCreateOn ? 'machinePresets.purposeTeam' : 'machinePresets.purposeTeamOff', { what, team: teamState.team.name }) : what,
         meta: [{ key: 'home', text: homeName }, { key: 'owner', text: visiblePreset.owner.kind === 'account' ? t('machinePresets.ownerPersonal') : ownerTitle }],
-        audience,
+        ...(sessionSandbox ? {} : { audience }),
         ...(teamState ? { memberCreate: { description: memberCreateHelp,
             title: t('machinePresets.memberCreateRow'), value: memberCreateOn, disabled: !canManage || approval.approvalPending, readOnly: !canManage,
             subtitle: !canManage ? t('machinePresets.memberCreateManagersOnly', { team: teamState.team.name })
                 : memberCreateOn ? t('machinePresets.memberCreateWithdraw') : undefined,
             onChange: (next: boolean) => edit({ teamAcquireDelegated: next }) } } : {}),
         // A local machine runs on its controller and bills nobody, so the billing caveat only speaks for a cloud one.
-        limit: { ...(presentation.billing?.location === 'local' ? {} : { description: t('machinePresets.limitHelp') }), row: canManage
+        ...(sessionSandbox ? {} : { limit: { ...(presentation.billing?.location === 'local' ? {} : { description: t('machinePresets.limitHelp') }), row: canManage
             ? managedPresetLimitRow({ limit: desiredLimit?.maximum, disabled: approval.approvalPending,
                 onChange: next => edit({ simultaneousLimit: next ? { maximum: next } : null }) })
             : { title: visiblePreset.simultaneousLimit
                 ? `${t('machinePresets.atMost')} ${visiblePreset.simultaneousLimit.maximum}` : t('machinePresets.limitNone'),
-                ...(visiblePreset.simultaneousLimit ? { subtitle: t('machinePresets.limitWaits') } : {}) } },
+                ...(visiblePreset.simultaneousLimit ? { subtitle: t('machinePresets.limitWaits') } : {}) } } }),
         // Its row names the controller; the description says only why it matters, and an online controller needs none.
         controller: { description: pooled ? t('machinePresets.controllerPoolHelp')
             : controller && presenceOf(controller).status === 'online' ? undefined : t('managedMachines.controller.requiredUnnamed'),
@@ -432,7 +436,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         receipt: { ...receipt, costPlacement: 'fact',
             ...(canManage ? { secondary: [{ label: t('machinePresets.editChoices'), testID: 'machine-preset.edit', onPress: () => openConfiguration(true), disabled: busy }],
                 secondaryNote: t('machinePresets.futureOnly') } : {}) },
-        ...(canUse && visiblePreset.archivedAt === undefined && configuration.creationEnabled && !cannotCreateHere
+        ...(!sessionSandbox && canUse && visiblePreset.archivedAt === undefined && configuration.creationEnabled && !cannotCreateHere
             ? { onCreateOne: () => openConfiguration(false) } : {}),
         // Archive attempts to delete the image it keeps ready; its retained report says when cleanup is needed.
         ...(visiblePreset.preparation?.enabled || visiblePreset.prepared !== undefined

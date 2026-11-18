@@ -8908,6 +8908,7 @@ const machineDetailPageTranslations = { ja: translated({
                 forSessionTwoWay: ({ preset }: { preset: string }) => `このセッションのみ。${preset} プリセットは双方向に同期します。`,
                 changeDefault: ({ preset }: { preset: string }) => `${preset} プリセットのデフォルトを変更`,
                 yourFolder: "あなたのフォルダー",
+                homeFolder: "ホームフォルダー",
                 copies: ({ folder }: { folder: string }) => `${folder} をコピー`,
                 clones: ({ repository, branch }: { repository: string; branch: string }) => `${repository} を ${branch} でクローン`,
                 syncsOneWay: ({ folder }: { folder: string }) => `${folder} を一方向に同期`,

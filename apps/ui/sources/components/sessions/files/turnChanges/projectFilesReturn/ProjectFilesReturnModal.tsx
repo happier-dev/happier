@@ -57,7 +57,9 @@ function returnChrome(
     material: 'solid',
     title: t('machineDetailPage.projectFiles.reviewTitle'),
     subtitle: t('machineDetailPage.projectFiles.reviewTo', {
-      folder: formatPathRelativeToHome(input.source.rootPath, input.homeDir),
+      folder: formatPathRelativeToHome(input.source.rootPath, input.homeDir, {
+        homeLabel: t('machineDetailPage.projectFiles.homeFolder'),
+      }),
       machine: input.machineName,
     }),
     subtitleLines: 1,

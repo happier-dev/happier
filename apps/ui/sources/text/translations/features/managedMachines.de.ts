@@ -584,6 +584,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         madeFrom: "Aus dieser Vorlage erstellt",
         noneYet: "Noch keine Rechner daraus erstellt",
         archive: "Vorlage archivieren",
+        archiveAction: "Archivieren",
         archiveHelp: "Keine neuen Rechner daraus. Laufende bleiben, bis sie gelöscht werden.",
         archivePreparedHelp: "Keine neuen Maschinen mehr daraus, und das vorbereitete Image wird entfernt. Laufende arbeiten weiter, bis du sie löschst.",
         preparedImageCleanupRequired: ({ host }: { host: string }) => `Das vorbereitete Image auf ${host} konnte nicht entfernt werden. Lösche es dort.`,

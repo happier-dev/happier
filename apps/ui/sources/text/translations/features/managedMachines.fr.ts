@@ -584,6 +584,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         madeFrom: "Créées depuis ce préréglage",
         noneYet: "Aucune machine créée pour l’instant",
         archive: "Archiver le préréglage",
+        archiveAction: "Archiver",
         archiveHelp: "Plus de nouvelles machines. Celles qui tournent continuent jusqu’à leur suppression.",
         archivePreparedHelp: "Plus aucune nouvelle machine à partir de lui, et son image préparée est supprimée. Celles en cours continuent jusqu’à ce que vous les supprimiez.",
         preparedImageCleanupRequired: ({ host }: { host: string }) => `L’image préparée sur ${host} n’a pas pu être supprimée. Supprimez-la sur cette machine.`,

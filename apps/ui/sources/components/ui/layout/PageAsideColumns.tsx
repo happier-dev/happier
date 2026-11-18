@@ -4,6 +4,7 @@ import { HAPPIER_COLUMN_MIN_WIDTH_PX, HAPPIER_PAGE_METRICS } from '@happier-dev/
 import type { PageAsideColumnsProps } from '@happier-dev/plugin-ui/components';
 
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
+import { usePageListInsets } from '@/components/ui/lists/listPresentation';
 
 /**
  * The aside's sheet (lab `m-config` receipt, lab A2 live preview): one width for every page aside.
@@ -27,6 +28,9 @@ const PAGE_ASIDE_COLUMN_WIDTH_PX = PAGE_ASIDE_SHEET_WIDTH_PX + 2 * HAPPIER_PAGE_
  */
 export const PageAsideColumns = React.memo(function PageAsideColumns(props: Omit<PageAsideColumnsProps, 'fallback'>) {
     const columnWidth = useLayoutMaxWidthStyle();
+    // On a page each column's sheets carry their own inset, which is the gutter between them. A contained
+    // surface (a card modal's body) drops that inset, so the columns keep the same gutter here instead.
+    const contained = usePageListInsets() === 'contained';
     // Split panes are wide enough by construction, so the first paint is already final there.
     const [wide, setWide] = React.useState(!props.compact);
     const onLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -48,7 +52,7 @@ export const PageAsideColumns = React.memo(function PageAsideColumns(props: Omit
     // closing row keeps its own last slot too: side by side, the row wraps it onto a line of its own
     // that leaves the aside's column free, so it stays under the sections without changing parent.
     return (
-        <View onLayout={measureColumns ? onLayout : undefined} style={sideBySide ? [styles.row, columnWidth] : undefined}>
+        <View onLayout={measureColumns ? onLayout : undefined} style={sideBySide ? [styles.row, columnWidth, contained ? styles.containedGutter : null] : undefined}>
             {asideFirst ? aside : null}
             <View key="main" style={sideBySide ? styles.main : undefined}>
                 {children}
@@ -81,6 +85,10 @@ const styles = {
     closing: {
         width: '100%',
         paddingRight: PAGE_ASIDE_COLUMN_WIDTH_PX,
+    },
+    // Both sheets' insets, the gutter a page shows between its columns.
+    containedGutter: {
+        columnGap: 2 * HAPPIER_PAGE_METRICS.sheetInsetPx,
     },
     aside: {
         width: PAGE_ASIDE_COLUMN_WIDTH_PX,

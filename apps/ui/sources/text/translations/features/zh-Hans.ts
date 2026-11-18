@@ -8848,6 +8848,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 forSessionTwoWay: ({ preset }: { preset: string }) => `仅限此会话。${preset} 预设双向同步。`,
                 changeDefault: ({ preset }: { preset: string }) => `更改 ${preset} 预设的默认值`,
                 yourFolder: "你的文件夹",
+                homeFolder: "你的主文件夹",
                 copies: ({ folder }: { folder: string }) => `复制 ${folder}`,
                 clones: ({ repository, branch }: { repository: string; branch: string }) => `在 ${branch} 克隆 ${repository}`,
                 syncsOneWay: ({ folder }: { folder: string }) => `单向同步 ${folder}`,

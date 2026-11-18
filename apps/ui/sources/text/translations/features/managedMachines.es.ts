@@ -584,6 +584,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         madeFrom: "Creadas desde este ajuste",
         noneYet: "Aún no se ha creado ninguna máquina",
         archive: "Archivar ajuste predefinido",
+        archiveAction: "Archivar",
         archiveHelp: "No se crearán más máquinas. Las que están en marcha siguen hasta que se eliminen.",
         archivePreparedHelp: "No se crean máquinas nuevas a partir de él y se elimina su imagen preparada. Las que están en marcha siguen hasta que las elimines.",
         preparedImageCleanupRequired: ({ host }: { host: string }) => `No se pudo eliminar la imagen preparada en ${host}. Elimínala allí.`,
