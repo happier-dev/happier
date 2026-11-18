@@ -82,7 +82,6 @@ export function resolveSessionViewExternalControlFooter(input: Input): SessionVi
     }
 
     const status = input.externalSessionRuntime.status;
-    const takeoverUnsupported = input.externalSessionTakeover.writerSafety === 'unsupported';
     const externalAgentState = input.externalSessionRuntimePresentation?.externalAgent.state ?? 'unknown';
     return {
         externalAgentPresentation: {
@@ -109,9 +108,10 @@ export function resolveSessionViewExternalControlFooter(input: Input): SessionVi
         takeoverPreflightInFlight: input.externalSessionTakeover.takeoverPreflightInFlight,
         takeoverInFlight: input.externalSessionTakeover.takeoverInFlight,
         onRequestTakeoverPreflight:
-            takeoverUnsupported || input.externalSessionOperationBlocksNewOperation === true
-                ? undefined
-                : createTakeoverPreflightCallback(input),
+            input.externalSessionTakeover.writerSafety === 'native_prevention'
+            && input.externalSessionOperationBlocksNewOperation !== true
+                ? createTakeoverPreflightCallback(input)
+                : undefined,
         materialize:
             input.materializeNeeded === true && input.externalSessionMaterialize
                 && input.externalSessionOperationBlocksNewOperation !== true

@@ -43,6 +43,22 @@ function createRecoveryProgress(
 }
 
 describe('resolveSessionViewExternalControlFooter', () => {
+    it('withholds takeover preflight when the linked Machine cannot supply writer safety', () => {
+        const footer = resolveFooter({
+            externalSessionLink: { machineId: 'offline-machine' },
+            externalSessionRuntime: { status: null },
+            externalSessionTakeover: {
+                takeoverInFlight: null,
+                takeoverPreflightInFlight: false,
+                requestTakeoverPreflight: vi.fn(),
+            },
+            isHiddenSystemSessionSession: false,
+        });
+
+        expect(footer).not.toBeNull();
+        expect(footer?.onRequestTakeoverPreflight).toBeUndefined();
+    });
+
     it.each([
         ['working', 'status.workingExternally', false],
         ['waiting', 'status.needsInputExternally', true],
@@ -280,7 +296,7 @@ describe('resolveSessionViewExternalControlFooter', () => {
         expect(footer?.activity).toBe('unknown');
     });
 
-    it('presents unfetched status as unknown and keeps one explicit takeover preflight available', async () => {
+    it('offers one explicit takeover preflight before status is fetched when writer safety is known', async () => {
         const requestTakeoverPreflight = vi.fn(async () => false);
         const footer = resolveFooter({
             externalSessionLink: {
@@ -328,6 +344,7 @@ describe('resolveSessionViewExternalControlFooter', () => {
                 },
             },
             externalSessionTakeover: {
+                writerSafety: 'native_prevention',
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
                 requestTakeoverPreflight: firstRequestTakeoverPreflight,
@@ -349,6 +366,7 @@ describe('resolveSessionViewExternalControlFooter', () => {
                 },
             },
             externalSessionTakeover: {
+                writerSafety: 'native_prevention',
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
                 requestTakeoverPreflight: secondRequestTakeoverPreflight,
@@ -378,6 +396,7 @@ describe('resolveSessionViewExternalControlFooter', () => {
                 },
             },
             externalSessionTakeover: {
+                writerSafety: 'native_prevention',
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
                 requestTakeoverPreflight,
@@ -410,6 +429,7 @@ describe('resolveSessionViewExternalControlFooter', () => {
                 },
             },
             externalSessionTakeover: {
+                writerSafety: 'native_prevention',
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
                 requestTakeoverPreflight: firstRequestTakeoverPreflight,
@@ -431,6 +451,7 @@ describe('resolveSessionViewExternalControlFooter', () => {
                 },
             },
             externalSessionTakeover: {
+                writerSafety: 'native_prevention',
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
                 requestTakeoverPreflight: secondRequestTakeoverPreflight,
@@ -461,6 +482,7 @@ describe('resolveSessionViewExternalControlFooter', () => {
                 },
             },
             externalSessionTakeover: {
+                writerSafety: 'native_prevention',
                 takeoverInFlight: null,
                 takeoverPreflightInFlight: false,
                 requestTakeoverPreflight: vi.fn(),

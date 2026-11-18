@@ -4546,7 +4546,7 @@ describe('SessionView (direct sessions)', () => {
     );
   });
 
-  it('keeps direct takeover footer status conservative and exposes one explicit takeover preflight', async () => {
+  it('keeps the direct Session footer descriptive when its Machine catalog has no writer safety', async () => {
     await renderSessionView();
 
     const latestChatListProps = sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0];
@@ -4555,7 +4555,7 @@ describe('SessionView (direct sessions)', () => {
         state: 'unknown',
         labelKey: 'status.externalStatusUnknown',
         needsAttention: false,
-        agentLabel: (await import('@/text')).t('agentInput.agent.codex'),
+        agentLabel: 'Codex',
         machineLabel: 'happy-host',
       },
       statusKnown: false,
@@ -4567,7 +4567,7 @@ describe('SessionView (direct sessions)', () => {
       canTakeOverPersist: false,
       takeoverPreflightInFlight: false,
       takeoverInFlight: null,
-      onRequestTakeoverPreflight: expect.any(Function),
+      onRequestTakeoverPreflight: undefined,
       materialize: null,
     });
     expect(machineDirectSessionStatusGetSpy).not.toHaveBeenCalled();

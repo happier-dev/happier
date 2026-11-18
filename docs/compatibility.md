@@ -9671,8 +9671,9 @@ metadata-only finite-command carrier, wire epoch, or persisted envelope format.
 
 The unreleased 0.3 Machine Agent catalog's closed V2 `externalSessions`
 projection carries optional `writerSafety` from the Agent manifest. The linked
-Session footer uses an explicit `unsupported` declaration to hide takeover.
-Older projections can omit the field and retain their previous footer behavior.
+Session footer offers takeover preflight only with a current `native_prevention`
+declaration. An unavailable catalog or an older projection without the field
+leaves the footer descriptive without offering takeover.
 Under the unpublished development direct cut, load the matching daemon and UI
 together because earlier strict readers reject the new field. This uses the
 existing wire epoch and changes no persisted data or takeover admission.

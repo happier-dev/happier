@@ -130,6 +130,30 @@ vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', async (import
 
 const machineProjectionReplies = new Map<string, PluginProjectionV2>();
 
+function externalSessionAgentProjection(
+  agentId: string,
+  sourceKind: string,
+  writerSafety: 'native_prevention' | 'unsupported',
+): PluginProjectionV2 {
+  const identity = { pluginId: `happier.agent.${agentId}`, localId: agentId };
+  return PluginProjectionV2Schema.parse({
+    v: 2,
+    generation: 42,
+    familiesById: {},
+    agentsById: { [agentId]: { id: agentId, identity, externalSessions: {
+      agent: identity,
+      generation: 42,
+      operations: { listCandidates: true, resolveLinkIdentity: true, pageTranscript: true, readAfterTranscript: true },
+      sources: [{
+        sourceKind,
+        schema: { fields: [{ kind: 'literal', name: 'kind', value: sourceKind }] },
+        key: { segments: [{ kind: 'literal', value: sourceKind }] },
+      }],
+      writerSafety,
+    } } },
+  });
+}
+
 const machineExternalSessionStatusGetSpy = vi.hoisted(() => vi.fn());
 const machineExternalSessionAttachSpy = vi.hoisted(() => vi.fn<
   (input: ReturnType<typeof ExternalSessionAttachRequestSchema.parse>) => Promise<ReturnType<typeof ExternalSessionAttachResponseSchema.parse>>
@@ -152,6 +176,7 @@ const transcriptReadAfterReply = vi.hoisted(() => vi.fn());
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => false));
 const chatListPropsSpy = vi.hoisted(() => vi.fn());
+const sessionChatFooterPropsSpy = vi.hoisted(() => vi.fn());
 const chatHeaderPropsSpy = vi.hoisted(() => vi.fn());
 const voiceSurfacePropsSpy = vi.hoisted(() => vi.fn());
 const warningActionBannerPropsSpy = vi.hoisted(() => vi.fn());
@@ -454,6 +479,17 @@ vi.mock('@/components/sessions/transcript/ChatList', () => ({
     return React.createElement('ChatList', props);
   },
 }));
+vi.mock('@/components/sessions/transcript/ChatFooter', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/sessions/transcript/ChatFooter')>();
+  const React = await import('react');
+  return {
+    ...actual,
+    SessionChatFooter: (props: React.ComponentProps<typeof actual.SessionChatFooter>) => {
+      sessionChatFooterPropsSpy(props);
+      return React.createElement(actual.SessionChatFooter, props);
+    },
+  };
+});
 vi.mock('@/components/ui/empty/EmptyMessages', () => ({
   EmptyMessages: () => React.createElement('EmptyMessages'),
 }));
@@ -1004,6 +1040,7 @@ describe('SessionView (direct sessions)', () => {
     activeServerAccountScopeState.current = canonicalDraftScope;
     createDefaultActionExecutorMock.mockReset();
     chatListPropsSpy.mockReset();
+    sessionChatFooterPropsSpy.mockReset();
     chatHeaderPropsSpy.mockReset();
     voiceSurfacePropsSpy.mockReset();
     warningActionBannerPropsSpy.mockClear();
@@ -1158,11 +1195,14 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('keeps external control footer status conservative and exposes one explicit takeover preflight', async () => {
+    daemonMergedProjectionState.current = {
+      phase: 'ready',
+      inputs: { pluginProjectionById: {}, pluginProjectionV2: externalSessionAgentProjection('codex', 'codexHome', 'native_prevention') },
+    };
     await renderSessionView();
 
-    expect(chatListPropsSpy).toHaveBeenCalled();
-    const latestChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
-    expect(latestChatListProps?.externalControlFooter).toEqual({
+    const footer = sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0]?.externalControl;
+    expect(footer).toEqual({
       externalAgentPresentation: {
         state: 'unknown',
         labelKey: 'status.externalStatusUnknown',
@@ -1190,7 +1230,7 @@ describe('SessionView (direct sessions)', () => {
     expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
 
     await act(async () => {
-      await latestChatListProps?.externalControlFooter?.onRequestTakeoverPreflight?.();
+      await footer?.onRequestTakeoverPreflight?.();
     });
 
     expect(machineExternalSessionStatusGetSpy).toHaveBeenCalledTimes(1);
@@ -1226,25 +1266,10 @@ describe('SessionView (direct sessions)', () => {
     session.materializedThroughSourceAt = Date.now();
     session.metadata.flavor = agentId;
     session.metadata.externalSessionV1 = { ...session.metadata.externalSessionV1, machineId: linkedMachineId, agentId, source };
-    const identity = { pluginId: `happier.agent.${agentId}`, localId: agentId };
-    const projection = (safety: typeof writerSafety) => PluginProjectionV2Schema.parse({
-      v: 2,
-      generation: 42,
-      familiesById: {},
-      agentsById: { [agentId]: { id: agentId, identity, externalSessions: {
-        agent: identity,
-        generation: 42,
-        operations: { listCandidates: true, resolveLinkIdentity: true, pageTranscript: true, readAfterTranscript: true },
-        sources: [{
-          sourceKind: source.kind,
-          schema: { fields: [{ kind: 'literal', name: 'kind', value: source.kind }] },
-          key: { segments: [{ kind: 'literal', value: source.kind }] },
-        }],
-        writerSafety: safety,
-      } } },
-    });
-    machineProjectionReplies.set(linkedMachineId, projection(writerSafety));
-    machineProjectionReplies.set('machine-1', projection(writerSafety === 'unsupported' ? 'native_prevention' : 'unsupported'));
+    machineProjectionReplies.set(linkedMachineId, externalSessionAgentProjection(agentId, source.kind, writerSafety));
+    machineProjectionReplies.set('machine-1', externalSessionAgentProjection(
+      agentId, source.kind, writerSafety === 'unsupported' ? 'native_prevention' : 'unsupported',
+    ));
 
     // The route has already bound its Account when the shell mounts. Refuse a new
     // credential resolution while allowing the scoped RPC to use the admitted Account.
@@ -1281,6 +1306,10 @@ describe('SessionView (direct sessions)', () => {
   });
 
   it('keeps the external control footer reference stable across unrelated shell renders', async () => {
+    daemonMergedProjectionState.current = {
+      phase: 'ready',
+      inputs: { pluginProjectionById: {}, pluginProjectionV2: externalSessionAgentProjection('codex', 'codexHome', 'native_prevention') },
+    };
     let forceShellRender: (() => void) | null = null;
     function ShellRenderHarness() {
       const [renderSequence, setRenderSequence] = React.useState(0);
@@ -1300,7 +1329,7 @@ describe('SessionView (direct sessions)', () => {
     }
     const screen = await renderScreen(<ShellRenderHarness />);
     await settleExternalSessionView();
-    const initialFooter = chatListPropsSpy.mock.calls.at(-1)?.[0]?.externalControlFooter;
+    const initialFooter = sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0]?.externalControl;
     expect(initialFooter).toBeTruthy();
     expect(screen.findByTestId('shell-render-marker')?.props.accessibilityLabel).toBe('0');
 
@@ -1310,11 +1339,11 @@ describe('SessionView (direct sessions)', () => {
     await settleExternalSessionView();
 
     expect(screen.findByTestId('shell-render-marker')?.props.accessibilityLabel).toBe('1');
-    expect(chatListPropsSpy.mock.calls.at(-1)?.[0]?.externalControlFooter).toBe(initialFooter);
+    expect(sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0]?.externalControl).toBe(initialFooter);
     await act(async () => { await initialFooter.onRequestTakeoverPreflight(); });
     await settleExternalSessionView();
     expect(machineExternalSessionStatusGetSpy).toHaveBeenCalledTimes(1);
-    expect(chatListPropsSpy.mock.calls.at(-1)?.[0]?.externalControlFooter).toMatchObject({
+    expect(sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0]?.externalControl).toMatchObject({
       statusKnown: true, canTakeOverDirect: true, canTakeOverPersist: true,
     });
   });
@@ -1345,7 +1374,7 @@ describe('SessionView (direct sessions)', () => {
       });
     expect(latestChatListProps?.session.metadata.externalSessionOperationV1)
       .toBeUndefined();
-    expect(latestChatListProps?.externalControlFooter).toEqual(expect.objectContaining({
+    expect(sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0]?.externalControl).toEqual(expect.objectContaining({
       statusKnown: false,
       onRequestTakeoverPreflight: undefined,
       materialize: null,
@@ -3082,7 +3111,7 @@ describe('SessionView (direct sessions)', () => {
     const latestHeaderProps = chatHeaderPropsSpy.mock.calls.at(-1)?.[0];
     const externalStatus = findHeaderRightElementChild(latestHeaderProps?.rightElement, (child: any) => child?.props?.testID === 'session-header-external-agent-status-working');
     expect(externalStatus?.props?.accessibilityLabel).toBe('status.workingExternally');
-    expect(chatListPropsSpy.mock.calls.at(-1)?.[0]?.externalControlFooter)
+    expect(sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0]?.externalControl)
       .toEqual(expect.objectContaining({
         statusKnown: false,
         externalAgentPresentation: {
@@ -3129,7 +3158,7 @@ describe('SessionView (direct sessions)', () => {
 
     await renderSessionViewAndSettle();
 
-    expect(chatListPropsSpy.mock.calls.at(-1)?.[0]?.externalControlFooter)
+    expect(sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0]?.externalControl)
       .toEqual(expect.objectContaining({
         externalAgentPresentation: expect.objectContaining({
           state: 'waiting',
@@ -3140,7 +3169,7 @@ describe('SessionView (direct sessions)', () => {
 
     await flushHookEffects({ advanceTimersMs: 500, cycles: 1, turns: 2 });
 
-    expect(chatListPropsSpy.mock.calls.at(-1)?.[0]?.externalControlFooter)
+    expect(sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0]?.externalControl)
       .toEqual(expect.objectContaining({
         externalAgentPresentation: expect.objectContaining({
           state: 'unknown',
@@ -3921,7 +3950,7 @@ describe('SessionView (direct sessions)', () => {
 
     expect(chatListPropsSpy).toHaveBeenCalled();
     const lastChatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
-    expect(lastChatListProps?.externalControlFooter ?? null).toBeNull();
+    expect(sessionChatFooterPropsSpy.mock.calls.at(-1)?.[0]?.externalControl ?? null).toBeNull();
     expect(lastChatListProps?.onRequestSwitchToRemote).toBeUndefined();
     expect(voiceSurfacePropsSpy).not.toHaveBeenCalled();
 

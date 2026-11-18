@@ -245,6 +245,7 @@ describe('ChatFooter (local control)', () => {
     it.each([
         ['Codex', 'native_prevention', true],
         ['Muse', 'unsupported', false],
+        ['Muse with no Machine catalog', undefined, false],
     ] as const)('shows the Take over action for a completed %s import only when supported', async (agentLabel, writerSafety, offered) => {
         const input = {
             externalSessionLink: { machineId: 'machine-1' },
