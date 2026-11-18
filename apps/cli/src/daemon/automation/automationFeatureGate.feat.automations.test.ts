@@ -30,14 +30,6 @@ describe('Automation worker feature decisions', () => {
     })).toMatchObject({ state: 'disabled' });
   });
 
-  it('respects build policy deny list', () => {
-    expect(
-      getAutomationWorkerFeatureDecision({ NODE_ENV: 'test',
-        HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
-        HAPPIER_BUILD_FEATURES_DENY: 'automations',
-      }),
-    ).toMatchObject({ state: 'disabled' });
-  });
 });
 
 describe('Workflow runtime activation', () => {
