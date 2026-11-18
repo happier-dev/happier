@@ -9,14 +9,16 @@ export const CARD_GRID = Object.freeze({
     columns: 3,
     gapPx: 10,
     minColumnWidthPx: 200,
+    /** A compact card (a mark, a name and two quiet lines: phone Credentials, R7 `p4-creds`) fits two on a phone. */
+    compactMinColumnWidthPx: 150,
 });
 
 /** How many columns a card grid of this width shows. */
-export function resolveCardGridColumns(widthPx: number, requestedColumns: number = CARD_GRID.columns): number {
+export function resolveCardGridColumns(widthPx: number, requestedColumns: number = CARD_GRID.columns, compact = false): number {
     return resolveHappierColumnCountForWidth({
         availableWidthPx: widthPx,
         requestedColumns,
-        minColumnWidthPx: CARD_GRID.minColumnWidthPx,
+        minColumnWidthPx: compact ? CARD_GRID.compactMinColumnWidthPx : CARD_GRID.minColumnWidthPx,
         columnGapPx: CARD_GRID.gapPx,
     });
 }

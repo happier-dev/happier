@@ -177,4 +177,26 @@ describe('ConnectedServicesIndexView grid', () => {
     expect(screen.getTextContent()).toContain('add:agents');
     await screen.unmount();
   });
+  it('groups a phone\'s cards by kind, two per row, with the purpose line in place of the count (R7 p4-creds)', async () => {
+    const kinds = model(undefined, ['work', 'key', 'expired']);
+    const keyed = { ...kinds, sheets: kinds.sheets.map((sheet) => ({ ...sheet, canAdd: true, accounts: sheet.accounts.map((account) =>
+      account.kind !== 'qualified' ? account
+        : account.accountId === 'key' ? { ...account, profile: { ...account.profile, accessMode: 'apiKey' } }
+          : account.accountId === 'expired' ? { ...account, status: 'needs_reauth' } : account) })) };
+    const screen = await render(undefined, { model: keyed as typeof kinds, presentation: 'grid', compact: true,
+      summary: { needsYouCount: 1, asOf: null } });
+    const ids = (group: string) => {
+      const node = screen.findHostByTestId(`connected-services-index:${group}`);
+      return ['work', 'key', 'expired'].filter((id) => node?.findAll((child) => child.props?.testID === `connected-services-account:${CODEX.pluginId}/${CODEX.localId}:${id}`).length);
+    };
+    expect(ids('needs-you')).toEqual(['expired']);
+    expect(ids('agent-accounts')).toEqual(['work']);
+    expect(ids('api-keys')).toEqual(['key']);
+    // The page's "+" adds; no group or service carries its own Add.
+    expect(screen.findHostByTestId(`connected-services-service:${CODEX.pluginId}/${CODEX.localId}:add-account`)).toBeNull();
+    expect(screen.getTextContent()).toContain('Sign-ins and keys your agents use.');
+    expect(screen.findHostByTestId('connected-services-summary')).toBeNull();
+    expect(screen.getTextContent()).toContain('Codex');
+    await screen.unmount();
+  });
 });

@@ -110,6 +110,8 @@ export const en = {
     addAgentAccount: 'Add an agent account',
     agentAccountsDescription: 'Plans and keys your agents sign in with, and how much each has left.',
     agentAccountsGroup: 'Agent accounts',
+    apiKeysGroup: 'API keys',
+    phonePurpose: 'Sign-ins and keys your agents use.',
     composerGroup: 'In the composer',
     composerDescription: 'How much is left, beside the prompt.',
     composerUsageGauges: 'Usage gauges',

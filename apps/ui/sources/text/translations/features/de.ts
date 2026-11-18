@@ -4530,6 +4530,8 @@ const de: ConnectedServicesCollectionCopy = {
     addAgentAccount: 'Agent-Konto hinzufügen',
     agentAccountsDescription: 'Abos und Schlüssel, mit denen sich deine Agents anmelden, und wie viel jedem bleibt.',
     agentAccountsGroup: 'Agent-Konten',
+    apiKeysGroup: 'API-Schlüssel',
+    phonePurpose: 'Anmeldungen und Schlüssel, die deine Agents nutzen.',
     composerGroup: 'Im Eingabefeld',
     composerDescription: 'Wie viel noch übrig ist, neben der Eingabe.',
     composerUsageGauges: 'Nutzungsanzeigen',

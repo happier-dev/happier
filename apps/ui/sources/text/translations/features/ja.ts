@@ -4475,6 +4475,8 @@ const ja: ConnectedServicesCollectionCopy = {
     addAgentAccount: 'エージェントのアカウントを追加',
     agentAccountsDescription: 'エージェントがサインインに使うプランとキー、それぞれの残り。',
     agentAccountsGroup: 'エージェントのアカウント',
+    apiKeysGroup: 'API キー',
+    phonePurpose: 'エージェントが使うサインインとキー。',
     composerGroup: '入力欄',
     composerDescription: 'プロンプトの横に残量を表示します。',
     composerUsageGauges: '使用量ゲージ',

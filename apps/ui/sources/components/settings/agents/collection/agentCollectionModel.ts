@@ -73,6 +73,16 @@ export function buildAgentCollection(params: Readonly<{
 }
 
 /** Text search is a local lens; ordinary held facts stay available to the condition header. */
+/**
+ * What a row asks of the viewer, for the rail and the grid alike: a sign-in whenever the machine reports one
+ * (verified trouble or not; amber needs you, lab phone-system p4), else a failure or an update; healthy rows say nothing.
+ */
+export function resolveAgentRowAttention(row: AgentCollectionRow): 'signIn' | 'failed' | 'update' | null {
+    if (row.trouble || row.status === 'needsSignIn') return 'signIn';
+    if (row.status === 'failed') return 'failed';
+    return row.status === 'updateAvailable' ? 'update' : null;
+}
+
 export function filterAgentCollectionByQuery(collection: AgentCollection, query: string): AgentCollection {
     const normalized = query.trim().toLocaleLowerCase();
     if (!normalized) return collection;

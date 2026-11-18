@@ -4416,6 +4416,8 @@ const zhHant: ConnectedServicesCollectionCopy = {
     addAgentAccount: '新增代理帳戶',
     agentAccountsDescription: '你的代理用來登入的方案與金鑰，以及各自的剩餘額度。',
     agentAccountsGroup: '代理帳戶',
+    apiKeysGroup: 'API 金鑰',
+    phonePurpose: '你的代理使用的登入和金鑰。',
     composerGroup: '在輸入框中',
     composerDescription: '在提示詞旁顯示剩餘額度。',
     composerUsageGauges: '用量指示',

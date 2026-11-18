@@ -4517,6 +4517,8 @@ const ca: ConnectedServicesCollectionCopy = {
     addAgentAccount: 'Afegeix un compte d’agent',
     agentAccountsDescription: 'Plans i claus amb què inicien sessió els teus agents, i quant en queda a cadascun.',
     agentAccountsGroup: 'Comptes d’agents',
+    apiKeysGroup: 'Claus d’API',
+    phonePurpose: 'Inicis de sessió i claus que fan servir els teus agents.',
     composerGroup: 'Al compositor',
     composerDescription: 'Quant en queda, al costat de la petició.',
     composerUsageGauges: 'Indicadors d’ús',

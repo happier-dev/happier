@@ -13,6 +13,7 @@ import { agentColumnFacts } from './agentColumnAdapter';
 import {
     buildAgentCollection,
     isCommandAgentDefinition,
+    resolveAgentRowAttention,
     resolveSelectedAgentCollectionId,
 } from './agentCollectionModel';
 
@@ -201,5 +202,18 @@ describe('resolveSelectedAgentCollectionId', () => {
         expect(resolveSelectedAgentCollectionId(entries, { agentId: null, pluginId: null })).toBeNull();
         expect(resolveSelectedAgentCollectionId(entries, { agentId: 'missing', pluginId: null })).toBeNull();
         expect(resolveSelectedAgentCollectionId(entries, { agentId: 'provider', pluginId: 'other.plugin' })).toBeNull();
+    });
+});
+
+describe('resolveAgentRowAttention', () => {
+    it('asks for a sign-in whenever the machine reports one, verified trouble or not; updates and failures keep their own state', () => {
+        const collection = buildAgentCollection({
+            entries: [entry('claude'), entry('opencode'), entry('gemini'), entry('codex'), entry('cursor')],
+            agents: [agent('claude', 'needsSignIn', { signInTrouble: false }), agent('opencode', 'needsSignIn'),
+                agent('gemini', 'updateAvailable'), agent('codex', 'failed'), agent('cursor', 'ready')],
+            query: '',
+        });
+        const byId = Object.fromEntries(collection.onMachine.map((row) => [row.key, resolveAgentRowAttention(row)]));
+        expect(byId).toEqual({ claude: 'signIn', opencode: 'signIn', gemini: 'update', codex: 'failed', cursor: null });
     });
 });

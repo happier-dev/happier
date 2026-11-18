@@ -4415,6 +4415,8 @@ const zhHans: ConnectedServicesCollectionCopy = {
     addAgentAccount: '添加智能体账户',
     agentAccountsDescription: '你的智能体用来登录的套餐和密钥，以及各自的剩余额度。',
     agentAccountsGroup: '智能体账户',
+    apiKeysGroup: 'API 密钥',
+    phonePurpose: '你的智能体使用的登录和密钥。',
     composerGroup: '在输入框中',
     composerDescription: '在提示词旁显示剩余额度。',
     composerUsageGauges: '用量指示',

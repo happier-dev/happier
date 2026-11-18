@@ -30,7 +30,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveConfiguredAcpAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
 import { openAgentAddModal, type OpenAgentAddModalParams } from '../add/agentAddModalConfig';
-import { buildAgentCollection, filterAgentCollectionByQuery, isCommandAgentDefinition, resolveSelectedAgentCollectionId, type AgentCollectionRow } from './agentCollectionModel';
+import { buildAgentCollection, filterAgentCollectionByQuery, isCommandAgentDefinition, resolveAgentRowAttention, resolveSelectedAgentCollectionId, type AgentCollectionRow } from './agentCollectionModel';
 import { CollectionIndexRow } from '@/components/ui/lists/collection/CollectionIndexRow';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { resolveAgentsMachineCandidateAvailability, type AgentAdministrationCatalog } from './useAgentAdministrationCatalog';
@@ -60,10 +60,7 @@ function readParam(value: string | string[] | undefined): string | null {
 /** One status line; quiet (none) when the machine has not said anything about the agent yet. */
 /** The row's state that must be said (P8 slots): a verified sign-in trouble, a failure, a waiting update. */
 function resolveRowStatus(row: AgentCollectionRow, label: string | undefined): Readonly<{ status: CollectionRowStatus; label: string }> | null {
-    const status: CollectionRowStatus | null = row.trouble ? 'signIn'
-        : row.status === 'failed' ? 'failed'
-            : row.status === 'updateAvailable' ? 'update'
-                : null;
+    const status: CollectionRowStatus | null = resolveAgentRowAttention(row);
     if (!status) return null;
     return { status, label: status === 'update' ? t('capabilities.status.update') : label ?? t('machineAgents.needsSignIn') };
 }

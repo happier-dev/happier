@@ -4535,6 +4535,8 @@ const fr: ConnectedServicesCollectionCopy = {
     addAgentAccount: 'Ajouter un compte d’agent',
     agentAccountsDescription: 'Les abonnements et clés avec lesquels vos agents se connectent, et ce qu’il reste à chacun.',
     agentAccountsGroup: 'Comptes des agents',
+    apiKeysGroup: 'Clés d’API',
+    phonePurpose: 'Les connexions et clés utilisées par vos agents.',
     composerGroup: 'Dans le compositeur',
     composerDescription: 'Ce qu’il reste, à côté de la saisie.',
     composerUsageGauges: 'Jauges d’utilisation',

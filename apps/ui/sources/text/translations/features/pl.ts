@@ -4540,6 +4540,8 @@ const pl: ConnectedServicesCollectionCopy = {
     addAgentAccount: 'Dodaj konto agenta',
     agentAccountsDescription: 'Plany i klucze, którymi logują się Twoi agenci, i ile każdemu zostało.',
     agentAccountsGroup: 'Konta agentów',
+    apiKeysGroup: 'Klucze API',
+    phonePurpose: 'Logowania i klucze, których używają Twoi agenci.',
     composerGroup: 'W polu wiadomości',
     composerDescription: 'Ile zostało, obok promptu.',
     composerUsageGauges: 'Wskaźniki użycia',

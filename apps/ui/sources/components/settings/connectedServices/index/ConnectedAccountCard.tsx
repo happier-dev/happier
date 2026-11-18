@@ -5,7 +5,9 @@ import { StyleSheet } from 'react-native-unistyles';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { Typography } from '@/constants/Typography';
 
-import { ConnectedServiceMark } from '../ConnectedServiceMark';
+import { ConnectedServiceMark, formatAgentNames } from '../ConnectedServiceMark';
+import { presentConnectedAccountAccessMode } from '../model/presentConnectedAccountAccessMode';
+import { resolveConnectedAccountAccessMode } from '../model/resolveConnectedAccountAccessMode';
 import { AccountUsageResetsLine } from '../usage/AccountUsageFacts';
 import {
     ConnectedAccountIndexActions,
@@ -19,6 +21,7 @@ import {
 } from './ConnectedAccountIndexRow';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
 import { ConnectedAccountIdentityText } from '../ConnectedAccountIdentityText';
+import { Text } from '@/components/ui/text/Text';
 
 /**
  * One account as a card (lab csvc C2, owner 11-01): as tall as what it holds. The header is the account and
@@ -30,8 +33,14 @@ export const ConnectedAccountCardView = React.memo(function ConnectedAccountCard
     legacyServiceMarkId: string | null;
     agentIds: readonly string[];
     now: number;
+    /**
+     * A phone's two-per-row card (R7, lab phone-system `p4-creds`): the mark, the account, its kind, then the
+     * agents that use it. Its limits, resets and default live one press away on the account.
+     */
+    compact?: Readonly<{ usedBy: readonly string[] }>;
 }>) {
     const { facts } = props;
+    if (props.compact) return <ConnectedAccountCompactCard {...props} compact={props.compact} />;
     const identity = [props.identityLabel, facts.planLabel].filter(Boolean).join(' · ');
     return (
         <WidgetFrame
@@ -91,6 +100,31 @@ export const ConnectedAccountCardView = React.memo(function ConnectedAccountCard
         />
     );
 });
+
+function ConnectedAccountCompactCard(props: React.ComponentProps<typeof ConnectedAccountCardView> & Readonly<{ compact: Readonly<{ usedBy: readonly string[] }> }>) {
+    const { facts } = props;
+    const accessMode = props.accessMode ?? resolveConnectedAccountAccessMode(null, facts.subscription);
+    const kind = accessMode ? presentConnectedAccountAccessMode(accessMode, facts.planLabel) : facts.planLabel;
+    return (
+        <WidgetFrame
+            testID={props.testID}
+            accessibilityLabel={props.title}
+            onOpen={props.onOpen}
+            frameStyle="card"
+            fill
+            placement="home"
+            bodyHeight="content"
+            rows={0}
+            mark={<ConnectedServiceMark service={props.service} legacyServiceId={props.legacyServiceMarkId} pluginId={props.pluginId} size="column" />}
+            title={<ConnectedAccountIdentityText value={props.title} style={styles.title} numberOfLines={1} />}
+            source={kind ? <ConnectedAccountIdentityText value={kind} style={styles.subtitle} numberOfLines={1} /> : undefined}
+            sourcePlacement="below"
+            facts={props.compact.usedBy.length > 0
+                ? <Text style={styles.subtitle} numberOfLines={1}>{formatAgentNames(props.compact.usedBy)}</Text>
+                : undefined}
+        />
+    );
+}
 
 const styles = StyleSheet.create((theme) => ({
     title: {

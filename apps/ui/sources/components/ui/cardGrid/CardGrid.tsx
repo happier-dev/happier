@@ -30,6 +30,8 @@ export const CardGrid = React.memo(function CardGrid(props: Readonly<{
     children: React.ReactNode;
     /** At most this many columns (default three). */
     columns?: 1 | 2 | 3;
+    /** Compact cards (`CARD_GRID.compactMinColumnWidthPx`): two fit on a phone. */
+    compact?: boolean;
     onColumnCountChange?: (columns: number) => void;
     testID?: string;
     style?: StyleProp<ViewStyle>;
@@ -40,9 +42,9 @@ export const CardGrid = React.memo(function CardGrid(props: Readonly<{
     const onLayout = React.useCallback((event: LayoutChangeEvent) => {
         const width = event.nativeEvent.layout.width;
         if (!Number.isFinite(width) || width <= 0) return;
-        const next = resolveCardGridColumns(width, requested);
+        const next = resolveCardGridColumns(width, requested, props.compact === true);
         setColumns((current) => (current === next ? current : next));
-    }, [requested]);
+    }, [requested, props.compact]);
     React.useEffect(() => { onColumnCountChange?.(columns); }, [columns, onColumnCountChange]);
 
     // Cards that say how many rows they take (widget footprints) pack in two dimensions on a two-column grid,

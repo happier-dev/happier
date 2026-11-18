@@ -4543,6 +4543,8 @@ const ru: ConnectedServicesCollectionCopy = {
     addAgentAccount: 'Добавить аккаунт агента',
     agentAccountsDescription: 'Тарифы и ключи, с которыми входят ваши агенты, и сколько у каждого осталось.',
     agentAccountsGroup: 'Аккаунты агентов',
+    apiKeysGroup: 'API-ключи',
+    phonePurpose: 'Входы и ключи, которые используют ваши агенты.',
     composerGroup: 'В поле ввода',
     composerDescription: 'Сколько осталось — рядом с запросом.',
     composerUsageGauges: 'Индикаторы использования',

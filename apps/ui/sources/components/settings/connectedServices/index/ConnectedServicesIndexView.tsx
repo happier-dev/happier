@@ -131,6 +131,9 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
     const { labelsByKey, present } = props;
     // Cards on every width, a phone included (R7); the device's view decides.
     const grid = props.presentation === 'grid';
+    // A phone's cards are grouped by kind, two per row (R7, lab phone-system `p4-creds`): Needs you, Agent accounts,
+    // API keys. The page's "+" adds to any service, so the groups carry no Add of their own.
+    const kindCards = grid && props.compact;
     const accountCount = props.model.sheets.reduce((total, sheet) => total + sheet.accounts.length, 0);
     // The phone's root is this Overview (R6/R7), so the rail's search comes here: the same field, threshold and match.
     const [query, setQuery] = React.useState('');
@@ -255,9 +258,9 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
     // Signed-out accounts lead the page in Needs you (lab `s2svc:home`), each once; their sections list the rest.
     const isSignedOut = (account: ConnectedServicesIndexAccount) => isConnectedAccountSignedOut(parseDisplayableCredentialHealthStatus(account.status));
     const listed = (sheets: readonly ConnectedServicesIndexSheet[]) => sheets.flatMap((sheet) => sheet.accounts
-        .filter((account) => grid || !isSignedOut(account))
+        .filter((account) => (grid && !kindCards) || !isSignedOut(account))
         .map((account) => ({ sheet, account })));
-    const needsYou = grid ? [] : model.sheets.flatMap((sheet) => sheet.accounts.filter(isSignedOut).map((account) => ({ sheet, account })));
+    const needsYou = grid && !kindCards ? [] : model.sheets.flatMap((sheet) => sheet.accounts.filter(isSignedOut).map((account) => ({ sheet, account })));
 
     // One row per account, on a sheet that mixes services: the fact line names the service when no plan does.
     const renderRows = (rows: ReadonlyArray<Readonly<{ sheet: ConnectedServicesIndexSheet; account: ConnectedServicesIndexAccount }>>, needs: boolean) => rows.map(({ sheet, account }, index) => {
@@ -327,6 +330,54 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
             </ItemGroup>
         );
     };
+
+    const renderKindCards = (input: Readonly<{
+        testID: string;
+        title: string;
+        rows: ReadonlyArray<Readonly<{ sheet: ConnectedServicesIndexSheet; account: ConnectedServicesIndexAccount }>>;
+        sheets: readonly ConnectedServicesIndexSheet[];
+        extraRows?: React.ReactNode;
+    }>) => {
+        const support = renderSupportRows(input.sheets);
+        if (input.rows.length === 0 && support.length === 0 && !input.extraRows) return null;
+        const settled = props.settled && input.rows.some(({ sheet }) => sheet.serviceKey === props.settled!.serviceKey) ? props.settled.node : null;
+        return (
+            <ItemGroup testID={input.testID} title={input.title} surface="none">
+                {input.rows.length > 0 ? (
+                    <CardGrid columns={2} compact>
+                        {input.rows.map(({ sheet, account }) => {
+                            const entry = entryFor(sheet, account);
+                            const usedBy = sheet.usedByByAccountId?.[account.accountId]?.usedBy ?? sheet.usedBy;
+                            return (
+                                <View key={`${sheet.serviceKey}:${account.accountId}`} style={styles.cardCell}>
+                                    {props.renderAccount({
+                                        sheet,
+                                        account,
+                                        render: (facts) => (
+                                            <ConnectedAccountCardView
+                                                {...entry}
+                                                fixProminence="secondary"
+                                                facts={againstPage(facts)}
+                                                legacyServiceMarkId={sheet.legacyServiceId}
+                                                agentIds={sheet.usedByAgentIds}
+                                                now={props.now}
+                                                compact={{ usedBy }}
+                                            />
+                                        ),
+                                    })}
+                                </View>
+                            );
+                        })}
+                    </CardGrid>
+                ) : null}
+                {support}
+                {settled ? <View style={styles.gridSettle}>{settled}</View> : null}
+                {input.extraRows}
+            </ItemGroup>
+        );
+    };
+    const isApiKey = (sheet: ConnectedServicesIndexSheet, account: ConnectedServicesIndexAccount) =>
+        presentConnectedServicesIndexAccount(sheet, account, labelsByKey, present).accessMode?.kind === 'apiKey';
 
     const renderGridSheet = (sheet: ConnectedServicesIndexSheet, sectionTitle?: string) => {
         const summary = presentSheetStateLine(sheet)
@@ -419,7 +470,22 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
         </ItemGroup>
     );
 
-    const agents = grid
+    const agentRows = kindCards ? listed(agentSheets) : [];
+    const agents = kindCards ? <>
+            {renderKindCards({
+                testID: 'connected-services-index:agent-accounts',
+                title: t('connectedServicesCollection.agentAccountsGroup'),
+                rows: agentRows.filter(({ sheet, account }) => !isApiKey(sheet, account)),
+                sheets: agentSheets,
+            })}
+            {renderKindCards({
+                testID: 'connected-services-index:api-keys',
+                title: t('connectedServicesCollection.apiKeysGroup'),
+                rows: agentRows.filter(({ sheet, account }) => isApiKey(sheet, account)),
+                sheets: [],
+            })}
+        </>
+        : grid
         ? agentSheets.map((sheet) => renderGridSheet(sheet))
         : renderListSection({
             testID: 'connected-services-index:agent-accounts',
@@ -435,7 +501,15 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
         icon={<Icon name="package" size={18} color={theme.colors.text.secondary} />}
         onPress={props.onOpenNpmProfiles}
     /> : null;
-    const tools = grid
+    const tools = kindCards
+        ? renderKindCards({
+            testID: 'connected-services-index:code-and-tools',
+            title: t('connectedServicesSettings.codeAndToolsTitle'),
+            rows: listed(toolSheets),
+            sheets: toolSheets,
+            extraRows: npmProfiles,
+        })
+        : grid
         ? <>{toolSheets.map((sheet, index) => renderGridSheet(sheet, index === 0 ? t('connectedServicesSettings.codeAndToolsTitle') : undefined))}
             {npmProfiles ? <ItemGroup title={toolSheets.length === 0 ? t('connectedServicesSettings.codeAndToolsTitle') : undefined} surface="none">{npmProfiles}</ItemGroup> : null}</>
         : renderListSection({
@@ -450,7 +524,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
     return (
         <ItemList pageColumn="wide">
             <SettingsPageHeader
-                {...(props.compact ? {} : {
+                {...(props.compact ? { description: t('connectedServicesCollection.phonePurpose') } : {
                     title: t('connectedServicesCollection.indexTitle'),
                     description: t('connectedServicesCollection.indexDescription'),
                 })}
@@ -461,7 +535,8 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
                 actions={props.compact ? undefined : switcher}
                 details={(
                     <View style={styles.details}>
-                        {accountCount > 0 ? (
+                        {/* A phone's purpose line replaces the count (lab `p4-creds`); old usage is still said here, once. */}
+                        {accountCount > 0 && (!props.compact || pageUsageStale) ? (
                             <ConnectedServicesSummaryLine
                                 accountCount={accountCount}
                                 poolCount={pooled.length}

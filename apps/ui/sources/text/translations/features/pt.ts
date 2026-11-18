@@ -4511,6 +4511,8 @@ const pt: ConnectedServicesCollectionCopy = {
     addAgentAccount: 'Adicionar uma conta de agente',
     agentAccountsDescription: 'Planos e chaves com que os seus agentes iniciam sessão, e quanto resta a cada um.',
     agentAccountsGroup: 'Contas dos agentes',
+    apiKeysGroup: 'Chaves de API',
+    phonePurpose: 'Logins e chaves que seus agentes usam.',
     composerGroup: 'No compositor',
     composerDescription: 'Quanto resta, ao lado do prompt.',
     composerUsageGauges: 'Indicadores de uso',
