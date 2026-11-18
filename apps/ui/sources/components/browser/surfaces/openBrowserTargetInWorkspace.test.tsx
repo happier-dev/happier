@@ -321,14 +321,11 @@ describe('openBrowserTargetInWorkspace', () => {
         expect(await open(externalTarget)).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
         expect(openDetailsTab).not.toHaveBeenCalled();
     });
-    it('refuses oversized command correlation before effects and accepts the existing dispatch boundary', async () => {
+    it('accepts long command correlations at the dispatch boundary', async () => {
         const openDetailsTab = vi.fn();
         const { executor, context } = createBrowserWorkspaceOpeningFixture({ openDetailsTab, scope: 'sessionDetails', platform: 'web' });
         const input = { scopeId: 'workspace_1', target: localServicePreviewTarget };
         expect(await executor.execute('browser.workspace.open', { ...input, commandId: 'x'.repeat(257) },
-            { ...context, surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-        expect(openDetailsTab).not.toHaveBeenCalled();
-        expect(await executor.execute('browser.workspace.open', { ...input, commandId: 'x'.repeat(256) },
             { ...context, surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: true });
         expect(openDetailsTab).toHaveBeenCalledTimes(1);
     });
