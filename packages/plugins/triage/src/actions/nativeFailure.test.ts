@@ -39,13 +39,14 @@ describe('native failure presentation at its Triage owner', () => {
     // or unreadable read looked like a Home with no Triage catalog and the real cause was lost.
     const context = { plugin: { id: 'happier.triage' }, signal: new AbortController().signal,
       ui: { executeAction: async () => answer() } } as unknown as PluginClientActionContext;
-    const launch = TriageNativeFailureInputV1Schema.parse({ kind: 'launch', context: { kind: 'healthAlert',
+    const subject = { kind: 'healthAlert',
       notice: { kind: 'host', artifactId: 'notice', source: { kind: 'host', topic: 'resource_limit' } },
-      target: { kind: 'machine', machine: { serverId: 'home', machineId: 'affected' } } } });
+      target: { kind: 'machine', machine: { serverId: 'home', machineId: 'affected' } } };
+    const launch = TriageNativeFailureInputV1Schema.parse({ kind: 'launch', context: subject });
     expect(await createTriageNativeFailureOwner().invoke(launch, context))
       .toEqual({ kind: 'presentation', outcome: { kind: 'unavailable', code } });
     const read = TriageNativeFailureInputV1Schema.parse({
-      kind: 'readAgentActions', context: launch.context, includeDefault: true,
+      kind: 'readAgentActions', context: subject, includeDefault: true,
     });
     expect(await createTriageNativeFailureOwner().invoke(read, context))
       .toEqual({ kind: 'presentation', outcome: { kind: 'unavailable', code } });

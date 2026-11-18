@@ -1,4 +1,4 @@
-import { actionTargetUnavailable } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { actionTargetUnavailable, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { type ActionExecutorContext, type ActionId } from '@happier-dev/protocol/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectExternalActionRequesterInvocationV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -32,7 +32,7 @@ export type UiAccountActionExecute = (args: Readonly<{
 export function createUiAccountActionTransport(params: Readonly<{
     account: Pick<LazyActionAccountContext, 'serverId' | 'accountId' | 'assertCurrent' | 'assertResultCurrent'>
         & Partial<Pick<LazyActionAccountContext, 'serverIdentityId'>>;
-    resolveFallbackMachineId: (args: Parameters<UiAccountActionExecute>[0]) => string | null | ReturnType<typeof actionTargetUnavailable> | Promise<string | null | ReturnType<typeof actionTargetUnavailable>>;
+    resolveFallbackMachineId: (args: Parameters<UiAccountActionExecute>[0]) => string | null | ActionExecuteFailure | Promise<string | null | ActionExecuteFailure>;
     transport: AccountActionTransport;
 }>): UiAccountActionExecute {
     return async (args) => {
