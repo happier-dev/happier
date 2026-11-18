@@ -4,7 +4,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { readReviewList } from '@/sync/api/reviews/list';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
 import { subscribeAccountCatalogInvalidation } from '@/sync/engine/settings/accountCatalogInvalidation';
-import { homeAccountChangeAffectsArtifactKinds } from '@/sync/runtime/orchestration/changesPlanner';
+import { homeAccountChangeAffectsArtifactKinds, homeAccountChangeAffectsResourceSpaceMembership } from '@/sync/runtime/orchestration/changesPlanner';
 import { applyReviewListFailure, applyReviewListPage, beginReviewListLoad, getReviewListSnapshot,
     invalidateReviewList, retireReviewList, reviewListKey } from '@/sync/store/domains/reviews/list';
 
@@ -27,7 +27,8 @@ const loader = createScopedSnapshotLoader<Target>({
     shouldLoadOnObserve: target => getReviewListSnapshot(target.key).stale,
     invalidateServer: () => {},
     invalidateTarget: target => invalidateReviewList(target.key),
-    prepareWake: event => homeAccountChangeAffectsArtifactKinds(event, kinds),
+    prepareWake: (event, target) => homeAccountChangeAffectsArtifactKinds(event, kinds)
+        || homeAccountChangeAffectsResourceSpaceMembership(event, target.input.spaceId),
     onCredentialMutation: (_event, target) => { retireReviewList(target.key); return true; },
 });
 const continuations = new Map<string, Promise<void>>();

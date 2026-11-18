@@ -144,6 +144,8 @@ export type PlannedChangeActions = {
     sessionTranscriptRepairs: PlannedSessionTranscriptRepair[];
     sessionFolderAssignmentSessionIds: string[];
     sessionOrganization: PlannedSessionOrganizationAction;
+    /** Organizer-private resource membership affects only these collection spaces. */
+    resourceSpaceMembershipSpaceIds?: readonly string[];
     unsupportedChanges: UnsupportedChangeMarker[];
     invalidate: {
         sessions: boolean;
@@ -566,6 +568,7 @@ export function planSyncActionsFromChanges(
     let invalidateSessions = false;
     let invalidateSessionFolderAssignments = false;
     let organizationRefresh = false;
+    const resourceSpaceMembershipSpaceIds = new Set<string>();
     let organizationIncludeFolders = false;
     let organizationIncludeTags = false;
     let organizationIncludeLabels = false;
@@ -793,6 +796,10 @@ export function planSyncActionsFromChanges(
             }
             if (hasSessionOrganizationHint(change)) {
                 const organizationHint = readSessionOrganizationHint(change);
+                if (organizationHint?.scope === 'resourceSpaceMemberships') {
+                    for (const spaceId of organizationHint.spaceIds ?? []) resourceSpaceMembershipSpaceIds.add(spaceId);
+                    continue;
+                }
                 organizationRefresh = true;
                 for (const sessionId of readHintStringArray(change, 'sessionIds')) organizationAssignmentSessionIds.add(sessionId);
                 for (const folderId of readHintStringArray(change, 'folderIds')) organizationFolderIds.add(folderId);
@@ -933,6 +940,7 @@ export function planSyncActionsFromChanges(
                 includeLabels: organizationIncludeLabels,
             }
             : { mode: 'none' },
+        resourceSpaceMembershipSpaceIds: [...resourceSpaceMembershipSpaceIds].sort(),
         unsupportedChanges,
         invalidate: {
             sessions: invalidateSessions,
@@ -1019,6 +1027,13 @@ export function homeAccountChangeAffectsArtifactKinds(event: HomeAccountChangeEv
     if (event.source === 'connected' || event.source === 'snapshot' || !event.changeKinds?.length) return true;
     if (!event.changeKinds.includes('artifact')) return false;
     return artifactKindsMayIncludeKindV1(event.artifactKinds, selectedKinds);
+}
+
+/** Detailed organization hints select spaces; an early bodyless organization wake retains recovery. */
+export function homeAccountChangeAffectsResourceSpaceMembership(event: HomeAccountChangeEvent, spaceId: string | undefined): boolean {
+    if (spaceId === undefined) return false;
+    if (event.resourceSpaceMembershipSpaceIds !== undefined) return event.resourceSpaceMembershipSpaceIds.includes(spaceId);
+    return event.changeKinds?.includes('account') === true && event.entityIds?.includes('session-organization') === true;
 }
 
 /**

@@ -13677,6 +13677,7 @@ class Sync {
                                     })),
                                     changeKinds: changes.map(change => change.kind),
                                     artifactKinds: plannedArtifactKinds(publishedPlan),
+                                    resourceSpaceMembershipSpaceIds: publishedPlan.resourceSpaceMembershipSpaceIds,
                                     sessionReadinessChanges: plannedSessionReadinessChanges(publishedPlan),
                                     ...(materialization?.workflowRunsMaterialized ? { workflowRunsMaterialized: true as const } : {}),
                                     ...(materialization?.savedSecretResourcesRefreshStarted ? { savedSecretResourcesRefreshStarted: true as const } : {}),

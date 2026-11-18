@@ -76,6 +76,7 @@ export type HomeAccountChangeEvent = Readonly<{
     changeKinds?: readonly ChangeEntry['kind'][];
     /** Complete server-visible encoded Artifact kinds; omission keeps readers conservative. */
     artifactKinds?: readonly string[];
+    resourceSpaceMembershipSpaceIds?: readonly string[];
     /** Exact content-free record/access routing; an empty list excludes record changes. */
     sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[];
     /**
@@ -147,6 +148,7 @@ type HomeAccountChangeDetails = Readonly<{
     feedPageConsumed?: true;
     changeKinds?: readonly ChangeEntry['kind'][];
     artifactKinds?: readonly string[];
+    resourceSpaceMembershipSpaceIds?: readonly string[];
     sessionSystemRecords?: readonly SessionSystemRecordInvalidationV1[];
     sessionListQueryAffects?: boolean | 'structural';
     sessionListRowFacets?: SessionListRowMembershipFacets | null;
@@ -546,6 +548,8 @@ export function publishHomeAccountChangeForRouting(
         ...(changeKinds ? { changeKinds: Object.freeze([...new Set(changeKinds)]) } : {}),
         ...(!coarse && details?.artifactKinds !== undefined
             ? { artifactKinds: Object.freeze([...details.artifactKinds]) } : {}),
+        ...(details?.resourceSpaceMembershipSpaceIds !== undefined
+            ? { resourceSpaceMembershipSpaceIds: Object.freeze([...details.resourceSpaceMembershipSpaceIds]) } : {}),
         ...(details?.sessionSystemRecords !== undefined
             ? { sessionSystemRecords: Object.freeze([...details.sessionSystemRecords]) } : {}),
         ...(!coarse && sessionListQueryAffects !== undefined
