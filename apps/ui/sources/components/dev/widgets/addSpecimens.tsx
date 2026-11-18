@@ -144,7 +144,7 @@ function CompanionAdd(props: Readonly<{ phone: boolean }>) {
  */
 const TELEMETRY_WIDGETS = [
     { localId: 'app-vitals', title: 'App vitals', description: 'Requests, p95 and errors, each with its line' },
-    { localId: 'metric', title: 'Metric', description: 'Latency, errors, requests or heap over time' },
+    { localId: 'metric', title: 'App metric', description: 'Latency, errors, requests or heap over time' },
     { localId: 'slowest-routes', title: 'Slowest routes', description: 'The slowest routes and their error rates' },
 ] as const;
 

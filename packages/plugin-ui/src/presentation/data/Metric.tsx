@@ -206,7 +206,9 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
         </View>
       ) : null}
       {props.caption ? (
-        <HappierText style={text.caption} numberOfLines={2}>
+        // Under a glance figure the line is its context ("was 188 ms before the last deploy"): it reads at the
+        // meta size, a step above the default node's micro caption.
+        <HappierText style={size === 'default' ? text.caption : { ...text.body, color: props.theme.colors.mutedText }} numberOfLines={2}>
           {props.caption}
         </HappierText>
       ) : null}

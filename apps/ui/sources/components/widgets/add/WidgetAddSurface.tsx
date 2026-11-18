@@ -572,7 +572,7 @@ const WidgetAddRow = React.memo(function WidgetAddRow(props: Readonly<{
                     <Text style={[styles.rowTitle, props.selected ? styles.rowTitleSelected : null, entry.added ? styles.rowTitleAdded : null]} numberOfLines={1}>{entry.title}</Text>
                     <RowTrailing entry={entry} feedback={feedback} testID={props.testID} />
                 </View>
-                {entry.subtitle ? <Text style={styles.rowSubtitle} numberOfLines={1}>{entry.subtitle}</Text> : null}
+                {entry.subtitle ? <Text style={styles.rowSubtitle} numberOfLines={2}>{entry.subtitle}</Text> : null}
             </View>
         </HappierPressable>
     );
