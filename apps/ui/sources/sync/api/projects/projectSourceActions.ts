@@ -57,8 +57,11 @@ export function createProjectSourceActionDeps(account: SourceAccountPort, option
                 const code = response.status === 404 || response.status === 405 ? 'unsupported_action'
                     : response.status === 401 ? 'action_home_signed_out' : response.status === 403 ? 'action_forbidden' : null;
                 if (code) return { ok: false, errorCode: code, error: code };
-                if (method === 'GET') throw error;
-                return projectConfirmedActionHttpRefusal({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' }, response.status, payload);
+                const refusal = projectConfirmedActionHttpRefusal<ActionExecuteFailure>(
+                    { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' }, response.status, payload,
+                );
+                if (method === 'GET' && refusal.errorCode === 'outcome_unknown') throw error;
+                return refusal;
             }
             if (method === 'GET') {
                 context?.signal?.throwIfAborted();

@@ -86,6 +86,17 @@ describe('authenticated Source Action transport', () => {
             patch: { name: 'Repository' } })).toMatchObject(expected);
     });
 
+    it('preserves a Home database refusal when reading a Source', async () => {
+        const error = 'database_connection_unavailable';
+        const deps = createProjectSourceActionDeps({ ...scope, assertCurrent() {}, workflowArtifacts: { read: async () => null },
+            request: async () => Response.json({ error, statusCode: 503 }, { status: 503 }),
+        });
+        expect(await deps.projectSourcesRead({ serverId: scope.serverId, sourceId: 'source-a' })).toMatchObject({
+            ok: false, errorCode: error,
+            failureCause: { phase: 'home.database.transaction', errorClass: 'HttpStatusError', errorCode: error, httpStatus: 503 },
+        });
+    });
+
     it('does not disclose an authenticated read after its captured Account port retires', async () => {
         let current = true;
         const deps = createProjectSourceActionDeps({ ...scope,
