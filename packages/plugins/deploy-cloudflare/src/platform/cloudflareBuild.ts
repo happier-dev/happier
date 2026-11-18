@@ -64,13 +64,20 @@ async function buildInContainer<T>(input: CloudflareBuildInput, context: Cloudfl
       '--user', `${owner.uid}:${owner.gid}`, '--interactive', '--mount', `type=bind,source=${scratch},target=/workspace`,
       '--workdir', posix.join('/workspace/project', input.rootDirectory ?? '.'), CLOUDFLARE_BUILD_IMAGE,
       'node', '--input-type=module'], stdin: new TextEncoder().encode(program) }, { signal: context.signal, outputDelivery: 'invocation' });
+  let output: T;
   try {
     const result = await process.wait();
     context.signal.throwIfAborted();
     if (result.termination.observed.kind !== 'exit' || result.termination.observed.exitCode !== 0
       || result.termination.requestedBy.kind !== 'none') throw new Error('Cloudflare build container did not finish successfully');
-    return await readOutput(await realpath(scratch));
-  } finally { await process.dispose(); }
+    output = await readOutput(await realpath(scratch));
+  } catch (error) {
+    // The Exec supervisor retains custody when cleanup is unconfirmed.
+    await process.dispose().catch(() => undefined);
+    throw error;
+  }
+  await process.dispose();
+  return output;
 }
 
 /** Executed only inside the pinned image, never by the importing host. */

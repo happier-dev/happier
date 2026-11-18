@@ -8,8 +8,11 @@ type Phase = DeploymentTargetRoleFailureV1['phase'];
 type Reply = Readonly<{ value: unknown; resultInfo?: unknown }> | DeploymentTargetRoleFailureV1;
 const origin = 'https://api.cloudflare.com';
 
-export function failure(code: DeploymentTargetRoleFailureV1['code'], phase: Phase): DeploymentTargetRoleFailureV1 {
+export function failure(code: DeploymentTargetRoleFailureV1['code'], phase: Phase,
+  failureCause?: ReturnType<typeof projectActionFailureCauseV1>): DeploymentTargetRoleFailureV1 {
   const result: DeploymentTargetRoleFailureV1 = { v: 1, code, phase, retryable: false };
+  // In-process Action adapters project this cause. The role result's JSON shape stays closed.
+  if (failureCause !== undefined) Object.defineProperty(result, 'failureCause', { value: failureCause });
   return code === 'deployment_unavailable' ? withActionFailureDiagnostic(result, { phase: `deployment.cloudflare.${phase}`, causeKind: 'not_found' }) : result;
 }
 function accountRoot(accountId: string) { return `${origin}/client/v4/accounts/${encodeURIComponent(accountId)}`; }
@@ -71,7 +74,7 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
     if (phase === 'teardown') throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase },
       failureCause: projectActionFailureCauseV1(error, 'deployment.provider.teardown') });
     // A locally stopped request cannot prove that a sent build/cancel did not run.
-    if (mutation) return failure('outcome_unknown', phase);
+    if (mutation) return failure('outcome_unknown', phase, projectActionFailureCauseV1(error, `deployment.provider.${phase}`));
     context.signal.throwIfAborted();
     return failure('provider_request_failed', phase);
   }
@@ -94,7 +97,12 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
       failureCause: { phase: `deployment.provider.${phase}`, errorClass: 'Error', errorCode: null, ...(nativeCode === null ? {} : { nativeErrorCode: nativeCode }), httpStatus: response.status } }), { phase: `deployment.cloudflare.provider.${phase ?? 'request'}`, causeKind: response.status === 404 ? 'not_found' : response.status === 401 || response.status === 403 ? 'access_denied' : 'native_failure' });
   }
   // Preserve acknowledged results even when local cancellation races with the response.
-  if (response.status < 200 || response.status >= 300) return failure(mutation && response.status >= 500 ? 'outcome_unknown' : 'provider_request_failed', phase);
+  if (response.status < 200 || response.status >= 300) {
+    if (mutation && response.status >= 500) return failure('outcome_unknown', phase, {
+      phase: `deployment.provider.${phase}`, errorClass: 'Error', errorCode: null, httpStatus: response.status,
+    });
+    return failure('provider_request_failed', phase);
+  }
   if (body === undefined) return failure(mutation ? 'outcome_unknown' : 'provider_response_invalid', phase);
   // Cloudflare's deletion, asset upload and hash-registration ACKs contain success/errors/messages,
   // without result. Data-bearing endpoints still require their result envelope.

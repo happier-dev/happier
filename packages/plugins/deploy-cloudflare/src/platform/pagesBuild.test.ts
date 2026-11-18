@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, readFile, readdir, readlink, rm, stat, symlink, writeFi
 import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ExecService, PluginExecSpawnRequest, PluginProcessHandle, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { CLOUDFLARE_BUILD_IMAGE, preparePagesBuild } from './pagesBuild.js';
 
@@ -133,6 +134,15 @@ it('disposes the existing Exec handle and preserves cancellation before output i
   const h = boundary({ cancel: controller });
   await expect(preparePagesBuild({ rootPath: await source(), actionOperationId: 'pages-cancelled' }, { exec: h.exec, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
   expect(h.dispose).toHaveBeenCalledOnce();
+});
+
+it.each([1, 0])('reports the deciding build or cleanup failure when the container exits %s', async exitCode => {
+  const h = boundary({ exitCode });
+  h.dispose.mockRejectedValueOnce(new PluginError({ code: 'plugin_exec_termination_incomplete', retryable: true }));
+  await expect(preparePagesBuild({ rootPath: await source(), actionOperationId: 'pages-build-cleanup' },
+    { exec: h.exec, signal: new AbortController().signal })).rejects.toMatchObject(exitCode === 1
+      ? { code: 'deployment_failed', data: { failureCause: { phase: 'deployment.cloudflare.build' } } }
+      : { code: 'plugin_exec_termination_incomplete' });
 });
 
 it('refuses container-produced paths that would read host bytes outside the staged output', async () => {

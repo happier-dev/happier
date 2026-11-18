@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
 import { request } from './deploymentHttp.js';
+import { pagesResult } from './pagesDeploy.js';
 
 it('retains an acknowledged mutation result when cancellation arrives with it', async () => {
   const controller = new AbortController();
@@ -49,4 +50,18 @@ it.each([400, 404])('retains known bare HTTP refusal status %s with no invented 
   await expect(request({ http, signal: new AbortController().signal, now: Date.now }, 'account', '/pages/projects', 'link', 'POST', { name: 'app' }))
     .rejects.toMatchObject({ code: status === 404 ? 'deployment_unavailable' : 'provider_request_failed',
       data: { details: { phase: 'link' }, failureCause: { httpStatus: status, errorCode: null } } });
+});
+
+it.each([
+  { status: 503, errorCode: null },
+  { status: null, errorCode: 'ECONNRESET' },
+])('keeps an uncertain Pages mutation and its observed cause ($status, $errorCode)', async ({ status, errorCode }) => {
+  const http = createPluginHttpFixture({ async request() {
+    if (status === null) throw Object.assign(new Error('internal transport details'), { code: errorCode });
+    return { status, headers: {}, body: new TextEncoder().encode('internal proxy details') };
+  } });
+  await expect(request({ http, signal: new AbortController().signal, now: Date.now }, 'account', '/pages/projects/app/deployments', 'send', 'POST')
+    .then(pagesResult)).rejects.toMatchObject({ code: 'outcome_unknown', data: {
+    failureCause: { phase: 'deployment.provider.send', errorCode, httpStatus: status },
+  } });
 });
