@@ -2,7 +2,6 @@ import * as React from 'react';
 import { presentMachineAuthorityV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
 import type { DeploymentEnvironmentHeaderV1, OwnServerDeploymentRuntimeProjectionV1 } from '@happier-dev/deployment-protocol/v1';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { DeploymentDomainHealthCheckV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainHealthCheckV1';
 import type { DeploymentDomainCloudflareRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
@@ -235,11 +234,28 @@ export function DeploymentDomainsPanel(
     />
   ) : undefined;
   // "3 domains" and what the list says about each (lab `envDom`); the list draws its own sheet.
+  // + Add domain opens the form inline in this section and an empty list is one plain line (pfc-redesign dDomains KEEP).
   return (
-    <>
-    {/* Adding opens its own titled card above the list (lab `domains-add`), never a bare form inside it. */}
-    {adding && editing?.targetLink ? (
-      <ItemGroup testID="project-deployments.environment.domains.addSection" title={t('projects.deployments.domainAddTitle')}>
+    <ItemGroup
+      testID="project-deployments.environment.domains"
+      // Every address the list shows counts, the platform's built-in one too.
+      title={addressCount > 0 ? t('projects.deployments.editors.domainsCount', { count: addressCount }) : t('projects.deployments.tabDomains')}
+      description={t('projects.deployments.editors.domainsLede')}
+      action={addAction}
+      surface="none"
+    >
+      {unavailableDockerDesktop ? (
+        <SurfaceStateCard testID="project-deployments.environment.domains.unavailableDockerDesktop"
+          size="line" kind="empty" title={t('projects.deployments.review.domainsUnavailable')} />
+      ) : null}
+      {outcome && editing && !addOutcome && !dnsOutcome ? (
+        <DeployOutcomeBanner
+          controller={change.banner}
+          machine={editing.machine}
+          copy="domain"
+        />
+      ) : null}
+      {adding && editing?.targetLink ? (
         <DomainAddForm
           phone={props.phone === true}
           busy={running}
@@ -274,27 +290,6 @@ export function DeploymentDomainsPanel(
             }), ADD_AT);
             if (added) setAdding(false);
           }}
-        />
-      </ItemGroup>
-    ) : null}
-    <ItemGroup
-      testID="project-deployments.environment.domains"
-      // Every address the list shows counts, the platform's built-in one too.
-      title={addressCount > 0 ? t('projects.deployments.editors.domainsCount', { count: addressCount }) : t('projects.deployments.tabDomains')}
-      description={t('projects.deployments.editors.domainsLede')}
-      // An empty list's invitation carries Add a domain; the title doesn't repeat it (one action per state).
-      action={domains.result.status === 'empty' && (props.builtInUrls?.length ?? 0) === 0 ? undefined : addAction}
-      surface="none"
-    >
-      {unavailableDockerDesktop ? (
-        <SurfaceStateCard testID="project-deployments.environment.domains.unavailableDockerDesktop"
-          size="line" kind="empty" title={t('projects.deployments.review.domainsUnavailable')} />
-      ) : null}
-      {outcome && editing && !addOutcome && !dnsOutcome ? (
-        <DeployOutcomeBanner
-          controller={change.banner}
-          machine={editing.machine}
-          copy="domain"
         />
       ) : null}
       {items.length > 0 || (props.builtInUrls?.length ?? 0) > 0 ? <DeploymentDomainsList
@@ -340,14 +335,7 @@ export function DeploymentDomainsPanel(
       /> : null}
       {unavailableDockerDesktop && domains.result.status === 'empty' || adding && items.length === 0
         // The built-in address already fills the list; "no domains yet" would contradict the row above it.
-        || domains.result.status === 'empty' && (props.builtInUrls?.length ?? 0) > 0 ? null
-        // No address yet invites the first one, as Telemetry's empty state does (lab `r3-domains`).
-        : domains.result.status === 'empty' ? <EmptyState testID="project-deployments.environment.domains.empty"
-          layout="page" scene="shipped" title={t('projects.deployments.domainsEmpty')}
-          {...(canAdd ? { primaryAction: { label: t('projects.deployments.domainAddTitle'),
-            // The one Add a domain while the list is empty: the title's action steps aside for it.
-            testID: 'project-deployments.environment.domains.add', onPress: () => setAdding(true) } } : {})} />
-        : <DeploymentTabState
+        || domains.result.status === 'empty' && (props.builtInUrls?.length ?? 0) > 0 ? null : <DeploymentTabState
         result={domains.result}
         testID="project-deployments.environment.domains"
         errorTitle={t('projects.deployments.domainsErrorTitle')}
@@ -374,7 +362,6 @@ export function DeploymentDomainsPanel(
         </View>
       ) : null}
     </ItemGroup>
-    </>
   );
 }
 
