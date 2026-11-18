@@ -11,6 +11,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import * as dependencies from './dependency_refresh.mjs';
 import { moveInPlaceInstallationIntoGeneration, readCurrentDependencyGeneration } from './dependency_generations.mjs';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { writeRunningStackState } from '../../testkit/core/running_stack_owner.mjs';
+import { observePidLiveness } from './pids.mjs';
 
 // The package manager is the process boundary: this fake installs like pnpm
 // does in place (remove a package, then write its files one by one). Locking,
@@ -179,21 +181,19 @@ test('a Stack running on the checkout keeps the replaced generation until it exi
   const first = (await moveInPlaceInstallationIntoGeneration(installDir)).name;
   const container = join(installDir, '.happier', 'deps', 'node_modules');
   // A running Stack on this checkout (a server or daemon that loads lazily) holds no
-  // dependency custody; its process is the boundary, so a real idle child stands in.
-  const stackProcess = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
-  t.after(() => stackProcess.kill());
+  // dependency custody; its process is the boundary, so a real idle child launched
+  // with the Stack's identity stands in.
   const stacks = fixture.path('stacks');
-  await mkdir(join(stacks, 'dev'), { recursive: true });
+  const { ownerPid } = await writeRunningStackState(t, join(stacks, 'dev'));
   await writeFile(join(stacks, 'dev', 'env'), `HAPPIER_STACK_REPO_DIR=${installDir}\n`);
-  await writeFile(join(stacks, 'dev', 'stack.runtime.json'), JSON.stringify({ ownerPid: stackProcess.pid }));
   const env = { ...baseEnv, HAPPIER_STACK_STORAGE_DIR: stacks, HAPPIER_STACK_ENV_FILE: '', HAPPIER_STACK_STACK: '' };
   await writeFile(join(installDir, 'pnpm-lock.yaml'), '# v2\n');
   await dependencies.withDependencyRefresh({ installDir, env, generationInstall: true },
     async ({ installCwd = installDir, publishInstallation }) => { await fakeInstall(installCwd, 'v2'); await publishInstallation?.(); });
   const second = readCurrentDependencyGeneration(installDir);
   assert.deepEqual((await readdir(container)).sort(), [first, second].sort(), 'the running Stack still holds the first generation');
-  stackProcess.kill();
-  await once(stackProcess, 'exit');
+  process.kill(ownerPid, 'SIGKILL');
+  while (observePidLiveness(ownerPid).status !== 'dead') await delay(10);
   // The next reader to finish releases what nothing holds any more.
   await dependencies.withDependencyConsumption({ installDir, env }, async () => { readInstalled(installDir); });
   assert.deepEqual(await readdir(container), [second]);
@@ -206,12 +206,9 @@ test('a long-running Stack pins only the generation it runs on, not every genera
   const { fixture, env: baseEnv, installDir } = await setup(t);
   const first = (await moveInPlaceInstallationIntoGeneration(installDir)).name;
   const container = join(installDir, '.happier', 'deps', 'node_modules');
-  const stackProcess = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
-  t.after(() => stackProcess.kill());
   const stacks = fixture.path('stacks');
-  await mkdir(join(stacks, 'dev'), { recursive: true });
+  await writeRunningStackState(t, join(stacks, 'dev'));
   await writeFile(join(stacks, 'dev', 'env'), `HAPPIER_STACK_REPO_DIR=${installDir}\n`);
-  await writeFile(join(stacks, 'dev', 'stack.runtime.json'), JSON.stringify({ ownerPid: stackProcess.pid }));
   const env = { ...baseEnv, HAPPIER_STACK_STORAGE_DIR: stacks, HAPPIER_STACK_ENV_FILE: '', HAPPIER_STACK_STACK: '' };
   const switchTo = async version => {
     await writeFile(join(installDir, 'pnpm-lock.yaml'), `# ${version}\n`);

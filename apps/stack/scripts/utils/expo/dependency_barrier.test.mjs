@@ -166,12 +166,14 @@ for (const invocation of ['spawn', 'exec']) test(`Metro startup waits only for a
 
 test('dependency refresh neither refuses nor stops a foreign legacy Metro or pending start', async t => {
   const fixture = await fixtureFor(t);
+  const baseDir = fixture.path('stacks', 'foreign');
+  // The foreign Stack's own Metro: launched with that Stack's identity, recorded without a fingerprint.
   const child = spawn(process.execPath, ['--eval', 'setInterval(() => {}, 1000)'], {
-    detached: process.platform !== 'win32', stdio: 'ignore', env: fixture.env,
+    detached: process.platform !== 'win32', stdio: 'ignore',
+    env: { ...fixture.env, HAPPIER_STACK_STACK: 'foreign', HAPPIER_STACK_ENV_FILE: join(baseDir, 'env') },
   });
   t.after(async () => await killProcessTree(child, 'SIGTERM', { graceMs: 500 }));
   await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
-  const baseDir = fixture.path('stacks', 'foreign');
   await mkdir(join(baseDir, 'source-runtime'), { recursive: true });
   await writeFile(join(baseDir, 'env'), `HAPPIER_STACK_REPO_DIR=${fixture.root}\n`);
   await writeFile(join(baseDir, 'source-runtime/start.pending.json'), JSON.stringify({ pid: process.pid, phase: 'preparing' }));

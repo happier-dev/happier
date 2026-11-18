@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { startRunningStackOwner } from '../../testkit/core/running_stack_owner.mjs';
 import { assertDependenciesReady, markDependencyMutation, waitForDependencyRefresh,
   withDependencyConsumption, withDependencyRefresh, withDependencyRefreshLock } from './dependency_refresh.mjs';
 import { ensureDepsInstalled } from './pm.mjs';
@@ -209,14 +210,15 @@ for (const kind of ['pending start', 'running Expo']) test(`refresh retains ${ki
   await mkdir(fixture.path('node_modules'));
   await withDependencyRefresh({ ...options, force: true }, async () => {});
   const base = fixture.path('stacks', 'qa');
-  await mkdir(base, { recursive: true });
+  // A running Expo is a real process launched with this Stack's identity.
+  const { ownerPid: expoPid } = await startRunningStackOwner(t, base);
   await writeFile(fixture.path('stacks', 'qa', 'env'), `HAPPIER_STACK_REPO_DIR=${fixture.root}\n`);
   const directory = kind === 'pending start'
     ? fixture.path('stacks', 'qa', 'source-runtime') : fixture.path('stacks', 'qa', 'expo-dev', 'app');
   const statePath = kind === 'pending start' ? `${directory}/start.pending.json` : `${directory}/expo.state.json`;
   await mkdir(directory, { recursive: true });
   const state = kind === 'pending start' ? { pid: process.pid, phase: 'preparing' }
-    : { pid: process.pid, uiDir: fixture.root, stackName: 'qa' };
+    : { pid: expoPid, uiDir: fixture.root, stackName: 'qa' };
   await writeFile(statePath, JSON.stringify(state));
   const before = await readFile(statePath, 'utf8');
   const result = await withDependencyRefresh({ ...options, force: true }, async () => {});

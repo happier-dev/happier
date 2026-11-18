@@ -11,7 +11,8 @@ import { resolveStackOwnedListenPid, STACK_LISTENER_OBSERVATION_TIMEOUT_MS } fro
 import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
 import { normalizeStackRuntimeOwnerStartedAt } from './runtime_owner_incarnation.mjs';
 import { readStackPortAllocations } from './runtime_ports.mjs';
-import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
+// Relative, like ownership.mjs: dependency refresh loads this before node_modules exists.
+import { readProcessInstanceFingerprintSync } from '../../../../../packages/cli-common/processInstance.mjs';
 import { resolveDependencyInstallRoot, retainDependencyGenerationForProcess, waitForDependencyRefresh } from '../proc/dependency_refresh.mjs';
 import { readEnvValueFromFile } from '../env/read.mjs';
 import { getStackRuntimeProcessEntries, getStackRuntimeProcessInstanceFingerprint, normalizeProcessInstanceRecord,

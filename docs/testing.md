@@ -539,7 +539,10 @@ recorded with `liveTreeIntact`, so consumers don't retry the same inputs. The
 replaced generation stays while any reader registered before the switch is
 alive, and while any Stack process running on this checkout at the switch is
 alive (a server or daemon loads modules lazily without custody; Node caches the
-real paths it resolved, so it would fail once its generation is gone). Reader
+real paths it resolved, so it would fail once its generation is gone). A Stack
+or Expo process counts only when the runtime lifecycle owner trusts it (its
+recorded start witness and the Stack's launch binding); a recycled PID left in a
+stale state file is not a running Stack and pins nothing. Reader
 records carry the generation they entered on; the switch writes a retention
 record per live Stack process, which writers never drain. The writer prunes
 after it releases, and every reader of a generation-managed tree prunes on exit

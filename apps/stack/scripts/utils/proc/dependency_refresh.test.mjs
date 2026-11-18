@@ -14,6 +14,7 @@ import { ensureDepsInstalled } from './pm.mjs';
 import { withPnpmInstallGuard } from '../worktrees/pnpm_install_guard.mjs';
 import { bootstrapRemoteDependencies } from '../dev_targets/remote_dependency_bootstrap.mjs';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { startRunningStackOwner } from '../../testkit/core/running_stack_owner.mjs';
 import { inspectUiPostinstallOutputs } from './ui_postinstall.mjs';
 import { buildNativeAdmissionFixtureEnv, installNativeAdmissionFixture } from '../../testkit/core/native_admission_fixture.mjs';
 import { createAdmissionBroker } from './admission_broker.mjs';
@@ -368,7 +369,8 @@ for (const worker of [false, true]) test(`dependency refresh reports running Sta
     HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), HAPPIER_STACK_ENV_FILE: '',
     HAPPIER_STACK_REPO_DIR: fixture.root, HAPPIER_STACK_PM_CACHE_BASE_DIR: fixture.path('target-home', 'cache') };
   await mkdir(fixture.path('node_modules'));
-  await mkdir(baseDir, { recursive: true });
+  // A running Stack process is a real process launched with this Stack's identity.
+  const { ownerPid: stackPid } = await startRunningStackOwner(t, baseDir);
   await writeFile(fixture.path('package.json'), '{"private":true}');
   await writeFile(join(baseDir, 'env'), `HAPPIER_STACK_REPO_DIR=${fixture.root}\n`);
   await withDependencyRefresh({ installDir: fixture.root, env }, async () => {});
@@ -377,8 +379,8 @@ for (const worker of [false, true]) test(`dependency refresh reports running Sta
   const messages = [];
   t.mock.method(console, 'log', message => messages.push(message));
   let mutations = 0;
-  for (const state of [{ ownerPid: process.pid }, { ownerPid: null, processes: { daemonPid: process.pid } },
-    { ownerPid: null, processes: { serverPid: process.pid } }]) {
+  for (const state of [{ ownerPid: stackPid }, { ownerPid: null, processes: { daemonPid: stackPid } },
+    { ownerPid: null, processes: { serverPid: stackPid } }]) {
     await writeFile(statePath, JSON.stringify({ stackName: 'qa', ...state }));
     assert.equal((await withDependencyRefresh({ installDir: fixture.root, env }, async () => { mutations++; })).refreshed, false,
       'warm readiness remains a reader even while a Stack is running');
