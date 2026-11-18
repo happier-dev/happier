@@ -96,18 +96,33 @@ async function waitForIdle(params: Readonly<{
     onActivity(kind: 'busy' | 'unknown' | 'idle' | 'waiting'): void;
     onWait?: (deadlineAt?: number) => Promise<number | undefined>;
 }>) {
-    for (;;) {
+    const assertCurrent = async () => {
         assertLive(params.signal);
         if (!await params.isCurrent()) throw new ManagedMachineControllerError('intent_changed');
+    };
+    const waitForActivity = async (deadlineAt?: number) => {
+        const renewAt = await params.onWait?.(deadlineAt);
+        const wakeAt = deadlineAt === undefined ? renewAt : renewAt === undefined ? deadlineAt : Math.min(deadlineAt, renewAt);
+        return await waitForChangeOrDeadline({ waitForChange: async signal => {
+            try {
+                await params.bridge.waitForChange(signal);
+            } catch (error) {
+                assertLive(signal);
+                await params.onWait?.();
+                throw error;
+            }
+        }, signal: params.signal, remainingMs: wakeAt === undefined ? undefined : Math.max(0, wakeAt - Date.now()) });
+    };
+    for (;;) {
+        await assertCurrent();
         let activity: ManagedActivityBridgeResultV1;
         try {
             activity = await params.bridge.read(params.machine, params.signal);
         } catch (error) {
-            assertLive(params.signal);
             // A power-down reply can precede the scheduler's invalidation.
             // Retired idle work settles through its currentness owner before
             // any guest transport failure is classified for that old intent.
-            if (!await params.isCurrent()) throw new ManagedMachineControllerError('intent_changed');
+            await assertCurrent();
             // Losing coverage cannot retain an idle-shortened native lifetime,
             // or leave this operation waiting for an optional reconnect wake.
             await params.onWait?.();
@@ -121,8 +136,10 @@ async function waitForIdle(params: Readonly<{
         // releases it before replying. Waiting never retains guest admission.
         params.onActivity(activity.kind === 'idle' ? 'waiting' : activity.kind);
         if (activity.kind === 'unknown') {
-            await params.onWait?.();
-            throw new ManagedMachineControllerError('activity_unknown');
+            // Existing vendor renewals can keep the resource available while
+            // coverage is missing. Only a guest change calls for a new probe.
+            while (await waitForActivity() === 'deadline') await assertCurrent();
+            continue;
         }
         let deadlineAt: number | undefined;
         if (activity.kind === 'idle') {
@@ -134,17 +151,7 @@ async function waitForIdle(params: Readonly<{
                 return activity;
             }
         }
-        const renewAt = await params.onWait?.(deadlineAt);
-        const wakeAt = deadlineAt === undefined ? renewAt : renewAt === undefined ? deadlineAt : Math.min(deadlineAt, renewAt);
-        await waitForChangeOrDeadline({ waitForChange: async signal => {
-            try {
-                await params.bridge.waitForChange(signal);
-            } catch (error) {
-                assertLive(signal);
-                await params.onWait?.();
-                throw error;
-            }
-        }, signal: params.signal, remainingMs: wakeAt === undefined ? undefined : Math.max(0, wakeAt - Date.now()) });
+        await waitForActivity(deadlineAt);
     }
 }
 

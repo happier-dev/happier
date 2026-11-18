@@ -657,7 +657,7 @@ describe('Delete with a retained native resource after canceled bootstrap', () =
 });
 
 describe('unused Stop through guest drain and controller operation custody', () => {
-    it.each(['idle-lapse', 'delayed-native-lapse', 'work-during-native-lapse', 'work-resumes', 'activity-unavailable', 'until-delete', 'cancel', 'renewal-failure'] as const)(
+    it.each(['idle-lapse', 'delayed-native-lapse', 'work-during-native-lapse', 'work-resumes', 'activity-unavailable', 'activity-unknown', 'until-delete', 'cancel', 'renewal-failure'] as const)(
         'owns Boat mandatory TTL through the real policy lifecycle (%s)', async ending => {
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
         vi.setSystemTime(1_790_000_000_000);
@@ -711,16 +711,17 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 account: { service: { pluginId: provider.pluginId, localId: 'boat-account' }, accountId: 'captured-account' },
             }] }, resource: { contributionRef: provider, schemaVersion: 1, value: { sandboxId } } });
         test.setMachine(ManagedMachineV1Schema.parse(test.readMachine()));
-        let busy = true;
-        const producer = createLiveWorkProducerGroup(() => [{ read: () => ({ coverage: 'complete',
+        let activityUnknown = ending === 'activity-unknown';
+        let busy = !activityUnknown;
+        const producer = createLiveWorkProducerGroup(() => [{ read: () => ({ coverage: activityUnknown ? 'unknown' : 'complete',
             items: busy ? [{ category: 'finite', state: 'active', ownerRef: 'work', attribution: { kind: 'unknown' } }] : [] }),
             subscribe: () => () => {} }]);
         const inventory = createManagedActivityInventory({ producers: [producer] });
-        const read = async () => {
+        const read = vi.fn(async () => {
             if (activityUnavailable) throw new RpcError('Guest activity transport is offline', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
             const decision = await inventory.readDecision();
             return decision.kind === 'idle' ? { ...decision, evidence: signedIdle(test.readMachine(), decision.since, Date.now()) } : decision;
-        };
+        });
         let waitingForActivity = false;
         let enteredFirstWait: () => void = () => {};
         const firstWait = new Promise<void>(resolve => { enteredFirstWait = resolve; });
@@ -772,7 +773,14 @@ describe('unused Stop through guest drain and controller operation custody', () 
             expect(expiry).toBeGreaterThan(Date.now());
             expect(requests.filter(request => request.method === 'PATCH')).toHaveLength(4);
             expect(finished).toBe(false);
-            if (ending === 'activity-unavailable') {
+            if (ending === 'activity-unknown') {
+                expect(read).toHaveBeenCalledTimes(1);
+                expect(requests.some(request => request.method === 'POST')).toBe(false);
+                activityUnknown = false; producer.notifyChanged();
+                await flush();
+                expect(read).toHaveBeenCalledTimes(2);
+                expect(expiry).toBe(Date.now() + 60_000);
+            } else if (ending === 'activity-unavailable') {
                 busy = false; producer.notifyChanged();
                 await flush();
                 expect(expiry).toBe(Date.now() + 60_000);
@@ -2405,7 +2413,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
     it.each(['idle', 'configured-stop', 'configured-suspend', 'busy', 'unknown', 'activity-unavailable', 'missing-confirmation', 'approval-held', 'approval-approved', 'approval-rejected', 'approval-observation-failed',
         'within-window', 'refused-reopen', 'lost-probe-reply', 'aborted-probe'] as const)(
         'settles retention power with configured consent or its required review (%s)', async disposition => {
-        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.useFakeTimers({ toFake: disposition === 'unknown' ? ['Date', 'setTimeout', 'clearTimeout'] : ['Date'] });
         vi.setSystemTime(1_790_000_000_000);
         const intent = disposition === 'configured-suspend' ? 'suspend' : 'stop';
         const test = setup(undefined, undefined, intent);
@@ -2457,9 +2465,10 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 managedId: current.id, expectedRevision: current.intentRevision, controller: current.controller,
                 ...(action ? { action } : {}) }, context));
         };
+        const readGuestActivity = vi.fn((current: typeof machine) => call(current, MANAGED_ACTIVITY_READ_RPC_METHOD));
         const bridge = { read: async (current: typeof machine) => {
                 if (disposition === 'activity-unavailable') throw new RpcError('Guest offline', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
-                const result = await call(current, MANAGED_ACTIVITY_READ_RPC_METHOD);
+                const result = await readGuestActivity(current);
                 if (disposition === 'lost-probe-reply') throw new Error('RPC response lost');
                 if (disposition === 'aborted-probe') await controller.handlers.cancel({ operationId: 'unused-stop' });
                 return result;
@@ -2637,9 +2646,33 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 expect(test.effects).toEqual(disposition === 'approval-approved' ? ['power'] : []);
                 // Absolute-deadline effects retain review but do not drain guest work.
                 expect(drain.isQuiescing()).toBe(false);
-            } else if (disposition === 'unknown' || disposition === 'activity-unavailable') {
+            } else if (disposition === 'unknown') {
                 await expect(controller.handlers.getV2({ operationId: 'unused-stop' })).resolves.toMatchObject({ kind: 'found', operation: {
-                    state: 'failed', error: { errorCode: disposition === 'unknown' ? 'activity_unknown' : RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE } } });
+                    state: 'running', progress: { phase: 'managed.intent.activity-unknown' },
+                } });
+                expect(drain.isQuiescing()).toBe(false);
+                await vi.advanceTimersByTimeAsync(3_600_000);
+                expect(readGuestActivity).toHaveBeenCalledTimes(1);
+                expect(test.effects).toEqual([]);
+                expect(test.post.mock.calls.some(([url]) => String(url).endsWith('/admit-policy'))).toBe(false);
+                missingCoverage = false;
+                guestWork.notifyChanged();
+                await vi.waitFor(async () => {
+                    expect(readGuestActivity).toHaveBeenCalledTimes(2);
+                    expect(await controller.handlers.getV2({ operationId: 'unused-stop' })).toMatchObject({ kind: 'found', operation: {
+                        state: 'running', progress: { phase: 'managed.intent.waiting-idle' },
+                    } });
+                });
+                expect(test.effects).toEqual([]);
+                await vi.advanceTimersByTimeAsync(3_600_000);
+                await observed;
+                await expect(controller.handlers.getV2({ operationId: 'unused-stop' })).resolves.toMatchObject({ kind: 'found', operation: {
+                    state: 'succeeded',
+                } });
+                expect(test.effects).toEqual(['power']);
+            } else if (disposition === 'activity-unavailable') {
+                await expect(controller.handlers.getV2({ operationId: 'unused-stop' })).resolves.toMatchObject({ kind: 'found', operation: {
+                    state: 'failed', error: { errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE } } });
                 expect(test.effects).toEqual([]);
                 expect(test.post.mock.calls.some(([url]) => String(url).endsWith('/admit-policy'))).toBe(false);
                 await observed;
@@ -3366,7 +3399,7 @@ describe('managed native intent through the accepted Action', () => {
         } });
         expect(test.effects).toEqual([]);
     });
-    it.each(['busy', 'unknown'] as const)('waits for busy work or settles unknown activity before an after-idle native effect (%s)', async kind => {
+    it.each(['busy', 'unknown'] as const)('waits for an activity change before an after-idle native effect (%s)', async kind => {
         const test = setup({ kind, reasons: ['finite'] });
         test.setMachine({ desiredWhen: 'after-idle' });
         const machine = test.readMachine();
@@ -3391,20 +3424,9 @@ describe('managed native intent through the accepted Action', () => {
             } });
         try {
             while (test.waitForChange.mock.calls.length === 0 && !settled) await new Promise<void>(resolve => setImmediate(resolve));
-            if (kind === 'unknown') {
-                expect(await operations.handlers.getV2({ operationId: `activity-${kind}` })).toMatchObject({ kind: 'found', operation: {
-                    state: 'failed', error: { errorCode: 'activity_unknown' },
-                    domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller },
-                } });
-                await expect(work).rejects.toMatchObject({ code: 'activity_unknown' });
-                expect(test.effects).toEqual([]);
-                expect(test.confirmIdle).not.toHaveBeenCalled();
-                expect(test.waitForChange).not.toHaveBeenCalled();
-                return;
-            }
             expect(await operations.handlers.getV2({ operationId: `activity-${kind}` })).toMatchObject({ kind: 'found', operation: {
                 state: 'running', domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller },
-                progress: { kind: 'phase', phase: 'managed.intent.busy' },
+                progress: { kind: 'phase', phase: kind === 'busy' ? 'managed.intent.busy' : 'managed.intent.activity-unknown' },
             } });
             expect(test.effects).toEqual([]);
             test.readActivity.mockResolvedValue({ kind: 'idle', since: 0 });

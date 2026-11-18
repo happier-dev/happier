@@ -4737,6 +4737,9 @@ and real activity changes wake the existing managed policy feed; a nonpersisted
 activity-change hint is not activity authority. The rule still reads a current,
 installation-signed activity proof before native effects. Equal/stale state and
 ordinary liveness do not publish managed-resource changes.
+When the guest reports unknown activity, unused retention keeps waiting for a
+real activity change. An existing vendor renewal can keep the resource running
+while the policy waits for fresh guest evidence.
 Runtime demand, Pending activation and retained-power presentation consume
 `resolveManagedMachineRuntimeV1` in Protocol's managed domain for native
 availability, guest readiness and whether wake needs Inspect. Native power owns
