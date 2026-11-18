@@ -9,11 +9,11 @@ import { InvalidUsernameError, UsernameTakenError } from "@/app/social/usernameU
 export async function oauthExternalFinalizeErrorHandler(error: FastifyError, request: FastifyRequest, reply: FastifyReply): Promise<void> {
     if (error instanceof UsernameTakenError) {
         reply.code(409).send({ error: 'username-taken' });
-        return;
+        return reply;
     }
     if (error instanceof InvalidUsernameError) {
         reply.code(400).send({ error: 'invalid-username' });
-        return;
+        return reply;
     }
     if (error instanceof TeamOAuthAdmissionAbort) {
         // The bounded continuation participates in the rejected transaction.
@@ -24,13 +24,13 @@ export async function oauthExternalFinalizeErrorHandler(error: FastifyError, req
         } else {
             reply.code(503).send({ error: error.code });
         }
-        return;
+        return reply;
     }
     if (!(error instanceof OAuthProviderConfigurationChangedError)
         && error.message !== AUTH_PROVIDER_CONFIGURATION_CHANGED_ERROR
         && error.message !== "auth_provider_unavailable") {
         accountDirectoryAuthErrorHandler(error, request, reply);
-        return;
+        return reply;
     }
     // Run outside the rejected mutation transaction so its rollback cannot revive stale state.
     const pendingKey = error instanceof OAuthProviderConfigurationChangedError
@@ -39,4 +39,5 @@ export async function oauthExternalFinalizeErrorHandler(error: FastifyError, req
             && typeof request.body.pending === "string" ? request.body.pending : "";
     await deleteOAuthPendingBestEffort(pendingKey);
     reply.code(409).send({ error: AUTH_PROVIDER_CONFIGURATION_CHANGED_ERROR });
+    return reply;
 }
