@@ -28,6 +28,14 @@ describe('machine isolation summary', () => {
             expect(keys(summary)).not.toContain('machineDetailPage.isolation.summary.allDirectly');
         } else expect(keys(summary)).toEqual(['machineDetailPage.isolation.summary.allDirectly']);
     });
+    it('never asks the owner to trust the owner while the Machine’s platform is still unknown', () => {
+        const unknown = presentMachineAuthorityV1({ isolation: null });
+        expect(unknown.separateUsers.placement).toBeNull();
+        const policy: MachineIsolationPolicyV1 = { configuredSandboxes: {}, workKinds: { sessions: directly, botsChannels: directly, automationsWorkflows: directly } };
+        expect(keys(describeMachineIsolationPolicy({ policy, machineName: 'devbox', nameOf, authority: unknown })))
+            .toEqual(['machineDetailPage.isolation.summary.allDirectly']);
+    });
+
     it('says everything runs directly when no kind of work uses a sandbox', () => {
         const policy: MachineIsolationPolicyV1 = { configuredSandboxes: {}, workKinds: { sessions: directly, botsChannels: directly, automationsWorkflows: directly } };
         expect(keys(describeMachineIsolationPolicy({ policy, machineName: 'devbox', nameOf, authority }))).toEqual(['machineDetailPage.isolation.summary.allDirectly']);

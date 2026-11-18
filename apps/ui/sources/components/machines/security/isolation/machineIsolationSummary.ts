@@ -19,7 +19,8 @@ export function describeMachineIsolationPolicy(input: Readonly<{
 }>): readonly string[] {
     const { policy, machineName, authority } = input;
     const placement = authority.separateUsers.placement;
-    const userIsolation = placement !== 'daemon'
+    // An unknown placement (the platform isn't read yet) says nothing about users; it is not a recipient's trust lead.
+    const userIsolation = placement !== 'daemon' && placement !== null
         ? describeMachineShareTrust(placement, false, machineName, authority.isolation).lead : null;
     const name = (id: string) => input.nameOf(id) ?? t('machineDetailPage.isolation.summary.unnamed');
     const choices = MACHINE_ISOLATION_WORK_KINDS.map(kind => policy.workKinds[kind]);
