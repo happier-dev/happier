@@ -5,7 +5,8 @@ import { useLocalSearchParams } from '@/components/appShell/workspace/destinatio
 export function WorkspaceRouteBody() {
   const params = useLocalSearchParams<{ starterId?: string; serverId?: string; machineId?: string }>();
   const machine = params.serverId && params.machineId ? { serverId: params.serverId, machineId: params.machineId } : null;
-  return <NewAppScreen starterId={params.starterId ?? null} machine={machine} />;
+  const starterId = params.starterId ?? null;
+  return <NewAppScreen key={JSON.stringify([starterId, machine?.serverId, machine?.machineId])} starterId={starterId} machine={machine} />;
 }
 export default function RouteEntry() {
   return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />;

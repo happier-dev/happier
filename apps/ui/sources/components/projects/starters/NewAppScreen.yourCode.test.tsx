@@ -150,6 +150,12 @@ it('the Deploy route keeps its Machine through Your code and the catalog (lab dM
     await screen.pressByTestIdAsync('newApp.continue');
     await waitForHomeGovernance(() => expect(draftMachine()).toBe('hetzner-fsn1'));
     expect(routerMock.spies.push).not.toHaveBeenCalled();
+    routerMock.spies.setParams({ ...machine, machineId: 'second-machine' });
+    await screen.update(<NewAppRouteBody />);
+    expect(draftMachine()).toBeUndefined();
+    await screen.pressByTestIdAsync('newApp.built.compose');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await waitForHomeGovernance(() => expect(draftMachine()).toBe('second-machine'));
     await screen.pressByTestIdAsync('newApp.deploy.changeSource');
     await screen.pressByTestIdAsync('newApp.fromCatalog');
     expect(routerMock.spies.push).toHaveBeenCalledWith(expect.stringMatching(/kind=app.*machine=/));

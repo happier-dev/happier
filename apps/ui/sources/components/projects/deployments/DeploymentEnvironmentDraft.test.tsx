@@ -842,6 +842,10 @@ describe('Environment draft Machine Home', () => {
       const machine = () => screen.findAllByType(SessionMachineField).find(node => node.props.testID === 'project-deployments.draft.machine');
       await vi.waitFor(() => expect(machine()).toBeTruthy());
       expect(machine()!.props.machineId).toBe('chosen');
+
+      routerMock.spies.setParams({ deployMachine: 'first' });
+      await screen.update(<WorkspaceRouteBody />);
+      expect(machine()!.props.machineId).toBe('first');
       await screen.unmount();
     } finally { routerMock.resetParams(); standardCleanup(); account.dispose(); storage.setState(previous); }
   });

@@ -16,8 +16,10 @@ export function DeploymentDefinitionDraftPage(props: Readonly<{ serverId: string
   /** The Machine a "Deploy an app here" door chose (route `deployMachine`); the draft starts on it. */
   initialMachineId?: string | null }>) {
   const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
-  return binding ? <DefinitionDraft key={`${binding.scope.serverId}:${binding.scope.accountId}`} lifetime={binding} definitionKind={props.definitionKind}
-    initialMachineId={props.initialMachineId ?? null} />
+  const initialMachineId = props.initialMachineId ?? null;
+  return binding ? <DefinitionDraft
+    key={JSON.stringify([binding.scope.serverId, binding.scope.accountId, props.definitionKind, initialMachineId])}
+    lifetime={binding} definitionKind={props.definitionKind} initialMachineId={initialMachineId} />
     : <PageLoadingRows testID="project-deployments.definition.loading" header />;
 }
 
