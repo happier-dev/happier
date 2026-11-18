@@ -176,7 +176,7 @@ describe('review follow-up Action ingress', () => {
             isLoaded: true, messageIdsOldestFirst: [message.id], messagesById: { [message.id]: message },
         }) } }));
         await flushHookEffects();
-        await screen.pressByTestIdAsync('review-finding-replies:finding-1');
+        await screen.pressByTestIdAsync('review-finding-toggle:finding-1');
         await send(screen, 'review-finding-ask-field:finding-1', 'Explain this finding');
         expect(actionRequests()).toEqual([{ serverUrl: homes.homes.review!.serverUrl, targetId: 'review-session',
             method: SESSION_RPC_METHODS.EXECUTION_RUN_ACTION, payload: { runId: 'review-run', actionId: 'review.follow_up',

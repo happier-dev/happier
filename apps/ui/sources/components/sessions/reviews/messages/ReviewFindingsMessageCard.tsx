@@ -90,6 +90,7 @@ type NormalizedReviewPayload = ReturnType<typeof normalizeReviewFindingsMessageP
 /** The transcript card shows this many findings before "N more findings" (lab R2 `card`). */
 const CARD_VISIBLE_FINDINGS = REVIEW_CARD_VISIBLE_FINDINGS;
 const EMPTY_THREAD: readonly never[] = [];
+const EMPTY_REVIEWERS: readonly never[] = [];
 const EMPTY_PENDING: Readonly<Record<string, ReviewTriageStatus>> = Object.freeze({});
 /** A reviewer run that stopped in one of these has no result: it didn't finish its review. */
 const UNFINISHED_RUN_STATUSES: ReadonlySet<string> = new Set(['failed', 'cancelled', 'timeout']);
@@ -503,6 +504,10 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
         }
         return contexts;
     }, [memberByRunId, rows, runId, serverId, sessionId]);
+    const reviewersByRowId = React.useMemo(() => new Map(rows.map((row) => [row.rowId, row.sources.map((source) => ({
+        label: source.member.reviewerLabel,
+        backendId: source.member.backendId,
+    }))] as const)), [rows]);
     const attributionByRowId = React.useMemo(() => {
         const attributions = new Map<string, Readonly<{ label: string; backendIds: readonly string[] }>>();
         if (!multiReviewer) return attributions;
@@ -713,6 +718,7 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                                     rowId={row.rowId}
                                     finding={row.finding}
                                     attribution={attributionByRowId.get(row.rowId) ?? null}
+                                    reviewers={reviewersByRowId.get(row.rowId) ?? EMPTY_REVIEWERS}
                                     original={row.sources.find((source) => source.finding === row.finding)?.member.originalByFindingId[row.finding.id] ?? null}
                                     density={isPage ? 'page' : 'card'}
                                     findBlockPrefix={isPage ? undefined : `structured-review-finding:${row.rowId}`}
@@ -724,8 +730,8 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                                     followUp={canAct ? followUpOf(rowMembers) : null}
                                     threadEntries={threadEntriesByRowId.get(row.rowId) ?? EMPTY_THREAD}
                                     pendingQuestion={pendingQuestionByRowId[row.rowId] ?? null}
-                                    threadOpen={openThreadRowId === row.rowId}
-                                    onToggleThread={toggleThread}
+                                    expanded={openThreadRowId === row.rowId}
+                                    onToggleExpanded={toggleThread}
                                     askContext={askContextByRowId.get(row.rowId)!}
                                     onAsk={askAboutRow}
                                 />

@@ -344,7 +344,9 @@ describe('ReviewFindingsMessageCard', () => {
         // The run pane's page reads the same decision from the same comment.
         const pane = await renderScreen(<ReviewFindingsMessageCard serverId={home.serverId} payload={payload} sessionId="sess_1" canSendMessages presentation="page" />);
         await flush();
+        await pane.pressByTestIdAsync('review-finding-toggle:f2');
         expect(pane.findByTestId('review-finding-triage:f2:accept')!.props.accessibilityState).toMatchObject({ checked: true });
+        await pane.pressByTestIdAsync('review-finding-toggle:f1');
         expect(pane.findByTestId('review-finding-triage:f1:reject')!.props.accessibilityState).toMatchObject({ checked: true });
     });
 
@@ -400,6 +402,7 @@ describe('ReviewFindingsMessageCard', () => {
         const text = actionSendSpy.mock.calls[0]![0].message;
         expect(text).toContain('comment-f2');
         expect(text).not.toContain('comment-f1');
+        await screen.pressByTestIdAsync('review-finding-toggle:f1');
         expect(screen.findByTestId('review-finding-triage:f1:reject')!.props.accessibilityState).toMatchObject({ checked: true });
     });
 
@@ -413,6 +416,7 @@ describe('ReviewFindingsMessageCard', () => {
             payload={payloadFor([finding('f1', 'high'), finding('f2', 'low')])} sessionId="sess_1" canSendMessages presentation="page" />);
         await flush();
         try {
+            await screen.pressByTestIdAsync('review-finding-toggle:f1');
             await screen.pressByTestIdAsync('review-finding-triage:f1:reject');
             await flush();
             expect(screen.findByTestId('review-findings-publish-accepted')!.props.disabled).toBe(true);
@@ -455,12 +459,13 @@ describe('ReviewFindingsMessageCard', () => {
         );
         await flush();
 
-        // The answer changed the finding: its latest version shows, marked as updated.
-        expect(screen.findByTestId('review-finding-updated:f1')).not.toBeNull();
+        // Opened, the answer that changed the finding shows its latest version, marked as updated,
+        // and the question and answer in the finding's conversation.
         await act(async () => {
-            await screen.pressByTestIdAsync('review-finding-replies:f1');
+            await screen.pressByTestIdAsync('review-finding-toggle:f1');
         });
-        expect(screen.findByTestId('review-finding-thread:f1')).not.toBeNull();
+        expect(screen.findByTestId('review-finding-updated:f1')).not.toBeNull();
+        expect(screen.findByTestId('review-finding-conversation:f1')!.findAll((node) => node.props.markdown === 'Only on iOS; lowered to Low.')).not.toHaveLength(0);
 
         await sendThroughComposer(screen, 'review-finding-ask-field:f1', 'Narrow it to iOS?');
         // The thread names who answers: the reviewer that found it.
@@ -474,18 +479,45 @@ describe('ReviewFindingsMessageCard', () => {
         }, expect.objectContaining({ serverId: home.serverId, scope: { serverId: home.serverId, accountId: 'account-1' } }));
     });
 
-    it('shows Ask about this disabled, with the reason, when the review cannot take follow-ups', async () => {
+    it('opens a finding into the merged body: decision beside the title, why it matters, the fixed code, how it was verified, then the conversation', async () => {
+        serveComments([commentFor('f1')]);
+        const screen = await renderScreen(
+            <ReviewFindingsMessageCard serverId={home.serverId} payload={payloadFor([finding('f1', 'high', {
+                whyItMatters: 'Switching tabs throws away unsaved edits.',
+                evidence: 'Reproduced with a new test.',
+            })])} sessionId="sess_1" canSendMessages presentation="page" />,
+        );
+        await flush();
+
+        // At rest the row is its title and facts: the decision and the body wait behind one press.
+        expect(screen.findByTestId('review-finding-triage:f1:accept')).toBeNull();
+        expect(screen.findByTestId('review-finding-body:f1')).toBeNull();
+
+        await screen.pressByTestIdAsync('review-finding-toggle:f1');
+        expect(screen.findByTestId('review-finding-toggle:f1')!.props.accessibilityState).toMatchObject({ expanded: true });
+        expect(screen.findByTestId('review-finding-triage:f1:accept')).not.toBeNull();
+        const body = screen.findByTestId('review-finding-body:f1')!;
+        const sections = body.findAll((node) => typeof node.props.testID === 'string'
+            && /^review-finding-(where|verified|conversation):f1$/.test(node.props.testID)
+            && typeof node.type === 'string').map((node) => node.props.testID);
+        expect([...new Set(sections)]).toEqual(['review-finding-where:f1', 'review-finding-verified:f1', 'review-finding-conversation:f1']);
+        expect(screen.findByTestId('review-finding-ask-field:f1')).not.toBeNull();
+        // The question field lives in the finding while it is open; the result's own field steps aside.
+        expect(screen.findByTestId('review-findings-follow-up')).toBeNull();
+    });
+
+    it('says why the opened finding cannot take questions when the review cannot take follow-ups', async () => {
         serveComments([commentFor('f1')]);
         const screen = await renderScreen(
             <ReviewFindingsMessageCard serverId={home.serverId} payload={payloadFor([finding('f1', 'high')], { retentionPolicy: 'ephemeral' })} sessionId="sess_1" canSendMessages presentation="page" />,
         );
         await flush();
 
-        const ask = screen.findByTestId('review-finding-ask:f1')!;
-        expect(ask.props.disabled).toBe(true);
-        expect(ask.props.accessibilityHint).toBe(t('runPage.review.followUpUnavailable.notResumable'));
         expect(screen.findByTestId('review-findings-follow-up-unavailable')).not.toBeNull();
         expect(screen.findByTestId('review-findings-follow-up')).toBeNull();
+        await screen.pressByTestIdAsync('review-finding-toggle:f1');
+        expect(screen.findByTestId('review-finding-ask-unavailable:f1')!.props.children).toBe(t('runPage.review.followUpUnavailable.notResumable'));
+        expect(screen.findByTestId('review-finding-ask-field:f1')).toBeNull();
     });
 
     it('shows the card\'s derived headline and its first three findings, most severe first', async () => {
@@ -607,8 +639,9 @@ describe('ReviewFindingsMessageCard', () => {
             <ReviewFindingsMessageCard serverId={home.serverId} payload={payload} sessionId="sess_1" canSendMessages presentation="page" />,
         );
         await flush();
+        await page.pressByTestIdAsync('review-finding-toggle:f1');
         expect(page.findByTestId('review-finding-triage:f1:accept')).not.toBeNull();
-        expect(page.findByTestId('review-finding-ask:f1')).not.toBeNull();
+        expect(page.findByTestId('review-finding-ask-field:f1')).not.toBeNull();
         expect(page.findByTestId('review-findings-publish-accepted')).not.toBeNull();
     });
 
@@ -618,9 +651,10 @@ describe('ReviewFindingsMessageCard', () => {
             <ReviewFindingsMessageCard serverId={home.serverId} payload={payloadFor([finding('f1', 'high')])} sessionId="sess_1" canSendMessages={false} presentation="page" />,
         );
         await flush();
+        await screen.pressByTestIdAsync('review-finding-toggle:f1');
 
         expect(screen.findByTestId('review-finding-triage:f1:accept')).toBeNull();
-        expect(screen.findByTestId('review-finding-ask:f1')).toBeNull();
+        expect(screen.findByTestId('review-finding-ask-field:f1')).toBeNull();
         expect(screen.findByTestId('review-findings-publish-accepted')).toBeNull();
         expect(screen.findByTestId('review-findings-follow-up')).toBeNull();
     });
@@ -665,17 +699,17 @@ describe('ReviewFindingsMessageCard', () => {
         expect(composerPart(second, 'review-findings-follow-up', 'new-session-composer-input', 'onChangeText').props.value).toBe('Half a question');
     });
 
-    it('keeps the finding follow-up in the same run draft when its thread closes and opens again', async () => {
+    it('keeps the finding follow-up in the same run draft when the finding closes and opens again', async () => {
         serveComments([commentFor('f1')]);
         const screen = await renderScreen(<ReviewFindingsMessageCard serverId={home.serverId}
             payload={payloadFor([finding('f1', 'high')])} sessionId="sess_1" canSendMessages presentation="page" />);
         await flush();
-        await screen.pressByTestIdAsync('review-finding-ask:f1');
+        await screen.pressByTestIdAsync('review-finding-toggle:f1');
         await act(async () => {
             changeTextTestInstance(composerPart(screen, 'review-finding-ask-field:f1', 'new-session-composer-input', 'onChangeText'), 'Check the iOS path?');
         });
-        await screen.pressByTestIdAsync('review-finding-ask:f1');
-        await screen.pressByTestIdAsync('review-finding-ask:f1');
+        await screen.pressByTestIdAsync('review-finding-toggle:f1');
+        await screen.pressByTestIdAsync('review-finding-toggle:f1');
         expect(composerPart(screen, 'review-finding-ask-field:f1', 'new-session-composer-input', 'onChangeText').props.value).toBe('Check the iOS path?');
         expect(screen.findByTestId('review-findings-follow-up')).toBeNull();
     });
@@ -722,6 +756,9 @@ describe('ReviewFindingsMessageCard', () => {
         expect(screen.findByTestId('review-findings-headline')!.props.children)
             .toBe(`${t('runPage.review.reviewerCount', { count: 2 })} · ${t('runPage.review.findingTotal', { count: 2 })} · ${t('runPage.review.highCount', { count: 1 })}`);
 
+        await act(async () => {
+            await screen.pressByTestIdAsync('review-finding-toggle:run_1:f1');
+        });
         if (!canAct) {
             expect(screen.findByTestId('review-finding-triage:run_1:f1:accept')).toBeNull();
             return;
@@ -748,9 +785,6 @@ describe('ReviewFindingsMessageCard', () => {
         }
 
         // A question on it goes to both reviewers, each in its own thread about its own finding.
-        await act(async () => {
-            await screen.pressByTestIdAsync('review-finding-ask:run_1:f1');
-        });
         await sendThroughComposer(screen, 'review-finding-ask-field:run_1:f1', 'Same key in both places?');
         expect(sessionExecutionRunActionSpy.mock.calls.map(([, request]) => request)).toEqual(expect.arrayContaining([
             { runId: 'run_1', actionId: 'review.follow_up', input: { findingIds: ['f1'], messageMarkdown: 'Same key in both places?' } },

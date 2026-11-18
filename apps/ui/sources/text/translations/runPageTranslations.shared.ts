@@ -74,6 +74,13 @@ export type RunPageTranslations = Readonly<{
         verifiedFirst: string;
         replies: (params: Count) => string;
         updatedAfterQuestion: string;
+        where: string;
+        howItWasVerified: string;
+        conversation: string;
+        /** "Claude found it": the reviewer that reported the finding first. */
+        foundIt: (params: Reviewer) => string;
+        /** "Codex agrees": another reviewer that reported the same finding. */
+        agrees: (params: Reviewer) => string;
         reviewerUpdated: (params: Reviewer) => string;
         askPlaceholder: string;
         askReviewerPlaceholder: string;
@@ -193,6 +200,11 @@ export const runPageTranslationsEnglish = { en: {
             verifiedFirst: 'Each is verified first, then fixed',
             replies: ({ count }) => (count === 1 ? '1 reply' : `${count} replies`),
             updatedAfterQuestion: 'Updated after your question',
+            where: 'Where',
+            howItWasVerified: 'How it was verified',
+            conversation: 'Conversation',
+            foundIt: ({ reviewer }) => `${reviewer} found it`,
+            agrees: ({ reviewer }) => `${reviewer} agrees`,
             reviewerUpdated: ({ reviewer }) => `${reviewer} updated the finding`,
             askPlaceholder: 'Ask a follow-up about this finding…',
             askReviewerPlaceholder: 'Ask the reviewer a follow-up…',

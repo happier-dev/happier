@@ -46,7 +46,6 @@ export function ReviewFindingThread(props: Readonly<{
     onAsk: (messageMarkdown: string) => Promise<boolean>;
     findBlockPrefix?: string;
 }>) {
-    const { theme } = useUnistyles();
     const find = useStructuredFindState();
     const quote = formatReviewFindingThreadQuote(props.finding);
     const severity = reviewSeverityLabel(props.finding.severity);
@@ -59,6 +58,34 @@ export function ReviewFindingThread(props: Readonly<{
                     <FindHighlightedText text={quote.slice(severity.length)} ranges={sliceFindRanges(quoteRanges, severity.length, quote.length - severity.length)} />
                 </Text>
             </View>
+            <ReviewFindingThreadEntries
+                rowId={props.rowId}
+                entries={props.entries}
+                pendingQuestion={props.pendingQuestion}
+                askContext={props.askContext}
+                onAsk={props.onAsk}
+                findBlockPrefix={props.findBlockPrefix}
+            />
+        </View>
+    );
+}
+
+/**
+ * The questions asked about a finding with the answers of the reviewers they went to, then the one
+ * field for the next question: the conversation both the thread above and the opened finding show.
+ */
+export function ReviewFindingThreadEntries(props: Readonly<{
+    rowId: string;
+    entries: readonly ReviewFindingThreadEntryView[];
+    pendingQuestion: string | null;
+    askContext: ReviewFindingAskContext;
+    onAsk: (messageMarkdown: string) => Promise<boolean>;
+    findBlockPrefix?: string;
+}>) {
+    const { theme } = useUnistyles();
+    const find = useStructuredFindState();
+    return (
+        <>
             {props.entries.map((entry, index) => (
                 <View key={`${entry.threadId}:${entry.generatedAtMs}:${index}`} style={styles.entry}>
                     <View style={styles.question}>
@@ -93,7 +120,7 @@ export function ReviewFindingThread(props: Readonly<{
                 recipient={props.askContext.recipient}
                 onSend={props.onAsk}
             />
-        </View>
+        </>
     );
 }
 
