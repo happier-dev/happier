@@ -37,6 +37,13 @@ import { PROVIDER_BROKER_APPLICATION_CONTROL_HEADERS } from '@/providers/broker/
 import { requestThroughApplicationTarget } from '@/providers/broker/providerBroker.testkit';
 import { dispatchWithUpstreamResponse } from '../../../../../server/sources/app/api/routes/providers/externalProviderBrokerDispatcher.testkit';
 
+// The real UI denial presenter reaches native styling through its shared imports.
+// Use the UI testkit's platform boundary without replacing presentation or broker logic.
+vi.mock('react-native-unistyles', async () => {
+  const { createUnistylesMock } = await import('../../../../../ui/sources/dev/testkit/mocks/unistyles');
+  return createUnistylesMock();
+});
+
 const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
 const root = { keyId: 'home', publicKey: Buffer.from(key.publicKey).toString('base64url') };
 const initiatorEndpoint = 'a'.repeat(64);
