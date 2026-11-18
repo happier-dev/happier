@@ -45,8 +45,9 @@ it.each(['machine', 'preset', 'unavailable-team'] as const)('prepares public no-
       sessionDefaults: { revision: 1, defaults: { approvalProfileId: 'project-profile',
         ...(placement === 'preset' ? { placement: { kind: 'preset', homeId: 'home', presetId: 'shared-preset' } } : {}),
         defaultAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } } } };
-    if (placement === 'unavailable-team' && url.pathname === '/v1/teams/get') return { status: 200, data: {
-      ok: false, errorCode: 'permission_denied', error: 'effect_family', effectAttempted: false } };
+    if (placement === 'unavailable-team' && url.pathname === '/v1/teams/get') {
+      return { status: 404, data: { error: 'team_not_found' } };
+    }
     if (url.pathname === '/v1/home/governance/get') throw new Error('optional Home is unreachable');
     if (url.pathname === '/v1/teams/get') return { status: 200, data: TeamSummaryV1Schema.parse({
       id: 'team', name: 'Team', description: null, logo: null, archivedAt: null, recovery: null,
@@ -80,7 +81,7 @@ it.each(['machine', 'preset', 'unavailable-team'] as const)('prepares public no-
     ...(placement === 'unavailable-team' ? ['/v1/home/governance/get'] : [])]);
   if (placement === 'unavailable-team') {
     expect(prepared.defaults.unavailableDefaults).toMatchObject([
-      { errorCode: 'permission_denied', effectAttempted: false }, { errorCode: 'defaults_unavailable', effectAttempted: false },
+      { errorCode: 'team_not_found' }, { errorCode: 'defaults_unavailable', effectAttempted: false },
     ]);
     const invocation = ExternalActionRequesterInvocationV1Schema.parse({ caller: { kind: 'host' }, surface: 'rpc',
       authority: 'account_automation', sessionCreationDefaults: prepared.defaults });
@@ -116,4 +117,40 @@ it.each(['pat', 'daemon'] as const)('prepares no-Project creation without reques
   expect(axios.request).not.toHaveBeenCalled();
   expect(axios.get).not.toHaveBeenCalled();
   expect(axios.post).not.toHaveBeenCalled();
+});
+
+it('inherits signed Account Home defaults without a Project selection or requester box', async () => {
+  const keys = nacl.sign.keyPair();
+  const token = 'machine-custodian-token';
+  const target = { kind: 'machine', machineId: 'machine' } as const;
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'root-proof', binding: {
+    accountId: 'requester', authentication: { kind: 'account', tokenEpoch: 0 },
+    accountEncryptionMode: 'e2ee', custodianAccountId: 'custodian', serverIdentityId: 'home',
+    machineId: target.machineId, installationId: 'installed', actionId: 'session.spawn_new', requestId: 'birth',
+    target, requestEnvelopeDigest: 'a'.repeat(43),
+  } });
+  vi.spyOn(axios, 'request').mockImplementation(async config => {
+    const path = new URL(String(config.url)).pathname;
+    expect(path).toBe('/v1/home/governance/get');
+    expect(config.data).toEqual({ projection: 'session_defaults' });
+    expect(Object.keys(config.headers ?? {}).map(name => name.toLowerCase())).not.toContain('authorization');
+    expect(verifyExternalActionMachineRequestV1({ authorizationToken: authorization.token, effectActionId: 'home.governance.get',
+      target, installationId: 'installed', requestId: 'birth', method: String(config.method).toUpperCase(),
+      path, body: config.data, publicKey: keys.publicKey,
+      signature: String(config.headers?.[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]) })).toBe(true);
+    return { status: 200, data: { homeDefaults: { approvalProfileId: 'home-profile' } } };
+  });
+  const prepare = createPrepareSessionSpawnInput({ credentials: { token, encryption: null }, token, mode: 'plain',
+    sessionId: '', ctx: null, rawSession: {}, serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test',
+    externalActionMachineInstallationId: 'installed', externalActionMachineRequestPrivateKey: keys.secretKey,
+  }, { serverId: 'home', serverHttpBaseUrl: 'https://home.test' }, {
+    spawnConnectedServicesList: async () => { throw new Error('no connected-services intent'); },
+  });
+  const prepared = await prepare({ executionTarget: { serverId: 'home', machineId: target.machineId },
+    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    directory: { kind: 'path', path: '/repo' } }, { surface: 'rpc', authority: 'account_automation',
+    externalActionExecutionAuthorization: authorization, externalActionTarget: target });
+  expect(prepared.defaults.unavailableDefaults ?? []).toEqual([]);
+  expect(resolveManagedSessionDefaults({ ...prepared.defaults.context, agentTargetKey: '' }).approvalProfileId)
+    .toMatchObject({ value: 'home-profile', source: 'home' });
 });
