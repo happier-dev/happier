@@ -46,7 +46,7 @@ export async function readSessionMessageInputSchema(params: Readonly<{
     const selected = entry;
     return selected.pending.run('session.message.send', async physicalSignal => {
         const execute = createUiAccountAction({ account });
-        const advertised = await readCompleteActionSpecV1({ actionId: 'session.message.send', signal: physicalSignal,
+        const advertised = await readCompleteActionSpecV1({ actionId: 'session.message.send', includeOutputSchema: false, signal: physicalSignal,
             read: input => execute({ actionId: 'action.spec.get', input,
                 context: { ...context, signal: physicalSignal }, signal: physicalSignal }) });
         account.assertCurrent();

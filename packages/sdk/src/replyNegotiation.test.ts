@@ -68,7 +68,7 @@ describe('Session reply negotiation through public HTTP', () => {
       await expect(client.machine('machine-1').sessions.get('session-1').sendAndWait('Inspect the failure.'))
         .rejects.toMatchObject({ name: 'HappierActionError', code: 'unsupported' });
       expect(server.calls).toEqual([{ actionId: 'action.spec.get',
-        input: { id: 'session.message.send', includeOutputSchema: true }, target: { kind: 'machine', machineId: 'machine-1' } }]);
+        input: { id: 'session.message.send', includeOutputSchema: false }, target: { kind: 'machine', machineId: 'machine-1' } }]);
     } finally { await client.close(); await server.close(); }
   });
 

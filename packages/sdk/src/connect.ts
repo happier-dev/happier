@@ -708,7 +708,7 @@ function createClient(
       // A predecessor passthrough schema accepting an unknown field proves no
       // support: its declared parser must reject an invalid value for that field.
       const definition = await readCompleteActionSpecV1({
-        actionId: 'session.message.send', signal: options.signal,
+        actionId: 'session.message.send', includeOutputSchema: false, signal: options.signal,
         read: async discoveryInput => await executeRequest('action.spec.get', discoveryInput,
           correspondenceOptions(options), allowAfterClose, false),
       });

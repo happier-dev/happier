@@ -118,11 +118,14 @@ export function projectActionSpecSchemaSections(definition: ActionDiscoveryDefin
 export async function readCompleteActionSpecV1(params: Readonly<{
   actionId: string;
   signal?: AbortSignal;
-  read: (input: Readonly<{ id: string; includeOutputSchema: true; schemaPath?: string }>) => Promise<unknown>;
+  /** An input-admission caller (a Session send) reads no output grammar; contract readers keep the default. */
+  includeOutputSchema?: boolean;
+  read: (input: Readonly<{ id: string; includeOutputSchema: boolean; schemaPath?: string }>) => Promise<unknown>;
 }>): Promise<ActionDiscoveryDefinitionV1> {
+  const includeOutputSchema = params.includeOutputSchema ?? true;
   const read = async (schemaPath?: string) => {
     params.signal?.throwIfAborted();
-    const result = await params.read({ id: params.actionId, includeOutputSchema: true,
+    const result = await params.read({ id: params.actionId, includeOutputSchema,
       ...(schemaPath !== undefined ? { schemaPath } : {}) });
     params.signal?.throwIfAborted();
     const parsed = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse(result);
@@ -161,7 +164,9 @@ export async function readCompleteActionSpecV1(params: Readonly<{
   if (!root.actionSpec.outputSchema && outputSections.length) throw new Error('invalid_action_schema_section');
   const [inputSchema, outputSchema] = await Promise.all([
     restore(root.actionSpec.inputSchema, '/inputSchema', inputSections),
-    root.actionSpec.outputSchema ? restore(root.actionSpec.outputSchema, '/outputSchema', outputSections) : undefined,
+    includeOutputSchema && root.actionSpec.outputSchema
+      ? restore(root.actionSpec.outputSchema, '/outputSchema', outputSections) : undefined,
   ]);
-  return { ...root.actionSpec, inputSchema, ...(outputSchema ? { outputSchema } : {}) };
+  const { outputSchema: _advertisedOutput, ...definition } = root.actionSpec;
+  return { ...definition, inputSchema, ...(outputSchema ? { outputSchema } : {}) };
 }

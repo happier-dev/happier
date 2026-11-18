@@ -61,6 +61,22 @@ describe('Action schema sections', () => {
     expect(reads, 'one root execute per distinct native leaf, independent of schema section count').toEqual(leaves);
   });
 
+  it('downloads no output grammar for a Session send that admits only its input', async () => {
+    const executor = createActionExecutor({});
+    let replyBytes = 0;
+    const definition = await readCompleteActionSpecV1({ actionId: 'session.message.send', includeOutputSchema: false,
+      read: async input => {
+        const result = await executor.execute('action.spec.get', input, { surface: 'ui' });
+        if (!result.ok) throw new Error(result.errorCode);
+        replyBytes += new TextEncoder().encode(JSON.stringify(result.result)).byteLength;
+        return result.result;
+      } });
+    const inputOnly = actionSpecToActionDefinitionV1(getActionSpec('session.message.send'), { surface: 'ui', includeOutputSchema: false });
+    expect(definition.inputSchema).toEqual(inputOnly.inputSchema);
+    expect(definition).not.toHaveProperty('outputSchema');
+    expect(replyBytes).toBe(new TextEncoder().encode(JSON.stringify({ actionSpec: inputOnly })).byteLength);
+  });
+
   it('carries native completion contracts through full sectioned discovery', async () => {
     const spec = getActionSpec('subagents.plan.start');
     const full = projectActionDefinitionForExternalDiscovery(actionSpecToActionDefinitionV1(spec));
