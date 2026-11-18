@@ -40,7 +40,7 @@ let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefi
 let queryRequests: SessionListQueryV1[] = [];
 let socketErrors: string[] = [];
 let unsubscribeSocketErrors: (() => void) | undefined;
-let queryGate: Promise<void> | undefined;
+let nextQueryGate: Promise<void> | undefined;
 const nextCursor = encodeV2SessionListCursorV1('page-one');
 
 function renderedSessionIds(index: readonly SessionListIndexItem[] | null) {
@@ -51,7 +51,7 @@ describe('ordinary list presentation for the opened Bots roster', () => {
     beforeAll(loadSyncSingletonForTests);
     beforeEach(async () => {
         queryRequests = [];
-        queryGate = undefined;
+        nextQueryGate = undefined;
         socketErrors = [];
         const { apiSocket } = await import('@/sync/api/session/apiSocket');
         unsubscribeSocketErrors = apiSocket.onError(error => {
@@ -65,8 +65,8 @@ describe('ordinary list presentation for the opened Bots roster', () => {
                 if (path === '/v2/sessions/query') {
                     const query = SessionListQueryV1Schema.parse(JSON.parse(String(init?.body)));
                     queryRequests.push(query);
-                    await queryGate;
                     const lastPage = query.cursor === nextCursor;
+                    if (lastPage) await nextQueryGate;
                     return Response.json(SessionListQueryResponseV1Schema.parse({
                         sessions: [],
                         nextCursor: lastPage ? null : nextCursor, hasNext: !lastPage,
@@ -120,7 +120,8 @@ describe('ordinary list presentation for the opened Bots roster', () => {
         expect(renderedSessionIds(roster.getCurrent().visibleSessionListIndex).sort()).toEqual(['active-bot', 'inactive-bot']);
         expect(storage.getState().settings.hideInactiveSessions).toBe(true);
         expect(renderedSessionIds(ordinary.getCurrent().visibleSessionListIndex).sort()).toEqual(['active-bot', 'ordinary']);
-        const explicitOptions = { workFilter: normalizeSessionListFilterV1({ includeInactive: true }) };
+        const serverId = resolveServerProfileScopeIdForIdentifier(connection!.home.id);
+        const explicitOptions = { workFilter: normalizeSessionListFilterV1({ homeServerIds: [serverId], includeInactive: true }) };
         let explicitRenders = 0;
         const explicit = await renderHook(() => {
             explicitRenders += 1;
@@ -133,7 +134,6 @@ describe('ordinary list presentation for the opened Bots roster', () => {
         expect(renders - settledRenders).toBe(0);
         expect(explicitRenders - settledExplicitRenders).toBe(0);
         expect(renderedSessionIds(ordinary.getCurrent().visibleSessionListIndex).sort()).toEqual(['active-bot', 'inactive-bot', 'ordinary']);
-        const serverId = resolveServerProfileScopeIdForIdentifier(connection!.home.id);
         await act(async () => {
             storage.getState().applyServerScopedSessionListRows(serverId, [
                 createSessionListRenderableSessionFixture({ id: 'new-bot', active: true,
@@ -169,15 +169,11 @@ describe('ordinary list presentation for the opened Bots roster', () => {
                 queryRequests,
             })).toBe('ready');
         });
-        expect(queryRequests).toEqual([expect.objectContaining({ includeInactive: true, scope: 'all_accessible' })]);
-        expect(queryRequests[0]?.bot).toBeUndefined();
-        expect(roster.getCurrent().query?.statesByServerId[serverId]).toMatchObject({ hasNext: true, nextCursor });
-        expect(roster.getCurrent().query?.coverageComplete).toBe(false);
-        expect(storage.getState().sessionListQueryMembershipByKey).toEqual(memberships);
-
-        await roster.getCurrent().query?.loadNext();
-        await flushHookEffects();
-        expect(queryRequests[1]).toMatchObject({ includeInactive: true, cursor: nextCursor });
+        expect(queryRequests).toEqual([
+            expect.objectContaining({ includeInactive: true, scope: 'all_accessible' }),
+            expect.objectContaining({ includeInactive: true, cursor: nextCursor }),
+        ]);
+        expect(queryRequests.every(query => query.bot === undefined)).toBe(true);
         expect(roster.getCurrent().query?.statesByServerId[serverId]).toMatchObject({
             hasNext: false, nextCursor: null, metadataUpgradeRequiredCount: 1,
         });
@@ -186,8 +182,8 @@ describe('ordinary list presentation for the opened Bots roster', () => {
     });
 
     it('keeps held Bots visible while a row-only roster pages without publishing membership or coverage', async () => {
-        let release!: () => void;
-        queryGate = new Promise<void>(resolve => { release = resolve; });
+        let releaseNextPage!: () => void;
+        nextQueryGate = new Promise<void>(resolve => { releaseNextPage = resolve; });
         const serverId = resolveServerProfileScopeIdForIdentifier(connection!.home.id);
         const query: SessionListQueryV1 = { v: 1, storage: 'active', includeInactive: true,
             scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [] };
@@ -202,19 +198,16 @@ describe('ordinary list presentation for the opened Bots roster', () => {
                 ordinaryAdapter: { path: '/v2/sessions', allowV1Fallback: true, membership: 'ordinary' } }],
         }));
         try {
-            await vi.waitFor(() => expect(roster.getCurrent().query?.statesByServerId[serverId]?.phase).toBe('loading'));
+            await vi.waitFor(() => expect(queryRequests.some(query => query.cursor === nextCursor)).toBe(true));
+            expect(roster.getCurrent().query?.statesByServerId[serverId]?.phase).toBe('loading');
             expect(renderedSessionIds(roster.getCurrent().visibleSessionListIndex).sort()).toEqual(['active-bot', 'inactive-bot']);
             expect(roster.getCurrent().queryPresentation?.kind).toBe('refreshing');
             expect(roster.getCurrent().query?.coverageComplete).toBe(false);
             expect(storage.getState().sessionListQueryMembershipByKey).toEqual(memberships);
-            release();
+            releaseNextPage();
             await vi.waitFor(() => expect(roster.getCurrent().query?.statesByServerId[serverId]?.phase).toBe('ready'));
-            expect(roster.getCurrent().query?.statesByServerId[serverId]?.hasNext).toBe(true);
-            expect(renderedSessionIds(roster.getCurrent().visibleSessionListIndex).sort()).toEqual(['active-bot', 'inactive-bot']);
-            await roster.getCurrent().query?.loadNext();
-            await flushHookEffects();
             expect(renderedSessionIds(roster.getCurrent().visibleSessionListIndex)).toEqual([]);
             expect(storage.getState().sessionListQueryMembershipByKey).toEqual(memberships);
-        } finally { release(); }
+        } finally { releaseNextPage(); }
     });
 });
