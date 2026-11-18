@@ -459,7 +459,9 @@ export function MachineProjectWorkSection(
           />
         ) : null}
         {state.kind === 'refused' || state.kind === 'error' ? (
-          <SurfaceStateCard
+          // While the Machine is offline, a failed read is the page's one offline fact, said above; no second cause
+          // here and no Retry that cannot answer until it is back.
+          unreachable ? null : <SurfaceStateCard
             testID={`${testID}.unavailable`}
             size="line"
             kind="unavailable"

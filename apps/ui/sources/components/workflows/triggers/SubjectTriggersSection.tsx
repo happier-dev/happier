@@ -117,6 +117,8 @@ export type SubjectTriggersSectionProps = Readonly<{
       sourceAudience?: readonly PrincipalRefV1[];
       controllerMachineId?: string;
       pushSetup?: DeploymentPushSetupConfig;
+      /** The page already says its subject is offline: starts it can't read then add no line and hold no Link place. */
+      offlineStatedAbove?: boolean;
 }>;
 
 /** A selected resource's Automations, borrowing the physical host's Account and presentation demand. */
@@ -207,6 +209,8 @@ export const SubjectTriggersSectionContent = React.memo(
     const widget = props.presentation === 'widget';
     const description = describeAutomationsSection(props.subject.kind, empty && !unsettled);
     const linkExpanded = opening?.kind === 'link';
+    // Offline, unread starts are the page's one offline fact: Retry can't answer until the subject is back.
+    const linkHeld = linkSlot === 'pending' || (linkSlot === 'unavailable' && props.offlineStatedAbove !== true);
     // In a widget frame the same two actions are its header's icon controls, under the same anchors and rule.
     const frameActions = React.useMemo(() => !widget ? null : (
       <View style={styles.actions}>
@@ -216,7 +220,7 @@ export const SubjectTriggersSectionContent = React.memo(
               accessibilityLabel={t('workflows.triggers.section.link')} tooltip={t('workflows.triggers.section.link')}
               onPress={() => setOpening({ kind: 'link', anchor: linkAnchor })} />
           </View>
-        ) : linkSlot === 'pending' || linkSlot === 'unavailable' ? (
+        ) : linkHeld ? (
           <View testID="subject-triggers-link-pending" style={styles.heldSlot} pointerEvents="none"
             aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             <IconButton iconName="link" variant="plain" accessibilityLabel={t('workflows.triggers.section.link')} disabled onPress={() => {}} />
@@ -228,7 +232,7 @@ export const SubjectTriggersSectionContent = React.memo(
             onPress={() => openSentence(null, addAnchor)} />
         </View>
       </View>
-    ), [widget, linkSlot, linkExpanded, openSentence]);
+    ), [widget, linkSlot, linkHeld, linkExpanded, openSentence]);
     const sectionActions = widget ? null : (
       <View ref={addAnchor} collapsable={false} style={styles.actions}>
         <SectionActionButton
@@ -247,7 +251,7 @@ export const SubjectTriggersSectionContent = React.memo(
               onPress={() => setOpening({ kind: 'link', anchor: linkAnchor })}
             />
           </View>
-        ) : linkSlot === 'pending' || linkSlot === 'unavailable' ? (
+        ) : linkHeld ? (
           <View testID="subject-triggers-link-pending" style={styles.heldSlot} pointerEvents="none"
             aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             <SectionActionButton icon="link" title={t('workflows.triggers.section.link')} disabled onPress={() => {}} />
@@ -289,7 +293,7 @@ export const SubjectTriggersSectionContent = React.memo(
               />
             ))}
         {/* Starts that could not be read say so under the rows they belong to, before the host's own rows. */}
-        {linkSlot === 'unavailable' && status !== 'failed' ? (
+        {linkSlot === 'unavailable' && status !== 'failed' && props.offlineStatedAbove !== true ? (
           <SurfaceStateCard testID="subject-triggers-starts-unavailable" size="line" kind="unavailable"
             title={t('workflows.triggers.section.startsUnavailable')}
             action={link ? { label: t('common.retry'), onPress: link.retryWhen } : undefined} />

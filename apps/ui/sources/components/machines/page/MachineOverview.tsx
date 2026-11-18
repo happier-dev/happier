@@ -125,7 +125,8 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
             <MachineResourcesAskBlock serverId={props.serverId} machineId={props.machineId} machineName={props.machineName} />
 
             {/* What runs here by itself (OPS-AUTOMATIONS-1102 D2): the Account's triggers on this machine, Add beside the title. */}
-            <SubjectTriggersSection subject={triggerSubject} subjectName={props.machineName} serverId={props.serverId} />
+            <SubjectTriggersSection subject={triggerSubject} subjectName={props.machineName} serverId={props.serverId}
+                offlineStatedAbove={props.online === false} />
 
             {/* What's on this Machine (S50 `i:machine`): everything Happier manages here, the same rows as Store → Installed. */}
             <MachineInventoryBlock serverId={props.serverId} machineId={props.machineId} scope={machineAccountScope}

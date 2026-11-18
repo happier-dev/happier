@@ -713,6 +713,22 @@ describe('Account Workflow Library and settings', () => {
         expect(screen.getTextContent()).toContain('workflows.triggers.section.startsUnavailable');
         await screen.unmount();
     });
+    it('leaves a Machine\'s unread starts to the page when the page already says the Machine is offline', async () => {
+        const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+        home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
+            automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 }) });
+        const screen = await renderAccountScreen(<PluginSurfaceFocusEligibilityProvider active><ListPresentationProvider value="page">
+            <SubjectTriggersSection subject={{ kind: 'machine', serverId, machineId: 'unreachable-machine' }} subjectName="Studio" offlineStatedAbove />
+        </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-add')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-read')).toBeNull());
+        // No second cause with a Retry that cannot answer while offline, and no unseen Link place pushing Automate… in.
+        expect(screen.findByTestId('subject-triggers-starts-unavailable')).toBeNull();
+        expect(screen.findByTestId('subject-triggers-link-pending')).toBeNull();
+        await screen.unmount();
+    });
     it('reads a plugin resource without execution placement or opening a saved attachment body', async () => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
         const { AutomationSubjectV1Schema } = await import('@happier-dev/protocol/automations/automationSubjectV1');

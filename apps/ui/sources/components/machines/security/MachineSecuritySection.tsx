@@ -251,7 +251,8 @@ export function MachineSecurityView(
           />
         ) : null}
         {props.store?.items.map((entry) => (
-          <StoreUpdateRow key={entry.key} entry={entry} host={props.store!.host} testID={`machine-security-store-${entry.key}`} />
+          // One text column with the rows above it: the Store's row takes this section's row role, not its catalog's.
+          <StoreUpdateRow key={entry.key} entry={entry} host={props.store!.host} rowRole="item" testID={`machine-security-store-${entry.key}`} />
         ))}
       </ItemGroup>
       <UpdatesReviewCard machineName={machine} controls={controls} serverId={props.serverId ?? null} />

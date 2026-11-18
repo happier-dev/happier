@@ -62,6 +62,8 @@ export function StoreUpdateRow(
     entry: StoreUpdateEntry;
     host: StoreUpdateRowHost;
     testID: string;
+    /** `item` inside a page section of ordinary rows (Machine → Security), so the section keeps one text column. */
+    rowRole?: 'catalogRow' | 'item';
   }>,
 ) {
   const { entry, host } = props;
@@ -121,6 +123,7 @@ export function StoreUpdateRow(
   return (
     <CapabilityRow
       testID={props.testID}
+      {...(props.rowRole === undefined ? {} : { rowRole: props.rowRole })}
       title={title}
       description={[version, state].filter(Boolean).join(' · ')}
       status={entry.status}

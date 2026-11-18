@@ -421,6 +421,25 @@ describe('Machine › Work from your projects through the Machine policy Actions
     }
   });
 
+  it('leaves a failed policy read on an offline Machine to the page, with no Retry that cannot answer', async () => {
+    const { screen, releasePolicyRead } = await setup({ announced: true, holdPolicyRead: true });
+    const { recordMachineRequestFailed, clearMachineRequestReachabilityForTest } =
+      await import('@/sync/domains/machines/reachability/machineReachability');
+    try {
+      const scope = storage.getState().profileScope;
+      if (!scope || scope.serverId !== fixture!.home.id) throw new Error('expected_current_machine_account_scope');
+      machineHttp.read = () => new Response(null, { status: 503 });
+      await act(async () => recordMachineRequestFailed({ ...scope, machineId: 'm1' }));
+      await act(async () => { releasePolicyRead(); });
+      await act(async () => { await Promise.resolve(); });
+      // The page says the Machine is offline once; this section adds no cause and no dead Retry of its own.
+      expect(screen.findAllByTestId('work.unavailable')).toHaveLength(0);
+      expect(screen.findAllByTestId('work.accepting')).toHaveLength(0);
+    } finally {
+      clearMachineRequestReachabilityForTest();
+    }
+  });
+
   it('on a phone, says Run at most is loading until the policy is read, and No limit only for a read null', async () => {
     viewport.compact = true;
     const { screen, releasePolicyRead } = await setup({ holdPolicyRead: true });
