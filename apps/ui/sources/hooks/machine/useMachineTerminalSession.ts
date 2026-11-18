@@ -57,6 +57,7 @@ import {
     type TerminalStreamRuntime,
 } from '@/sync/domains/terminal/stream/runtime';
 import { machineTerminalClose } from '@/sync/ops/machineTerminal';
+import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
 import { buildMachineTerminalSessionRequest } from './machineTerminalSessionRequest';
 import { useMachineTerminalActionAdmission } from './useMachineTerminalActionAdmission';
 import { delay } from '@/utils/timing/time';
@@ -1002,6 +1003,20 @@ export function useMachineTerminalSession(params: Readonly<{
         updateSurfaceState,
         writeTerminalOutput,
     ]);
+
+    // A lost established attachment waits for the existing Home/Machine transport
+    // reconnect (network recovery, foreground) and re-attaches then; it adds no timer.
+    // A person's Reconnect starts its own attempt and supersedes this wait.
+    const awaitingTransportRecovery = status === 'error' && hasEstablishedTerminalRef.current;
+    React.useEffect(() => {
+        if (!awaitingTransportRecovery || !params.machineId) return undefined;
+        const scope = attachmentScopeRef.current;
+        return subscribeMachineRpcRecovery({ machineId: params.machineId, serverId: scope?.serverId ?? params.serverId,
+            expectedAccountId: scope?.accountId }, () => {
+            resetAutoRetryState();
+            bumpConnectionNonce();
+        });
+    }, [awaitingTransportRecovery, bumpConnectionNonce, params.machineId, params.serverId, resetAutoRetryState]);
 
     React.useEffect(() => {
         return () => {

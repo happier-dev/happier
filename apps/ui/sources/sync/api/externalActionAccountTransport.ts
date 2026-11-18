@@ -382,7 +382,12 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     const controllerAccess = preset?.managedPresetControllerAccess;
     const scopedController = controller && controllerAccess ? { controller, access: controllerAccess } : null;
     if (scopedController && scopedController.controller.machineId !== params.machineId) return failure('target_not_local');
-    const currentOwnRow = !scopedController && !finite && !runtimeDemand && !params.invocation && !retainedResource
+    // Stream I/O on an admitted PTY carries no review; Home re-admits each own-Machine RPC.
+    // Open/restart/close/list keep their requester invocation's Home custody.
+    const ownTargetIncumbent = params.foreignTargetOnly === true
+        && (params.actionId === 'machines.terminal.read' || params.actionId === 'machines.terminal.write');
+    const reviewedInvocation = params.invocation !== undefined && !ownTargetIncumbent;
+    const currentOwnRow = !scopedController && !finite && !runtimeDemand && !reviewedInvocation && !retainedResource
         ? readCurrentOwnActionMachine(account, params.machineId) : null;
     const row = scopedController ? null : currentOwnRow ?? await readOriginalAccountActionMachine(account, params.machineId, params.signal);
     const custody = scopedController ? {
@@ -397,7 +402,7 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     if (!custody) return failure('admission_unavailable');
     const foreignCustody = custody.custodian.accountId !== account.accountId;
     const needsCustody = foreignCustody || finite || runtimeDemand && custody.managed
-        || params.invocation !== undefined || retainedResource;
+        || reviewedInvocation || retainedResource;
     // Ordinary own targets retain their incumbent transport. Managed runtime
     // demand and finite placement need Home custody even for an own guest.
     if (params.foreignTargetOnly && !needsCustody) return null;

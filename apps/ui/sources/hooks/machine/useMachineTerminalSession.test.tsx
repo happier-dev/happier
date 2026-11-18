@@ -1088,6 +1088,80 @@ describe('useMachineTerminalSession', () => {
         expect(streamReadSignals[2]?.aborted).toBe(true);
     });
 
+    it('keeps own-Machine Shell I/O on the admitted Machine RPC without a per-chunk mint or Machine re-read', async () => {
+        const terminalId = 'own-io';
+        const output = (seq: number, data: string) => ({ ok: true, terminalId, frames: [{ t: 'bytes', terminalId, seq, byteOffset: seq,
+            byteLength: 1, encoding: 'base64', data }], nextByteOffset: seq + 1, availableByteOffset: seq + 1, droppedBeforeByteOffset: 0, done: false });
+        const echo = createDeferred<unknown>();
+        terminalOps.streamReadBytes.mockImplementationOnce(() => output(0, 'QQ==')).mockImplementationOnce(() => echo.promise)
+            .mockImplementation(() => new Promise(() => {}));
+        const { useMachineTerminalSession } = await import('./useMachineTerminalSession');
+        const terminalRef = { current: { write: vi.fn(), writeBytes: vi.fn(() => true), clear: vi.fn() } satisfies EmbeddedTerminalRendererHandle };
+        const hook = await renderHook(() => useMachineTerminalSession({
+            machineId: 'machine', serverId: homeIds.primary, cwd: '/repo', terminalKey: 'own-io-routing', terminalRef,
+            attachedTerminalId: terminalId,
+        }));
+        await act(async () => hook.getCurrent().onReady(80, 24));
+        await flushHookEffects({ cycles: 4, turns: 2 });
+        expect(hook.getCurrent()).toMatchObject({ status: 'connected', terminalId, error: null });
+        const custodyRequests = () => servedHomes.requests.filter(request => request.path.endsWith('/execution-authorization')
+            || request.path === '/v1/machines/read-batch' || request.path.startsWith('/v1/actions/machines.terminal.')).length;
+        const before = custodyRequests();
+        await act(async () => hook.getCurrent().onInput('a'));
+        await flushHookEffects({ cycles: 2, turns: 2, runOnlyPendingTimers: true });
+        await vi.waitFor(() => expect(terminalOps.streamSendInput).toHaveBeenCalledWith('machine',
+            { terminalId, event: { t: 'text', text: 'a' } }, expect.any(Object)));
+        await act(async () => echo.resolve(output(1, 'YQ==')));
+        await flushHookEffects({ cycles: 4, turns: 2 });
+        await vi.waitFor(() => expect(terminalOps.streamReadBytes).toHaveBeenCalledTimes(3));
+        expect(custodyRequests()).toBe(before);
+        expect(hook.getCurrent()).toMatchObject({ status: 'connected', error: null });
+        await hook.unmount();
+    });
+
+    it('re-attaches a lost Shell when its Home Account transport reconnects, without a Reconnect click', async () => {
+        const terminalId = 'transport-drop';
+        const disconnected = () => createRpcCallError({ error: 'Socket disconnected', errorCode: 'RPC_SOCKET_DISCONNECTED' });
+        const held: ReturnType<typeof createDeferred<unknown>>[] = [];
+        let offline = false;
+        terminalOps.streamReadBytes.mockImplementationOnce((_machineId: string, request: { terminalId: string }) => ({
+            ok: true, terminalId: request.terminalId,
+            frames: [{ t: 'bytes', terminalId: request.terminalId, seq: 0, byteOffset: 0, byteLength: 1, encoding: 'base64', data: 'QQ==' }],
+            nextByteOffset: 1, availableByteOffset: 1, droppedBeforeByteOffset: 0, done: false,
+        })).mockImplementation(() => {
+            if (offline) return Promise.reject(disconnected());
+            const read = createDeferred<unknown>();
+            held.push(read);
+            return read.promise;
+        });
+        const { useMachineTerminalSession } = await import('./useMachineTerminalSession');
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const terminalRef = { current: { write: vi.fn(), writeBytes: vi.fn(() => true), clear: vi.fn() } satisfies EmbeddedTerminalRendererHandle };
+        const hook = await renderHook(() => useMachineTerminalSession({
+            machineId: 'machine', serverId: homeIds.primary, cwd: '/repo', terminalKey: 'transport-drop-recovery', terminalRef,
+            machineReachable: true, machineRpcTargetAvailable: true, attachedTerminalId: terminalId,
+        }));
+        await act(async () => hook.getCurrent().onReady(80, 24));
+        await flushHookEffects({ cycles: 4, turns: 2 });
+        expect(hook.getCurrent()).toMatchObject({ status: 'connected', terminalId, error: null });
+        // The Account socket goes away under the held read.
+        offline = true;
+        await act(async () => { for (const read of held.splice(0)) read.reject(disconnected()); });
+        await flushHookEffects({ cycles: 4, turns: 2, runOnlyPendingTimers: true });
+        await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'error', connectionLost: true }));
+        const readsBeforeRecovery = terminalOps.streamReadBytes.mock.calls.length;
+        // Idle while offline: no timer re-attempts the attach.
+        await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+        expect(terminalOps.streamReadBytes).toHaveBeenCalledTimes(readsBeforeRecovery);
+        // The Home's Account transport reports it connected again.
+        offline = false;
+        await act(async () => publishHomeAccountChange(homeIds.primary, undefined, { source: 'connected' }));
+        await flushHookEffects({ cycles: 4, turns: 2 });
+        await vi.waitFor(() => expect(terminalOps.streamReadBytes).toHaveBeenCalledTimes(readsBeforeRecovery + 1));
+        expect(hook.getCurrent()).toMatchObject({ status: 'connected', terminalId, error: null });
+        await hook.unmount();
+    });
+
     it('offers connection recovery only after a failed attempt and resets it for an explicit restart', async () => {
         const initial = createDeferred<DaemonTerminalEnsureResponse>();
         const retried = createDeferred<DaemonTerminalEnsureResponse>();
