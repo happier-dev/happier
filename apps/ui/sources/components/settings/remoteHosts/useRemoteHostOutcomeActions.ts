@@ -18,6 +18,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { getRemoteHostLocalOverrides } from '@/sync/domains/remoteHosts/remoteHostLocalOverrides';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { resolveRemoteHostActionRefusal } from './resolveRemoteHostActionRefusal';
 import {
     buildRelayAccessSshTargetFromRemoteHostConfig,
 } from './remoteHostOutcomeActions';
@@ -152,16 +153,10 @@ export function useRemoteHostOutcomeActions(options: Readonly<{
         const result = await executor.execute(actionId,
             { hostId: remoteHost.id, expectedRevision: options.catalogRevision },
             { surface: 'ui', authority: 'present_user', serverId: options.scope.serverId, expectedAccountId: options.scope.accountId });
-        if (!result.ok) {
-            Modal.alert(t('common.error'), result.error);
-            return null;
-        }
-        if (result.result && typeof result.result === 'object' && 'status' in result.result
-            && (result.result.status === 'unavailable' || result.result.status === 'conflict' || result.result.status === 'outcome_unknown')) {
-            Modal.alert(t('common.error'), t('errors.operationFailed'));
-            return null;
-        }
-        return result.result;
+        if (!lifetime.isCurrent()) return null;
+        const refusal = resolveRemoteHostActionRefusal(result);
+        if (refusal) Modal.alert(t('common.error'), refusal);
+        return result.ok && !refusal ? result.result : null;
     }, [options.catalogRevision, options.scope]);
 
     const setupAsMachine = React.useCallback(async (remoteHost: RemoteHost) => {

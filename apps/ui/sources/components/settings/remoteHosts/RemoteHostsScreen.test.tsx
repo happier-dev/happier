@@ -540,7 +540,7 @@ await import('./collection/remoteHostsCollectionController');
 	        expect(screen.findByTestId('settings.remoteHosts.managementDisabled')).toBeTruthy();
 	    });
 
-	    it('starts a SystemTask when running the test connection action', async () => {
+	    it.each(['allowed', 'off'] as const)('presents the test connection Action outcome when policy is %s', async policy => {
 	        setTauriDesktop(true);
 	        featureGateState.managementEnabled = true;
 	        remoteHostsState.value = [
@@ -561,6 +561,13 @@ await import('./collection/remoteHostsCollectionController');
         ];
 
         const { RemoteHostsScreen } = await loadRemoteHostsScreen();
+        if (policy === 'off') {
+            const { storage } = await import('@/sync/domains/state/storage');
+            const { settingsParse } = await import('@/sync/domains/settings/settings');
+            storage.setState(state => ({ settings: settingsParse({ ...state.settings, actionsSettingsV1: {
+                v: 1, actions: { 'remote_hosts.relay.test': { disabledSurfaces: ['ui'] } },
+            } }) }));
+        }
         const screen = await renderScreen(React.createElement(RemoteHostsScreen));
 
         expect(screen.findByTestId('settings.remoteHosts.desktopOnly')).toBeNull();
@@ -575,6 +582,11 @@ await import('./collection/remoteHostsCollectionController');
 
         testConnection!.onPress();
         await flushHookEffects({ cycles: 1, turns: 6 });
+        if (policy === 'off') {
+            await vi.waitFor(() => expect(modalSpies.alert).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage'));
+            expect(startMock.mock.calls.some(([spec]) => spec.kind === 'remote.ssh.manageHost.v1')).toBe(false);
+            return;
+        }
         await vi.waitFor(() => { expect(startMock.mock.calls.some(([spec]) => spec.kind === 'remote.ssh.manageHost.v1')).toBe(true); });
 
         expect(startMock.mock.calls.map(([spec]) => spec)).toContainEqual(expect.objectContaining({
@@ -995,7 +1007,7 @@ await import('./collection/remoteHostsCollectionController');
         expect(screen.findByTestId('settings.server.accessEndpoints.channel:access-channel:ssh-tunnel-native:host-a:native-key-a.action:ssh-tunnel-native:native-lease-1:stop')).toBeTruthy();
     });
 
-    it('surfaces native SSH tunnel stop failures from access channel remediation', async () => {
+    it.each(['native-error', 'policy-off'] as const)('explains %s when stopping a native SSH tunnel', async failure => {
         setTauriDesktop(false);
         systemTaskState.mode = 'native';
         systemTaskState.nativeSshAvailable = true;
@@ -1011,9 +1023,16 @@ await import('./collection/remoteHostsCollectionController');
             status: 'failed',
             startedAt: '2026-05-06T10:00:00.000Z',
         }];
-        nativeTunnelState.releaseTunnel.mockRejectedValueOnce(new Error('native_stop_failed'));
+        if (failure === 'native-error') nativeTunnelState.releaseTunnel.mockRejectedValueOnce(new Error('native_stop_failed'));
 
         const { RemoteHostsScreen } = await loadRemoteHostsScreen();
+        if (failure === 'policy-off') {
+            const { storage } = await import('@/sync/domains/state/storage');
+            const { settingsParse } = await import('@/sync/domains/settings/settings');
+            storage.setState(state => ({ settings: settingsParse({ ...state.settings, actionsSettingsV1: {
+                v: 1, actions: { 'remote_hosts.tunnel.stop': { disabledSurfaces: ['ui'] } },
+            } }) }));
+        }
         const screen = await renderScreen(React.createElement(RemoteHostsScreen));
 
         const action = screen.findByTestId(
@@ -1024,6 +1043,11 @@ await import('./collection/remoteHostsCollectionController');
         action!.props.onPress();
         await flushHookEffects({ cycles: 2, turns: 6 });
 
+        if (failure === 'policy-off') {
+            await vi.waitFor(() => expect(modalSpies.alert).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage'));
+            expect(nativeTunnelState.releaseTunnel).not.toHaveBeenCalled();
+            return;
+        }
         expect(nativeTunnelState.releaseTunnel).toHaveBeenCalledWith('native-lease-failed');
         expect(modalSpies.alert).toHaveBeenCalledWith('common.error', 'native_stop_failed');
     });
@@ -1268,7 +1292,7 @@ await import('./collection/remoteHostsCollectionController');
         expect(JSON.stringify(startedSpecs)).not.toContain('sshTunnelProvider');
     });
 
-    it('opens configure access on the existing relay-access control for the saved SSH target', async () => {
+    it.each(['current', 'stale'] as const)('presents Configure Access for a %s saved SSH target', async revision => {
         setTauriDesktop(true);
         featureGateState.managementEnabled = true;
         remoteHostsState.value = [
@@ -1295,8 +1319,20 @@ await import('./collection/remoteHostsCollectionController');
         const configureAccess = rowActionsProps?.actions?.find((action) => action.id === 'configureAccess');
         expect(configureAccess).toBeTruthy();
 
+        if (revision === 'stale') {
+            const { storage } = await import('@/sync/domains/state/storage');
+            home.answer(storage.getState().settingsScope!.serverId, '/v1/account/entity-rows/remote-hosts', { body: {
+                status: 'present', revision: 5, content: { t: 'plain', v: { v: 1, hosts: remoteHostsState.value } },
+            } });
+        }
         configureAccess!.onPress();
         await flushHookEffects({ cycles: 2, turns: 6 });
+        if (revision === 'stale') {
+            await vi.waitFor(() => expect(modalSpies.alert).toHaveBeenCalledWith('common.error', 'approvals.conflictFailure'));
+            expect(routerSpies.push).not.toHaveBeenCalled();
+            expect(startMock.mock.calls.some(([spec]) => spec.kind === 'relay.access.status.v1')).toBe(false);
+            return;
+        }
         await vi.waitFor(() => { expect(routerSpies.push).toHaveBeenCalledWith('/settings/remote-hosts/host-a?remoteHostIntent=relay&expectedRevision=4'); });
         routerState.params = { remoteHostIntent: 'relay', expectedRevision: '4' };
         await screen.update(React.createElement(RemoteHostsScreen));

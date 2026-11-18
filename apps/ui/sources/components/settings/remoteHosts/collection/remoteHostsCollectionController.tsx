@@ -29,6 +29,7 @@ import { useSystemTaskSnapshot } from '@/components/systemTasks/useSystemTaskSna
 import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
 import { useSshSystemTaskPromptModals } from '@/components/systemTasks/ssh/useSshSystemTaskPromptModals';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
+import { resolveRemoteHostActionRefusal } from '../resolveRemoteHostActionRefusal';
 import { readNativeSshBridgeInterruptionKey, type NativeSshBridgeInterruptionMarker } from '@/components/systemTasks/createNativeSshBridge';
 import { NATIVE_SSH_BOOTSTRAP_TASK_KIND } from '@/components/systemTasks/bridges/native';
 import { createDefaultNativeSshBridgeInterruptionStore } from '@/components/systemTasks/nativeSshBridgeInterruptionStore';
@@ -235,11 +236,8 @@ export function useRemoteHostsCollectionController(gates: RemoteHostsGates): Rea
         if (!lifetime.isCurrent()) return null;
         const result = await executor.execute(actionId, input, { surface: 'ui', authority: 'present_user',
             serverId: scope.serverId, expectedAccountId: scope.accountId, ...presentation });
-        if (!result.ok) Modal.alert(t('common.error'), result.error);
-        else if (result.result && typeof result.result === 'object' && 'status' in result.result
-            && (result.result.status === 'unavailable' || result.result.status === 'conflict' || result.result.status === 'outcome_unknown')) {
-            Modal.alert(t('common.error'), t('errors.operationFailed'));
-        }
+        const refusal = resolveRemoteHostActionRefusal(result);
+        if (refusal && lifetime.isCurrent()) Modal.alert(t('common.error'), refusal);
         return result;
     }, [scope]);
     const hosts = React.useMemo(() => sortByLastUsedDesc(remoteHosts), [remoteHosts]);
@@ -362,14 +360,18 @@ export function useRemoteHostsCollectionController(gates: RemoteHostsGates): Rea
         if (leaseId && runner.mode === 'native') {
             void (async () => {
                 try {
-                    const result = await tunnelExecution.execute('remote_hosts.tunnel.stop', { target: { kind: 'native', leaseId } });
-                    if (!result.ok) throw new Error(result.error);
-                    if (result.result && typeof result.result === 'object' && 'status' in result.result && result.result.status !== 'released') {
-                        throw new Error('reason' in result.result ? String(result.result.reason) : String(result.result.status));
+                    const result = await tunnelExecution.executeForPresentation('remote_hosts.tunnel.stop', { target: { kind: 'native', leaseId } });
+                    if (!result) return;
+                    const refusal = resolveRemoteHostActionRefusal(result);
+                    if (refusal) {
+                        Modal.alert(t('common.error'), refusal);
+                    } else if (result.ok && result.result && typeof result.result === 'object' && 'status' in result.result
+                        && result.result.status !== 'released') {
+                        Modal.alert(t('common.error'), t('settings.remoteHostsConnectFromThisDeviceFailed'));
                     }
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error ?? '');
-                    Modal.alert(t('common.error'), message || t('settings.remoteHostsConnectFromThisDeviceFailed'));
+                    if (tunnelExecution.isCurrent()) Modal.alert(t('common.error'), message || t('settings.remoteHostsConnectFromThisDeviceFailed'));
                 }
             })();
             return;
@@ -378,7 +380,7 @@ export function useRemoteHostsCollectionController(gates: RemoteHostsGates): Rea
         if (tunnelKey) {
             void sshTunnelControl.stopTunnel(tunnelKey);
         }
-    }, [runner.mode, sshTunnelControl, tunnelExecution.execute]);
+    }, [runner.mode, sshTunnelControl, tunnelExecution.executeForPresentation, tunnelExecution.isCurrent]);
 
     const startManageHostAction = React.useCallback(async (
         remoteHost: RemoteHost,
