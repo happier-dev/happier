@@ -126,6 +126,11 @@ const styles = StyleSheet.create((theme) => ({
         alignSelf: 'stretch',
         minWidth: 0,
     },
+    /** Sized to its value but never past its column: a long value truncates inside the chip (C24). */
+    chipAnchor: {
+        alignSelf: 'flex-start',
+        maxWidth: '100%',
+    },
     textInput: {
         ...Typography.default('regular'),
         color: theme.colors.text.primary,
@@ -244,7 +249,7 @@ function SessionAuthoringOptionChip(props: Readonly<{
         // field's own picker, anchored to the chip.
         return (
             <>
-                <View ref={anchorRef} collapsable={false} style={{ alignSelf: 'flex-start' }}>
+                <View ref={anchorRef} collapsable={false} style={styles.chipAnchor}>
                     <SelectionListFilterChip
                         filter={{
                             id: props.controlId,
@@ -274,7 +279,7 @@ function SessionAuthoringOptionChip(props: Readonly<{
             <View
                 ref={anchorRef}
                 collapsable={false}
-                style={props.presentation === 'fields' ? styles.fieldAnchor : { alignSelf: 'flex-start' }}
+                style={props.presentation === 'fields' ? styles.fieldAnchor : styles.chipAnchor}
             >
                 <HappierPressable
                     testID={props.testID}

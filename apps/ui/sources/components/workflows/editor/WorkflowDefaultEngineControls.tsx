@@ -3,6 +3,7 @@ import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/
 import { setWorkflowDefaultField } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import {
   SessionAuthoringControls,
+  type SessionAuthoringControlsPresentation,
 } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
 import type { SessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import {
@@ -25,8 +26,8 @@ export function WorkflowDefaultEngineControls(
     onChange: (next: WorkflowEditorDraft) => void;
     editable: boolean;
     facts?: SessionAuthoringControlFacts;
-    /** `fields`: the phone's value row (a titled field select); the chip line otherwise. */
-    presentation?: 'chips' | 'fields';
+    /** `fields`: the phone's value row (a titled field select); `selects`: an unlabelled field select for a row that names it; the chip line otherwise. */
+    presentation?: SessionAuthoringControlsPresentation;
     engineFieldTitle?: string | null;
     testIDPrefix: string;
   }>,

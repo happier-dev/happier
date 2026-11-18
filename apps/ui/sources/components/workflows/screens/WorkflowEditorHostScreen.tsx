@@ -1101,7 +1101,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         // An editable draft's Run review changes its Agent with the editor's own picker, editing the draft itself.
         ...(canEditDefinition && runRetained === null && testSource === null && !retainedTest ? { agentControl: <WorkflowDefaultEngineControls
             defaults={runReviewDraft.defaults} roles={runReviewDraft.roles} readDraft={bodyDraftStore.get} editable
-            onChange={changeReviewedEngine}
+            // The review row already names the field, so its control is the unlabelled field select (C24).
+            presentation="selects" onChange={changeReviewedEngine}
             facts={authoringHost.authoringFacts} testIDPrefix="workflow-run-inputs-review-engine" /> } : {}),
         onRun: (inputs, roleOverrides, visibleTeamId) => { void startRun(inputs, roleOverrides, visibleTeamId); },
         onCancel: dismissInputSheet,
