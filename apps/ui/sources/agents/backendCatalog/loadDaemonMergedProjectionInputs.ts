@@ -401,12 +401,16 @@ export async function loadDaemonMergedProjectionCacheEntry(params: Readonly<{
             return accountLifetime && !accountLifetime.isCurrent() ? null : cached;
         }
     }
-    const readers = new Set<ActiveServerAccountScopeLifetime>(accountLifetime ? [accountLifetime] : []);
+    // Retained answers follow each reader's Account, not the mount that asked:
+    // a surface leaving and the next mount of it share one answer until the
+    // Account leaves or the projection revision advances.
+    const readers = new Set<ActiveServerAccountScopeLifetime>(accountLifetime ? [readServerAccountScopeOwnerLifetime(accountLifetime)] : []);
     const readerObservers = new Set<Readonly<{
         observe(reader: ActiveServerAccountScopeLifetime): void;
         forget(reader: ActiveServerAccountScopeLifetime): void;
     }>>();
-    const retainReader = (reader: ActiveServerAccountScopeLifetime) => {
+    const retainReader = (mountedReader: ActiveServerAccountScopeLifetime) => {
+        const reader = readServerAccountScopeOwnerLifetime(mountedReader);
         for (const previous of readers) {
             if (previous === reader || (previous.isCurrent() && !previous.isReleased?.())) continue;
             readers.delete(previous);

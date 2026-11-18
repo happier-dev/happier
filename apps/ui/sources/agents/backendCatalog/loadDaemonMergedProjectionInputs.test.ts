@@ -856,6 +856,33 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         expect(projectionDescribeMock.mock.lastCall?.[1].payload).not.toHaveProperty('selection');
     });
 
+    it('keeps a mounted Action answer for its Account when the mount leaves, so the next mount does not describe it again', async () => {
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const account = createAccountLifetime('account-a');
+        onTestFinished(() => account.retire());
+        // A surface mount's credential binding retires when the mount leaves; its Account stays current.
+        const mount = () => {
+            const binding = createAccountLifetime('account-a');
+            return { ...binding, lifetime: Object.freeze({ ...binding.lifetime, accountLifetime: account.lifetime }) };
+        };
+        const caller = { pluginId: 'acme.one', occurrenceId: 'one', sourceCustody: { kind: 'development' as const, registeredRootId: 'one-root' } };
+        const mountedActions = { callers: [caller], actions: [{ pluginId: 'acme.one', localId: 'read' }] };
+        projectionDescribeMock.mockResolvedValue({ supported: true, projection: daemonProjection(7) });
+        const first = mount();
+        await expect(loadDaemonMergedProjectionCacheEntry({ sections: 'complete', ...projectionScope,
+            accountLifetime: first.lifetime, mountedActions })).resolves.toMatchObject({ kind: 'ready' });
+        first.retire();
+        await expect(loadDaemonMergedProjectionCacheEntry({ sections: 'complete', ...projectionScope,
+            accountLifetime: mount().lifetime, mountedActions })).resolves.toMatchObject({ kind: 'ready' });
+        expect(projectionDescribeMock).toHaveBeenCalledTimes(1);
+        // The Account leaving still evicts its copy.
+        account.retire();
+        const successor = createAccountLifetime('account-a');
+        onTestFinished(() => successor.retire());
+        await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', ...projectionScope, accountLifetime: successor.lifetime, mountedActions });
+        expect(projectionDescribeMock).toHaveBeenCalledTimes(2);
+    });
+
     it('narrows mounted inline translations through the real registered handler for each Account and captured locale', async () => {
         const { RpcHandlerManager } = await import(new URL('../../../../cli/src/api/rpc/RpcHandlerManager.ts', import.meta.url).href);
         const { registerDaemonContributionRegistryProjectionHandler } = await import(new URL('../../../../cli/src/rpc/handlers/daemonContributionRegistryProjection.ts', import.meta.url).href);
