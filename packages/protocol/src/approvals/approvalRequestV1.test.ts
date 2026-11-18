@@ -19,7 +19,32 @@ import {
   StoredApprovalRequestSchema,
   requiresExactDaemonApprovalReplay,
   isMountedPluginBlockingApprovalEligibleForLiveClient,
+  admitApprovalRequesterDecisionV1,
 } from './approvalRequestV1.js';
+
+it.each(['matching', 'other-account', 'other-home', 'checking', 'human-required'] as const)(
+  'retains Workflow requester binding during check-only execution admission (%s)', async kind => {
+    const humanDecision = kind === 'human-required'
+      ? { kind: 'approve', authority: 'present_user', decidingAccountId: 'actor', decidedAtMs: 2 } : undefined;
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: kind === 'checking' ? 'open' : 'approved',
+      createdAtMs: 1, updatedAtMs: 2, createdBy: { surface: 'agent' }, requestedSurface: 'agent',
+      actionId: 'machines.command.run', actionArgs: { command: 'echo CHECK_EXECUTED > cli-check.txt; exit 7' },
+      summary: 'Run the saved check', ...(humanDecision ? { decision: humanDecision } : {}),
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', accountId: 'actor', serverId: 'home',
+        actionId: 'machines.command.run', requestId: 'run/check/0', machineId: 'machine',
+        target: { kind: 'machine', machineId: 'machine' },
+        caller: { kind: 'workflowRun', runId: 'run',
+          authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+          authenticatedStarterV1: { requestRef: 'start', requester: { accountId: 'actor', serverId: 'home' } } } },
+      automaticChecks: { phase: kind === 'checking' ? 'checking' : 'passed', humanApprovalRequired: kind === 'human-required',
+        ...(humanDecision ? { humanDecision } : {}), subjects: [], selectionStatus: 'ready', selected: [],
+        consents: [], runs: [], results: [], notices: [] },
+    });
+    expect(await admitApprovalRequesterDecisionV1({ request, context: { authority: 'account_automation',
+      runtimeAccountId: kind === 'other-account' ? 'other' : 'actor',
+      serverId: kind === 'other-home' ? 'other' : 'home' } }))
+      .toMatchObject(kind === 'matching' ? { ok: true } : { ok: false, errorCode: 'present_user_required' });
+  });
 
 it.each(['built_in', 'target'] as const)('retains automatic check progress privately while %s public reads omit approval custody', family => {
   const original = family === 'built_in' ? { v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,

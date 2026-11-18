@@ -518,7 +518,8 @@ export function isApprovalRequesterConfirmationBoundToOriginV1(
 /** Admission only: execution still rechecks its existing signed origin/currentness owner. */
 export async function admitApprovalRequesterDecisionV1(params: Readonly<{
   request: Readonly<{ requesterConfirmation?: ApprovalRequesterConfirmationV1;
-    executionOriginV1?: StoredApprovalRequestV2['executionOriginV1']; actionId: ApprovalRequestV1['actionId']; actionArgs: unknown; status: string }>;
+    executionOriginV1?: StoredApprovalRequestV2['executionOriginV1']; actionId: ApprovalRequestV1['actionId']; actionArgs: unknown; status: string;
+    automaticChecks?: StoredApprovalRequestV2['automaticChecks'] }>;
   context: ActionExecutorContext;
 }>): Promise<Readonly<{ ok: true }> | Readonly<{
   ok: false; errorCode: 'present_user_required' | 'approval_stale' | 'approval_requester_unavailable';
@@ -534,7 +535,9 @@ export async function admitApprovalRequesterDecisionV1(params: Readonly<{
       && origin?.caller.kind === 'workflowRun' && !origin.actionRequestAttributionV1?.requester && !starter) {
       return { ok: false, errorCode: 'approval_requester_unavailable', error: APPROVAL_REQUESTER_UNAVAILABLE_MESSAGE_V1 };
     }
-    if (starter && (context.authority !== 'present_user'
+    const checkOnlyExecutionApproved = request.automaticChecks?.humanApprovalRequired === false
+      && isApprovalRequestExecutionApproved(request);
+    if (starter && (!checkOnlyExecutionApproved && context.authority !== 'present_user'
       || context.runtimeAccountId !== starter.requester.accountId
       || (context.serverIdentityId ?? context.serverId) !== starter.requester.serverId)) {
       return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };

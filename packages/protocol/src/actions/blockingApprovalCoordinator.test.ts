@@ -11,6 +11,7 @@ import { buildApprovalExecutionOriginV1 } from './executor/approvalOrigins.js';
 import { ExternalActionExecutionAuthorizationV1Schema } from './externalActionApi.js';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprovalInputV1 } from './externalActionExecutionAuthorization.js';
 import type { ActionExecutorContext } from './executor/types.js';
+import { ApprovalAutomaticChecksV1Schema } from '../approvals/approvalAutomaticChecks.js';
 
 function approvalRequest(overrides: Partial<ApprovalRequestV2> = {}): ApprovalRequestV2 {
   return ApprovalRequestV2Schema.parse({
@@ -171,6 +172,11 @@ describe('createBlockingApprovalCoordinator', () => {
     const delivered = await observed;
     if (delivered.kind !== 'resolved' || delivered.value.decision !== 'approve') throw new Error('Expected the live decision');
     const consumingRequest = { ...request, actionId, actionArgs: input };
+    expect(await admitApprovalRequesterDecisionV1({ request: { ...consumingRequest,
+      automaticChecks: ApprovalAutomaticChecksV1Schema.parse({ phase: 'passed', humanApprovalRequired: false,
+        subjects: [], selectionStatus: 'ready', selected: [], consents: [], runs: [], results: [], notices: [] }) },
+      context: { ...context, authority: 'account_automation' } }))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
     const decisionContext = { ...context, requesterApprovalDecision: delivered.value.requesterApprovalDecision };
     expect(await admitApprovalRequesterDecisionV1({ request: consumingRequest, context: decisionContext })).toMatchObject({ ok: true });
     requesterLifetime.abort();

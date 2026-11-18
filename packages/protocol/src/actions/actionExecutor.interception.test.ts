@@ -47,9 +47,12 @@ function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
 }
 
 describe('createActionExecutor execution interception', () => {
-  it.each(['skipped', 'unavailable'] as const)('settles a before-wait admission with no Run as %s', async outcome => {
+  it.each((['skipped', 'unavailable'] as const).flatMap(outcome =>
+    (['host', 'workflowRun'] as const).map(callerKind => ({ outcome, callerKind }))))(
+    'settles a before-wait admission with no Run as $outcome for $callerKind', async ({ outcome, callerKind }) => {
     const actionId = 'example.fixture/actions/write';
     let effects = 0;
+    let effectAuthority: ActionExecutorContext['authority'];
     let stored: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'] | null = null;
     const port = createActionAutomationPortV1({ accountId: 'actor', seed: async () => ({ v: 1, rows: [
       { automationId: 'review', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow', workflowRevision: 1,
@@ -63,11 +66,17 @@ describe('createActionExecutor execution interception', () => {
       approvalsGet: async () => stored,
       approvalsUpdate: async ({ request }) => { stored = request; return { ok: true }; },
       isApprovalExecutionOriginCurrent: async () => true,
-      invokeContributedAction: async () => { effects++; return { ok: true, result: { applied: true } }; },
+      invokeContributedAction: async ({ context }) => { effects++; effectAuthority = context.authority;
+        return { ok: true, result: { applied: true } }; },
     });
     try {
       const context: ActionExecutorContext = {
-        surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, bypassApprovals: true,
+        surface: callerKind === 'host' ? 'cli' : 'agent',
+        authority: callerKind === 'host' ? 'present_user' : 'account_automation',
+        actionCaller: callerKind === 'host' ? { kind: 'host' } : { kind: 'workflowRun', runId: 'check-run',
+          authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+          authenticatedStarterV1: { requestRef: 'start-check', requester: { serverId: 'home', accountId: 'actor' } } },
+        bypassApprovals: true,
         serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'actor', actionRequestId: 'no-run-request',
         defaultSessionMachineId: 'machine',
       };
@@ -77,8 +86,9 @@ describe('createActionExecutor execution interception', () => {
         action: { pluginId: 'example.fixture', localId: 'write' }, input: {},
       }, { ...context, actionAutomationAdmission: createActionAutomationInvocationV1({ actionId, context, selection, port })
       });
-      expect(result).toMatchObject(outcome === 'skipped' ? { ok: true } : { ok: false, errorCode: 'target_unavailable' });
+      expect(result, JSON.stringify(result)).toMatchObject(outcome === 'skipped' ? { ok: true } : { ok: false, errorCode: 'target_unavailable' });
       expect(effects).toBe(outcome === 'skipped' ? 1 : 0);
+      if (outcome === 'skipped') expect(effectAuthority).toBe(context.authority);
     } finally { port.dispose(); }
   });
 
