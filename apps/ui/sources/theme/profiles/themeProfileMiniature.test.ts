@@ -1,11 +1,43 @@
 import { describe, expect, it } from 'vitest';
 import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { ThemeLibraryEntrySchema } from '@happier-dev/protocol/actions/themeActionFamily';
-import { projectThemeLibraryEntry, projectThemeMiniaturePalette, projectThemeProfileDocumentPresentation } from './themeProfilePresentation';
+import { projectPluginThemeProfileDocument, projectThemeLibraryEntry, projectThemeMiniaturePalette, projectThemeProfileDocumentPresentation } from './themeProfilePresentation';
+import { PluginThemeContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/themes';
 import { FontFamilies } from '@/constants/Typography';
 import { resolveThemeProfile } from './resolveThemeProfile';
 
 describe('theme miniature projection', () => {
+    it('reuses admitted plugin paint inputs when attaching the source and reporting unsupported tokens', () => {
+        const declaration = PluginThemeContributionV1Schema.parse({ id: 'midnight', theme: {
+            schemaVersion: 1, id: 'midnight', name: 'Midnight', createdAt: 'now', updatedAt: 'now',
+            base: { light: 'light', dark: 'dark' }, requiresAppVersion: '9.0.0',
+            overrides: { light: {}, dark: { 'background.canvas': '#172033', 'future.accent': '#aabbcc' } },
+        } });
+        const source = { kind: 'plugin', pluginId: 'sample.colors', contributionId: declaration.id } as const;
+        const document = projectPluginThemeProfileDocument(declaration.theme, source);
+        expect(document.profile.overrides).toBe(declaration.theme.overrides);
+        expect(document.raw.source).toEqual(source);
+        expect(document.compatibility).toEqual({ status: 'partial', requiresAppVersion: '9.0.0',
+            unsupportedPaths: ['overrides.dark.future.accent'] });
+    });
+
+    it('keeps one editor palette derivation across an interleaved gallery of distinct themes', () => {
+        const parsed = parseThemeProfileDocument({ schemaVersion: 1, id: 'draft', name: 'Draft', createdAt: 'now',
+            updatedAt: 'now', base: { light: 'light', dark: 'dark' }, assetAppearance: 'dark',
+            overrides: { light: {}, dark: { 'background.canvas': '#172033' } } });
+        if (!parsed.ok) throw new Error('Invalid fixture');
+        const editor = { mode: 'dark' as const, profile: parsed.document.profile };
+        const palettes = new Set([resolveThemeProfile(editor)]);
+        const gallery = ['#282828', '#333333', '#484848'];
+        for (const canvas of gallery) {
+            const entry = projectThemeLibraryEntry({ ...parsed.document, profile: { ...editor.profile,
+                overrides: { light: {}, dark: { 'background.canvas': canvas } } } });
+            expect(entry.miniature.canvas).toBe(canvas);
+            palettes.add(resolveThemeProfile(editor));
+        }
+        expect(palettes.size).toBe(1);
+    });
+
     it('projects both authored modes while keeping seed-only and single-mode documents in their own mode', () => {
         const parsed = parseThemeProfileDocument({ schemaVersion: 1, id: 'paired', name: 'Paired', createdAt: 'now', updatedAt: 'now',
             base: { light: 'light', dark: 'dark' }, assetAppearance: 'dark', seeds: { canvas: '#172033', accent: '#aabbcc' },

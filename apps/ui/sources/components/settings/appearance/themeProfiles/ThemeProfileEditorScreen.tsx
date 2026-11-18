@@ -433,7 +433,6 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         view,
         presented,
         readonly,
-        document: draftDocument,
         editorRef: codeEditorRef,
         onChange: updateCss,
         onViewChange: setView,

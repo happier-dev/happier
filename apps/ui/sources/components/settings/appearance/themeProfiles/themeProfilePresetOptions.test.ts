@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
+import { getBuiltInThemeLibraryEntries } from '@/theme/profiles/builtInThemeProfiles';
 
 import type { ThemePresetSourceOption } from './themeProfilePresetOptions';
 import { buildThemePresetSourceOptions, getThemePresetSourceReferenceId, readThemePresetSourceReferenceId, resolveCustomThemeSourceLabel, resolveThemePresetSourcePreferredMode, themeProfileDraftMatchesPresetSource } from './themeProfilePresetOptions';
@@ -27,6 +28,20 @@ const source = (sourceProfile: ThemeProfileV1): ThemePresetSourceOption => ({
 });
 
 describe('themeProfilePresetOptions', () => {
+    it('projects all built-ins from the library miniatures across gallery rebuilds', () => {
+        const entries = getBuiltInThemeLibraryEntries();
+        const previews = new Set();
+        for (let render = 0; render < 3; render++) {
+            const presets = buildThemePresetSourceOptions(entries).filter(option => option.kind === 'builtIn');
+            expect(presets).toHaveLength(entries.length);
+            for (const preset of presets) {
+                expect(preset.miniature).toBe(entries.find(entry => entry.id === preset.id)?.miniature);
+                previews.add(preset.miniature);
+            }
+        }
+        expect(previews.size).toBe(entries.length);
+    });
+
     it('labels a built-in source without presenting it as an authored theme', () => {
         expect(resolveCustomThemeSourceLabel({ kind: 'built-in', presetId: 'premiumDark' }, {
             sourceYours: 'Authored', sourceStore: 'Store', sourcePlugin: 'Plugin',

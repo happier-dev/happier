@@ -2,7 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
-import { isJsonObject, normalizeStrictJsonValue, sameStrictJsonValue } from '../../json/strictJsonValue.js';
+import { isJsonObject, normalizeStrictJsonValue, projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '../../json/strictJsonValue.js';
 import { RegistryProvenanceV1Schema } from '../../registries/registryItemsV1.js';
 import { isSupportedThemeProfileTokenId, migrateThemeProfileOverrideTokenIds } from './themeProfileTokens.js';
 import * as z from '../../zodRuntimePolicy.js';
@@ -208,16 +208,30 @@ export function parseThemeProfileDocument(value: unknown): ThemeProfileDocumentR
     }
     const parsed = ThemeProfileV1Schema.safeParse(known);
     if (!parsed.success) return { ok: false, error: 'invalid_known_envelope' };
-    for (const [mode, overrides] of Object.entries(parsed.data.overrides)) {
+    return { ok: true, document: {
+        profile: parsed.data, raw, compatibility: describeThemeProfileCompatibility(parsed.data, unsupportedPaths),
+    } };
+}
+
+function describeThemeProfileCompatibility(profile: ThemeProfileV1, unsupportedPaths: string[] = []): ThemePresentationCompatibility {
+    for (const [mode, overrides] of Object.entries(profile.overrides)) {
         for (const tokenId of Object.keys(overrides)) {
             if (!isSupportedThemeProfileTokenId(tokenId)) unsupportedPaths.push(`overrides.${mode}.${tokenId}`);
         }
     }
-    return { ok: true, document: {
-        profile: parsed.data, raw,
-        compatibility: { status: unsupportedPaths.length ? 'partial' : 'supported', unsupportedPaths,
-            ...(parsed.data.requiresAppVersion ? { requiresAppVersion: parsed.data.requiresAppVersion } : {}) },
-    } };
+    return { status: unsupportedPaths.length ? 'partial' : 'supported', unsupportedPaths,
+        ...(profile.requiresAppVersion ? { requiresAppVersion: profile.requiresAppVersion } : {}) };
+}
+
+/** Attach the admitted declaration's plugin identity and portable representation. */
+export function createPluginThemeProfileDocument(theme: ThemeProfileV1,
+    source: Extract<ThemeProfileSource, { kind: 'plugin' }>): ThemeProfileDocument {
+    // Changing the source of a built-in id would invalidate the document's identity.
+    if (isReservedThemeProfileId(theme.id)) throw new Error('Invalid admitted plugin theme');
+    const profile = { ...theme, source };
+    const raw = projectNativeJsonValueForTransport(profile);
+    if (!isJsonObject(raw)) throw new TypeError('Theme profile must be an object');
+    return { profile, raw, compatibility: describeThemeProfileCompatibility(profile) };
 }
 
 const ThemeProfileKnownEditSchema = z.partial(z.strictObject(ThemeProfileV1Schema.shape));
@@ -282,19 +296,19 @@ export function mergeThemeProfileDocumentEdit(document: ThemeProfileDocument, ed
     const result = parseThemeProfileDocument(raw);
     if (!result.ok) throw new Error('invalid_known_envelope');
     if (!options?.removeKnownFields?.length) return result.document;
-    const cleared = { ...result.document.raw };
+    const cleared: Record<string, JsonValue> = { __proto__: null, ...result.document.raw };
+    const profile = { ...result.document.profile };
     for (const field of options.removeKnownFields) {
+        delete profile[field];
         const value = cleared[field];
         if (field === 'css' || !isJsonObject(value)) {
             delete cleared[field];
             continue;
         }
-        const unsupported = Object.fromEntries(Object.entries(value).filter(([key]) =>
-            result.document.compatibility.unsupportedPaths.includes(`${field}.${key}`)));
-        if (Object.keys(unsupported).length) cleared[field] = unsupported;
+        const unsupported = Object.entries(value).filter(([key]) =>
+            result.document.compatibility.unsupportedPaths.includes(`${field}.${key}`));
+        if (unsupported.length) cleared[field] = Object.freeze({ __proto__: null, ...Object.fromEntries(unsupported) });
         else delete cleared[field];
     }
-    const reset = parseThemeProfileDocument(cleared);
-    if (!reset.ok) throw new Error('invalid_known_envelope');
-    return reset.document;
+    return { ...result.document, profile, raw: Object.freeze(cleared) };
 }

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { getThemeSurfaceReference, type SurfaceId, type ThemeSurfacePaintSource } from '@happier-dev/plugin-sdk/ui';
-import type { ThemeProfileDocument, ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
+import type { ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 import type { CodeEditorHandle, EditorDecoration } from '@/components/ui/code/editor/codeEditorTypes';
 import { projectThemeSurfacePaintMap } from '@/theme/css/themeSurfacePaintMap';
 import { usePreparedThemeCss } from '@/theme/css/usePreparedThemeCss';
@@ -36,7 +36,6 @@ export function useThemeProfileEditorCss(input: Readonly<{
     view: ThemeEditorView;
     presented: boolean;
     readonly: boolean;
-    document: (profile: ThemeProfileV1) => ThemeProfileDocument;
     editorRef: React.RefObject<CodeEditorHandle | null>;
     onChange: (css: string) => void;
     onViewChange: (view: ThemeEditorView) => void;
@@ -44,8 +43,8 @@ export function useThemeProfileEditorCss(input: Readonly<{
 }>) {
     const [pickedTokenIds, setPickedTokenIds] = React.useState<readonly string[] | undefined>();
     const getPaintMap = React.useCallback(() => input.draft
-        ? projectThemeSurfacePaintMap(input.document(input.draft), input.mode) : [],
-    [input.draft, input.document, input.mode]);
+        ? projectThemeSurfacePaintMap({ profile: input.draft }, input.mode) : [],
+    [input.draft, input.mode]);
     const onPick = React.useCallback((target: ThemeInspectionTarget) => {
         const ids = editableTokens(target);
         setPickedTokenIds(ids.length ? ids : undefined);

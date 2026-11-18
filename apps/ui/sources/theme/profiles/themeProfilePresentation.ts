@@ -1,8 +1,8 @@
-import { parseThemeProfileDocument, type ThemeLibraryEntry, type ThemeMiniatureData, type ThemeProfileDocument, type ThemeProfileMode, type ThemeProfileSource, type ThemeProfileV1 } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { createPluginThemeProfileDocument, type ThemeLibraryEntry, type ThemeMiniatureData, type ThemeProfileDocument, type ThemeProfileMode, type ThemeProfileSource, type ThemeProfileV1 } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { THEME_MINIATURE_OVERRIDE_TOKENS, type ThemeProfileArtifactHeader } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
 import { resolveKnownFontFamily } from '@/constants/Typography';
 import { DEFAULT_THEME_RADIUS_SCALE_NAME } from '@/theme/themeStyleScales';
-import { resolveThemeProfileWithPaint } from './resolveThemeProfile';
+import { resolveUncachedThemeProfile } from './resolveThemeProfile';
 import { resolveThemeProfileAssetAppearance, resolveThemeProfileSupportedModes } from './themeProfileAssetAppearance';
 import { getThemeProfileTokenDefinition } from './themeProfileTokenRegistry';
 import { readThemeProfilePathValue } from './themeProfilePathAccess';
@@ -23,9 +23,7 @@ export type ThemeMiniatureInput = Pick<ThemeProfileV1, 'overrides' | 'seeds' | '
 
 /** The admitted plugin declaration joins the library without an Artifact copy. */
 export function projectPluginThemeProfileDocument(theme: ThemeProfileV1, source: Extract<ThemeProfileSource, { kind: 'plugin' }>): ThemeProfileDocument {
-    const parsed = parseThemeProfileDocument({ ...theme, source });
-    if (!parsed.ok) throw new Error('Invalid admitted plugin theme');
-    return projectThemeProfileDocumentPresentation(parsed.document);
+    return projectThemeProfileDocumentPresentation(createPluginThemeProfileDocument(theme, source));
 }
 
 /** Retain only authored inputs needed by the read-time miniature. */
@@ -40,9 +38,8 @@ export function projectThemeMiniaturePalette(profile: ThemeMiniatureInput, mode 
 export function projectThemeMiniature(
     profile: ThemeMiniatureInput,
     mode = resolveThemeProfileAssetAppearance(profile),
-    resolve = resolveThemeProfileWithPaint,
 ): ThemeMiniatureData {
-    const { colors } = resolve({ mode, profile }).theme;
+    const { colors } = resolveUncachedThemeProfile({ mode, profile }).theme;
     const values = Object.fromEntries(Object.entries(THEME_MINIATURE_OVERRIDE_TOKENS).map(([role, token]) =>
         [role, readThemeProfilePathValue(colors, getThemeProfileTokenDefinition(token)!.path)!])) as Record<keyof typeof THEME_MINIATURE_OVERRIDE_TOKENS, string>;
     return { mode, ...values, radius: profile.style?.radius ?? DEFAULT_THEME_RADIUS_SCALE_NAME };

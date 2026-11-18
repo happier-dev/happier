@@ -1,5 +1,5 @@
 import { t } from '@/text';
-import { BUILT_IN_THEME_PROFILES } from '@/theme/profiles/builtInThemeProfiles';
+import { BUILT_IN_THEME_PROFILES, getBuiltInThemeLibraryEntries } from '@/theme/profiles/builtInThemeProfiles';
 import { resolveThemeProfileAssetAppearance } from '@/theme/profiles/themeProfileAssetAppearance';
 import { ThemeReferenceSchema, type ThemeLibraryEntry, type ThemeMiniatureData, type ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import type { BuiltInThemeProfileDefinition, ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
@@ -80,6 +80,7 @@ export const buildThemePresetSourceOptions = (
         sourceStore: t('settingsAppearance.themeProfiles.sourceStore'),
         sourcePlugin: t('settingsAppearance.themeProfiles.sourcePlugin'),
     };
+    const builtInEntries = new Map(getBuiltInThemeLibraryEntries().map(entry => [entry.id, entry]));
     return [
         ...entries.filter(entry => entry.source.kind !== 'built-in').map((entry): ThemePresetSourceOption => ({
             id: getThemePresetSourceReferenceId(entry.reference),
@@ -119,6 +120,7 @@ export const buildThemePresetSourceOptions = (
             preferredMode: definition.preferredMode,
             builtInDefinition: definition,
             reference: { kind: 'built-in', presetId: definition.presetId },
+            miniature: builtInEntries.get(definition.profile.id)?.miniature,
         })),
     ];
 };

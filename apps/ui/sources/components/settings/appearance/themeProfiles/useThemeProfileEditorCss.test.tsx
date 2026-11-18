@@ -3,7 +3,6 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
-import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraft';
 import { prepareThemeCssAsync } from '@/theme/css/prepareThemeCss';
 import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
@@ -13,11 +12,8 @@ import { t } from '@/text';
 vi.mock('react-native', async () => import('@/platform/shims/reactNativeWebShim'));
 
 it('projects only demanded CSS facts and inserts after the confirmed engine buffer, preserving diagnostics', async () => {
-    const draft = { ...createThemeProfileDraft({ id: 'css-editor', name: 'Ink', now: '2026-11-17T00:00:00.000Z' }),
+    const draft = { ...createThemeProfileDraft({ id: 'css-editor', name: 'Ink', now: '2026-11-17T00:00:00.000Z' }), name: '',
         css: '[data-surface="sidebar"] { display: none; }\n.arbitrary { color: red; }\n@import url("https://example.com/theme.css");' };
-    const parsed = parseThemeProfileDocument(draft);
-    if (!parsed.ok) throw new Error(parsed.error);
-    const profileDocument = parsed.document;
     let buffer = draft.css + '\n/* buffered edit */';
     const onChange = vi.fn();
     const onViewChange = vi.fn();
@@ -32,7 +28,7 @@ it('projects only demanded CSS facts and inserts after the confirmed engine buff
     let model!: ReturnType<typeof useThemeProfileEditorCss>;
     function Harness({ view, presented }: { view: ThemeEditorView; presented: boolean }) {
         model = useThemeProfileEditorCss({ draft, mode: 'light', view, presented, readonly: false,
-            document: () => profileDocument, editorRef, onChange, onViewChange, onQueryChange });
+            editorRef, onChange, onViewChange, onQueryChange });
         return null;
     }
     const host = document.createElement('div'); document.body.append(host);
@@ -70,13 +66,10 @@ it('projects only demanded CSS facts and inserts after the confirmed engine buff
 it('preserves fixed and derived paint provenance without inventing editable colors', async () => {
     const draft = { ...createThemeProfileDraft({ id: 'pick-provenance', name: 'Ink', now: '2026-11-17T00:00:00.000Z' }),
         overrides: { light: { 'message.user.background': '#303030' }, dark: {} } };
-    const parsed = parseThemeProfileDocument(draft);
-    if (!parsed.ok) throw new Error(parsed.error);
-    const profileDocument = parsed.document;
     let model!: ReturnType<typeof useThemeProfileEditorCss>;
     function Harness() {
         model = useThemeProfileEditorCss({ draft, mode: 'light', view: 'colors', presented: true, readonly: false,
-            document: () => profileDocument, editorRef: { current: null },
+            editorRef: { current: null },
             onChange: vi.fn(), onViewChange: vi.fn(), onQueryChange: vi.fn() });
         return null;
     }

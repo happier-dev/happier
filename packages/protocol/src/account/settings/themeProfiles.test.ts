@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as themes from './themeProfiles.js';
 import { AccountSettingsSchema } from './accountSettings.js';
 import { applyAccountSettingMutationV1 } from './accountSettingMutationV1.js';
@@ -113,8 +113,12 @@ describe('theme document retention', () => {
         if (!parsed.ok) throw new Error('reset source rejected');
         const partial = themes.mergeThemeProfileDocumentEdit(parsed.document, { name: 'Renamed' });
         expect(partial.raw.seeds).toEqual(parsed.document.raw.seeds);
+        const admission = vi.spyOn(themes.ThemeProfileV1Schema, 'safeParse');
         const reset = themes.mergeThemeProfileDocumentEdit(parsed.document, { name: 'Reset', overrides: { light: {}, dark: {} } },
             { removeKnownFields: ['seeds', 'style', 'css'] });
+        const admissions = admission.mock.calls.length;
+        admission.mockRestore();
+        expect(admissions).toBe(1);
         expect(reset.profile).not.toHaveProperty('seeds');
         expect(reset.profile).not.toHaveProperty('style');
         expect(reset.profile).not.toHaveProperty('css');

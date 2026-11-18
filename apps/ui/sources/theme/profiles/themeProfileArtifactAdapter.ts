@@ -22,8 +22,6 @@ export type ThemeProfileArtifactContext = Pick<Parameters<typeof createArtifactW
 }>;
 /** Captured Account/transport scope is supplied once by Sync's existing Artifact admission. */
 export function createThemeProfileArtifactAdapter(context: ThemeProfileArtifactContext): ThemeProfileArtifactAdapter {
-    const owns = (row: DecryptedArtifact) => row.isDecrypted && row.ownerAccountId === context.ownerAccountId && row.access === 'owner'
-        && row.sourceServerId === context.serverId;
     const get = async (id: string): Promise<ThemeProfileArtifactRecord | null> => {
         let row = context.readArtifacts()[id];
         if (!row?.isDecrypted || row.body === undefined) {
@@ -50,7 +48,6 @@ export function createThemeProfileArtifactAdapter(context: ThemeProfileArtifactC
         list() {
             const result: ThemeProfileArtifactSummary[] = [];
             for (const row of Object.values(context.readArtifacts())) {
-                if (!owns(row)) continue;
                 const summary = projectThemeProfileArtifactSummary(row, { serverId: context.serverId, accountId: context.ownerAccountId });
                 if (summary) result.push(summary);
             }

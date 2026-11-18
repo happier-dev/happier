@@ -69,7 +69,8 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
         if (preparationError) input.onFailure?.(preparationError);
     }, [preparationError, input.onFailure]);
     const previewFor = React.useCallback((option: ThemeLibrarySourceOption, previewMode: ThemeProfileMode): ThemeLibraryTile['preview'] => {
-        const miniature = option.entry?.miniatures?.[previewMode] ?? option.miniature;
+        const miniature = option.entry?.miniatures?.[previewMode]
+            ?? (option.kind === 'builtIn' && option.preferredMode !== previewMode ? undefined : option.miniature);
         return miniature ? { kind: 'miniature', miniature } : {
             kind: 'palette', palette: resolveThemeProfile({ mode: previewMode, profile: option.profile }),
             ...(option.profile?.style?.radius ? { radius: option.profile.style.radius } : {}),

@@ -104,9 +104,9 @@ function resolvePaintRoles(address: SurfaceAddress, resolved: ResolvedThemeProfi
 }
 
 /** Registry addresses and owning paint selectors project the requested profile. */
-export function projectThemeSurfacePaintMap(document: ThemeProfileDocument, mode: ThemeProfileMode,
+export function projectThemeSurfacePaintMap({ profile }: Pick<ThemeProfileDocument, 'profile'>, mode: ThemeProfileMode,
     context: ThemeSurfacePaintContext = {}): readonly ThemeSurfacePaintDescriptor[] {
-    const resolved = resolveThemeProfileWithPaint({ profile: document.profile, mode });
+    const resolved = resolveThemeProfileWithPaint({ profile, mode });
     return getThemeSurfacePaintMap(address => ({
         label: `${themeSurfaceLabel(address.surface)} · ${address.part}`,
         paintRoles: resolvePaintRoles(address, resolved, context),

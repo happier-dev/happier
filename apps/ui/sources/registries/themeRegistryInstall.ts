@@ -3,7 +3,6 @@ import { createActionExecuteFailureError, readActionErrorCodeV1 } from '@happier
 import type { RegistryItemPointerV1 } from '@happier-dev/protocol/registries/registryContentRefV1';
 import { createThemeProfileLibrary, createThemeProfileSourceAdapter, type ThemeProfileLibraryContext } from '@/theme/profiles/themeProfileLibrary';
 import { projectThemeMiniature } from '@/theme/profiles/themeProfilePresentation';
-import { resolveUncachedThemeProfile } from '@/theme/profiles/resolveThemeProfile';
 import type { RegistryThemeAcquisitionV1 } from '@happier-dev/protocol/registries/registryThemeV1';
 import type { ThemeTryOnSnapshot } from '@/theme/profiles/themeTryOn';
 import type { ThemeInstallFaceOutcome, ThemeInstallResult, ThemeRegistryItemKey } from '@happier-dev/protocol/actions/themeActionFamily';
@@ -57,7 +56,7 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
         const acquired = await acquire(listing, options);
         // This acquisition retains its previews. Gallery palettes must not replace the live paint entry.
         const miniatures = acquired.item.payload.themes.map(face =>
-            projectThemeMiniature(face.document.profile, face.mode, resolveUncachedThemeProfile));
+            projectThemeMiniature(face.document.profile, face.mode));
         return { ...acquired, miniatures };
     };
     const acquirePreview = (listing: ThemeRegistryItemKey & Pick<RegistryItemPointerV1, 'version'>, options: ThemeRegistryOperationOptions): Promise<AcquiredRegistryThemePreview> => {

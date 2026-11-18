@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { projectThemeProfileArtifactSummary, readThemeProfileArtifactDocument } from './themeProfileArtifactProjection';
 
@@ -37,7 +37,16 @@ describe('theme Artifact header projection', () => {
         const row: DecryptedArtifact = { id: parsed.document.profile.id, title: entry.name, rawHeader,
             body: JSON.stringify(parsed.document.raw), isDecrypted: true, ownerAccountId: scope.accountId, access: 'owner',
             sourceServerId: scope.serverId, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 0, updatedAt: 0 };
-        expect(readThemeProfileArtifactDocument(row, scope)?.document.raw).toEqual(parsed.document.raw);
+        const admit = vi.spyOn(ThemeProfileArtifactHeaderSchema, 'safeParse');
+        try {
+            expect(readThemeProfileArtifactDocument(row, scope)?.document.raw).toEqual(parsed.document.raw);
+            expect(projectThemeProfileArtifactSummary(row, scope)?.entry.id).toBe(row.id);
+            expect(readThemeProfileArtifactDocument({ ...row, bodyVersion: 2 }, scope)?.document.raw).toEqual(parsed.document.raw);
+            expect(readThemeProfileArtifactDocument(row, { ...scope, accountId: 'other' })).toBeNull();
+            expect(admit).toHaveBeenCalledTimes(1);
+        } finally {
+            admit.mockRestore();
+        }
     });
     it('derives forty miniatures from headers without reading bodies, retaining their identity', () => {
         let bodyReads = 0;
