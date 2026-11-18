@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema, DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, ExecutionRunResultContractV1Schema, ResolvedRoleV1Schema, withExecutionRunStartFailureDetails } from '@happier-dev/protocol';
+import { createInMemoryReviewRecordPortV1 } from '../../../../../packages/protocol/src/reviews/reviewArtifactV1.testkit';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends';
 import { validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import type { WorkflowActionLeafV1, WorkflowDefinitionV1, WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows';
@@ -27,6 +28,7 @@ const executionTarget = { kind: 'session' as const };
 // These are host transport boundaries; all Action admission and execution logic stays real.
 function createTestActionExecutor(overrides: Partial<ActionExecutorDeps>) {
   const unexpected = async (): Promise<never> => { throw new Error('unexpected_action_dependency'); };
+  const reviewRecords = createInMemoryReviewRecordPortV1();
   return createActionExecutor({
     executionRunStart: unexpected,
     executionRunList: unexpected,
@@ -43,6 +45,7 @@ function createTestActionExecutor(overrides: Partial<ActionExecutorDeps>) {
     machinesList: unexpected,
     serversList: unexpected,
     reviewEnginesList: unexpected,
+    reviewRecords: () => reviewRecords,
     agentsBackendsList: unexpected,
     agentsModelsList: unexpected,
     sessionSendMessage: unexpected,
