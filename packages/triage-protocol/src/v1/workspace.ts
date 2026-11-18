@@ -1,5 +1,6 @@
 import { triageListSourceSchemasV1 } from './listSourceSchemaInstances.js';
 import { TriageSourceFailureV1Schema } from './diagnostics.js';
+import { ScmComparisonSourceProtocolSchema } from '@happier-dev/plugin-sdk/scm';
 import {
     defineProtocolLiteral,
     defineProtocolJsonValue,
@@ -101,6 +102,14 @@ export const TriageReviewWorkspaceCurrentnessV1Schema = defineProtocolUnion([
 export type TriageReviewWorkspaceCurrentnessV1 = ReturnType<
     typeof TriageReviewWorkspaceCurrentnessV1Schema.parse
 >;
+
+/** Provider-owned occurrence identity and routing; saved source and workspace choices remain separate. */
+export const TriagePullRequestReviewTargetV1Schema = defineProtocolObject({
+    entryRef: TriageEntryRefV1Schema,
+    lastKnownLocator: TriageEntryLocatorV1Schema,
+    comparisonSource: ScmComparisonSourceProtocolSchema,
+}, { policy: 'closed' });
+export type TriagePullRequestReviewTargetV1 = ReturnType<typeof TriagePullRequestReviewTargetV1Schema.parse>;
 
 /**
  * The optional source-owned preparation request. An omitted `workspace` means no
