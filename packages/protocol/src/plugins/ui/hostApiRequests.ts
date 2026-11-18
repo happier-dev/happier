@@ -78,7 +78,7 @@ import {
   PluginUiTargetedContributionOperationV1Schema,
 } from './targetedContributions.js';
 import { SessionServerStartSpawnDraftV1Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
-import { ReviewStartInputSchema } from '../../reviews/reviewStart.js';
+import { ReviewStartInputFieldsSchema } from '../../reviews/reviewStart.js';
 import {
   SessionAwarenessLifecycleV1Schema,
   SessionAwarenessOperationalPrimaryV1Schema,
@@ -962,8 +962,8 @@ export const PluginUiSelectActionInputHostRequestV1Schema = lazyZodSchema(() => 
     sessionId: z.string().check(z.minLength(1)),
     serverId: z.optional(z.string().check(z.minLength(1))),
     draft: z.strictObject({
-      engineIds: ReviewStartInputSchema.shape.engineIds,
-      instructions: ReviewStartInputSchema.shape.instructions,
+      reviewers: ReviewStartInputFieldsSchema.shape.reviewers,
+      instructions: ReviewStartInputFieldsSchema.shape.instructions,
     }),
   }),
 ]));
@@ -1019,9 +1019,9 @@ export type PluginUiSelectActionInputServerStartDraftV1 =
 const PluginUiSelectActionInputExecutionRunLaunchV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('executionRunLaunch'),
   input: z.strictObject({
-    secretReferenceOverlay: ReviewStartInputSchema.shape.secretReferenceOverlay,
-    teamCredentialModel: ReviewStartInputSchema.shape.teamCredentialModel,
-    teamCredentialSessionBindingConsent: ReviewStartInputSchema.shape.teamCredentialSessionBindingConsent,
+    secretReferenceOverlay: ReviewStartInputFieldsSchema.shape.secretReferenceOverlay,
+    teamCredentialModel: ReviewStartInputFieldsSchema.shape.teamCredentialModel,
+    teamCredentialSessionBindingConsent: ReviewStartInputFieldsSchema.shape.teamCredentialSessionBindingConsent,
   }),
 }));
 
