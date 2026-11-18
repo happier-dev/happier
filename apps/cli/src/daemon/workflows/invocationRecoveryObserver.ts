@@ -165,7 +165,7 @@ export async function resolveWorkflowSessionConversation(params: Readonly<{
   // Pending capability intent is not applied runtime state; its existing owner retains
   // the exact applied selection when a restart is required.
   selection.capabilitySelection = readAppliedSessionCapabilitySelectionFromMetadataV1(metadata);
-  const { permissionMode, modelSelection } = resolveSessionRuntimeSnapshot({
+  const { permissionMode, modelSelection, teamModelSelection } = resolveSessionRuntimeSnapshot({
     incomingOptions: { existingSessionId: target.sessionId, directory },
     persistedMetadata: metadata,
   }).snapshot;
@@ -178,7 +178,7 @@ export async function resolveWorkflowSessionConversation(params: Readonly<{
     runtimeSelection: WorkflowSessionAuthoringSelectionSchema.parse(selection),
     ...(modes && modes.agentId === backend?.backendId ? { sessionModes: modes } : {}),
     ...(sessionRoles ? { sessionRoles } : {}),
-    runtimeSnapshot: { permissionMode, modelSelection },
+    runtimeSnapshot: { permissionMode, modelSelection, teamModelSelection },
   };
 }
 

@@ -1694,6 +1694,52 @@ describe('workflow Session step executor', () => {
     })]);
   });
 
+  it('preserves the selected Team source when admitting input to an existing Session', async () => {
+    const admitted: unknown[] = [];
+    const target = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+    const teamSelection = {
+      v: 2 as const,
+      updatedAt: 300,
+      ref: {
+        source: 'team_resource' as const,
+        resourceId: 'team-resource',
+        teamId: 'team-1',
+        expectedResourceRevision: 4,
+        deliveryMode: 'brokered' as const,
+        agentTargetKey: 'agent:happier.agent.claude/claude',
+        modelId: 'muse-spark-1.3-contributor',
+      },
+    };
+    const execute = createProductionWorkflowSessionStepExecutor({
+      credentials: { token: 'token', encryption: null }, machineId: 'machine-1',
+      machineAdmissionTransport: vi.fn(), createFreshConversation: async () => { throw new Error('Existing target'); },
+      resolveSharedRunConversation: async () => ({ sessionId: 'retained', machineId: 'machine-1', directory: '/repo', agentTarget: target,
+        runtimeSnapshot: { permissionMode: { value: 'read-only' as const, updatedAt: 200 }, modelSelection: { value: { agentTargetKey: target.identity.pluginId + '/' + target.identity.localId, providerConnectionId: null, modelId: 'legacy' }, updatedAt: 200 }, teamModelSelection: teamSelection },
+      }), resolveProducerConversation: async () => null,
+      resolveExistingSessionConversation: async () => ({ sessionId: 'retained', machineId: 'machine-1', directory: '/repo', agentTarget: target,
+        runtimeSnapshot: { permissionMode: { value: 'read-only' as const, updatedAt: 200 }, modelSelection: { value: { agentTargetKey: target.identity.pluginId + '/' + target.identity.localId, providerConnectionId: null, modelId: 'legacy' }, updatedAt: 200 }, teamModelSelection: teamSelection },
+      }),
+      sessionInput: { enqueue: async (request) => { admitted.push(request); return { status: 'accepted', localId: 'input' }; },
+        observe: async ({ sessionId, localId }) => ({ ok: true, sessionId, localId, result: { kind: 'final_text', text: 'done' } }),
+      },
+    });
+    const result = await execute({ runId: 'run',
+      step: { kind: 'step', id: 'work', document: { text: 'work', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+      invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: 'logical' },
+      input: { text: 'work', references: [], attachments: [], values: [] },
+      execution: { conversation: { kind: 'shared_run' }, agentTarget: target,
+        permissionMode: 'default', permissionModeUpdatedAt: 300, modelSelection: teamSelection },
+      executionTarget: { kind: 'session' }, authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
+      workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
+      beforeInputAdmission: async () => {}, onInputAccepted: async () => {},
+    });
+    expect(result).toEqual({ kind: 'completed', result: 'done' });
+    expect(admitted).toEqual([expect.objectContaining({
+      modelSelectionInput: teamSelection.ref,
+      modelSelectionUpdatedAt: 300,
+    })]);
+  });
+
   it('anchors an unmaterialized generation timeout to the exact host input across rejoin', async () => {
     const acceptedTimes: number[] = [];
     const execute = createWorkflowSessionStepExecutor({

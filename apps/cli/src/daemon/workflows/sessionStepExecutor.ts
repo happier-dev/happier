@@ -124,7 +124,7 @@ export type WorkflowSessionConversation = Readonly<{
   sessionModes?: SessionOwnerModeCatalogV2;
   /** Authenticated Session role configuration used by scoped trigger admission. */
   sessionRoles?: SessionRolesV1;
-  runtimeSnapshot?: Pick<SessionRuntimeSnapshot, 'permissionMode' | 'modelSelection'>;
+  runtimeSnapshot?: Pick<SessionRuntimeSnapshot, 'permissionMode' | 'modelSelection' | 'teamModelSelection'>;
   /** Session-owned creation facts, retained across shared inputs and recovery. */
   origin?: SessionAwarenessOriginV1;
   workDepth?: number;
@@ -941,13 +941,17 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       return { kind: 'completed', result: '' };
     }
     const runtime = prepared.existing?.runtimeSnapshot;
+    const trackedTeamModelSelection = runtime?.teamModelSelection;
     const selectedControls = runtime ? resolveSessionRuntimeSnapshot({
       incomingOptions: { directory: params.workspace.directory, permissionMode: parsePermissionIntentAlias(requestedPermissionCeiling ?? 'default') ?? undefined,
         permissionModeUpdatedAt: params.execution.permissionModeUpdatedAt, modelSelection: params.execution.modelSelection ?? undefined },
       trackedSpawnOptions: { directory: params.workspace.directory,
         ...(runtime.permissionMode ? { permissionMode: runtime.permissionMode.value, permissionModeUpdatedAt: runtime.permissionMode.updatedAt } : {}),
+        ...(trackedTeamModelSelection
+          ? { modelSelection: trackedTeamModelSelection }
+          : {}),
       },
-      trackedModelSelection: runtime.modelSelection,
+      ...(trackedTeamModelSelection ? {} : { trackedModelSelection: runtime.modelSelection }),
     }).snapshot : null;
     const text = renderWorkflowSessionStepInput({ input: params.input, result: params.step.result,
       roleInstructions: deps.resolveRoleInstructions?.(params) });
@@ -1021,9 +1025,12 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       ...(params.execution.modelSelection === undefined
         ? {}
         : { modelSelectionInput: params.execution.modelSelection === null ? { modelId: null }
-            : selectedControls?.modelSelection
-              ? selectedControls.modelSelection.value ?? { modelId: null }
-              : params.execution.modelSelection.ref ?? { modelId: null },
+            : selectedControls?.teamModelSelection?.ref
+              ?? (selectedControls?.modelSelection
+                ? selectedControls.modelSelection.value ?? { modelId: null }
+                : undefined)
+              ?? params.execution.modelSelection.ref
+              ?? { modelId: null },
           ...(params.execution.modelSelection === null ? {} : { modelSelectionUpdatedAt: selectedControls?.modelSelection?.updatedAt ?? params.execution.modelSelection.updatedAt }) }),
       ...(params.signal ? { signal: params.signal } : {}),
     });
