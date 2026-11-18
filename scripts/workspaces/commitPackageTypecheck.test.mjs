@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { attributeRollingRange, commitGateTypecheck, commitGateTypecheckPlan, reportCommitGateTypecheck, treeDependencyPreparer, treeTypechecker, commitPackageTypecheckRefuses, nextRollingScope, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
+import { attributeRollingRange, commitGateTypecheck, commitGateTypecheckPlan, reportCommitGateTypecheck, drainCommitGateReports, queueCommitGateReport, treeDependencyPreparer, treeTypechecker, commitPackageTypecheckRefuses, nextRollingScope, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
 
 async function workspace(t) {
   const repo = await mkdtemp(join(tmpdir(), 'happier-commit-package-typecheck-'));
@@ -522,4 +522,26 @@ test('dependencies are prepared once per dependency generation, outside the comp
   const manifest = await commit('packages/leaf/package.json', JSON.stringify({ name: '@x/leaf', scripts: { typecheck: 'tsc' }, version: '2.0.0' }));
   assert.equal(prepare(tree(manifest)), true, 'a manifest change is a new generation');
   assert.equal(installs.length, 2);
+});
+
+// 2026-11-18 21:00-21:12Z: one detached report process per landed commit (10 in 12 min) piled up behind the gate lane's
+// single worktree. One drainer takes the queued commits in landing order; a commit's parent tree is the previous
+// commit's tree, so each commit after the first fetches only its own tree.
+test('queued report-mode commits are drained in landing order by one drainer, each new tree fetched once', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-commit-gate-queue-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const fetched = [];
+  const remote = (treeIds, dirs) => { fetched.push(...treeIds); return new Map(treeIds.map(treeId => [treeId, new Map(dirs.map(dir => [dir, []]))])); };
+  const shas = [];
+  for (const value of [21, 22, 23]) {
+    shas.push(await commit('packages/plugins/codex/src/index.ts', `export const value = ${value};\n`));
+    queueCommitGateReport({ repo, env, commit: shas.at(-1) });
+  }
+  const drained = await drainCommitGateReports({ repo, env, remote, post: () => {}, boardPaths: [], log: () => {} });
+  assert.deepEqual(drained, shas, 'landing order, each once');
+  assert.equal(fetched.length, 4, 'parent + 3 commits: every tree once');
+  assert.deepEqual(await drainCommitGateReports({ repo, env, remote, post: () => {}, boardPaths: [], log: () => {} }), [], 'the queue is empty');
+  assert.equal(readFileSync(join(state, 'verdicts.log'), 'utf8').match(/GATE-REPORT-ok/gu).length, 3);
 });

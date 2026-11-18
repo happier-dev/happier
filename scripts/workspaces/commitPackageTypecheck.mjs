@@ -540,6 +540,8 @@ export const commitPackageTypecheckRefuses = result => !result.skipped && (resul
 /** The commit gate's worker lane: its own warm worktree beside the rolling one (sharing its bare repository), so a gate
  * never waits behind a rolling app compile (up to hours) for the worktree, and its own admission identity. */
 const GATE_LANE = 'gate';
+/** nl1 first: the rolling owner takes nl3 first, and nl3's sync hung every gate request on 2026-11-18 ~21:00Z. */
+const GATE_WORKERS = ['nl1', 'nl3'];
 /** The gate's admitted entry: the broker ranks admissions by script, and this one takes the top rank. */
 export const COMMIT_GATE_TYPECHECK_ENTRY = 'scripts/workspaces/commitGateTypecheck.mjs';
 
@@ -554,7 +556,8 @@ export async function commitGateTypecheck({ repo, base, tree, env = process.env,
   const plan = commitGateTypecheckPlan({ repo, base, tree });
   const state = commitPackageTypecheckStateDir(repo, env);
   const result = await commitPackageTypecheck({ repo, base, tree, env, log, packages: plan.blocking,
-    remote: remote ?? workerTreeRows({ repo, state, env, log, lane: GATE_LANE, entry: COMMIT_GATE_TYPECHECK_ENTRY }) });
+    remote: remote ?? workerTreeRows({ repo, state, env, log, lane: GATE_LANE, entry: COMMIT_GATE_TYPECHECK_ENTRY,
+      workers: (env.HAPPIER_COMMIT_TYPECHECK_WORKERS || GATE_WORKERS.join(' ')).split(/\s+/u).filter(Boolean) }) });
   if (!result.skipped && record) {
     mkdirSync(state, { recursive: true });
     appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} GATE-${commitPackageTypecheckRefuses(result) ? 'REFUSED' : 'ok'} base=${result.trees.base} tree=${result.trees.head} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} ${(result.ms / 1000).toFixed(1)}s\n`);
@@ -585,6 +588,48 @@ export async function reportCommitGateTypecheck({ repo, commit, env = process.en
   mkdirSync(state, { recursive: true });
   appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} GATE-REPORT-${red ? 'RED' : 'ok'} commit=${sha} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} wall=${(result.ms / 1000).toFixed(1)}s\n`);
   return result;
+}
+
+const gateReportQueuePath = state => join(state, 'gate-report-queue');
+
+/** Queues a landed commit for report mode; the single drainer (`drainCommitGateReports`) checks it. */
+export function queueCommitGateReport({ repo, env = process.env, commit }) {
+  const state = commitPackageTypecheckStateDir(repo, env);
+  mkdirSync(state, { recursive: true });
+  appendFileSync(gateReportQueuePath(state), `${commit}\n`);
+}
+
+/**
+ * Checks every queued commit in landing order, one at a time, then returns the drained SHAs. One drainer per host
+ * (lock without waiting; a second one returns []), and the holder re-reads the queue before it lets go. A commit's
+ * parent tree is the previous commit's tree, so after the first only the new tree is compiled
+ * (2026-11-18 21:00-21:12Z: one detached process per commit, 10 in 12 min, piled up behind the gate lane).
+ */
+export async function drainCommitGateReports({ repo, env = process.env, ...options }) {
+  const state = commitPackageTypecheckStateDir(repo, env);
+  mkdirSync(state, { recursive: true });
+  const queue = gateReportQueuePath(state);
+  const drained = [];
+  for (;;) try {
+    await withWorkspaceBundleLock(async () => {
+      for (;;) {
+        if (!existsSync(queue)) return;
+        const taken = `${queue}.${process.pid}`;
+        renameSync(queue, taken);
+        const commits = [...new Set(readFileSync(taken, 'utf8').split('\n').filter(Boolean))];
+        rmSync(taken, { force: true });
+        for (const commit of commits) {
+          await reportCommitGateTypecheck({ repo, env, commit, ...options });
+          drained.push(commit);
+        }
+      }
+    }, { lockPath: join(state, 'gate-report.lock'), timeoutMs: null, wait: false });
+    // A commit queued between the holder's last read and its release: its own drainer found the lock busy.
+    if (!existsSync(queue)) return drained;
+  } catch (error) {
+    if (error?.code !== WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE) throw error;
+    return drained;
+  }
 }
 
 const ROLLING_HEAD = 'rolling-head';
@@ -926,9 +971,10 @@ export function kickRollingHeadTypecheck({ repo, env = process.env, commit }) {
   // The landed commit's gate typecheck in report-and-URGENT mode (P03 ORCH 2026-11-18): its own detached process and
   // worker lane, only for a commit that touches packages/* or packages/plugins/* workspaces.
   if (commit && commitGateTypecheckPlan({ repo, base: `${commit}^`, tree: commit }).blocking.length) {
+    queueCommitGateReport({ repo, env, commit });
     const reportLog = openSync(join(state, 'runs', 'gate-report.log'), 'a');
     try {
-      spawn(process.execPath, [fileURLToPath(new URL('./commitGateTypecheck.mjs', import.meta.url)), '--report', `--commit=${commit}`],
+      spawn(process.execPath, [fileURLToPath(new URL('./commitGateTypecheck.mjs', import.meta.url)), '--report-queue'],
         { cwd: repo, env: childEnv, detached: true, stdio: ['ignore', reportLog, reportLog] }).unref();
     } finally {
       closeSync(reportLog);
