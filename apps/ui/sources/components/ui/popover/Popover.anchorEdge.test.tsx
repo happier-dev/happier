@@ -35,7 +35,7 @@ const { PopoverPortalTargetContextProvider } = await import('./PopoverPortalTarg
 
 /** A fixed-width picker (520 wide) hung from a chip, as the composer's list pickers are. */
 async function renderPicker(anchor: AnchorRect, anchorAlign: 'start' | 'end' | 'auto', onAnchorHidden?: () => void,
-    portalOverride?: Readonly<{ matchAnchorWidth: boolean; anchoredMinWidth?: number }>) {
+    portalOverride?: Readonly<{ matchAnchorWidth: boolean; anchoredMinWidth?: number }>, horizontalGutter = 0) {
     const portalRootNode = {
         measureInWindow: (cb: any) => cb(0, 0, 1000, 800),
         measure: (cb: any) => cb(0, 0, 1000, 800, 0, 0),
@@ -55,7 +55,7 @@ async function renderPicker(anchor: AnchorRect, anchorAlign: 'start' | 'end' | '
                     gap={8}
                     maxHeightCap={300}
                     maxWidthCap={520}
-                    edgePadding={{ horizontal: 0, vertical: 0 }}
+                    edgePadding={{ horizontal: horizontalGutter, vertical: 0 }}
                 >
                     {() => React.createElement('Picker')}
                 </Popover>
@@ -94,6 +94,16 @@ describe('Popover: a fixed-width popover hangs from its anchor edge', () => {
     it('hangs an end-aligned popover from the anchor\'s start edge when the end edge leaves it no room', async () => {
         const { left } = await renderPicker({ left: 100, top: 400, width: 100, height: 32 }, 'end');
         expect(left).toBe(100);
+    });
+});
+
+describe('Popover: a gutter around the surface never moves it off its anchor edge', () => {
+    // WF-REDESIGN-1116 (WF-ACCEPT-1118 item 1): Step options' surface stood 12 px inside its "…" (1243 vs 1256).
+    it('hangs the visible surface, not its transparent gutter, from the anchor edge', async () => {
+        const start = await renderPicker({ left: 200, top: 100, width: 100, height: 32 }, 'start', undefined, undefined, 12);
+        expect(start.left).toBe(200);
+        const end = await renderPicker({ left: 600, top: 100, width: 100, height: 32 }, 'end', undefined, undefined, 12);
+        expect(end.left + end.width).toBe(700);
     });
 });
 

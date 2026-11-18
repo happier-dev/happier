@@ -158,6 +158,10 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
                 if (next && props.source.requestCatalog) fireAndForget(props.source.requestCatalog(), { tag: 'ApprovalProfileSelect.catalog' });
             }}
             items={items} selectedId={selectedId}
+            // A chip names a value; its menu sizes to its choices and hangs from the chip's edge, never clamped to
+            // the chip's width (WF-ACCEPT-1118 item 11: "Machine default (Account …" wrapped in 140 px). A field keeps
+            // its field's width.
+            {...(chip && props.presentation !== 'selects' ? { matchTriggerWidth: false } : {})}
             onSelect={select}
             emptyLabel={t(props.source.unavailable ? 'common.unavailable' : 'common.loading')}
             trigger={chip && props.presentation === 'selects' ? ({ toggle }) => <SessionAuthoringFieldSelectTrigger

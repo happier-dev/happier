@@ -1836,19 +1836,25 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
                 }
                 const desiredLeftRaw = (() => {
                     const anchorRight = anchorRectState.x + anchorRectState.width;
+                    // The box carries its horizontal edge padding as a transparent gutter: an edge-hung popover
+                    // places its visible surface, not that gutter, on the anchor's edge (WF-ACCEPT-1118 item 1).
+                    const gutter = horizontalGutter;
+                    const startLeft = anchorRectState.x - gutter;
+                    const endLeft = anchorRight - desiredWidth + gutter;
                     // A popover hangs from its requested edge while that edge leaves it its full width; an
                     // anchor near the other window edge hangs it from that edge instead, so it stays attached
                     // to its trigger rather than sliding away from it to fit.
-                    const startFits = anchorRectState.x + desiredWidth <= boundaryRect.x + boundaryRect.width;
-                    const endFits = anchorRight - desiredWidth >= boundaryRect.x;
+                    // Fit is the visible surface's: the gutter may overhang the boundary, as the clamp below allows.
+                    const startFits = startLeft + desiredWidth - gutter <= boundaryRect.x + boundaryRect.width;
+                    const endFits = endLeft + gutter >= boundaryRect.x;
                     switch (resolvePopoverAnchorEdge(anchorAlignOnPortal, anchorRectState, boundaryRect)) {
                         case 'end':
-                            return endFits || !startFits ? anchorRight - desiredWidth : anchorRectState.x;
+                            return endFits || !startFits ? endLeft : startLeft;
                         case 'center':
                             return anchorRectState.x + (anchorRectState.width - desiredWidth) / 2;
                         case 'start':
                         default:
-                            return startFits || !endFits ? anchorRectState.x : anchorRight - desiredWidth;
+                            return startFits || !endFits ? startLeft : endLeft;
                     }
                 })();
                 return desiredLeftRaw;
