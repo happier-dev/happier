@@ -3,7 +3,7 @@ import type { ThemeActionId, ThemeActionInput, ThemeActionOutput, ThemeActionReq
 import type { ThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -15,6 +15,7 @@ import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionP
 const shared = vi.hoisted(() => ({
     themes: null as Record<'light' | 'dark', Theme> | null,
     setTheme: vi.fn(),
+    machineRpc: vi.fn(),
     update: vi.fn((name: 'light' | 'dark', updater: (theme: Theme) => Theme) => {
         if (shared.themes) shared.themes[name] = updater(shared.themes[name]);
     }),
@@ -31,6 +32,8 @@ vi.mock('react-native-unistyles', async () =>
     } }));
 vi.mock('expo-status-bar', () => ({ setStatusBarStyle: vi.fn() }));
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn(async () => {}) }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () =>
+    (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(shared.machineRpc));
 
 const { ThemeProfileRuntimeSync } = await import('./ThemeProfileRuntimeSync');
 const { initializeArtifactInventoryDemandHarness } = await import('@/dev/testkit/harness/artifactInventoryDemandHarness');
@@ -58,7 +61,72 @@ async function setup() {
     return { ...fixture, scope, row };
 }
 
-describe('Artifact-backed theme runtime synchronization', () => {
+describe('Theme runtime synchronization', () => {
+    it('cold-loads the saved plugin theme through its Machine theme section without opening a catalog', async () => {
+        const fixture = await setup();
+        const { AppShellPluginUiProjectionProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection, readPluginAccountAvailability }
+            = await import('@/sync/domains/plugins/availability/projection');
+        const { PluginProjectionV2Schema, buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeRequestSchema }
+            = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+        const { resolveMachineReachability } = await import('@/sync/domains/machines/reachability/machineReachability');
+        const pluginId = 'fixture.startup-theme';
+        const machineId = 'startup-theme-machine';
+        const occurrenceId = 'startup-theme-occurrence';
+        const theme = { schemaVersion: 1, id: 'paper', name: 'Paper', createdAt: '2026-11-16', updatedAt: '2026-11-16',
+            base: { light: 'light', dark: 'dark' }, overrides: { light: { 'background.canvas': '#224466' }, dark: {} } };
+        const materialization = { serverIdentityId: fixture.scope.serverId, machineId, materializationId: occurrenceId,
+            pluginId, version: '1.0.0', sourceClass: 'localPath' as const, portableRelease: false, uiArtifacts: [],
+            enabled: true, trustState: 'trusted' as const, observedAt: 1 };
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Paper palette', version: '1.0.0', enabled: true, occurrenceId,
+                source: { kind: 'localPath', locator: '/fixture/startup-theme' } } },
+            familiesById: { themes: { family: 'themes', entriesById: { [`${pluginId}/paper`]: {
+                id: `${pluginId}/paper`, pluginId, pluginVersion: '1.0.0', occurrenceId, definition: { id: 'paper', theme },
+            } } }, registrySources: { family: 'registrySources', entriesById: {} } },
+        });
+        const deferred = buildDeferredDaemonProjectionSections({ protocolVersion: 1, projectionDigest: 'a'.repeat(64), projection });
+        const sectionReads: string[] = [];
+        shared.machineRpc.mockImplementation(async ({ method, payload }) => {
+            expect(method).toBe(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
+            const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(payload);
+            if (!request.sectionRead) return deferred.manifest;
+            const { digest, offset, includeDigests } = request.sectionRead;
+            sectionReads.push(digest, ...includeDigests ?? []);
+            return deferred.read(digest, offset, includeDigests);
+        });
+        onTestFinished(() => { shared.machineRpc.mockReset(); clearPluginAccountAvailabilityProjection(); });
+        storage.setState({ endpointStatus: 'online', isDataReady: true });
+        const machine = createMachineFixture({ id: machineId, active: true, activeAt: Date.now(), storageMode: 'plain',
+            daemonStateVersion: 1, daemonState: { contributionRegistryProjectionRevision: 1 } });
+        await publishMachineInventoryForTest(fixture.scope, [machine]);
+        expect(resolveMachineReachability(fixture.scope, machine)).toBe('reachable');
+        replacePluginAccountAvailabilityProjection({ scope: fixture.scope, snapshot: { availabilityCursor: 1,
+            intentReads: [], materializations: [materialization], snapshots: [{ serverIdentityId: fixture.scope.serverId,
+                machineId, materializations: [materialization] }] } });
+        expect(readPluginAccountAvailability(fixture.scope).readInstalledPlugins()).toMatchObject({ kind: 'available',
+            plugins: [{ pluginId, installations: [{ materialization }] }] });
+        const shell = <><ThemeProfileRuntimeSync /><AppShellPluginUiProjectionProvider>{null}</AppShellPluginUiProjectionProvider></>;
+        const idle = await renderScreen(shell);
+        expect(shared.themes!.light.colors.background.canvas).toBe('#f1e2d3');
+        expect(shared.machineRpc).not.toHaveBeenCalled();
+        await idle.unmount();
+
+        storage.getState().applyLocalSettings({ themeProfileSelection: { light: { kind: 'plugin', pluginId, contributionId: 'paper' }, dark: null } });
+        shared.themes = { light: lightTheme, dark: darkTheme };
+        const cold = await renderScreen(shell);
+        await vi.waitFor(() => {
+            const demandedFamilies = Object.entries(deferred.manifest.sections)
+                .filter(([section, digest]) => section.startsWith('familiesById.') && sectionReads.includes(digest))
+                .map(([section]) => section);
+            expect({ demandedFamilies, canvas: shared.themes!.light.colors.background.canvas })
+                .toEqual({ demandedFamilies: ['familiesById.themes'], canvas: '#224466' });
+        });
+        await cold.unmount();
+    });
+
     it('applies each mode press once when its settings publication flushes synchronously', async () => {
         const fixture = await setup();
         const { themeModeStorageBinding } = await import('@/components/settings/appearance/themeModeSettingBinding');

@@ -61,7 +61,8 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
         }
         return [...targets.entries()];
     }, [installed, owingRegistrySources, presented, props.accountScope?.serverId, props.pluginId, props.presents, readsRegistrySources, selectedOrigin]);
-    const hosted = useHostedDemands(targets, 'presentation');
+    const sections = props.sections ?? (props.pluginId !== undefined ? pluginUiSections(props.pluginId) : PLUGIN_UI_SECTIONS);
+    const hosted = useHostedDemands(targets, `presentation:${JSON.stringify(sections)}`);
     // Administration's uncontextual selection is plugin-scoped, so one presented body decides it for all.
     const decides = selectedOrigin && presented;
     const selection = React.useMemo(() => decides ? [[props.pluginId!, props.pluginId!] as const] : [], [decides, props.pluginId]);
@@ -71,8 +72,6 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
     const homeIds = React.useMemo(() => hosted.map(([, target]) => target.serverIdentityId), [hosted]);
     const bindings = useServerCredentialAccountScopeBindings(homeIds);
     // A surface render (an Availability publication) does not redraw its unchanged Machine demands.
-    // A plugin's surface presents that plugin only: its slices, never the Machine's whole catalogue.
-    const sections = props.sections ?? (props.pluginId !== undefined ? pluginUiSections(props.pluginId) : PLUGIN_UI_SECTIONS);
     const sourceDemands = React.useMemo(() => hosted.map(([key, target]) => <SourceDemand key={key} target={target} sections={sections}
         accountLifetime={bindings.get(normalizeCredentialScopeServerId(target.serverIdentityId)) ?? null} />), [bindings, hosted, sections]);
     return <>
@@ -122,7 +121,7 @@ function releaseSourceDemand(key: string, owner: symbol): boolean {
 }
 
 function useHostedDemands<T>(targets: readonly (readonly [string, T])[],
-    question: 'presentation' | 'selectedOrigin'): readonly (readonly [string, T])[] {
+    question: `presentation:${string}` | 'selectedOrigin'): readonly (readonly [string, T])[] {
     const [owner] = React.useState(() => Symbol('source-demand-surface'));
     const targetsKey = targets.map(([key]) => `${question}:${key}`).join('\n');
     // Registration follows the key set by difference, so a key the surface keeps keeps its place (and

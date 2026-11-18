@@ -5,13 +5,14 @@ import { DAEMON_PROJECTION_PLUGIN_SELECTABLE_SECTIONS, DAEMON_PROJECTION_SESSION
 // Account descriptors, Store registry sources, backup destinations, Voice catalog authority and translation Resource declarations.
 // Other catalogues retain separate demand.
 export const CONNECTED_ACCOUNT_PROJECTION_SECTIONS = ['familiesById.connectedAccounts'] as const;
+export const THEME_PROJECTION_SECTIONS = ['familiesById.themes'] as const;
 // A connected-account purpose declaration resolves through its consumer's Actions/Resources,
 // managed provisioners and authentication descriptors (`readDeclaredConnectedAccountPurposeV1`).
 export const CONNECTED_ACCOUNT_PURPOSE_DECLARATION_SECTIONS = ['actionsById', 'resourcesById',
     ...CONNECTED_ACCOUNT_PROJECTION_SECTIONS, 'familiesById.machineProvisioners'] as const;
 export const PLUGIN_UI_SECTIONS = ['actionsById', 'familiesById.pluginUi', 'familiesById.pluginBrowser',
     ...CONNECTED_ACCOUNT_PROJECTION_SECTIONS, 'familiesById.inputTypes', 'familiesById.voiceProviders',
-    'familiesById.subjectKinds', 'familiesById.storeKinds', 'familiesById.registrySources', 'familiesById.themes', 'familiesById.backupDestinations', 'resourcesById'] as const;
+    'familiesById.subjectKinds', 'familiesById.storeKinds', 'familiesById.registrySources', ...THEME_PROJECTION_SECTIONS, 'familiesById.backupDestinations', 'resourcesById'] as const;
 /**
  * Store registry source declarations alone (Deploy an app's starters). A Machine publishes them as soon as
  * this section is read; its other presentation sections are not waited on.

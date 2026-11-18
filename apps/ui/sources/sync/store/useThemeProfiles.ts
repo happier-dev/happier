@@ -4,6 +4,7 @@ import type { ThemeLibraryEntry, ThemeProfileDocument, ThemeProfileMode, ThemeRe
 import { THEME_ARTIFACT_KIND } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { useArtifactBody, type ArtifactBodyState } from '@/components/artifacts/useArtifactBody';
 import { useArtifactInventoryRead } from '@/components/artifacts/useArtifactInventoryRead';
 import { isArtifactInventoryLoaded, isArtifactInventoryReady } from '@/sync/domains/artifacts/artifactInventory';
@@ -157,7 +158,7 @@ export function useThemeLibraryEntry(reference: ThemeReference | null, enabled =
 }
 
 /** Editors, export and selected runtime consumers share Artifact's addressed loading lifecycle. */
-export function useThemeProfileDocument(reference: ThemeReference | null, enabled = true): Readonly<{
+export function useThemeProfileDocument(reference: ThemeReference | null, enabled = true, committedScope?: AccountSettingsScope | null): Readonly<{
     state: ArtifactBodyState; document: ThemeProfileDocument | null; failure?: unknown; retry(): void;
 }> {
     const scope = useAccountSettingsScope();
@@ -165,7 +166,7 @@ export function useThemeProfileDocument(reference: ThemeReference | null, enable
     const subscription = React.useMemo(() => ({ artifacts: [id] } satisfies StorageSubscriptionScope), [id]);
     const row = getStorage()(React.useCallback(state => enabled && id ? state.artifacts[id] ?? null : null, [enabled, id]), enabled ? subscription : noSubscription);
     const read = useArtifactBody(enabled ? id : '', row, { readMissing: enabled && reference?.kind === 'artifact' });
-    const plugin = usePluginThemeList(enabled && reference?.kind === 'plugin' ? reference : null);
+    const plugin = usePluginThemeList(enabled && reference?.kind === 'plugin' ? reference : null, enabled, committedScope);
     const pluginProfile = React.useMemo(() => plugin ? pluginDocument(plugin) : null, [plugin]);
     const currentRow = read.result?.artifact ?? row;
     const opened = React.useMemo(() => currentRow && scope ? readThemeProfileArtifactDocument(currentRow, scope)?.document ?? null : null,
@@ -207,11 +208,10 @@ function selectedProfiles(documents: readonly (ThemeProfileDocument | null)[], r
 }
 
 /** Runtime demands only the two selected documents; browsing uses the header hook above. */
-export function useSelectedThemeProfiles(): ThemeProfilesLocalStateV1 {
-    const input = getStorage()(useShallow(state => ({ selection: state.localSettings.themeProfileSelection, scope: state.settingsScope })), selectionScope);
-    const references = React.useMemo(() => readThemeProfileReferenceSelection(input.selection), [input.selection]);
-    const light = useThemeProfileDocument(references.light).document;
-    const dark = useThemeProfileDocument(references.dark).document;
+export function useSelectedThemeProfiles(references: Readonly<Record<ThemeProfileMode, ThemeReference | null>>,
+    scope: AccountSettingsScope | null): ThemeProfilesLocalStateV1 {
+    const light = useThemeProfileDocument(references.light, true, scope).document;
+    const dark = useThemeProfileDocument(references.dark, true, scope).document;
     return React.useMemo(() => selectedProfiles([light, dark], [references.light, references.dark]), [light, dark, references]);
 }
 
@@ -226,8 +226,9 @@ export function readSelectedThemeProfiles(expectedScope?: AccountSettingsScope |
     return selectedProfiles(selectedReferences.map(reference => {
         if (reference?.kind === 'built-in') return getBuiltInThemeProfileDocument(reference.presetId);
         if (reference?.kind === 'plugin') {
-            const item = readPluginThemeList().find(candidate => candidate.pluginId === reference.pluginId && candidate.contributionId === reference.contributionId);
-            return item ? pluginDocument(item) : null;
+            const projection = state.settingsScope && readCurrentAppShellPluginUiProjection({ scope: state.settingsScope, declarationsOnly: true });
+            const entry = projection?.themesById[pluginThemeReferenceKey(reference)];
+            return entry ? projectPluginThemeProfileDocument(entry.definition.theme, reference) : null;
         }
         if (reference?.kind !== 'artifact' || !state.settingsScope) return null;
         const row = state.artifacts[reference.id];

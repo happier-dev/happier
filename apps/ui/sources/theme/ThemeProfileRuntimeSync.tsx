@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { useSelectedThemeProfiles } from '@/sync/store/useThemeProfiles';
+import { useSelectedThemeProfiles, useThemeProfileReferenceSelection } from '@/sync/store/useThemeProfiles';
+import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/PluginSurfaceProjectionDemand';
+import { THEME_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { findActiveThemeProfileForMode } from './profiles/themeProfilePersistence';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { transitionThemeRuntimeSelection } from './profiles/themeProfileRuntime';
@@ -15,11 +17,14 @@ export function ThemeProfileRuntimeSync({ enabled = true }: Readonly<{ enabled?:
 }
 
 function ThemeProfileRuntimeObserver() {
-    useAccountSettingsScope();
+    const scope = useAccountSettingsScope();
     const owner = getThemeTryOnOwner();
     const preview = React.useSyncExternalStore(owner.subscribe, owner.read, owner.read);
     const themePreference = useLocalSetting('themePreference');
-    const themeProfiles = useSelectedThemeProfiles();
+    const references = useThemeProfileReferenceSelection();
+    const themeProfiles = useSelectedThemeProfiles(references, scope);
+    const lightPluginId = references.light?.kind === 'plugin' ? references.light.pluginId : null;
+    const darkPluginId = references.dark?.kind === 'plugin' ? references.dark.pluginId : null;
     const light = findActiveThemeProfileForMode(themeProfiles, 'light');
     const dark = findActiveThemeProfileForMode(themeProfiles, 'dark');
     const finish = useLocalSetting('uiSurfaceFinish');
@@ -35,5 +40,12 @@ function ThemeProfileRuntimeObserver() {
             style: themeStyleSelectionFromSurfaceFinish({ uiSurfaceFinish: finish, uiSurfaceFinishOverrides: overrides }),
         }, readReducedMotionPreference()), { tag: 'theme.runtime.transition' });
     }, [themePreference, light, dark, finish, overrides, preview]);
-    return null;
+    // A saved plugin theme is presented by the app itself, including before any catalog opens.
+    if (!scope) return null;
+    return <>
+        {lightPluginId ? <PluginSurfaceProjectionDemand pluginId={lightPluginId} accountScope={scope}
+            presents="allInstallations" sections={THEME_PROJECTION_SECTIONS} /> : null}
+        {darkPluginId && darkPluginId !== lightPluginId ? <PluginSurfaceProjectionDemand pluginId={darkPluginId} accountScope={scope}
+            presents="allInstallations" sections={THEME_PROJECTION_SECTIONS} /> : null}
+    </>;
 }
