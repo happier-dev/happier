@@ -17,7 +17,7 @@ import type { ScmBackendRegistry } from '@/scm/registry';
 import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import { readProjectAccountRows, createProjectAccountSnapshotMutation, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
+import { readProjectAccountRows, createProjectAccountSnapshotMutation, mutateProjectAccountOrganization, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { materializeWorkspaceRefForMachineRoot, resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
 import type { WorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import { materializeWorkspaceSyncForOpen } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
@@ -485,6 +485,17 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       }) : { kind: 'missing' as const };
       if (acceptedRef.kind !== 'resolved') return outcomeUnknown(`Accepted Workspace row readback was ${acceptedRef.kind}`);
       const workspace = workspaceAddressFromRefV1(acceptedRef.ref);
+      // Opening a Project is the person adding it to their Projects list (owner 11-08), whoever invokes
+      // projects.open for them. A reviewed child of another Action (a Session's project files) keeps its root
+      // Action's binding and stays a Session folder. The list is not the open: a failed write leaves it unlisted.
+      if (!requester.rows.authorization || requester.rows.authorization.binding.actionId === 'projects.open') {
+        await mutateProjectAccountOrganization({ ...requester.rows, serverId: acceptedRef.ref.serverId,
+          projectKey: acceptedRef.ref.projectKey ?? acceptedRef.ref.id,
+          mutate: value => value.hidden === false ? value : { ...value, hidden: false } }).catch(error => {
+          context.signal.throwIfAborted();
+          logger.warnLocalFile('[Project Open] Listing unavailable', { code: codeOf(error) });
+        });
+      }
       let setup: Opened['setup'];
       try {
         const association = await resolveProjectSetupAcceptedWorkspace({ address: workspace, ...requester.rows,

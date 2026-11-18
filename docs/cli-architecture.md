@@ -1724,7 +1724,11 @@ Project.
 
 `projects.list` is an Account Action that lists the Projects the person added.
 A Project is listed when its organization row exists and is not hidden, or, with
-no row, when it was opened or set up from a Source. A folder only a Session
+no row, when it was opened or set up from a Source. Opening adds it: the host
+`projects.open` owner sets `hidden:false` on the requester's organization row
+(keeping its other fields) when it accepts an Open invoked directly by any
+caller (UI, CLI or an agent), but not when Open runs as a reviewed child of
+another Action, such as a Session's project files. A folder only a Session
 brought is unlisted ("From your sessions" in the + menu, newest first) until
 `projects.visibility.set {hidden:false}` adds it. `includeUnlisted:true` returns
 those too (each item carries `listed`), and hidden Projects are omitted unless

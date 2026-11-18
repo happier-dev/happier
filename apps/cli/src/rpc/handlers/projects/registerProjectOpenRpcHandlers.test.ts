@@ -253,6 +253,68 @@ describe('Project Open RPC', () => {
     expect(post).not.toHaveBeenCalled();
   });
 
+  it.each(['plain', 'e2ee'] as const)('lists an opened Project in the requester Account rows for any projects.open caller, keeping its other organization fields (%s)', async mode => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-open-lists-project-'));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const homeId = 'srv_listing_home';
+    await seedTestServerProfile({ id: homeId, homeId, serverUrl: 'https://listing.example' });
+    const material = mode === 'plain' ? null : { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+    const cipher = createProjectAccountRowCipherV1({ mode, material, randomBytes: n => new Uint8Array(n).fill(3) });
+    const admitted: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'agent-open-root', binding: {
+      accountId: 'account', custodianAccountId: 'account', serverIdentityId: homeId,
+      machineId: 'machine', installationId: 'installation', actionId: 'projects.open', accountEncryptionMode: mode,
+      authentication: { kind: 'account', tokenEpoch: 0 }, requestId: 'agent-folder-open',
+      requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'machine' },
+    }, requesterAccountProjection: {
+      accountId: 'account', serverId: homeId, accountEncryptionMode: mode, projectAccountRowCipher: cipher,
+      projectTrustRowCipher: createProjectSetupTrustRowCipher({ mode, material }),
+      resolveMachineContentEncryptionContext: () => ({ encryptionMode: 'plain' }),
+      isCurrent: async () => true, readArtifact: async () => null,
+    } };
+    Object.defineProperty(admitted, 'requesterAccountProjection', { value: admitted.requesterAccountProjection, enumerable: false });
+    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: admitted,
+      serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: 'https://listing.example',
+      target: admitted.binding.target, installationId: 'installation', privateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(4)).secretKey,
+      rootAdmitted: true, isCurrent: async () => true });
+    if (!authorization) throw new Error('Canonical Account HTTP projection was not constructed');
+    // The Home row store is the HTTP boundary; the real Open and row owners run above it.
+    const rows: ProjectAccountRowV1[] = [];
+    vi.spyOn(axios, 'get').mockImplementation(plainMachineRead);
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (url.endsWith('/project-trust/read')) return { status: 200, data: { status: 'absent' } };
+      if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
+      if (url.endsWith('/read')) return projectAccountRowReadResponse(rows, body);
+      const changed = ProjectAccountRowMutationRequestV1Schema.parse(body).mutations
+        .map(item => ({ key: item.key, revision: item.expectedRevision === 'absent' ? 0 : item.expectedRevision + 1, content: item.content }));
+      for (const row of changed) {
+        const index = rows.findIndex(existing => JSON.stringify(existing.key) === JSON.stringify(row.key));
+        if (index < 0) rows.push(row); else rows[index] = row;
+      }
+      return { status: 200, data: { status: 'updated', cursor: 1, rows: changed } };
+    });
+    const organization = (projectKey: string) => {
+      const row = rows.find(candidate => candidate.key.kind === 'project-organization' && candidate.key.projectKey === projectKey);
+      return row?.content ? cipher.open(row.key, row.content).value : undefined;
+    };
+    const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
+      callerInputAuthorization: authorization, machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account',
+        machineId: 'machine', installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+      verifyMachineAdmissionCurrent: async () => true };
+    const handler = register(RPC_METHODS.PROJECTS_OPEN, { serverId: homeId, serverHttpBaseUrl: 'https://listing.example',
+      machineId: 'machine', accountId: 'account', readCredentials: async () => null });
+    const input = { serverId: homeId, machineId: 'machine', source: { kind: 'folder', path: root }, materialization: { kind: 'attach' } };
+    const opened = OpenProjectResultV1Schema.parse(await handler(input, context));
+    if (opened.kind !== 'opened' || !opened.facts?.projectKey) throw new Error(JSON.stringify(opened));
+    const projectKey = opened.facts.projectKey;
+    expect(organization(projectKey)).toEqual({ hidden: false });
+    // Opening a Project the person hid adds it back without losing its other organization.
+    const key = { kind: 'project-organization' as const, serverId: homeId, projectKey };
+    rows[rows.findIndex(row => row.key.kind === 'project-organization')] = { key, revision: 1,
+      content: cipher.seal({ key, value: { hidden: true, pinned: true } }) };
+    expect(await handler(input, context)).toMatchObject({ kind: 'opened' });
+    expect(organization(projectKey)).toEqual({ hidden: false, pinned: true });
+  });
+
   it.each(['attach', 'worktree'] as const)('accepts a native Git worktree under its main Project before daemon registration (%s)', async kind => {
     const root = await mkdtemp(join(tmpdir(), 'happier-open-git-family-'));
     onTestFinished(() => rm(root, { recursive: true, force: true }));
