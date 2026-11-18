@@ -1,5 +1,6 @@
 import { REVIEW_ARTIFACT_KIND_V1, type ReviewMetadataWriteV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { writeReviewRoundState } from '@/app/reviews/reviewRecordService';
+import { resolveReviewCreationPolicyInTx } from '@/app/reviews/reviewCreationPolicy';
 import { isTransactionStorageError } from '@/storage/transactionErrors';
 import type { Prisma } from '@prisma/client';
 import type { ApprovalInputCustody } from '@happier-dev/protocol/approvals/approvalInputCustody';
@@ -936,9 +937,23 @@ async function readArtifactCreateStateInTx(tx: Tx, params: CreateArtifactTxParam
 }
 
 export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): Promise<CreateArtifactResult> {
-    const publication = params.mutationGuard ? await admitArtifactMutationInTx(tx, {
+    let mutationGuard = params.mutationGuard;
+    const reviewMetadata = params.reviewMetadata;
+    // Existing ids retain their admitted audience; only a new Review chooses Team defaults.
+    if (reviewMetadata?.state === 'running' && !await tx.artifact.findUnique({
+        where: { id: params.artifactId }, select: { id: true },
+    })) {
+        mutationGuard = { admitInTx: async (tx, input) => {
+            const inherited = params.mutationGuard ? await params.mutationGuard.admitInTx(tx, input) : { publicationGrants: [] };
+            if (!inherited) return null;
+            const policy = await resolveReviewCreationPolicyInTx(tx, { actorAccountId: input.actorAccountId,
+                projectSourceId: reviewMetadata.projectSourceId, authentication: params.authentication });
+            return policy ? { publicationGrants: [...inherited.publicationGrants, ...policy.publicationGrants] } : null;
+        } };
+    }
+    const publication = mutationGuard ? await admitArtifactMutationInTx(tx, {
         actorAccountId: params.actorUserId, artifactId: params.artifactId,
-    }, params.mutationGuard) : undefined;
+    }, mutationGuard) : undefined;
     if (publication === null) return { ok: false, error: 'artifact_access_forbidden' };
     await acquireAccountChangePublicationLocksInTx(tx, [params.actorUserId], {
         includeSingleAccount: true,
