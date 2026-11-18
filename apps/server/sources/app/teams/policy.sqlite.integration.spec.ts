@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { HOME_GOVERNANCE_POLICY_ID } from "@/app/home/governance/governancePolicy";
 import { db } from "@/storage/db";
+import { observePrismaReads } from "@/testkit/observePrismaReads";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
@@ -369,6 +370,40 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
             mode: "restricted",
             accepted: [{ kind: "home_method", methodId: "key_challenge" }],
         });
+    });
+
+    it("publishes a Team authentication change to each shared Session with one recipient census", async () => {
+        const { owner, teamId } = await ownedTeam();
+        const sessionIds = Array.from({ length: 16 }, () => crypto.randomUUID());
+        await db.session.createMany({ data: sessionIds.map(id => ({
+            id, accountId: owner.id, tag: id, metadata: "{}", encryptionMode: "e2ee",
+        })) });
+        await db.sessionGrant.createMany({ data: sessionIds.map(sessionId => ({
+            principalKind: "team", sessionId, teamId, createdByAccountId: owner.id,
+            accessLevel: "view", effectiveAt: new Date(),
+        })) });
+
+        const observed = await inTx(async tx => {
+            const observed = observePrismaReads(tx, ["session"]);
+            expect(await setTeamPolicyInTx(observed.tx, {
+                actorAccountId: owner.id, teamId, previousAuthenticationPolicy: null,
+                authenticationPolicy: { v: 1, mode: "restricted", accepted: [{ kind: "home_method", methodId: "key_challenge" }] },
+                authentication: {
+                    authenticationEvidence: [{ kind: "home_method", methodId: "key_challenge" }],
+                    authenticationAuthority: "present_user",
+                },
+            })).toMatchObject({ ok: true });
+            return observed;
+        });
+
+        const changes = await db.accountChange.findMany({
+            where: { accountId: owner.id, kind: "session", entityId: { in: sessionIds } },
+            select: { entityId: true },
+        });
+        expect(changes.map(change => change.entityId).sort()).toEqual(sessionIds.sort());
+        // Admission reads remain set-oriented too. A singleton recipient census per Session
+        // would alone exceed this bound before counting any admission queries.
+        expect(observed.reads.filter(read => read === "session.findMany").length).toBeLessThan(sessionIds.length);
     });
 
     it("authorizes Session defaults and admission/authentication through their distinct capabilities", () => {

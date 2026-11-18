@@ -4,6 +4,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { observePrismaReads } from "@/testkit/observePrismaReads";
+import { setTeamMemberRoleForActorInTx } from "../memberships/memberAdministration";
 import { admitTeamMemberInTx } from "../memberships/membershipService";
 import { applyTeamGroupContributionInTx } from "./groupContributions";
 import {
@@ -69,6 +71,29 @@ describe("Team Groups (SQLite integration)", () => {
         if (!result.ok) throw new Error(`group create failed: ${result.error}`);
         return result.value;
     }
+
+    it("avoids a second consecutive publication-audience read when changing Group and Team membership", async () => {
+        const { team, ownerAccountId } = await teamWithOwner("Membership publication cost");
+        const member = await memberOf(team.id);
+        const group = await createGroup(team.id, ownerAccountId, "Group");
+        const run = (mutate: (tx: Parameters<typeof addTeamGroupMemberForActorInTx>[0]) => Promise<{ ok: boolean }>) =>
+            inTx(async tx => {
+                const observed = observePrismaReads(tx, ["teamCredentialResource"]);
+                expect(await mutate(observed.tx)).toMatchObject({ ok: true });
+                return observed.reads.filter(read => read === "teamCredentialResource.findMany").length;
+            });
+
+        const groupReads = await run(tx => addTeamGroupMemberForActorInTx(tx, {
+            teamId: team.id, actorAccountId: ownerAccountId, groupId: group.id,
+            accountId: member.accountId, historyAccess: "from_membership",
+        }));
+        const teamReads = await run(tx => setTeamMemberRoleForActorInTx(tx, {
+            teamId: team.id, actorAccountId: ownerAccountId, membershipId: member.membershipId, role: "admin",
+        }));
+        expect(await db.teamGroupMembership.count({ where: { teamGroupId: group.id, teamMembershipId: member.membershipId } })).toBe(1);
+        expect(await db.teamMembership.findUnique({ where: { id: member.membershipId } })).toMatchObject({ role: "admin" });
+        expect({ groupReads, teamReads }).toEqual({ groupReads: 8, teamReads: 6 });
+    });
 
     it("does not turn Home Team-detail administration into Group authority", async () => {
         const { team } = await teamWithOwner("Home detail is not Group access");

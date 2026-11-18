@@ -1,10 +1,10 @@
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { afterTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
-import { acquireAccountChangePublicationLocksInTx } from "@/app/changes/markAccountChanged";
+import { acquireAccountChangePublicationLocksInTx, markSessionAccountsChanged } from "@/app/changes/markAccountChanged";
 import type { AccountAdmissionIntent } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import { readTeamChangePublicationAudienceInTx } from "../teamChanges";
 import { notifySessionHumanPresenceAccessChanged } from "@/app/session/humanPresence/sessionHumanPresenceService";
-import { markCurrentSessionReadersChanged } from "@/app/session/changeTracking/markCurrentSessionReadersChanged";
+import { resolveCurrentSessionRecipientAccountIdsBySessionInTx } from "@/app/session/access/sessionRecipients";
 import { readSessionAccountCursorAudienceInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import {
     captureMachineAccessImpactsInTx,
@@ -116,8 +116,9 @@ export async function applyTeamSessionAuthenticationContextEffectsInTx(
     input: Readonly<{ teamIds: readonly string[] }>,
 ): Promise<void> {
     const sessionIds = await readTeamAuthenticationContextSessionIdsInTx(tx, [...new Set(input.teamIds.filter(Boolean))]);
+    const recipients = await resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds });
+    await markSessionAccountsChanged(tx, recipients);
     for (const sessionId of sessionIds) {
-        await markCurrentSessionReadersChanged({ tx, sessionId });
         afterTx(tx, () => notifySessionHumanPresenceAccessChanged({ sessionId }));
     }
 }
@@ -152,13 +153,12 @@ export async function withTeamSessionAccessEffectsInTx<T>(
     const change = input.change ?? (input.teamGroupId
         ? { kind: "teamGroupMembership" as const, teamId: input.teamId, teamGroupIds: [input.teamGroupId] }
         : { kind: "teamMembership" as const, teamId: input.teamId });
-    const recheckAdmission = await acquireTeamMutationAccountAdmissionInTx(tx, {
+    await acquireTeamMutationAccountAdmissionInTx(tx, {
         teamId: input.teamId,
         accountIds: uniqueAccountIds,
         membershipChange: change,
         affectedAccountIds: uniqueAccountIds,
     });
-    await recheckAdmission();
     const captured = await captureSessionAccessMembershipImpactsInTx(tx, {
         accountIds: ownedAccountIds,
         changes: [change],
