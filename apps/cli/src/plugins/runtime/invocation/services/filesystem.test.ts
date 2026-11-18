@@ -9,6 +9,24 @@ import {
 } from './filesystem';
 
 describe('plugin invocation filesystem service', () => {
+  it('provides durable native directories under the same plugin data root as logical file operations', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'happier-plugin-data-'));
+    const roots = { pluginData: join(base, 'plugin-a'), projects: new Map<string, string>() };
+    const create = () => createPluginFileSystemService({ roots, signal: new AbortController().signal,
+      isOccurrenceCurrent: () => true });
+    const service = create();
+    const path = await service.getPluginDataDirectory({ relativePath: 'config-one/native-state' });
+    expect(path).toBe(join(roots.pluginData, 'config-one', 'native-state'));
+    await writeFile(join(path, 'run.json'), 'retained');
+    expect(await create().getPluginDataDirectory({ relativePath: 'config-one/native-state' })).toBe(path);
+    await expect(create().readFile({ root: 'pluginData', relativePath: 'config-one/native-state/run.json' }))
+      .resolves.toEqual(new TextEncoder().encode('retained'));
+    const other = createPluginFileSystemService({ roots: { ...roots, pluginData: join(base, 'plugin-b') },
+      signal: new AbortController().signal, isOccurrenceCurrent: () => true });
+    expect(await other.getPluginDataDirectory()).toBe(join(base, 'plugin-b'));
+    expect(await service.getPluginDataDirectory({ relativePath: 'config-two' })).not.toBe(path);
+  });
+
   it('keeps Machine invocations without a Workspace root distinct from admitted Project roots', async () => {
     const roots = { pluginData: tmpdir(), projects: new Map<string, string>() };
     expect(() => resolvePluginPathWithinRoots(roots, { root: 'workspace', relativePath: 'file' }))

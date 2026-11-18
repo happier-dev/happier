@@ -9,6 +9,15 @@ The [public authoring example](examples/public-authoring/README.md) demonstrates
 `/manifest` text resolver. The [manifest guide](../../apps/docs/content/docs/plugins/manifest/index.mdx#localized-labels-03-development-source)
 describes fallback behavior and older-host compatibility.
 
+## Durable native-tool data (0.3 development source)
+
+Daemon invocations can call `context.services.fs.getPluginDataDirectory({ relativePath: 'my-configuration/native-state' })`
+to create or reopen a directory beneath the plugin's existing `pluginData` root.
+The returned absolute path works in Exec arguments and refers to the same bytes as
+logical `pluginData` file operations. Invocation disposal leaves this data in place.
+Use separate relative paths for configurations that need independent native state;
+this accessor does not create another storage root or a background service.
+
 ## Native SQLite reads (0.3 development source)
 
 Daemon plugins use `openSqliteDatabaseSync` from `@happier-dev/plugin-sdk/fs` to

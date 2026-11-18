@@ -527,7 +527,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
         id: 'fs', publicProperty: 'fs', requiredInvocationPlacement: 'daemon', unavailableCode: PLUGIN_SERVICE_UNAVAILABLE_CODE, deniedCode: PLUGIN_SERVICE_RESOURCE_NOT_SELECTED_CODE,
         createUnavailable(code?: string, diagnostic?: PluginServiceUnavailableDiagnostic): FileSystemService {
             const fail = unavailableMethod('fs', code, diagnostic);
-            return Object.freeze({ observeMachinePath: fail, prepareDownload: fail, readFile: fail, writeFile: fail, stat: fail, list: fail, remove: fail });
+            return Object.freeze({ getPluginDataDirectory: fail, observeMachinePath: fail, prepareDownload: fail, readFile: fail, writeFile: fail, stat: fail, list: fail, remove: fail });
         },
         createAvailable({ fileSystem, seed }): FileSystemService | null {
             if (!fileSystem && !seed.fileDownload) return null;

@@ -164,6 +164,15 @@ export function createPluginFileSystemService(params: Readonly<{
     return candidate;
   }
   const implementation: Omit<FileSystemService, 'prepareDownload'> = {
+    async getPluginDataDirectory(input) {
+      guard(input?.signal);
+      const target = resolveOperationPath({ root: 'pluginData', relativePath: input?.relativePath ?? '' });
+      await mkdir(target.root, { recursive: true });
+      const absolutePath = await resolveNativePath(target.root, target.relativePath, true);
+      await mkdir(absolutePath, { recursive: true });
+      guardCancellation(input?.signal);
+      return await realpath(absolutePath);
+    },
     async observeMachinePath(input, emit, options) {
       guard(options?.signal);
       if (params.machineNative !== true) fail('plugin_fs_machine_context_required', 'Native filesystem observation requires Machine execution');
@@ -278,6 +287,7 @@ export function createPluginFileSystemService(params: Readonly<{
     },
   };
   const service: Omit<FileSystemService, 'prepareDownload'> = {
+    getPluginDataDirectory: input => withStableFileSystemErrors(() => implementation.getPluginDataDirectory(input)),
     observeMachinePath: (input, emit, options) => withStableFileSystemErrors(() => implementation.observeMachinePath(input, emit, options)),
     readFile: (path, options) => withStableFileSystemErrors(() => implementation.readFile(path, options)),
     writeFile: (path, data, options) => withStableFileSystemErrors(() => implementation.writeFile(path, data, options)),

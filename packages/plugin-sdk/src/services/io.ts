@@ -28,6 +28,11 @@ export type PluginPath =
     | Readonly<{ root: 'project'; projectId: string; relativePath: string }>;
 
 export interface FileSystemService {
+    /** Create or reopen a durable directory under this plugin's existing data
+     * root; relativePath can select configuration-specific storage.
+     * The absolute native path can be passed to Exec.
+     * Releasing an invocation does not remove its contents. */
+    getPluginDataDirectory(input?: Readonly<{ relativePath?: string; signal?: AbortSignal }>): Promise<string>;
     /** Observe only metadata of a declared read-only Machine path. The ready
      * snapshot includes changes during attachment. Cancellation or disposal
      * invalidates reads; disposal awaits native watcher cleanup. The host retains
