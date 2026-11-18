@@ -145,6 +145,17 @@ it.each([true, false, 'reject', 'cancel', 'observation_failed'] as const)('joins
     await expect(restarting).resolves.toMatchObject({ kind: healthy === 'observation_failed' ? 'outcome_unknown' : healthy ? 'restarted' : 'failed', taskId, result, runtimeStatusResult });
 });
 
+it('explains the refused remote restart before starting an SSH task', async () => {
+    const { serverId, scope, host, manual, restartHomeRuntime } = await prepareHome();
+    await home.setActionPolicy(serverId, 'remote_hosts.relay.restart', 'ui', 'off');
+    const { t } = await import('@/text');
+    await expect(restartHomeRuntime({ kind: 'remote_host', host, hostName: host.name, scope, catalogRevision: 4 },
+        { serverId, secretMaterialAllowed: false, onApprovalPending: vi.fn() }))
+        .resolves.toMatchObject({ kind: 'failed', message: t('actionConfirmations.turnedOffUnnamedMessage') });
+    expect(manual.bridge.start).not.toHaveBeenCalled();
+    expect(Modal.confirm).not.toHaveBeenCalled();
+});
+
 it.each([
     { surface: 'banner', decision: 'reject' },
     { surface: 'runtime', decision: 'cancel' },

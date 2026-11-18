@@ -18,6 +18,7 @@ import {
     resolveServerProfileScopeId,
 } from '@/sync/domains/server/serverProfiles';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { createUiHomeRuntimeActionClient } from '@/sync/ops/actions/homeRuntimeActionClient';
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
 import { t } from '@/text';
@@ -122,7 +123,7 @@ export async function restartHomeRuntime(
                                 { surface: 'ui', authority: 'present_user', serverId: scope.serverId,
                                     expectedAccountId: scope.accountId, ...(context.signal ? { signal: context.signal } : {}) });
                             if (!executed.ok) return isActionApprovalDeclinedErrorCode(executed.errorCode)
-                                ? { kind: 'cancelled' } : { kind: 'failed', message: executed.error };
+                                ? { kind: 'cancelled' } : { kind: 'failed', message: resolveActionExecutionErrorMessage(executed, t('errors.operationFailed')) };
                             const pending = ActionApprovalRequestCreatedResultSchema.safeParse(executed.result);
                             if (!pending.success) return { kind: 'completed', value: executed.result };
                             if (pending.data.actionId !== actionId) return { kind: 'failed', message: 'approval_binding_mismatch' };
@@ -135,8 +136,9 @@ export async function restartHomeRuntime(
                             return { approvalPending: true };
                         },
                         succeeded: value => ({ kind: 'completed', value }),
-                        failed: code => isActionApprovalDeclinedErrorCode(code)
-                            ? { kind: 'cancelled' } : { kind: 'failed', message: code },
+                        failed: (code, failure) => isActionApprovalDeclinedErrorCode(code)
+                            ? { kind: 'cancelled' }
+                            : { kind: 'failed', message: resolveActionExecutionErrorMessage(failure ?? { code }, t('errors.operationFailed')) },
                         aborted: () => ({ kind: 'cancelled' }),
                         ...(context.signal ? { signal: context.signal } : {}),
                     });
@@ -181,7 +183,8 @@ export async function restartHomeRuntime(
                                 ...(context.signal ? { signal: context.signal } : {}),
                             });
                             if (!executed.ok) return isActionApprovalDeclinedErrorCode(executed.errorCode)
-                                ? { kind: 'cancelled' } : { kind: 'failed', message: executed.errorCode === 'request_not_sent' ? null : executed.error };
+                                ? { kind: 'cancelled' } : { kind: 'failed', message: executed.errorCode === 'request_not_sent'
+                                    ? null : resolveActionExecutionErrorMessage(executed, t('errors.operationFailed')) };
                             const pending = ActionApprovalRequestCreatedResultSchema.safeParse(executed.result);
                             if (!pending.success) return { kind: 'completed', value: executed.result };
                             if (pending.data.actionId !== actionId) return { kind: 'failed', message: 'approval_binding_mismatch' };
@@ -194,8 +197,9 @@ export async function restartHomeRuntime(
                             return { approvalPending: true };
                         },
                         succeeded: value => ({ kind: 'completed', value }),
-                        failed: code => isActionApprovalDeclinedErrorCode(code)
-                            ? { kind: 'cancelled' } : { kind: 'failed', message: code },
+                        failed: (code, failure) => isActionApprovalDeclinedErrorCode(code)
+                            ? { kind: 'cancelled' }
+                            : { kind: 'failed', message: resolveActionExecutionErrorMessage(failure ?? { code }, t('errors.operationFailed')) },
                         aborted: () => ({ kind: 'cancelled' }),
                         ...(context.signal ? { signal: context.signal } : {}),
                     });
