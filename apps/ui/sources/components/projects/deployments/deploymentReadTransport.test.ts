@@ -31,7 +31,7 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
 const { createFrontDoorUiActionExecutor } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
-const { useDeploymentEnvironmentChecks } = await import('./useDeploymentReads');
+const { useDeploymentEnvironmentChecks, useDeploymentDataServicePage } = await import('./useDeploymentReads');
 const { createPluginDeploymentCollectionHostReadStore } = await import('@/components/plugins/surfaces/pluginDeploymentCollectionHostRead');
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 const { getStorage } = await import('@/sync/domains/state/storageStore');
@@ -102,9 +102,10 @@ describe('deployment scoped read transport', () => {
         expect(homes.requests).toHaveLength(beforeForeign);
     });
 
-    it.each(['deployment_service', 'managed_deployment', 'deployment_service_disabled'] as const)('retains %s database subjects through scoped semantic Actions and reads native size', async kind => {
+    it.each(['deployment_service', 'managed_deployment', 'deployment_service_disabled', 'selected_environment'] as const)('reads %s database size and only discovers Workbench subjects for a selected Environment', async kind => {
         const disabled = kind === 'deployment_service_disabled';
         const nativeKind = kind !== 'managed_deployment';
+        const exactEnvironment = kind === 'selected_environment';
         const serverIdentityId = 'srv_database_size';
         const serverId = await homes.addHome({ name: 'Database size', serverUrl: 'https://database-size.test',
             serverIdentityId, accountId: 'account-owner', currentAccount: true, active: false });
@@ -135,7 +136,7 @@ describe('deployment scoped read transport', () => {
                 environmentId: detail.environment.id, targetLinkId: 'managed-link', databaseName: database } } } });
         // A native deployment_service descriptor from an older daemon may omit the optional projection field. The
         // transport still owns enough canonical target data to project the native subject deterministically.
-        const selected = kind === 'deployment_service' ? nativeWithoutSubject : nativeKind ? native : managed('first-database');
+        const selected = exactEnvironment ? nativeWithoutSubject : nativeKind ? native : managed('first-database');
         const targets = nativeKind ? [selected] : [selected, managed('second-database')];
         homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
             environment: detail.environment, targetLinks: [runtimeLink] } });
@@ -146,7 +147,10 @@ describe('deployment scoped read transport', () => {
         finally { writer.dispose(); }
         const stored = homes.artifacts(serverId).read(detail.environment.contentArtifactId);
         if (!stored) throw new Error('Expected the Account Environment Artifact');
-        homes.answer(serverId, '/v1/deployments/data-services', { body: { ok: true, items: [{ environment: detail.environment }],
+        // The selected Environment is not on the first Account page. Its own read must not depend on that page.
+        const inventory = nativeKind ? [{ environment: detail.environment }] : ['managed-a', 'managed-b', 'managed-c']
+            .map(id => ({ environment: { ...detail.environment, id } }));
+        homes.answer(serverId, '/v1/deployments/data-services', { body: { ok: true, items: exactEnvironment ? [] : inventory,
             artifacts: [projectArtifactBoundaryReadRow(stored)], nextCursor: null } });
         const listLocalId = databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1);
         const projection = { ...EMPTY_PLUGIN_UI_PROJECTION,
@@ -192,32 +196,47 @@ describe('deployment scoped read transport', () => {
         const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account-owner' },
             isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
         const transport = createDeploymentReadTransport(lifetime);
+        const controller = exactEnvironment ? createDeploymentReadControllerV1({ scope: lifetime.scope, transport }) : null;
+        const accountPage = controller?.acquireDataServicePage({}, { mounted: true, visible: true, focused: true });
+        await accountPage?.refresh();
+        const beforeExactRead = homes.requests.filter(request => request.path === '/v1/actions/action.invoke').length;
+        const exactRead = controller ? await renderHook(() => useDeploymentDataServicePage(controller,
+            { mounted: true, visible: true, focused: true }, { environmentId: detail.environment.id })) : null;
         try {
-            const page = await transport.listDataServicePage!(lifetime.scope, {}, { signal: new AbortController().signal });
+            if (exactRead) await vi.waitFor(() => expect(exactRead.getCurrent().snapshot.status).toBe('ready'));
+            const page = exactRead ? { ok: true as const, value: exactRead.getCurrent().snapshot.value! }
+                : await transport.listDataServicePage!(lifetime.scope, {}, { signal: new AbortController().signal });
+            if (exactRead) {
+                expect(beforeExactRead).toBe(0);
+                expect(page).toMatchObject({ ok: true, value: { items: [{ environment: { id: detail.environment.id } }],
+                    hasNextPage: false, hasPreviousPage: false } });
+                expect(homes.requests.filter(request => new URL(request.path, 'https://home.invalid').pathname === '/v1/deployments/data-services')).toHaveLength(1);
+            }
             if (nativeKind) {
                 expect(page, JSON.stringify({ page, sizeInputs })).toMatchObject({ ok: true, value: { items: [{ databaseSizes: [{ service: 'postgres',
                     deploymentId: 'serving-receipt', size: { status: 'available', bytes: 4096 } }] }] } });
                 expect(sizeInputs).toMatchObject([{ environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
                     service: 'postgres', targetLinkId: 'runtime-link', deploymentId: 'serving-receipt',
                     machineId: runtimeMember.machineId, installationId: runtimeMember.installationId }]);
-                if (!disabled) expect(page).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {
-                    postgres: kind === 'deployment_service' ? readAutomationDatabaseSubjectV1(serverId, native.target) : selected.automationSubject,
+                if (exactEnvironment) expect(page).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {
+                    postgres: readAutomationDatabaseSubjectV1(serverId, native.target),
                 } }] } });
-                expect(invocations).toMatchObject(disabled ? [
-                    { target: { kind: 'machine', machineId: runtimeMember.machineId }, input: { service: 'postgres' } },
-                ] : [
+                expect(invocations).toMatchObject(exactEnvironment ? [
                     { target: { kind: 'machine', machineId: 'controller' }, input: {
                         action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: listLocalId } } },
                     { target: { kind: 'machine', machineId: runtimeMember.machineId }, input: { service: 'postgres' } },
+                ] : [
+                    { target: { kind: 'machine', machineId: runtimeMember.machineId }, input: { service: 'postgres' } },
                 ]);
             } else {
-                expect(page).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {}, managedDatabaseSubjects: {
-                    'managed-link': targets.map(target => target.automationSubject),
-                }, databaseSizes: [] }] } });
-                expect(invocations).toHaveLength(1);
+                expect(page).toMatchObject({ ok: true, value: { items: inventory.map(({ environment }) => ({
+                    environment: { id: environment.id }, databaseSizes: [],
+                })) } });
             }
-            expect(homes.requests.filter(request => request.path === '/v1/actions/action.invoke').every(request => request.serverId === serverId)).toBe(true);
-        } finally { withdraw(); }
+            const workbenchRequests = homes.requests.filter(request => request.path === '/v1/actions/action.invoke');
+            expect(workbenchRequests).toHaveLength(exactEnvironment ? 1 : 0);
+            if (exactEnvironment) expect(workbenchRequests[0]?.serverId).toBe(serverId);
+        } finally { await exactRead?.unmount(); accountPage?.release(); controller?.retire(); withdraw(); }
     });
 
     it.each(['plain', 'e2ee'] as const)('projects %s live addresses from the serving receipt and current Domains in one batch, including latest commit facts', async mode => {

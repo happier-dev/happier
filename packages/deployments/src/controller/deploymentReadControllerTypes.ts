@@ -100,8 +100,6 @@ export type DeploymentDataServiceReadItemV1 = Readonly<{
     databaseSizes?: readonly DeploymentDatabaseSizeV1[];
     /** Keys are the incumbent database page's service or data-link address. */
     databaseSubjects?: Readonly<Record<string, AutomationDatabaseSubjectReadV1>>;
-    /** All logical databases per admitted data Link; a Link does not select one database. */
-    managedDatabaseSubjects?: Readonly<Record<string, readonly AutomationDatabaseSubjectReadV1[]>>;
 }>;
 export type DeploymentAccountReadPageV1<T> = Readonly<{ items: readonly T[]; nextCursor: string | null }>
     & Pick<DeploymentEnvironmentCollectionV1, 'coverage'>;

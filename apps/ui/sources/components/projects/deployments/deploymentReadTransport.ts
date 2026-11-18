@@ -182,17 +182,21 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 const row = readDeploymentEnvironmentArtifactV1(environment, artifact?.status === 'fulfilled' ? artifact.value : null);
                 if (!row.ok) { coverage = 'partial'; continue; }
                 const previous = previousById.get(environment.id);
-                // Optional workbench discovery supplies managed logical database subjects.
-                const databaseTargetsRequest = (async () => {
-                    if (!environment.controllerMachineId) throw Object.assign(new Error('active_deployment_required'), { code: 'active_deployment_required' });
-                    return DatabaseTargetsListResultV1Schema.parse(await execute('action.invoke', {
-                        action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1) },
-                        input: { scope: { kind: 'environment', environment: { serverId: environment.serverId,
-                            projectSourceId: environment.projectSourceId, environmentId: environment.id } } },
-                    }, { signal: options.signal, externalActionTarget: { kind: 'machine', machineId: environment.controllerMachineId } }));
-                })();
                 let databaseTargets: DatabaseTargetsListResultV1 | undefined;
-                try { databaseTargets = await databaseTargetsRequest; } catch { coverage = 'partial'; }
+                // The exact Database page reads Automation subjects. Services inventory only reads declared databases and sizes.
+                if (query.environmentId !== undefined) {
+                    if (environment.controllerMachineId) {
+                        try {
+                            databaseTargets = DatabaseTargetsListResultV1Schema.parse(await execute('action.invoke', {
+                                action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_TARGETS_LIST_ACTION_ID_V1) },
+                                input: { scope: { kind: 'environment', environment: { serverId: environment.serverId,
+                                    projectSourceId: environment.projectSourceId, environmentId: environment.id } } },
+                            }, { signal: options.signal, externalActionTarget: { kind: 'machine', machineId: environment.controllerMachineId } }));
+                        } catch { coverage = 'partial'; }
+                    } else {
+                        coverage = 'partial';
+                    }
+                }
                 const databaseSizes: DeploymentDatabaseSizeV1[] = [];
                 const data = row.content.template?.data ?? [];
                 const metadata = selectedMetadata ?? (data.length > 0
@@ -232,12 +236,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     }
                     return [];
                 }));
-                const managedDatabaseSubjects: Record<string, AutomationDatabaseSubjectReadV1[]> = {};
-                for (const descriptor of databaseTargets?.targets ?? []) {
-                    if (descriptor.target.kind !== 'managed_deployment' || !descriptor.automationSubject) continue;
-                    (managedDatabaseSubjects[descriptor.target.targetLinkId] ??= []).push(descriptor.automationSubject);
-                }
-                items.push({ environment, title: row.title, content: row.content, databaseSizes, databaseSubjects, managedDatabaseSubjects });
+                items.push({ environment, title: row.title, content: row.content, databaseSizes, databaseSubjects });
             }
             return { ok: true, value: { items, nextCursor: page.nextCursor, ...(coverage === undefined ? {} : { coverage }) } };
         }),
