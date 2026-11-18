@@ -1437,8 +1437,9 @@ describe('observed native occurrence question settlement', () => {
       const appOutcome = Promise.resolve(answer).then(result => ({ ok: true as const, result }), error => ({ ok: false as const, error }));
       await started;
       const answers = decision === 'approved' ? { 'Continue?': [matches ? 'Yes' : 'No'] } : undefined;
-      await expect(handler.settleObservedDecision({ requestId: 'native-ACK', source, owner, decision, ...(answers ? { answers } : {}) })).resolves.toBe(true);
+      const observation = handler.settleObservedDecision({ requestId: 'native-ACK', source, owner, decision, ...(answers ? { answers } : {}) });
       release();
+      await expect(observation).resolves.toBe(true);
       const outcome = await appOutcome;
       if (rejectAck) expect(outcome).toMatchObject({ ok: false, error: { message: 'native answer differs' } });
       else if (matches) expect(outcome).toEqual({ ok: true, result: undefined });
