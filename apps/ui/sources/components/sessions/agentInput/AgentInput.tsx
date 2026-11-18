@@ -990,6 +990,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         documentPanel: resolveAgentInputPanelLayoutStyle(theme),
         /** Inside a card its host draws: the card is the edge, so the composer draws none. */
         embeddedPanel: { borderWidth: 0, borderRadius: 0, paddingHorizontal: 0 },
+        /** Embedded, the host card's content inset is the text edge: the input adds no leading inset of its own. */
+        embeddedInputContainer: { paddingLeft: 0, paddingRight: 0 },
         readOnlyPanel: {
             ...resolveAgentInputPanelLayoutStyle(theme),
             width: '100%',
@@ -4245,7 +4247,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         {composerPresentationFeedback}
                         {headerControlsLine}
                         <AgentInputAttachmentsRow items={attachmentRowItems} />
-                        <View dataSet={themeSurfaceDataSet('composer', 'input', composerSurfaceState)} style={[styles.inputContainer, styles.readOnlyInputContent, documentPanel ? styles.readOnlyDocumentContent : null, inputSurfaceStyle]}>
+                        <View dataSet={themeSurfaceDataSet('composer', 'input', composerSurfaceState)} style={[styles.inputContainer, styles.readOnlyInputContent, documentPanel ? styles.readOnlyDocumentContent : null, embeddedPanel ? styles.embeddedInputContainer : null, inputSurfaceStyle]}>
                             {/* A reading document's card is calm: about three lines, then More (DESIGN-4 M4). */}
                             <AgentInputReadOnlyDocumentText source={textSource} mentions={structuredInputMentions} accessibilityLabel={props.inputAccessibilityLabel} clamp={documentPanel}
                                 style={[isConversation ? styles.sessionInputText : styles.newSessionInputText, styles.readOnlyText]} />
@@ -4511,7 +4513,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     ref={composerAnchorRef}
                                     collapsable={false}
                                     dataSet={themeSurfaceDataSet('composer', 'input', composerSurfaceState)}
-                                    style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined, inputSurfaceStyle]}
+                                    style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined, embeddedPanel ? styles.embeddedInputContainer : null, inputSurfaceStyle]}
                                     onLayout={(event) => {
                                         updateNullableLayoutHeight(setInputContainerHeightPx, event.nativeEvent.layout.height);
                                     }}
@@ -4589,7 +4591,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     ref={composerAnchorRef}
                                     collapsable={false}
                                     dataSet={themeSurfaceDataSet('composer', 'input', composerSurfaceState)}
-                                    style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined, inputSurfaceStyle]}
+                                    style={[styles.inputContainer, props.minHeight ? { minHeight: props.minHeight } : undefined, embeddedPanel ? styles.embeddedInputContainer : null, inputSurfaceStyle]}
                                     onLayout={(event) => {
                                         updateNullableLayoutHeight(setInputContainerHeightPx, event.nativeEvent.layout.height);
                                     }}

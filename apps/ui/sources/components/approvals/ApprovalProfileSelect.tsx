@@ -90,17 +90,22 @@ export function approvalProfileChoiceTitle(mode: ApprovalProfileChoiceMode, valu
 
 /**
  * A chip names what applies: the chosen profile or the Machine's own profile. While a new Session follows a
- * Machine with no profile it names its field, as every chip in the row does (QA-SHELL-1114 F3).
+ * Machine with no profile it names its field, as every chip in the row does (QA-SHELL-1114 F3). Where an unset
+ * value inherits (a workflow step), the quiet chip names the Machine default it inherits (WF-ACCEPT-1118 item 7).
  */
 export function approvalProfileChipLabel(params: Readonly<{
     value: string | null | undefined;
     profiles: readonly Pick<ApprovalProfileV1, 'id' | 'name'>[];
     machineDefault: ApprovalProfileMachineDefault;
     ready: boolean;
+    inherited?: boolean;
 }>): Readonly<{ label: string; chosen: boolean }> {
     const fieldName = t('workflows.triggers.guided.profile.title');
     if (typeof params.value !== 'string') {
         const profile = params.machineDefault?.profile;
+        if (params.inherited === true) return { label: profile
+            ? t('workflows.triggers.guided.profile.machineDefaultChip', { profile: profile.name })
+            : t('workflows.triggers.guided.profile.machineDefault'), chosen: false };
         return profile ? { label: t('workflows.triggers.guided.profile.machineDefaultChip', { profile: profile.name }), chosen: true }
             : { label: fieldName, chosen: false };
     }
@@ -127,6 +132,8 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
     icon?: React.ReactNode;
     /** The fields presentation's control placement: `stacked` under the words (default), or `adaptive` beside them. */
     layout?: 'stacked' | 'adaptive';
+    /** An unset value inherits (a workflow step): its chip names the Machine default it inherits, quietly. */
+    inherited?: boolean;
 }>) {
     const [open, setOpen] = React.useState(false);
     const machineDefault = props.machineDefault ?? null;
@@ -147,7 +154,7 @@ export function ApprovalProfileSelect(props: Choice & Readonly<{
     };
     const selectAnchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
     const chip = props.presentation === 'chips' || props.presentation === 'selects' ? approvalProfileChipLabel({ value: props.value,
-        profiles: displayProfiles, machineDefault, ready: displayReady }) : null;
+        profiles: displayProfiles, machineDefault, ready: displayReady, ...(props.inherited === true ? { inherited: true } : {}) }) : null;
     const row = props.presentation === 'row';
     // A chip keeps its own width wherever it is placed; only the field presentation spans its row.
     return <View style={chip ? styles.chipHost : undefined}>

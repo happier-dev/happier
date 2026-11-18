@@ -794,6 +794,8 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
                 if (field === 'approvalProfileId') return inRow(field, withReset(field, <SessionAuthoringApprovalProfileField key={field}
                     value={props.values.approvalProfileId} serverId={facts.agentPickerContext?.serverId}
                     machineId={facts.agentPickerContext?.machineId ?? null} presentation={presentation}
+                    // A host whose unset values inherit (it offers a way back to its parent's) names the inherited default.
+                    {...(props.resetOverride === undefined ? {} : { inherited: true })}
                     onChange={value => props.onChangeField('approvalProfileId', value)} disabled={props.disabled}
                     titleMeta={props.fieldMeta?.approvalProfileId} testID={`${testIDPrefix}-approvalProfileId`} />));
                 if (presentation !== 'chips' && field === 'profileId' && !props.values.profileId) return null;
@@ -895,12 +897,15 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
 export function SessionAuthoringApprovalProfileField(props: Readonly<{
     value: string | null | undefined; serverId?: string | null; machineId?: string | null; testID: string; disabled?: boolean;
     presentation?: SessionAuthoringControlsPresentation; titleMeta?: React.ReactNode; onChange: (value: string | null | undefined) => void;
+    /** An unset value inherits its host's parent (a workflow step): the chip names the inherited Machine default. */
+    inherited?: boolean;
 }>) {
     const source = useApprovalProfiles(props.value, props.serverId ?? undefined, { demand: false, machineId: props.machineId });
     const machineDefault = React.useMemo(() => resolveApprovalProfileMachineDefault(source, props.machineId),
         [source.displayProfiles, source.machineApprovalProfiles, props.machineId]); // eslint-disable-line react-hooks/exhaustive-deps
     return <ApprovalProfileSelect mode="session" value={props.value} source={source} machineDefault={machineDefault}
-        testID={props.testID} disabled={props.disabled} titleMeta={props.titleMeta} presentation={props.presentation} onChange={props.onChange} />;
+        testID={props.testID} disabled={props.disabled} titleMeta={props.titleMeta} presentation={props.presentation}
+        {...(props.inherited === true ? { inherited: true } : {})} onChange={props.onChange} />;
 }
 
 function sessionAuthoringUnavailableText(field: SessionAuthoringFieldId, reason: SessionAuthoringFieldUnavailableReason): string {

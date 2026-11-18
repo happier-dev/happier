@@ -67,3 +67,22 @@ it('announces a chip that names its own field once, not "Approval profile: Appro
   const label = screen.findByTestId('profile-chip')?.props.accessibilityLabel ?? screen.findByTestId('profile-chip')?.props['aria-label'];
   expect(label).toMatch(/^(workflows\.triggers\.guided\.profile\.title|Approval profile)$/);
 });
+
+// A workflow step's unset profile inherits the workflow's, which is the Machine's default: the quiet chip says that value
+// (WF-ACCEPT-1118 item 7, lab round 1116b), unlike the composer's empty field above.
+it('names the inherited Machine default on a quiet chip where an unset value inherits', async () => {
+  const screen = await renderScreen(
+    <ApprovalProfileSelect
+      mode="session"
+      presentation="chips"
+      testID="profile"
+      value={undefined}
+      inherited
+      source={source}
+      onChange={() => {}}
+    />,
+  );
+  const text = screen.getTextContent();
+  expect(text).toMatch(/workflows\.triggers\.guided\.profile\.machineDefault|Machine default/);
+  expect(text).not.toMatch(/workflows\.triggers\.guided\.profile\.title/);
+});

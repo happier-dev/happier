@@ -4,7 +4,8 @@ import { StyleSheet } from 'react-native-unistyles';
 import { resolveAgentInputPanelLayoutStyle } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Typography } from '@/constants/Typography';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { MULTI_TEXT_INPUT_BASE_FONT_SIZE, MULTI_TEXT_INPUT_BASE_LINE_HEIGHT } from '@/components/ui/forms/multiTextInputTypography';
+import { HAPPIER_FILTER_CHIP_METRICS, HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * The document draws at its lab rhythm under every pointer; text-labelled authoring controls are
@@ -22,6 +23,11 @@ const ORDINAL_SIZE = ICON_SIZE.lg;
 /** A lane caption's line: the caption's own type (`rowMeta`), which its fork and caret hang on. */
 const LANE_LINE = Number(Typography.variant('meta').lineHeight);
 
+/**
+ * A chip's content inset (the filter chip's padding plus its 1 px border). A card's chip rows hang their chips out by
+ * it, so a chip's words start on the card's text edge as the prompt's do (lab round 1116b bstep-v-A).
+ */
+const CHIP_CONTENT_INSET = HAPPIER_FILTER_CHIP_METRICS.paddingHorizontalPx + 1;
 /** The spine's stroke: a hairline-weight line that still reads at a glance. */
 const SPINE_WIDTH = 1;
 
@@ -421,8 +427,11 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         gap: theme.space.s2,
     },
     /** A summarised prompt block's first prompt line (lab S1), on the name column. */
+    /** A prompt at rest reads in the composer's own type, so opening it to edit changes nothing (WF-ACCEPT-1118 item 7). */
     summaryPrompt: {
-        ...Typography.variant('body'),
+        ...Typography.variant('reading'),
+        fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE,
+        lineHeight: MULTI_TEXT_INPUT_BASE_LINE_HEIGHT,
         color: theme.colors.text.primary,
     },
     /** The block name as the control that selects the block. */
@@ -675,6 +684,7 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         minWidth: 0,
         flexDirection: 'row',
         alignItems: 'center',
+        marginLeft: -CHIP_CONTENT_INSET,
     },
     /** An Agent step's foot (round 1116b, step options A): its changed chips, then "…" at the trailing edge. */
     stepOptionChips: {
@@ -684,6 +694,7 @@ export const workflowEditorStyles = StyleSheet.create((theme) => ({
         alignItems: 'flex-start',
         gap: theme.space.s8,
         minWidth: 0,
+        marginLeft: -CHIP_CONTENT_INSET,
     },
     stepOptionChipList: {
         flex: 1,
