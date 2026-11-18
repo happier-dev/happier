@@ -411,6 +411,10 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
     const initialAccess: SessionInitialAccessDraftV1 | undefined = team
       ? { grants: [{ subject: { kind: 'team', teamId: team.id }, accessLevel: 'view', canApprovePermissions: false }] }
       : undefined;
+    const authoredModel = readAuthoredSessionModelSelection({
+      agentTarget: selection.agentTarget, modelSelection: selection.modelSelection,
+      teamCredentialBindings: sessionChoices.teamCredentialBindings,
+    });
     let initialSessionRolesV1: SessionRolesV1 | undefined;
     if (deps.originSessionId) {
       const lead = await resolveWorkflowAuthorizedSession({ credentials: deps.credentials, sessionId: deps.originSessionId,
@@ -428,7 +432,7 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
         getCurrentSessionMetadata: () => lead.metadata,
         getCurrentSessionBackendTarget: () => leadAgent?.backendTarget,
         workflowStepRoleDefaultEngine: { agentTargetKey: buildBackendTargetKeyV2(resolvedAgent.backendTarget),
-          ...(selection.modelSelection ? { modelId: selection.modelSelection.ref.modelId } : {}) },
+          ...(authoredModel ? { modelId: authoredModel.ref.modelId } : {}) },
       }).resolveAgentStartContext!({ surface: 'agent', defaultSessionId: deps.originSessionId,
         callerPermissionMode: permissionMode ?? 'default', ...(signal ? { signal } : {}) });
       if (startContext && 'ok' in startContext) throw new WorkflowSessionCompositionError(
@@ -525,7 +529,7 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
     };
     const configuration = launchConfiguration ?? (selection.sessionConfigOptionOverrides || selection.providerSessionResume ? {
       mode: { value: request.agentModeId ?? null, updatedAtMs: request.agentModeUpdatedAt ?? 0 },
-      model: { value: request.modelSelection?.ref.modelId ?? null, updatedAtMs: request.modelSelection?.updatedAt ?? 0 },
+      model: { value: authoredModel?.ref.modelId ?? null, updatedAtMs: authoredModel?.updatedAt ?? 0 },
       permissionIntent: { value: permissionMode ?? null, updatedAtMs: request.permissionModeUpdatedAt ?? 0 },
       options: Object.fromEntries(Object.entries(selection.sessionConfigOptionOverrides?.overrides ?? {})
         .map(([key, option]) => [key, { value: option.value, updatedAtMs: option.updatedAt }])),

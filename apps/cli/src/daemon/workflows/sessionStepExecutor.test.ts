@@ -2881,7 +2881,12 @@ describe('workflow Session step executor', () => {
     expect(resolveExistingSessionConversation).not.toHaveBeenCalled();
   });
 
-  it.each([{ miswired: false, pending: false }, { miswired: false, pending: true }, { miswired: true, pending: false }])('spawns a literal-engine Workflow leaf on its origin Session non-default Connected profile (miswired=$miswired, pending=$pending)', async ({ miswired, pending }) => {
+  it.each([
+    { miswired: false, pending: false, teamModel: false },
+    { miswired: false, pending: true, teamModel: false },
+    { miswired: true, pending: false, teamModel: false },
+    { miswired: false, pending: false, teamModel: true },
+  ])('spawns a literal-engine Workflow leaf on its origin Session non-default Connected profile (miswired=$miswired, pending=$pending, teamModel=$teamModel)', async ({ miswired, pending, teamModel }) => {
     const launches = installSessionCreationTransport();
     const originSessionId = 'c111111111111111111111111';
     const credentials = { token: 'token', encryption: null };
@@ -2916,7 +2921,12 @@ describe('workflow Session step executor', () => {
     const modelSelection = { v: 1 as const, updatedAt: 1, ref: {
       agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6-luna',
     } };
-    const definition = { version: 1 as const, defaults: { agentTarget, modelSelection, sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 0, overrides: { reasoning_effort: { value: 'low', updatedAt: 0 } } } },
+    const teamBinding = { v: 1 as const, slot: { kind: 'provider_model' as const }, teamId: 'team-a', resourceId: 'resource-a',
+      expectedResourceRevision: 2, deliveryMode: 'brokered' as const,
+      providerModelSelection: { agentTargetKey: modelSelection.ref.agentTargetKey, modelId: modelSelection.ref.modelId } };
+    const definition = { version: 1 as const, defaults: { agentTarget,
+      ...(teamModel ? { modelSelection: null, teamCredentialBindings: [teamBinding] } : { modelSelection }),
+      sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 0, overrides: { reasoning_effort: { value: 'low', updatedAt: 0 } } } },
       blocks: [{ kind: 'step' as const, id: 'work', document: { text: 'Reply READY.', references: [], attachments: [] } }] };
     const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition,
       context: { source: { kind: 'inline' }, inputs: {}, machineId: 'machine-1', executionTarget: { kind: 'session' },
@@ -2927,7 +2937,7 @@ describe('workflow Session step executor', () => {
     expect(accepted.ok, JSON.stringify(accepted)).toBe(true);
     if (!accepted.ok) throw new Error(accepted.error.code);
     const leaf = accepted.snapshot.materializedLeaves[0]!;
-    expect(leaf.selection.connectedServices).toEqual(miswired ? undefined : connectedServices);
+    expect(leaf.selection.connectedServices).toEqual(miswired || teamModel ? undefined : connectedServices);
     if (miswired) return;
     const create = createProductionFreshWorkflowSessionConversation({ credentials,
       serverId: 'server-1', machineId: 'machine-1', workDepth: 0, originRunId: 'run-1', originSessionId,
@@ -2935,13 +2945,18 @@ describe('workflow Session step executor', () => {
     await expect(create({ selection: resolveWorkflowAcceptedStepSelectionV1(leaf).selection,
       workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
       creationKey: 'workflow:run-1:connected-leaf' })).resolves.toMatchObject({ sessionId: 'new-session' });
-    expect(launches).toMatchObject([{ connectedServices, originSessionId, manager: { sessionId: originSessionId }, modelSelection,
+    expect(launches).toMatchObject([{ originSessionId, manager: { sessionId: originSessionId },
+      ...(teamModel ? { teamCredentialBindings: [teamBinding] } : { modelSelection, connectedServices }),
       sessionConfigOptionOverrides: { overrides: { reasoning_effort: { value: 'low' } } } }]);
     const snapshot = readSessionRolesV1(spawnedSessionBirthMetadata.get('new-session'));
     expect(snapshot?.inheritedFrom).toBe(originSessionId);
     expect(snapshot?.sessionRoles.builder.engine).toEqual({ agentTargetKey: modelSelection.ref.agentTargetKey,
       modelId: modelSelection.ref.modelId });
     expect(snapshot?.sessionRoles.reviewer.engine).toEqual(snapshot?.sessionRoles.builder.engine);
+    if (teamModel) {
+      expect(launches[0]?.sessionCreationCorrespondence?.recipe.modelSelection).toMatchObject({ v: 2,
+        ref: { source: 'team_resource', resourceId: teamBinding.resourceId, modelId: modelSelection.ref.modelId } });
+    }
     expect(Object.values(snapshot?.sessionRoles ?? {}).map(role => role.engine?.modelId))
       .not.toContain('origin-pending-model');
     expect(Object.values(snapshot?.sessionRoles ?? {}).map(role => role.engine?.modelId))

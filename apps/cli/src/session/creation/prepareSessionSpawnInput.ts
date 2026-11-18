@@ -169,7 +169,7 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
       // choice just as it carries its resolved Agent and placement. Leaving a
       // Team resource model in the private defaults context makes the receiver
       // resolve a different provider/runtime tuple from an explicit request.
-      ...(!modelSelectionInput && readSessionSpawnModelChoice(input, buildBackendTargetKeyV2(agentTarget)) === undefined
+      ...(!modelSelectionInput && readSessionSpawnModelChoice(input, agentTarget) === undefined
         && selectedModel
         ? { modelSelection: selectedModel } : {}),
       ...(modelSelectionInput && modelSelectionRef ? { modelSelection: { v: 1, ref: modelSelectionRef, updatedAt: modelSelectionInput.updatedAt } } : {}),

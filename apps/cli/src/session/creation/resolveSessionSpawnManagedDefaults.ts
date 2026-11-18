@@ -176,7 +176,7 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
     creationMachineApprovalProfileId: tryNormalizeActionsSettingsV1(settings.actionsSettingsV1)
       ?.machineApprovalProfiles?.[input.executionTarget.machineId] });
   const explicitPermission = input.permissionMode ?? input.configuration?.permissionIntent.value ?? undefined;
-  const explicitModel = readSessionSpawnModelChoice(input, targetKey);
+  const explicitModel = readSessionSpawnModelChoice(input, input.agentTarget);
   const authoredPlacement = params.authoredChoices?.sessionPlacement
     ?? (params.authoredChoices ? undefined : input.sessionPlacement);
   const explicitPlacement = authoredPlacement && authoredPlacement.kind !== 'managed' ? authoredPlacement
