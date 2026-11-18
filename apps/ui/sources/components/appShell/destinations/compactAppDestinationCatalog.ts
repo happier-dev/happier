@@ -882,7 +882,8 @@ export function resolveCurrentAppDestination(
     catalog: readonly CompactAppDestination[],
     pathname: string,
 ): CompactAppDestination | null {
-    const actual = splitPath(normalizePathname(pathname));
+    // A tab hands its href (query and anchor included); the route is the path alone.
+    const actual = splitPath(normalizePathname(pathname.split(/[?#]/, 1)[0]!));
     let current: CompactAppDestination | null = null;
     let currentScore = -1;
     for (const destination of catalog) {

@@ -167,7 +167,8 @@ export const SessionChooserModal = React.memo(function SessionChooserModal(
                     label: multipleSelect.submitLabel,
                     emphasis: 'primary',
                     disabled: count === 0,
-                    renderIcon: (color) => <Icon name="pencil" size={14} color={color} />,
+                    // The same Compose glyph as the session list's selection bar and the Compose tab.
+                    renderIcon: (color) => <Icon name="pencil-simple" size={14} color={color} />,
                     onPress: submit,
                 }]}
                 dismiss={{

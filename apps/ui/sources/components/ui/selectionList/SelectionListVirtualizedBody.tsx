@@ -861,6 +861,17 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
     });
     // A host hands these per render (often inline); their identity is not a row fact, so it never
     // invalidates a recycled cell. Activation always reaches the newest callback.
+    // Each row's place in its section, for the one list-row rule. Delivered beside focus and selection, never on the
+    // item, so a neighbour leaving redraws only the row whose place changed, not its recycled cell.
+    const nextOptionOf = React.useMemo(() => {
+        const next = new Map<string, SelectionListOption | null>();
+        flatItems.forEach((item, index) => {
+            if (item.kind !== 'option') return;
+            const following = flatItems[index + 1];
+            next.set(item.option.id, following?.kind === 'option' && following.sectionId === item.sectionId ? following.option : null);
+        });
+        return (optionId: string) => next.get(optionId) ?? null;
+    }, [flatItems]);
     const onSelect = useEventCallback(props.onSelect);
     const onPushStep = useEventCallback(props.onPushStep);
     const renderItem = React.useCallback(
@@ -913,6 +924,7 @@ function SelectionListBodyFlattenedVirtualized(props: SelectionListBodyVirtualiz
                 focusedOptionId={props.focusedOptionId}
                 optionPositionById={optionPositions.byId}
                 optionSetSize={optionPositions.setSize}
+                nextOptionOf={nextOptionOf}
             >
                 <VirtualizedList
                     ref={virtualizedListRef}
@@ -1027,6 +1039,12 @@ function SelectionListBodyDirectVirtualizedSource(props: SelectionListBodyVirtua
 }>): React.ReactElement {
     const source = props.source;
     const sourceStateKey = source.stateKey;
+    // A row's place in its section: the next visual row, when it is an option (a header or hint ends the section).
+    const nextOptionOf = React.useCallback((optionId: string) => {
+        const itemIndex = source.findItemIndexByOptionIndex(source.findOptionIndexById(optionId));
+        const following = itemIndex < 0 ? undefined : source.items[itemIndex + 1];
+        return following?.kind === 'option' ? source.getOption(following.optionIndex) : null;
+    }, [source]);
     const reducedMotion = useReducedMotionPreference();
     const onSelect = useEventCallback(props.onSelect);
     const onPushStep = useEventCallback(props.onPushStep);
@@ -1097,6 +1115,7 @@ function SelectionListBodyDirectVirtualizedSource(props: SelectionListBodyVirtua
                 selectedOptionIds={props.selectedOptionIds}
                 focusedOptionId={props.focusedOptionId}
                 optionSetSize={source.optionCount}
+                nextOptionOf={nextOptionOf}
             >
                 <VirtualizedList
                     ref={virtualizedListRef}

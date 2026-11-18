@@ -143,8 +143,10 @@ export function isHappierSelectionActionBarLabelSqueezed(input: Readonly<{
   hasStatus: boolean;
   labelNaturalWidth: number;
   labelSlotWidth: number;
+  /** The slot was measured in the folded bar: the unfolded layout it replaced squeezed it with every action inline. */
+  labelSlotFolded: boolean;
 }>): boolean {
-  return input.folded && !input.hasStatus && input.labelNaturalWidth > 0 && input.labelSlotWidth > 0
+  return input.folded && input.labelSlotFolded && !input.hasStatus && input.labelNaturalWidth > 0 && input.labelSlotWidth > 0
     && input.labelSlotWidth - LABEL_PADDING * 2 < input.labelNaturalWidth - FILL_EPSILON_PX;
 }
 
@@ -235,19 +237,20 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
   // it, the kept action draws its glyph alone (its name stays its accessible label). Decided once per column
   // width: the compact bar is wider for the label, which must not flip it back.
   const [labelNaturalWidth, setLabelNaturalWidth] = useState(0);
-  const [labelSlotWidth, setLabelSlotWidth] = useState(0);
+  const [labelSlot, setLabelSlot] = useState<Readonly<{ width: number; folded: boolean }>>({ width: 0, folded: false });
   const [compactAtWidth, setCompactAtWidth] = useState<number | null>(null);
   const onLabelMeasure = useCallback((event: LayoutChangeEvent) => {
     setLabelNaturalWidth(event.nativeEvent.layout.width);
   }, []);
   const onLabelSlotLayout = useCallback((event: LayoutChangeEvent) => {
-    setLabelSlotWidth(event.nativeEvent.layout.width);
-  }, []);
+    setLabelSlot({ width: event.nativeEvent.layout.width, folded: layout.folded });
+  }, [layout.folded]);
   const labelSqueezed = isHappierSelectionActionBarLabelSqueezed({
     folded: layout.folded,
     hasStatus: Boolean(presentedRef.current?.status),
     labelNaturalWidth,
-    labelSlotWidth,
+    labelSlotWidth: labelSlot.width,
+    labelSlotFolded: labelSlot.folded,
   });
   useEffect(() => {
     if (labelSqueezed && compactAtWidth !== containerWidth) setCompactAtWidth(containerWidth);

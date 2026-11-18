@@ -13,7 +13,12 @@
  */
 
 import * as React from 'react';
-import { resolveThemeSurfaceAddress, useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import {
+  HappierListRowFollowedContext,
+  HappierListRowPrecedesSelectedContext,
+  resolveThemeSurfaceAddress,
+  useHappierThemeSurfaceOverridesEnabled,
+} from '@happier-dev/plugin-ui/presentation';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { resolveSelectionListPaint } from './selectionListPaint';
 import { SelectionListThemeSurfaceContext } from './SelectionListThemeSurfaceContext';
@@ -218,6 +223,14 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
     cellPlacement?: SelectionListGridCellPlacement | null;
     /** Its section holds the leading mark column (`sectionReservesLeadingSlot`): a row without a mark keeps it empty. */
     reservesLeadingSlot?: boolean;
+    /**
+     * The row's place in its section, for the one list-row rule (DESIGN.md 2026-11-15, owner 2026-11-17 23:52Z):
+     * whether another option of its section follows, and that option's highlight and selection (its fill). Absent
+     * where the renderer states no order (grid cells, cards), which draws no rule.
+     */
+    followed?: boolean;
+    nextFocused?: boolean;
+    nextSelected?: boolean;
   }>,
 ): React.ReactElement {
   // Current by the list's selection, or because the option's owner says so (one choice per group).
@@ -761,9 +774,17 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
   // Everything the option owns, in reading order. In `listbox` mode these are
   // the wrapper's direct children exactly as they have always been; in `grid`
   // mode they are the contents of the option's one cell.
+  // A single-column row states its place in its section; the row's anatomy (`Item`) decides whether it draws.
+  const orderedRow = props.followed === undefined || isCard || isGridCell ? row : (
+    <HappierListRowFollowedContext.Provider value={props.followed}>
+      <HappierListRowPrecedesSelectedContext.Provider value={props.nextFocused === true || (selectionTakesFill && props.nextSelected === true)}>
+        {row}
+      </HappierListRowPrecedesSelectedContext.Provider>
+    </HappierListRowFollowedContext.Provider>
+  );
   const optionOwnedContent = (
     <SelectionListOptionStateContext.Provider value={optionState}>
-      {row}
+      {orderedRow}
       {renderCardAccessoryOverlay(true)}
       {expandedContent}
     </SelectionListOptionStateContext.Provider>
@@ -789,6 +810,18 @@ export const PlanOptionRow = React.memo(function PlanOptionRow(
   );
 });
 
+/** The next option's place facts for the one list-row rule: followed, and that option's highlight and selection. */
+export function resolveSelectionListRowOrder(
+  next: SelectionListOption | null,
+  state: Readonly<{ focusedOptionId: string | null; selectedOptionIds: ReadonlySet<string> }>,
+): Readonly<{ followed: boolean; nextFocused: boolean; nextSelected: boolean }> {
+  return {
+    followed: next !== null,
+    nextFocused: next !== null && state.focusedOptionId === next.id,
+    nextSelected: next !== null && (state.selectedOptionIds.has(next.id) || next.selected === true),
+  };
+}
+
 export function PlanSuccessRows(
   props: RenderPlanRowsProps,
 ): React.ReactElement {
@@ -799,6 +832,7 @@ export function PlanSuccessRows(
     index: number,
     cellPlacement?: SelectionListGridCellPlacement,
     rowIndex?: number,
+    next?: SelectionListOption | null,
   ): React.ReactElement => (
     <PlanOptionRow
       key={option.id}
@@ -815,6 +849,7 @@ export function PlanSuccessRows(
       reservesLeadingSlot={reservesLeadingSlot}
       {...(cellPlacement === undefined ? {} : { cellPlacement })}
       {...(rowIndex === undefined ? {} : { rowIndex })}
+      {...(next === undefined ? {} : resolveSelectionListRowOrder(next, props))}
     />
   );
   const columnCount = props.columnCount ?? 1;
@@ -836,6 +871,7 @@ export function PlanSuccessRows(
             index,
             undefined,
             offset === undefined ? undefined : offset.rowIndex + index + 1,
+            options[index + 1] ?? null,
           ),
         )}
       </>

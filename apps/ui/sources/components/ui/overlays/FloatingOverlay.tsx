@@ -38,7 +38,7 @@ import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { createBackdropWebStyle } from '@/components/ui/overlays/createBackdropLayerStyle';
 import { useGlassSurfaceBackdropTone, useGlassSurfaceColor } from '@/components/ui/glass/useGlassSurfaceColor';
 import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
-import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { HappierListRowFollowedContext, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
 import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
 import { SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
@@ -355,7 +355,8 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
     // A view pushed inside a phone popover leads with its way back; surfaces nested in it don't repeat it.
     // The edge fades and indicators frame the scroll viewport itself, so a pinned header (a search field) and footer
     // stay clear of them and a row scrolled past either edge fades out at the viewport's edge instead of being cut there.
-    const surfaceContent = <SurfaceFreshnessOnSheetProvider>
+    // A floating surface is not a row of the list it opened from: its rows state their own order, or none.
+    const surfaceContent = <HappierListRowFollowedContext.Provider value={null}><SurfaceFreshnessOnSheetProvider>
         {pushedView ? <PushedViewBackRow view={pushedView} /> : null}
         {props.header}
         <View style={SCROLL_VIEWPORT_FRAME_STYLE}>
@@ -373,7 +374,7 @@ export const FloatingOverlay = React.memo((props: FloatingOverlayProps) => {
             ) : null}
         </View>
         {props.footer}
-    </SurfaceFreshnessOnSheetProvider>;
+    </SurfaceFreshnessOnSheetProvider></HappierListRowFollowedContext.Provider>;
 
     // One tree whichever way the surface is presented: a popover body kept mounted while it moves from an anchored
     // popover into a phone sheet and back keeps its rows (typed text, a picked source). Only props change: inside a

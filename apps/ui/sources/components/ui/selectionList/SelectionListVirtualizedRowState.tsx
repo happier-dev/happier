@@ -4,7 +4,8 @@ import { ListOptionPositionContext, ListOptionSetSizeContext } from '@/component
 
 import { SelectionListA11yPatternContext } from './SelectionListA11yPatternContext';
 import { SelectionListOptionPresentationContext } from './SelectionListOptionPresentationContext';
-import { PlanOptionRow } from './SelectionListOptionRow';
+import { PlanOptionRow, resolveSelectionListRowOrder } from './SelectionListOptionRow';
+import type { SelectionListOption } from './_types';
 
 /**
  * The list-wide facts a virtualized option row shows: the keyboard highlight, the selection, its place
@@ -21,6 +22,8 @@ export type SelectionListVirtualizedRowState = Readonly<{
     focusedOptionId: string | null;
     /** Position of each option in the popup-wide set; absent where the row's item carries it. */
     optionPositionById?: ReadonlyMap<string, number>;
+    /** The next option of a row's section (`null` for its last), for the one list-row rule; absent where unstated. */
+    nextOptionOf?: (optionId: string) => SelectionListOption | null;
 }>;
 
 const SelectionListVirtualizedRowStateContext =
@@ -30,14 +33,15 @@ export function SelectionListVirtualizedRowStateProvider(props: Readonly<{
     selectedOptionIds: ReadonlySet<string>;
     focusedOptionId: string | null;
     optionPositionById?: ReadonlyMap<string, number>;
+    nextOptionOf?: (optionId: string) => SelectionListOption | null;
     /** Popup-wide set size every option row reports. */
     optionSetSize: number;
     children: React.ReactNode;
 }>): React.ReactElement {
-    const { selectedOptionIds, focusedOptionId, optionPositionById } = props;
+    const { selectedOptionIds, focusedOptionId, optionPositionById, nextOptionOf } = props;
     const value = React.useMemo<SelectionListVirtualizedRowState>(
-        () => ({ selectedOptionIds, focusedOptionId, optionPositionById }),
-        [selectedOptionIds, focusedOptionId, optionPositionById],
+        () => ({ selectedOptionIds, focusedOptionId, optionPositionById, nextOptionOf }),
+        [selectedOptionIds, focusedOptionId, optionPositionById, nextOptionOf],
     );
     return (
         <SelectionListVirtualizedRowStateContext.Provider value={value}>
@@ -57,25 +61,30 @@ type PlanOptionRowProps = React.ComponentProps<typeof PlanOptionRow>;
  * as a prop only where it lays itself out by it (a card's gap) or numbers a grid row with it.
  */
 export function SelectionListVirtualizedOptionRow(props: Readonly<
-    Omit<PlanOptionRowProps, 'isSelected' | 'isFocused' | 'positionInSet' | 'setSize'> & {
+    Omit<PlanOptionRowProps, 'isSelected' | 'isFocused' | 'positionInSet' | 'setSize' | 'followed' | 'nextFocused' | 'nextSelected'> & {
         /** Position when the provider has none for this option (a row the item numbers itself). */
         positionInSet: number;
+        /** The next option of this row's section (`null` when it is the last), when the renderer has it at hand. */
+        nextOption?: SelectionListOption | null;
     }
 >): React.ReactElement {
     const state = React.useContext(SelectionListVirtualizedRowStateContext);
     if (state === null) throw new Error('SelectionListVirtualizedOptionRow renders inside SelectionListVirtualizedRowStateProvider');
     const a11yPattern = React.useContext(SelectionListA11yPatternContext);
     const presentation = React.useContext(SelectionListOptionPresentationContext);
+    const { nextOption: itemNextOption, ...rowProps } = props;
     const id = props.option.id;
+    const nextOption = itemNextOption !== undefined ? itemNextOption : state.nextOptionOf?.(id);
     const position = state.optionPositionById?.get(id) ?? props.positionInSet;
     const rowReadsPosition = a11yPattern === 'grid' || presentation === 'card';
     return (
         <ListOptionPositionContext.Provider value={position}>
             <PlanOptionRow
-                {...props}
+                {...rowProps}
                 isSelected={state.selectedOptionIds.has(id)}
                 isFocused={state.focusedOptionId !== null && state.focusedOptionId === id}
                 positionInSet={rowReadsPosition ? position : undefined}
+                {...(nextOption === undefined ? {} : resolveSelectionListRowOrder(nextOption, state))}
             />
         </ListOptionPositionContext.Provider>
     );

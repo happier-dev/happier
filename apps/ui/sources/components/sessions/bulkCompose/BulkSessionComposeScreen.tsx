@@ -25,6 +25,7 @@ import {
 import { useBulkSessionComposer } from '@/components/sessions/authoring/bulk/useBulkSessionComposer';
 import { useHydratedBulkSessionAuthoringFacts } from '@/components/sessions/authoring/bulk/useHydratedBulkSessionAuthoringFacts';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
+import { PhonePageBackLine, usePhoneDestinationBack } from '@/components/ui/layout/usePageBackControl';
 import { OutcomeRow } from '@/components/sessions/new/placement/SessionIsolationOutcomeLine';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Text } from '@/components/ui/text/Text';
@@ -284,9 +285,13 @@ function BulkSessionComposer(
   const done = useEventCallback(() =>
     safeRouterBack({ router, navigation, fallbackHref: '/' }),
   );
+  // A phone page with no native bar carries its own way out (lab: the composer's head line), in both of its states.
+  const phoneBack = usePhoneDestinationBack('bulk-compose:back');
 
   if (composer.rows.length > 0) {
     return (
+      <View style={styles.screen}>
+      <PhonePageBackLine control={phoneBack} page />
       <BulkSessionResults
         rows={composer.rows}
         text={submittedText}
@@ -301,10 +306,13 @@ function BulkSessionComposer(
         onDone={done}
         onOpenSession={(href) => router.push(href as never)}
       />
+      </View>
     );
   }
 
   return (
+    <View style={styles.screen}>
+    <PhonePageBackLine control={phoneBack} page />
     <View testID="bulk-compose-screen" style={styles.page}>
       {controlTargets.probes}
       {enginePickerOpen ? enginePicker.readinessDemand : null}
@@ -354,6 +362,7 @@ function BulkSessionComposer(
         </View>
       </View>
       <View style={phone ? styles.spacerBottomPhone : styles.spacerBottom} />
+    </View>
     </View>
   );
 }
@@ -532,6 +541,9 @@ function useBulkSessionToModel(
 }
 
 const styles = StyleSheet.create((theme) => ({
+  screen: {
+    flex: 1,
+  },
   page: {
     flex: 1,
     alignItems: 'center',

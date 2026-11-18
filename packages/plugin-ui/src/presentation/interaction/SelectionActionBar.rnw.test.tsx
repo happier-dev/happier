@@ -229,11 +229,18 @@ describe('resolveHappierSelectionActionBarLayout', () => {
 
   it('never truncates the count: a folded bar whose label is squeezed draws its kept action as a glyph', () => {
     // "5 selected" needs 68 px; the narrow sidebar's folded bar leaves it 40 (plus its 8 + 8 padding).
-    expect(isHappierSelectionActionBarLabelSqueezed({ folded: true, hasStatus: false, labelNaturalWidth: 68, labelSlotWidth: 56 })).toBe(true);
-    expect(isHappierSelectionActionBarLabelSqueezed({ folded: true, hasStatus: false, labelNaturalWidth: 68, labelSlotWidth: 84 })).toBe(false);
+    expect(isHappierSelectionActionBarLabelSqueezed({ folded: true, hasStatus: false, labelNaturalWidth: 68, labelSlotWidth: 56 , labelSlotFolded: true })).toBe(true);
+    expect(isHappierSelectionActionBarLabelSqueezed({ folded: true, hasStatus: false, labelNaturalWidth: 68, labelSlotWidth: 84 , labelSlotFolded: true })).toBe(false);
     // An unfolded bar fits by definition, and nothing is known before both widths are measured.
-    expect(isHappierSelectionActionBarLabelSqueezed({ folded: false, hasStatus: false, labelNaturalWidth: 68, labelSlotWidth: 20 })).toBe(false);
-    expect(isHappierSelectionActionBarLabelSqueezed({ folded: true, hasStatus: false, labelNaturalWidth: 0, labelSlotWidth: 20 })).toBe(false);
+    expect(isHappierSelectionActionBarLabelSqueezed({ folded: false, hasStatus: false, labelNaturalWidth: 68, labelSlotWidth: 20 , labelSlotFolded: true })).toBe(false);
+    expect(isHappierSelectionActionBarLabelSqueezed({ folded: true, hasStatus: false, labelNaturalWidth: 0, labelSlotWidth: 20 , labelSlotFolded: true })).toBe(false);
+  });
+
+  it('judges the label only by a slot measured in the folded bar, never by the unfolded layout it replaced', () => {
+    // Unfolded, every action sat inline and squeezed the slot to 20 px; that width says nothing about the folded bar,
+    // and taking it latched the glyph-only bar although the folded bar holds "3 selected" and "Compose" (live, 11-18).
+    expect(isHappierSelectionActionBarLabelSqueezed({ folded: true, hasStatus: false, labelNaturalWidth: 64, labelSlotWidth: 20, labelSlotFolded: false })).toBe(false);
+    expect(isHappierSelectionActionBarLabelSqueezed({ folded: true, hasStatus: false, labelNaturalWidth: 64, labelSlotWidth: 20, labelSlotFolded: true })).toBe(true);
   });
 
   it('has nothing to fold before either width is known', () => {

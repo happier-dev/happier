@@ -646,6 +646,9 @@ describe('catalog destination instances', () => {
         expect(resolveCurrentAppDestination(catalog, '/session/sess-a')?.id).toBe('sessions');
         // The tab opened on the composer is a Compose tab, not a session called "compose".
         expect(resolveDestinationRefFromHref(catalog, '/session/compose?dataId=seed-1')?.kind).toBe('sessions.compose');
+        // A tab resolves its glyph from its href, query included: the Compose tab draws the Compose glyph (live 11-18).
+        expect(resolveCurrentAppDestination(catalog, '/session/compose?dataId=seed-1')?.icon).toBe('pencil-simple');
+        expect(resolveCurrentAppDestination(catalog, '/session/compose#top')?.id).toBe('sessions.compose');
     });
 
     it('round-trips distinct session, project, workflow, settings, and qualified plugin page identities', () => {

@@ -132,23 +132,23 @@ export function SelectionListVirtualizedSection(
     // Focus, selection and set position reach rows through the row-state provider below, so the
     // cell renderer (the list's `extraData`) changes only with the row configuration and options.
     const renderRow = React.useCallback(
-        (option: SelectionListOption): React.ReactElement => (
-            <SelectionListVirtualizedOptionRow
-                key={option.id}
-                option={option}
-                measureMode={measureMode}
-                rootTestID={rootTestID}
-                stepId={stepId}
-                onSelect={onSelect}
-                onPushStep={onPushStep}
-                positionInSet={options.findIndex((candidate) => candidate.id === option.id) + 1}
-                {...(rowIndexOffset === undefined ? {} : {
-                    rowIndex: rowIndexOffset
-                        + options.findIndex((candidate) => candidate.id === option.id)
-                        + 1,
-                })}
-            />
-        ),
+        (option: SelectionListOption): React.ReactElement => {
+            const index = options.findIndex((candidate) => candidate.id === option.id);
+            return (
+                <SelectionListVirtualizedOptionRow
+                    key={option.id}
+                    option={option}
+                    measureMode={measureMode}
+                    rootTestID={rootTestID}
+                    stepId={stepId}
+                    onSelect={onSelect}
+                    onPushStep={onPushStep}
+                    positionInSet={index + 1}
+                    nextOption={options[index + 1] ?? null}
+                    {...(rowIndexOffset === undefined ? {} : { rowIndex: rowIndexOffset + index + 1 })}
+                />
+            );
+        },
         [rootTestID, stepId, onSelect, onPushStep, options, rowIndexOffset, measureMode],
     );
 

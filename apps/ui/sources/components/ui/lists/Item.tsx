@@ -1650,15 +1650,17 @@ function ItemRow(props: ItemProps & Readonly<{
         ? { ...flatDividerInsetBase, marginEnd: rowBleedPx } : flatDividerInsetBase;
     const rowFollowed = React.useContext(HappierListRowFollowedContext);
     const rowPrecedesSelected = React.useContext(HappierListRowPrecedesSelectedContext);
-    // The one list-row rule, for a row whose list states its order (a column, a flat page list; never a sheet's or a
-    // menu's rows, which their group divides): drawn while another row follows, from the row's text column (a page
-    // row's text inset; a column row's own leading padding, then its glyph column), never over its own fill.
-    const listRuleRow = rowFollowed !== null && (inCollectionColumn || (pageSheet === null && !isMenuRow));
+    // The one list-row rule, for a row whose list states its order (a column, a flat page list, a selection list's
+    // rows, menu-shaped ones included; never a sheet's rows, which their group divides): drawn while another row
+    // follows, from the row's text column (a page row's text inset; a column row's own leading padding, then its
+    // glyph column), never over its own fill. A floating surface states no order for the rows it opened over.
+    const listRuleRow = rowFollowed !== null && (inCollectionColumn || pageSheet === null);
     const listRuleShown = listRuleRow && resolveHappierListRowRuleShown({
         followed: rowFollowed,
         // A row with a line under its title; one-line rows part by spacing alone (owner 2026-11-17 23:52Z, DESIGN.md 2026-11-15).
         multiline: hasSubtitleContent,
-        selected: selected === true,
+        // The row's fill: a choice that marks itself with the check alone (`selectedFill={false}`) is not filled.
+        selected: (selected === true && selectedFill) || focused === true,
         precedesSelected: rowPrecedesSelected,
         hovered: isHovered,
     });
