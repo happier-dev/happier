@@ -26,7 +26,7 @@ export function createPanelExecutionRunFactory(): AgentExecutionRunRuntimeFactor
           if (input.scope === 'repository') return { status: 'failed', diagnostic: {
             code: 'panel_scope_unsupported', severity: 'error', message: 'The native reviewer supports changes rather than repository-wide reviews.',
           } };
-          if (input.selectedPaths?.length || input.selectedFiles?.length) return { status: 'failed', diagnostic: {
+          if ([input.selectedPaths, input.selectedFiles].some(paths => Array.isArray(paths) && paths.length > 0)) return { status: 'failed', diagnostic: {
             code: 'panel_scope_unsupported', severity: 'error', message: 'The native reviewer cannot restrict a review to selected files. Choose another reviewer for this selection.',
           } };
           // Capture produces trees for working-tree and session snapshots.
