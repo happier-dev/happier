@@ -187,6 +187,32 @@ it('keeps starters listed while the shared field holds a pasted repository link'
   }
 });
 
+it('says starters come from an online Machine when none is online, and an empty Store only when one is (AUTO-LIVE F2)', async () => {
+  for (const online of [false, true]) {
+    // No starter source answers yet: nothing supplies the starters package on this fresh Home.
+    const fixture = await createPlainPromptLibraryCatalogHomeFixture(`https://new-app-starters-${online ? 'online' : 'none'}.test`, {
+      key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [] } }, 'updated');
+    try {
+      if (online) {
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const scope = storage.getState().settingsScope;
+        if (!scope) throw new Error('Expected admitted Home Account');
+        await publishMachineInventoryForTest(scope, [createMachineFixture({ activeAt: Date.now() })]);
+      }
+      const screen = await renderScreen(<NewAppScreen onClose={() => {}} />);
+      const settled = online ? 'newApp.startersEmpty' : 'newApp.needsMachine';
+      await waitForHomeGovernance(() => expect(screen.findByTestId(settled)).toBeTruthy());
+      expect(screen.findByTestId(online ? 'newApp.needsMachine' : 'newApp.startersEmpty')).toBeNull();
+      await screen.unmount();
+    } finally {
+      await standardCleanup();
+      await fixture.dispose();
+    }
+  }
+});
+
 it('makes an unavailable starter supplier visible instead of an empty gallery', async () => {
   const fixture = await starterHome('https://new-app-starter-failure.test', Promise.resolve(new Response('Unavailable', { status: 503 })));
   try {

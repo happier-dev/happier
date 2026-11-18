@@ -699,7 +699,9 @@ export const DeploymentEnvironmentDraft = React.memo(
           machines={machines}
           machineId={machineId ?? chosen?.id ?? null}
           machineName={t('approvals.machineNotKnown')}
-          title={onPlatform ? t('projects.deployments.platformLink.deploysFrom') : t('projects.deployments.machine')}
+          // The Machine card stays the Machine's card when a platform is chosen; which Machine a platform deploys from is
+          // Configure's (journey-deploy stWhere).
+          title={t('projects.deployments.machine')}
           /* An answering Machine whose Docker setup the Plan reports satisfied says it is ready to host (whereM). */
           {...(chosen ? { subtitle: !machineAway && host.readiness === 'ready' ? t('newApp.deploy.readyToHost')
             : presence.get(chosen.id)?.label } : {})}

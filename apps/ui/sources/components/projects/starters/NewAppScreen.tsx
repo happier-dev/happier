@@ -171,6 +171,12 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   // such as Coder's declares none and is not a way to deploy an app.
   const starters = React.useMemo(() => starterCatalog.items.filter((item) => item.starterDeploy !== undefined),
     [starterCatalog.items]);
+  const startersSettledEmpty = !search && starterCatalog.hasValue && !starterCatalog.loading && !starterCatalog.error
+    && starterCatalog.sourceFailures.length === 0 && starters.length === 0;
+  // Starters are package content an online Machine reads: a source that says so, or a settled empty list while no
+  // Machine is online (nothing supplies the package yet, AUTO-LIVE F2), is that one cause and gets its next step.
+  const startersNeedMachine = starters.length === 0 && (starterCatalog.sourceFailures.some((failure) => failure.status.state === 'needs_machine')
+    || (startersSettledEmpty && machines.length === 0));
 
   const [step, setStep] = React.useState<Step>(props.suggestion || props.startOn === 'describe' ? 'auto' : 'start');
   // Describe your app (journey-deploy S1/S2/S!): the suggestion owner's last report, and the setup the person chose.
@@ -744,14 +750,14 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         ) : null}
         {/* One cause, one line: starters are read on a Machine, so a person without one online is offered the
             Add a computer flow that keeps this draft, instead of one Retry card per source. */}
-        {starterCatalog.sourceFailures.some((failure) => failure.status.state === 'needs_machine') && starters.length === 0 ? (
+        {startersNeedMachine ? (
           <SurfaceStateCard
             testID="newApp.needsMachine"
             kind="unavailable"
             layout="inline"
-            title={t('newApp.noComputer')}
-            reason={t('newApp.computerNeeded')}
-            action={{ label: t('newApp.addComputer'), onPress: addComputer }}
+            title={t('newApp.startersNeedMachine')}
+            reason={t('newApp.startersNeedMachineBody')}
+            action={{ label: t('newApp.auto.addMachine'), onPress: addComputer }}
           />
         ) : null}
         {starterCatalog.sourceFailures.filter((failure) => failure.status.state !== 'needs_machine' || starters.length > 0).map((failure) => (
@@ -775,7 +781,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             action={{ label: t('common.retry'), onPress: starterCatalog.refresh }}
           />
         ) : null}
-        {!search && starterCatalog.hasValue && !starterCatalog.loading && !starterCatalog.error && starterCatalog.sourceFailures.length === 0 && starters.length === 0 ? (
+        {startersSettledEmpty && !startersNeedMachine ? (
           // Inside the picker an empty group is one quiet line; Describe your app above stays the way to start.
           <EmptyState testID="newApp.startersEmpty" layout="line" title={t('newApp.noStarters')} />
         ) : null}

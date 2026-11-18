@@ -1365,9 +1365,11 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
     bodyBelow: {
       marginTop: 6,
     },
-    // Its height is its content: the body and footer follow the title row instead of a card's reserved height.
+    // Its height is its content: the body and footer follow the title row instead of a card's reserved height, and a
+    // shorter card in a row keeps its body at the top, the row's slack under it (journey-deploy stWhere).
     tilePressableBelow: {
       minHeight: 0,
+      flexGrow: 0,
     },
     footerBelow: {
       paddingLeft: 12,
