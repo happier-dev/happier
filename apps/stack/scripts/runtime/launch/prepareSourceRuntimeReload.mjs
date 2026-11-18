@@ -259,7 +259,7 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       pending.signal.throwIfAborted();
       // The selection this activation replaces is the incumbent's revision. Its
       // restart owner restarts it if the replacement fails after retirement.
-      await recordSourceSelectionRollback({ stackBaseDir });
+      await recordSourceSelectionRollback({ stackBaseDir, env });
       await remote?.activate();
       await admitted.activate();
       // Successful selection is already authoritative. A diagnostic write must

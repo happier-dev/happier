@@ -780,6 +780,9 @@ async function main() {
   }
   let effectiveInternalServerUrl = internalServerUrl;
   let activeServerProcess = null;
+  // Readiness names this stack's own Home identity record only when the live server proved to
+  // publish it instead of the profile's established Home (shared-database consumer, 2129113c152).
+  let serverHomeReadiness = null;
   if (serverComponentName === 'happier-server') {
     const managed = (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0';
     if (managed) {
@@ -833,7 +836,7 @@ async function main() {
           : await spawnSourceServerScript({ label: 'server', serverDir, script: 'start', env: backendEnv });
         if (!serverLaunchSpec) children.push(backend);
         activeServerProcess = backend;
-        await waitForServerReady(backendUrl, { childProcess: backend, env: daemonScopeEnv, cliHomeDir,
+        serverHomeReadiness = await waitForServerReady(backendUrl, { childProcess: backend, env: daemonScopeEnv, cliHomeDir,
           timeoutMs: serverStartReadyTimeoutMs });
         if (sourceRuntimeIdentities.server) await recordStackRuntimeUpdate(runtimeStatePath, {
           sourceRuntimeIdentities: { server: { ...sourceRuntimeIdentities.server, loaded: sourceRuntimeIdentities.server.selected } },
@@ -856,7 +859,7 @@ async function main() {
         ];
         const gateway = spawnProc('ui', process.execPath, gatewayArgs, { ...backendEnv, PORT: String(serverPort) }, { cwd: rootDir });
         children.push(gateway);
-        await waitForServerReady(internalServerUrl, { childProcess: gateway, env: daemonScopeEnv, cliHomeDir,
+        serverHomeReadiness = await waitForServerReady(internalServerUrl, { childProcess: gateway, env: daemonScopeEnv, cliHomeDir,
           timeoutMs: serverStartReadyTimeoutMs });
         if (stackMode && runtimeStatePath) {
           await recordStackRuntimeServerActivation(runtimeStatePath, {
@@ -871,7 +874,7 @@ async function main() {
 
         // Skip default server spawn below
       } else {
-        await waitForServerReady(internalServerUrl, { env: daemonScopeEnv, cliHomeDir });
+        serverHomeReadiness = await waitForServerReady(internalServerUrl, { env: daemonScopeEnv, cliHomeDir });
         console.log(`${green('✓')} server: already running at ${cyan(internalServerUrl)}`);
       }
     }
@@ -891,7 +894,7 @@ async function main() {
         : await spawnSourceServerScript({ label: 'server', serverDir, script: serverStartScript, env: serverEnv });
       if (!serverLaunchSpec) children.push(server);
       activeServerProcess = server;
-      await waitForServerReady(internalServerUrl, { childProcess: server, env: daemonScopeEnv, cliHomeDir,
+      serverHomeReadiness = await waitForServerReady(internalServerUrl, { childProcess: server, env: daemonScopeEnv, cliHomeDir,
           timeoutMs: serverStartReadyTimeoutMs });
       if (sourceRuntimeIdentities.server) await recordStackRuntimeUpdate(runtimeStatePath, {
         sourceRuntimeIdentities: { server: { ...sourceRuntimeIdentities.server, loaded: sourceRuntimeIdentities.server.selected } },
@@ -920,7 +923,7 @@ async function main() {
         });
       }
     } else {
-      await waitForServerReady(internalServerUrl, { env: daemonScopeEnv, cliHomeDir });
+      serverHomeReadiness = await waitForServerReady(internalServerUrl, { env: daemonScopeEnv, cliHomeDir });
       console.log(`${green('✓')} server: already running at ${cyan(internalServerUrl)}`);
     }
   }
@@ -1004,6 +1007,7 @@ async function main() {
       env: daemonScopeEnv,
       stackName,
       cliIdentity: 'default',
+      homeIdentityRecordPath: serverHomeReadiness?.homeIdentityRecordPath ?? null,
       ...cliRuntimeProvenance,
     };
     const startResult = await startLocalDaemonWithAuth(launchOptions);

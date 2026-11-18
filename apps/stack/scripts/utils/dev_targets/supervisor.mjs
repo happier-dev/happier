@@ -777,7 +777,7 @@ export async function startStackDevTargets(
 
     const spawnTargetWorker = (plan, remoteCommand) => {
       const { target } = plan;
-      const environmentFailure = { refusal: null, sourceRefusal: null, publication: Promise.resolve(),
+      const environmentFailure = { refusal: null, sourceRefusal: null, publication: Promise.resolve(), stderrTail: '',
         serverReadiness: { current: false, events: new EventEmitter() },
         daemonReadiness: { current: { state: 'starting' }, events: new EventEmitter() } };
       const worker = spawnProcess({
@@ -796,7 +796,10 @@ export async function startStackDevTargets(
             environmentFailure.daemonReadiness.events.emit('change', daemonReadiness);
             return;
           }
-          if (stream === 'stderr') environmentFailure.refusal ??= parseRemoteStackEnvironmentRefusal(line);
+          if (stream === 'stderr') {
+            environmentFailure.stderrTail = appendBoundedTail(environmentFailure.stderrTail, `${line}\n`);
+            environmentFailure.refusal ??= parseRemoteStackEnvironmentRefusal(line);
+          }
           const sourceRefusal = stream === 'stderr' ? parseSourceReloadRefusalLine(line, env) : null;
           if (sourceRefusal) {
             environmentFailure.sourceRefusal ??= Object.assign(new Error('Remote source startup refused' + formatSourceReloadRefusal(sourceRefusal, env)), sourceRefusal);
@@ -1568,13 +1571,14 @@ export async function startStackDevTargets(
 
             const workerFailure = outcome.kind === 'worker-exit' && outcome.result?.code !== 0
               ? workerEnvironmentFailures.get(worker) : null;
+            const workerOutput = workerFailure ? formatFailureDiagnostic({ err: workerFailure.stderrTail, env: infraEnv }) : '';
             if (workerFailure) await workerFailure.publication;
             // PREPARED already admitted the replacement. A failed activation
             // cannot turn that swap into another source preparation request.
             const preparedReloadFailure = sourceSnapshot && env.HAPPIER_STACK_PREPARED_SOURCE_RELOAD === '1'
               && outcome.kind === 'worker-exit' && Number.isInteger(outcome.result?.code)
               && outcome.result.code !== 0 && outcome.result.code !== 255
-              ? Object.assign(new Error(`[reload] ${target.name} prepared replacement exited (code=${outcome.result.code}); repair the runtime failure before explicitly reloading`),
+              ? Object.assign(new Error(`[reload] ${target.name} prepared replacement exited (code=${outcome.result.code}); repair the runtime failure before explicitly reloading${workerOutput}`),
                 { code: 'source_reload_activation_failed', phase: 'activation', retryable: false,
                   exitCode: outcome.result.code }) : null;
             const environmentRefusal = workerFailure?.refusal

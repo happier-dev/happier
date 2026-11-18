@@ -25,11 +25,29 @@ function unavailable(reason) {
 }
 
 /** Called right before a reload activates its replacement selection: the
- * selection it replaces is the incumbent's revision, retained until settled. */
-export async function recordSourceSelectionRollback({ stackBaseDir }) {
+ * selection it replaces is the incumbent's revision, retained until settled.
+ * A shared-database stack's replacement may re-establish its profile on its
+ * own server's Home identity, so the incumbent's Home binding is kept too. */
+export async function recordSourceSelectionRollback({ stackBaseDir, env = null }) {
   const selections = {};
   for (const component of COMPONENTS) selections[component] = await readJsonIfExists(selectionPath(stackBaseDir, component));
-  await writeJsonAtomic(rollbackPath(stackBaseDir), { selections });
+  const homeBindings = env ? await readIncumbentHomeBindings({ stackBaseDir, env }) : [];
+  await writeJsonAtomic(rollbackPath(stackBaseDir), { selections, ...(homeBindings.length ? { homeBindings } : {}) });
+}
+
+async function readIncumbentHomeBindings({ stackBaseDir, env }) {
+  const [{ readStackServerProfileHomeBinding }, { getCliHomeDirFromEnvOrDefault }, { resolveStackActiveServerId },
+    { listStackCliIdentities, resolveCliHomeDirForIdentity }] = await Promise.all([
+    import('../../utils/stack/server_profile_reconciliation.mjs'),
+    import('../../utils/stack/dirs.mjs'),
+    import('../../utils/auth/stable_scope_id.mjs'),
+    import('../../utils/stack/cli_identities.mjs'),
+  ]);
+  const cliHomeDir = getCliHomeDirFromEnvOrDefault({ stackBaseDir, env });
+  // Every CLI identity of this stack reconciles its own profile against the same server.
+  return (await listStackCliIdentities({ cliHomeDir })).map(identity => readStackServerProfileHomeBinding({ env,
+    homeDir: resolveCliHomeDirForIdentity({ cliHomeDir, identity }),
+    serverId: resolveStackActiveServerId({ env, cliIdentity: identity }) })).filter(Boolean);
 }
 
 /** Paths a pending rollback still needs; the retention and tree-release owners keep them. */
@@ -59,6 +77,12 @@ export async function restoreSourceSelectionRollback({ stackBaseDir }) {
     if (selection) await writeJsonAtomic(selectionPath(stackBaseDir, component), selection);
     else await rm(selectionPath(stackBaseDir, component), { force: true });
     restored.push(component);
+  }
+  if (record.homeBindings?.length) {
+    const { restoreStackServerProfileHomeBinding } = await import('../../utils/stack/server_profile_reconciliation.mjs');
+    for (const binding of record.homeBindings) {
+      if (await restoreStackServerProfileHomeBinding(binding)) restored.push(`home:${binding.serverId}`);
+    }
   }
   return restored;
 }

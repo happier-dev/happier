@@ -1,8 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { resolveServerIdentityRecordPath } from '@happier-dev/cli-common/firstPartyRuntime/personalHome/layout';
+
+import { resolveStackEnvPath } from '../paths/paths.mjs';
+import { getServerLightDataDirFromEnvOrDefault } from './dirs.mjs';
 
 function normalizeServerUrl(url) {
   return String(url ?? '').trim().replace(/\/+$/, '');
@@ -86,6 +92,22 @@ export function readStackServerProfileHomeDescriptor({ homeDir, serverId }) {
   return HomeConnectionDescriptorV1Schema.parse(profile.homeConnectionDescriptor);
 }
 
+// A shared-database consumer's own server mints and keeps its Home identity in a private record
+// (owner ruling 2026-11-18, 2129113c152). That record is the only authority by which this stack
+// recognizes a Home identity change as one it originated; every other stack has none.
+export function resolveStackOwnServerIdentityRecordPath(env) {
+  if (!String(env?.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ?? '').trim()) return null;
+  const stackBaseDir = resolveStackEnvPath(null, env).baseDir;
+  return resolveServerIdentityRecordPath(getServerLightDataDirFromEnvOrDefault({ stackBaseDir, env }));
+}
+
+/** The identity this stack's own server recorded, or null when the stack has no such record. */
+export function readStackOwnServerIdentity(env) {
+  const recordPath = resolveStackOwnServerIdentityRecordPath(env);
+  if (!recordPath || !existsSync(recordPath)) return null;
+  return readFileSync(recordPath, 'utf-8').trim() || null;
+}
+
 // An explicit `--server <id>` that names a saved profile of the stack's own public URL selects the
 // stack endpoint, not a foreign server, so the stack's current relay URLs apply to that profile.
 export function stackOwnsServerProfile({ homeDir, serverId, publicServerUrl }) {
@@ -135,7 +157,7 @@ export function assertStackServerProfileReconciled({
  * Builds the canonical CLI command that refreshes one stack-owned profile before a stack
  * invocation or daemon launch. Persistence remains owned by the CLI profile writer.
  */
-export function buildStackServerProfileSetArgs({ serverId, internalServerUrl, publicServerUrl }) {
+export function buildStackServerProfileSetArgs({ serverId, internalServerUrl, publicServerUrl, homeIdentityRecordPath = null }) {
   const id = String(serverId ?? '').trim();
   const localServerUrl = normalizeServerUrl(internalServerUrl);
   const canonicalServerUrl = normalizeServerUrl(publicServerUrl);
@@ -156,8 +178,51 @@ export function buildStackServerProfileSetArgs({ serverId, internalServerUrl, pu
     localServerUrl,
     '--webapp-url',
     canonicalServerUrl,
+    // Only a stack whose own server recorded a different Home identity than the profile
+    // established names that record; the CLI verifies it against the live authenticated Home.
+    ...(homeIdentityRecordPath ? ['--home-identity-record', homeIdentityRecordPath] : []),
     '--json',
   ];
+}
+
+/**
+ * The stack-owned profile's Home binding, snapshotted by the reload rollback owner right before a
+ * replacement activates. Only a shared-database consumer can change it by its own doing.
+ */
+export function readStackServerProfileHomeBinding({ env, homeDir, serverId }) {
+  if (!resolveStackOwnServerIdentityRecordPath(env)) return null;
+  const profile = readCliSettings(homeDir)?.servers?.[serverId];
+  if (!profile || profile.homeConnectionDescriptor === undefined) return null;
+  return { homeDir, serverId, homeConnectionDescriptor: profile.homeConnectionDescriptor,
+    homeConnectionDescriptorAuthority: profile.homeConnectionDescriptorAuthority ?? null };
+}
+
+/**
+ * Restores a snapshotted Home binding when a failed replacement re-established the profile on its
+ * own server's identity, so the incumbent revision's server is accepted again. Takes the CLI's
+ * settings lock and refuses while another writer holds it.
+ */
+export async function restoreStackServerProfileHomeBinding(binding) {
+  const settingsPath = join(binding.homeDir, 'settings.json');
+  const settings = readCliSettings(binding.homeDir);
+  const profile = settings?.servers?.[binding.serverId];
+  if (!profile || isDeepStrictEqual(profile.homeConnectionDescriptor, binding.homeConnectionDescriptor)) return false;
+  const lockPath = `${settingsPath}.lock`;
+  const lock = await open(lockPath, 'wx', 0o600);
+  try {
+    await lock.writeFile(String(process.pid));
+    const current = JSON.parse(await readFile(settingsPath, 'utf-8'));
+    const { homeConnectionDescriptorAuthority: _authority, ...rest } = current.servers[binding.serverId];
+    current.servers[binding.serverId] = { ...rest, homeConnectionDescriptor: binding.homeConnectionDescriptor,
+      ...(binding.homeConnectionDescriptorAuthority ? { homeConnectionDescriptorAuthority: binding.homeConnectionDescriptorAuthority } : {}) };
+    const temporaryPath = `${settingsPath}.${process.pid}.rollback.tmp`;
+    await writeFile(temporaryPath, JSON.stringify(current, null, 2), { mode: 0o600 });
+    await rename(temporaryPath, settingsPath);
+  } finally {
+    await lock.close();
+    await rm(lockPath, { force: true });
+  }
+  return true;
 }
 
 // The CLI owns refusal classification: exit 1 is an expected typed refusal,

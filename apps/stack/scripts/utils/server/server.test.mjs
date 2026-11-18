@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { waitForBackgroundStackReadiness } from '../../stack/run_script_with_stack_env.mjs';
 
@@ -234,7 +235,7 @@ async function descriptorReadinessFixture(t) {
   await writeFile(fixture.path('settings.json'), JSON.stringify({ schemaVersion: 6,
     activeServerId: serverId, servers: { [serverId]: { id: serverId, serverUrl: url,
       webappUrl: url, homeConnectionDescriptor: descriptor } } }));
-  return { url, descriptor, token, env: { HAPPIER_STACK_CLI_HOME_DIR: fixture.root,
+  return { url, descriptor, token, cliHomeDir: fixture.root, env: { HAPPIER_STACK_CLI_HOME_DIR: fixture.root,
     HAPPIER_ACTIVE_SERVER_ID: serverId } };
 }
 
@@ -295,6 +296,37 @@ test(`${surface} readiness never admits an authenticated descriptor for a differ
   await assert.rejects(starting.then(() => { phases.push('server_set', 'daemon_preflight'); }), /Home.*identity|identity.*Home/i);
   assert.deepEqual(phases, []);
 });
+}
+
+// A shared-database QA stack's own server mints a private Home identity (2129113c152), while the
+// stack's CLI profile still names the shared identity it established before. Reload activation
+// refused that transition (#176, L12 #161). Only the identity the stack's own server recorded is
+// admitted; any other identity change stays refused.
+for (const surface of ['server', 'background']) {
+for (const scenario of ['own-minted', 'unrecorded', 'other-recorded', 'not-consumer']) {
+test(`${surface} readiness on a shared-database stack: ${scenario} Home identity`, async t => {
+  const fixture = await descriptorReadinessFixture(t);
+  const dataDir = join(fixture.cliHomeDir, 'server-light');
+  const minted = 'srv_stack_own_minted';
+  if (scenario !== 'unrecorded') {
+    await mkdir(join(dataDir, 'runtime'), { recursive: true });
+    await writeFile(join(dataDir, 'runtime', 'server.identity'), `${scenario === 'other-recorded' ? 'srv_stack_other' : minted}\n`);
+  }
+  const env = { ...fixture.env, HAPPIER_SERVER_LIGHT_DATA_DIR: dataDir,
+    ...(scenario === 'not-consumer' ? {} : { HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'repo-dev' }) };
+  t.mock.method(globalThis, 'fetch', async url => String(url).endsWith('/health')
+    ? Response.json({ status: 'ok', service: 'happier-server' })
+    : Response.json({ features: {}, capabilities: { serverIdentity: { serverIdentityId: minted } },
+      homeConnectionDescriptor: { ...fixture.descriptor, homeServerIdentityId: minted } }));
+  const starting = surface === 'server'
+    ? waitForServerReady(fixture.url, { env, intervalMs: 0, timeoutMs: 5_000 })
+    : waitForBackgroundStackReadiness({ stackName: 'descriptor', scriptPath: 'dev.mjs', args: ['--no-daemon'],
+      env, internalServerUrl: fixture.url, timeoutMs: 5_000 });
+  if (scenario === 'own-minted') assert.deepEqual(await starting, { status: 'ready',
+    homeIdentityRecordPath: join(dataDir, 'runtime', 'server.identity') });
+  else await assert.rejects(starting, /Home descriptor identity does not match the established Home/);
+});
+}
 }
 
 for (const status of [401, 403]) {

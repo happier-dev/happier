@@ -1534,10 +1534,14 @@ test(`source worker crash ${preparedSourceReload ? 'refuses prepared reload with
   try {
     await initialReady;
     const initialFlushes = flushes;
+    // The replacement runner's own refusal is the only cause the reload result can carry.
+    workers[0].onLine({ stream: 'stderr', line: '[local] failed: Authenticated Home descriptor identity does not match the established Home' });
     workers[0].exitCode = 1;
     failWorker({ code: 1 });
     await recovered;
     if (preparedSourceReload) {
+      assert.match(controller.targetFailures[0].error.message, /prepared replacement exited \(code=1\)[\s\S]*\[stderr\][\s\S]*established Home/);
+      assert.match(states.at(-1).error, /established Home/, 'the published reload state keeps the activation cause');
       assert.equal(workers.length, 1, 'a prepared swap must not request another source capture');
       assert.equal(flushes, initialFlushes, 'a prepared swap must not synchronize for a second admission');
       assert.equal(stops.length, 0, 'failure must not acquire another runtime lifecycle');

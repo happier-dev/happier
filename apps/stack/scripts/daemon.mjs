@@ -1983,6 +1983,9 @@ export async function startLocalDaemonWithAuth({
   sourceRuntimeLaunchUpdate = null,
   preserveSessionsOnRestart = false,
   allowSignInRequired = false,
+  // Set only when server readiness proved the live server publishes this stack's own recorded
+  // Home identity (shared-database consumer); profile reconciliation re-establishes onto it.
+  homeIdentityRecordPath = null,
 }) {
   const runtimeState = runtimeStatePath ? await readStackRuntimeStateFile(runtimeStatePath) : null;
   if (readStackRuntimeDaemonDesiredState(runtimeState, { cliIdentity }) === 'stopped') {
@@ -2285,7 +2288,8 @@ export async function startLocalDaemonWithAuth({
       if (serverId) {
         const profileSetArgs = [
           ...daemonCommand.argsPrefix,
-          ...buildStackServerProfileSetArgs({ serverId, internalServerUrl, publicServerUrl }),
+          ...buildStackServerProfileSetArgs({ serverId, internalServerUrl, publicServerUrl,
+            homeIdentityRecordPath }),
         ];
         const profileSetTimeoutMs = Math.max(1, startVerifyTimeoutMs);
         try {
