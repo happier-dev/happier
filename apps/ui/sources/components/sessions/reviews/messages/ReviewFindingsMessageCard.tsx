@@ -972,7 +972,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
     },
     errorText: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
         ...Typography.variant('body'),
     },
 }));

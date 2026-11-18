@@ -26,6 +26,19 @@ describe('theme profile contrast warnings', () => {
         expect(getThemeProfileContrastWarnings(profile, 'light', getThemeProfileTokenDefinition('text.link')!)).toContain('background.canvas');
     });
 
+    it('warns for text ink between 3:1 and 4.5:1 while accepting the same indicator ink', () => {
+        const profile: ThemeProfileV1 = {
+            schemaVersion: 1, id: 'state-text-warning', name: 'State text warning', createdAt: '', updatedAt: '',
+            base: { light: 'light', dark: 'dark' },
+            overrides: { light: { 'state.success.foreground': '#8A8A8A', 'state.success.textForeground': '#8A8A8A', 'state.success.background': '#FFFFFF' }, dark: {} },
+        };
+
+        expect(getThemeProfileContrastWarnings(profile, 'light', getThemeProfileTokenDefinition('state.success.textForeground')!))
+            .toEqual(['state.success.background']);
+        expect(getThemeProfileContrastWarnings(profile, 'light', getThemeProfileTokenDefinition('state.success.foreground')!))
+            .toEqual([]);
+    });
+
     it('keeps the Default palette quiet in both modes', () => {
         const profile: ThemeProfileV1 = {
             schemaVersion: 1, id: 'default', name: 'Default', createdAt: '', updatedAt: '',

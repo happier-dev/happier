@@ -40,7 +40,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 22,
         ...Typography.default(),
     },
-    error: { color: theme.colors.state.danger.foreground, fontSize: 14, lineHeight: 20, ...Typography.default() },
+    error: { color: theme.colors.state.danger.textForeground, fontSize: 14, lineHeight: 20, ...Typography.default() },
     actions: { gap: theme.space.s12 },
 }));
 

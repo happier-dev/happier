@@ -90,5 +90,5 @@ function SessionPeopleReadinessRows(
 
 const styles = StyleSheet.create((theme) => ({
   section: { paddingTop: theme.space.s12 },
-  attention: { color: theme.colors.state.warning.foreground },
+  attention: { color: theme.colors.state.warning.textForeground },
 }));

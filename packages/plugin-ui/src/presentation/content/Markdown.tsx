@@ -9,6 +9,8 @@ import type { HappierRenderableImageSource } from './renderableImage.js';
 export type MarkdownInlineReference = Readonly<{
   label: string;
   foreground: string;
+  /** Label ink when a reference uses its foreground for a severity mark. */
+  textForeground?: string;
   background: string;
   severity?: ReviewFinding['severity'];
   glyph?: HappierIconName;

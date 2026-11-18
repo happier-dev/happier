@@ -141,7 +141,7 @@ export function SessionGoalContinuationSection(props: Readonly<{
                 <Text
                     testID="session-goal-keep-going-error"
                     accessibilityRole="alert"
-                    style={[styles.description, { color: theme.colors.state.danger.foreground }]}
+                    style={[styles.description, { color: theme.colors.state.danger.textForeground }]}
                 >
                     {keepGoing.error}
                 </Text>

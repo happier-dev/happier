@@ -40,7 +40,7 @@ function startEntrance(animation: Animated.CompositeAnimation, settle: () => voi
 
 const stylesheet = StyleSheet.create((theme) => ({
     error: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
         ...Typography.variant('body'),
     },
     revealHero: {

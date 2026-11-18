@@ -77,7 +77,7 @@ const styles = StyleSheet.create((theme) => ({
         maxWidth: 220,
     },
     text: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
         ...Typography.variant('meta', 'semiBold'),
         flexShrink: 1,
     },

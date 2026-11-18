@@ -61,7 +61,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         padding: theme.space.s12,
     },
     errorLabel: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
         ...Typography.variant('meta', 'semiBold'),
         textTransform: 'uppercase',
         letterSpacing: 0.4,

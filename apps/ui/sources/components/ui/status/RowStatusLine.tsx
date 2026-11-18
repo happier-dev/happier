@@ -13,7 +13,7 @@ export type RowStatusTone = HappierRowStatusTone;
 
 /** The one ink for each status tone; a page-level status line that is not a row reads the same trouble colours. */
 export function rowStatusToneColors(theme: Theme): Readonly<Record<RowStatusTone, string>> {
-    return { quiet: theme.colors.text.secondary, warn: theme.colors.state.warning.foreground, bad: theme.colors.state.danger.foreground };
+    return { quiet: theme.colors.text.secondary, warn: theme.colors.state.warning.textForeground, bad: theme.colors.state.danger.textForeground };
 }
 
 /**
@@ -28,7 +28,7 @@ export const RowStatusLine = React.memo(function RowStatusLine(props: HappierRow
             colors: rowStatusToneColors(theme),
             actionGap: theme.space.s8,
             renderBusy: ({ size }) => <ActivitySpinner size={size} color={theme.colors.text.tertiary} style={styles.spinner} />,
-            renderIndicator: ({ size, color }) => <StatusDot size={size} color={color} />,
+            renderIndicator: ({ size }) => <StatusDot size={size} color={theme.colors.state[props.tone === 'warn' ? 'warning' : 'danger'].foreground} />,
             renderText: ({ text, numberOfLines, style, mono }) => <Text style={[styles.text, mono ? styles.mono : null, style]} numberOfLines={numberOfLines}>{text}</Text>,
             renderAction: (action) => <TextLinkButton tone="strong" {...action} />,
         }} />

@@ -636,6 +636,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.text.secondary,
   },
   failed: {
-    color: theme.colors.state.danger.foreground,
+    color: theme.colors.state.danger.textForeground,
   },
 }));

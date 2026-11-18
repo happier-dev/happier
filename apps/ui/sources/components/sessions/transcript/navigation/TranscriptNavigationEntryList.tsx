@@ -214,7 +214,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: 17,
     },
     failedText: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     waitingLine: {
         flexDirection: 'row',
@@ -224,7 +224,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     waitingText: {
         flexShrink: 1,
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
         ...Typography.variant('meta', 'semiBold'),
     },
     pendingText: {
@@ -256,7 +256,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontVariant: ['tabular-nums'],
     },
     timeLive: {
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
         ...Typography.default('semiBold'),
     },
     dayRow: {
@@ -306,10 +306,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     errorText: {
         flex: 1,
         minWidth: 0,
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     retryText: {
-        color: theme.colors.state.info.foreground,
+        color: theme.colors.state.info.textForeground,
         ...Typography.default('semiBold'),
     },
 }));

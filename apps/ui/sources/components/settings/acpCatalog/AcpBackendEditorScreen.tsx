@@ -399,7 +399,7 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                         testID={`${TEST_ID}.error`}
                         accessibilityRole="alert"
                         accessibilityLiveRegion="polite"
-                        style={{ color: theme.colors.state.danger.foreground, fontSize: 13, lineHeight: 18 }}
+                        style={{ color: theme.colors.state.danger.textForeground, fontSize: 13, lineHeight: 18 }}
                     >
                         {errors.env ?? errors.other}
                     </Text>

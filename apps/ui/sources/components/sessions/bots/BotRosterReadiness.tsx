@@ -72,5 +72,5 @@ export const BotRosterReadiness = React.memo(function BotRosterReadiness(props: 
 const styles = StyleSheet.create((theme) => ({
   line: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
   text: { flex: 1, minWidth: 0, color: theme.colors.text.secondary },
-  attention: { color: theme.colors.state.warning.foreground },
+  attention: { color: theme.colors.state.warning.textForeground },
 }));

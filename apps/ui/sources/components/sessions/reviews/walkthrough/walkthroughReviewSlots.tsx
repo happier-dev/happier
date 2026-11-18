@@ -31,7 +31,7 @@ export type WalkthroughReviewSlotsInput = Readonly<{
     onAskStop?: ((stopId: string) => void) | null;
     showKeys?: boolean;
     /** Severity colours (from `useReviewSeverityColorResolver`), for citations drawn inside the prose. */
-    severityColors: (severity: ReviewFinding['severity']) => Readonly<{ foreground: string; tint: string }>;
+    severityColors: (severity: ReviewFinding['severity']) => Readonly<{ foreground: string; textForeground: string; tint: string }>;
     /** An explanation of the findings asked for explicitly, by stop (lab WT5-R2). */
     explanationsByStopId?: ReadonlyMap<string, React.ReactNode> | null;
 }>;
@@ -84,7 +84,8 @@ export function buildWalkthroughReviewSlots(input: WalkthroughReviewSlotsInput):
                         const view = viewForReference(target);
                         if (!view) return null;
                         const colors = input.severityColors(view.severity);
-                        return { label: `${reviewSeverityLabel(view.severity)} · ${view.engineLabel}`, severity: view.severity, foreground: colors.foreground, background: colors.tint };
+                        return { label: `${reviewSeverityLabel(view.severity)} · ${view.engineLabel}`, severity: view.severity,
+                            foreground: colors.foreground, textForeground: colors.textForeground, background: colors.tint };
                     },
                     onPress: (target: string) => {
                         const view = viewForReference(target);

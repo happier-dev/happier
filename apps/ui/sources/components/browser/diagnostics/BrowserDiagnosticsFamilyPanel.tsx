@@ -681,9 +681,9 @@ export function DiagnosticsRow(props: Readonly<{
         ? theme.colors.state.danger.foreground
         : theme.colors.state.attention.foreground;
     const metaColor = (cell: DiagnosticsMetaCell) => cell.tone === 'danger'
-        ? { color: theme.colors.state.danger.textForeground ?? theme.colors.state.danger.foreground }
+        ? { color: theme.colors.state.danger.textForeground }
         : cell.tone === 'warning'
-            ? { color: theme.colors.state.attention.textForeground ?? theme.colors.state.attention.foreground }
+            ? { color: theme.colors.state.attention.textForeground }
             : null;
 
     const narrow = React.useContext(DiagnosticsNarrowContext);

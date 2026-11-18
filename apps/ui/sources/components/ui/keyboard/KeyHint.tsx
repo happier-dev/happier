@@ -52,7 +52,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('micro', 'regular'),
         ...Typography.mono(),
         ...Typography.tabular(),
-        color: theme.colors.state.attention.foreground,
+        color: theme.colors.state.attention.textForeground,
     },
     onFillLabel: { color: theme.colors.surface.base },
 }));

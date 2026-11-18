@@ -632,10 +632,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontStyle: 'italic',
     },
     machineStatusWarning: {
-        color: theme.colors.state.neutral.foreground,
+        color: theme.colors.state.neutral.textForeground,
     },
     machineStatusSuccess: {
-        color: theme.colors.state.success.foreground,
+        color: theme.colors.state.success.textForeground,
     },
     machineStatusDiffers: {
         color: theme.colors.text.secondary,

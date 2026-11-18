@@ -419,19 +419,29 @@ describe('Work primitives for plugin authors', () => {
     ).toBe('Braucht dich');
   });
 
-  it('draws "needs you" in the host\'s attention ink, distinct from its warning', () => {
+  it('uses the host status text and glyph inks independently for attention and danger', () => {
     const theme = {
       ...SURFACE_THEME_FIXTURE,
       colors: {
         ...SURFACE_THEME_FIXTURE.colors,
-        attention: '#945200',
+        attention: '#b46b00',
         warning: '#ff9500',
+        danger: '#ec5656',
+      },
+      statusText: {
+        success: '#187632',
+        warning: '#945700',
+        attention: '#945200',
+        danger: '#be2525',
+        info: '#4e5ba5',
+        neutral: '#6c6c70',
       },
     };
     const { colors } = resolveHappierWorkTheme(theme);
-    expect(
-      authorBarrel.resolveHappierWorkStatusGlyphColor('attention', colors),
-    ).toBe('#945200');
+    expect(authorBarrel.resolveHappierWorkStatusGlyphColor('attention', colors)).toBe('#b46b00');
+    expect(authorBarrel.resolveHappierWorkStatusGlyphColor('danger', colors)).toBe('#ec5656');
+    expect(authorBarrel.resolveHappierWorkStatusWordColor('attention', colors)).toBe('#945200');
+    expect(authorBarrel.resolveHappierWorkStatusWordColor('danger', colors)).toBe('#be2525');
     expect(authorBarrel.HAPPIER_TONE_COLOR_TOKEN.attention).toBe('attention');
   });
 

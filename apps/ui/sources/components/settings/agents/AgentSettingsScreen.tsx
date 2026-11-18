@@ -203,7 +203,7 @@ const AgentSettingsNotFound = React.memo(function AgentSettingsNotFound(props: R
             <ItemGroup>
                 <View style={{ alignItems: 'center', paddingVertical: 32, paddingHorizontal: 16 }}>
                     <Icon name="warning" size={48} color={props.theme.colors.state.danger.foreground} style={{ marginBottom: 16 }} />
-                    <Text style={{  ...Typography.variant('heading'), color: props.theme.colors.state.danger.foreground, textAlign: 'center', marginBottom: 8 }}>
+                    <Text style={{  ...Typography.variant('heading'), color: props.theme.colors.state.danger.textForeground, textAlign: 'center', marginBottom: 8 }}>
                         {t('settingsAgents.notFoundTitle')}
                     </Text>
                     <Text style={{ ...Typography.default(), fontSize: 14, color: props.theme.colors.text.secondary, textAlign: 'center', lineHeight: 20 }}>

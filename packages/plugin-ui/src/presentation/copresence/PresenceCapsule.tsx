@@ -321,7 +321,7 @@ export function HappierPresenceCapsule(props: HappierPresenceCapsuleProps): Reac
         : stopping
           ? copy.stoppingDetail
           : presence.kind === 'agent' ? copy.agentDetail : null;
-    const detailColor = mayHaveLanded ? colors.warning : colors.secondaryText;
+    const detailColor = mayHaveLanded ? colors.warningText ?? colors.warning : colors.secondaryText;
     const stateKey = human ? 'human' : unconfirmed ? 'unconfirmed' : recovery ? 'recovery' : stopping ? 'stopping' : 'agent';
 
     const trailingControls = (

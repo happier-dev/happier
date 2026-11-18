@@ -311,7 +311,7 @@ export function SessionPublicLinkCard(props: Readonly<{
             consentDescription={t('session.sharing.requireConsentDescription')}
             replacementNote={t('session.collaboration.pane.newLinkReplaces')}
             colors={{ border: theme.colors.border.default, inset: theme.colors.surface.inset, surface: theme.colors.surface.base,
-                text: theme.colors.text.primary, secondary: theme.colors.text.secondary, success: theme.colors.state.success.foreground }}
+                text: theme.colors.text.primary, secondary: theme.colors.text.secondary, success: theme.colors.state.success.textForeground }}
             typography={{ title: { ...Typography.default('semiBold'), ...ITEM_TITLE_TEXT_METRICS.compact },
                 subtitle: { ...Typography.default(), ...ITEM_SUBTITLE_TEXT_METRICS.compact },
                 emphasizedSubtitle: { ...Typography.default('semiBold'), ...ITEM_SUBTITLE_TEXT_METRICS.compact },

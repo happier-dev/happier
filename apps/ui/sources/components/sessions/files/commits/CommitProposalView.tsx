@@ -489,7 +489,7 @@ const styles = StyleSheet.create((theme) => ({
     subtitle: { marginTop: theme.space.s4, ...Typography.variant('reading'), color: theme.colors.text.secondary },
     subtitleSmall: { marginTop: theme.space.s2, ...Typography.variant('reading'),  color: theme.colors.text.secondary,  },
     failureNotice: { marginBottom: theme.space.s12 },
-    error: { marginBottom: theme.space.s12, ...Typography.variant('body'),  color: theme.colors.state.danger.foreground,  },
+    error: { marginBottom: theme.space.s12, ...Typography.variant('body'),  color: theme.colors.state.danger.textForeground,  },
     outcome: { marginBottom: 14 },
     groups: { gap: 14 },
     cardFocused: { borderColor: theme.colors.state.active.border },
@@ -509,7 +509,7 @@ const styles = StyleSheet.create((theme) => ({
     footerInnerPhone: { maxWidth: undefined },
     footerText: { flex: 1, minWidth: 0, fontSize: 14, lineHeight: 20, color: theme.colors.text.secondary, ...Typography.default() },
     footerStrong: { color: theme.colors.text.primary, ...Typography.default('semiBold') },
-    footerWarning: { color: theme.colors.state.warning.foreground },
+    footerWarning: { color: theme.colors.state.warning.textForeground },
     pbar: {
         flexDirection: 'row',
         alignItems: 'center',

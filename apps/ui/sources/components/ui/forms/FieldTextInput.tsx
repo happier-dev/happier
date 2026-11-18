@@ -193,6 +193,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: HAPPIER_FIELD_TEXT_METRICS.errorFontSizePx,
         lineHeight: HAPPIER_FIELD_TEXT_METRICS.errorLineHeightPx,
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
 }));

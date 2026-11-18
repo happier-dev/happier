@@ -276,7 +276,7 @@ const styles = StyleSheet.create((theme) => ({
     chips: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s6, paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s8 },
     authoringChips: { maxWidth: '100%' },
     note: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
-    chipError: { ...Typography.variant('meta'), color: theme.colors.state.danger.foreground },
+    chipError: { ...Typography.variant('meta'), color: theme.colors.state.danger.textForeground },
     toolsGroup: { paddingTop: 0 },
-    error: { marginHorizontal: theme.space.s24, marginTop: theme.space.s12, color: theme.colors.state.danger.foreground },
+    error: { marginHorizontal: theme.space.s24, marginTop: theme.space.s12, color: theme.colors.state.danger.textForeground },
 }));

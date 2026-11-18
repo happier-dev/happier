@@ -341,7 +341,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         minHeight: happierPageTextMetrics('meta').lineHeight,
         color: theme.colors.text.tertiary,
     },
-    noteError: { color: theme.colors.state.danger.foreground },
+    noteError: { color: theme.colors.state.danger.textForeground },
     fact: {
         flexDirection: 'row',
         gap: theme.space.s12,

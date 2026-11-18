@@ -129,7 +129,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     error: {
         ...Typography.variant('meta'),
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     danger: {
         gap: theme.space.s8,

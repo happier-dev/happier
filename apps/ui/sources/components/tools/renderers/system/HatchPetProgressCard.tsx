@@ -142,7 +142,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   label: { color: theme.colors.text.primary, flexShrink: 1 },
   pending: { color: theme.colors.text.tertiary, flexShrink: 1 },
-  failed: { color: theme.colors.state.danger.foreground, flexShrink: 1 },
+  failed: { color: theme.colors.state.danger.textForeground, flexShrink: 1 },
   failure: {
     color: theme.colors.text.secondary,
     marginLeft: ICON_SIZE.xs + theme.space.s8,

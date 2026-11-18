@@ -266,9 +266,9 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         gap: theme.space.s8,
     },
-    deleteLabel: { color: theme.colors.state.danger.foreground },
+    deleteLabel: { color: theme.colors.state.danger.textForeground },
     failure: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
         width: '100%',
     },
     // The pushed page's Back keeps its own width at the page's leading edge, never a full-width bar.

@@ -79,7 +79,7 @@ export function MachineServiceWatchMenu(props: Readonly<{
       }}
       footer={(
         <View style={styles.footer}>
-          <Text variant="meta" style={[styles.note, { color: outcome ? theme.colors.state.warning.foreground : theme.colors.text.secondary }]}
+          <Text variant="meta" style={[styles.note, { color: outcome ? theme.colors.state.warning.textForeground : theme.colors.text.secondary }]}
             testID={outcome ? 'machine-services-watch-outcome' : undefined}>
             {outcome ?? t('machineServices.watch.note')}
           </Text>

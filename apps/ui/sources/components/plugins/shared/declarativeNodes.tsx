@@ -52,7 +52,7 @@ export const DECLARATIVE_ACTION_VARIANT_COLORS: Readonly<Record<
     destructive: (colors) => ({
         background: colors.state.danger.background,
         border: colors.state.danger.border,
-        label: colors.state.danger.foreground,
+        label: colors.state.danger.textForeground,
     }),
 });
 

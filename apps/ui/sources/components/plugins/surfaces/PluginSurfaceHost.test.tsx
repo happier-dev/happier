@@ -5623,13 +5623,13 @@ describe('PluginSurfacePlacementHost', () => {
             return flattenStyle(typeof style === 'function' ? style(state) : style);
         };
         const textColor = (path: string) => styleColor(`plugin-declarative-text:${path}`);
-        expect(textColor('root.children[0]')).toBe(colors.state.danger.foreground);
+        expect(textColor('root.children[0]')).toBe(colors.state.danger.textForeground);
         expect(textColor('root.children[1]')).toBe(colors.text.tertiary);
         expect(textColor('root.children[2]')).toBe(colors.text.primary);
         // A destructive action must not be pixel-identical to a primary one.
         expect(textColor('root.children[0]')).not.toBe(textColor('root.children[2]'));
         expect(styleColor('plugin-declarative-status-value:root.children[3]'))
-            .toBe(colors.state.warning.foreground);
+            .toBe(colors.state.warning.textForeground);
 
         surfaceEnvironment.highContrast = true;
         await screen.update(<PluginSurfacePlacementHost placement={placement} machineId="machine-1" pluginUiProjection={EMPTY_PLUGIN_UI_PROJECTION} platform="web" />);
@@ -5650,7 +5650,7 @@ describe('PluginSurfacePlacementHost', () => {
         expect(destructive?.props.accessibilityHint).toBe('common.destructiveActionHint');
         expect(primary?.props.accessibilityHint).toBeUndefined();
         expect(styleColor('plugin-declarative-action-label:acme.tone/wipe'))
-            .toBe(colors.state.danger.foreground);
+            .toBe(colors.state.danger.textForeground);
 
         // Schema → renderer closure: a new tone/variant member cannot silently no-op.
         const { PluginDeclarativeActionVariantV2Schema, PluginDeclarativeToneV2Schema} = await import('@happier-dev/protocol/plugins/contributions/ui/v2');

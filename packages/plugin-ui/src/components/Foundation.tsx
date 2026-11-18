@@ -12,7 +12,7 @@ import {
   HappierProgress,
   type HappierBannerPoint,
 } from '../presentation/content/Foundation.js';
-import { HAPPIER_TONE_COLOR_TOKEN, resolveHappierMarkColor, type HappierMarkColor, type HappierTone } from '../presentation/semantics.js';
+import { HAPPIER_TONE_COLOR_TOKEN, resolveHappierMarkColor, resolveHappierToneTextColor, type HappierMarkColor, type HappierTone } from '../presentation/semantics.js';
 import { softenHappierWorkColor } from '../presentation/work/workStatus.js';
 import { HappierStatusDot } from '../presentation/status/StatusDot.js';
 import { usePluginHostApi } from '../hostApi/context.js';
@@ -106,9 +106,9 @@ export function Badge({ tone = 'neutral', variant = 'outlined', icon, dot, testI
   // The icon sits at the words' own line height, so a badge with an icon is exactly as tall as one without.
   const iconSize = useHappierTypeRoleStyle('micro', theme).lineHeight;
   const tinted = variant === 'tinted';
-  const textColor = tinted && tone !== 'accent' && tone !== 'secondary' && tone !== 'muted'
-    ? theme.statusText?.[tone] ?? color
-    : color;
+  const textColor = tinted && tone === 'neutral'
+    ? theme.statusText?.neutral ?? color
+    : resolveHappierToneTextColor(theme, tone);
   // The tint is the tone at the one strength the shared work-state tint uses; a theme colour with no
   // softened form (a custom rgba) keeps the elevated surface rather than guessing a mix.
   const tint = tinted && tone !== 'neutral' && tone !== 'secondary' && tone !== 'muted'

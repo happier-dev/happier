@@ -34,8 +34,8 @@ export function WidgetGlanceRow({ mark, ...props }: WidgetGlanceRowProps): React
         text: theme.colors.text,
         secondaryText: theme.colors.secondaryText,
         mutedText: theme.colors.mutedText,
-        attention: theme.colors.warning,
-        danger: theme.colors.danger,
+        attention: theme.statusText?.warning ?? theme.colors.warning,
+        danger: theme.statusText?.danger ?? theme.colors.danger,
         pressed: palette?.navigationHover ?? theme.colors.control,
         focus: theme.colors.focus,
       }}

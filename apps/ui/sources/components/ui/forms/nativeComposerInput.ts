@@ -60,6 +60,7 @@ export type NativeComposerInputProps = Omit<ViewProps, 'onFocus' | 'onBlur'> & R
     decorations: readonly ComposerInputDecoration[];
     theme: Readonly<{
         text: string; placeholder: string; chipForeground: string; chipGlyphForeground: string; chipBackground: string;
+        chipWarningGlyphForeground: string;
         selection: string; warning: string; success: string; muted: string; link: string;
     }>;
     typography: Readonly<{

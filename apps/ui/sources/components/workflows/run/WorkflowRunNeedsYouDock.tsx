@@ -104,7 +104,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   title: {
     ...Typography.variant('heading'),
-    color: theme.colors.state.warning.foreground,
+    color: theme.colors.state.warning.textForeground,
   },
   steps: {
     ...Typography.variant('meta'),

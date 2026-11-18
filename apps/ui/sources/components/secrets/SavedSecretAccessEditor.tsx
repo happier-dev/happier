@@ -190,7 +190,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
     if (entry !== null && (parsed?.kind !== 'shared_resource' || entry.revision === null || entry.encryptionMode === null)) {
         return (
             <View style={styles.body}>
-                <Text accessibilityRole="alert" style={[styles.notice, { color: theme.colors.state.danger.foreground }]}>
+                <Text accessibilityRole="alert" style={[styles.notice, { color: theme.colors.state.danger.textForeground }]}>
                     {t('secrets.catalog.operationFailed')}
                 </Text>
                 <View style={styles.actions}>
@@ -444,7 +444,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
                     testID="saved-secret-access-failure"
                     accessibilityRole="alert"
                     accessibilityLiveRegion="polite"
-                    style={[styles.notice, { color: theme.colors.state.danger.foreground }]}
+                    style={[styles.notice, { color: theme.colors.state.danger.textForeground }]}
                 >
                     {failureText}
                 </Text>

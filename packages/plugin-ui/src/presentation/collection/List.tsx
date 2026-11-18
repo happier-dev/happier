@@ -30,7 +30,7 @@ import { resolveHappierPageRowDetailLayout } from '../layout/pageRowDetail.js';
 import { HAPPIER_FIELD_BOX_METRICS } from '../form/FieldBox.js';
 import { happierPageRowDividerInset, happierPageRowDividerWidth, useHappierPageSection } from '../layout/PageSection.js';
 import { HAPPIER_PAGE_TEXT, resolveHappierPageTextStyle } from '../layout/pageText.js';
-import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../semantics.js';
+import { resolveHappierToneTextColor, type HappierTone } from '../semantics.js';
 import { HappierText } from '../text/Text.js';
 import { HAPPIER_MIDDLE_ELLIPSIS_STYLE, splitForWebMiddleEllipsis } from '../text/middleEllipsis.js';
 import { HAPPIER_META_COLUMN_STYLE } from '../text/metaColumn.js';
@@ -916,7 +916,7 @@ export function HappierListItem({
       </View>
     );
 
-    const titleColor = resolvedTheme.colors[HAPPIER_TONE_COLOR_TOKEN[tone]];
+    const titleColor = resolveHappierToneTextColor(resolvedTheme, tone);
     const pageCompact = behavior.density === 'compact' || behavior.density === 'tight';
     return (
       <View
@@ -1024,7 +1024,7 @@ export function HappierListItem({
           {detailBeneath && detail ? <HappierText
             textScale={textScale}
             style={{ ...resolveHappierPageTextStyle('rowDescription', hostTypography), ...pageRowMetrics?.subtitle,
-              color: detailTone === undefined ? resolvedTheme.colors.secondaryText : resolvedTheme.colors[HAPPIER_TONE_COLOR_TOKEN[detailTone]] }}
+              color: detailTone === undefined ? resolvedTheme.colors.secondaryText : resolveHappierToneTextColor(resolvedTheme, detailTone) }}
           >{detailContent ?? detail}</HappierText> : null}
           {subtitle ? (
             <HappierText
@@ -1049,14 +1049,14 @@ export function HappierListItem({
               // core page rows draw it; elsewhere it is the collection's quiet meta.
               pageSection
                 ? { ...pageDetailTextStyle,
-                    color: detailTone === undefined ? resolvedTheme.colors.secondaryText : resolvedTheme.colors[HAPPIER_TONE_COLOR_TOKEN[detailTone]] }
+                    color: detailTone === undefined ? resolvedTheme.colors.secondaryText : resolveHappierToneTextColor(resolvedTheme, detailTone) }
                 : textStyle(
                 resolvedTheme,
                 hostTypography,
                 'micro',
                 detailTone === undefined
                   ? resolvedTheme.colors.secondaryText
-                  : resolvedTheme.colors[HAPPIER_TONE_COLOR_TOKEN[detailTone]],
+                  : resolveHappierToneTextColor(resolvedTheme, detailTone),
               ),
               // The trailing column is quiet metadata: it may never take the
               // title's width, and changing counts or ages must not jitter.

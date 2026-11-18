@@ -60,7 +60,7 @@ export const LinkBubbleEditInput = React.memo(function LinkBubbleEditInput(
                     accessibilityRole="button"
                     accessibilityLabel={t('markdown.linkBubble.save')}
                 >
-                    <Text style={[styles.buttonText, { color: theme.colors.state.active.foreground }]}>
+                    <Text style={[styles.buttonText, { color: theme.colors.state.active.textForeground }]}>
                         {t('markdown.linkBubble.save')}
                     </Text>
                 </Pressable>

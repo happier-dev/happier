@@ -81,7 +81,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 2,
     },
     outcomeWarning: {
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
     shot: {
         flexDirection: 'row',

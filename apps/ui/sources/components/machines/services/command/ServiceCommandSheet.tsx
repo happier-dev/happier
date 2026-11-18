@@ -291,7 +291,7 @@ function ServiceCommandResult(
           {state.kind === 'finished' ? (
             <Icon name={failedExit ? 'warning-circle' : 'check-circle'} size={ICON_SIZE.xs} color={tone} />
           ) : null}
-          <Text variant="meta" testID="service-command.status" style={{ color: tone }}>
+          <Text variant="meta" testID="service-command.status" style={{ color: failedExit ? theme.colors.state.warning.textForeground : theme.colors.text.secondary }}>
             {state.kind === 'finished'
               ? t('machineServices.command.finished', {
                   seconds: (state.durationMs / 1000).toFixed(1),

@@ -593,7 +593,7 @@ export const ScmStashDetailsCore = React.memo((props: ScmStashDetailsCoreProps) 
                             diffState.truncated
                                 ? () => (
                                     <View style={{ paddingHorizontal: theme.space.s16, paddingTop: theme.space.s10, paddingBottom: theme.space.s4 }}>
-                                        <Text style={{ ...Typography.variant('meta', 'semiBold'), color: theme.colors.state.neutral.foreground,  }}>
+                                        <Text style={{ ...Typography.variant('meta', 'semiBold'), color: theme.colors.state.neutral.textForeground,  }}>
                                             {t('files.stash.diffTruncated')}
                                         </Text>
                                     </View>

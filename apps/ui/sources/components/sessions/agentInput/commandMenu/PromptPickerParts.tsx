@@ -297,7 +297,7 @@ const styles = StyleSheet.create((theme) => ({
     saveMeta: { marginTop: theme.space.s6 },
     saveStar: { marginTop: theme.space.s6 },
     previewText: { ...Typography.default(), ...ITEM_SUBTITLE_TEXT_METRICS.compact, color: theme.colors.text.primary },
-    noticeError: { color: theme.colors.state.danger.foreground },
+    noticeError: { color: theme.colors.state.danger.textForeground },
     actionLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', minWidth: 0 },
     action: { flexDirection: 'row', alignItems: 'center' },
     skeleton: { paddingHorizontal: theme.space.s4 },

@@ -42,7 +42,7 @@ export function ReturnedAnswerQuote(props: ReturnedAnswerQuoteProps): ReactEleme
       showLess: translate(`${KEY}.showLess`, 'Show less'),
     }}
     informationMark={<Icon name="info" size="small" tone="secondary" />}
-    colors={{ text: theme.colors.text, secondaryText: theme.colors.secondaryText, danger: theme.colors.danger, border: theme.colors.divider, surface: theme.colors.surface }}
+    colors={{ text: theme.colors.text, secondaryText: theme.colors.secondaryText, danger: theme.statusText?.danger ?? theme.colors.danger, border: theme.colors.divider, surface: theme.colors.surface }}
     labels={{
       outcome: {
         answer: translate(`${KEY}.outcome.answer`, 'answered'),

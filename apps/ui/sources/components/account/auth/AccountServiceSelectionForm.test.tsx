@@ -159,6 +159,10 @@ describe('AccountServiceSelectionForm', () => {
         });
         await screen.pressByTestIdAsync('account-service-url-submit');
         await vi.waitFor(() => expect(screen.findByTestId('account-service-url-error')?.props.children).toBe('welcome.signInServiceUnsupportedBody'));
+        const { StyleSheet } = await import('react-native');
+        const { lightTheme } = await import('@/theme');
+        expect(StyleSheet.flatten(screen.findByTestId('account-service-url-error')?.props.style).color)
+            .toBe(lightTheme.colors.state.danger.textForeground);
 
         expect(onSelect).toHaveBeenCalledWith(
             'https://home.example.test',

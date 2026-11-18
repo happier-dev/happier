@@ -150,7 +150,7 @@ export function WorkflowValuePicker(props: Readonly<{
                                 ]}>
                                     {/* A narrow card wraps the value rather than cutting it short ("A fixed…"). */}
                                     <Text style={[workflowEditorStyles.valuePickerLabel,
-                                        { color: token ? theme.colors.state.active.foreground : theme.colors.text.secondary }]}>
+                                        { color: token ? theme.colors.state.active.textForeground : theme.colors.text.secondary }]}>
                                         {token ? `↵ ${label}` : label}
                                     </Text>
                                     <Icon name={open ? 'caret-up' : 'caret-down'} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />

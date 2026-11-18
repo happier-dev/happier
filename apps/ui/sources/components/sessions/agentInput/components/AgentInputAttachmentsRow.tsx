@@ -258,7 +258,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('micro', 'semiBold'),
     },
     attachmentChipError: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
         flexShrink: 1,
         ...Typography.variant('micro', 'semiBold'),
         maxWidth: 180,

@@ -233,7 +233,7 @@ export function MachineServiceLogs(
         }}
       />
       {projection?.kind === 'index' && projection.secretMasking ? (
-        <Text variant="meta" testID="machine-service-logs-masking" style={{ color: theme.colors.state.warning.foreground }}>
+        <Text variant="meta" testID="machine-service-logs-masking" style={{ color: theme.colors.state.warning.textForeground }}>
           {t('machineServices.logs.maskingIncomplete')}
         </Text>
       ) : null}

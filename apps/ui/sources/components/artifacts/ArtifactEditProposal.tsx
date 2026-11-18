@@ -593,15 +593,15 @@ const MARK: Readonly<Record<HappierDocEditProposalMark, IconName>> = {
   undone: 'clock-counter-clockwise', warning: 'warning', failed: 'warning-circle', locked: 'lock',
 };
 
-function toneColor(theme: ReturnType<typeof useUnistyles>['theme'], tone: HappierDocEditProposalTone | undefined): string {
-  return tone === 'warning' ? theme.colors.state.warning.foreground
+function toneColor(theme: ReturnType<typeof useUnistyles>['theme'], tone: HappierDocEditProposalTone | undefined, channel: 'foreground' | 'textForeground'): string {
+  return tone === 'warning' ? theme.colors.state.warning[channel]
     : tone === 'danger' ? theme.colors.text.destructive
       : tone === 'muted' ? theme.colors.text.tertiary : theme.colors.text.secondary;
 }
 
 function ProposalMark(props: HappierDocEditProposalMarkProps) {
   const { theme } = useUnistyles();
-  return <Icon name={MARK[props.mark]} size={ICON_SIZE.sm} color={toneColor(theme, props.tone)} />;
+  return <Icon name={MARK[props.mark]} size={ICON_SIZE.sm} color={toneColor(theme, props.tone, 'foreground')} />;
 }
 
 function ProposalText(props: HappierDocEditProposalTextProps) {
@@ -616,7 +616,7 @@ function ProposalText(props: HappierDocEditProposalTextProps) {
   }
   if (props.role === 'reason') return <Text variant="body" style={styles.reasonText}>{props.children}</Text>;
   // A receipt reads in primary ink; a status line takes its tone's colour.
-  const color = props.role === 'receipt' ? theme.colors.text.primary : toneColor(theme, props.tone);
+  const color = props.role === 'receipt' ? theme.colors.text.primary : toneColor(theme, props.tone, 'textForeground');
   return (
     <Text variant="meta" emphasis={props.role === 'receipt' ? 'medium' : undefined} style={[styles.lineText, { color }]}>
       {props.children}

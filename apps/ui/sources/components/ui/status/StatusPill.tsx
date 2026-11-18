@@ -21,7 +21,7 @@ export type StatusPillVariant = (typeof STATUS_PILL_VARIANTS)[number];
 
 type HappierBadgeStyle = React.ComponentProps<typeof HappierBadge>['style'];
 
-type StateColors = Readonly<{ foreground: string; textForeground?: string; background: string; border: string }>;
+type StateColors = Readonly<{ foreground: string; textForeground: string; background: string; border: string }>;
 
 /**
  * "Needs you" (DESIGN.md, "One attention colour"): the Brand-owned attention amber for its ink and ring.
@@ -30,7 +30,7 @@ type StateColors = Readonly<{ foreground: string; textForeground?: string; backg
  * the Work status treatment both draw it from here.
  */
 export function resolveAttentionStateColors(state: Readonly<{
-    attention: Readonly<{ foreground: string; textForeground?: string }>;
+    attention: Readonly<{ foreground: string; textForeground: string }>;
     warning: Readonly<{ background: string }>;
 }>): StateColors {
     return { foreground: state.attention.foreground, textForeground: state.attention.textForeground, background: state.warning.background, border: state.attention.foreground };
@@ -49,7 +49,7 @@ function resolveStatusPillState(
  */
 export function StatusWord(props: Readonly<{ variant: StatusPillVariant; label: string; testID?: string }>): React.ReactElement {
     const { theme } = useUnistyles();
-    return <Text testID={props.testID} style={{ color: resolveStatusPillState(theme.colors.state, props.variant).foreground }}>{props.label}</Text>;
+    return <Text testID={props.testID} style={{ color: resolveStatusPillState(theme.colors.state, props.variant).textForeground }}>{props.label}</Text>;
 }
 
 export function resolveStatusPillVariantForState(
@@ -152,7 +152,7 @@ export function StatusPill(props: StatusPillProps): React.ReactElement {
     const state = resolveStatusPillState(theme.colors.state, props.variant);
     const chrome = props.chrome ?? 'pill';
     const plain = chrome === 'plain';
-    const foregroundColor = props.foregroundColor ?? (plain ? state.foreground : state.textForeground ?? state.foreground);
+    const foregroundColor = props.foregroundColor ?? state.textForeground;
     const labelVariantStyle = props.labelVariant === 'phrase' ? styles.phraseLabel : null;
     const dotColor = props.dotColor ?? props.foregroundColor ?? state.foreground;
     const leading = props.leading ?? (props.hideDot ? null : (

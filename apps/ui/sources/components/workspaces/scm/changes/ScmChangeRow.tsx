@@ -317,7 +317,7 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
             )}
 
             {props.proposalNote ? (
-                <Text testID="scm-change-row-proposal-note" numberOfLines={1} style={{ flexShrink: 0, ...Typography.variant('meta', 'semiBold'), color: theme.colors.state.active.foreground,  }}>
+                <Text testID="scm-change-row-proposal-note" numberOfLines={1} style={{ flexShrink: 0, ...Typography.variant('meta', 'semiBold'), color: theme.colors.state.active.textForeground,  }}>
                     {props.proposalNote}
                 </Text>
             ) : null}

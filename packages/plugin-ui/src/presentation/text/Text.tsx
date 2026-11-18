@@ -19,7 +19,7 @@ import {
 } from '../../environment/context.js';
 import type { HappierPortableStyle, HappierStyleProp, HappierTextHostProps } from '../portableTypes.js';
 import {
-  HAPPIER_TONE_COLOR_TOKEN,
+  resolveHappierToneTextColor,
   type HappierTextVariant,
   type HappierTone,
 } from '../semantics.js';
@@ -213,7 +213,7 @@ export const HappierText = memo(forwardRef<unknown, HappierTextProps>(function H
       );
     }
 
-    const color = tone ? theme.colors[HAPPIER_TONE_COLOR_TOKEN[tone]] : undefined;
+    const color = tone ? resolveHappierToneTextColor(theme, tone) : undefined;
     const code = variant === 'code' ? theme.typography.code : undefined;
     return {
       ...(variant === undefined

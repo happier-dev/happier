@@ -4,7 +4,10 @@ export function resolveHappierFieldTextColors<Color>(palette: Readonly<{
   fieldBackground: Color;
   controlEdge?: import('../../environment/types.js').HappierUiPalette['controlEdge'];
   placeholder: Color;
-}>, theme: Readonly<{ colors: Readonly<{ text: Color; danger: Color }> }>) {
+}>, theme: Readonly<{
+  colors: Readonly<{ text: Color; danger: Color }>;
+  statusText?: Readonly<{ danger?: Color }>;
+}>) {
   return {
     borderColor: palette.controlBorder,
     backgroundColor: palette.fieldBackground,
@@ -12,5 +15,6 @@ export function resolveHappierFieldTextColors<Color>(palette: Readonly<{
     valueColor: theme.colors.text,
     placeholderColor: palette.placeholder,
     errorColor: theme.colors.danger,
+    errorTextColor: theme.statusText?.danger ?? theme.colors.danger,
   };
 }

@@ -23,9 +23,9 @@ function DiffStatText(props: HappierDiffStatTextProps): ReactElement {
   const palette = useOptionalHappierUiPalette(theme);
   const typography = useOptionalHappierUiTypography();
   const color = props.kind === 'added'
-    ? palette?.versionControlAdded ?? theme.colors.success
+    ? palette?.versionControlAdded ?? theme.statusText?.success ?? theme.colors.success
     : props.kind === 'removed'
-      ? palette?.versionControlRemoved ?? theme.colors.danger
+      ? palette?.versionControlRemoved ?? theme.statusText?.danger ?? theme.colors.danger
       : null;
   return (
     <HappierText

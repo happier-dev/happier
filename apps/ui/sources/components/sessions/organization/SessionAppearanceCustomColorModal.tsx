@@ -106,6 +106,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: theme.space.s10,
     },
     error: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
 }));

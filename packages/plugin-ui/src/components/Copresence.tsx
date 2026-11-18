@@ -39,6 +39,7 @@ function useCapsuleColors(theme: PluginUiThemeV1): HappierCapsuleColors {
     text: theme.colors.text,
     secondaryText: theme.colors.secondaryText,
     warning: theme.colors.warning,
+    warningText: theme.statusText?.warning,
     stripBackground: theme.colors.surface,
     stripBorder: theme.colors.divider,
   }), [palette?.segmentTrack, theme]);

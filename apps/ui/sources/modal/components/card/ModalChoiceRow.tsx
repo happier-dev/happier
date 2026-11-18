@@ -93,6 +93,6 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: theme.space.s2,
     },
     destructiveText: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
 }));

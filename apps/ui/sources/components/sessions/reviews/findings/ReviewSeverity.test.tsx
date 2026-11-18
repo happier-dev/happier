@@ -42,9 +42,9 @@ it('draws each severity in the colour role the shared severity owner gives it, L
     )[0];
     return StyleSheet.flatten(node?.props.style)?.color;
   };
-  expect(colorOf('blocker words')).toBe(theme.colors.state.danger.foreground);
-  expect(colorOf('high words')).toBe(theme.colors.state.danger.foreground);
-  expect(colorOf('medium words')).toBe(theme.colors.state.warning.foreground);
+  expect(colorOf('blocker words')).toBe(theme.colors.state.danger.textForeground);
+  expect(colorOf('high words')).toBe(theme.colors.state.danger.textForeground);
+  expect(colorOf('medium words')).toBe(theme.colors.state.warning.textForeground);
   expect(colorOf('low words')).toBe(theme.colors.text.secondary);
   expect(colorOf('nit words')).toBe(theme.colors.text.tertiary);
   expect(colorOf('low words')).not.toBe(theme.colors.accent.blue);

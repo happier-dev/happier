@@ -171,7 +171,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     outcomeWarningText: {
         ...Typography.variant('meta'),
         // Cleanup debt after a committed success is a warning, not a failure.
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
     detailsBody: {
         paddingHorizontal: theme.space.s16,

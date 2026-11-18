@@ -320,7 +320,7 @@ const styles = StyleSheet.create((theme) => ({
     // Aligned under the words, past the check.
     paddingLeft: ICON_SIZE.sm + theme.space.s8,
     ...Typography.variant('meta'),
-    color: theme.colors.state.danger.foreground,
+    color: theme.colors.state.danger.textForeground,
   },
   title: {
     ...Typography.variant('body'),

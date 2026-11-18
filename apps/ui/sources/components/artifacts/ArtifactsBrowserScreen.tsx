@@ -713,7 +713,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.state.warning.foreground,
     },
     meterTextFull: {
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
     freshness: {
         marginHorizontal: PAGE_LIST_METRICS.sheetInsetPx,

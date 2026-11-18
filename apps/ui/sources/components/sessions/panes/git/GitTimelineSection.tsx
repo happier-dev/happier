@@ -234,7 +234,7 @@ const OriginMarker = React.memo(function OriginMarker(props: Readonly<{ name: st
             <ScmTimelineGutter when="" pointTopPx={0} tone="shared" showLeadingLine showTrailingLine hidePoint />
             <View style={[styles.originChip, { borderColor: tint }]}>
                 <Icon name="cloud" size={12} color={tint} />
-                <Text style={[styles.originText, { color: tint }]} numberOfLines={1}>{props.name}</Text>
+                <Text style={[styles.originText, { color: props.upToDate ? theme.colors.state.success.textForeground : theme.colors.text.secondary }]} numberOfLines={1}>{props.name}</Text>
                 {props.upToDate ? (
                     <Animated.View entering={reducedMotion ? FadeIn.duration(motionTokens.successMoment.reducedCrossFadeMs) : ZoomIn.duration(motionTokens.successMoment.checkMs)}>
                         <Icon name="check" size={11} color={tint} />

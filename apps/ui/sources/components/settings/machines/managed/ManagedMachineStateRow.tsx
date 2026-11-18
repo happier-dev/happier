@@ -97,9 +97,9 @@ export const ManagedMachineStateRow = React.memo(
     }
     const tint =
       presentation.tone === 'warning'
-        ? theme.colors.state.warning.foreground
+        ? theme.colors.state.warning.textForeground
         : presentation.tone === 'danger'
-          ? theme.colors.state.danger.foreground
+          ? theme.colors.state.danger.textForeground
           : null;
     const leadWithLine = props.leadWithLine === true && !tint && Boolean(presentation.line);
     return (

@@ -394,10 +394,10 @@ const styles = StyleSheet.create((theme) => ({
         flexShrink: 1,
     },
     readinessNeedsYou: {
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
     readinessBlocked: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     readinessQuiet: {
         color: theme.colors.text.secondary,

@@ -39,7 +39,7 @@ export const PromptEditorHeader = React.memo(function PromptEditorHeader(props: 
                     testID={`${props.testID}.error`}
                     accessibilityRole="alert"
                     accessibilityLiveRegion="polite"
-                    style={{ color: theme.colors.state.danger.foreground, fontSize: 13, lineHeight: 18 }}
+                    style={{ color: theme.colors.state.danger.textForeground, fontSize: 13, lineHeight: 18 }}
                 >
                     {props.error}
                 </Text>

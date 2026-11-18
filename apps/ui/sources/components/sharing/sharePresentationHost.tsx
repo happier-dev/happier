@@ -15,7 +15,7 @@ const styles = StyleSheet.create(theme => ({
     secondary: { color: theme.colors.text.secondary },
     selected: { color: theme.colors.text.link },
     strong: { color: theme.colors.text.primary, fontWeight: '600' },
-    destructive: { color: theme.colors.state.danger.foreground },
+    destructive: { color: theme.colors.state.danger.textForeground },
 }));
 
 function ShareText({ tone = 'primary', ...props }: HappierShareTextProps) {

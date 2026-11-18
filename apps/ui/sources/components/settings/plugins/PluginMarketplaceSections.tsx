@@ -1456,7 +1456,7 @@ const sectionStylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
     },
     statusMessageError: {
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
     statusQualifier: {
         ...Typography.variant('meta'),

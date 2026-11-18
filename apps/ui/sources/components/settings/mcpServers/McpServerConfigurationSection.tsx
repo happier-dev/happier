@@ -103,7 +103,7 @@ export const McpServerConfigurationSection = React.memo(function McpServerConfig
     const savedLine = props.saveState === 'saved' || props.saveState === 'saving' || props.saveState === 'failed' ? (
         <View testID="mcp.server.config.saveState" style={styles.saved}>
             {props.saveState === 'saved' ? <Icon name="check" size={14} color={theme.colors.text.secondary} /> : null}
-            <Text variant="meta" style={{ color: props.saveState === 'failed' ? theme.colors.state.danger.foreground : theme.colors.text.secondary }}>
+            <Text variant="meta" style={{ color: props.saveState === 'failed' ? theme.colors.state.danger.textForeground : theme.colors.text.secondary }}>
                 {props.saveState === 'saved' ? t('capabilities.mcp.config.saved')
                     : props.saveState === 'saving' ? t('capabilities.mcp.config.saving')
                         : t('capabilities.mcp.config.saveFailed')}

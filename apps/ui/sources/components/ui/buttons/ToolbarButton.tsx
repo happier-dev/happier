@@ -117,7 +117,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.button.primary.tint,
     },
     dangerLabel: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     hovered: {
         backgroundColor: theme.colors.surface.pressed,

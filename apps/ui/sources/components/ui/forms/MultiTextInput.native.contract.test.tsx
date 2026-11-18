@@ -27,6 +27,17 @@ afterEach(async () => {
 });
 
 describe('MultiTextInput native composer boundary', () => {
+    it('supplies readable decoration text and the warning chip glyph ink to native', async () => {
+        const { MultiTextInput } = await import('./MultiTextInput');
+        const { lightTheme } = await import('@/theme');
+        const screen = await renderScreen(<MultiTextInput value="hello" onChangeText={() => {}} />);
+        expect(screen.tree.findByType('HappierComposerInput').props.theme).toMatchObject({
+            warning: lightTheme.colors.state.warning.textForeground,
+            success: lightTheme.colors.state.success.textForeground,
+            chipWarningGlyphForeground: lightTheme.colors.state.warning.foreground,
+        });
+    });
+
     it('classifies only the native-view teardown error as not attached', () => {
         expect(classifyNativeComposerInputCommandError(new Error("Unable to find the 'HappierComposerInputView' view with tag '22162'")))
             .toEqual({ kind: 'not_attached', reason: 'native_view_missing' });

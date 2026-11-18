@@ -722,7 +722,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.text.tertiary,
   },
   metaStale: {
-    color: theme.colors.state.warning.foreground,
+    color: theme.colors.state.warning.textForeground,
   },
   invite: {
     gap: theme.space.s10,

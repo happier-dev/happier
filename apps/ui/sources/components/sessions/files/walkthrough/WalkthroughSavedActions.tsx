@@ -328,6 +328,6 @@ const styles = StyleSheet.create((theme) => ({
     stopEditor: { gap: theme.space.s16, padding: theme.space.s16, backgroundColor: theme.colors.surface.selected },
     stopActions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s4 },
     reason: { ...Typography.variant('body'), color: theme.colors.text.secondary },
-    error: { ...Typography.variant('body'), color: theme.colors.state.danger.foreground },
+    error: { ...Typography.variant('body'), color: theme.colors.state.danger.textForeground },
     feedback: { gap: PAGE_LIST_METRICS.groupHeadingGapPx },
 }));

@@ -36,7 +36,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingBottom: theme.space.s16,
         gap: 18,
     },
-    failed: { color: theme.colors.state.danger.foreground },
+    failed: { color: theme.colors.state.danger.textForeground },
     subtitleLine: { ...happierPageTextMetrics('rowDescription'), color: theme.colors.text.tertiary },
     roleName: { ...Typography.variant('label'), color: theme.colors.text.primary },
     notes: {

@@ -140,7 +140,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   container: { gap: theme.space.s8 },
   conflict: {
     ...Typography.variant('meta'),
-    color: theme.colors.state.warning.foreground,
+    color: theme.colors.state.warning.textForeground,
   },
   quiet: {
     ...Typography.variant('meta'),

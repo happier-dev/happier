@@ -235,7 +235,7 @@ export function EnvironmentVariablesPreviewPanel(props: EnvironmentVariablesPrev
                                         return theme.colors.status?.connected ?? theme.colors.text.secondary;
                                     case 'fallback':
                                     case 'missing':
-                                        return theme.colors.state.neutral.foreground;
+                                        return theme.colors.state.neutral.textForeground;
                                     default:
                                         return theme.colors.text.secondary;
                                 }

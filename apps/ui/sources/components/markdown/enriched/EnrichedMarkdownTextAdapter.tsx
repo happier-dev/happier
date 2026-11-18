@@ -240,7 +240,7 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
                 label: reference.label,
                 glyph: nativeReferenceChipGlyph(href.slice(INLINE_REFERENCE_HREF_PREFIX_V1.length), reference.glyph, Platform.OS, reference.thumbnail != null),
                 thumbnail: reference.thumbnail?.uri ?? '',
-                foreground: nativeReferenceChipColor(reference.foreground),
+                foreground: nativeReferenceChipColor(reference.textForeground ?? reference.foreground),
                 background: nativeReferenceChipColor(reference.background),
                 glyphInk: nativeReferenceChipColor(chipInks.secondary),
             }])),

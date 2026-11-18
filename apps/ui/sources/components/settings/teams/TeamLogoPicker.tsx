@@ -198,7 +198,7 @@ export const TeamLogoPicker = React.memo(function TeamLogoPicker(props: Readonly
             // What the row shows now: a picked image waiting to be used, else the monogram until a
             // logo exists. A published logo needs no words; it is beside them.
             subtitle={shownError ?? (previewSource ? t('teams.logo.previewLabel') : imageUrl ? undefined : t('teams.logo.monogramLabel'))}
-            subtitleStyle={shownError ? { color: theme.colors.state.danger.foreground } : undefined}
+            subtitleStyle={shownError ? { color: theme.colors.state.danger.textForeground } : undefined}
             subtitleLines={0}
             accessoryLayout="adaptive"
             rightElement={actions}

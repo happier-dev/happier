@@ -358,7 +358,8 @@ export function ListSelectionActionBar(props: ListSelectionActionBarProps): Reac
       accessibilityLabel={props.accessibilityLabel ?? translate(SELECTION_ACTION_BAR_TRANSLATION_KEY, 'Selection actions')}
       testID={props.testID}
       style={props.style}
-      colors={{ background: theme.colors.text, foreground: theme.colors.canvas, destructive: theme.colors.danger }}
+      colors={{ background: theme.colors.text, foreground: theme.colors.canvas,
+        destructive: theme.colors.danger, destructiveText: theme.statusText?.danger }}
       host={host}
       moreLabel={translate(SELECTION_MORE_TRANSLATION_KEY, 'More actions')}
       actions={props.actions.map((action) => ({

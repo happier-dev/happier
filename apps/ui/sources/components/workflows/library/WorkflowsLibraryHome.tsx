@@ -467,7 +467,7 @@ function useDefinitionRowActions(row: Exclude<LibraryRow, AccountWorkflowLibrary
                         size="small"
                         display="inverted"
                         title={t('workflows.destination.sections.needsYou')}
-                        textStyle={{ color: theme.colors.state.warning.foreground }}
+                        textStyle={{ color: theme.colors.state.warning.textForeground }}
                         onPress={() => commands.openRun(needsYouRunId)}
                     />
                 )}

@@ -185,6 +185,7 @@ internal class ComposerEditText(context: Context) : AppCompatEditText(context) {
     dimension(typography, "chipGlyphSize", 0f) * density * fontScale,
     dimension(typography, "chipGap", 0f) * density * fontScale,
     ink("chipGlyphForeground", ink("chipForeground")),
+    ink("chipWarningGlyphForeground", ink("warning")),
     chipContainerWidth.toFloat(),
   )
 

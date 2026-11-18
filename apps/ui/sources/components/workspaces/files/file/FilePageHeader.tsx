@@ -400,7 +400,7 @@ export const FilePageHeader = React.memo(function FilePageHeader(props: FilePage
                         label={virtualSelectionEnabled ? t('files.fileActions.selectedLines.selectLinesForCommit')
                             : selectedLineActionIsRemoval ? t('files.fileActions.selectedLines.unstageSelectedLines')
                                 : t('files.fileActions.selectedLines.stageSelectedLines')}
-                        labelColor={selectedLineActionIsRemoval ? theme.colors.state.neutral.foreground : theme.colors.state.success.foreground}
+                        labelColor={selectedLineActionIsRemoval ? theme.colors.state.neutral.textForeground : theme.colors.state.success.textForeground}
                     />
                     <IconButton onPress={onClearSelection} testID="file-details-clear-selection" variant="plain" size={30}
                         iconSize={14} iconName="x" accessibilityLabel={t('files.fileActions.clearSelection')} />

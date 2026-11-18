@@ -482,7 +482,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingTop: theme.space.s12,
   },
   noticeText: {
-    color: theme.colors.state.warning.foreground,
+    color: theme.colors.state.warning.textForeground,
   },
   // A floating control over the miniature: the menu's surface and hairline keep it legible on any theme.
   tileMenu: {

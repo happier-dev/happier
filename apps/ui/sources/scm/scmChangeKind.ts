@@ -44,10 +44,10 @@ type ScmChangeToneTheme = Readonly<{
     colors: Readonly<{
         text: Readonly<{ secondary: string; link?: string }>;
         state: Readonly<{
-            success: Readonly<{ foreground?: string }>;
-            neutral: Readonly<{ foreground?: string }>;
-            danger: Readonly<{ foreground?: string }>;
-            warning?: Readonly<{ foreground?: string }>;
+            success: Readonly<{ textForeground?: string }>;
+            neutral: Readonly<{ textForeground?: string }>;
+            danger: Readonly<{ textForeground?: string }>;
+            warning?: Readonly<{ textForeground?: string }>;
         }>;
     }>;
 }>;
@@ -56,15 +56,15 @@ export function resolveScmChangeToneColor(tone: ScmChangeTone, theme: ScmChangeT
     const fallback = theme.colors.text.secondary;
     switch (tone) {
         case 'added':
-            return theme.colors.state.success.foreground ?? fallback;
+            return theme.colors.state.success.textForeground ?? fallback;
         case 'deleted':
         case 'conflicted':
-            return theme.colors.state.danger.foreground ?? fallback;
+            return theme.colors.state.danger.textForeground ?? fallback;
         case 'moved':
             return theme.colors.text.link ?? fallback;
         case 'modified':
         default:
             // Lab tone: modified reads amber (warning), the one hue that means "edited".
-            return theme.colors.state.warning?.foreground ?? theme.colors.state.neutral.foreground ?? fallback;
+            return theme.colors.state.warning?.textForeground ?? theme.colors.state.neutral.textForeground ?? fallback;
     }
 }

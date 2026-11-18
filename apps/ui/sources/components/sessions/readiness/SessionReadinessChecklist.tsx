@@ -199,7 +199,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   title: { color: theme.colors.text.primary },
   detail: { color: theme.colors.text.secondary },
-  attention: { color: theme.colors.state.warning.foreground },
+  attention: { color: theme.colors.state.warning.textForeground },
   fix: {
     flexDirection: 'row',
     alignItems: 'center',

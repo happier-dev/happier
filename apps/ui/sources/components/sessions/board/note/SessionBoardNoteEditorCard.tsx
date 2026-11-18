@@ -66,7 +66,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 160,
     },
     noticeAlert: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     review: {
         marginTop: theme.space.s12,

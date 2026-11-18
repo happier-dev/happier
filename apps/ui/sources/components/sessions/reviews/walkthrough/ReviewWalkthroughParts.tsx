@@ -40,7 +40,7 @@ export function ReviewFindingReference(props: Readonly<{ view: WalkthroughFindin
             style={(state) => [styles.ref, { backgroundColor: colors.tint }, state.pressed ? styles.pressed : null, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
         >
             <View style={[styles.dot, { backgroundColor: colors.foreground }]} />
-            <Text style={[styles.refText, { color: colors.foreground }]}>{label}</Text>
+            <Text style={[styles.refText, { color: colors.textForeground }]}>{label}</Text>
         </HappierPressable>
     );
 }

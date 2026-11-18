@@ -100,8 +100,10 @@ export type HappierFindBarColors = Readonly<{
   secondaryText: string;
   tertiaryText: string;
   divider: string;
-  /** Toggle-on ink, Done, the seated arrows, Stop. */
+  /** Toggle-on glyph ink and the seated arrows. */
   accent: string;
+  /** Readable ink for active labels and links. */
+  accentText?: string;
   /** Toggle-on fill. */
   accentFill: string;
   danger: string;
@@ -582,7 +584,7 @@ export function HappierFindBar(props: HappierFindBarProps) {
           >
             {(state) => (
               <View style={[styles.doneLabel, state.focused ? { borderColor: colors.focus } : null]}>
-                <host.Text numberOfLines={1} style={{ fontSize: seatedMetrics.fontSizePx, fontWeight: '600', color: colors.accent }}>{labels.done}</host.Text>
+                <host.Text numberOfLines={1} style={{ fontSize: seatedMetrics.fontSizePx, fontWeight: '600', color: colors.accentText ?? colors.accent }}>{labels.done}</host.Text>
               </View>
             )}
           </HappierPressable>
@@ -778,7 +780,7 @@ function FindBarToggle(props: Readonly<{
             style={{
               fontSize: HAPPIER_FIND_BAR_METRICS.inline.toggleFontSizePx,
               fontWeight: '600',
-              color: props.on ? props.colors.accent : props.colors.secondaryText,
+              color: props.on ? props.colors.accentText ?? props.colors.accent : props.colors.secondaryText,
             }}
           >{props.text}</props.host.Text>
           <FocusRing visible={state.focused} color={props.colors.focus} radius={radius} />
@@ -825,7 +827,7 @@ function FindBarOptionPill(props: Readonly<{
           backgroundColor: props.on ? colors.accentFill : colors.field,
         }}>
           <host.Text numberOfLines={1} mono style={{ fontSize: HAPPIER_FIND_BAR_METRICS.inline.toggleFontSizePx, fontWeight: '600', color: props.on ? colors.accent : colors.secondaryText }}>{props.glyph}</host.Text>
-          <host.Text numberOfLines={1} style={{ flexShrink: 1, fontSize: 13, color: props.on ? colors.accent : colors.secondaryText }}>{props.text}</host.Text>
+          <host.Text numberOfLines={1} style={{ flexShrink: 1, fontSize: 13, color: props.on ? colors.accentText ?? colors.accent : colors.secondaryText }}>{props.text}</host.Text>
           <FocusRing visible={state.focused} color={colors.focus} radius={pill / 2} />
         </View>
       )}
@@ -879,8 +881,8 @@ function FindBarNote(props: Readonly<{
         <HappierTextLinkButton
           {...props.link}
           Text={host.Text}
-          labelStyle={{ fontSize: 12, lineHeight: 16, color: colors.accent }}
-          hoverColor={colors.accent}
+          labelStyle={{ fontSize: 12, lineHeight: 16, color: colors.accentText ?? colors.accent }}
+          hoverColor={colors.accentText ?? colors.accent}
           focusColor={colors.focus}
           minimumTargetSize={props.minimumTargetSize}
           // Past the note's own padding the field above or below is the neighbour.

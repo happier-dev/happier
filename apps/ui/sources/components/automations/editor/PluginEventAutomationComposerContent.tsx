@@ -1102,7 +1102,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     availableText: {
         ...Typography.variant('meta'),
-        color: theme.colors.state.success.foreground,
+        color: theme.colors.state.success.textForeground,
     },
     payloadBrowser: {
         gap: theme.space.s6,

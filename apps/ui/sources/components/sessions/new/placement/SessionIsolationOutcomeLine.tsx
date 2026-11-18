@@ -283,6 +283,6 @@ const styles = StyleSheet.create((theme) => ({
   text: { ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 },
   warning: {
     ...Typography.variant('meta'),
-    color: theme.colors.state.warning.foreground,
+    color: theme.colors.state.warning.textForeground,
   },
 }));

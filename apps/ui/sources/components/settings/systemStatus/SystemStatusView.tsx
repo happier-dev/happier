@@ -600,7 +600,7 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
                   const daemonAccountId = fetchEntry.snapshot.accountId ?? UNKNOWN_VALUE;
                   const mismatchLabel = attention === 'mismatch' ? ` • ${t('systemStatus.mismatch')}` : '';
                   return (
-                    <Text style={{ color: attention === 'mismatch' ? theme.colors.state.danger.foreground : theme.colors.text.secondary }}>
+                    <Text style={{ color: attention === 'mismatch' ? theme.colors.state.danger.textForeground : theme.colors.text.secondary }}>
                       {t('systemStatus.machine.daemonAttribution', { home: daemonServerUrl, account: daemonAccountId })}
                       {mismatchLabel}
                       {'\n'}

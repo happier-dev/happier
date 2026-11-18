@@ -571,7 +571,7 @@ function ScopedReviewCommentsSessionSurface(props: ReviewCommentsSessionSurfaceP
                                 testID={`${props.testID ?? 'review-comments'}-direct-write-grant-${grant.id}-revoke`}
                                 style={{ justifyContent: 'center' }}
                             >
-                                <Text style={{ color: theme.colors.state.danger.foreground }}>
+                                <Text style={{ color: theme.colors.state.danger.textForeground }}>
                                     {t('files.reviewComments.durable.directWriteGrant.revoke')}
                                 </Text>
                             </HappierPressable>

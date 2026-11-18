@@ -252,7 +252,7 @@ function NoAgentMachineRow(props: Readonly<{ serverId: string | null; machine: N
       {...(machine.attention
         ? {
             subtitleStyle: {
-              color: theme.colors.state.warning.foreground,
+              color: theme.colors.state.warning.textForeground,
             },
           }
         : {})}

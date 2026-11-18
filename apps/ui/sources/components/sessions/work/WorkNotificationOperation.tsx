@@ -8,7 +8,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 const stylesheet = StyleSheet.create(theme => ({
-  error: { ...Typography.variant('meta'), color: theme.colors.state.danger.foreground },
+  error: { ...Typography.variant('meta'), color: theme.colors.state.danger.textForeground },
 }));
 
 /** State-free shared row; personal Follow owns arming and delivery. */

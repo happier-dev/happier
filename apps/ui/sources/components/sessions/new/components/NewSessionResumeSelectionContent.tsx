@@ -87,7 +87,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
     },
     buttonTextDestructive: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     clearButton: {
         paddingVertical: theme.space.s6,

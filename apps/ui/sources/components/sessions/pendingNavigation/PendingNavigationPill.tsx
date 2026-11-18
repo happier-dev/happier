@@ -122,7 +122,7 @@ export function PendingAttentionPill(props: Readonly<{ count: number; phone: boo
             ]}
         >
             <StatusDot color={ink} size={countOnly ? 6 : 7} />
-            <Text testID={`${testID}-count`} style={[styles.attentionLabel, { color: ink }]} numberOfLines={1}>
+            <Text testID={`${testID}-count`} style={[styles.attentionLabel, { color: theme.colors.state.attention.textForeground }]} numberOfLines={1}>
                 {countOnly ? String(count) : label}
             </Text>
             {!countOnly && shortcut ? (

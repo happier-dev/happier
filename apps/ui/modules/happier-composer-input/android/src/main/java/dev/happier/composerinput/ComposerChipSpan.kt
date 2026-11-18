@@ -37,6 +37,7 @@ internal data class ComposerChipStyle(
   val glyphSize: Float,
   val gap: Float,
   val glyphForeground: Int,
+  val warningGlyphForeground: Int,
   val maxWidth: Float,
 )
 
@@ -105,7 +106,15 @@ private fun drawQuietInkChip(
     "pending", "pending-upload", "uploading" -> style.muted
     else -> style.foreground
   }
-  val glyphPaint = Paint(paint).apply { textSize = style.glyphSize; typeface = Typeface.DEFAULT; if (state == "ready") color = style.glyphForeground }
+  val glyphPaint = Paint(paint).apply {
+    textSize = style.glyphSize
+    typeface = Typeface.DEFAULT
+    color = when (state) {
+      "removed", "unavailable" -> style.warningGlyphForeground
+      "ready" -> style.glyphForeground
+      else -> paint.color
+    }
+  }
   canvas.drawText(glyph, x + style.paddingLeft, center - (glyphPaint.fontMetrics.ascent + glyphPaint.fontMetrics.descent) / 2, glyphPaint)
   canvas.drawText(label, x + style.paddingLeft + style.glyphSize + style.gap, baseline, paint)
 }

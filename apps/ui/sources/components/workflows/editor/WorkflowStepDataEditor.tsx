@@ -97,7 +97,7 @@ export function WorkflowValueReferenceToken(props: Readonly<{ draft: WorkflowEdi
     }
     // A reference reads as the lab's tinted chip (`.uwe-ref`): the accent's own tint behind accent words,
     // inline in a sentence or on a step's footer line, never a bare link-coloured run of text.
-    return <Text testID={props.testID} style={{ color: theme.colors.state.active.foreground, backgroundColor: theme.colors.state.active.background,
+    return <Text testID={props.testID} style={{ color: theme.colors.state.active.textForeground, backgroundColor: theme.colors.state.active.background,
         borderRadius: theme.borderRadius.sm, paddingHorizontal: theme.space.s4 }} selectable>
         {/* A chip wraps whole, never inside its words (owner 2026-11-06): its spaces do not break. */}
         {`↵ ${props.label ?? formatWorkflowValueReference(props.draft, props.reference)}`.replace(/ /g, '\u00A0')}</Text>;

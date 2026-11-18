@@ -712,7 +712,7 @@ const ValueRefInlineRow = React.memo(function ValueRefInlineRow(
         <Text
           variant="meta"
           testID={`${props.testID}.error`}
-          style={{ color: theme.colors.state.danger.foreground }}
+          style={{ color: theme.colors.state.danger.textForeground }}
         >
           {error}
         </Text>

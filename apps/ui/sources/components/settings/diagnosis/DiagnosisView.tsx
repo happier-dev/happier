@@ -632,11 +632,11 @@ const diagnosisStyles = StyleSheet.create((theme) => ({
         marginTop: theme.space.s6,
     },
     okText: {
-        color: theme.colors.state.success.foreground,
+        color: theme.colors.state.success.textForeground,
         marginTop: theme.space.s6,
     },
     errorText: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
         marginTop: theme.space.s6,
     },
 }));

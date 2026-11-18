@@ -681,7 +681,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                         testID="teams-create-error"
                         accessibilityRole="alert"
                         accessibilityLiveRegion="polite"
-                        style={{ color: theme.colors.state.danger.foreground }}
+                        style={{ color: theme.colors.state.danger.textForeground }}
                     >
                         {error}
                     </Text>

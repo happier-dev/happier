@@ -115,6 +115,7 @@ export function FindBar({ surfaceLabel, ...props }: FindBarProps): React.ReactEl
         tertiaryText: text.tertiary,
         divider: border.default,
         accent: state.active.foreground,
+        accentText: state.active.textForeground,
         accentFill: state.active.background,
         danger: text.destructive,
         hover: surface.selected,

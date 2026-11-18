@@ -61,7 +61,8 @@ export function DocEditProposal(props: DocEditProposalProps): ReactElement {
 }
 
 function toneColor(tone: HappierDocEditProposalTone | undefined, theme: ReturnType<typeof usePluginTheme>): string {
-  return tone === 'warning' ? theme.colors.warning : tone === 'danger' ? theme.colors.danger
+  return tone === 'warning' ? theme.statusText?.warning ?? theme.colors.warning
+    : tone === 'danger' ? theme.statusText?.danger ?? theme.colors.danger
     : tone === 'muted' ? theme.colors.mutedText : theme.colors.secondaryText;
 }
 

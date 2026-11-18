@@ -1240,7 +1240,7 @@ export const AccountEmailPasswordSection = React.memo(function AccountEmailPassw
                     testID="settings-account-password-outcome"
                     accessibilityRole="alert"
                     accessibilityLiveRegion="polite"
-                    style={[styles.noticeText, { color: theme.colors.state.success.foreground }]}
+                    style={[styles.noticeText, { color: theme.colors.state.success.textForeground }]}
                 >{outcomeMessage}</Text>
             </View>
         </View>

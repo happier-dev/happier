@@ -48,7 +48,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginTop: theme.space.s4,
     },
     irreversibleText: {
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
 }));
 

@@ -218,7 +218,7 @@ describe('Automations · Latest runs on Home', () => {
         expect(done.subtitleStyle).toBeUndefined();
         const failed = await glyphOf('failed', 'x-circle');
         expect(failed.color).toBe(lightTheme.colors.state.danger.foreground);
-        expect(failed.subtitleStyle?.color).toBe(lightTheme.colors.state.danger.foreground);
+        expect(failed.subtitleStyle?.color).toBe(lightTheme.colors.state.danger.textForeground);
         expect((await glyphOf('outcome_uncertain', 'warning-circle')).color).toBe(lightTheme.colors.state.attention.foreground);
     });
 

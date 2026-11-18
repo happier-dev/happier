@@ -104,7 +104,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
     },
     statusLabelAttention: {
-        color: theme.colors.state.attention.foreground,
+        color: theme.colors.state.attention.textForeground,
     },
     facts: {
         gap: theme.space.s2,

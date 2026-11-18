@@ -807,10 +807,10 @@ const styles = StyleSheet.create((theme) => ({
         fontFamily: 'monospace',
     },
     kindTextNew: {
-        color: theme.colors.state.success.foreground,
+        color: theme.colors.state.success.textForeground,
     },
     kindTextDeleted: {
-        color: theme.colors.state.danger.foreground ?? theme.colors.state.neutral.foreground,
+        color: theme.colors.state.danger.textForeground ?? theme.colors.state.neutral.textForeground,
     },
     kindTextRenamed: {
         color: theme.colors.accent.indigo,

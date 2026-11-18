@@ -51,7 +51,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontFamily: resolveCodeMonoFontFamily(),
         fontSize: 14,
         lineHeight: 20,
-        color: theme.colors.state.success.foreground ?? theme.colors.text.primary,
+        color: theme.colors.state.success.textForeground ?? theme.colors.text.primary,
         fontWeight: '600',
     },
     commandText: {
@@ -75,7 +75,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     stderr: {
         fontFamily: resolveCodeMonoFontFamily(),
         fontSize: 13,
-        color: theme.colors.state.neutral.foreground ?? theme.colors.text.secondary,
+        color: theme.colors.state.neutral.textForeground ?? theme.colors.text.secondary,
         lineHeight: 18,
         marginTop: theme.space.s8,
         ...LONG_TOKEN_WRAP,
@@ -83,7 +83,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     error: {
         fontFamily: resolveCodeMonoFontFamily(),
         fontSize: 13,
-        color: theme.colors.state.danger.foreground ?? theme.colors.state.danger.foreground ?? theme.colors.text.primary,
+        color: theme.colors.state.danger.textForeground ?? theme.colors.state.danger.textForeground ?? theme.colors.text.primary,
         lineHeight: 18,
         marginTop: theme.space.s8,
         ...LONG_TOKEN_WRAP,

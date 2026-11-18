@@ -91,5 +91,5 @@ const styles = StyleSheet.create((theme) => ({
     shortcutToggle: { alignSelf: 'flex-start' },
     shortcutSlash: { ...Typography.mono(), color: theme.colors.text.tertiary },
     buttons: { flexDirection: 'row', justifyContent: 'flex-end', gap: theme.space.s8, marginTop: theme.space.s4 },
-    error: { ...Typography.variant('meta'), color: theme.colors.state.danger.foreground },
+    error: { ...Typography.variant('meta'), color: theme.colors.state.danger.textForeground },
 }));

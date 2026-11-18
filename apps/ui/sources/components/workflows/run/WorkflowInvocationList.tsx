@@ -245,7 +245,7 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
         // A failed step is said by its rose glyph too: the Run's outcome already says "Failed", once per surface.
         const word = finished || invocation.lifecycle === 'failed' || workflowLifecycleAwaitsDecision(invocation.lifecycle) ? null : (
             <Text testID={`${testIDPrefix}-word-${invocation.id}`} numberOfLines={1} style={[styles.word, speaks ? styles.wordSpeaking : null,
-                { color: speaks ? theme.colors.state[presentation.variant].foreground : theme.colors.text.secondary }]}>
+                { color: speaks ? theme.colors.state[presentation.variant].textForeground : theme.colors.text.secondary }]}>
                 {stateLabel}
             </Text>
         );

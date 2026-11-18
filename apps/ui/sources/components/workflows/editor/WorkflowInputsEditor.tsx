@@ -96,7 +96,7 @@ const styles = StyleSheet.create((theme) => ({
     sheet: { gap: theme.space.s12, padding: theme.space.s16 },
     sheetLabel: { ...Typography.variant('label'), color: theme.colors.text.secondary },
     remove: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, alignSelf: 'flex-start', paddingVertical: theme.space.s4 },
-    removeLabel: { ...Typography.variant('label'), color: theme.colors.state.danger.foreground },
+    removeLabel: { ...Typography.variant('label'), color: theme.colors.state.danger.textForeground },
 }));
 
 const VALUE_TYPES = ['string', 'number', 'boolean', 'json'] as const;

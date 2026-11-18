@@ -104,6 +104,7 @@ export function EditorAccessoryChip(props: EditorAccessoryChipProps) {
     const paintColor = useHappierMaterialColorResolver();
     const selected = props.selected === true;
     const foreground = selected ? theme.colors.state.active.foreground : theme.colors.text.secondary;
+    const textForeground = selected ? theme.colors.state.active.textForeground : theme.colors.text.secondary;
     const repeatHandlers = useHeldKeyRepeat(props.repeat === true && !props.disabled, props.onPress);
     const hitReach = React.useContext(EditorAccessoryReachContext);
     return <HappierPressable
@@ -123,9 +124,9 @@ export function EditorAccessoryChip(props: EditorAccessoryChipProps) {
         }]}
     >
         {props.text !== undefined
-            ? <Text style={[props.text.length <= 2 ? stylesheet.symbolKeyText : stylesheet.keyText, { color: foreground }]} allowFontScaling={false}>{props.text}</Text>
+            ? <Text style={[props.text.length <= 2 ? stylesheet.symbolKeyText : stylesheet.keyText, { color: textForeground }]} allowFontScaling={false}>{props.text}</Text>
             : props.icon ? <Icon name={props.icon} size={16} color={foreground} /> : null}
-        {props.badge ? <Text style={[stylesheet.badge, { color: foreground }]} allowFontScaling={false}>
+        {props.badge ? <Text style={[stylesheet.badge, { color: textForeground }]} allowFontScaling={false}>
             {props.badge}
         </Text> : null}
     </HappierPressable>;

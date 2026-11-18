@@ -79,8 +79,14 @@ export function resolveHappierWorkStatusBucketLabel(
   return translate ? translate(HAPPIER_WORK_STATUS_BUCKET_LABEL_KEYS[bucket], fallback) : fallback;
 }
 
-/** A state hue: the word and glyph ink, its faint tint, and the ring it is drawn from. */
-export type HappierWorkStateColors = Readonly<{ foreground: string; background: string; border: string }>;
+/** The marker ink, text ink, tint and ring for a Work state. */
+export type HappierWorkStateColors = Readonly<{
+  foreground: string;
+  /** A state with one ink can omit this role and use its foreground for the word. */
+  textForeground?: string;
+  background: string;
+  border: string;
+}>;
 
 /** The colours the status treatment reads (a {@link HappierWorkTheme}'s `colors` satisfies it). */
 export type HappierWorkStatusColors = Readonly<{
@@ -192,7 +198,8 @@ export function resolveHappierWorkStatusWordColor(
   tone: HappierWorkStatusTone,
   colors: HappierWorkStatusColors,
 ): string | null {
-  return stateColors(colors, tone)?.foreground ?? null;
+  const state = stateColors(colors, tone);
+  return state === null ? null : state.textForeground ?? state.foreground;
 }
 
 /** A state glyph's colour in this tone (an icon has no text style): quiet secondary ink while healthy. */

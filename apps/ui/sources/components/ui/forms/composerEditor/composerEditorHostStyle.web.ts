@@ -72,8 +72,8 @@ export function resolveComposerEditorHostStyle(
     '--happier-placeholder-color': input.placeholderInk,
     '--happier-composer-monospace': Typography.mono().fontFamily,
     '--happier-composer-muted': theme.colors.text.secondary,
-    '--happier-composer-warning': theme.colors.state.warning.foreground,
-    '--happier-composer-success': theme.colors.state.success.foreground,
+    '--happier-composer-warning': theme.colors.state.warning.textForeground,
+    '--happier-composer-success': theme.colors.state.success.textForeground,
     '--happier-composer-accent': theme.colors.accent.blue,
     ...referenceChipCssVariables({
       secondary: theme.colors.text.secondary,

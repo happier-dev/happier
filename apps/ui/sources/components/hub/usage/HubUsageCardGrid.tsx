@@ -235,7 +235,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default(),
         flex: 1,
         ...happierPageTextMetrics('meta'),
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
     signedOutAction: {
         flexDirection: 'row',

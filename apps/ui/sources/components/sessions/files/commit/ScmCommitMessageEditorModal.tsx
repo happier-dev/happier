@@ -29,7 +29,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     error: {
         fontSize: 12,
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     footer: {
         flexDirection: 'row',

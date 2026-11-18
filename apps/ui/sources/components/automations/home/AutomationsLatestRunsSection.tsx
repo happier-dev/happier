@@ -10,7 +10,7 @@ import { HOME_WIDGET_BODY_ROWS, WidgetFrame, type WidgetFrameBody, type WidgetFr
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
-import { workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
+import { workStatusGlyphColor, workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 import { WORKFLOWS_NEW_ROUTE } from '@/components/workflows/workflowsRoutes';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
@@ -279,7 +279,7 @@ export const LatestRunRow = React.memo(function LatestRunRow(props: Readonly<{
             subtitleLines={1}
             // When it ran is the row's meta: the shared right-aligned tabular column.
             detail={formatShortRelativeTime(row.at)}
-            {...(statusTone !== 'neutral' ? { subtitleStyle: { color: toneColor } } : {})}
+            {...(statusTone !== 'neutral' ? { subtitleStyle: workStatusWordStyle(statusTone) } : {})}
             icon={row.tone === 'active'
                 ? <ActivitySpinner size={ICON_SIZE.sm} color={toneColor} />
                 : <Icon name={TONE_ICON[row.tone]} size={ICON_SIZE.sm} color={toneColor} />}

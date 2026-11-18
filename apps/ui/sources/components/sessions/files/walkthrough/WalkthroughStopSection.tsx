@@ -381,7 +381,7 @@ const styles = StyleSheet.create((theme) => ({
     actionDisabled: { opacity: 0.5 },
     actionText: { ...Typography.variant('body', 'medium'), color: theme.colors.text.secondary,  },
     actionTextStrong: { color: theme.colors.text.primary },
-    actionTextMarked: { color: theme.colors.state.success.foreground, ...Typography.default('semiBold') },
+    actionTextMarked: { color: theme.colors.state.success.textForeground, ...Typography.default('semiBold') },
     // Questions sit under the stop's Ask, in its rhythm: quiet ink-edged controls that wrap, never a second toolbar.
     questions: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s6, marginTop: theme.space.s2, marginBottom: theme.space.s6 },
     questionsPhone: { marginTop: theme.space.s12 },

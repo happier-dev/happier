@@ -31,6 +31,22 @@ let home: Awaited<ReturnType<typeof activateStorageAccountScope>> | null = null;
 afterEach(() => { standardCleanup(); home?.dispose(); home = null; navigation.push.mockClear(); resetSessionDraftRepositoryForTests(); });
 
 describe('installed enriched native selection carrier', () => {
+    it('paints a review citation label with readable ink in the native chip', async () => {
+        const reference = {
+            label: 'High · Codex', severity: 'high' as const,
+            foreground: '#a57272', textForeground: '#732525', background: '#f9edee',
+        };
+        const screen = await renderScreen(<EnrichedMarkdownTextAdapter
+            markdown="See [finding](finding:run:f1)."
+            profile="default" selectable streamingAnimated={false} agentTexMath={false}
+            inlineReferences={{ scheme: 'finding', resolve: () => reference }} />);
+        const native = screen.findByType('NativeMarkdownText');
+        const chips = JSON.parse(native.props.markdownStyle.link.referenceChips);
+        expect(chips.references['happier-ref:finding:run:f1']).toMatchObject({
+            label: 'High · Codex', foreground: 0xff732525,
+        });
+    });
+
     it('passes bound chip presentation through the installed native style carrier and retains destination presses', async () => {
         const onPress = vi.fn();
         const picture = { label: 'Image #2', glyph: 'preview' as const, thumbnail: { uri: 'file:///preview.png' }, foreground: '#112233', background: '#11223312' };

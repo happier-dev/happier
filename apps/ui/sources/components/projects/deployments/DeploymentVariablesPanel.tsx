@@ -1193,7 +1193,7 @@ function BulkEditor(
       <View testID="project-deployments.environment.variables.bulk.diff" style={styles.bulkFooter}>
         <View style={styles.bulkSummary}>
           {error ?? failure ? (
-            <Text variant="meta" style={{ color: theme.colors.state.danger.foreground }}>
+            <Text variant="meta" style={{ color: theme.colors.state.danger.textForeground }}>
               {/* The two parse refusals say what to fix; a save refusal says nothing changed. */}
               {(error ?? failure) === 'unknown_reference'
                 ? t('projects.deployments.bulkUnknownReference')

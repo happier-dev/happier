@@ -97,7 +97,7 @@ const styles = StyleSheet.create((theme) => ({
         flex: 1,
     },
     completedText: {
-        color: theme.colors.state.success.foreground,
+        color: theme.colors.state.success.textForeground,
         textDecorationLine: 'line-through',
     },
     inProgressText: {

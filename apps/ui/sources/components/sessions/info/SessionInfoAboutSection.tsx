@@ -383,7 +383,7 @@ export const SessionInfoAboutSection = React.memo(
             }
             detailStyle={
               props.isCliOutdated
-                ? { color: theme.colors.state.warning.foreground }
+                ? { color: theme.colors.state.warning.textForeground }
                 : undefined
             }
             showChevron={false}

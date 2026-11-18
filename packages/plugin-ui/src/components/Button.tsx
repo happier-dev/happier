@@ -211,6 +211,7 @@ export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled
   const textEdge = useContext(HappierTextActionEdgeContext);
   const fill = useContext(PluginUiButtonFillContext);
   const { foreground } = resolveHappierButtonChrome({ theme, variant, disabled, focused: false, ...material });
+  const labelColor = variant === 'destructive' ? theme.statusText?.danger ?? foreground : foreground;
   const style = (state: HappierPressableStyleState): HappierPortableStyle => {
     const chrome = resolveHappierButtonChrome({
       theme, variant, size, disabled: state.disabled, focused: state.focused,
@@ -270,7 +271,7 @@ export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled
       */}
       <View style={state.busy ? { opacity: 0, flexShrink: 1 } : { flexShrink: 1 }}>
         {typeof content.children === 'string' || content.children === undefined ? (
-          <HappierText {...{ dataSet: labelSurface.dataSet }} variant="label" {...(content.singleLine === true ? { numberOfLines: 1 } : {})} style={[{ color: foreground, textAlign: 'center' }, labelSurface.style]}>
+          <HappierText {...{ dataSet: labelSurface.dataSet }} variant="label" {...(content.singleLine === true ? { numberOfLines: 1 } : {})} style={[{ color: labelColor, textAlign: 'center' }, labelSurface.style]}>
             {content.children}
           </HappierText>
         ) : content.children}

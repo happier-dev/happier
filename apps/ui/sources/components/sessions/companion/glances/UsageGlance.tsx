@@ -14,8 +14,8 @@ import { t } from '@/text';
 import { readSessionAgentLabel, useSessionContextUsageFacts } from '../summary/useSessionSummaryModel';
 
 const stylesheet = StyleSheet.create((theme) => ({
-  warning: { color: theme.colors.state.warning.foreground },
-  critical: { color: theme.colors.state.danger.foreground },
+  warning: { color: theme.colors.state.warning.textForeground },
+  critical: { color: theme.colors.state.danger.textForeground },
 }));
 
 /**

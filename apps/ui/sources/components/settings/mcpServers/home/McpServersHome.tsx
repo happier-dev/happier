@@ -817,7 +817,7 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.space.s8,
   },
   count: { color: theme.colors.text.primary, fontVariant: ['tabular-nums'] },
-  attention: { color: theme.colors.state.warning.foreground },
+  attention: { color: theme.colors.state.warning.textForeground },
   acts: {
     flexDirection: 'row',
     alignItems: 'center',

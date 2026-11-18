@@ -71,7 +71,7 @@ export const ConnectedServicesGatewaysGroup = React.memo(function ConnectedServi
                     title={t('settingsProvidersCollection.gateway.addGateway')}
                     titleStyle={{ color: theme.colors.text.secondary }}
                     subtitle={props.addError ?? undefined}
-                    subtitleStyle={props.addError ? { color: theme.colors.state.danger.foreground } : undefined}
+                    subtitleStyle={props.addError ? { color: theme.colors.state.danger.textForeground } : undefined}
                     icon={<Icon name="plus" size={18} color={theme.colors.text.secondary} />}
                     showChevron={false}
                     loading={props.adding}

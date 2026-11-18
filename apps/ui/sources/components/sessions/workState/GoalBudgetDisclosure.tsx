@@ -78,7 +78,7 @@ export function GoalBudgetDisclosure(props: Readonly<{
                 ]}
             />
             {props.budgetError ? (
-                <Text testID="session-goal-budget-error" style={[styles.errorText, { color: theme.colors.state.danger.foreground }]}>
+                <Text testID="session-goal-budget-error" style={[styles.errorText, { color: theme.colors.state.danger.textForeground }]}>
                     {t('session.workState.goal.invalidBudget')}
                 </Text>
             ) : null}

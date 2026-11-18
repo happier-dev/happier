@@ -56,10 +56,10 @@ const styles = StyleSheet.create((theme) => ({
     },
     errorText: {
         fontSize: 13,
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
         flex: 1,
     },
     toolUseErrorText: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
 }));

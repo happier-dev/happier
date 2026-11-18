@@ -274,10 +274,11 @@ export const MultiTextInput = React.forwardRef<MultiTextInputHandle, MultiTextIn
         placeholder: resolveInk(props.placeholderTextColor ?? theme.colors.input.placeholder) ?? theme.colors.input.placeholder,
         chipForeground: theme.colors.text.primary,
         chipGlyphForeground: theme.colors.text.secondary,
+        chipWarningGlyphForeground: theme.colors.state.warning.foreground,
         chipBackground: referenceChipFill(theme.colors.text.primary),
         selection: theme.colors.border.focus,
-        warning: theme.colors.state.warning.foreground,
-        success: theme.colors.state.success.foreground,
+        warning: theme.colors.state.warning.textForeground,
+        success: theme.colors.state.success.textForeground,
         muted: theme.colors.text.secondary,
         link: theme.colors.text.link,
     }), [textStyle.color, resolveInk, theme, props.placeholderTextColor]);

@@ -23,7 +23,7 @@ export function MachineServiceControlOutcomeNotice(props: Readonly<{
         diagnosticDetail={outcome.failure ? presentActionExecutionFailure(outcome.failure).technicalDetails
             .filter(line => line.key !== 'code').map(line => line.label + ': ' + line.value).join('\n') : undefined} />;
     return <Text variant="meta" testID={props.testID}
-        style={[props.style, outcome.kind === 'approval' ? null : { color: theme.colors.state.warning.foreground }]}>{title}</Text>;
+        style={[props.style, outcome.kind === 'approval' ? null : { color: theme.colors.state.warning.textForeground }]}>{title}</Text>;
 }
 
 function controlOutcomeCopy(outcome: MachineServiceControlOutcome, service: string, machine: string): string {

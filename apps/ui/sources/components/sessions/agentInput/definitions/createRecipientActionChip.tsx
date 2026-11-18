@@ -277,7 +277,7 @@ function createSessionTalkChip(params: Readonly<{
 }
 
 const styles = StyleSheet.create((theme) => ({
-    failedText: { color: theme.colors.state.danger.foreground },
+    failedText: { color: theme.colors.state.danger.textForeground },
     chipRow: {
         flexDirection: 'row',
         alignItems: 'center',

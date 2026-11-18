@@ -681,7 +681,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.state.attention.textForeground,
     },
     failure: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
         fontVariant: ['tabular-nums'],
     },
     failureHovered: {

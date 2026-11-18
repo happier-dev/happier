@@ -419,7 +419,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   failed: {
     ...Typography.variant('meta'),
-    color: theme.colors.state.danger.foreground,
+    color: theme.colors.state.danger.textForeground,
     width: '100%',
   },
 }));

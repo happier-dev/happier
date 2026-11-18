@@ -59,7 +59,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     noticeText: {
         ...Typography.variant('meta'),
         flex: 1,
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
     footer: {
         flexDirection: 'row',

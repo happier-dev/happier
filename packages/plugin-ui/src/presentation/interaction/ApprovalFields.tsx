@@ -199,7 +199,7 @@ function useApprovalFieldsLook<TSource>(
           text: theme.colors.text,
           secondaryText: theme.colors.secondaryText,
           mutedText: theme.colors.mutedText,
-          danger: theme.colors.danger,
+          danger: theme.statusText?.danger ?? theme.colors.danger,
           inset: palette?.inset ?? theme.colors.control,
         }
       : null);

@@ -1437,7 +1437,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
     } : undefined, [selectSource, source]);
     const activeFilters = terminalJump ? terminalScopeChrome.filters : combinedFilters;
     // Aa and .* read as the Find bar's toggles (lab G1s): quiet mono glyphs, no well at rest, the accent ink when on.
-    const optionGlyph = (glyph: string, on: boolean) => <Text style={[Typography.mono(), Typography.variant('meta'), { fontWeight: '600', color: on ? theme.colors.state.active.foreground : theme.colors.text.secondary }]}>{glyph}</Text>;
+    const optionGlyph = (glyph: string, on: boolean) => <Text style={[Typography.mono(), Typography.variant('meta'), { fontWeight: '600', color: on ? theme.colors.state.active.textForeground : theme.colors.text.secondary }]}>{glyph}</Text>;
     // One find over a project (Code's Go to file, Text in files): Files and Text switch in place, keeping the folder and the query.
     // A phone's band keeps the field wide: the same glyphs as the source token, the words as their names.
     const findModeIcons = deviceType === 'phone';

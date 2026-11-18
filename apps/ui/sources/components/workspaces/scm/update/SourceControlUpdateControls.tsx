@@ -129,7 +129,7 @@ export function SourceControlUpdateButton(props: Readonly<{
     const injectedLabelColor = kind === 'primary'
         ? props.theme.colors.button?.primary?.tint
         : kind === 'danger'
-            ? props.theme.colors.state.danger.foreground
+            ? props.theme.colors.state.danger.textForeground
             : props.theme.colors.text.primary;
 
     return (

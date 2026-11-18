@@ -110,7 +110,7 @@ const styles = StyleSheet.create((theme) => ({
     head: { gap: theme.space.s4 },
     /** The one place that says this needs the person: amber on the word and the hand, nothing else. */
     stateLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.s6, paddingBottom: theme.space.s12 },
-    stateWord: { color: theme.colors.state.warning.foreground },
+    stateWord: { color: theme.colors.state.warning.textForeground },
     /** Where the value came from, with its Copy and Expand, directly above it. */
     valueHead: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, paddingBottom: theme.space.s4, minHeight: theme.space.s32 },
     valueSource: { flex: 1, minWidth: 0, color: theme.colors.text.secondary },

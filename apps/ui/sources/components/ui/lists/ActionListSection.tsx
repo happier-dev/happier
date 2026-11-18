@@ -74,7 +74,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     // A destructive row says so in its words as well as its glyph (as DropdownMenu's destructive rows do).
     labelDestructive: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
 }));
 

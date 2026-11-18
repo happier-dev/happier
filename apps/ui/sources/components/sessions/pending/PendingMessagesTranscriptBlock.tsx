@@ -1459,7 +1459,7 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                         ) : (
                                             <Icon name="x-circle" size={14} color={theme.colors.state.danger.foreground} />
                                         )}
-                                        <Text style={[styles.clearComposerButtonText, { color: theme.colors.state.danger.foreground }]}>
+                                        <Text style={[styles.clearComposerButtonText, { color: theme.colors.state.danger.textForeground }]}>
                                             {terminalComposerClear.busy
                                                 ? t('session.pendingMessages.clearComposer.clearing')
                                                 : t('session.pendingMessages.clearComposer.action')}

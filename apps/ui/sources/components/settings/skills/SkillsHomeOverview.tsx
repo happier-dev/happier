@@ -719,7 +719,7 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.space.s8,
   },
   count: { color: theme.colors.text.primary, fontVariant: ['tabular-nums'] },
-  attention: { color: theme.colors.state.warning.foreground },
+  attention: { color: theme.colors.state.warning.textForeground },
   groupCount: {
     color: theme.colors.text.secondary,
     fontVariant: ['tabular-nums'],

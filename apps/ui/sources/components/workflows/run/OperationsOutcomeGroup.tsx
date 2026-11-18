@@ -105,6 +105,6 @@ export const OperationsOutcomeGroup = React.memo(
 );
 
 const styles = StyleSheet.create((theme) => ({
-  danger: { color: theme.colors.state.danger.foreground },
-  attention: { color: theme.colors.state.warning.foreground },
+  danger: { color: theme.colors.state.danger.textForeground },
+  attention: { color: theme.colors.state.warning.textForeground },
 }));

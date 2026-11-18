@@ -69,7 +69,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     footerNoteText: {
         flexShrink: 1,
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
         ...Typography.variant('meta'),
     },
     guidanceRow: {
@@ -94,7 +94,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         textDecorationLine: 'underline',
     },
     error: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
         ...Typography.variant('body'),
     },
     secret: {

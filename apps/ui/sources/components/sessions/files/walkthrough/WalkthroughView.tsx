@@ -1105,6 +1105,6 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.variant('heading'),
     color: theme.colors.text.primary,
   },
-  phoneBarLabelDone: { color: theme.colors.state.success.foreground },
+  phoneBarLabelDone: { color: theme.colors.state.success.textForeground },
   disabled: { opacity: 0.4 },
 }));

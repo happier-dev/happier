@@ -450,7 +450,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
       title={props.title ?? purposeTitle}
       subtitle={subtitle}
       subtitleLines={props.description || subtitleNeedsYou ? 0 : undefined}
-      subtitleStyle={subtitleNeedsYou ? { color: theme.colors.state.warning.foreground } : undefined}
+      subtitleStyle={subtitleNeedsYou ? { color: theme.colors.state.warning.textForeground } : undefined}
       detail={fieldColors ? undefined : triggerDetail}
       rightElement={fieldColors ? renderDropdownItemTriggerRightElement({
         detail: triggerDetail,

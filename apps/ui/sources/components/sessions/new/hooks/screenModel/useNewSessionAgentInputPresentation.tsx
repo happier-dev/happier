@@ -140,7 +140,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         if (!params.selectedMachineId) return undefined;
         if (params.selectedMachineManagedPresence?.offline?.state === 'resource_absent') return {
             text: params.selectedMachineManagedPresence.offline.word,
-            color: params.theme.colors.state.danger.foreground,
+            color: params.theme.colors.state.danger.textForeground,
             dotColor: params.theme.colors.state.danger.foreground,
             isPulsing: false,
             recovery: 'machine' as const,
@@ -148,14 +148,14 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         if (hostResolvedMachine) return undefined;
         if (wakeDescription) return {
             text: wakeDescription,
-            color: params.theme.colors.state.success.foreground,
+            color: params.theme.colors.state.success.textForeground,
             dotColor: params.theme.colors.state.success.foreground,
             isPulsing: false,
         };
         if (!params.selectedMachine || selectedMachineReachability === 'unknown') {
             return {
                 text: t('newSession.machineUnavailableStatus'),
-                color: params.theme.colors.state.danger.foreground,
+                color: params.theme.colors.state.danger.textForeground,
                 dotColor: params.theme.colors.state.danger.foreground,
                 isPulsing: false,
                 recovery: 'machine' as const,
@@ -166,7 +166,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
             text: selectedMachineReadinessStatus === 'keyUnavailable'
                 ? t('machineRequester.keyPending', { machine: selectedMachineLabel })
                 : t('newSession.machineOfflineInlineTitle'),
-            color: params.theme.colors.state.danger.foreground,
+            color: params.theme.colors.state.danger.textForeground,
             dotColor: params.theme.colors.state.danger.foreground,
             isPulsing: false,
             recovery: 'machine' as const,
@@ -181,7 +181,9 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         selectedMachineReadinessStatus,
         selectedMachineLabel,
         params.theme.colors.state.danger.foreground,
+        params.theme.colors.state.danger.textForeground,
         params.theme.colors.state.success.foreground,
+        params.theme.colors.state.success.textForeground,
         canAttemptSpawn,
     ]);
 

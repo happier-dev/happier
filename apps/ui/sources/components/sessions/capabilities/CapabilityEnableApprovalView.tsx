@@ -345,7 +345,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s6,
   },
   errorText: {
-    color: theme.colors.state.danger.foreground,
+    color: theme.colors.state.danger.textForeground,
     flexShrink: 1,
   },
   settled: {
@@ -363,7 +363,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.text.primary,
   },
   settledMetaFailed: {
-    color: theme.colors.state.danger.foreground,
+    color: theme.colors.state.danger.textForeground,
   },
   settledMeta: {
     color: theme.colors.text.secondary,

@@ -405,7 +405,7 @@ function OwnerWhere(
           style={[
             styles.quiet,
             note
-              ? { color: theme.colors.state.attention.textForeground ?? theme.colors.state.attention.foreground }
+              ? { color: theme.colors.state.attention.textForeground }
               : status?.color && !stopping && item.matchCount === null
                 ? { color: status.color }
                 : null,

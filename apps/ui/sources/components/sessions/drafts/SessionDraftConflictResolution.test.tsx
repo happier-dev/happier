@@ -62,8 +62,8 @@ describe('SessionDraftConflictResolution', () => {
 
         const mineLabel = screen.root.findAll((node) => node.props.children === 'sessionDrafts.conflict.mine')[0];
         const syncedLabel = screen.root.findAll((node) => node.props.children === 'sessionDrafts.conflict.synced')[0];
-        expect(flattenStyle(mineLabel?.props.style)).toMatchObject({ color: lightTheme.colors.state.warning.foreground });
-        expect(flattenStyle(syncedLabel?.props.style)).toMatchObject({ color: lightTheme.colors.state.warning.foreground });
+        expect(flattenStyle(mineLabel?.props.style)).toMatchObject({ color: lightTheme.colors.state.warning.textForeground });
+        expect(flattenStyle(syncedLabel?.props.style)).toMatchObject({ color: lightTheme.colors.state.warning.textForeground });
 
         const useSynced = screen.findByTestId('session-draft-conflict-action:composer.text:use-synced');
         const keepDevice = screen.findByTestId('session-draft-conflict-action:composer.text:keep-device');

@@ -13,7 +13,7 @@ import { HappierMarkdown } from '../presentation/content/Markdown.js';
 import { HappierStack, resolveHappierLayoutGap } from '../presentation/layout/Layout.js';
 import { HappierStatus } from '../presentation/status/Status.js';
 import { HappierSpinner } from '../presentation/feedback/Spinner.js';
-import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../presentation/semantics.js';
+import { HAPPIER_TONE_COLOR_TOKEN, resolveHappierToneTextColor, type HappierTone } from '../presentation/semantics.js';
 import type { HappierUiAccessibility, HappierUiTheme } from '../environment/index.js';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import type { PluginUiDeclarativeNodeV2 as PluginDeclarativeNodeV2, PluginUiDeclarativeToneV2 as PluginDeclarativeToneV2 } from '@happier-dev/plugin-sdk/ui';
@@ -542,6 +542,7 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
         const description = readDisplayText(context, 'description');
         const iconToken = typeof node.icon === 'string' ? node.icon : null;
         const color = resolveDeclarativeToneColor(context.presentationTheme, presentation.tone);
+        const textColor = resolveHappierToneTextColor(context.presentationTheme, resolveDeclarativePresentationTone(presentation.tone));
         const path = readDeclarativePath(node, context.nodePath);
         if (context.stateLine) {
             const lineColor = presentation.tone === 'danger' ? color : context.presentationTheme.colors.secondaryText;
@@ -556,7 +557,7 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                             : <HappierSpinner color={context.presentationTheme.colors.secondaryText} animationEnabled={false} />
                         : (iconToken ? context.host.renderIcon(iconToken, 'small', lineColor, context.direction) : undefined)}
                 >
-                    <context.host.Text style={{ color: lineColor, ...HAPPIER_STATE_LINE_METRICS.text }}>
+                    <context.host.Text style={{ color: presentation.tone === 'danger' ? textColor : lineColor, ...HAPPIER_STATE_LINE_METRICS.text }}>
                         {renderDisplayText(context, 'title')}{description ? ' · ' : null}{description ? renderDisplayText(context, 'description') : null}
                     </context.host.Text>
                 </HappierStateLine>
@@ -578,7 +579,7 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                         : (iconToken
                             ? context.host.renderIcon(iconToken, 'large', color, context.direction)
                             : undefined)}
-                    title={<context.host.Text style={{ color }}>{renderDisplayText(context, 'title')}</context.host.Text>}
+                    title={<context.host.Text style={{ color: textColor }}>{renderDisplayText(context, 'title')}</context.host.Text>}
                     description={description ? <context.host.Text style={{ color: context.presentationTheme.colors.secondaryText }}>{renderDisplayText(context, 'description')}</context.host.Text> : undefined}
                 />
             </HappierInfoState>
@@ -629,7 +630,7 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                 testID={`plugin-declarative-text:${readDeclarativePath(node, context.nodePath)}`}
                 selectable
                 {...(toneLabel ? { accessibilityLabel: `${toneLabel}: ${text}` } : {})}
-                style={{ color: resolveDeclarativeToneColor(context.presentationTheme, node.tone) }}
+                style={{ color: resolveHappierToneTextColor(context.presentationTheme, resolveDeclarativePresentationTone(node.tone)) }}
             >
                 {renderDisplayText(context, 'text')}
             </context.host.Text>
@@ -666,7 +667,7 @@ const DECLARATIVE_NODE_RENDERERS = Object.freeze({
                     <context.host.Text
                         testID={`plugin-declarative-status-value:${readDeclarativePath(node, context.nodePath)}`}
                         selectable
-                        style={{ color: resolveDeclarativeToneColor(context.presentationTheme, node.tone) }}
+                        style={{ color: resolveHappierToneTextColor(context.presentationTheme, resolveDeclarativePresentationTone(node.tone)) }}
                     >
                         {renderDisplayText(context, 'value')}
                     </context.host.Text>

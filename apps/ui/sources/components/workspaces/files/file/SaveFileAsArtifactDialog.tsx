@@ -77,7 +77,7 @@ export function SaveFileAsArtifactDialog(props: SaveFileAsArtifactDialogProps) {
             dimensions={{ width: HAPPIER_PAGE_METRICS.dialogWidthPx.default, size: 'dialog' }}
             footer={(
                 <View style={styles.footer}>
-                    {statusLine ? <Text testID="save-as-artifact-status" style={[styles.status, status.kind === 'failed' ? { color: theme.colors.state.danger.foreground } : null]}>{statusLine}</Text> : null}
+                    {statusLine ? <Text testID="save-as-artifact-status" style={[styles.status, status.kind === 'failed' ? { color: theme.colors.state.danger.textForeground } : null]}>{statusLine}</Text> : null}
                     <RoundButton testID="save-as-artifact-cancel" display="inverted" title={t('common.cancel')} onPress={close} />
                     {savedId && props.onOpenArtifact ? (
                         // The copy exists: Open it; when only sharing failed, sharing again is the one primary.

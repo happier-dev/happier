@@ -141,7 +141,7 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: 'center',
   },
   stateAttention: {
-    color: theme.colors.state.warning.foreground,
+    color: theme.colors.state.warning.textForeground,
     textAlign: 'center',
   },
 }));

@@ -21,7 +21,7 @@ const styles = StyleSheet.create((theme) => ({
 
     },
     error: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
 }));
 

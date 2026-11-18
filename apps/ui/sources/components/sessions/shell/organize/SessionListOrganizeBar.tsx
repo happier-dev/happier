@@ -26,7 +26,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     doneText: {
         ...Typography.default('semiBold'),
-        color: theme.colors.state.active.foreground,
+        color: theme.colors.state.active.textForeground,
     },
 }));
 

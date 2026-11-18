@@ -113,7 +113,7 @@ const ChangedFilesReviewIndexRow = React.memo(function ChangedFilesReviewIndexRo
                 {comments > 0 ? (
                     <View style={styles.comments} accessibilityLabel={t('detailsSurface.review.comments', { count: comments })}>
                         <Icon name="chat-circle" size={12} color={theme.colors.state.active.foreground} />
-                        <Text style={[styles.count, { color: theme.colors.state.active.foreground }]}>{String(comments)}</Text>
+                        <Text style={[styles.count, { color: theme.colors.state.active.textForeground }]}>{String(comments)}</Text>
                     </View>
                 ) : null}
             </View>}

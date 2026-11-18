@@ -37,7 +37,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     reviewHeading: {  ...Typography.variant('body', 'semiBold'), color: theme.colors.text.secondary },
     reviewEditor: { minHeight: 160 },
     footer: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: theme.space.s8, paddingTop: theme.space.s12 },
-    notice: {  ...Typography.variant('body'), color: theme.colors.state.danger.foreground, flex: 1, minWidth: 160 },
+    notice: {  ...Typography.variant('body'), color: theme.colors.state.danger.textForeground, flex: 1, minWidth: 160 },
 }));
 
 export type SessionBoardHostedHtmlEditorCardProps = Omit<SessionBoardHostedHtmlEditorInput, 'flushHtml'> & Readonly<{

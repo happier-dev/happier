@@ -17,8 +17,16 @@ describe('StatusPill', () => {
         expect(flattenStyle(screen.findByTestId('pill:count')?.props.style).color).toBe(lightTheme.colors.state.success.textForeground);
         expect(flattenStyle(screen.findByTestId('pill:dot')?.props.style).backgroundColor).toBe(lightTheme.colors.state.success.foreground);
         const plain = await renderScreen(<StatusPill variant="success" chrome="plain" label="Live" testID="plain" />);
-        expect(flattenStyle(plain.findByTestId('plain:label')?.props.style).color).toBe(lightTheme.colors.state.success.foreground);
+        expect(flattenStyle(plain.findByTestId('plain:label')?.props.style).color).toBe(lightTheme.colors.state.success.textForeground);
     });
+
+    it.each(['success', 'warning', 'attention', 'danger', 'info', 'neutral'] as const)(
+        'uses text ink for the inline %s word', async variant => {
+            const { StatusWord } = await import('./StatusPill');
+            const screen = await renderScreen(<StatusWord variant={variant} label="Status" testID="word" />);
+            expect(flattenStyle(screen.findByTestId('word')?.props.style).color).toBe(lightTheme.colors.state[variant].textForeground);
+        },
+    );
 
     it('applies an explicit foreground exactly, with the existing marker override precedence', async () => {
         const { StatusPill } = await import('./StatusPill');

@@ -262,7 +262,7 @@ export function HappierValidationMessage({
       accessibilityLiveRegion={accessibilityLiveRegion}
       nativeID={nativeID}
       testID={testID}
-      style={{ ...captionStyle, color: theme.colors.danger }}
+      style={{ ...captionStyle, color: theme.statusText?.danger ?? theme.colors.danger }}
     >
       {message}
     </HappierText>
@@ -413,7 +413,7 @@ export type HappierTextFieldProps = Readonly<{
    * `body` (the default). No well, box or edge: the caret is the field's focus, and the text grows with what is typed.
    */
   documentRole?: 'title' | 'body';
-  fieldColors?: HappierFieldBoxColors & Readonly<{ errorColor: string }>;
+  fieldColors?: HappierFieldBoxColors & Readonly<{ errorColor: string; errorTextColor?: string }>;
   /** `field` only: the field's refusal, shown beneath the box and announced. */
   error?: string;
   /** Fires when focus leaves the field (a draft that commits on leaving). */
@@ -743,7 +743,7 @@ export function HappierTextField(props: HappierTextFieldProps) {
             style={{
               fontSize: HAPPIER_FIELD_TEXT_METRICS.errorFontSizePx,
               lineHeight: HAPPIER_FIELD_TEXT_METRICS.errorLineHeightPx,
-              color: fieldAppearance.errorColor,
+              color: fieldAppearance.errorTextColor ?? fieldAppearance.errorColor,
             }}
           >
             {props.error}

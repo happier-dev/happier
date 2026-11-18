@@ -205,7 +205,7 @@ export const BugReportComposerView = React.memo(function BugReportComposerView(p
       <ItemGroup surface="none">
         <SectionContentRow showDivider={false}>
           <View style={submitRowStyle}>
-            <Text variant="body" style={{ flex: 1, minWidth: 0, color: model.submitHint === 'problem' ? theme.colors.state.danger.foreground : theme.colors.text.secondary }}>
+            <Text variant="body" style={{ flex: 1, minWidth: 0, color: model.submitHint === 'problem' ? theme.colors.state.danger.textForeground : theme.colors.text.secondary }}>
               {model.submitHint === 'required'
                 ? t('bugReports.composer.submit.requiredFieldsHint')
                 : model.submitHint === 'problem' && model.validation.code !== 'ok'

@@ -130,7 +130,7 @@ export const ThemeColorTokenRow = React.memo(function ThemeColorTokenRow(props: 
 
 const stylesheet = StyleSheet.create((theme) => ({
     feedbackText: {
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
         paddingHorizontal: theme.space.s16,
         paddingBottom: theme.space.s8,
     },
@@ -138,7 +138,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surface.selected,
     },
     warningText: {
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
     warningLine: {
         flexDirection: 'row',

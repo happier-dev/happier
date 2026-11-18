@@ -236,7 +236,7 @@ function SessionResponsibilityPickerContent(
                     testID="session-responsibility-picker-error"
                     accessibilityRole="alert"
                     style={{
-                        color: theme.colors.state.warning.foreground,
+                        color: theme.colors.state.warning.textForeground,
                         fontSize: 14,
                         paddingHorizontal: theme.space.s16,
                         paddingBottom: theme.space.s8,

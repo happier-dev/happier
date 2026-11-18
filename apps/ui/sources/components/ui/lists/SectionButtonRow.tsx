@@ -49,6 +49,6 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
     },
     footnoteDanger: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
 }));

@@ -183,7 +183,7 @@ export function CommitPlanGroupOutcome(props: Readonly<{
             <View style={styles.log} testID={`commit-group-rewritten:${group.id}`}>
                 <Text style={styles.logCaption}>{t('commitProposal.state.rewritten')}</Text>
                 {lines.map((line, index) => (
-                    <Text key={index} style={[styles.logText, index > 0 && line.trim() && !original.includes(line.trim()) ? { color: theme.colors.state.success.foreground } : null]}>
+                    <Text key={index} style={[styles.logText, index > 0 && line.trim() && !original.includes(line.trim()) ? { color: theme.colors.state.success.textForeground } : null]}>
                         {line || ' '}
                     </Text>
                 ))}
@@ -262,8 +262,8 @@ export function LandedMeta(props: Readonly<{ sha: string; committedAtMs: number 
 
 export function GroupMetaText(props: Readonly<{ children: React.ReactNode; tone?: 'warning' | 'danger' | null; icon?: 'lock' | null }>) {
     const { theme } = useUnistyles();
-    const color = props.tone === 'warning' ? theme.colors.state.warning.foreground
-        : props.tone === 'danger' ? theme.colors.state.danger.foreground : undefined;
+    const color = props.tone === 'warning' ? theme.colors.state.warning.textForeground
+        : props.tone === 'danger' ? theme.colors.state.danger.textForeground : undefined;
     return (
         <View style={styles.metaRow}>
             {props.icon ? <Icon name={props.icon} size={12} color={theme.colors.text.tertiary} /> : null}

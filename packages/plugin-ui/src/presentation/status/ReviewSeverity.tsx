@@ -3,7 +3,7 @@ import { View } from 'react-native';
 
 import type { HappierUiTheme } from '../../environment/types.js';
 import { useOptionalHappierUiTypography } from '../../environment/context.js';
-import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../semantics.js';
+import { HAPPIER_TONE_COLOR_TOKEN, resolveHappierToneTextColor, type HappierTone } from '../semantics.js';
 import { HappierText } from '../text/Text.js';
 import { resolveHappierTypeRoleStyle } from '../text/typeRole.js';
 
@@ -96,9 +96,10 @@ export function HappierReviewSeveritySign(
       />
     );
   }
+  const labelColor = resolveHappierToneTextColor(props.theme, HAPPIER_REVIEW_SEVERITY_TONE[props.severity]);
   const textStyle = {
     ...resolveHappierTypeRoleStyle('body', props.theme, typography, 'semiBold'),
-    color,
+    color: labelColor,
   };
   return (
     <View
@@ -115,7 +116,7 @@ export function HappierReviewSeveritySign(
       />
       {isValidElement<{ style?: unknown }>(props.label) ? (
         cloneElement(props.label, {
-          style: [props.label.props.style, { color }],
+          style: [props.label.props.style, { color: labelColor }],
         })
       ) : (
         <HappierText style={textStyle}>{props.label}</HappierText>

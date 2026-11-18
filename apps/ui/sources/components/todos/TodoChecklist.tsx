@@ -73,7 +73,7 @@ export function TodoChecklist(props: Readonly<{
                                 size === 'compact' && styles.compactItemText,
                                 { color: theme.colors.text.secondary },
                                 completed && {
-                                    color: theme.colors.state.success.foreground,
+                                    color: theme.colors.state.success.textForeground,
                                     textDecorationLine: 'line-through',
                                 },
                                 active && {

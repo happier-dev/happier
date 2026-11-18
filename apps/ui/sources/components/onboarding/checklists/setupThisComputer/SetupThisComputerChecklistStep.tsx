@@ -37,7 +37,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         textAlign: 'left',
     },
     error: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
         textAlign: 'left',
     },
 }));

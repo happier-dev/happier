@@ -740,7 +740,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     signedOutText: {
         ...Typography.variant('meta'),
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
     /** A quiet fact on the content edge like the scope line above it: no tile (owner 11-16, no grey tiles). */
     nextMove: {

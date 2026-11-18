@@ -88,7 +88,7 @@ export type HappierSelectionActionBarProps = Readonly<{
   /** Accessible name of the ⋯ that holds folded actions. */
   moreLabel?: string;
   /** The inverted fill and its ink: the runtime's primary-button pair. */
-  colors: Readonly<{ background: string; foreground: string; destructive?: string }>;
+  colors: Readonly<{ background: string; foreground: string; destructive?: string; destructiveText?: string }>;
   host: HappierSelectionActionBarHost;
   /** Defaults to the environment's reduced-motion fact. */
   reducedMotion?: boolean;
@@ -333,7 +333,8 @@ export function HappierSelectionActionBar(props: HappierSelectionActionBarProps)
               ) : null}
               {action.renderIcon?.(actionColor(action)) ?? null}
               {compact && action.renderIcon ? null : (
-                <Text numberOfLines={1} style={{ ...actionTextStyle, color: actionColor(action) }}>{action.label}</Text>
+                <Text numberOfLines={1} style={{ ...actionTextStyle,
+                  color: action.emphasis === 'destructive' ? props.colors.destructiveText ?? actionColor(action) : foreground }}>{action.label}</Text>
               )}
             </HappierPressable>
           ))}

@@ -345,7 +345,7 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
           ...(sideLabels ? { width: HAPPIER_DATA_METRICS.intervalRowLabelWidthPx } : { alignSelf: 'stretch' }) }}>
             <HappierText style={{ ...(sideLabels ? text.body : text.caption), flexShrink: 1 }} numberOfLines={1}>{interval.label}</HappierText>
             {interval.flag ? <HappierText testID={props.testID ? `${props.testID}-flag-${interval.id}` : undefined}
-              style={{ ...text.captionStrong, color: props.theme.colors.danger, flexShrink: 0 }}>{interval.flag}</HappierText> : null}
+              style={{ ...text.captionStrong, color: props.theme.statusText?.danger ?? props.theme.colors.danger, flexShrink: 0 }}>{interval.flag}</HappierText> : null}
             {!sideLabels && interval.value ? <HappierText style={{ ...text.caption, marginLeft: 'auto', flexShrink: 0 }} tabularNumbers>{interval.value}</HappierText> : null}
           </View>;
         const valueCell = sideLabels && rowValuesShown ? <HappierText style={{ ...text.caption, width: HAPPIER_DATA_METRICS.intervalRowValueWidthPx, textAlign: 'right' }}

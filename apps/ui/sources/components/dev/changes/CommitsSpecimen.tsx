@@ -353,5 +353,5 @@ const styles = StyleSheet.create((theme) => ({
     gitSection: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, paddingHorizontal: theme.space.s12, paddingTop: theme.space.s12, paddingBottom: theme.space.s6 },
     gitSectionTitle: { ...Typography.variant('meta', 'semiBold'), color: theme.colors.text.secondary,  },
     gitSectionCount: { ...Typography.variant('meta'), color: theme.colors.text.tertiary, fontVariant: ['tabular-nums'],  },
-    gitInCommit: { marginLeft: 'auto', color: theme.colors.state.active.foreground, ...Typography.default('semiBold') },
+    gitInCommit: { marginLeft: 'auto', color: theme.colors.state.active.textForeground, ...Typography.default('semiBold') },
 }));

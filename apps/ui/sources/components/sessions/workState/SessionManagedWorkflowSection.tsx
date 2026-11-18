@@ -104,7 +104,7 @@ export function SessionManagedWorkflowSection(props: Readonly<{
                             <Text
                                 testID={`${testIDPrefix}-run-${run.id}-state`}
                                 accessibilityLabel={state.label}
-                                style={[styles.meta, toned ? { color: theme.colors.state[state.variant].foreground } : null]}
+                                style={[styles.meta, toned ? { color: theme.colors.state[state.variant].textForeground } : null]}
                                 numberOfLines={1}
                             >
                                 {[state.label, origin].filter(Boolean).join(' · ')}

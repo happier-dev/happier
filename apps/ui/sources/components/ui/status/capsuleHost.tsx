@@ -136,6 +136,7 @@ export function useCoreCapsuleColors(): HappierCapsuleColors {
         text: theme.colors.text.primary,
         secondaryText: theme.colors.text.secondary,
         warning: theme.colors.state.warning.foreground,
+        warningText: theme.colors.state.warning.textForeground,
         stripBackground: theme.colors.surface.base,
         stripBorder: theme.colors.border.default,
     }), [theme]);

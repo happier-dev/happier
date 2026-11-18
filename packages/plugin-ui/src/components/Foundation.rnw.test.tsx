@@ -33,7 +33,7 @@ function mountFoundation(children: React.ReactNode, hostApi = createHostApiStub(
 }
 
 describe('foundation presentation families', () => {
-  it('uses projected status text ink on tinted badges without changing the icon or outlined ink', () => {
+  it('uses projected status text ink for both badge variants while the icon and ring keep marker ink', () => {
     const base = createSurfaceContext();
     const context = { ...base, theme: { ...base.theme, statusText: {
       // Deliberately low contrast: an explicit appearance value must not be corrected by Badge.
@@ -55,7 +55,9 @@ describe('foundation presentation families', () => {
     try {
       const text = (id: string) => mount.container.querySelector<HTMLElement>(`[data-testid="${id}"] [dir="auto"]`)!;
       expect(getComputedStyle(text('tinted')).color).toBe('rgb(255, 255, 255)');
-      expect(getComputedStyle(text('outlined')).color).toBe(getComputedStyle(withColor(context.theme.colors.success)).backgroundColor);
+      expect(getComputedStyle(text('outlined')).color).toBe('rgb(255, 255, 255)');
+      const outlined = mount.container.querySelector<HTMLElement>('[data-testid="outlined"]')!;
+      expect(getComputedStyle(outlined).borderTopColor).toBe(getComputedStyle(withColor(context.theme.colors.success)).backgroundColor);
       const icon = mount.container.querySelector<HTMLElement>('[data-testid="tinted:icon"]')!;
       expect(getComputedStyle(icon).color).toBe(getComputedStyle(withColor(context.theme.colors.success)).backgroundColor);
     } finally { mount.unmount(); }

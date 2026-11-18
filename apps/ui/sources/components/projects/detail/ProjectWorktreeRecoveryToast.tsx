@@ -36,7 +36,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     message: {
         flexShrink: 1,
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
         fontSize: 13,
     },
 }));

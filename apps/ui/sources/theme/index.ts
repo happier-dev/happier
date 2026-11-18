@@ -120,6 +120,7 @@ const lightThemeBase = {
             },
             active: {
                 foreground: '#007AFF',
+                textForeground: '#0064D2',
                 background: 'rgba(0, 122, 255, 0.10)',
                 border: 'rgba(0, 122, 255, 0.40)',
             },
@@ -518,6 +519,7 @@ const darkThemeBase = {
             },
             active: {
                 foreground: '#9EB9FF',
+                textForeground: '#9EB9FF',
                 background: 'rgba(158, 185, 255, 0.12)',
                 border: 'rgba(158, 185, 255, 0.50)',
             },

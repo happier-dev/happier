@@ -104,7 +104,7 @@ export const SourceControlOperationsHistoryTimelineRow = React.memo((props: Sour
 
             <View style={{ flex: 1, paddingTop: props.layout === 'summary' ? 2 : 6, paddingBottom: props.layout === 'summary' ? 2 : 8, justifyContent: 'center' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-                    {mergedPullRequest ? <View testID={`scm-commit-entry-${props.entry.sha}-pr-${mergedPullRequest}`} style={{ paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, backgroundColor: props.theme.colors.state?.success?.background }}><Text style={{ ...Typography.variant('micro', 'medium'), color: props.theme.colors.state?.success?.foreground ?? props.theme.colors.text.secondary,  }}>#{mergedPullRequest}</Text></View> : null}
+                    {mergedPullRequest ? <View testID={`scm-commit-entry-${props.entry.sha}-pr-${mergedPullRequest}`} style={{ paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4, backgroundColor: props.theme.colors.state?.success?.background }}><Text style={{ ...Typography.variant('micro', 'medium'), color: props.theme.colors.state?.success?.textForeground ?? props.theme.colors.text.secondary,  }}>#{mergedPullRequest}</Text></View> : null}
                     <Text
                         style={{ flex: 1, color: props.theme.colors.text.primary, ...Typography.variant('body', 'semiBold'),  }}
                         numberOfLines={1}
@@ -144,7 +144,7 @@ export const SourceControlOperationsHistoryTimelineRow = React.memo((props: Sour
                             <Text style={{
                                 ...Typography.variant('micro', 'semiBold'),
                                 color: props.tag === 'just-now'
-                                    ? props.theme.colors.state?.success?.foreground
+                                    ? props.theme.colors.state?.success?.textForeground
                                     : props.theme.colors.text.link,
                             }}>
                                 {props.tag === 'just-now' ? t('sessionGitPane.flow.timeline.justNow') : t('sessionGitPane.flow.timeline.toPull')}

@@ -53,10 +53,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('body'),
     },
     error: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     notice: {
-        color: theme.colors.state.success.foreground,
+        color: theme.colors.state.success.textForeground,
     },
     listErrorContainer: {
         paddingVertical: theme.space.s20,

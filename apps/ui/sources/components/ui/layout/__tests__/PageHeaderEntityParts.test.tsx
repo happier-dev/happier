@@ -73,7 +73,7 @@ describe('PageHeaderMenu', () => {
 
         await openMenu(screen);
 
-        const danger = createThemeFixture().colors.state.danger.foreground;
+        const danger = createThemeFixture().colors.state.danger.textForeground;
         const deleteRow = findRow(screen, 'Delete');
         const duplicateRow = findRow(screen, 'Duplicate');
         const clearRow = findRow(screen, 'Clear history');

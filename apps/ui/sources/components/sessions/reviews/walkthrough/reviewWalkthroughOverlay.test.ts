@@ -39,7 +39,7 @@ describe('buildWalkthroughReviewOverlay', () => {
     it('keeps the reading in review until findings exist, then labels narration as writing', () => {
         const slotsFor = (reviews: ReviewFindingsOverlayReview[]) => buildWalkthroughReviewSlots({
             overlay: overlayOf(reviews), phone: false, writing: true,
-            severityColors: () => ({ foreground: '#c00', tint: '#fee' }),
+            severityColors: () => ({ foreground: '#c00', textForeground: '#900', tint: '#fee' }),
         });
         expect(slotsFor([review('run-claude', 'claude', [], { status: 'running', hasOutput: false })]).writingLabel)
             .toBe(t('reviewWalkthrough.steps.reviewing'));
@@ -56,7 +56,7 @@ describe('buildWalkthroughReviewOverlay', () => {
         expect(resolveReviewWalkthroughProgress({ review: active.summary, narration }))
             .toEqual({ review: { state: 'running', kind: 'reviewing' }, narration: { state: 'waiting', kind: 'writing' } });
         expect(buildWalkthroughReviewSlots({ overlay: active, phone: false, writing: true,
-            severityColors: () => ({ foreground: '#c00', tint: '#fee' }) }).writingLabel)
+            severityColors: () => ({ foreground: '#c00', textForeground: '#900', tint: '#fee' }) }).writingLabel)
             .toBe(t('reviewWalkthrough.steps.reviewing'));
 
         const terminal = overlayOf([failed, review('run-codex', 'codex', [])]);
@@ -72,7 +72,7 @@ describe('buildWalkthroughReviewOverlay', () => {
         const overlay = overlayOf([review('run-codex', 'codex', [
             finding('old', 'high', { filePath: SHEET, startLine: 11 }),
         ], { comparisonId: 'older-comparison' })], walkthrough);
-        const slots = buildWalkthroughReviewSlots({ overlay, phone: false, severityColors: () => ({ foreground: '#c00', tint: '#fee' }) });
+        const slots = buildWalkthroughReviewSlots({ overlay, phone: false, severityColors: () => ({ foreground: '#c00', textForeground: '#900', tint: '#fee' }) });
         const reading = buildWalkthroughReading({ comparison: SPECIMEN_COMPARISON,
             walkthrough: { state: 'complete', value: walkthrough }, analysis: null, reviewed: null });
         const nav = { scrollToStop: vi.fn(), scrollToFindings: vi.fn() };
@@ -94,7 +94,7 @@ describe('buildWalkthroughReviewOverlay', () => {
             finding('other', 'low', { filePath: KEY, startLine: 3 }),
             finding('literal escape', 'medium', { filePath: KEY, startLine: 3 }),
         ])], walkthrough);
-        const slots = buildWalkthroughReviewSlots({ overlay, phone: false, severityColors: () => ({ foreground: '#c00', tint: '#fee' }) });
+        const slots = buildWalkthroughReviewSlots({ overlay, phone: false, severityColors: () => ({ foreground: '#c00', textForeground: '#900', tint: '#fee' }) });
         const reading = buildWalkthroughReading({ comparison: SPECIMEN_COMPARISON,
             walkthrough: { state: 'complete', value: walkthrough }, analysis: null, reviewed: null });
         const scrollToStop = vi.fn();

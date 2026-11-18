@@ -949,7 +949,7 @@ const styles = StyleSheet.create((theme) => ({
   impact: { width: 120, alignItems: 'flex-end', gap: 1 },
   trend: { width: 180, gap: theme.space.s4, justifyContent: 'center' },
 
-  impactValue: { ...Typography.default('semiBold'), color: theme.colors.state.success.foreground, fontVariant: ['tabular-nums'] },
+  impactValue: { ...Typography.default('semiBold'), color: theme.colors.state.success.textForeground, fontVariant: ['tabular-nums'] },
   glyph: { paddingTop: theme.space.s2 },
   main: { flex: 1, minWidth: 0, gap: theme.space.s2 },
   category: { ...Typography.default(), color: theme.colors.text.tertiary },

@@ -85,7 +85,9 @@ export function SelectionActionBar(props: SelectionActionBarProps): React.ReactE
         background: theme.colors.button.primary.background,
         foreground: theme.colors.button.primary.tint,
         destructive: theme.colors.state.danger.foreground,
-    }), [theme.colors.button.primary.background, theme.colors.button.primary.tint, theme.colors.state.danger.foreground]);
+        destructiveText: theme.colors.state.danger.textForeground,
+    }), [theme.colors.button.primary.background, theme.colors.button.primary.tint,
+        theme.colors.state.danger.foreground, theme.colors.state.danger.textForeground]);
     return (
         <HappierSelectionActionBar
             {...props}

@@ -31,7 +31,7 @@ import { hasWebFocusableElement } from '../interaction/webFocusableElements.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HappierText } from '../text/Text.js';
 import { readHappierTypeRoleTabular, resolveHappierTypeRoleStyle } from '../text/typeRole.js';
-import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../semantics.js';
+import { resolveHappierToneTextColor, type HappierTone } from '../semantics.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
 import { useHappierTabSelection } from './tabSelection.js';
 
@@ -573,7 +573,7 @@ export function HappierTabs(props: Readonly<{
                   {glyphOnly ? null : (
                     <HappierText style={{ ...labelStyle, color: isSelected ? pageStrip ? props.theme.colors.text : props.theme.colors.accent : props.theme.colors.secondaryText }} tabularNumbers={readHappierTypeRoleTabular('label', typography)}>{tab.title}</HappierText>
                   )}
-                  {tab.badge ? <HappierText style={{ ...badgeStyle, color: props.theme.colors[HAPPIER_TONE_COLOR_TOKEN[tab.badgeTone ?? 'secondary']] }} tabularNumbers>{tab.badge}</HappierText> : null}
+                  {tab.badge ? <HappierText style={{ ...badgeStyle, color: resolveHappierToneTextColor(props.theme, tab.badgeTone ?? 'secondary') }} tabularNumbers>{tab.badge}</HappierText> : null}
                   {tab.marker ? <HappierTabMarker color={props.theme.colors.mutedText}
                     testID={`${props.testID ?? 'tabs'}:${tab.value}:marker`} /> : null}
                 </View>

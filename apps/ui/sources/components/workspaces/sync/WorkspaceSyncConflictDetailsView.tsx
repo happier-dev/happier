@@ -522,11 +522,11 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
                     {inspectionPhase === 'loading' ? <Text style={{ padding: theme.space.s16 }}>{t('common.loading')}</Text> : null}
                     {inspectionPhase === 'error' ? <Text accessibilityLiveRegion="polite" style={{ padding: theme.space.s16 }}>{t('workspaceSync.review.inspectionUnavailable')}</Text> : null}
                     {props.approvedRequest && inspectionPhase === 'ready' && !approvedCurrent ? <Text accessibilityLiveRegion="polite"
-                        style={{ padding: theme.space.s16, color: theme.colors.state.warning.foreground }}>
+                        style={{ padding: theme.space.s16, color: theme.colors.state.warning.textForeground }}>
                         {t('workspaceSync.resolve.changedBody')}
                     </Text> : null}
                     {!selectedRow || invalidated || !projection.coverage.complete || !currentInspection?.coverage.complete ? (
-                        <Text accessibilityLiveRegion="polite" style={{ padding: theme.space.s16, color: theme.colors.state.warning.foreground }}>
+                        <Text accessibilityLiveRegion="polite" style={{ padding: theme.space.s16, color: theme.colors.state.warning.textForeground }}>
                             {t('workspaceSync.review.coverageIncomplete')}
                         </Text>
                     ) : null}
@@ -616,7 +616,7 @@ export const WorkspaceSyncConflictDetailsView = React.memo(function WorkspaceSyn
                                 {sourcePreview.phase === 'refreshing' || comparePreview.phase === 'refreshing'
                                     || (sourcePreview.phase === 'error' && sourcePreview.value)
                                     || (comparePreview.phase === 'error' && comparePreview.value)
-                                    ? <Text accessibilityLiveRegion="polite" style={{ paddingHorizontal: theme.space.s16, color: theme.colors.state.warning.foreground }}>
+                                    ? <Text accessibilityLiveRegion="polite" style={{ paddingHorizontal: theme.space.s16, color: theme.colors.state.warning.textForeground }}>
                                         {t('workspaceSync.previewUnavailable')}
                                     </Text> : null}
                                 {comparisonText ? (

@@ -87,7 +87,7 @@ export const MachineDaemonSection = React.memo(function MachineDaemonSection(pro
             <Item
                 title={t('machine.status')}
                 detail={daemonStatusLabel}
-                detailStyle={daemonStatus === 'stopped' ? { color: theme.colors.state.warning.foreground } : undefined}
+                detailStyle={daemonStatus === 'stopped' ? { color: theme.colors.state.warning.textForeground } : undefined}
                 mode="info"
                 showChevron={false}
             />

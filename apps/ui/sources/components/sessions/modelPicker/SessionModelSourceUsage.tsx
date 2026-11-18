@@ -112,10 +112,10 @@ const styles = StyleSheet.create((theme) => ({
         fontVariant: ['tabular-nums'],
     },
     amountWarning: {
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
     amountDanger: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     failureInLine: {
         flexShrink: 1,

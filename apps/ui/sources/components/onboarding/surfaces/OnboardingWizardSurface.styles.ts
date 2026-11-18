@@ -39,7 +39,7 @@ export const onboardingWizardSurfaceStylesheet = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: 16,
         lineHeight: 24,
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
     relayGroupTitle: {
         ...Typography.variant('body', 'semiBold'),

@@ -74,10 +74,10 @@ export const ScmFileViewedMark = React.memo(function ScmFileViewedMark(
   // One note at most: a refused write outranks "changed since viewed".
   const note = file.errorCode
     ? { text: t('hunkReview.viewedNotSaved'), icon: 'warning-circle' as const,
-        color: theme.colors.state.danger.foreground, testID: `scm-file-viewed-failed-${safePath}` }
+        glyphColor: theme.colors.state.danger.foreground, textColor: theme.colors.state.danger.textForeground, testID: `scm-file-viewed-failed-${safePath}` }
     : file.state === 'dismissed'
       ? { text: t('hunkReview.viewedChanged'), icon: 'clock-counter-clockwise' as const,
-          color: theme.colors.text.tertiary, testID: `scm-file-viewed-changed-${safePath}` }
+          glyphColor: theme.colors.text.tertiary, textColor: theme.colors.text.tertiary, testID: `scm-file-viewed-changed-${safePath}` }
       : null;
   return (
     <View style={styles.row}>
@@ -85,10 +85,10 @@ export const ScmFileViewedMark = React.memo(function ScmFileViewedMark(
         phone ? (
           // A phone keeps the file name: the note shrinks to its glyph and stays its own tooltip and name.
           <Tooltip label={note.text} testID={note.testID}>
-            <Icon name={note.icon} size={ICON_SIZE.xs} color={note.color} />
+            <Icon name={note.icon} size={ICON_SIZE.xs} color={note.glyphColor} />
           </Tooltip>
         ) : (
-          <Text testID={note.testID} variant="meta" numberOfLines={1} style={{ color: note.color }}>
+          <Text testID={note.testID} variant="meta" numberOfLines={1} style={{ color: note.textColor }}>
             {note.text}
           </Text>
         )

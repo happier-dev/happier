@@ -14,7 +14,7 @@ import type {
   HappierLayoutChangeEvent,
   HappierStyleProp,
 } from '../portableTypes.js';
-import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../semantics.js';
+import { HAPPIER_TONE_COLOR_TOKEN, resolveHappierToneTextColor, type HappierTone } from '../semantics.js';
 import { HappierText } from '../text/Text.js';
 import { resolveHappierTypeRoleStyle } from '../text/typeRole.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
@@ -303,10 +303,7 @@ export function HappierMetadata(
                 selectable
                 style={{
                   ...valueStyle,
-                  color:
-                    props.theme.colors[
-                      HAPPIER_TONE_COLOR_TOKEN[entry.tone ?? 'neutral']
-                    ],
+                  color: resolveHappierToneTextColor(props.theme, entry.tone ?? 'neutral'),
                 }}
               >
                 {entry.valueContent ?? entry.value}

@@ -674,7 +674,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     fieldError: {
         ...Typography.variant('body'),
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     foot: {
         ...Typography.variant('meta'),

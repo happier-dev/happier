@@ -477,7 +477,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
                     ? <ActivitySpinner size={iconMatchedSpinnerSize(16)} color={theme.colors.text.secondary} />
                     : item.icon ?? null,
                 rowContainerStyle: item.rowContainerStyle,
-                ...(item.destructive ? { rowTitleStyle: { color: theme.colors.state.danger.foreground } } : {}),
+                ...(item.destructive ? { rowTitleStyle: { color: theme.colors.state.danger.textForeground } } : {}),
                 right: item.loading && !item.icon
                     ? <ActivitySpinner size={iconMatchedSpinnerSize(16)} color={theme.colors.text.secondary} />
                     : item.rightElement
@@ -493,7 +493,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
     // A shut menu is a trigger: its rows are built when it opens (a row menu per list row would otherwise
     // build and group every row's items at rest). The trigger reads the raw items only for the selected one.
     const selectableItems = React.useMemo(() => props.open ? menuItems.map(toSelectableItem) : NO_SELECTABLE_ITEMS,
-        [hasHardwareKeyboard, menuItems, props.open, selectCheckedId, theme.colors.state.danger.foreground, theme.colors.text.secondary]);
+        [hasHardwareKeyboard, menuItems, props.open, selectCheckedId, theme.colors.state.danger.textForeground, theme.colors.text.secondary]);
     const selectableItemSource: SelectableMenuItemSource | undefined = props.open && props.itemSource ? {
         items: selectableItems,
         indexById: props.itemSource.indexById,

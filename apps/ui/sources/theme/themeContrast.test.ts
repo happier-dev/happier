@@ -145,6 +145,9 @@ const CORRIDOR_PAIRINGS: readonly CorridorPairing[] = [
     // "Needs you" words (D8) take the attention text role; the dot beside them keeps the attention amber.
     { foreground: 'state.attention.textForeground', background: 'background.canvas', minRatio: 4.5, renderedBy: 'appShell/panes/PaneHeader.tsx attention fact' },
     { foreground: 'state.attention.textForeground', background: 'surface.base', minRatio: 4.5, renderedBy: 'widgets/glance/WidgetGlanceRow.tsx attention' },
+    { foreground: 'state.active.textForeground', background: 'background.canvas', minRatio: 4.5, renderedBy: 'ui/linkBubble/LinkBubbleEditInput.tsx label' },
+    { foreground: 'state.active.textForeground', background: 'surface.base', minRatio: 4.5, renderedBy: 'workspaces/scm/review/ChangedFilesReviewIndex.tsx count' },
+    { foreground: 'state.active.textForeground', background: 'state.active.background', minRatio: 4.5, renderedBy: 'workflows/editor/WorkflowValuePicker.tsx token label' },
 
     // The canonical filled-button pair. `RoundButton` and `SurfaceStateCard.action`
     // paint this, and it is the pairing the corridor's two hand-rolled indigo CTAs

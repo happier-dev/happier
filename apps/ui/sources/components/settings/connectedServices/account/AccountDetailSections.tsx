@@ -708,7 +708,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.tertiary,
     },
     warning: {
-        color: theme.colors.state.warning.foreground,
+        color: theme.colors.state.warning.textForeground,
     },
     worksOnNote: {
         ...Typography.variant('meta'),

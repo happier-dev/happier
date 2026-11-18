@@ -202,10 +202,10 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
-function toneColor(tone: SessionSwitcherRowTone, colors: ReturnType<typeof useUnistyles>['theme']['colors']): string {
-    if (tone === 'attention') return colors.state.warning.foreground;
-    if (tone === 'failed') return colors.state.danger.foreground;
-    return colors.text.secondary;
+function statusToneState(tone: SessionSwitcherRowTone, colors: ReturnType<typeof useUnistyles>['theme']['colors']) {
+    if (tone === 'attention') return colors.state.warning;
+    if (tone === 'failed') return colors.state.danger;
+    return undefined;
 }
 
 const RowMark = React.memo(function RowMark(props: Readonly<{ row: SessionSwitcherRow; size: number }>) {
@@ -234,10 +234,8 @@ function StatusGlyph(props: Readonly<{ row: SessionSwitcherRow }>) {
     if (row.draft) return <Icon name="pencil-simple" size={13} color={theme.colors.text.secondary} />;
     if (!row.status) return null;
     if (row.status.tone === 'working') return <ActivitySpinner size={11} color={theme.colors.text.secondary} />;
-    if (row.status.tone === 'attention' || row.status.tone === 'failed') {
-        return <StatusDot color={toneColor(row.status.tone, theme.colors)} size={7} />;
-    }
-    return null;
+    const state = statusToneState(row.status.tone, theme.colors);
+    return state ? <StatusDot color={state.foreground} size={7} /> : null;
 }
 
 /** One line under the title: the draft being written, or what the session is doing. */
@@ -248,7 +246,8 @@ function StatusLine(props: Readonly<{ row: SessionSwitcherRow }>) {
         return <Text style={styles.status} numberOfLines={1}>{t('phoneNav.switcher.draft', { text: row.draft })}</Text>;
     }
     if (!row.status) return null;
-    return <Text style={[styles.status, { color: toneColor(row.status.tone, theme.colors) }]} numberOfLines={1}>{row.status.text}</Text>;
+    const state = statusToneState(row.status.tone, theme.colors);
+    return <Text style={[styles.status, { color: state?.textForeground ?? theme.colors.text.secondary }]} numberOfLines={1}>{row.status.text}</Text>;
 }
 
 const SwitcherRow = React.memo(function SwitcherRow(props: Readonly<{

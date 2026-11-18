@@ -73,7 +73,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     shapeOk: {
         ...Typography.variant('meta'),
-        color: theme.colors.state.success.foreground,
+        color: theme.colors.state.success.textForeground,
     },
 }));
 

@@ -52,13 +52,13 @@ export type HappierWorkTheme = Readonly<{
   radii: Readonly<{ control: number; inset: number; card: number }>;
 }>;
 
-function snapshotState(color: string, surface: string): HappierWorkStateColors {
-  return { foreground: color, border: color, background: softenHappierWorkColor(color, 0.1) ?? surface };
+function snapshotState(color: string, surface: string, textForeground: string | undefined): HappierWorkStateColors {
+  return { foreground: color, textForeground, border: color, background: softenHappierWorkColor(color, 0.1) ?? surface };
 }
 
 /**
  * The Work theme from the public theme snapshot (and the page palette, when the host installed one).
- * The snapshot carries one hue per state, so the state tint is that hue at a tenth.
+ * The state tint is the snapshot's marker hue at a tenth.
  */
 export function resolveHappierWorkTheme(
   base: HappierUiTheme,
@@ -79,8 +79,8 @@ export function resolveHappierWorkTheme(
       hover: palette.navigationHover,
       selected: palette.navigationSelected,
       focus: colors.focus,
-      attention: snapshotState(colors.attention, colors.surface),
-      danger: snapshotState(colors.danger, colors.surface),
+      attention: snapshotState(colors.attention, colors.surface, base.statusText?.attention),
+      danger: snapshotState(colors.danger, colors.surface, base.statusText?.danger),
     },
     spacing: { xsmall: base.spacing.xsmall, small: base.spacing.small },
     radii: { control: base.radii.control, inset: base.radii.control, card: base.radii.panel },

@@ -9,7 +9,7 @@
  *
  * It lives at the presentation root rather than under `text/` because tone is
  * NOT a text concept: text, status indicators, spinners and state surfaces all
- * project the same semantic role onto the same canonical theme colour. Two
+ * project the same semantic role onto the canonical theme. Two
  * families each owning a tone→token table would disagree the first time either
  * changed.
  */
@@ -44,6 +44,13 @@ export const HAPPIER_TONE_COLOR_TOKEN = {
   danger: 'danger',
   accent: 'accent',
 } as const satisfies Record<HappierTone, string>;
+
+/** Resolve readable status text from a host snapshot, including older snapshots without that role. */
+export function resolveHappierToneTextColor(theme: HappierUiTheme, tone: HappierTone): string {
+  const color = theme.colors[HAPPIER_TONE_COLOR_TOKEN[tone]];
+  if (tone === 'neutral' || tone === 'accent' || tone === 'secondary' || tone === 'muted') return color;
+  return theme.statusText?.[tone] ?? color;
+}
 
 /**
  * A colour a person picks for a mark (a label's dot, its swatch in a colour menu): a theme tone, or a named hue

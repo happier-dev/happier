@@ -43,12 +43,12 @@ export function getContextWarning({
     const percentageRemaining = Math.max(0, Math.min(100, 100 - percentageUsed));
 
     if (percentageRemaining <= 5) {
-        return { text: t('agentInput.context.remaining', { percent: Math.round(percentageRemaining) }), color: theme.colors.state.danger.foreground };
+        return { text: t('agentInput.context.remaining', { percent: Math.round(percentageRemaining) }), color: theme.colors.state.danger.textForeground };
     } else if (percentageRemaining <= 15) {
-        return { text: t('agentInput.context.remaining', { percent: Math.round(percentageRemaining) }), color: theme.colors.state.warning.foreground };
+        return { text: t('agentInput.context.remaining', { percent: Math.round(percentageRemaining) }), color: theme.colors.state.warning.textForeground };
     } else if (alwaysShow) {
         // Show context remaining in neutral color when not near limit
-        return { text: t('agentInput.context.remaining', { percent: Math.round(percentageRemaining) }), color: theme.colors.state.neutral.foreground };
+        return { text: t('agentInput.context.remaining', { percent: Math.round(percentageRemaining) }), color: theme.colors.state.neutral.textForeground };
     }
     return null; // No display needed
 }

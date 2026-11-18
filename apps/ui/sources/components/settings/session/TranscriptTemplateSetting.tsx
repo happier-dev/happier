@@ -24,7 +24,7 @@ export function TranscriptTemplateSetting(props: Readonly<{ tipStyle: React.Comp
                 value={typeof value === 'string' ? value : '{{MESSAGES}}'}
                 onCommit={next => setSetting(TRANSCRIPT_SETTINGS.settings.sendToSessionTemplate, next)}
                 placeholder={t('settingsSession.transcript.messageActions.template.placeholder')} multiline monospace
-                supportingContent={draft => !draft.includes('{{MESSAGES}}') ? <Text style={[props.tipStyle, { color: theme.colors.state.warning.foreground }]}>
+                supportingContent={draft => !draft.includes('{{MESSAGES}}') ? <Text style={[props.tipStyle, { color: theme.colors.state.warning.textForeground }]}>
                     {t('settingsSession.transcript.messageActions.template.warningMissingPlaceholder')}
                 </Text> : null} />
         </View>} />;

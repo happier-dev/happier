@@ -107,7 +107,7 @@ export function deriveThemeColorsWithPaint(theme: Theme, baseTheme: Theme,
     const edge = buildRaisedEdgeColorsWithPaint(theme.colors, raisedEdgeInk.color, theme.dark, finishInk.color);
     // Existing profiles authored the shared foreground. Keep that choice exact unless they
     // explicitly set the new text role, even when its value equals the default.
-    const statusText = (variant: 'success' | 'warning' | 'attention' | 'danger' | 'info' | 'neutral') => (
+    const statusText = (variant: 'success' | 'warning' | 'attention' | 'danger' | 'info' | 'neutral' | 'active') => (
         explicitOverrides.has(`state.${variant}.textForeground`)
             ? theme.colors.state[variant].textForeground
             : explicitOverrides.has(`state.${variant}.foreground`)
@@ -133,6 +133,7 @@ export function deriveThemeColorsWithPaint(theme: Theme, baseTheme: Theme,
                 danger: { ...theme.colors.state.danger, textForeground: statusText('danger') },
                 info: { ...theme.colors.state.info, textForeground: statusText('info') },
                 neutral: { ...theme.colors.state.neutral, textForeground: statusText('neutral') },
+                active: { ...theme.colors.state.active, textForeground: statusText('active') },
             },
             surface: {
                 ...theme.colors.surface,

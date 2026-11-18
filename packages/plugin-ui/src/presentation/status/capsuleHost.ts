@@ -82,8 +82,10 @@ export type HappierCapsuleColors = Readonly<{
   text: string;
   /** A meta line and the spinner. */
   secondaryText: string;
-  /** The line that must be read whole (an action whose effect is unknown). */
+  /** The warning mark. */
   warning: string;
+  /** The line that must be read whole (an action whose effect is unknown). */
+  warningText?: string;
   /** The round plate behind the presence capsule's mark. */
   /** The in-flow strip's ground and hairline edge. */
   stripBackground: string;

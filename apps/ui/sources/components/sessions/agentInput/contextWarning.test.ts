@@ -26,7 +26,7 @@ describe('getContextWarning', () => {
 
         expect(warning).toEqual(
             expect.objectContaining({
-                color: lightTheme.colors.state.neutral.foreground,
+                color: lightTheme.colors.state.neutral.textForeground,
             }),
         );
         expect(warning?.text).toContain('100');
@@ -52,7 +52,7 @@ describe('getContextWarning', () => {
         });
 
         expect(warning).toEqual(expect.objectContaining({
-            color: lightTheme.colors.state.warning.foreground,
+            color: lightTheme.colors.state.warning.textForeground,
         }));
         expect(warning?.text).toContain('15');
     });

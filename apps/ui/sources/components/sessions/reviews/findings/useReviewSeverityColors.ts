@@ -7,7 +7,7 @@ import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding'
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 
 type Theme = ReturnType<typeof useUnistyles>['theme'];
-type SeverityColors = Readonly<{ foreground: string; tint: string }>;
+type SeverityColors = Readonly<{ foreground: string; textForeground: string; tint: string }>;
 
 /**
  * A severity's colours where a finding sits beside code: its foreground from the shared severity owner
@@ -16,9 +16,9 @@ type SeverityColors = Readonly<{ foreground: string; tint: string }>;
 function resolveReviewSeverityColors(theme: Theme, presentationTheme: PluginUiThemeV1, severity: ReviewFinding['severity']): SeverityColors {
     const foreground = resolveHappierReviewSeverityColor(presentationTheme, severity);
     switch (HAPPIER_REVIEW_SEVERITY_TONE[severity]) {
-        case 'danger': return { foreground, tint: theme.colors.state.danger.background };
-        case 'warning': return { foreground, tint: theme.colors.state.warning.background };
-        default: return { foreground, tint: theme.colors.surface.inset };
+        case 'danger': return { foreground, textForeground: theme.colors.state.danger.textForeground, tint: theme.colors.state.danger.background };
+        case 'warning': return { foreground, textForeground: theme.colors.state.warning.textForeground, tint: theme.colors.state.warning.background };
+        default: return { foreground, textForeground: foreground, tint: theme.colors.surface.inset };
     }
 }
 

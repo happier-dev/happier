@@ -214,7 +214,7 @@ export function useApprovalFieldsLook(): HappierApprovalFieldsLook<ApprovalValue
             text: theme.colors.text.primary,
             secondaryText: theme.colors.text.secondary,
             mutedText: theme.colors.text.tertiary,
-            danger: theme.colors.state.danger.foreground,
+            danger: theme.colors.state.danger.textForeground,
             inset: theme.colors.surface.inset,
         },
         space: theme.space,

@@ -651,7 +651,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     headerErrorText: {
         ...Typography.variant('body', 'semiBold'),
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     headerErrorTextQuiet: {
         color: theme.colors.text.secondary,

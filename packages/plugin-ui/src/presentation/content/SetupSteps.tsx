@@ -145,7 +145,7 @@ function resolveTitlePresentation(
   if (state === 'upcoming' || state === 'cancelled')
     return title(colors.mutedText, 'regular');
   return title(
-    state === 'failed' ? colors.danger : colors.secondaryText,
+    state === 'failed' ? theme.statusText?.danger ?? colors.danger : colors.secondaryText,
     'regular',
   );
 }

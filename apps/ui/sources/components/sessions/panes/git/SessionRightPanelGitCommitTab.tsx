@@ -391,10 +391,10 @@ const CommitFlightChip = React.memo(function CommitFlightChip(props: Readonly<{
             <Text style={{ ...Typography.variant('meta'), color: colors.text.secondary,  }}>
                 {t('sessionGitPane.commit.selection', { count: props.chip.fileCount })}
             </Text>
-            <Text style={{ ...Typography.variant('meta', 'semiBold'), fontVariant: ['tabular-nums'], color: colors.state?.success?.foreground,  }}>
+            <Text style={{ ...Typography.variant('meta', 'semiBold'), fontVariant: ['tabular-nums'], color: colors.state?.success?.textForeground,  }}>
                 {`+${formatExactCount(props.chip.added)}`}
             </Text>
-            <Text style={{ ...Typography.variant('meta', 'semiBold'), fontVariant: ['tabular-nums'], color: colors.state?.danger?.foreground,  }}>
+            <Text style={{ ...Typography.variant('meta', 'semiBold'), fontVariant: ['tabular-nums'], color: colors.state?.danger?.textForeground,  }}>
                 {`\u2212${formatExactCount(props.chip.removed)}`}
             </Text>
         </View>
@@ -608,8 +608,8 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
     const themeSurfaceBase = props.theme.colors.surface?.base ?? props.theme.colors.surface;
     const themeTextPrimary = props.theme.colors.text?.primary ?? props.theme.colors.text;
     const themeTextSecondary = props.theme.colors.text?.secondary ?? props.theme.colors.textSecondary;
-    const themeSuccess = props.theme.colors.state?.success?.foreground ?? themeTextSecondary;
-    const themeDanger = props.theme.colors.state?.danger?.foreground ?? themeTextSecondary;
+    const themeSuccess = props.theme.colors.state?.success?.textForeground ?? themeTextSecondary;
+    const themeDanger = props.theme.colors.state?.danger?.textForeground ?? themeTextSecondary;
     const selectedMode = props.changedFilesViewMode === 'selected';
     const [collapsedGroups, setCollapsedGroups] = React.useState<ReadonlySet<CommitGroupItem['id']>>(() => new Set(props.completedOperationId ? ['session', 'elsewhere'] : props.phone ? ['elsewhere'] : []));
     React.useEffect(() => {
@@ -1239,7 +1239,7 @@ const ChangeGroupHeaderRow = React.memo((props: Readonly<{
                 {formatExactCount(group.files.length)}
             </Text>
             {proposalCount > 0 && props.proposalHighlight ? (
-                <Text testID={`scm-change-group-proposal:${group.id}`} style={{ marginLeft: 'auto', ...Typography.variant('meta', 'semiBold'), color: props.theme.colors.state.active.foreground, fontVariant: ['tabular-nums'],  }}>
+                <Text testID={`scm-change-group-proposal:${group.id}`} style={{ marginLeft: 'auto', ...Typography.variant('meta', 'semiBold'), color: props.theme.colors.state.active.textForeground, fontVariant: ['tabular-nums'],  }}>
                     {t('commitProposal.gitPane.inCommit', { count: proposalCount, number: props.proposalHighlight.groupNumber })}
                 </Text>
             ) : null}

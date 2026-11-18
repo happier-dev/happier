@@ -428,9 +428,12 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         theme.colors.text?.secondary,
         theme.colors.text?.link,
         theme.colors.surface?.pressed,
-        theme.colors.state?.neutral?.foreground,
-        theme.colors.state?.success?.foreground,
-        theme.colors.state?.danger?.foreground,
+        theme.colors.state?.neutral?.textForeground,
+        theme.colors.state?.success?.textForeground,
+        theme.colors.state?.danger?.textForeground,
+        theme.colors.state?.warning?.textForeground,
+        theme.colors.state.active.foreground,
+        theme.colors.state.active.textForeground,
     ].join('|'), [
         props.scope.serverId,
         props.scope.machineId,
@@ -449,9 +452,12 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         props.rowStyle,
         props.folderPage,
         props.webDropHoverPath,
-        theme.colors.state?.danger?.foreground,
-        theme.colors.state?.neutral?.foreground,
-        theme.colors.state?.success?.foreground,
+        theme.colors.state?.danger?.textForeground,
+        theme.colors.state?.neutral?.textForeground,
+        theme.colors.state?.success?.textForeground,
+        theme.colors.state?.warning?.textForeground,
+        theme.colors.state.active.foreground,
+        theme.colors.state.active.textForeground,
         theme.colors.surface?.pressed,
         theme.colors.text?.link,
         theme.colors.text?.secondary,
@@ -553,7 +559,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
                     // checkbox (the Git tree) the letter moves to the icon slot after it (Git lab TV).
                     <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: theme.space.s6 }}>
                         {rowState.rowProposal?.notes.get(node.path) ? (
-                            <Text testID={`${rowTestId}-proposal-note`} numberOfLines={1} style={{ ...Typography.variant('meta', 'semiBold'), color: rowState.theme.colors.state.active.foreground,  }}>
+                            <Text testID={`${rowTestId}-proposal-note`} numberOfLines={1} style={{ ...Typography.variant('meta', 'semiBold'), color: rowState.theme.colors.state.active.textForeground,  }}>
                                 {rowState.rowProposal.notes.get(node.path)}
                             </Text>
                         ) : null}

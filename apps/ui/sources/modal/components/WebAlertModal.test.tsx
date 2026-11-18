@@ -42,6 +42,27 @@ function getNodeByTestID(screen: { findByTestId: (testID: string) => any }, test
 }
 
 describe('WebAlertModal', () => {
+    it('uses text ink for irreversible copy and destructive choices', async () => {
+        const { WebAlertModal } = await import('./WebAlertModal');
+        const { lightTheme } = await import('@/theme');
+        const { StyleSheet } = await import('react-native');
+        const screen = await renderScreen(<WebAlertModal config={{
+            id: 'contrast', type: 'confirm', title: 'Delete',
+            messageParagraphs: [{ text: 'Cannot undo', irreversible: true }],
+            confirmText: 'Delete', destructive: true,
+        }} onClose={() => {}} />);
+        const ink = (text: string) => {
+            const node = screen.findAllByType('Text').find(node => node.props.children === text);
+            return StyleSheet.flatten(node?.props.style)?.color;
+        };
+        expect(ink('Cannot undo')).toBe(lightTheme.colors.state.warning.textForeground);
+        expect(ink('Delete')).toBe(lightTheme.colors.text.primary);
+        const { ModalChoiceRow } = await import('./card/ModalChoiceRow');
+        const row = await renderScreen(<ModalChoiceRow choices={[{ text: 'Remove', role: 'destructive', onPress: () => {} }]} />);
+        const label = row.findAllByType('Text').find(node => node.props.children === 'Remove');
+        expect(StyleSheet.flatten(label?.props.style)?.color).toBe(lightTheme.colors.state.danger.textForeground);
+    });
+
     it('wraps the dialog content in the shared card frame and keeps backdrop dismissal disabled', async () => {
         const { WebAlertModal } = await import('./WebAlertModal');
 

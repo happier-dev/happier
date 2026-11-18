@@ -172,7 +172,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s4,
   },
   readinessText: {
-    color: theme.colors.state.warning.foreground,
+    color: theme.colors.state.warning.textForeground,
     flexShrink: 1,
   },
   // Popover and sheet content carries its own ink; a bare Text has no colour and reads black on dark.

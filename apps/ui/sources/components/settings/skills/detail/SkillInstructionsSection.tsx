@@ -518,7 +518,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   conflictText: { color: theme.colors.text.primary },
   quiet: { color: theme.colors.text.tertiary },
-  failed: { color: theme.colors.state.danger.foreground },
+  failed: { color: theme.colors.state.danger.textForeground },
   editor: {
     minHeight: 320,
     paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx,

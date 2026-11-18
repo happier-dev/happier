@@ -432,6 +432,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   conflictText: {
     ...Typography.variant('meta'),
-    color: theme.colors.state.warning.foreground,
+    color: theme.colors.state.warning.textForeground,
   },
 }));

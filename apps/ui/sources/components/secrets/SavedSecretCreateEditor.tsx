@@ -455,7 +455,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                     testID="saved-secret-create-failure"
                     accessibilityRole="alert"
                     accessibilityLiveRegion="polite"
-                    style={[styles.notice, { color: theme.colors.state.danger.foreground }]}
+                    style={[styles.notice, { color: theme.colors.state.danger.textForeground }]}
                 >
                     {failure}
                 </Text>

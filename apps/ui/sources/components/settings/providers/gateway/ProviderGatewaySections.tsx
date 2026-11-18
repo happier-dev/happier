@@ -364,7 +364,7 @@ export const ProviderGatewaySections = React.memo(
                     style={[
                       styles.status,
                       computerTrouble
-                        ? { color: theme.colors.state.warning.foreground }
+                        ? { color: theme.colors.state.warning.textForeground }
                         : null,
                     ]}
                   >

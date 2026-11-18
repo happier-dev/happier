@@ -35,9 +35,11 @@ export const GitNextActionButton = React.memo(function GitNextActionButton(props
     const running = props.runningKey !== null && props.runningKey === primary.key;
     const attention = primary.key === 'resolve' || primary.emphasis === 'attention';
     const tone = primary.emphasis === 'primary' && !running && !attention ? 'primary' : 'default';
-    const contentColor = attention ? theme.colors.state.warning.foreground : tone === 'primary'
+    const contentColor = tone === 'primary'
         ? theme.colors.button.primary.tint
         : primary.emphasis === 'quiet' ? theme.colors.text.secondary : theme.colors.text.primary;
+    const labelColor = attention ? theme.colors.state.warning.textForeground : contentColor;
+    const iconColor = attention ? theme.colors.state.warning.foreground : contentColor;
     const onPrimary = React.useCallback(() => props.onRun(primary.key), [primary.key, props.onRun]);
 
     const items = React.useMemo<DropdownMenuItem[]>(() => {
@@ -82,8 +84,8 @@ export const GitNextActionButton = React.memo(function GitNextActionButton(props
                 tone={tone}
                 disabled={primary.disabled || running || primary.key === 'up-to-date'}
                 busy={running}
-                labelColor={contentColor}
-                icon={running ? <ActivitySpinner size={14} color={contentColor} /> : <Icon name={actionIcon(primary.key)} size={14} color={contentColor} />}
+                labelColor={labelColor}
+                icon={running ? <ActivitySpinner size={14} color={iconColor} /> : <Icon name={actionIcon(primary.key)} size={14} color={iconColor} />}
                 onPress={onPrimary}
                 joinedEdge="end"
                 style={[attention ? { backgroundColor: theme.colors.state.warning.background, borderColor: theme.colors.state.warning.border } : null, running || primary.emphasis === 'quiet' ? { borderWidth: 0, backgroundColor: 'transparent', opacity: 1 } : null]}
@@ -104,7 +106,7 @@ export const GitNextActionButton = React.memo(function GitNextActionButton(props
                         label=""
                         accessibilityLabel={t('sessionGitPane.flow.menu.open')}
                         tone={tone}
-                        icon={<Icon name="caret-down" size={12} color={contentColor} />}
+                        icon={<Icon name="caret-down" size={12} color={iconColor} />}
                         onPress={toggle}
                         joinedEdge="start"
                         style={[attention ? { backgroundColor: theme.colors.state.warning.background, borderColor: theme.colors.state.warning.border } : null, running || primary.emphasis === 'quiet' ? { borderWidth: 0, backgroundColor: 'transparent' } : null]}

@@ -60,9 +60,9 @@ export const VoiceStatusLine = React.memo(function VoiceStatusLine(props: Readon
         : null;
     const cell = props.voice.statusCell;
     const wordColor = props.voice.tone === 'error'
-        ? theme.colors.state.danger.foreground
+        ? theme.colors.state.danger.textForeground
         : cell === 'needs_you'
-            ? theme.colors.state.warning.foreground
+            ? theme.colors.state.warning.textForeground
             : theme.colors.text.primary;
     const hero = props.size === 'hero';
     return (

@@ -56,9 +56,9 @@ function createScmChangeRowTheme() {
             },
             state: {
                 active: { foreground: '#09f', background: '#eaf5ff' },
-                success: { foreground: '#0a0' },
-                danger: { foreground: '#a00' },
-                neutral: { foreground: '#b60' },
+                success: { foreground: '#0a0', textForeground: '#075' },
+                danger: { foreground: '#a00', textForeground: '#800' },
+                neutral: { foreground: '#b60', textForeground: '#850' },
             },
         },
     } as const;
@@ -182,6 +182,8 @@ describe('ScmChangeRow', () => {
 
     const textContent = tree.findAllByType('Text' as any).map((node) => String(node.props.children));
     expect(textContent.join(' ')).toContain('A');
+    const badge = tree.findAllByType('Text' as any).find(node => node.props.children === 'A');
+    expect(flattenStyle(badge?.props.style).color).toBe(theme.colors.state.success.textForeground);
   });
 
   it('normalizes leading slashes in file names (prevents "/file" rendering in root paths)', async () => {

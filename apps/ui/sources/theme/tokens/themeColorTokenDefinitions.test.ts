@@ -260,6 +260,9 @@ describe('editable theme color token definitions', () => {
             expect(getEditableThemeColorTokenDefinition(`state.${variant}.foreground`)?.contrastPairs).toEqual([
                 { tokenId: `state.${variant}.background`, minRatio: 3 },
             ]);
+            expect(getEditableThemeColorTokenDefinition(`state.${variant}.textForeground`)?.contrastPairs).toEqual([
+                { tokenId: `state.${variant}.background`, minRatio: 4.5 },
+            ]);
         }
         expect(getEditableThemeColorTokenDefinition('overlay.foreground')?.contrastPairs).toEqual([
             { tokenId: 'overlay.scrim', minRatio: 3 },

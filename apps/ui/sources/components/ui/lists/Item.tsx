@@ -593,7 +593,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         ...Typography.default('semiBold'),
     },
     titleDestructive: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     // A dimmed row (`dimmed`) steps every text line down one ink level, keeping title over subtitle.
     titleDimmed: {

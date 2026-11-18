@@ -769,7 +769,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 0,
     },
     failing: {
-        color: theme.colors.state.danger.foreground,
+        color: theme.colors.state.danger.textForeground,
     },
     cardStatus: {
         ...Typography.variant('meta'),

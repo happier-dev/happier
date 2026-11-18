@@ -720,7 +720,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     overflow: 'hidden',
   },
   error: {
-    color: theme.colors.state.danger.foreground,
+    color: theme.colors.state.danger.textForeground,
   },
   columns: {
     flexDirection: 'row',
