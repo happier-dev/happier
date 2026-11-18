@@ -1315,7 +1315,10 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         serviceBinding,
                         correlationId,
                         lifetime,
-                        sharedSaveAdmission,
+                        // A host-reviewed parent (e.g. the app's carried confirmation of this exact
+                        // action.invoke) admitted these operands instead of a current-intent round.
+                        sharedSaveAdmission ?? (args.reviewedChild
+                            ? readReviewedSharedSaveAdmission(preparedInput.input, assertSharedSaveCurrent) : undefined),
                     );
                 },
                 ...(params.redactDiagnosticText
@@ -1330,6 +1333,11 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             // A proposed shared save is admitted only by the reviewed current-intent round,
             // so it takes that round even when the Action's own policy needs none.
             const proposesSharedSave = readReviewedSharedSaveAdmission(preparedInput.input, () => {}) !== undefined;
+            const assertSharedSaveCurrent = () => {
+                if (lifetime.signal.aborted || !indexed.isCurrent()) {
+                    throw new PluginError({ code: 'plugin_action_generation_retired', message: 'Shared save Action authority retired' });
+                }
+            };
             const prepared = await executor.prepare({
                     pluginId: invocation.pluginId, localId: invocation.localId, input: preparedInput.input,
                     surface: invocation.surface,
@@ -1347,11 +1355,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     ...(invocation.approvalContext ? { approvalContext: invocation.approvalContext } : {}),
                     ...(invocation.requestCurrentIntent ? {
                         requestCurrentIntent: async (request: TargetActionCurrentIntentRequest) => {
-                            const reviewedSave = readReviewedSharedSaveAdmission(request.action.input, () => {
-                                if (lifetime.signal.aborted || !indexed.isCurrent()) {
-                                    throw new PluginError({ code: 'plugin_action_generation_retired', message: 'Shared save Action authority retired' });
-                                }
-                            });
+                            const reviewedSave = readReviewedSharedSaveAdmission(request.action.input, assertSharedSaveCurrent);
                             const result = await invocation.requestCurrentIntent!(request);
                             sharedSaveAdmission = result.status === 'approved' && result.fingerprint === request.fingerprint
                                 ? reviewedSave : undefined;

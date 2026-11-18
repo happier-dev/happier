@@ -596,7 +596,8 @@ export type PluginActionCurrentIntentResult = Readonly<
 >;
 
 export type PluginActionPresentUserGateResult<TAction> = Readonly<
-  | { status: 'admitted'; action: TAction; artifactId?: string }
+  /** reviewedChild: a host-reviewed parent admitted these exact operands (no current-intent round ran). */
+  | { status: 'admitted'; action: TAction; artifactId?: string; reviewedChild?: true }
   | { status: 'deferred'; artifactId: string }
   | { status: 'unavailable'; code: string; message: string; data?: StrictJsonValue }
   | Extract<PluginActionInvocationResult, { status: 'failed' }>
@@ -816,7 +817,7 @@ export function createPluginActionPresentUserGate<TAction>(deps: Readonly<{
       if (isHostAdmittedReviewedChildPolicyV1(
         reviewedChild, initial.policy.qualifiedId, args.input,
       )) {
-        return Object.freeze({ status: 'admitted' as const, action: initial.action });
+        return Object.freeze({ status: 'admitted' as const, action: initial.action, reviewedChild: true as const });
       }
       const initialPolicy = evaluatePresentUserPolicy(initial.policy, args);
       if (initialPolicy.outcome !== 'visible') return presentUserUnavailable(initialPolicy.code);

@@ -251,6 +251,8 @@ export function createTargetActionExecutor(deps: Readonly<{
   requestCurrentIntent?: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult>;
   invoke: (action: ResolvedTargetAction, args: Readonly<{ surface: string; sessionId?: string; signal?: AbortSignal;
     recordOperationCredentialUse?: (use: ActionOperationCredentialUseV1) => void;
+    /** The gate admitted these exact operands as a host-reviewed child. */
+    reviewedChild?: true;
   }>, serviceBinding: PluginInvocationServiceBinding) => Promise<TargetActionExecutionResult>;
   redactFailureText?: (action: ResolvedTargetAction, value: string) => string;
   /** In-process host consumer: return the executed value unredacted as native operands. */
@@ -465,6 +467,7 @@ export function createTargetActionExecutor(deps: Readonly<{
               ...(args.sessionId ? { sessionId: args.sessionId } : {}),
               ...(args.signal ? { signal: args.signal } : {}),
               ...(settleExecution ? { recordOperationCredentialUse } : {}),
+              ...(admission.reviewedChild ? { reviewedChild: true as const } : {}),
             }, serviceBinding);
           } catch (error) {
             result = failed('plugin_action_execution_failed', error);

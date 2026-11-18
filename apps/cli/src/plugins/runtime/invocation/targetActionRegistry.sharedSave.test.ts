@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 
 import { createAccountPluginSecretCustodyRouter } from '../context/accountPluginSecretCustody';
 import { createStableDeclaredPluginSecretsHost, type PluginSharedSaveAdmission } from '../context/secrets';
@@ -11,7 +12,7 @@ import { createPluginInvocationSecretRedactor } from './services/logger';
 import { createTargetActionInvocationRegistry } from './targetActionRegistry';
 
 describe('reviewed shared-save Action admission', () => {
-    it.each(['reviewed', 'normalized', 'mutatedPurpose', 'replay', 'cancel', 'stale', 'mismatch', 'proposedOnly', 'missingPurpose', 'wrongAudience', 'wrongId'] as const)(
+    it.each(['reviewed', 'normalized', 'mutatedPurpose', 'replay', 'confirmedParent', 'cancel', 'stale', 'mismatch', 'proposedOnly', 'missingPurpose', 'wrongAudience', 'wrongId'] as const)(
         'uses real declaration and Account custody after %s admission', async scenario => {
             const pluginId = 'acme.shared-save';
             const occurrenceId = 'shared-save-1' as PluginRuntimeOccurrenceId;
@@ -73,6 +74,11 @@ describe('reviewed shared-save Action admission', () => {
             try {
                 const result = await registry.invoke({ pluginId, localId: 'save', input, surface: 'cli', signal: controller.signal,
                     ...(scenario === 'replay' ? { requireCurrentIntent: true, isApprovalRequiredByActionSettings: () => false } : {}),
+                    // COR3-171 r4: the app's confirmation dialog carries consent for the exact
+                    // action.invoke wrapper; the host admits this Action as its reviewed child.
+                    ...(scenario === 'confirmedParent' ? { approvalContext: { hostReviewedChild: createHostReviewedChildPortV1({
+                        actionId: 'action.invoke', input: { action: { pluginId, localId: 'save' }, input }, context: {}, reviewAdmitted: true,
+                    }) } } : {}),
                     requestCurrentIntent: async request => {
                         approvals++;
                         expect(request.action.input).toEqual(reviewedInput);
@@ -84,9 +90,9 @@ describe('reviewed shared-save Action admission', () => {
                 });
                 // A proposed shared save always takes the reviewed current-intent round, even for an
                 // Action whose own policy needs none (W2-PLATFORM-QA-164: Neon connections-save from the CLI).
-                expect(approvals).toBe(1);
+                expect(approvals).toBe(scenario === 'confirmedParent' ? 0 : 1);
                 if (scenario === 'reviewed' || scenario === 'normalized' || scenario === 'mutatedPurpose' || scenario === 'replay'
-                    || scenario === 'proposedOnly') {
+                    || scenario === 'confirmedParent' || scenario === 'proposedOnly') {
                     expect(result).toEqual({ status: 'executed', value: { ref: 'happier:shared-secret:v1:reviewed-resource', resourceRevision: 1 } });
                     expect(admissions.at(-1)).toMatchObject({ id: 'database', purpose: 'data.connection',
                         audience: { teamGrants: ['reviewed-team'] } });
