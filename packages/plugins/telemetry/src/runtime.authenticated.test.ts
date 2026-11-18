@@ -27,6 +27,32 @@ function post(endpoint: string, index: number) {
 }
 
 describe('authenticated collector writer admission through HTTP and SQLite', () => {
+    it('returns redacted log bodies at rest from one authenticated batch and one list query', async () => {
+        const f = await fixture();
+        const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition }, admit: request => f.assignments.admit(request) });
+        try {
+            const response = await fetch(receiver.endpoint + '/v1/logs', { method: 'POST', headers: {
+                'content-type': 'application/json', authorization: 'Bearer ' + token,
+            }, body: JSON.stringify({ resourceLogs: [{ scopeLogs: [{ logRecords: Array.from({ length: 5 }, (_, index) => ({
+                timeUnixNano: String(index + 1), body: { stringValue: `request-${index} Authorization: Bearer super-secret-token\nsecond line` },
+            })) }] }] }) });
+            expect(response.status).toBe(200);
+            f.statements.length = 0;
+            const rows = await f.runtime.store.list({ worktree: partition, kind: 'log', limit: 10 });
+            expect(rows).toHaveLength(5);
+            expect(f.statements).toHaveLength(1);
+            for (const row of rows) {
+                expect(row.bodyPrefix).toContain('request-');
+                expect(row.bodyPrefixTruncated).toBe(true);
+                expect(row.bodyPrefix).not.toContain('super-secret-token');
+                expect(row.bodyPrefix).not.toContain('second line');
+            }
+            const detail = await f.runtime.store.detail(partition, rows[0]!.id);
+            expect(JSON.stringify(detail)).not.toContain('super-secret-token');
+            expect(JSON.stringify(detail)).toContain('second line');
+        } finally { await receiver.release(); f.close(); }
+    });
+
     it('waits before reading concurrent bodies and acknowledges only committed batches', async () => {
         const f = await fixture(), requests: IncomingMessage[] = [];
         let admitted = () => {};

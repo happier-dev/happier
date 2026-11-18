@@ -18,6 +18,8 @@ describe('canonical capture transport', () => {
         const result = { ok: true, source, items: [{ id: 'query', worktree: 'selected', kind: 'query', source: 'wire', at: 1,
             shape: 'select ?', durationMs: 2, statementKind: 'select', executionIdentity: 'execution' }], nextCursor: { at: 1, id: 'query' } };
         expect(capture.DatabaseCaptureQueriesListResultV1ProtocolSchema.parse(result)).toEqual(result);
+        const logs = { ok: true, source, items: [{ id: 'log', worktree: 'selected', kind: 'log', source: 'otlp', at: 1, bodyPrefix: '[REDACTED]', bodyPrefixTruncated: true }] };
+        expect(capture.DatabaseCaptureLogsListResultV1ProtocolSchema.parse(logs)).toEqual(logs);
         expect(capture.DatabaseCaptureQueriesListResultV1Schema.safeParse({ ...result, items: [{ ...result.items[0], detail: { parameters: ['private'] } }] }).success).toBe(false);
         expect(capture.DatabaseCaptureQueryGetResultV1ProtocolSchema.parse({ ok: true, source, detail: { sql: 'select ?', parameters: [{ ordinal: 1, format: 'text', value: '[REDACTED]' }] } }))
             .toEqual({ ok: true, source, detail: { sql: 'select ?', parameters: [{ ordinal: 1, format: 'text', value: '[REDACTED]' }] } });

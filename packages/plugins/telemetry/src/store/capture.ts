@@ -125,10 +125,31 @@ export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly 
     if (input.since !== undefined) { predicates.push('at >= ?'); params.push(input.since); }
     if (input.until !== undefined) { predicates.push('at < ?'); params.push(input.until); }
     if (cursor) { predicates.push('(at < ? OR (at = ? AND id < ?))'); params.push(cursor.at, cursor.at, cursor.id); }
-    const { rows: page, pageSize } = await queryPage(`SELECT ${summaryFields.join(',')} FROM captureSummaries WHERE ${predicates.join(' AND ')} ORDER BY at DESC,id DESC LIMIT ?`, params, Math.min(input.limit - rows.length, limits.maximumResultRows));
+    const requested = Math.min(input.limit - rows.length, limits.maximumResultRows);
+    // Divide the public 16 KiB result boundary across the requested rows. A JSON
+    // character can require six bytes (\uXXXX); metadata overflow uses queryPage's
+    // existing host-bound paging. No telemetry-specific size cap or detail reads.
+    const prefixLength = Math.floor(limits.maximumResultBytes / requested / 6);
+    const includeLogs = (input.kind === undefined || input.kind === 'log') && input.spanKind === undefined;
+    const selected = `SELECT ${summaryFields.join(',')} FROM captureSummaries WHERE ${predicates.join(' AND ')} ORDER BY at DESC,id DESC LIMIT ?`;
+    // Only already-redacted retained bodies are projected, scoped by BOTH keys.
+    // substr works in Unicode code points, so the prefix cannot split UTF-8.
+    const statement = includeLogs ? `WITH selected AS (${selected}),
+logBodies AS MATERIALIZED (SELECT selected.*, CASE WHEN selected.kind = 'log' THEN
+ (SELECT CAST(json_extract(body,'$.log.body') AS TEXT) FROM captureDetails WHERE worktree = selected.worktree AND id = selected.id)
+ END AS logBody FROM selected),
+logLines AS (SELECT *, CASE WHEN instr(logBody,char(10)) > 0 THEN substr(logBody,1,instr(logBody,char(10))-1) ELSE logBody END AS logLine FROM logBodies)
+SELECT ${summaryFields.join(',')},substr(logLine,1,${prefixLength}) AS bodyPrefix,
+ CASE WHEN length(logBody) > length(substr(logLine,1,${prefixLength})) THEN 1 ELSE 0 END AS bodyPrefixTruncated FROM logLines ORDER BY at DESC,id DESC` : selected;
+    const { rows: page, pageSize } = await queryPage(statement, params, requested);
     // The table is produced only by this store; SQLite scalar decoding is the genuine boundary.
     const summaries = page as unknown as readonly CaptureSummary[];
-    rows.push(...summaries);
+    rows.push(...summaries.map(summary => {
+     if (!includeLogs) return summary;
+     const { bodyPrefix, bodyPrefixTruncated, ...rest } = summary;
+     return bodyPrefix === null || bodyPrefix === undefined ? rest
+      : { ...rest, bodyPrefix, bodyPrefixTruncated: Boolean(bodyPrefixTruncated) };
+    }));
     if (page.length < pageSize) break;
     const last = summaries.at(-1);
     if (!last) break;
@@ -261,6 +282,7 @@ FROM groups JOIN latest ON latest.fingerprint = groups.fingerprint AND latest.po
 }
 export type CaptureSummary = Readonly<{
  id: string; worktree: string; kind: 'query' | 'transaction' | 'span' | 'log' | 'coverage'; source: 'wire' | 'otlp' | 'capture'; at: number;
+ bodyPrefix?: string; bodyPrefixTruncated?: boolean;
  shape?: string | null; traceId?: string | null; spanId?: string | null; durationMs?: number | null; outcome?: string | null;
  parentSpanId?: string | null; spanKind?: number | null; serviceName?: string | null; severityNumber?: number | null; endpointMethod?: string | null; endpointRoute?: string | null; httpStatusCode?: number | null;
  statementKind?: 'select' | 'control' | 'other' | 'unknown' | null; parameterIdentity?: string | null; executionIdentity?: string | null; callsite?: string | null; transactionId?: string | null; retryOf?: string | null; connectionId?: string | null;

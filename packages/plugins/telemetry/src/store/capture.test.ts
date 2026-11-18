@@ -1,7 +1,33 @@
 import { describe, expect, it } from 'vitest';
+import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 as limits } from '@happier-dev/plugin-sdk/storage';
 import { captureMigrations, createCaptureStore } from './capture.js';
 import { createCaptureSqliteFixture as fixture } from '../testing/sqlite.js';
 describe('capture store through SQLite', () => {
+ it('returns bounded redacted log prefixes for N rows in one list read, with details on demand', async () => {
+  const f = fixture();
+  try {
+   for (const migration of captureMigrations) await migration.up(f.db);
+   const store = createCaptureStore(f.db, () => {});
+   const bodies = ['short [REDACTED]', 'first line\nprivate second line', '😀'.repeat(1000), { message: '[REDACTED]' }];
+   await store.write(bodies.map((body, index) => ({ id: String(index), worktree: 'chosen', kind: 'log', source: 'otlp', at: index, detail: { log: { body } } })));
+   await store.write([{ id: '0', worktree: 'other', kind: 'log', source: 'otlp', at: 99, detail: { log: { body: 'other worktree' } } }]);
+   f.statements.length = 0;
+   const rows = await store.list({ worktree: 'chosen', kind: 'log', limit: 10 });
+   expect(f.statements).toHaveLength(1);
+   expect(rows).toEqual([
+    expect.objectContaining({ id: '3', bodyPrefix: '{"message":"[REDACTED]"}', bodyPrefixTruncated: false }),
+    expect.objectContaining({ id: '2', bodyPrefix: expect.any(String), bodyPrefixTruncated: true }),
+    expect.objectContaining({ id: '1', bodyPrefix: 'first line', bodyPrefixTruncated: true }),
+    expect.objectContaining({ id: '0', bodyPrefix: 'short [REDACTED]', bodyPrefixTruncated: false }),
+   ]);
+   expect(JSON.stringify(rows)).not.toContain('private second line');
+   expect(JSON.stringify(rows)).not.toContain('other worktree');
+   expect(rows[1]!.bodyPrefix).toMatch(/^(?:😀)+$/u);
+   expect(rows[1]!.bodyPrefix!.length).toBeLessThan(String(bodies[2]).length);
+   expect(Buffer.byteLength(JSON.stringify(rows))).toBeLessThanOrEqual(limits.maximumResultBytes);
+   expect(await store.detail('chosen', '1')).toEqual({ log: { body: bodies[1] } });
+  } finally { f.close(); }
+ });
  it('adds browser provenance without relabeling or discarding retained pre-provenance exceptions', async () => {
   const f = fixture();
   try {
@@ -69,7 +95,7 @@ describe('capture store through SQLite', () => {
   } finally { f.close(); }
  });
 
- it('filters log service and exact severity before paging and never reads bodies', async () => {
+ it('filters log service and exact severity before paging with only bounded body projections', async () => {
   const f = fixture();
   try {
    for (const migration of captureMigrations) await migration.up(f.db);
@@ -86,7 +112,7 @@ describe('capture store through SQLite', () => {
    expect(first).toEqual([expect.objectContaining({ id: 'match-newer', serviceName: 'api', severityNumber: 13 })]);
    expect(f.statements).toHaveLength(1);
    expect(f.queryRows).toEqual([1]);
-   expect(f.statements.some(statement => statement.includes('captureDetails'))).toBe(false);
+   // J2 #3: the list now projects log prefixes in this same selected read.
    expect(await store.list({ worktree: 'chosen', kind: 'log', serviceName: 'api', severityNumber: 13, limit: 1, before: { at: 20, id: 'match-newer' } })).toEqual([expect.objectContaining({ id: 'match-older' })]);
    expect(await store.list({ worktree: 'chosen', kind: 'log', serviceName: 'api', severityNumber: 0, limit: 1 })).toEqual([expect.objectContaining({ id: 'zero', severityNumber: 0 })]);
   } finally { f.close(); }

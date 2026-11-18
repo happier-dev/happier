@@ -29,10 +29,11 @@ export const DatabaseCapturePageV1Schema = z.strictObject({
     before: z.optional(DatabaseCaptureCursorV1Schema),
 });
 
-/** Lists cannot carry demanded SQL, parameter, error or log bodies. */
+/** Lists exclude demanded details; log prefixes are bounded, redacted display projections. */
 export const DatabaseCaptureSummaryV1Schema = z.strictObject({
     id, worktree: id, kind: z.enum(['query', 'transaction', 'span', 'log', 'coverage']),
     source: z.enum(['wire', 'otlp', 'capture']), at: time,
+    bodyPrefix: z.optional(z.string()), bodyPrefixTruncated: z.optional(z.boolean()),
     shape: optionalText, traceId: optionalText, spanId: optionalText, durationMs: optionalNumber, outcome: optionalText,
     parentSpanId: optionalText, spanKind: optionalNumber, serviceName: optionalText, severityNumber: optionalNumber,
     endpointMethod: optionalText, endpointRoute: optionalText, httpStatusCode: optionalNumber,

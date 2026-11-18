@@ -45,8 +45,9 @@ describe('selected capture reads through SQLite', () => {
                 { logId: 'trace-log', traceId: 'trace-a', spanId: null, spanObservationId: null },
                 { logId: 'linked-log', traceId: 'trace-a', spanId: 'query-a', spanObservationId: 'query-a' },
             ]);
-            expect(f.statements.some(statement => statement.includes('captureDetails'))).toBe(false);
-            expect(JSON.stringify(trace)).not.toContain('demanded log');
+            // J2 #3 permits bounded log prefixes, but no demanded detail result.
+            expect(f.statements.some(statement => statement.startsWith('SELECT body FROM captureDetails'))).toBe(false);
+            expect(trace.summaries.find(summary => summary.id === 'linked-log')).toMatchObject({ bodyPrefix: 'demanded log', bodyPrefixTruncated: false });
         } finally { f.close(); }
     });
 
@@ -75,7 +76,8 @@ describe('selected capture reads through SQLite', () => {
             const trace = await read.trace({ worktree, traceId: 'trace-a', pageSize: 2 });
             expect(trace.summaries.map(item => item.id).sort()).toEqual(['query-a', 'query-b', 'request-a', 'wire-a']);
             expect(trace.repeatedQueries).toEqual([expect.objectContaining({ kind: 'suspected_n_plus_one', repetitionCount: 2, totalDatabaseTimeMs: 4 })]);
-            expect(f.statements.some(statement => statement.includes('captureDetails'))).toBe(false);
+            // J2 #3 permits bounded log prefixes, but no demanded detail result.
+            expect(f.statements.some(statement => statement.startsWith('SELECT body FROM captureDetails'))).toBe(false);
             expect(f.queryRows.reduce((total, count) => total + count, 0)).toBe(4);
             expect(JSON.stringify(trace)).not.toContain('masked SQL detail');
             expect(await read.detail(worktree, 'query-a')).toMatchObject({ sql: 'masked SQL detail' });

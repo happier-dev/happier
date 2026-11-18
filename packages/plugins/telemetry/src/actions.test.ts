@@ -98,9 +98,10 @@ describe('capture Action producer bindings', () => {
             fixture.statements.length = 0;
             expect((await producers.queriesList({ worktree: 'selected', limit: 2 })).map(row => row.id)).toEqual(['query']);
             expect((await producers.tracesList({ worktree: 'selected', limit: 2 })).map(row => row.id)).toEqual(['request']);
-            expect((await producers.logsList({ worktree: 'selected', limit: 2 })).map(row => row.id)).toEqual(['log']);
+            expect(await producers.logsList({ worktree: 'selected', limit: 2 })).toEqual([expect.objectContaining({ id: 'log', bodyPrefix: 'selected log', bodyPrefixTruncated: false })]);
             expect((await producers.traceGet({ worktree: 'selected', traceId: 'trace', pageSize: 2 })).summaries.map(row => row.id)).toEqual(['request']);
-            expect(fixture.statements.some(statement => statement.includes('captureDetails'))).toBe(false);
+            // J2 #3 projects redacted log prefixes in the list query, never per-row detail reads.
+            expect(fixture.statements.some(statement => statement.startsWith('SELECT body FROM captureDetails'))).toBe(false);
             expect(await producers.queryGet({ worktree: 'selected', id: 'query' })).toEqual({ sql: 'select ?', parameters: ['masked'] });
             expect(await producers.queryGet({ worktree: 'other', id: 'query' })).toBeNull();
             runtime.recordCoverage('selected', 'unsupported_frame');
