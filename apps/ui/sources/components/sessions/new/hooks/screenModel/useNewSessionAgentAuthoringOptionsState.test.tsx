@@ -32,10 +32,20 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
         });
         const agentTargetKey = resolveBackendTargetKeyV2(agentTarget);
         const selection = nativeSelection(agentTargetKey, 'gpt-5.1-codex', 1);
+        const projectAgent = AgentExecutionTargetV1Schema.parse({
+            kind: 'agent', identity: { pluginId: 'happier.agent.pi', localId: 'pi' },
+        });
+        const projectAgentKey = resolveBackendTargetKeyV2(projectAgent);
+        const projectSelection = nativeSelection(projectAgentKey, 'project-model', 1);
         const hook = await renderHook(useNewSessionAgentAuthoringOptionsState, { initialProps: {
             agentType: 'codex', backendTargetKey: agentTargetKey, agentTarget,
             hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null,
-            managedDefaults: { teamDefaults: { team: { modelByAgentTargetKey: { [agentTargetKey]: selection } }, groups: {} } },
+            managedDefaults: {
+                projectDefaults: { defaultAgentTarget: projectAgent },
+                teamDefaults: { team: { modelByAgentTargetKey: {
+                    [agentTargetKey]: selection, [projectAgentKey]: projectSelection,
+                } }, groups: {} },
+            },
         } });
         try {
             expect(hook.getCurrent().modelSelection).toEqual(selection);
