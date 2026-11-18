@@ -43,6 +43,7 @@ describe('original CLI Account admission', () => {
             vi.spyOn(axios, 'get').mockImplementation(async url => {
                 if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
                 if (url.endsWith('/v1/machines')) return { status: 200, data: [machine] };
+                if (url.endsWith(`/v1/machines/${machineId}`)) return { status: 200, data: { machine } };
                 throw new Error(`Unexpected admission read ${new URL(url).pathname}`);
             });
             let delivered = false;
@@ -70,7 +71,7 @@ describe('original CLI Account admission', () => {
             });
             expect(getActionSpec(actionId).inputSchema.safeParse(input).success).toBe(true);
             expect(await executor.execute(actionId, input, { surface: 'cli', actionRequestId: 'account-read' }))
-                .toEqual({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden' });
+                .toEqual({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden', requestId: 'account-read' });
             expect(delivered).toBe(true);
         });
     });
