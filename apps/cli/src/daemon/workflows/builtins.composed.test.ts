@@ -1138,7 +1138,7 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(h.events.indexOf('verify')).toBeGreaterThan(h.events.indexOf('check'));
     expect(h.events.slice(h.events.indexOf('verify') + 1).filter((event) => event === 'review')).toHaveLength(2);
     expect(h.launches.filter(({ request }) => request.intent === 'review').every(({ request, sessionId }) =>
-      sessionId === 'origin' && request.instructions === 'Review the changes made in this session.')).toBe(true);
+      sessionId === null && request.instructions === 'Review the changes made in this session.')).toBe(true);
     expect(String(h.launches.find(({ request }) => request.intent === 'agent')?.request.instructions)).toContain('A material finding');
   });
   it.each([{ engines: ['codex'] }, { engines: [engine, otherEngine] }])('supplies the complete requested engine set to Check for a zero-finding panel: $engines', async ({ engines }) => {
