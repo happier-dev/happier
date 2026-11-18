@@ -33,3 +33,29 @@ export function groupDeploymentRowsByProject<
   }
   return { named: [...named.values()], unnamed };
 }
+
+/** The unbanded group a view's rows share when it lists one Project (no heading). */
+export const DEPLOYMENT_UNBANDED_GROUP = 'all';
+/** The last band: rows whose Project name the read could not carry. */
+export const DEPLOYMENT_OTHER_PROJECT_GROUP = 'other';
+
+/**
+ * The one band rule of every Services view (Apps, Databases, Domains; UI refinements 2026-11-18): a view bands its rows by
+ * Project only when it lists more than one Project. Then every Project gets its band, in the read's order, and rows whose
+ * Project name is unavailable share one last band titled `otherTitle`; a view of one Project stands unbanded.
+ */
+export function deploymentProjectBands<
+  Row extends Readonly<{ projectSourceId: string; projectName: string | null }>,
+>(rows: readonly Row[], otherTitle: string): Readonly<{
+  banded: boolean;
+  groups: readonly DeploymentProjectGroup<Row>[];
+  groupOf: (row: Row) => string;
+}> {
+  const { named, unnamed } = groupDeploymentRowsByProject(rows);
+  const groups: DeploymentProjectGroup<Row>[] = [...named];
+  if (unnamed.length > 0) groups.push({ key: DEPLOYMENT_OTHER_PROJECT_GROUP, title: otherTitle, rows: unnamed });
+  if (groups.length <= 1) {
+    return { banded: false, groups: [{ key: DEPLOYMENT_UNBANDED_GROUP, title: '', rows: [...rows] }], groupOf: () => DEPLOYMENT_UNBANDED_GROUP };
+  }
+  return { banded: true, groups, groupOf: (row) => row.projectName ? row.projectSourceId : DEPLOYMENT_OTHER_PROJECT_GROUP };
+}

@@ -25,13 +25,13 @@ import { Typography } from '@/constants/Typography';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
-import { isSameDeploymentName, useDeploymentEnvironmentRowParts } from './DeploymentEnvironmentCollection';
+import { useDeploymentEnvironmentRowParts } from './DeploymentEnvironmentCollection';
 import { DeploymentStepStrip } from './DeploymentStepStrip';
 import { deploymentActorIsViewer, deploymentActorLabel } from './deploymentPresentation';
 import { useDeploymentActorPresentations, type DeploymentActorPresentation } from './useDeploymentActorPresentations';
 import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
-import { groupDeploymentRowsByProject } from './deploymentProjectGroups';
+import { deploymentProjectBands } from './deploymentProjectGroups';
 import { DeploymentEnvironmentMark, DeploymentEnvironmentStateMark } from './rows/DeploymentEnvironmentRow';
 
 import { deploymentEnvironmentColumns, type DeploymentEnvironmentBuiltinColumn } from './deploymentEnvironmentColumns';
@@ -43,10 +43,8 @@ export { deploymentEnvironmentColumns } from './deploymentEnvironmentColumns';
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
 type RowParts = ReturnType<typeof useDeploymentEnvironmentRowParts>[number];
 /** Row-local presentation facts keep the collection anatomy stable when one Environment changes. */
-type Row = RowParts & Readonly<{ author: string | null; collectorMachineId: string | null; bylineProjectName: string | null }>;
+type Row = RowParts & Readonly<{ author: string | null; collectorMachineId: string | null }>;
 
-const OTHER_PROJECT = 'other';
-const SINGLE_PROJECTS = 'single';
 const keyOfRow = (row: Row) => row.environmentId;
 
 /** Whether a row needs the person: a failed or unconfirmed deploy (the readiness owner's tone), never one at work. */
@@ -59,45 +57,30 @@ export function deploymentEnvironmentRowNeedsYou(
 type BandRow = Pick<Row, 'projectSourceId' | 'projectName' | 'title' | 'state'>;
 
 /**
- * The Apps list's bands (lab envList): Projects in the page's own order (the one Project grouping the Services column
- * shares), each a band on the list's one sheet that says how many of its Environments need the person. A Project whose
- * only Environment carries its name needs no band to say it again: those share one unbanded group that leads the sheet.
- * Projects whose name is unavailable share one last band.
+ * The Apps list's bands (lab envList) through the one Services band rule (deploymentProjectBands): Projects in the
+ * page's own order, each a band on the list's one sheet that says how many of its Environments need the person; a
+ * list of one Project stands unbanded.
  */
 export function deploymentEnvironmentBands<T extends BandRow>(rows: readonly T[]) {
-  const { named, unnamed } = groupDeploymentRowsByProject(rows);
-  const single = new Set<string>();
-  const banded: { key: string; title: string; rows: readonly T[] }[] = [];
-  for (const group of named) {
-    // One rule (UI refinements 11-16): a Project with one Environment stands in the lead group without a heading; the
-    // row names its Project when the two names differ (deploymentEnvironmentRowLine `project`).
-    if (group.rows.length === 1) single.add(group.key);
-    else banded.push(group);
-  }
-  if (unnamed.length > 0) banded.push({ key: OTHER_PROJECT, title: t('projects.deployments.allOtherProject'), rows: unnamed });
-  const axis = [
-    ...(single.size > 0 ? [{ key: SINGLE_PROJECTS, title: '', section: SERVICES_ONE_SHEET }] : []),
-    ...banded.map((group) => {
-      const speaking = group.rows.filter(deploymentEnvironmentRowNeedsYou);
-      // The band's line (lab "Staging deploy failed"): the one Environment that needs the person and its state, or how many.
-      const only = speaking.length === 1 ? speaking[0]! : null;
-      return {
-        key: group.key,
-        title: group.title,
-        section: SERVICES_ONE_SHEET,
-        ...(speaking.length > 0
-          ? { description: only && only.state
-              ? t('projects.deployments.services.bandOne', { environment: only.title, state: only.state.text })
-              : t('projects.deployments.services.needYou', { count: speaking.length }),
-            tone: 'danger' as const }
-          : {}),
-      };
-    }),
-  ];
-  return {
-    axis,
-    groupOf: (row: T) => single.has(row.projectSourceId) ? SINGLE_PROJECTS : row.projectName ? row.projectSourceId : OTHER_PROJECT,
-  };
+  const { banded, groups, groupOf } = deploymentProjectBands(rows, t('projects.deployments.allOtherProject'));
+  const axis = groups.map((group) => {
+    // The band's line (lab "Staging deploy failed"): the one Environment that needs the person and its state, or how many.
+    // A one-Environment band says nothing: its row already says that state (one message per state).
+    const speaking = banded && group.rows.length > 1 ? group.rows.filter(deploymentEnvironmentRowNeedsYou) : [];
+    const only = speaking.length === 1 ? speaking[0]! : null;
+    return {
+      key: group.key,
+      title: group.title,
+      section: SERVICES_ONE_SHEET,
+      ...(speaking.length > 0
+        ? { description: only && only.state
+            ? t('projects.deployments.services.bandOne', { environment: only.title, state: only.state.text })
+            : t('projects.deployments.services.needYou', { count: speaking.length }),
+          tone: 'danger' as const }
+        : {}),
+    };
+  });
+  return { axis, groupOf };
 }
 
 /**
@@ -141,7 +124,7 @@ export function DeploymentEnvironmentRows(
   const presentations = useDeploymentActorPresentations({ actors, scope: props.lifetime?.scope ?? NO_SCOPE,
     accountLifetime: props.lifetime, active: props.lifetime !== null });
   const groups = React.useMemo(() => deploymentEnvironmentBands(parts), [parts]);
-  const rows = useAuthoredRows(props.items, parts, presentations, accountId, groups.groupOf);
+  const rows = useAuthoredRows(props.items, parts, presentations, accountId);
   const { serverId } = props;
   const openBackups = props.openBackups === true;
   const byId = React.useMemo(
@@ -218,8 +201,7 @@ export function DeploymentEnvironmentRows(
       // Line 2 (lab envRow): what was deployed and who asked; a phone folds the columns in (deploymentEnvironmentRowLine).
       // A phone row (no columns) leads line 2 with the state that speaks, so the name keeps line 1 whole (DESIGN
       // "Phones recompose"); wide, the State column says it.
-      byline: (row, layout) => deploymentEnvironmentRowLine(row, row.author, { columns: layout?.fieldColumns === true, hereMachine,
-        project: row.bylineProjectName }),
+      byline: (row, layout) => deploymentEnvironmentRowLine(row, row.author, { columns: layout?.fieldColumns === true, hereMachine }),
       bylineLead: (row, layout) =>
         deploymentEnvironmentRowLeadState(row, { columns: layout?.fieldColumns === true }) ? <EnvironmentStateWord row={row} /> : null,
       fields,
@@ -280,7 +262,7 @@ const NO_SCOPE: ServerAccountScope = Object.freeze({ serverId: '', accountId: ''
  * (a Session's Agent, a Workflow's title, a person) redraws only the rows it names.
  */
 function useAuthoredRows(items: readonly EnvironmentItem[], parts: readonly RowParts[],
-  presentations: readonly DeploymentActorPresentation[], accountId: string | null, groupOf: (part: RowParts) => string): readonly Row[] {
+  presentations: readonly DeploymentActorPresentation[], accountId: string | null): readonly Row[] {
   const authored = React.useRef(new WeakMap<RowParts, Row>());
   const previous = React.useRef<readonly Row[]>([]);
   return React.useMemo(() => {
@@ -289,18 +271,16 @@ function useAuthoredRows(items: readonly EnvironmentItem[], parts: readonly RowP
       const author = deploymentActorIsViewer(part.actor, accountId) ? t('projects.deployments.byYou')
         : presentation ? deploymentActorLabel(presentation, part.actor, accountId) : null;
       const collectorMachineId = items[index]!.environment.telemetryMachineId ?? null;
-      const bylineProjectName = groupOf(part) === SINGLE_PROJECTS && part.projectName && !isSameDeploymentName(part.title, part.projectName)
-        ? part.projectName : null;
       const known = authored.current.get(part);
-      if (known && known.author === author && known.collectorMachineId === collectorMachineId && known.bylineProjectName === bylineProjectName) return known;
-      const row = { ...part, author, collectorMachineId, bylineProjectName };
+      if (known && known.author === author && known.collectorMachineId === collectorMachineId) return known;
+      const row = { ...part, author, collectorMachineId };
       authored.current.set(part, row);
       return row;
     });
     const same = rows.length === previous.current.length && rows.every((row, index) => row === previous.current[index]);
     if (!same) previous.current = rows;
     return previous.current;
-  }, [accountId, groupOf, items, parts, presentations]);
+  }, [accountId, items, parts, presentations]);
 }
 
 type LineRow = Pick<Row, 'deploymentTitle' | 'runsOn' | 'lastDeploy' | 'steps' | 'stepCaption' | 'liveAddress'>;
@@ -311,13 +291,13 @@ type LineRow = Pick<Row, 'deploymentTitle' | 'runsOn' | 'lastDeploy' | 'steps' |
  * ("Compose") is never the line; nothing known draws no line.
  */
 export function deploymentEnvironmentRowLine(row: LineRow, author: string | null,
-  layout: Readonly<{ columns: boolean; hereMachine: boolean; project?: string | null }>): string | null {
-  // A one-Environment Project's row (no heading) names its Project first when the names differ; where it answers
-  // (its live address's host) follows: no Address column is drawn for the few rows that have one (UI refinements 11-16).
+  layout: Readonly<{ columns: boolean; hereMachine: boolean }>): string | null {
+  // Where it answers (its live address's host) leads: no Address column is drawn for the few rows that have one
+  // (UI refinements 11-16).
   const address = row.liveAddress ? formatDeploymentLiveAddress(row.liveAddress) : null;
   const facts = layout.columns
-    ? [layout.project, address, row.deploymentTitle, author]
-    : [row.steps ? row.stepCaption : null, layout.project, address, row.deploymentTitle, author,
+    ? [address, row.deploymentTitle, author]
+    : [row.steps ? row.stepCaption : null, address, row.deploymentTitle, author,
         layout.hereMachine ? null : row.runsOn, row.steps ? null : row.lastDeploy];
   const line = facts.filter(Boolean).join(' · ');
   return line === '' ? null : line;

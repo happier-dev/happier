@@ -24,9 +24,9 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { databaseEngineTitle, describeDatabaseSize } from './databasePresentation';
-import { DeploymentDomainsList } from './DeploymentDomainRow';
+import { DeploymentDomainsList, EnvironmentNameCell } from './DeploymentDomainRow';
 import { deploymentDomainNeedKind } from './deploymentDomainAttention';
-import { groupDeploymentRowsByProject } from './deploymentProjectGroups';
+import { deploymentProjectBands } from './deploymentProjectGroups';
 import { SERVICES_ONE_SHEET, ServicesPageList } from './DeploymentEnvironmentRows';
 import { useVisibleBackupCoverage } from './useVisibleBackupCoverage';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
@@ -108,6 +108,10 @@ type DatabaseRow = Readonly<{
   key: string;
   environmentId: string;
   projectSourceId: string;
+  /** The data service read carries no Project name yet, so its rows fall in the band rule's unnamed group. */
+  projectName: string | null;
+  /** The Environment that holds it (lab svcDb Environment column). */
+  environmentTitle: string;
   service: string;
   engine: string | null;
   growth: string | null;
@@ -117,12 +121,12 @@ type DatabaseRow = Readonly<{
   sizeInline: string;
 }>;
 const keyOfDatabase = (row: DatabaseRow) => row.key;
-const groupOfDatabase = (row: DatabaseRow) => row.environmentId;
 const NO_DATABASES: readonly DatabaseRow[] = Object.freeze([]);
 
 /**
  * Databases (lab svcDb): every Environment's data services with the size DB-SIZE-1113's read reports and the
- * Environment's backup coverage from its owner, banded by Environment on one sheet; a row opens its database page.
+ * Environment's backup coverage from its owner, on one sheet through the one Services band rule (deploymentProjectBands);
+ * a row says its Environment and opens its database page.
  */
 export function ServicesDatabasesView(
   props: Readonly<{
@@ -150,6 +154,8 @@ export function ServicesDatabasesView(
         key: `${item.environment.id}:${database.service}`,
         environmentId: item.environment.id,
         projectSourceId: item.environment.projectSourceId,
+        projectName: null,
+        environmentTitle: item.title,
         service: database.service,
         engine: declared ? databaseEngineTitle(declared) : null,
         growth: describeDatabaseGrowth(database.growth),
@@ -157,10 +163,11 @@ export function ServicesDatabasesView(
         sizeInline: describeDatabaseSize(database.size, 'inline'),
       };
     })), [items]);
-  const groups = React.useMemo(() => ({
-    axis: items.map((item) => ({ key: item.environment.id, title: item.title, section: SERVICES_ONE_SHEET })),
-    groupOf: groupOfDatabase,
-  }), [items]);
+  const groups = React.useMemo(() => {
+    const bands = deploymentProjectBands(rows, t('projects.deployments.allOtherProject'));
+    return { axis: bands.groups.map((group) => ({ key: group.key, title: group.title, section: SERVICES_ONE_SHEET })),
+      groupOf: bands.groupOf };
+  }, [rows]);
   const { serverId } = props;
   const open = React.useCallback((key: string | number | null) => {
     const row = key === null ? undefined : rows.find((candidate) => candidate.key === String(key));
@@ -184,11 +191,15 @@ export function ServicesDatabasesView(
     return {
       glyph: () => <Icon name="stack" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
       title: (row) => row.service,
-      // Line 2: the engine and how it grew; a phone also says its size.
+      // Line 2: the engine and how it grew; a phone also says its Environment and size.
       // A phone row (no columns) leads line 2 with "Not backed up" when it speaks; the name keeps line 1 whole.
-      byline: (row, layout) => [row.engine, row.growth, layout?.fieldColumns === true ? null : row.sizeInline].filter(Boolean).join(' · ') || null,
+      byline: (row, layout) => [row.engine, row.growth, ...(layout?.fieldColumns === true ? [] : [row.environmentTitle, row.sizeInline])]
+        .filter(Boolean).join(' · ') || null,
       bylineLead: (row, layout) => layout?.fieldColumns !== true && coverage.get(row.environmentId) === 'uncovered' ? backupWord(row) : null,
       fields: [
+        // Lab svcDb "Environment": which Environment holds it, so same-named services read apart.
+        { key: 'environment', title: t('projects.deployments.services.columnEnvironment'), minWidth: 160, priority: 3, listColumn: true,
+          render: (row) => <EnvironmentNameCell title={row.environmentTitle} /> },
         { key: 'size', title: t('projects.deployments.services.sizeLabel'), minWidth: 216, priority: 2, listColumn: true,
           render: (row) => row.size },
         // Lab svcDb "Last backup": when the Environment's last backup completed, from the same coverage read.
@@ -197,7 +208,7 @@ export function ServicesDatabasesView(
         { key: 'backups', title: t('projects.deployments.services.columnBackups'), minWidth: 140, priority: 1, align: 'end',
           listColumn: true, render: backupWord },
       ],
-      accessibilityLabel: (row) => [row.service, row.engine, row.sizeInline].filter(Boolean).join(', '),
+      accessibilityLabel: (row) => [row.service, row.environmentTitle, row.engine, row.sizeInline].filter(Boolean).join(', '),
       testID: (row) => `services.databases.row.${row.environmentId}.${row.service}`,
       columnTitles: { title: t('projects.deployments.services.columnDatabase') },
     };
@@ -269,25 +280,19 @@ export function useReportViewCount(view: ServicesView, parts: readonly HappierPa
 
 type AccountDomainItem = Readonly<{ environment: Readonly<{ projectSourceId: string }>; environmentTitle: string;
   projectSourceName: string | null }>;
-const OTHER_DOMAIN_PROJECT = 'other';
 const domainEnvironmentTitle = (item: AccountDomainItem) => item.environmentTitle;
-const domainProjectOf = (item: AccountDomainItem) => item.projectSourceName ? item.environment.projectSourceId : OTHER_DOMAIN_PROJECT;
 
 /**
- * Domains banded by Project (lab svcDom), through the one Project grouping the Apps view and the Services column
- * share; addresses whose Project name the read could not carry stand in the same last band the Apps view uses.
+ * Domains (lab svcDom) through the one Services band rule (deploymentProjectBands), which the Apps and Databases views
+ * share: banded by Project only when the view lists more than one.
  */
 function domainProjectBands<Item extends AccountDomainItem>(items: readonly Item[]) {
-  const { named, unnamed } = groupDeploymentRowsByProject(items.map((item) => ({
-    projectSourceId: item.environment.projectSourceId, projectName: item.projectSourceName })));
+  const bandRow = (item: Item) => ({ projectSourceId: item.environment.projectSourceId, projectName: item.projectSourceName });
+  const { groups, groupOf } = deploymentProjectBands(items.map(bandRow), t('projects.deployments.allOtherProject'));
   // The list draws each group's count beside its title (F3), so a band says nothing more.
-  const band = (key: string, title: string) => ({ key, title, section: SERVICES_ONE_SHEET });
   return {
-    axis: [
-      ...named.map((group) => band(group.key, group.title)),
-      ...(unnamed.length > 0 ? [band(OTHER_DOMAIN_PROJECT, t('projects.deployments.allOtherProject'))] : []),
-    ],
-    groupOf: domainProjectOf,
+    axis: groups.map((group) => ({ key: group.key, title: group.title, section: SERVICES_ONE_SHEET })),
+    groupOf: (item: Item) => groupOf(bandRow(item)),
   };
 }
 

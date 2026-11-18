@@ -139,8 +139,10 @@ export function DeploymentDomainsList<Item extends DomainRowItem>(props: Readonl
     // The host is an identifier (lab envDom): one mono line ending in an ellipsis; the label keeps it whole.
     title: (item) => isBuiltInAddress(item) ? item.hostname : item.content.hostname,
     titleIdentifier: true,
-    byline: (item, layout) => isBuiltInAddress(item) ? <BuiltInAddressByline /> : <DomainByline item={item} context={context}
-      columns={layout?.fieldColumns === true} environment={environmentTitle?.(item) ?? null} />,
+    byline: (item, layout) => isBuiltInAddress(item) ? <BuiltInAddressByline />
+      : domainBylineShown(item, context, layout?.fieldColumns === true)
+        ? <DomainByline item={item} context={context} columns={layout?.fieldColumns === true} environment={environmentTitle?.(item) ?? null} />
+        : null,
     // The recovery an address needs stands beside it, not only in ⋯ (DEPLOY-REACCEPT-1113): it ends the byline.
     titleControls: (item) => isBuiltInAddress(item) ? null : <DomainRowControls item={item} context={context} />,
     // A phone folds the columns; the state and ⋯ keep the row's end.
@@ -152,7 +154,7 @@ export function DeploymentDomainsList<Item extends DomainRowItem>(props: Readonl
         listColumn: true, render: (item: Item | BuiltInAddressRow) => isBuiltInAddress(item) ? null : <DomainReaches item={item} /> }] : []),
       ...(environmentTitle ? [{ key: 'environment', title: t('projects.deployments.editors.domainColumnEnvironment'), minWidth: 112,
         priority: 1, listColumn: true, render: (item: Item | BuiltInAddressRow) => isBuiltInAddress(item) ? null
-          : <DomainEnvironment title={environmentTitle(item)} /> }] : []),
+          : <EnvironmentNameCell title={environmentTitle(item)} /> }] : []),
       ...(routed ? [{ key: 'certificate', title: t('projects.deployments.editors.domainColumnCertificate'), minWidth: 120, priority: 2,
         listColumn: true, render: (item: Item | BuiltInAddressRow) => isBuiltInAddress(item) ? null : <DomainCertificate item={item} /> }] : []),
       // The state and the row's ⋯ share the last column, so the bar's titles stay over their figures.
@@ -285,7 +287,8 @@ function DomainReaches(props: Readonly<{ item: DomainItem }>) {
   return <Text variant="meta" numberOfLines={1} style={[Typography.mono(), { color: theme.colors.text.secondary }]}>{text}</Text>;
 }
 
-function DomainEnvironment(props: Readonly<{ title: string }>) {
+/** An Environment's name in a list column (Domains, Databases): a quiet name, never an identifier's mono. */
+export function EnvironmentNameCell(props: Readonly<{ title: string }>) {
   const { theme } = useUnistyles();
   return <Text variant="meta" numberOfLines={1} style={{ color: theme.colors.text.secondary }}>{props.title}</Text>;
 }
@@ -307,6 +310,35 @@ function DomainCertificate(props: Readonly<{ item: DomainItem }>) {
   </Text>;
 }
 
+/** What sets an address apart on its second line (the record to add, a wrong answer, a redirect, a password), or null. */
+function domainBylineLead(item: DomainItem, context: DomainRowContext): Readonly<{ records: readonly string[]; lead: string | null }> {
+  const { content } = item;
+  const dns = projectDeploymentDomainDnsReadinessV1(item.domain.dnsHealth).state;
+  const records = content.providerObservation?.dns.map(record =>
+    t('projects.deployments.editors.domainAddRecord', { type: record.type, name: record.name, value: record.value })) ?? [];
+  const lead = records.length > 0 ? records.join(' · ')
+    : dns === 'missing' && context.machineName ? t('projects.deployments.domainDnsMissingBody', { machine: context.machineName })
+    : dns === 'not_this_machine' && context.machineName ? t('projects.deployments.domainDnsElsewhereBody', { machine: context.machineName })
+    // A wrong answer says what came back (lab svcDom "answers 502"): the Domain health owner's observed status.
+    : item.health?.needsYou?.cause === 'http' && item.health.needsYou.httpStatus !== undefined
+      ? t('projects.deployments.editors.domainAnswers', { status: item.health.needsYou.httpStatus })
+    : content.target.kind !== 'provider' && content.target.redirectTo ? t('projects.deployments.domainRedirect', { target: content.target.redirectTo })
+    : content.basicAuth ? t('projects.deployments.domainTagBasicAuth')
+    : null;
+  return { records, lead };
+}
+
+/**
+ * Whether the row has a second line at all, decided before it renders: a row with none is one line, so the list draws
+ * no rule under it (the one list-row rule, R2-D9).
+ */
+function domainBylineShown(item: DomainItem, context: DomainRowContext, columns: boolean): boolean {
+  // A phone always has one: the Environment, else the route its missing Reaches column would say.
+  if (!columns) return true;
+  return domainBylineLead(item, context).lead !== null
+    || domainRouteMachineIds(item.domain.routedReplicas?.replicas, context.ownMachineId).length > 0;
+}
+
 /**
  * The row's second line: the record to add while DNS is missing, or what sets the address apart (a redirect, a
  * password), then the Machines it leads to. A phone has no Reaches column, so a row with nothing else says its route.
@@ -322,18 +354,7 @@ function DomainByline(props: Readonly<{ item: DomainItem; context: DomainRowCont
   const routedOn = routedMachineIds.length > 0 ? t('projects.deployments.domainRoutedOn', {
     machines: [...new Set(routedMachineIds.map(machineId => routedNames[machineId] ?? t('projects.deployments.aMachine')))].join(', '),
   }) : null;
-  const dns = projectDeploymentDomainDnsReadinessV1(item.domain.dnsHealth).state;
-  const records = content.providerObservation?.dns.map(record =>
-    t('projects.deployments.editors.domainAddRecord', { type: record.type, name: record.name, value: record.value })) ?? [];
-  const lead = records.length > 0 ? records.join(' · ')
-    : dns === 'missing' && context.machineName ? t('projects.deployments.domainDnsMissingBody', { machine: context.machineName })
-    : dns === 'not_this_machine' && context.machineName ? t('projects.deployments.domainDnsElsewhereBody', { machine: context.machineName })
-    // A wrong answer says what came back (lab svcDom "answers 502"): the Domain health owner's observed status.
-    : item.health?.needsYou?.cause === 'http' && item.health.needsYou.httpStatus !== undefined
-      ? t('projects.deployments.editors.domainAnswers', { status: item.health.needsYou.httpStatus })
-    : content.target.kind !== 'provider' && content.target.redirectTo ? t('projects.deployments.domainRedirect', { target: content.target.redirectTo })
-    : content.basicAuth ? t('projects.deployments.domainTagBasicAuth')
-    : null;
+  const { records, lead } = domainBylineLead(item, context);
   // A phone has no Environment column: the line names it first.
   const parts = [props.columns ? null : props.environment, lead, routedOn].filter(Boolean);
   const line = parts.length > 0 ? parts.join(' · ') : props.columns ? null : domainRoute(content);

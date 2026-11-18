@@ -19,32 +19,40 @@ const row = (
 });
 
 describe('deploymentEnvironmentBands (Services → Apps, lab envList)', () => {
-  it('bands each Project with several Environments in the page order, leads with every one-Environment Project, and keeps unnamed last', () => {
+  it('bands every Project in the page order once the list holds more than one, and keeps unnamed last (R2-D9)', () => {
     const rows = [
       row('source-shop', 'storefront', 'Staging', 'danger'),
       row('source-gone', null, 'Demo'),
       row('source-maria', 'maria-db', 'maria-db'),
       row('source-shop', 'storefront', 'Production'),
-      row('source-api', 'payments-api', 'Production API', null),
     ];
     const bands = deploymentEnvironmentBands(rows);
-    // One rule (UI refinements 11-16): a Project with one Environment never gets a heading, whatever its names.
+    // One band rule for Apps, Databases and Domains (UI refinements 2026-11-18): a one-Environment Project is a band too.
     expect(bands.axis.map((band) => [band.key, band.title])).toEqual([
-      ['single', ''],
       ['source-shop', 'storefront'],
+      ['source-maria', 'maria-db'],
       ['other', expect.any(String)],
     ]);
-    expect(
-      rows.map((candidate) => [candidate.id, bands.groupOf(candidate)]),
-    ).toEqual([
-      ['source-shop:Staging', 'source-shop'],
-      ['source-gone:Demo', 'other'],
-      ['source-maria:maria-db', 'single'],
-      ['source-shop:Production', 'source-shop'],
-      ['source-api:Production API', 'single'],
-    ]);
+    expect(rows.map((candidate) => bands.groupOf(candidate))).toEqual(['source-shop', 'other', 'source-maria', 'source-shop']);
     // Every band stands on the one sheet.
     expect(new Set(bands.axis.map((band) => band.section.key)).size).toBe(1);
+  });
+
+  it('keeps a one-Environment band quiet: its row already says the state', () => {
+    const bands = deploymentEnvironmentBands([
+      row('source-shop', 'storefront', 'Staging', 'danger'),
+      row('source-api', 'payments-api', 'Production'),
+    ]);
+    expect(bands.axis.find((band) => band.key === 'source-shop')).not.toHaveProperty('description');
+  });
+
+  it('leaves a list of one Project unbanded, with nothing said on the one group', () => {
+    const bands = deploymentEnvironmentBands([
+      row('source-shop', 'storefront', 'Staging', 'danger'),
+      row('source-shop', 'storefront', 'Production'),
+    ]);
+    expect(bands.axis).toEqual([expect.objectContaining({ title: '' })]);
+    expect(bands.axis[0]).not.toHaveProperty('description');
   });
 
   it('says how many Environments need the person on their band, counting failed and unconfirmed deploys, never ones at work', () => {
@@ -96,9 +104,11 @@ describe('deploymentEnvironmentRowLeadState (DESIGN "Phones recompose")', () => 
 describe('deploymentEnvironmentBands sentences (lab band lines)', () => {
   it('names the one Environment that needs the person and its state; several read as a count', async () => {
     const { deploymentEnvironmentBands } = await import('./DeploymentEnvironmentRows');
+    const other = { projectSourceId: 'docs', projectName: 'docs', title: 'Production', state: null };
     const one = deploymentEnvironmentBands([
       { projectSourceId: 'shop', projectName: 'billing-api', title: 'Production', state: null },
       { projectSourceId: 'shop', projectName: 'billing-api', title: 'Staging', state: { tone: 'danger' as const, text: 'Failed' } },
+      other,
     ]);
     const band = one.axis.find((group) => group.key === 'shop') as { description?: string };
     expect(band.description).toContain('Staging');
@@ -106,18 +116,19 @@ describe('deploymentEnvironmentBands sentences (lab band lines)', () => {
     const several = deploymentEnvironmentBands([
       { projectSourceId: 'shop', projectName: 'billing-api', title: 'Production', state: { tone: 'warning' as const, text: 'Running, not verified' } },
       { projectSourceId: 'shop', projectName: 'billing-api', title: 'Staging', state: { tone: 'danger' as const, text: 'Failed' } },
+      other,
     ]);
     expect((several.axis.find((group) => group.key === 'shop') as { description?: string }).description).not.toContain('Staging');
   });
 });
 
-describe('deploymentEnvironmentRowLine folds the address and a collapsed Project (UI refinements 11-16)', () => {
-  it('leads line 2 with the Project of a one-Environment row named otherwise, then where it answers', async () => {
+describe('deploymentEnvironmentRowLine folds the address (UI refinements 11-16)', () => {
+  it('leads line 2 with where it answers', async () => {
     const { deploymentEnvironmentRowLine } = await import('./DeploymentEnvironmentRows');
     const row = { deploymentTitle: 'fix: cart', runsOn: 'vps-ams', lastDeploy: '2h', steps: null, stepCaption: null,
       liveAddress: 'https://shop.example.com' };
-    expect(deploymentEnvironmentRowLine(row, 'Ana', { columns: true, hereMachine: false, project: 'storefront' }))
-      .toBe('storefront · shop.example.com · fix: cart · Ana');
+    expect(deploymentEnvironmentRowLine(row, 'Ana', { columns: true, hereMachine: false }))
+      .toBe('shop.example.com · fix: cart · Ana');
     expect(deploymentEnvironmentRowLine({ ...row, liveAddress: null }, null, { columns: true, hereMachine: false }))
       .toBe('fix: cart');
   });

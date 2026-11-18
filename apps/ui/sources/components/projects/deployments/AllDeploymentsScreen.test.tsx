@@ -369,7 +369,7 @@ describe('Projects → All deployments', () => {
     offline.controller.retire();
   });
 
-  it('names a Project once when its only Environment carries the Project’s name, and never repeats that name as what is live', async () => {
+  it('bands a one-Environment Project like any other and never repeats its name as what is live (R2-D9)', async () => {
     const { controller } = controllerFor(() =>
       page([
         environment('env-maria', 'source-maria', 'maria-db', { projectSourceName: 'maria-db', liveVersionTitle: 'maria-db' }),
@@ -379,10 +379,12 @@ describe('Projects → All deployments', () => {
       ]),
     );
     const screen = await render(controller, 'all-deployments');
-    const text = screen.getTextContent();
-    // Untitled rows lead the page in one sheet: one placed below a titled group would read as part of it.
-    expect(text.split('maria-db').length - 1).toBe(1);
-    expect(text.split('pgbouncer').length - 1).toBe(1);
+    // A band title may be drawn in more than one text run (it middle-ellipsizes), so compare without spaces.
+    const text = screen.getTextContent().replace(/\s/g, '');
+    // One band rule (UI refinements 2026-11-18): every Project of a several-Project list has its band, so the band and
+    // the Environment row say the name, and what is live never says it a third time.
+    expect(text.split('maria-db').length - 1).toBe(2);
+    expect(text.split('pgbouncer').length - 1).toBe(2);
     expect(text.indexOf('maria-db')).toBeLessThan(text.indexOf('pgbouncer'));
     controller.retire();
   });
