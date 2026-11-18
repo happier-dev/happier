@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { useUnistyles } from 'react-native-unistyles';
 import {
   Collection,
@@ -364,35 +365,39 @@ export function ServicesPageList<Item>(props: Readonly<{
   columns?: DeploymentEnvironmentColumnsBinding;
 }>) {
   // Inside a page section's body (an Environment's Domains under "1 domain") the section already stands its content on
-  // the sheet edge, so the list's sheet takes that edge instead of adding its own inset; on the Services page it insets.
+  // the sheet edge, so the list's sheet takes that edge; on the Services page the list is the page's own flat list.
   const inSection = useItemGroupRowPosition() !== null;
   const enclosingEdgePx = React.useContext(HappierColumnEdgeContext);
+  const collection = (
+    <CoreCollectionScope>
+      <Collection<Item>
+        testID={`${props.testID}.table`}
+        model={props.model}
+        anatomy={props.anatomy}
+        accessibilityLabel={props.accessibilityLabel}
+        presentation={props.presentation ?? 'list'}
+        detail="none"
+        scroll="page"
+        minListWidth={0}
+        minDetailWidth={0}
+        preferredListRatio={1}
+        {...(props.groupAction ? { groupAction: props.groupAction } : {})}
+        {...(props.useRowActions ? { useRowActions: props.useRowActions } : {})}
+        {...(props.columns ? { columns: { collectionId: props.columns.collectionId } } : {})}
+        {...(props.columns?.onColumnsFit ? { onColumnsFit: props.columns.onColumnsFit } : {})}
+      />
+    </CoreCollectionScope>
+  );
   return (
     <HappierColumnEdgeContext.Provider value={inSection ? HAPPIER_PAGE_METRICS.sheetInsetPx : enclosingEdgePx}>
     <ListPresentationProvider value="page" pageInsets="contained">
-      {/* On the page, the list is the flat page section (no card); inside a page section it takes that section's sheet. */}
-      <ItemGroupDefaultSurfaceProvider value="flat">
-      <ItemGroup header="none" {...(inSection ? { surface: 'none' as const } : {})} testID={props.testID}>
-        <CoreCollectionScope>
-          <Collection<Item>
-            testID={`${props.testID}.table`}
-            model={props.model}
-            anatomy={props.anatomy}
-            accessibilityLabel={props.accessibilityLabel}
-            presentation={props.presentation ?? 'list'}
-            detail="none"
-            scroll="page"
-            minListWidth={0}
-            minDetailWidth={0}
-            preferredListRatio={1}
-            {...(props.groupAction ? { groupAction: props.groupAction } : {})}
-            {...(props.useRowActions ? { useRowActions: props.useRowActions } : {})}
-            {...(props.columns ? { columns: { collectionId: props.columns.collectionId } } : {})}
-            {...(props.columns?.onColumnsFit ? { onColumnsFit: props.columns.onColumnsFit } : {})}
-          />
-        </CoreCollectionScope>
-      </ItemGroup>
-      </ItemGroupDefaultSurfaceProvider>
+      {/* On the page the Collection is the flat page list itself in the page's column, so its marks, section titles and
+          column bar stand on the header's edges (monitoring-1115 B1); inside a page section it takes that section's sheet. */}
+      {inSection ? (
+        <ItemGroupDefaultSurfaceProvider value="flat">
+          <ItemGroup header="none" surface="none" testID={props.testID}>{collection}</ItemGroup>
+        </ItemGroupDefaultSurfaceProvider>
+      ) : <PageContentColumn testID={props.testID}>{collection}</PageContentColumn>}
     </ListPresentationProvider>
     </HappierColumnEdgeContext.Provider>
   );

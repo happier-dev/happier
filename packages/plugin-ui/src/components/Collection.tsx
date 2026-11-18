@@ -2625,7 +2625,9 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       // Its rule runs the rows' content width, like their own rules; after the last head it keeps the rows' ⋯ slot, so
       // each head stands over its figures (Services → Apps).
       style={[pageSheetHeaderStyle, listColumnsHeaderStyle, { borderBottomColor: palette?.rowDivider ?? theme.colors.divider,
-        paddingRight: rowAccessoryWidth }]}
+        paddingRight: rowAccessoryWidth },
+        // A flat page list's rows stand on the page edge (`rowInsetPx` below); its bar names their columns from there.
+        enclosingPageSheet === null ? flatListColumnsHeaderStyle : null]}
     >
       <View style={pageRowGlyphStyle} />
       <HappierText variant="meta" tone="muted" numberOfLines={1} style={flexTextStyle}>{anatomy.columnTitles.title}</HappierText>
@@ -2635,7 +2637,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         </View>
       ))}
     </View>
-  ), [accessibility.textScale, anatomy.columnTitles.title, listColumns, palette?.rowDivider, props.testID, rowAccessoryWidth, theme.colors.divider]);
+  ), [accessibility.textScale, anatomy.columnTitles.title, enclosingPageSheet, listColumns, palette?.rowDivider, props.testID, rowAccessoryWidth, theme.colors.divider]);
   const pageSheetHeader = useMemo(() => listColumnsHeader ?? (!pageSections || (grouped && !pageTable) || sort === undefined || sortedField === undefined ? null : (
     <View
       testID={props.testID === undefined ? undefined : `${props.testID}:sheet-header`}
@@ -2851,7 +2853,9 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         // A page list lies flat on the page at every width, its rows parted by their text-inset hairlines: the Services
         // shape (owner 2026-11-15 "browse flat"; UI refinements ruling WAVE-ACCEPT-1117C: no card on an index list).
         flatSheet: false,
-        ...(enclosingPageSheet === null && narrowRows ? { rowInsetPx: HAPPIER_PAGE_METRICS.headingOpticalInsetPx } : {}),
+        // With no card around them, the rows' marks stand on the page's text edge at every width, as the header's title
+        // and the section headings do (monitoring-1115 B1, pfc-redesign flat lists), not a card's content inset in.
+        ...(enclosingPageSheet === null ? { rowInsetPx: HAPPIER_PAGE_METRICS.headingOpticalInsetPx } : {}),
         stackedHeadings: narrowRows,
       } }),
     } : wrapTitles || catalogSideList ? {
@@ -3685,6 +3689,8 @@ const flexTextStyle: HappierPortableStyle = { flex: 1, minWidth: 0 };
 const listColumnsHeaderStyle: HappierPortableStyle = {
   gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx, paddingLeft: 0, marginHorizontal: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
 };
+/** The same bar over a flat page list: on its rows' page-edge inset, less the row's 1 pt ring. */
+const flatListColumnsHeaderStyle: HappierPortableStyle = { marginHorizontal: HAPPIER_PAGE_METRICS.headingOpticalInsetPx - 1 };
 
 /** A list row's `listColumn` cell and its bar title: one fixed width, so the column lines up down every sheet. */
 function listColumnCellStyle<Item>(field: CollectionField<Item>, textScale: number): HappierPortableStyle {
