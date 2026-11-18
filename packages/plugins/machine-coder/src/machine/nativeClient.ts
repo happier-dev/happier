@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { defineProtocolArray, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
-import { projectMachineProvisionerActionFailure, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure as projectExternalActionFailure, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { coderCredentialUnavailable } from './connection.js';
 import { BILLING, CoderOperationSchema, CoderResourceSchema, reference, RECONCILIATION, type CoderAcquireOperation, type CoderDeleteOperation, type CoderLaunch, type CoderResource } from './schemas.js';
 
@@ -24,9 +24,16 @@ const buildFailed = (build: ReturnType<typeof buildSchema.parse>) => build.job.s
 type Workspace = ReturnType<typeof workspaceSchema.parse>;
 type Acquisition = ReturnType<typeof RECONCILIATION.result.parse>;
 type Destruction = ReturnType<typeof RECONCILIATION.destroyResult.parse>;
-class CoderNativeError extends Error {}
+class CoderNativeError extends PluginError {
+  constructor(code: string) { super({ code }); }
+}
 const fail = (code: string): never => { throw new CoderNativeError(code); };
-export const coderFailureCode = (error: unknown) => error instanceof CoderNativeError ? error.message : 'provider_unavailable';
+export const coderFailureCode = (error: unknown) => error instanceof CoderNativeError ? error.code : 'provider_unavailable';
+// Native failures retain operation-specific recovery after an effect. If one
+// escapes before admission, the host still receives the canonical PluginError.
+function projectCoderFailure<T>(error: unknown, fallback: () => T | PromiseLike<T>): T | PromiseLike<T> {
+  return error instanceof CoderNativeError ? fallback() : projectExternalActionFailure(error, fallback);
+}
 // Coder's workspace-name boundary is 32 characters. A stable managed row name
 // allows owner-qualified recovery even when the create response was lost.
 export const coderWorkspaceName = (managedId: string) => 'hm-' + createHash('sha256').update(managedId).digest('hex').slice(0, 29);
@@ -108,7 +115,7 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
     const operation = CoderOperationSchema.parse(raw);
     if (operation.kind === 'delete') return { kind: 'bound', resource: reference(operation.resource) };
     try { return await observeRetainedAcquisition(operation); }
-    catch (error) { return projectMachineProvisionerActionFailure(error, () => unknown(operation, coderFailureCode(error))); }
+    catch (error) { return projectCoderFailure(error, () => unknown(operation, coderFailureCode(error))); }
   }
   async function buildObservation(resource: CoderResource, buildId: string) {
     const value = await request('/workspacebuilds/' + encodeURIComponent(buildId));
@@ -128,7 +135,7 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
       return native ? { observedAt: input.observedAt, availability: 'present', power: powerOf(native), storage: 'unknown', billing: BILLING,
         ...(native.dormant_at ? { reason: 'coder_dormant' } : {}) }
         : { observedAt: input.observedAt, availability: 'absent', storage: 'lost', billing: BILLING };
-    } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ observedAt: input.observedAt, availability: 'unavailable', power: 'unknown', reason: coderFailureCode(error) })); }
+    } catch (error) { return projectCoderFailure(error, () => ({ observedAt: input.observedAt, availability: 'unavailable', power: 'unknown', reason: coderFailureCode(error) })); }
   }
   async function cleanup(raw: unknown): Promise<ReturnType<typeof RECONCILIATION.cleanupResult.parse>> {
     const operation = CoderOperationSchema.parse(raw);
@@ -139,7 +146,7 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
       const observed = operation.buildId ? await buildObservation(operation.resource, operation.buildId) : native.latest_build;
       if (observed.transition === 'delete' && buildFailed(observed)) return { kind: 'unknown', code: 'coder_build_failed' };
       return { kind: 'unknown', code: 'coder_delete_pending' };
-    } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: coderFailureCode(error) })); }
+    } catch (error) { return projectCoderFailure(error, () => ({ kind: 'unknown', code: coderFailureCode(error) })); }
   }
   async function destroy(value: ReturnType<typeof RECONCILIATION.destroyInput.parse>): Promise<Destruction> {
     let resource: CoderResource;
@@ -175,7 +182,7 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
       const build = await submitBuild(resource, 'delete');
       operation = { ...operation, buildId: build.id };
       return { kind: 'accepted', nativeOperationRef: reference(operation) };
-    } catch (error) { return projectMachineProvisionerActionFailure(error, () => issued && coderFailureCode(error) !== 'invalid_request'
+    } catch (error) { return projectCoderFailure(error, () => issued && coderFailureCode(error) !== 'invalid_request'
       ? { kind: 'accepted', nativeOperationRef: reference(operation) } : { kind: issued ? 'refused' : 'unknown', code: coderFailureCode(error) }); }
   }
   return {
@@ -198,7 +205,7 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
           result = await observeRetainedAcquisition(retained);
         }
         return result;
-      } catch (error) { return projectMachineProvisionerActionFailure(error, () => coderFailureCode(error) === 'invalid_request'
+      } catch (error) { return projectCoderFailure(error, () => coderFailureCode(error) === 'invalid_request'
         ? { kind: 'rejected', code: 'invalid_request' } : pending(retained)); }
     },
     async power(resource: CoderResource, intent: string): Promise<MachineProvisionerPowerResultV1> {
@@ -224,7 +231,7 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
           if (observed.job.status === 'succeeded' && powerOf(native) === (intent === 'start' ? 'running' : 'stopped')) return { kind: 'confirmed' };
           await input.waitForObservation(); input.signal.throwIfAborted();
         }
-      } catch (error) { input.signal.throwIfAborted(); return projectMachineProvisionerActionFailure(error, () => ({ kind: issued ? 'unknown' : 'refused', code: coderFailureCode(error) })); }
+      } catch (error) { input.signal.throwIfAborted(); return projectCoderFailure(error, () => ({ kind: issued ? 'unknown' : 'refused', code: coderFailureCode(error) })); }
     },
     async guest(resource: CoderResource) {
       const native = await read(resource);

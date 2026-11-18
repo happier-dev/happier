@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { createCoderClient, coderWorkspaceName } from './nativeClient.js';
 import { CoderLaunchSchema, RECONCILIATION, type CoderResource } from './schemas.js';
 
@@ -14,7 +15,7 @@ const workspace = (status = 'running', transition = 'start', id = 'build-create'
   dormant_at: null, latest_build: build(status, transition, id) });
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
-async function fixture(options: { lostCreate?: boolean; lostDelete?: boolean; owner?: string; missing?: boolean; readFails?: boolean; mismatchedVersion?: boolean; postResponse?: 'late-abort' | 'incomplete'; waitForObservation?: () => Promise<void> } = {}) {
+async function fixture(options: { preflightStatus?: number; lostCreate?: boolean; lostDelete?: boolean; owner?: string; missing?: boolean; readFails?: boolean; mismatchedVersion?: boolean; postResponse?: 'late-abort' | 'incomplete'; waitForObservation?: () => Promise<void> } = {}) {
   const requests: Array<{ method: string; path: string; body: unknown }> = [];
   let current = workspace(), deleted = false;
   const handler = async (req: IncomingMessage, res: ServerResponse) => {
@@ -24,7 +25,10 @@ async function fixture(options: { lostCreate?: boolean; lostDelete?: boolean; ow
     requests.push({ method: req.method!, path, body });
     res.setHeader('content-type', 'application/json');
     const send = (value: unknown, status = 200) => { res.statusCode = status; res.end(JSON.stringify(value)); };
-    if (path === '/api/v2/templateversions/version') return send({ id: 'version', template_id: options.mismatchedVersion ? 'other-template' : 'template', organization_id: 'org' });
+    if (path === '/api/v2/templateversions/version') {
+      if (options.preflightStatus) return send({ message: 'upstream unavailable' }, options.preflightStatus);
+      return send({ id: 'version', template_id: options.mismatchedVersion ? 'other-template' : 'template', organization_id: 'org' });
+    }
     if (path === '/api/v2/users/me') return send({ id: options.owner ?? 'user-a', username: 'alice' });
     if (req.method === 'POST' && path.endsWith('/workspaces')) {
       current = { ...workspace('starting'), latest_build: { ...build('starting'), job: { status: 'pending' }, resources: [] } };
@@ -71,6 +75,16 @@ async function fixture(options: { lostCreate?: boolean; lostDelete?: boolean; ow
 }
 
 describe('Coder finite lifecycle through its REST boundary', () => {
+  it('keeps a gateway failure during acquisition preflight typed after a successful acquisition', async () => {
+    const options: { preflightStatus?: number } = {};
+    const h = await fixture(options);
+    expect(await h.client.acquire(launch, managedId)).toMatchObject({ kind: 'bound' });
+    options.preflightStatus = 502;
+    const error: unknown = await h.client.acquire(launch, managedId).catch(error => error);
+    expect(error).toBeInstanceOf(PluginError);
+    expect(error).toMatchObject({ code: 'provider_unavailable' });
+    expect(h.requests.filter(request => request.method === 'POST')).toHaveLength(1);
+  });
   it('retains completed workspace and build correlation after late cancellation', async () => {
     const create = await fixture({ postResponse: 'late-abort' });
     expect(await create.client.acquire(launch, managedId)).toMatchObject({ kind: 'pending',
