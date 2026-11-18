@@ -19,7 +19,12 @@ const { useCurrentUiContextVoiceToolPort } = await import('@/components/appShell
 
 afterEach(async () => { standardCleanup(); await account.reset(); });
 
-it.each(['invoke', 'observe'] as const)('settles refused Account action %s while an unrelated Machine declaration is establishing', async mode => {
+it.each([
+    { mode: 'invoke', unavailable: 'refused' },
+    { mode: 'observe', unavailable: 'refused' },
+    { mode: 'invoke', unavailable: 'missing-artifact' },
+    { mode: 'observe', unavailable: 'missing-artifact' },
+] as const)('settles $unavailable Account action $mode while an unrelated Machine declaration is establishing', async ({ mode, unavailable }) => {
     await account.restore({ machines: [] });
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Expected Account lifetime');
@@ -38,7 +43,7 @@ it.each(['invoke', 'observe'] as const)('settles refused Account action %s while
     for (const target of targets) cache.putInstalledArtifact({ identity: target.cacheIdentity, bytes: new Uint8Array([47, 47]), format: 'plainJs' });
     // Executable bytes are an external boundary. Admission, activation, refusal
     // publication and the host Action acquisition remain real.
-    await composition.reconcile(targets.map(target => ({ pluginId: target.pluginId, pluginVersion: target.pluginVersion,
+    if (unavailable === 'refused') await composition.reconcile(targets.map(target => ({ pluginId: target.pluginId, pluginVersion: target.pluginVersion,
         hostUiApiRange: target.hostUiApiRange, contributes: target.contributes, target: target.target,
         executionOrigin: target.executionOrigin, cache, identity: target.cacheIdentity, moduleReference: target.moduleReference,
         backend: { backendId: 'commonJs', available: true, async loadInstalledBundle() { throw new Error('Executable unavailable'); } },
@@ -46,7 +51,12 @@ it.each(['invoke', 'observe'] as const)('settles refused Account action %s while
         occurrenceId: Object.values(installed.projection.actionsById)[0]!.occurrenceId, isCurrent: lifetime.isCurrent,
     })));
     const action = Object.values(installed.projection.actionsById)[0]!;
-    expect(resolvePluginUiClientActionRefusal({ action, platform })).not.toBeNull();
+    if (unavailable === 'refused') expect(resolvePluginUiClientActionRefusal({ action, platform })).not.toBeNull();
+    // QA #173j has settled Account availability, Machine declarations and no
+    // Account-hosted UI artifacts. An unrelated discovery wait cannot supply
+    // the requested executable or keep the catalog placeholder pending.
+    const projection = unavailable === 'missing-artifact'
+        ? { ...installed.projection, reactNativeBundlesById: {} } : installed.projection;
     let port: ReturnType<typeof useCurrentUiContextVoiceToolPort> = null;
     function Probe() { port = useCurrentUiContextVoiceToolPort(); return null; }
     const reader = { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} };
@@ -54,7 +64,7 @@ it.each(['invoke', 'observe'] as const)('settles refused Account action %s while
     function Shell() {
         const defaults = useAppShellPluginUiProjection();
         return <AppShellPluginUiProjectionValueProvider declarationReady value={{ ...defaults,
-            pluginUiProjection: installed.projection, phase: 'current', hasEstablishingMembers: true,
+            pluginUiProjection: projection, phase: 'current', hasEstablishingMembers: true,
             clientExecutableActivation: { status: 'ready' }, accountLifetime: lifetime, serverId,
         }}><CurrentUiContextBridge publisher={null} reader={reader}><Probe /></CurrentUiContextBridge></AppShellPluginUiProjectionValueProvider>;
     }

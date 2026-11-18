@@ -69,7 +69,7 @@ export async function acquireCurrentContributedAction(input: Readonly<{
         // Declaration and executable-Artifact publication can advance separately.
         // A missing exact activation target cannot establish settled absence
         // while its declaration source is still establishing.
-        return admission?.declarationPhase === 'establishing' || admission?.hasEstablishingMembers === true
+        return admission?.declarationPhase === 'establishing' || !action && admission?.hasEstablishingMembers === true
             || isPluginUiClientActionPending({ admission, accountLifetime: owner, action, currentAction: action });
     };
     const settlement = createPluginConnectionSettlement();
