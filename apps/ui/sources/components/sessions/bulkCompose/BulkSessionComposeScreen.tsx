@@ -13,7 +13,6 @@ import {
 } from '@/components/appShell/workspace/destinationRoute';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
-import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { createRecipientMultiSelectActionChip } from '@/components/sessions/agentInput/definitions/createRecipientActionChip';
@@ -63,7 +62,13 @@ import {
 
 import { BulkSessionResults } from './BulkSessionResults';
 import { describeBulkSkipReason } from './bulkSessionComposePresentation';
-import { useBulkSessionMachineLabels, useBulkSessionTargetNames } from './useBulkSessionTargetIdentities';
+import {
+  resolveBulkTargetCatalogAgentId,
+  useBulkSessionAgentTitles,
+  useBulkSessionMachineLabels,
+  useBulkSessionTargetNames,
+} from './useBulkSessionTargetIdentities';
+import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 
 /** The column of the New session page (lab bc §6): the composer and the results share it at every width. */
 const COMPOSE_COLUMN_MAX_WIDTH = 760;
@@ -151,12 +156,18 @@ function BulkSessionComposer(
     [facts],
   );
   const machineLabels = useBulkSessionMachineLabels(targetMachines);
+  const targetAgents = React.useMemo(
+    () => facts.map((fact) => ({ agentId: resolveBulkTargetCatalogAgentId(fact.agentTarget), machineId: fact.machineId })),
+    [facts],
+  );
+  const agentTitles = useBulkSessionAgentTitles(targetAgents, facts[0]?.address.serverId ?? null);
   const toModel = useBulkSessionToModel({
     seedTargets: props.seed.targets,
     targets,
     facts,
     names,
     machineLabels,
+    agentTitles,
     onChange: editToTargets,
   });
   const toChip = React.useMemo(
@@ -203,27 +214,7 @@ function BulkSessionComposer(
     composer.setSelection({ ...composer.selection, permissionMode: mode });
   });
 
-  // The engine picker is the shipped one, with rows narrowed to the Agents every target's Machine offers.
-  const engineOptionIds = React.useMemo(
-    () =>
-      engineControl.kind === 'options'
-        ? new Set(engineControl.options.map((option) => option.id))
-        : null,
-    [engineControl],
-  );
   const leadFacts = controlTargets.leadFacts;
-  const enginePickerFacts = React.useMemo(
-    () =>
-      leadFacts && engineOptionIds
-        ? {
-            ...leadFacts,
-            agentTargets: (leadFacts.agentTargets ?? []).filter((option) =>
-              engineOptionIds.has(option.id),
-            ),
-          }
-        : undefined,
-    [engineOptionIds, leadFacts],
-  );
   const changeEngineFields = useEventCallback(
     (fields: Partial<WorkflowSessionAuthoringSelection>) => {
       composer.setSelection({ ...composer.selection, ...fields });
@@ -231,7 +222,8 @@ function BulkSessionComposer(
   );
   const enginePicker = useSessionAuthoringEnginePicker({
     values: composer.selection,
-    facts: enginePickerFacts,
+    facts: engineControl.kind === 'options' ? leadFacts : undefined,
+    engineOptions: engineControl.kind === 'options' ? engineControl.options : undefined,
     disabled: engineControl.kind !== 'options',
     onChangeFields: changeEngineFields,
   });
@@ -619,10 +611,12 @@ function useBulkSessionToModel(
     names: readonly string[];
     /** Each fact's Machine name, in fact order. */
     machineLabels: readonly (string | null)[];
+    /** Agent titles from the Machine-scoped catalog, by catalog Agent id. */
+    agentTitles: ReadonlyMap<string, string>;
     onChange: (next: readonly ActionSessionAddressV1[]) => void;
   }>,
 ): RecipientMultiSelectModel<ActionSessionAddressV1> {
-  const { seedTargets, targets, facts, names, machineLabels, onChange } = input;
+  const { seedTargets, targets, facts, names, machineLabels, agentTitles, onChange } = input;
   return React.useMemo(() => {
     const nameByKey = new Map(
       targets.map((target, index) => [
@@ -659,12 +653,11 @@ function useBulkSessionToModel(
     );
     return {
       targets: reachable.map((target) => {
-        const agentType = resolveBundledAgentIdFromContributionIdentity(
-          factByKey.get(sessionAddressKey(target))?.agentTarget?.identity,
-        );
+        const fact = factByKey.get(sessionAddressKey(target));
+        const catalogAgentId = resolveBulkTargetCatalogAgentId(fact?.agentTarget);
         const machineLabel = machineByKey.get(sessionAddressKey(target)) ?? null;
         // The row says which agent and where it runs, in words ("Codex · devbox", lab bc To list).
-        const subtitle = [agentType ? resolveAgentCatalogTitle(agentType) : null, machineLabel]
+        const subtitle = [catalogAgentId ? agentTitles.get(catalogAgentId) ?? null : null, machineLabel]
           .filter((part): part is string => Boolean(part))
           .join(' · ');
         return {
@@ -673,7 +666,14 @@ function useBulkSessionToModel(
           recipient: target,
           ...(subtitle ? { subtitle } : {}),
           // The agent mark keeps the leading slot.
-          ...(agentType ? { icon: <AgentIcon agentId={agentType} size={ICON_SIZE.sm} /> } : {}),
+          ...(catalogAgentId ? { icon: (
+            <SessionAgentCatalogIdentityIcon
+              agentId={catalogAgentId}
+              machineId={fact?.machineId ?? null}
+              serverId={target.serverId}
+              size={ICON_SIZE.sm}
+            />
+          ) } : {}),
         };
       }),
       selectedIds: recipients.map(sessionAddressKey),
@@ -697,7 +697,7 @@ function useBulkSessionToModel(
       },
       clear: () => onChange([]),
     };
-  }, [facts, machineLabels, names, onChange, seedTargets, targets]);
+  }, [agentTitles, facts, machineLabels, names, onChange, seedTargets, targets]);
 }
 
 const styles = StyleSheet.create((theme) => ({
