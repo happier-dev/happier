@@ -8,10 +8,11 @@ import { PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, type ActionId } from '@happi
 import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { ProjectDefinitionInspectOutputSchema, ProjectManifestUpdateOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
-import { ActionOperationGetV1ResponseSchema, ActionOperationListV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { ActionOperationGetV1ResponseSchema, ActionOperationListV1ResponseSchema, projectActionOperationListSnapshotV1, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { ProjectSourcesReadOutputV1Schema, ProjectSourcesListOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
+import { TeamMembershipV1Schema } from '@happier-dev/protocol/teams/membership';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { startProjectDaemonFixture, type ProjectDaemonFixture } from '../../src/testkit/daemon/projectDaemon';
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -52,8 +53,9 @@ it('Source author shares with a Team, recipient reads it, and withdrawal removes
     name: 'Source journey Team', initialOwnerAccountId: created.createdByAccountId, requestKey: randomUUID() }));
   const recipientIdentity = source(await action(member, 'projects.sources.create', { serverId: fixture.serverId,
     name: 'Recipient identity', requestKey: randomUUID() }));
-  await action(owner, 'teams.members.add', { v: 1, teamId: team.id, accountId: recipientIdentity.createdByAccountId,
-    role: 'member', historyAccess: 'all_existing' });
+  const membership = TeamMembershipV1Schema.parse(await action(owner, 'teams.members.add', {
+    v: 1, teamId: team.id, accountId: recipientIdentity.createdByAccountId,
+    role: 'member', historyAccess: 'all_existing' }));
   const address = { serverId: fixture.serverId, sourceId: created.id };
   expect(ProjectSourcesReadOutputV1Schema.parse(await action(member, 'projects.sources.read', address)))
     .toMatchObject({ ok: false, error: 'source_unavailable' });
@@ -66,7 +68,7 @@ it('Source author shares with a Team, recipient reads it, and withdrawal removes
   const renamed = source(await action(owner, 'projects.sources.update', { ...address, expectedRevision: shared.revision,
     patch: { name: 'Revised onboarding' } }));
   expect(source(await action(member, 'projects.sources.read', address)).name).toBe('Revised onboarding');
-  await action(owner, 'teams.members.remove', { v: 1, teamId: team.id, accountId: recipientIdentity.createdByAccountId });
+  await action(owner, 'teams.members.remove', { v: 1, teamId: team.id, membershipId: membership.id });
   expect(ProjectSourcesReadOutputV1Schema.parse(await action(member, 'projects.sources.read', address)))
     .toMatchObject({ ok: false, error: 'source_unavailable' });
   const withdrawn = ProjectSourcesListOutputV1Schema.parse(await action(member, 'projects.sources.list', { serverId: fixture.serverId }));
@@ -225,11 +227,17 @@ it('Open imports a native task, preserves dirty work, and retains its receipt ac
   expect(ProjectManifestUpdateOutputSchema.parse(await action(owner, 'projects.manifest.update', {
     workspace: opened.workspace, expectedBasis: reloaded.definition.basis, bytes: draft }))).toMatchObject({ status: 'saved' });
   const retained = ActionOperationListV1ResponseSchema.parse(await action(owner, 'action.operations.list', machine.target));
-  const receipt = retained.items.find(row => {
-    const result = OpenProjectResultV1Schema.safeParse(row.result);
-    return row.actionId === 'projects.open' && row.state === 'succeeded' && result.success
-      && result.data.kind === 'opened' && result.data.directory === checkout;
-  });
+  let receipt: ActionOperationSnapshotV1 | undefined;
+  for (const row of retained.items.filter(row => row.actionId === 'projects.open' && row.state === 'succeeded')) {
+    const read = ActionOperationGetV1ResponseSchema.parse(await action(owner, 'action.operations.get', {
+      ...machine.target, operationId: row.operationId }));
+    if (read.kind !== 'found') continue;
+    const result = OpenProjectResultV1Schema.safeParse(read.operation.result);
+    if (result.success && result.data.kind === 'opened' && result.data.directory === checkout) {
+      receipt = read.operation;
+      break;
+    }
+  }
   expect(receipt).toBeDefined();
   if (!receipt) throw new Error('Successful Open did not publish its operation receipt');
   for (const restart of [1, 2]) {
@@ -238,7 +246,7 @@ it('Open imports a native task, preserves dirty work, and retains its receipt ac
       ...machine.target, operationId: receipt.operationId }));
     expect(read, `Open receipt after restart ${restart}`).toEqual({ kind: 'found', operation: receipt });
     const listed = ActionOperationListV1ResponseSchema.parse(await action(owner, 'action.operations.list', machine.target));
-    expect(listed.items.find(row => row.operationId === receipt.operationId)).toEqual(receipt);
+    expect(listed.items.find(row => row.operationId === receipt.operationId)).toEqual(projectActionOperationListSnapshotV1(receipt));
     expect(await readFile(join(checkout, 'unfinished.bin'))).toEqual(sentinel);
     expect((await inspect('editor')).definition.document).toMatchObject({ status: 'valid', bytes: draft,
       manifest: { scripts: { onboarding: { source: nativeTask.source } } } });
@@ -250,12 +258,13 @@ it('Withdrawing held Setup settles cancelled and leaves its command unexecuted',
   await mkdir(join(root, '.happier'), { recursive: true });
   execFileSync('git', ['init', '--quiet', root]);
   await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1,
-    workspace: { setup: [{ kind: 'command', command: 'printf forbidden > setup-effect' }] } }));
+    workspace: { setup: [{ kind: 'command', command: 'printf forbidden > setup-effect' }] },
+    scripts: { withheld: { source: { kind: 'command', command: 'printf forbidden > script-effect' } } } }));
   const opened = OpenProjectResultV1Schema.parse(await action(owner, 'projects.open', { ...machine.target,
     source: { kind: 'folder', path: root }, materialization: { kind: 'attach' } }));
   if (opened.kind !== 'opened') throw new Error(`Withdrawal fixture failed: ${opened.kind}`);
-  const accepted = ProjectCommandActionOutputV1Schema.parse(await action(owner, 'projects.prepare', {
-    workspace: opened.workspace, phase: 'setup' })).operation;
+  const accepted = ProjectCommandActionOutputV1Schema.parse(await action(owner, 'projects.script.run', {
+    workspace: opened.workspace, selection: { kind: 'named', name: 'withheld' } })).operation;
   const address = { ...machine.target, operationId: accepted.operationId };
   let observed: ActionOperationSnapshotV1 | undefined;
   const observe = async () => {
@@ -270,4 +279,5 @@ it('Withdrawing held Setup settles cancelled and leaves its command unexecuted',
   await waitFor(async () => (await observe()).state === 'cancelled', { context: 'Held Setup withdrawal settles' });
   expect(observed?.state).toBe('cancelled');
   await expect(access(join(root, 'setup-effect'))).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(access(join(root, 'script-effect'))).rejects.toMatchObject({ code: 'ENOENT' });
 }, 0);
