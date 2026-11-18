@@ -9,7 +9,8 @@ export type DeploymentJourneyProvider = 'vercel' | 'cloudflare' | 'neon';
 // loadUndici's CJS named exports snapshot this function, so its identity stays
 // stable for the test module while each sequential journey owns its socket.
 const undici: typeof import('undici') = createRequire(new URL('../../../../apps/cli/package.json', import.meta.url))('undici/index.js');
-const providerHosts = new Set(['api.vercel.com', 'api.cloudflare.com', 'console.neon.tech', 'ep-journey.neon.tech', 'api.eu-central-1.aws.neon.tech']);
+const providerHosts = new Set(['api.vercel.com', 'api.cloudflare.com', 'console.neon.tech', 'ep-journey.neon.tech', 'api.eu-central-1.aws.neon.tech',
+  'api.supabase.com', 'api.preview.aws.neon.tech', 'api.production.aws.neon.tech', 'api.neighbor.aws.neon.tech']);
 const nativeFetch = undici.fetch;
 let providerDispatcher: InstanceType<typeof undici.ProxyAgent> | undefined;
 undici.fetch = (input, init) => {
@@ -27,6 +28,13 @@ export async function startDeploymentProvidersHttp() {
     triggerUuid: 'journey-trigger', versionId: 'journey-version', zoneId: 'e'.repeat(32) };
   const neon = { organizationId: 'org-journey', projectId: 'journey-neon', branchId: 'br-journey', endpointId: 'ep-journey',
     readRolePassword: 'journey-provider-read-role-only' };
+  const managedBranches = [
+    { name: 'preview', neonId: 'br-preview', supabaseRef: 'journey-preview', marker: 'selected-preview' },
+    { name: 'production', neonId: 'br-production', supabaseRef: 'journey-production', marker: 'selected-production' },
+    { name: 'neighbor', neonId: 'br-neighbor', supabaseRef: 'journey-neighbor', marker: 'neighbor-database' },
+  ] as const;
+  const supabase = { organizationSlug: 'journey-organization', projectRef: 'journey-production' };
+  let rejectNextManagedQuery: 'neon' | 'supabase' | undefined;
   let vercelDeleted = false;
   let cloudflareDeleted = false;
   let vercelDomainAttached = false;
@@ -116,6 +124,14 @@ export async function startDeploymentProvidersHttp() {
         if (method === 'GET' && path === `${selectedBranchPath}/endpoints`) return ok({ endpoints: [{ id: neon.endpointId,
           project_id: neon.projectId, branch_id: neon.branchId, type: 'read_write', host: 'ep-journey.eu-central-1.aws.neon.tech' }] });
         if (method === 'GET' && path === `${selectedBranchPath}/databases`) return ok({ databases: [{ name: 'neondb', branch_id: neon.branchId }] });
+        for (const branch of managedBranches) {
+          const base = `/api/v2/projects/${neon.projectId}/branches/${branch.neonId}`;
+          if (method === 'GET' && path === base) return ok({ branch: { id: branch.neonId, project_id: neon.projectId,
+            name: branch.name, current_state: 'ready', default: branch.name === 'production', protected: branch.name === 'production' } });
+          if (method === 'GET' && path === `${base}/endpoints`) return ok({ endpoints: [{ id: `ep-${branch.name}`,
+            project_id: neon.projectId, branch_id: branch.neonId, type: 'read_write', host: `ep-journey.${branch.name}.aws.neon.tech` }] });
+          if (method === 'GET' && path === `${base}/databases`) return ok({ databases: [{ name: 'neondb', branch_id: branch.neonId }] });
+        }
         if (method === 'GET' && path === `/api/v2/organizations/${neon.organizationId}`) return ok({ id: neon.organizationId, name: 'Journey organization', plan: 'launch' });
         if (method === 'GET' && path === '/api/v2/regions') return ok({ regions: [{ region_id: 'aws-eu-central-1', name: 'Frankfurt' }] });
         if (method === 'GET' && path === '/api/v2/projects') return ok({ projects: [] });
@@ -137,6 +153,37 @@ export async function startDeploymentProvidersHttp() {
           { command: 'SELECT', fields: [{ name: 'marker', dataTypeID: 25 }],
             rows: [[body.queries[1]?.params?.[0]]], rowCount: 1 }] });
       }
+      for (const branch of managedBranches) {
+        if (url.hostname === `api.${branch.name}.aws.neon.tech` && method === 'POST' && path === '/sql') {
+          // The external fixture models the official Neon batch request shape.
+          const body = JSON.parse(request.body) as { queries?: Array<{ query: string }> };
+          // Preserve P45's guard and official raw OID/text-array framing at HTTPS.
+          if (body.queries?.[0]?.query !== postgresqlReadOnlyRoleGuardSql) throw new Error('Neon request omitted its read-role guard');
+          if (rejectNextManagedQuery === 'neon') { rejectNextManagedQuery = undefined; return ok({ code: '42601', message: 'Fixture syntax error' }, 400); }
+          const empty = body.queries?.[1]?.query.includes('WHERE false');
+          return ok({ results: [{ command: 'DO', fields: [], rows: [], rowCount: null },
+            { command: 'SELECT', fields: [{ name: 'marker', dataTypeID: 25 }, { name: 'duplicate', dataTypeID: 25 },
+              { name: 'duplicate', dataTypeID: 20 }, { name: 'absent', dataTypeID: 25 }, { name: 'empty_text', dataTypeID: 25 }],
+            rows: empty ? [] : [[branch.marker, 'typed-text', '9007199254740993', null, '']], rowCount: empty ? 0 : 1 }] });
+        }
+      }
+      if (url.hostname === 'api.supabase.com') {
+        if (method === 'GET' && path === '/v1/organizations') return ok([{ slug: supabase.organizationSlug, name: 'Journey organization' }]);
+        if (method === 'GET' && path === `/v1/projects/${supabase.projectRef}/branches`) return ok(managedBranches.map(branch => ({
+          id: `branch-${branch.name}`, project_ref: branch.supabaseRef, parent_project_ref: supabase.projectRef,
+          name: branch.name, persistent: branch.name === 'production', preview_project_status: 'ACTIVE_HEALTHY' })));
+        for (const branch of managedBranches) {
+          if (method === 'GET' && path === `/v1/projects/${branch.supabaseRef}`) return ok({ ref: branch.supabaseRef,
+            organization_slug: supabase.organizationSlug, name: branch.name, status: 'ACTIVE_HEALTHY', database: { version: '17' } });
+          if (method === 'POST' && path === `/v1/projects/${branch.supabaseRef}/database/query/read-only`) {
+            // The external fixture models the Management API query body.
+            const body = JSON.parse(request.body) as { query: string };
+            if (body.query === 'SELECT current_database() AS database') return ok([{ database: 'postgres' }]);
+            if (rejectNextManagedQuery === 'supabase') { rejectNextManagedQuery = undefined; return ok({ message: 'Fixture throttled' }, 429); }
+            return ok(body.query.includes('WHERE false') ? [] : [{ marker: branch.marker, absent: null, empty_text: '' }]);
+          }
+        }
+      }
       throw new Error(`Unexpected provider HTTP: ${method} ${url.hostname}${path}`);
     },
   });
@@ -144,7 +191,7 @@ export async function startDeploymentProvidersHttp() {
   try { dispatcher = new undici.ProxyAgent({ uri: proxy.url, requestTls: { ca: await readFile(proxy.caCertPath) } }); }
   catch (error) { await proxy.stop(); throw error; }
   providerDispatcher = dispatcher;
-  return { vercel, cloudflare, neon, entries: proxy.entries,
+  return { vercel, cloudflare, neon, supabase, managedBranches, entries: proxy.entries,
     async fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
       // UI and native Account hosts share the same third-party HTTPS vectors.
       return await undici.fetch(String(input), init as Parameters<typeof undici.fetch>[1]) as unknown as Response;
@@ -156,6 +203,7 @@ export async function startDeploymentProvidersHttp() {
     isAbsent(provider: 'vercel' | 'cloudflare') { return provider === 'vercel' ? vercelDeleted : cloudflareDeleted; },
     rejectNextVercelDeployment() { rejectNextVercelDeployment = true; },
     rejectNextCloudflareDeployment() { rejectNextCloudflareDeployment = true; },
+    rejectNextManagedQuery(provider: 'neon' | 'supabase') { rejectNextManagedQuery = provider; },
     async stop() {
       providerDispatcher = undefined;
       try { await dispatcher.close(); } finally { await proxy.stop(); }
