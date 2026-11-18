@@ -54,6 +54,19 @@ describe('workflow final output accessibility', () => {
         expect(onChange).toHaveBeenLastCalledWith(null);
     });
 
+    it('lists Nothing with its mark, then the step results under one group (lab round 1116c sent-v-result)', async () => {
+        const draft = createWorkflowEditorDraft({ draftId: 'anatomy', name: 'Review' });
+        const screen = await renderScreen(<WorkflowFinalOutputEditor draft={draft} onChange={vi.fn()} testIDPrefix="output" />);
+        const items = screen.root.findByType(DropdownMenu).props.items as ReadonlyArray<{ id: string; icon?: unknown; category?: string }>;
+        // WF-ACCEPT-1118 item 6: "Nothing ×", then a "Step results" group, as in Steps and the Sentence clause.
+        expect(items[0]).toMatchObject({ id: 'none' });
+        expect(items[0]!.icon).toBeDefined();
+        expect(items[0]!.category).toBeUndefined();
+        const results = items.filter((item) => item.id.startsWith('result:'));
+        expect(results.length).toBeGreaterThan(0);
+        expect(results.every((item) => item.category === 'workflows.input.stepResults' && item.icon !== undefined)).toBe(true);
+    });
+
     it('keeps an unavailable authored producer visible without rewriting it', async () => {
         const draft = createWorkflowEditorDraft({ draftId: 'missing', name: 'Review' });
         const finalOutput = { kind: 'result' as const, producer: { blockId: 'removed', scope: { kind: 'current' as const } }, path: ['summary'] };

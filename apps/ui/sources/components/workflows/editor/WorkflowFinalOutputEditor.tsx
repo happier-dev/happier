@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { WorkflowAuthoredResultReference } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 
 import { SessionAuthoringFieldSelectTrigger } from '@/components/sessions/authoring/controls/SessionAuthoringFieldSelectTrigger';
+import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -45,12 +46,16 @@ export function WorkflowFinalOutputEditor(props: Readonly<{
                 open={open}
                 onOpenChange={setOpen}
                 selectedId={selectedId}
-                // The field select names the value, so the menu checks it among its rows.
+                // The field select names the value, so the menu checks it among its rows: "Nothing ×", then the
+                // step results as one group (lab round 1116c sent-v-result), in Steps and the Sentence clause alike.
                 items={[
-                    { id: 'none', title: t('workflows.finalOutput.none'), checked: selectedId === 'none', testID: `${props.testIDPrefix}-final-output-clear` },
-                    ...options.map(option => ({ id: `result:${option.blockId}`, title: option.label, checked: selectedId === `result:${option.blockId}`,
+                    { id: 'none', title: t('workflows.finalOutput.none'), icon: <Icon name="x" />, checked: selectedId === 'none',
+                        testID: `${props.testIDPrefix}-final-output-clear` },
+                    ...options.map(option => ({ id: `result:${option.blockId}`, title: option.label, icon: <Icon name="check-circle" />,
+                        category: t('workflows.input.stepResults'), checked: selectedId === `result:${option.blockId}`,
                         testID: `${props.testIDPrefix}-final-output-option-${option.blockId}` })),
-                    ...(unavailable && selected ? [{ id: `result:${selected.producer.blockId}`, title: t('workflows.contentUnavailable'), disabled: true }] : []),
+                    ...(unavailable && selected ? [{ id: `result:${selected.producer.blockId}`, title: t('workflows.contentUnavailable'),
+                        icon: <Icon name="check-circle" />, category: t('workflows.input.stepResults'), disabled: true }] : []),
                 ]}
                 {...(props.presentation === 'chip' ? {
                     popoverPhonePresentation: 'sheet' as const,
