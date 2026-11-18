@@ -323,7 +323,7 @@ import {
     runWithServerHttpBaseUrl,
 } from './client/serverHttpBaseUrl';
 import { createAuthenticationHttpStatusError, isAuthenticationError, isAuthenticationStatus, readHttpStatus } from './client/httpStatusError';
-import { classifyServerEndpointError } from './client/classifyServerEndpointError';
+import { classifyServerEndpointError, type ServerEndpointErrorClassification } from './client/classifyServerEndpointError';
 import { serializeAxiosErrorForLog } from './client/serializeAxiosErrorForLog';
 import { handleRequestAuthenticationFailure } from '@/api/connection/requestSupervision/reportRequestOutcomeToSupervisor';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
@@ -1403,7 +1403,7 @@ export class ApiMachineClient {
         transportGeneration: number;
         timeoutMs: number;
     }>): Promise<Readonly<{
-        ready: boolean;
+        retryPublication: boolean;
         readiness: RpcHandlerRegistrationReadiness;
     }>> {
         const { socket, transportGeneration, timeoutMs } = params;
@@ -1413,7 +1413,7 @@ export class ApiMachineClient {
         );
         if (missingCoreHandlers.length > 0) {
             return {
-                ready: false,
+                retryPublication: false,
                 readiness: { status: 'disconnected', missingMethods: missingCoreHandlers },
             };
         }
@@ -1428,14 +1428,14 @@ export class ApiMachineClient {
             || this.activeTransportGeneration !== transportGeneration
             || socket.connected !== true
         ) {
-            return { ready: false, readiness };
+            return { retryPublication: false, readiness };
         }
         if (this.machineControlRunningGeneration === transportGeneration) {
-            return { ready: true, readiness };
+            return { retryPublication: false, readiness };
         }
         if (this.machineControlReadinessPublication?.generation === transportGeneration) {
-            const published = await this.machineControlReadinessPublication.promise;
-            return { ready: published, readiness };
+            const retryPublication = await this.machineControlReadinessPublication.promise;
+            return { retryPublication, readiness };
         }
 
         // A successful core registration receipt proves that the server has
@@ -1447,6 +1447,15 @@ export class ApiMachineClient {
         this.rpcHandlerManager.replayUnacknowledgedHandlerRegistrations();
 
         const promise = (async () => {
+            if (!this.machineContentReady) {
+                const failure = await this.refreshMachineFromServer();
+                if (!this.machineContentReady) return failure?.retryable === true;
+                if (
+                    this.socket !== socket
+                    || this.activeTransportGeneration !== transportGeneration
+                    || socket.connected !== true
+                ) return false;
+            }
             const capabilities = await timeWebLatencyPhase('machine.startup.resolveCapabilities',
                 () => this.resolveCurrentMachineOperationProtocolCapabilitiesForPublication());
             if (
@@ -1492,20 +1501,20 @@ export class ApiMachineClient {
                     advertisesOperationProtocolCapabilities: capabilities !== null,
                 });
             }
-            return true;
+            return false;
         })().catch((error) => {
             logger.warn('[API MACHINE] Failed to publish machine-control readiness; session spawn stays unadvertised until the retry on this connection lands', {
                 message: error instanceof Error ? error.message : String(error),
             });
-            return false;
+            return true;
         }).finally(() => {
             if (this.machineControlReadinessPublication?.generation === transportGeneration) {
                 this.machineControlReadinessPublication = null;
             }
         });
         this.machineControlReadinessPublication = { generation: transportGeneration, promise };
-        const published = await promise;
-        return { ready: published, readiness };
+        const retryPublication = await promise;
+        return { retryPublication, readiness };
     }
 
     private isCurrentConnectionState(state: ManagedConnectionState): boolean {
@@ -1538,8 +1547,8 @@ export class ApiMachineClient {
             });
             // Unready registrations are driven by their own acknowledgements; only a
             // publication that failed after readiness was proven is retried here.
-            if (result.readiness.status === 'ready' && !result.ready && isCurrentTransport()) {
-                throw new Error('Machine capability publication did not establish readiness');
+            if (result.retryPublication && isCurrentTransport()) {
+                throw new Error('Machine control readiness publication needs retry');
             }
         });
     }
@@ -1779,7 +1788,7 @@ export class ApiMachineClient {
                     transportGeneration,
                     timeoutMs: 0,
                 }).then((result) => {
-                    if (result.readiness.status === 'ready' && !result.ready) {
+                    if (result.retryPublication) {
                         this.retryMachineControlReadinessPublication({ socket, transportGeneration });
                     }
                 });
@@ -5829,8 +5838,14 @@ export class ApiMachineClient {
                         this.activeTransportGeneration;
                     if (isReconnect && this.lifecycleDependencies.loadMachine) {
                         this.retireMachineContent();
-                        await timeWebLatencyPhase('machine.startup.refreshContent', () => this.refreshMachineFromServer());
-                        if (!this.machineContentReady || this.socket !== socket || this.activeTransportGeneration !== transportGeneration) return;
+                        const failure = await timeWebLatencyPhase('machine.startup.refreshContent', () => this.refreshMachineFromServer());
+                        if (
+                            this.socket !== socket
+                            || this.activeTransportGeneration !== transportGeneration
+                            || (!this.machineContentReady && failure?.retryable !== true)
+                        ) return;
+                        // A transient snapshot failure leaves RPC content locked.
+                        // Registration can proceed and the readiness owner will recover content.
                     }
                     // Registration carries no execution authority. The server holds early
                     // packets through admission; request authority checks stay unchanged.
@@ -5926,8 +5941,7 @@ export class ApiMachineClient {
                                     }));
                             }
                             if (
-                                registrationResult.readiness.status === 'ready'
-                                && !registrationResult.ready
+                                registrationResult.retryPublication
                                 && isCurrentTransport()
                             ) {
                                 this.retryMachineControlReadinessPublication({
@@ -6584,7 +6598,7 @@ export class ApiMachineClient {
         return this.machine.dataEncryptionKey ?? null;
     }
 
-    private async refreshMachineFromServer(signal?: AbortSignal): Promise<void> {
+    private async refreshMachineFromServer(signal?: AbortSignal): Promise<ServerEndpointErrorClassification | undefined> {
         const loadMachine = this.lifecycleDependencies.loadMachine;
         if (!loadMachine) return;
         const previousContext = this.machineContentContext;
@@ -6625,12 +6639,14 @@ export class ApiMachineClient {
         } catch (error) {
             // Transient reads provide no contrary key/owner evidence. Preserve
             // the admitted context; an already retired context stays retired.
-            if (!classifyServerEndpointError(error).retryable
+            const failure = classifyServerEndpointError(error);
+            if (!failure.retryable
                 && previousContext === this.machineContentContext
                 && transportGeneration === this.activeTransportGeneration) this.retireMachineContent();
             logger.debug('[API MACHINE] Failed to refresh machine snapshot', {
                 error: serializeAxiosErrorForLog(error),
             });
+            return failure;
         }
     }
 

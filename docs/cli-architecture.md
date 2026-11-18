@@ -236,7 +236,10 @@ wait for the next heartbeat after registration or disconnect. Cached Machine Set
 receivers attach before connection, and this same readiness fact waits for their
 registration acknowledgments before managed enrollment dispatches Setup children.
 This also applies when the Machine's Sessions role is inactive; optional native
-observations still settle independently of readiness.
+observations still settle independently of readiness. On reconnect, a transient
+Machine snapshot failure lets the authenticated socket restore registration.
+The daemon waits for a fresh snapshot before unlocking RPC content and
+publishing readiness on that connection.
 
 In 0.3 development, optional Account catalog or plugin initialization failures
 settle as unavailable diagnostics while the daemon continues to register and
