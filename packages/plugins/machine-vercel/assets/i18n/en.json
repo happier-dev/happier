@@ -26,5 +26,6 @@
   "machineVercel.deleteBody": "Deletes this sandbox and its owned snapshots. Its files cannot be recovered after deletion.",
   "machineVercel.customSize": "Custom size",
   "machineVercel.signIn": "Sign in with Vercel",
-  "machineVercel.signInTeamIdDescription": "Leave empty to choose from your teams after you sign in."
+  "machineVercel.signInTeamIdDescription": "Leave empty to choose from your teams after you sign in.",
+  "machineVercel.projectRequired": "Choose a Vercel project for Sandboxes"
 }

@@ -32,7 +32,8 @@ export async function readVercelQuota(context: ConnectedAccountReadContext): Pro
   const token = await context.credentials.get('token', { signal: context.signal });
   if (typeof token !== 'string' || token.length === 0) return { observedAtMs, planLabel: null, limits: [] };
   let teamId = typeof configuredTeamId === 'string' && configuredTeamId.trim().length > 0 ? configuredTeamId : null;
-  if (teamId === null) {
+  // A sign-in acts only for the team it was granted; never Vercel's default team.
+  if (teamId === null && context.configuration.target.modeId !== 'oauth') {
     const userResponse = await request(context, token, `${ORIGIN}/v2/user`);
     if (!userResponse || userResponse.status < 200 || userResponse.status >= 300) return { observedAtMs, planLabel: null, limits: [] };
     // `GET /v2/user` answers `{ user: { defaultTeamId } }` (API reference; unconfirmed by a capture until the release check).

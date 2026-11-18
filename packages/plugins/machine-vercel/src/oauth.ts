@@ -12,17 +12,22 @@ import type {
   ConnectedAccountMutationContext,
   ConnectedAccountReadContext,
   ConnectedAccountRuntime,
+  PluginConnectedAccountConfigurationFieldV2,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
 import {
+  type Choice,
   diagnostic,
-  discover,
+  listProjects,
+  listTeams,
   object,
   origin,
   parseBody,
   probe,
   scopeOf,
   stageToken,
+  teamField,
+  unlistedScopeFields,
   validToken,
 } from './probe.js';
 
@@ -348,6 +353,78 @@ function signedIn(
   };
 }
 
+/** Attempt custody naming the team whose projects this attempt already offered. */
+const projectChoiceKey = 'projectChoiceTeamId';
+type Configuration = Extract<ConnectedAccountAuthCompletionResult, { status: 'configurationRequired' }>;
+type Connected = Extract<ConnectedAccountAuthCompletionResult, { status: 'connected' }>;
+
+function projectField(projects: readonly Choice[] | null): PluginConnectedAccountConfigurationFieldV2 {
+  return { id: 'projectId', title: 'Vercel project', required: false, secret: false,
+    description: 'Sandboxes need a project. Deployments and AI Gateway work without one.',
+    schema: projects ? { type: 'string', enum: projects.map((project) => project.id) } : { type: 'string', minLength: 1 },
+    presentation: projects
+      ? { order: 2, options: projects.map((project) => ({ value: project.id, title: project.name })) }
+      : { order: 2, placeholder: 'prj_…' } };
+}
+
+/**
+ * `/v2/teams` lists memberships, not grants: each listed team is probed with
+ * `GET /v2/teams/{id}` and only teams the grant can read are offered. A team
+ * whose probe could not answer stays offered; its choice is probed again.
+ */
+async function chooseGrantedTeam(
+  token: string,
+  context: ConnectedAccountAuthenticationContext,
+  signal: AbortSignal,
+): Promise<Failure | Configuration | Readonly<{ status: 'chosen'; team: Choice; result: Connected }>> {
+  const listed = await listTeams(token, context, signal);
+  if (listed === 'unlisted') return { status: 'configurationRequired', fields: unlistedScopeFields };
+  if ('status' in listed) return listed;
+  const probes = await Promise.all(listed.map((team) => probe(token, { teamId: team.id }, context, signal, true)));
+  const invalid = probes.find((result) => result.status === 'rejected' && result.diagnostic.code === 'vercel_invalid_token');
+  if (invalid && invalid.status !== 'connected') return invalid;
+  const candidates = listed.flatMap((team, index) => probes[index]!.status === 'rejected' ? [] : [{ team, result: probes[index]! }]);
+  if (candidates.length === 0) {
+    return { status: 'rejected', diagnostic: diagnostic('vercel_oauth_team_not_granted',
+      'Happier was not granted any of your Vercel teams. Reconnect and choose a team on the Vercel consent screen.') };
+  }
+  const only = candidates.length === 1 ? candidates[0]! : null;
+  if (!only || only.result.status !== 'connected' || !context.stageAccountConfiguration) {
+    return { status: 'configurationRequired', fields: [teamField(candidates.map((candidate) => candidate.team))] };
+  }
+  try {
+    await context.stageAccountConfiguration({ fields: [teamField([only.team])],
+      values: { ...context.configuration.values, teamId: only.team.id } });
+  } catch (error) {
+    signal.throwIfAborted();
+    return { status: 'unavailable', diagnostic: { ...diagnostic('vercel_configuration_unavailable', 'The Vercel team could not be saved. Try the connection again.'),
+      details: { failureCause: projectActionFailureCauseV1(error, 'machine.account.stage_configuration') } } };
+  }
+  return { status: 'chosen', team: only.team, result: only.result };
+}
+
+/**
+ * Offers the chosen team's projects once per attempt. The project is optional:
+ * Sandboxes need one, Deployments and AI Gateway do not. A listing that cannot
+ * answer falls back to typing the project ID; the chosen project is probed.
+ */
+async function offerProject(
+  context: ConnectedAccountAuthenticationContext,
+  token: string,
+  teamId: string,
+  team: Choice | null,
+  signal: AbortSignal,
+): Promise<Failure | Configuration | null> {
+  const listed = await listProjects(token, teamId, context, signal);
+  if (listed !== 'unlisted' && 'status' in listed && listed.status === 'rejected'
+    && listed.diagnostic.code === 'vercel_invalid_token') return listed;
+  const projects = Array.isArray(listed) ? listed : null;
+  if (projects?.length === 0) return null;
+  await context.attemptCredentials.set(projectChoiceKey, teamId, { signal });
+  signal.throwIfAborted();
+  return { status: 'configurationRequired', fields: [...(team ? [teamField([team])] : []), projectField(projects)] };
+}
+
 export const vercelOAuthMode: Extract<
   ConnectedAccountAuthenticationModeRuntime,
   { kind: 'oauthAuthorizationCode' }
@@ -415,13 +492,12 @@ export const vercelOAuthMode: Extract<
       );
       const identity = await identify(context, grant.token, signal);
       if (context.configuration.values.teamId === undefined) {
-        // Team choice reuses the token mode's discovery; the grant stays in this attempt's custody.
-        const discovered = await discover(grant.token, context, signal);
-        if (
-          discovered.status !== 'connected' &&
-          discovered.status !== 'configurationRequired'
-        )
-          return signedIn(discovered, identity);
+        // Never a default team: only teams this grant can read are offered; the grant stays in this attempt's custody.
+        const chosen = await chooseGrantedTeam(grant.token, context, signal);
+        if (chosen.status !== 'chosen' && chosen.status !== 'configurationRequired')
+          return signedIn(chosen, identity);
+        const staged = await stageToken(context, grant.token, signal);
+        if (staged) return staged;
         await stage(
           context.attemptCredentials,
           grant,
@@ -429,15 +505,17 @@ export const vercelOAuthMode: Extract<
           identity,
           signal,
         );
-        return discovered.status === 'connected'
-          ? signedIn(discovered, identity)
-          : discovered;
+        if (chosen.status === 'configurationRequired') return chosen;
+        const offered = await offerProject(context, grant.token, chosen.team.id, chosen.team, signal);
+        if (offered?.status === 'configurationRequired') return offered;
+        return signedIn(offered ?? chosen.result, identity);
       }
       const result = await probe(
         grant.token,
         scopeOf(context),
         context,
         signal,
+        true,
       );
       if (result.status !== 'connected') return signedIn(result, identity);
       const staged = await stageToken(context, grant.token, signal);
@@ -473,8 +551,18 @@ export const vercelOAuthMode: Extract<
         context.attemptCredentials,
         signal,
       );
+      const scope = scopeOf(context);
+      if (scope && scope.projectId === undefined
+        && await context.attemptCredentials.get(projectChoiceKey, { signal }) !== scope.teamId) {
+        // The chosen team is probed before its projects are offered.
+        const team = await probe(token, scope, context, signal, true);
+        if (team.status !== 'connected') return signedIn(team, identity);
+        const offered = await offerProject(context, token, scope.teamId, null, signal);
+        if (offered?.status === 'configurationRequired') return offered;
+        return signedIn(offered ?? team, identity);
+      }
       return signedIn(
-        await probe(token, scopeOf(context), context, signal),
+        await probe(token, scope, context, signal, true),
         identity,
       );
     } catch (error) {
@@ -509,7 +597,7 @@ export async function vercelOAuthStatus(
     if (expiresAt <= Date.now()) return { status: 'expired' };
     const identity = await retainedIdentity(context.credentials, signal);
     const result = signedIn(
-      await probe(token, scopeOf(context), context, signal),
+      await probe(token, scopeOf(context), context, signal, true),
       identity,
       expiresAt,
     );

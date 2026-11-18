@@ -13,6 +13,7 @@ import type {
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import { PluginConnectedAccountAuthenticationModeV2Schema } from '@happier-dev/protocol';
 import * as entry from './index.js';
+import { PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
 
 // Constructed vectors from Vercel's OIDC discovery and documented REST schemas
 // (read 2026-11-18), not tenant captures:
@@ -100,6 +101,7 @@ async function harness(
     ],
     ['/login/oauth/token/revoke', { status: 200 }],
     ['/v2/teams', { status: 200, body: { teams, pagination: { next: null } } }],
+    ['/v10/projects', { status: 200, body: { projects: [], pagination: { next: null } } }],
   ]);
   for (const team of teams)
     routes.set(`/v2/teams/${team.id}`, {
@@ -211,6 +213,7 @@ async function harness(
     values,
     stagedConfigurations,
     getPublicOAuthClient,
+    request,
   };
 }
 
@@ -343,6 +346,7 @@ describe('Sign in with Vercel (public PKCE client on the daemon)', () => {
       '/login/oauth/userinfo',
       '/v2/teams',
       `/v2/teams/${teamId}`,
+      '/v10/projects',
     ]);
     expect(h.requests[1]?.headers).toMatchObject({
       authorization: 'Bearer access-private',
@@ -376,6 +380,8 @@ describe('Sign in with Vercel (public PKCE client on the daemon)', () => {
       status: 'configurationRequired',
       fields: [{ id: 'teamId', schema: { enum: [teamId, 'team_other'] } }],
     });
+    // Both granted teams were read by the grant; no default team was assumed.
+    expect(h.values).not.toHaveProperty('teamId');
     expect(h.staged.values.get('token')).toBe('access-private');
     h.values.teamId = 'team_other';
     if (!h.mode.reconcile)
@@ -390,12 +396,15 @@ describe('Sign in with Vercel (public PKCE client on the daemon)', () => {
         organizationId: 'team_other',
       },
     });
-    // One token call and one userinfo read per connect.
+    // One token call and one userinfo read per connect; T team probes, then the chosen team's probe and project list.
     expect(h.requests.map((item) => new URL(item.url).pathname)).toEqual([
       '/login/oauth/token',
       '/login/oauth/userinfo',
       '/v2/teams',
+      `/v2/teams/${teamId}`,
       '/v2/teams/team_other',
+      '/v2/teams/team_other',
+      '/v10/projects',
     ]);
   });
 
@@ -510,5 +519,150 @@ describe('Sign in with Vercel (public PKCE client on the daemon)', () => {
       status: 'remoteUnsupported',
       diagnostic: { code: 'vercel_oauth_manual_revoke_required' },
     });
+  });
+});
+
+const scopeRefusal = {
+  status: 403,
+  body: { error: { code: 'forbidden', message: 'Not authorized: Trying to access resource under scope "team_other". You must re-authenticate to this scope or use a token with access to this scope.' } },
+};
+const projectId = 'prj_example';
+const projects = {
+  status: 200,
+  body: { projects: [{ id: projectId, name: 'Example site' }, { id: 'prj_docs', name: 'Docs' }], pagination: { next: null } },
+};
+const paths = (h: Awaited<ReturnType<typeof harness>>) => h.requests.map((item) => new URL(item.url).pathname);
+
+describe('Sign in with Vercel: granted team, project and re-consent', () => {
+  it('auto-chooses the only granted team when another listed membership refuses the grant', async () => {
+    const h = await harness({ teams: [{ id: teamId, name: 'Example team' }, { id: 'team_other', name: 'Other team' }] });
+    h.routes.set('/v2/teams/team_other', scopeRefusal);
+    await h.mode.begin({ callbackUrl, state: 'attempt-1.nonce', pkce }, h.authentication);
+    const result = await h.mode.complete(completion, h.authentication);
+    expect(result).toMatchObject({ status: 'connected', providerIdentity: { organizationId: teamId } });
+    expect(h.values.teamId).toBe(teamId);
+    expect(h.stagedConfigurations).toMatchObject([{ values: { teamId }, fields: [{ id: 'teamId', schema: { enum: [teamId] } }] }]);
+  });
+
+  it('refuses a sign-in whose grant reads none of the listed teams, and never uses a default team', async () => {
+    const h = await harness({ teams: [{ id: 'team_other', name: 'Other team' }] });
+    h.routes.set('/v2/teams/team_other', scopeRefusal);
+    await h.mode.begin({ callbackUrl, state: 'attempt-1.nonce', pkce }, h.authentication);
+    const result = await h.mode.complete(completion, h.authentication);
+    expect(result).toMatchObject({ status: 'rejected', diagnostic: { code: 'vercel_oauth_team_not_granted' } });
+    expect(h.values).not.toHaveProperty('teamId');
+    expect(paths(h)).not.toContain('/v2/user');
+    expect(h.staged.values.size).toBe(1); // only the attempt's retained client id
+  });
+
+  it('refuses a chosen team the grant cannot read at reconcile', async () => {
+    const h = await harness({ teams: [{ id: teamId, name: 'Example team' }, { id: 'team_other', name: 'Other team' }] });
+    h.routes.set('/v2/teams/team_other', { status: 503 });
+    await h.mode.begin({ callbackUrl, state: 'attempt-1.nonce', pkce }, h.authentication);
+    // An unanswered probe keeps the team offered; its choice is probed again.
+    expect(await h.mode.complete(completion, h.authentication)).toMatchObject({
+      status: 'configurationRequired', fields: [{ id: 'teamId', schema: { enum: [teamId, 'team_other'] } }],
+    });
+    h.routes.set('/v2/teams/team_other', { status: 403, body: { error: { code: 'forbidden', message: 'Not authorized' } } });
+    h.values.teamId = 'team_other';
+    expect(await h.mode.reconcile!(h.authentication)).toMatchObject({ status: 'rejected', diagnostic: { code: 'vercel_missing_permission' } });
+  });
+
+  it('offers the team\'s projects after sign-in and connects the probed project choice', async () => {
+    const h = await harness();
+    h.routes.set('/v10/projects', projects);
+    h.routes.set(`/v9/projects/${projectId}`, { status: 200, body: { id: projectId, name: 'Example site', accountId: teamId } });
+    await h.mode.begin({ callbackUrl, state: 'attempt-1.nonce', pkce }, h.authentication);
+    const offered = await h.mode.complete(completion, h.authentication);
+    expect(offered).toMatchObject({ status: 'configurationRequired', fields: [
+      { id: 'teamId', schema: { enum: [teamId] } },
+      { id: 'projectId', required: false, schema: { enum: [projectId, 'prj_docs'] } },
+    ] });
+    const listing = h.requests.find((item) => new URL(item.url).pathname === '/v10/projects');
+    expect(new URL(listing!.url).searchParams.get('teamId')).toBe(teamId);
+    h.values.projectId = projectId;
+    expect(await h.mode.reconcile!(h.authentication)).toMatchObject({ status: 'connected', displayName: 'Example site',
+      providerIdentity: { accountId: 'user_subject', organizationId: teamId } });
+    expect(paths(h).at(-1)).toBe(`/v9/projects/${projectId}`);
+  });
+
+  it('connects without a project when the person skips the optional choice, offering it once', async () => {
+    const h = await harness();
+    h.routes.set('/v10/projects', projects);
+    await h.mode.begin({ callbackUrl, state: 'attempt-1.nonce', pkce }, h.authentication);
+    expect(await h.mode.complete(completion, h.authentication)).toMatchObject({ status: 'configurationRequired' });
+    const before = h.requests.length;
+    expect(await h.mode.reconcile!(h.authentication)).toMatchObject({ status: 'connected', providerIdentity: { organizationId: teamId } });
+    expect(paths(h).slice(before)).toEqual([`/v2/teams/${teamId}`]);
+  });
+
+  it('reports Vercel\'s scope refusal on a signed-in account as updated permissions to reconnect for', async () => {
+    const h = await harness({ values: { teamId }, retained: signedIn });
+    h.routes.set(`/v2/teams/${teamId}`, scopeRefusal);
+    expect(await h.runtime.status(h.read)).toMatchObject({
+      status: 'reconnectRequired', diagnostic: { code: 'vercel_permissions_update_required' },
+    });
+    // Other 403s keep their existing classification.
+    h.routes.set(`/v2/teams/${teamId}`, { status: 403, body: { error: { code: 'forbidden', message: 'Not authorized' } } });
+    expect(await h.runtime.status(h.read)).toMatchObject({
+      status: 'reconnectRequired', diagnostic: { code: 'vercel_missing_permission' },
+    });
+  });
+});
+
+describe('Sign in with Vercel, then start a Sandbox (composed)', () => {
+  async function signInThenProvisioner(options: { chooseProject: boolean }) {
+    const h = await harness();
+    h.routes.set('/v10/projects', projects);
+    h.routes.set(`/v9/projects/${projectId}`, { status: 200, body: { id: projectId, name: 'Example site', accountId: teamId } });
+    h.routes.set(`/v2/teams/${teamId}`, { status: 200, body: { id: teamId, name: 'Example team', billing: { plan: 'pro' } } });
+    await h.mode.begin({ callbackUrl, state: 'attempt-1.nonce', pkce }, h.authentication);
+    await h.mode.complete(completion, h.authentication);
+    if (options.chooseProject) h.values.projectId = projectId;
+    expect(await h.mode.reconcile!(h.authentication)).toMatchObject({ status: 'connected' });
+    // The settled account: its configuration and the credentials this sign-in staged.
+    const account = { ...h.read, credentials: h.staged.store };
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: PLUGIN, services: {
+      connectedAccounts: { async materialize(_purpose: string, request: Parameters<typeof h.runtime.materialize>[0]) {
+        return await h.runtime.materialize(request, account);
+      } },
+      http: createPluginHttpFixture({ request: h.request }),
+    } as never });
+    kits.push(kit);
+    return { h, kit };
+  }
+
+  it('boots a Sandbox in the signed-in team and project with the sign-in token', async () => {
+    const { h, kit } = await signInThenProvisioner({ chooseProject: true });
+    const managedId = 'machine-one';
+    const name = `happier-${managedId}`;
+    h.routes.set('/v4/sandboxes', { status: 200, body: {
+      sandbox: { name, tags: { 'happier-managed-id': managedId }, createdAt: 1000, currentSessionId: 'sbx_one', status: 'running', persistent: true },
+      session: { id: 'sbx_one', sourceSandboxName: name, projectId, createdAt: 1000 }, routes: [],
+    } });
+    const before = h.requests.length;
+    expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({ available: true });
+    expect(await kit.invokeAction('acquire', { managedId,
+      launch: { image: 'vercel/sandbox/universal:latest', region: 'iad1', vcpus: 1, timeoutMs: 300000, snapshotExpirationMs: 0 } },
+    { surface: 'plugin' })).toMatchObject({ kind: 'bound' });
+    const sandbox = h.requests.slice(before).filter((item) => new URL(item.url).pathname.startsWith('/v4/sandboxes'));
+    expect(sandbox).toHaveLength(1);
+    expect(new URL(sandbox[0]!.url).searchParams.get('teamId')).toBe(teamId);
+    expect(JSON.parse(new TextDecoder().decode(sandbox[0]!.body as Uint8Array))).toMatchObject({ projectId });
+    expect(sandbox[0]!.headers).toMatchObject({ authorization: 'Bearer access-private' });
+  });
+
+  it('without a project, says to choose one with a fix-it that opens the Vercel account', async () => {
+    const { h, kit } = await signInThenProvisioner({ chooseProject: false });
+    const before = h.requests.length;
+    expect(await kit.invokeAction('check', {}, { surface: 'plugin' })).toMatchObject({
+      available: false, code: 'vercel_project_required', status: { key: 'machineVercel.projectRequired' },
+    });
+    await expect(kit.invokeAction('acquire', { managedId: 'machine-one',
+      launch: { image: 'vercel/sandbox/universal:latest', region: 'iad1', vcpus: 1, timeoutMs: 300000, snapshotExpirationMs: 0 } },
+    { surface: 'plugin' })).rejects.toMatchObject({ code: 'vercel_project_required',
+      remediation: { kind: 'selectAccount', service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' } } });
+    // The reason comes from the account's configuration, without any vendor call.
+    expect(h.requests.length).toBe(before);
   });
 });

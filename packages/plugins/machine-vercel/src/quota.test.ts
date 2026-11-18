@@ -5,7 +5,7 @@ import { forbiddenResponse, personalUserResponse, teamId, teamResponse } from '.
 
 const service = { pluginId: 'happier.machine.vercel', localId: 'vercel-account' } as const;
 
-function readContext(response: unknown, status = 200, values: { teamId?: string } = { teamId }, responseSequence?: readonly unknown[]): { context: ConnectedAccountReadContext; requests: string[] } {
+function readContext(response: unknown, status = 200, values: { teamId?: string } = { teamId }, responseSequence?: readonly unknown[], modeId = 'token'): { context: ConnectedAccountReadContext; requests: string[] } {
   const requests: string[] = [];
   let responseIndex = 0;
   const context = {
@@ -15,7 +15,7 @@ function readContext(response: unknown, status = 200, values: { teamId?: string 
     invokedAtMs: 1_000,
     signal: new AbortController().signal,
     account: { service, accountId: teamId },
-    configuration: { target: { kind: 'account' as const, account: { service, accountId: teamId }, modeId: 'token' },
+    configuration: { target: { kind: 'account' as const, account: { service, accountId: teamId }, modeId },
       revision: 'revision-1', values, async getSecret() { return null; } },
     credentials: { async get() { return 'token'; } },
     services: { http: { async request(request: { url: string }) {
@@ -39,6 +39,12 @@ describe('Vercel account plan quota', () => {
     const { context, requests } = readContext({}, 200, {}, [personalUserResponse, teamResponse('hobby')]);
     await expect(connectedAccountRuntime.quota?.(context)).resolves.toMatchObject({ planLabel: 'Hobby' });
     expect(requests).toEqual(['https://api.vercel.com/v2/user', `https://api.vercel.com/v2/teams/${teamId}`]);
+  });
+
+  it('never falls back to the default team for a sign-in without a granted team', async () => {
+    const { context, requests } = readContext({}, 200, {}, [personalUserResponse, teamResponse('hobby')], 'oauth');
+    await expect(connectedAccountRuntime.quota?.(context)).resolves.toMatchObject({ planLabel: null });
+    expect(requests).toEqual([]);
   });
 
   it.each([

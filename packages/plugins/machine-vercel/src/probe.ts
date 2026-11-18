@@ -11,7 +11,7 @@ export type Context = Pick<ConnectedAccountAuthenticationContext, 'signal' | 'co
 export type Scope = Readonly<{ teamId: string; projectId?: string }>;
 export type ProbeResult = Extract<ConnectedAccountAuthCompletionResult, { status: 'connected' | 'rejected' | 'unavailable' }>;
 export type Failure = Exclude<ProbeResult, { status: 'connected' }>;
-type TeamChoice = Readonly<{ id: string; name: string }>;
+export type Choice = Readonly<{ id: string; name: string }>;
 
 export function diagnostic(code: string, message: string) {
   return { code, severity: 'error' as const, message };
@@ -73,9 +73,22 @@ function invalidToken(response: HttpResponse, body: unknown): boolean {
   return response.status === 401 || (response.status === 403 && object(body) && object(body.error) && body.error.invalidToken === true);
 }
 
-export function responseFailure(response: HttpResponse, body: unknown): Failure | null {
+/**
+ * Vercel's refusal of a resource outside a token's granted scope:
+ * `{ error: { code: 'forbidden', message: 'Not authorized: Trying to access resource under scope …' } }`.
+ * For a sign-in it means the app's grant no longer covers the call.
+ */
+function scopeRefusal(response: HttpResponse, body: unknown): boolean {
+  return response.status === 403 && object(body) && object(body.error) && body.error.code === 'forbidden'
+    && typeof body.error.message === 'string' && /resource under scope/iu.test(body.error.message);
+}
+
+export function responseFailure(response: HttpResponse, body: unknown, signIn = false): Failure | null {
   if (invalidToken(response, body)) {
     return { status: 'rejected', diagnostic: diagnostic('vercel_invalid_token', 'The Vercel token is invalid, expired or revoked. Create a new personal access token.') };
+  }
+  if (signIn && scopeRefusal(response, body)) {
+    return { status: 'rejected', diagnostic: diagnostic('vercel_permissions_update_required', 'Vercel needs updated permissions. Reconnect to review them.') };
   }
   if (response.status === 403) return { status: 'rejected', diagnostic: diagnostic('vercel_missing_permission', 'The Vercel token cannot access the selected scope. Check its team and project access.') };
   if (response.status === 404) return { status: 'rejected', diagnostic: diagnostic('vercel_scope_unavailable', 'The selected Vercel team or project is unavailable to this token.') };
@@ -98,7 +111,7 @@ export function responseFailure(response: HttpResponse, body: unknown): Failure 
  * not every actor's write permission. Hence no inferred permission scopes.
  * Project PATs deny user/team resources: never require a broader metadata read.
  */
-export async function probe(token: string, scope: Scope | null, context: Context, signal: AbortSignal): Promise<ProbeResult> {
+export async function probe(token: string, scope: Scope | null, context: Context, signal: AbortSignal, signIn = false): Promise<ProbeResult> {
   signal.throwIfAborted();
   if (!scope) return { status: 'rejected', diagnostic: diagnostic('vercel_invalid_configuration', 'Choose a Vercel team and, for a project-scoped token, its project.') };
   const url = scope.projectId
@@ -109,7 +122,7 @@ export async function probe(token: string, scope: Scope | null, context: Context
   try { response = await send(context, token, url.href, 'GET', signal); }
   catch (error) { return transportFailure(error, signal); }
   const body = parseBody(response);
-  const failure = responseFailure(response, body);
+  const failure = responseFailure(response, body, signIn);
   if (failure) return failure;
   if (!object(body) || !identifier(body.id) || typeof body.name !== 'string' || !body.name.trim()
     || (scope.projectId && !identifier(body.accountId))) {
@@ -125,16 +138,21 @@ export async function probe(token: string, scope: Scope | null, context: Context
 }
 
 /**
- * Official GET /v2/teams, checked 2026-11-14:
+ * Official GET /v2/teams (checked 2026-11-14) and GET /v10/projects (checked
+ * 2026-11-18) share Vercel's REST pagination: pages continue with
+ * until=pagination.next until next is null.
  * https://vercel.com/docs/rest-api/teams/list-all-teams
- * Pages continue with until=pagination.next until next is null. Project
- * tokens deny team-level resources, so a non-token 403 means "cannot list".
+ * https://vercel.com/docs/rest-api/projects/retrieve-a-list-of-projects
+ * Project tokens deny team-level resources, so a non-token 403 means "cannot list".
  */
-async function listTeams(token: string, context: Context, signal: AbortSignal): Promise<readonly TeamChoice[] | 'unlisted' | Failure> {
-  const teams = new Map<string, TeamChoice>();
+async function listChoices(token: string, context: Context, signal: AbortSignal,
+  path: '/v2/teams' | '/v10/projects', key: 'teams' | 'projects', parameters: Readonly<Record<string, string>> = {},
+): Promise<readonly Choice[] | 'unlisted' | Failure> {
+  const choices = new Map<string, Choice>();
   let until: string | null = null;
   for (;;) {
-    const url = new URL(`${origin}/v2/teams`);
+    const url = new URL(`${origin}${path}`);
+    for (const [name, value] of Object.entries(parameters)) url.searchParams.set(name, value);
     if (until !== null) url.searchParams.set('until', until);
     let response: HttpResponse;
     try { response = await send(context, token, url.href, 'GET', signal); }
@@ -143,13 +161,14 @@ async function listTeams(token: string, context: Context, signal: AbortSignal): 
     if (response.status === 403 && !invalidToken(response, body)) return 'unlisted';
     const failure = responseFailure(response, body);
     if (failure) return failure;
-    if (!object(body) || !Array.isArray(body.teams) || !object(body.pagination)) return unexpectedResponse();
-    for (const team of body.teams) {
-      if (!object(team) || !identifier(team.id) || typeof team.name !== 'string' || !team.name.trim()) return unexpectedResponse();
-      teams.set(team.id, { id: team.id, name: team.name });
+    const items = object(body) ? body[key] : undefined;
+    if (!object(body) || !Array.isArray(items) || !object(body.pagination)) return unexpectedResponse();
+    for (const item of items) {
+      if (!object(item) || !identifier(item.id) || typeof item.name !== 'string' || !item.name.trim()) return unexpectedResponse();
+      choices.set(item.id, { id: item.id, name: item.name });
     }
     const next: unknown = body.pagination.next;
-    if (next === null) return [...teams.values()];
+    if (next === null) return [...choices.values()];
     const cursor = typeof next === 'number' && Number.isSafeInteger(next) ? String(next)
       : typeof next === 'string' && /^\d+$/u.test(next) ? next : null;
     // A cursor that does not advance would page forever.
@@ -158,14 +177,22 @@ async function listTeams(token: string, context: Context, signal: AbortSignal): 
   }
 }
 
-function teamField(teams: readonly TeamChoice[]): PluginConnectedAccountConfigurationFieldV2 {
+export function listTeams(token: string, context: Context, signal: AbortSignal) {
+  return listChoices(token, context, signal, '/v2/teams', 'teams');
+}
+
+export function listProjects(token: string, teamId: string, context: Context, signal: AbortSignal) {
+  return listChoices(token, context, signal, '/v10/projects', 'projects', { teamId, limit: '100' });
+}
+
+export function teamField(teams: readonly Choice[]): PluginConnectedAccountConfigurationFieldV2 {
   return { id: 'teamId', title: 'Vercel team', required: true, secret: false,
     schema: { type: 'string', enum: teams.map(team => team.id) },
     presentation: { order: 1, options: teams.map(team => ({ value: team.id, title: team.name })) } };
 }
 
 /** Project tokens cannot list teams; their exact team and project stay typed. */
-const unlistedScopeFields: readonly PluginConnectedAccountConfigurationFieldV2[] = [
+export const unlistedScopeFields: readonly PluginConnectedAccountConfigurationFieldV2[] = [
   { id: 'teamId', title: 'Team ID', required: true, secret: false, schema: { type: 'string', minLength: 1 },
     description: 'This token cannot list your Vercel teams, which usually means it is scoped to one project. Enter the team ID from the team settings.',
     presentation: { placeholder: 'team_…', order: 1 } },

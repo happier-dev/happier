@@ -1,4 +1,5 @@
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
@@ -10,7 +11,7 @@ import {
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { ACCOUNT_ID, connectedAccountPortableRuntime, connectedAccountRuntime } from './account.js';
 import { VERCEL_IDENTITY_SCOPES } from './oauth.js';
-import { ACCOUNT_PURPOSE, nativeFetch, readAccountScope } from './machine/credentials.js';
+import { ACCOUNT_PURPOSE, nativeFetch, PROJECT_REQUIRED, readAccountScope } from './machine/credentials.js';
 import { createVercelNativeClient } from './machine/nativeClient.js';
 import { createVercelPreparationClient, VERCEL_PREPARATION_HOME, VercelPreparationInputSchema, VercelPreparedArtifactSchema, VercelPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
 import { BILLING, CONTRIBUTION, reference, ROLE_SCHEMAS, RECONCILIATION, VercelLaunchSchema, VercelOptionsSchema, VercelOperationSchema, VercelResourceSchema, VERCEL_REGIONS, type VercelOperation } from './machine/schemas.js';
@@ -98,7 +99,11 @@ export const PLUGIN = definePlugin({
       async run(_input, context) {
         try { const result = await (await runtime(context)).check();
           return MachineProvisionerCheckResultV1Schema.parse({ ...result, status: label(result.available ? 'checkStatus' : 'checkUnavailable') }); }
-        catch (error) { return projectMachineProvisionerActionFailure(error, () => MachineProvisionerCheckResultV1Schema.parse({ available: false, code: errorCode(error), status: label('checkUnavailable') })); }
+        catch (error) {
+          // A connection without a project is a typed setup finding, not a missing account.
+          if (isPluginError(error) && error.code === PROJECT_REQUIRED) return MachineProvisionerCheckResultV1Schema.parse(error.details);
+          return projectMachineProvisionerActionFailure(error, () => MachineProvisionerCheckResultV1Schema.parse({ available: false, code: errorCode(error), status: label('checkUnavailable') }));
+        }
       } },
     options: { ...defaults, title: label('kind'), dangerLevel: 'safe', inputSchema: VercelOptionsSchema,
       resultSchema: MachineProvisionerOptionsResultV1Schema,

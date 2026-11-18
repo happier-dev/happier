@@ -23,6 +23,7 @@ const en = {
   "account": "Vercel account",
   "checkStatus": "Account connected",
   "checkUnavailable": "Vercel account unavailable. Check the token, team, and project.",
+  "projectRequired": "Choose a Vercel project for Sandboxes",
   "confirmTitle": "Create a Vercel sandbox?",
   "confirmBody": "Vercel bills running compute and retained snapshots. Files can persist across runs; process memory cannot.",
   "nativeCredentialConfirmTitle": "Apply Vercel credential delivery?",

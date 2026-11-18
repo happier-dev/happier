@@ -42,8 +42,16 @@ describe('Vercel sandbox credentials', () => {
     expect(host.materializations).toEqual([{ purpose: ACCOUNT_PURPOSE,
       request: { kind: 'environment', keys: ['VERCEL_TEAM_ID', 'VERCEL_PROJECT_ID'] } }]);
     expect(host.requests).toEqual([]);
-    await expect(readAccountScope(fixture({ configuration: { teamId: scope.teamId } }).action))
+    await expect(readAccountScope(fixture({ configuration: {} }).action))
       .rejects.toThrow('credential_unavailable');
+  });
+
+  it('names a missing project as its own typed reason with a fix-it to the Vercel account', async () => {
+    const host = fixture({ configuration: { teamId: scope.teamId } });
+    await expect(readAccountScope(host.action)).rejects.toMatchObject({ code: 'vercel_project_required',
+      remediation: { kind: 'selectAccount', service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' } },
+      details: { available: false, code: 'vercel_project_required' } });
+    expect(host.requests).toEqual([]);
   });
 
   it('captures authorization once per role invocation and preserves binary and text bodies', async () => {
