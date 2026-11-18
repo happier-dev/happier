@@ -1,6 +1,8 @@
-import { readSessionRuntimeIssueNativeAuthAgentId, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readSessionRuntimeIssueNativeAuthAgentId, resolveSessionRuntimeIssueSignInRecovery, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
+import { createAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { t } from '@/text';
 
 export type SessionAgentAuthRequiredPresentation = Readonly<{
@@ -26,4 +28,22 @@ export function presentSessionAgentAuthRequired(
         agentId,
         message: t('session.agentAuthRequired.message', { agent: resolveAgentCatalogTitle(agentId) }),
     };
+}
+
+/**
+ * Where Protocol's sign-in recovery (`resolveSessionRuntimeIssueSignInRecovery`) is carried out: the Agent's
+ * own page on the Machine the Session runs on, where its sign-in and connected accounts live. The owner
+ * decides whether the issue has that recovery; this only routes it. Null when there is none or the Home is
+ * unknown, so no surface offers a step that cannot run.
+ */
+export function createSessionAgentSignInRoute(
+    issue: SessionRuntimeIssueV1 | null | undefined,
+    machineId: string | null | undefined,
+    serverId: string | null | undefined,
+): string | null {
+    const recovery = resolveSessionRuntimeIssueSignInRecovery(issue, machineId);
+    const serverIdentityId = serverId ? resolvePortableServerIdentityForRoutingId(serverId) : null;
+    if (!recovery || !serverIdentityId) return null;
+    return createAgentSettingsRoute({ agentId: recovery.agentId, identity: null,
+        machine: { machineId: recovery.machineId, serverIdentityId } });
 }

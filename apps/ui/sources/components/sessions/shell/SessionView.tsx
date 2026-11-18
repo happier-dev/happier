@@ -160,6 +160,7 @@ import { createSessionCompanionPanePresentation } from "@/components/sessions/co
 import type { PaneMainColumnState } from "@/components/appShell/panes/mainColumn/usePaneMainColumn";
 import { ComposerAuxiliaryFrame } from "./view/ComposerAuxiliaryFrame";
 import { SessionStartFailureBanner } from "@/components/sessions/startFailure/SessionStartFailureBanner";
+import { createSessionAgentSignInRoute } from "@/components/sessions/presentation/sessionAgentAuthRequiredPresentation";
 import { resolveSessionStartFailureNotice } from "@/components/sessions/startFailure/sessionStartFailureNotice";
 import { readSessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { dispatchProviderRecoveryAction } from '@/providers/connection/recovery';
@@ -2625,8 +2626,11 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
               resolveSessionActionDefaultTarget(resolveSessionActionDefaultBackend({ session })))
           : null;
       const disabledPluginId = startFailureRecovery?.kind === 'plugin_disabled' ? startFailureRecovery.pluginId : null;
+      const startFailureSignInRoute = startFailureNotice
+          ? createSessionAgentSignInRoute(startFailureNotice.issue, ownerMetadata?.machineId, session.serverId) : null;
       const startFailureBanner = startFailureNotice
           ? <SessionStartFailureBanner notice={startFailureNotice} retry={startFailureRetry}
+              {...(startFailureSignInRoute ? { signIn: () => router.push(startFailureSignInRoute as never) } : {})}
               {...(startFailureProviderRecovery ? { reviewConnection: () => {
                   fireAndForget(dispatchProviderRecoveryAction({ router, recovery: startFailureProviderRecovery }),
                       { tag: 'SessionView.startFailure.reviewConnection' });

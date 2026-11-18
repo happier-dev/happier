@@ -16,6 +16,8 @@ export const SessionStartFailureBanner = React.memo(function SessionStartFailure
     managePlugin?: () => void;
     chooseModel?: () => void;
     reviewConnection?: () => void;
+    /** Opens the Agent's own sign-in for a refused connected account (`createSessionAgentSignInRoute`). */
+    signIn?: () => void;
 }>) {
     const { notice } = props;
     const retry = notice.retryable ? props.retry : null;
@@ -28,7 +30,14 @@ export const SessionStartFailureBanner = React.memo(function SessionStartFailure
                 body={notice.message}
                 // The transcript row for this failure defers to the notice, so its raw cause moves here.
                 content={<RuntimeIssueDetails issue={notice.issue} />}
-                {...(notice.providerRecovery && props.reviewConnection
+                {...(props.signIn
+                    ? {
+                        actionTestID: 'session-start-failure-sign-in',
+                        actionLabel: t('session.agentAuthRequired.action'),
+                        actionAccessibilityLabel: t('session.agentAuthRequired.action'),
+                        onActionPress: props.signIn,
+                    }
+                    : notice.providerRecovery && props.reviewConnection
                     ? {
                         actionTestID: 'session-start-failure-review-connection',
                         actionLabel: t('settingsProviders.errors.actions.reviewConnection'),

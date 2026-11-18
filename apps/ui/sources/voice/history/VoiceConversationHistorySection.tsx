@@ -227,7 +227,7 @@ export function useVoiceConversationHistoryRows(
       key: `conversations:${key}`,
       type: 'conversations-state',
       render: () => (
-        <ItemGroup title={title}>
+        <ItemGroup title={title} surface="none">
           {content}
         </ItemGroup>
       ),
@@ -326,8 +326,10 @@ export function useVoiceConversationHistoryRows(
         key: `conversations:rows:${sessionAddressKey(segment[0]!.address)}`,
         type: first ? 'conversations-first' : 'conversations-rows',
         render: () => (
+          // A browse list lies flat on the page; sheets are for settings.
           <ItemGroup
             title={first ? title : undefined}
+            surface="none"
             virtualizedSegment={{ first, last }}
           >
             {/* Known rows stay at full strength; one quiet line says they may be out of date. */}
@@ -369,7 +371,7 @@ export function useVoiceConversationHistoryRows(
         key: 'conversations:more',
         type: 'conversations-more',
         render: () => (
-          <ItemGroup virtualizedSegment={{ first: false, last: true }}>
+          <ItemGroup surface="none" virtualizedSegment={{ first: false, last: true }}>
             <Item
               testID="voice-history-conversations-load-more"
               title={

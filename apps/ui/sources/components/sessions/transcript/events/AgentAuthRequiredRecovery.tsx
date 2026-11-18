@@ -3,11 +3,9 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
-import { createAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
-import { presentSessionAgentAuthRequired } from '@/components/sessions/presentation/sessionAgentAuthRequiredPresentation';
+import { createSessionAgentSignInRoute } from '@/components/sessions/presentation/sessionAgentAuthRequiredPresentation';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { t } from '@/text';
 
 export const AGENT_AUTH_REQUIRED_RECOVERY_TEST_ID = 'transcript-event-agent-auth-recovery';
@@ -20,10 +18,9 @@ export const AGENT_AUTH_REQUIRED_RECOVERY_TEST_ID = 'transcript-event-agent-auth
 export function AgentAuthRequiredRecovery(props: Readonly<{ issue: SessionRuntimeIssueV1 }>) {
     const source = useSessionTranscriptSource();
     const machineId = source.useMetadata()?.machineId ?? null;
-    const serverIdentityId = resolvePortableServerIdentityForRoutingId(source.serverId);
-    const auth = presentSessionAgentAuthRequired(props.issue);
+    const route = createSessionAgentSignInRoute(props.issue, machineId, source.serverId);
     const navigate = source.navigate;
-    if (!auth || !navigate || !machineId || !serverIdentityId) return null;
+    if (!route || !navigate) return null;
     return (
         <View style={styles.footer}>
             <RoundButton
@@ -31,9 +28,7 @@ export function AgentAuthRequiredRecovery(props: Readonly<{ issue: SessionRuntim
                 size="small"
                 display="secondary"
                 title={t('session.agentAuthRequired.action')}
-                onPress={() => navigate(createAgentSettingsRoute({
-                    agentId: auth.agentId, identity: null, machine: { machineId, serverIdentityId },
-                }))}
+                onPress={() => navigate(route)}
                 style={styles.action}
             />
         </View>

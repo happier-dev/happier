@@ -19,7 +19,7 @@ export type SessionStartFailureSpecimenCause = 'retry' | 'blocked' | 'plugin' | 
 const ISSUES = {
     retry: { code: 'agent_startup_model_reconciliation_failed', source: 'agent_session_error',
         failureCause: { phase: 'client_start', failureReason: 'unknown', requestId: 'req-7f3a' } },
-    blocked: { code: 'codex_refresh_free_auth_unsupported', source: 'agent_session_error' },
+    blocked: { code: 'codex_refresh_free_auth_unsupported', source: 'auth_error', agentId: 'codex' },
     plugin: { code: 'plugin_disabled', source: 'agent_session_error' },
     model: { code: 'agent_startup_model_reconciliation_failed', source: 'agent_session_error',
         failureCause: { phase: 'client_start', failureReason: 'model_selection_required', retryable: false } },
@@ -41,7 +41,8 @@ function Scene(props: Readonly<{ cause: SessionStartFailureSpecimenCause }>) {
             <Text style={styles.label}>{props.cause}</Text>
             <SessionStartFailureBanner notice={notice} retry={{ run: noop, busy: false }}
                 {...(props.cause === 'plugin' ? { managePlugin: noop } : {})}
-                {...(props.cause === 'model' ? { chooseModel: noop } : {})} />
+                {...(props.cause === 'model' ? { chooseModel: noop } : {})}
+                {...(props.cause === 'blocked' ? { signIn: noop } : {})} />
         </View>
     );
 }
