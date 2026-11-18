@@ -4909,6 +4909,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               return workflowAction({ actionId: workflowId, input: (parsed.data as z.infer<(typeof WorkflowActionInputSchemasV1)[typeof workflowId]>), ...common });
             case 'workflow.definition.export':
               return workflowAction({ actionId: workflowId, input: (parsed.data as z.infer<(typeof WorkflowActionInputSchemasV1)[typeof workflowId]>), ...common });
+            case 'workflow.subjects.list':
+              return workflowAction({ actionId: workflowId, input: (parsed.data as z.infer<(typeof WorkflowActionInputSchemasV1)[typeof workflowId]>), ...common });
             case 'workflow.trigger.list':
               return workflowAction({ actionId: workflowId, input: (parsed.data as z.infer<(typeof WorkflowActionInputSchemasV1)[typeof workflowId]>), ...common });
             case 'workflow.trigger.add':
