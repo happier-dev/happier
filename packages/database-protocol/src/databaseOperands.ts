@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { DatabaseTargetV1Schema } from './databaseTargets.js';
-import { DatabaseNamedCellV1Schema, DatabaseValueV1Schema, type DatabaseValueV1 } from './databaseValues.js';
+import { DatabaseNamedCellV1Schema, DatabaseValueV1Schema, DatabaseValueRangeV1Schema, type DatabaseValueV1 } from './databaseValues.js';
 
 const name = z.string().check(z.minLength(1));
 const nonnegativeInteger = z.number().check(z.int(), z.nonnegative());
@@ -43,9 +43,17 @@ export type DatabasePageDemandV1 = z.infer<typeof DatabasePageDemandV1Schema>;
 export const databaseOperationContextV1 = { target: DatabaseTargetV1Schema, subscriptionId: z.optional(name) };
 export const DatabaseStatementV1Schema = z.strictObject({ sql: name, parameters: z.array(DatabaseValueV1Schema) });
 export type DatabaseStatementV1 = z.infer<typeof DatabaseStatementV1Schema>;
+/** Stateless windows refer to the ordered result of this explicit, non-snapshot read rerun. */
+export const DatabaseReadStatementDemandV1Schema = z.extend(DatabasePageDemandV1Schema, {
+    window: z.optional(z.discriminatedUnion('kind', [
+        z.strictObject({ kind: z.literal('rows'), offset: nonnegativeInteger }),
+        // A cell window projects one column and one row; ordinals preserve duplicate labels.
+        z.strictObject({ kind: z.literal('cell'), row: nonnegativeInteger, column: nonnegativeInteger, range: DatabaseValueRangeV1Schema }),
+    ])),
+});
 export const DatabaseReadStatementInputV1Schema = z.strictObject({
     operation: z.literal('statement.run'), ...databaseOperationContextV1, mode: z.literal('read'),
-    statement: DatabaseStatementV1Schema, demand: z.optional(DatabasePageDemandV1Schema),
+    statement: DatabaseStatementV1Schema, demand: z.optional(DatabaseReadStatementDemandV1Schema),
 });
 export type DatabaseReadStatementInputV1 = z.infer<typeof DatabaseReadStatementInputV1Schema>;
 export const DatabaseWriteStatementInputV1Schema = z.strictObject({

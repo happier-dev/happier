@@ -26,8 +26,11 @@ null have different tags (`{ type: 'null' }` and `{ type: 'json', value: 'null' 
 Rows and columns are ordered arrays so duplicate column labels and zero-row
 metadata survive. A partial cell carries its encoding and byte range; incomplete
 results carry a reason and a continuation when the executor can provide one.
-Arbitrary SQL continuation is an explicit non-snapshot rerun operand. No output
-allowance, shared model cap, retained cursor or retry policy is introduced.
+An arbitrary SQL continuation marks a non-snapshot rerun with `input: "original"`
+and advancing demand. The caller retains the original read request and explicitly
+resubmits it with the returned demand. Row windows use result offsets. Cell windows
+use row and column ordinals and a byte range, so duplicate labels still identify
+the correct result cell. Stable-key relation cells continue through `cell.read`.
 
 Relation summaries can include the existing `size` measurement: total bytes,
 heap/relation bytes, table bytes (including auxiliary storage), and index bytes

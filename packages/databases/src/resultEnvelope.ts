@@ -1,7 +1,7 @@
 import type {
     DatabaseCellV1, DatabaseCompletenessV1, DatabaseContinuationV1, DatabaseOperationInputV1,
     DatabaseOperationResultV1, DatabasePartialCellV1, DatabaseRowV1, DatabaseRowsReadInputV1,
-    DatabaseRowsResultV1,
+    DatabaseRowsResultV1, DatabaseReadStatementInputV1, DatabaseValueRangeV1,
 } from '@happier-dev/database-protocol';
 import {
     EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
@@ -21,6 +21,74 @@ const unavailable: DatabaseOperationResultV1 = {
 function incomplete(continuation?: DatabaseContinuationV1): DatabaseCompletenessV1 {
     return continuation ? { complete: false, reason: 'response_envelope', continuation }
         : { complete: false, reason: 'response_envelope' };
+}
+
+type ReadWindow = NonNullable<NonNullable<DatabaseReadStatementInputV1['demand']>['window']>;
+
+function rerun(input: DatabaseReadStatementInputV1, window: ReadWindow, rows = 0): Extract<DatabaseContinuationV1, { kind: 'rerun' }> {
+    return { kind: 'rerun', snapshot: false, input: 'original', demand: { rows: Math.max(input.demand?.rows ?? 0, rows) + 1, window } };
+}
+
+function readRowOffset(input: DatabaseReadStatementInputV1): number {
+    const window = input.demand?.window;
+    return window?.kind === 'rows' ? window.offset : window?.kind === 'cell' ? window.row : 0;
+}
+
+function readCellContinuation(input: DatabaseReadStatementInputV1, cell: DatabasePartialCellV1, column: number): DatabaseContinuationV1 | undefined {
+    const offset = cell.range.offset + cell.range.length;
+    if (cell.range.total === undefined || offset >= cell.range.total) return undefined;
+    const window = input.demand?.window;
+    return rerun(input, { kind: 'cell', row: readRowOffset(input), column: window?.kind === 'cell' ? window.column : column,
+        range: { offset, length: cell.range.total - offset, unit: cell.range.unit } });
+}
+
+function sliceReadCell(cell: DatabaseCellV1, range: DatabaseValueRangeV1): DatabaseCellV1 | string {
+    const kind = cell.type === 'partial' ? cell.valueType : cell.type;
+    if (kind !== 'text' && kind !== 'json' && kind !== 'binary') return cell;
+    if (!('value' in cell) || typeof cell.value !== 'string') return cell;
+    const binary = kind === 'binary';
+    if (range.unit !== (binary ? 'bytes' : 'utf8_bytes')) return 'invalid_cell_range_unit';
+    const bytes = Buffer.from(cell.value, binary ? 'base64' : 'utf8');
+    const offset = Math.min(range.offset, bytes.length);
+    let end = Math.min(offset + range.length, bytes.length);
+    if (!binary) {
+        if (offset < bytes.length && (bytes[offset]! & 0xc0) === 0x80) return 'invalid_cell_range_boundary';
+        while (end > offset && end < bytes.length && (bytes[end]! & 0xc0) === 0x80) end -= 1;
+    }
+    const retained = bytes.subarray(offset, end);
+    const span = { offset, length: retained.length, total: bytes.length };
+    return binary
+        ? { type: 'partial', valueType: 'binary', encoding: 'base64', value: retained.toString('base64'), range: { ...span, unit: 'bytes' } }
+        : kind === 'json'
+            ? { type: 'partial', valueType: 'json', encoding: 'utf8', value: retained.toString('utf8'), range: { ...span, unit: 'utf8_bytes' } }
+            : { type: 'partial', valueType: 'text', encoding: 'utf8', value: retained.toString('utf8'), range: { ...span, unit: 'utf8_bytes' } };
+}
+
+/** Window projection precedes the transport check, including for small replies. */
+function projectRead(input: DatabaseReadStatementInputV1,
+    result: Extract<DatabaseOperationResultV1, { ok: true; operation: 'statement.run' }>): DatabaseOperationResultV1 {
+    if (!input.demand) return result;
+    const projected: Array<(typeof result.results)[number]> = [];
+    for (const native of result.results) {
+        const window = input.demand.window;
+        if (window?.kind === 'cell') {
+            const column = native.columns[window.column];
+            const original = native.rows[window.row]?.cells[window.column];
+            if (!column || !original) return { ok: false, status: 'failed', code: 'invalid_action_input', reason: column ? 'row_missing' : 'unknown_column' };
+            const cell = sliceReadCell(original, window.range);
+            if (typeof cell === 'string') return { ok: false, status: 'failed', code: 'invalid_action_input', reason: cell };
+            const next = cell.type === 'partial' ? readCellContinuation(input, cell, window.column) : undefined;
+            projected.push({ ...native, columns: [column], rows: [{ cells: [cell] }],
+                completeness: { complete: false, reason: 'page', ...(next ? { continuation: next } : {}) } });
+        } else {
+            const offset = window?.offset ?? 0;
+            const rows = native.rows.slice(offset, offset + input.demand.rows);
+            projected.push({ ...native, rows, completeness: offset + rows.length < native.rows.length
+                ? { complete: false, reason: 'page', continuation: rerun(input, { kind: 'rows', offset: offset + rows.length }) }
+                : native.completeness });
+        }
+    }
+    return { ...result, results: projected };
 }
 
 function rowsContinuation(input: DatabaseRowsReadInputV1, result: DatabaseRowsResultV1, count: number): DatabaseContinuationV1 | undefined {
@@ -46,7 +114,7 @@ function rowsContinuation(input: DatabaseRowsReadInputV1, result: DatabaseRowsRe
 function continuation(input: DatabaseOperationInputV1, result: DatabaseRowsResultV1, count: number): DatabaseContinuationV1 | undefined {
     if (input.operation === 'rows.read') return rowsContinuation(input, result, count);
     if (input.operation === 'statement.run' && input.mode === 'read') {
-        return { kind: 'rerun', snapshot: false, input, demand: { rows: Math.max(input.demand?.rows ?? 0, result.rows.length, count) + 1 } };
+        return rerun(input, { kind: 'rows', offset: readRowOffset(input) + count }, Math.max(result.rows.length, count));
     }
     return undefined;
 }
@@ -80,7 +148,7 @@ function cellSlicer(cell: DatabaseCellV1): { length: number; bytes: number; slic
 }
 
 function remainingCell(input: DatabaseOperationInputV1, cell: DatabasePartialCellV1, row?: DatabaseRowV1, column?: string,
-    source?: DatabaseCellV1): DatabaseContinuationV1 | undefined {
+    source?: DatabaseCellV1, columnIndex?: number): DatabaseContinuationV1 | undefined {
     const end = cell.range.total ?? (source?.type === 'partial' ? source.range.offset + source.range.length : cell.range.offset + cell.range.length);
     const range = { ...cell.range, offset: cell.range.offset + cell.range.length,
         length: end - cell.range.offset - cell.range.length };
@@ -92,6 +160,7 @@ function remainingCell(input: DatabaseOperationInputV1, cell: DatabasePartialCel
         return { kind: 'cell', input: { target: input.target, relation: input.relation, key: row.identity.key, column,
             ...(input.subscriptionId ? { subscriptionId: input.subscriptionId } : {}) }, range };
     }
+    if (input.operation === 'statement.run' && input.mode === 'read' && columnIndex !== undefined) return readCellContinuation(input, cell, columnIndex);
     return undefined;
 }
 
@@ -145,7 +214,7 @@ function fitPartialRow(input: DatabaseOperationInputV1, result: DatabaseRowsResu
         const identity = row.identity ? { ...row.identity, original: row.identity.original.filter(value => !partialColumns.has(value.column)) } : undefined;
         const first = selected[0];
         const cell = first ? cells[first.index] : undefined;
-        const next = cell?.type === 'partial' ? remainingCell(input, cell, row, result.columns[first!.index]!.name, row.cells[first!.index]) : undefined;
+        const next = cell?.type === 'partial' ? remainingCell(input, cell, row, result.columns[first!.index]!.name, row.cells[first!.index], first!.index) : undefined;
         return build({ ...result, rows: [{ cells, ...(identity ? { identity } : {}) }],
             completeness: incomplete(next ?? continuation(input, result, 0)) });
     };
@@ -196,6 +265,7 @@ function fitRows(input: DatabaseOperationInputV1, result: DatabaseRowsResultV1,
 
 /** Fit typed database data to the canonical Action transport response envelope. */
 export function fitDatabaseOperationResult(input: DatabaseOperationInputV1, result: DatabaseOperationResultV1): DatabaseOperationResultV1 {
+    if (input.operation === 'statement.run' && input.mode === 'read' && result.ok && result.operation === 'statement.run') result = projectRead(input, result);
     if (isExternalActionResultWithinResponseEnvelopeLimitV1(result)) return result;
     if (!result.ok) return unavailable;
     if (result.operation === 'schemas.list' && input.operation === 'schemas.list') {
