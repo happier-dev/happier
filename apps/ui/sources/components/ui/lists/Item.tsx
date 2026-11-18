@@ -85,7 +85,6 @@ import {
     HappierListRowRule,
     resolveHappierListRowRuleShown,
     resolveHappierCatalogDirectoryRowEdges,
-    useHappierListRowRuled,
 } from '@happier-dev/plugin-ui/presentation';
 
 const NO_MARGINS = Object.freeze({ start: 0, end: 0 });
@@ -1622,12 +1621,10 @@ function ItemRow(props: ItemProps) {
     // menu's rows, which their group divides): drawn while another row follows, from the row's text column (a page
     // row's text inset; a column row's own leading padding, then its glyph column), never over its own fill.
     const listRuleRow = rowFollowed !== null && (inCollectionColumn || (pageSheet === null && !isMenuRow));
-    // A list whose rows carry a second line rules every row; a list of one-line rows parts them by spacing alone. The
-    // list decides it (its rule scope), never this row's own subtitle (decision 7).
-    const listRuled = useHappierListRowRuled(listRuleRow && hasSubtitleContent);
     const listRuleShown = listRuleRow && resolveHappierListRowRuleShown({
         followed: rowFollowed,
-        multiline: listRuled,
+        // A row with a line under its title; one-line rows part by spacing alone (owner 2026-11-17 23:52Z, DESIGN.md 2026-11-15).
+        multiline: hasSubtitleContent,
         selected: selected === true,
         precedesSelected: rowPrecedesSelected,
         hovered: isHovered,

@@ -1,4 +1,4 @@
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentType, type ReactElement, type ReactNode, type RefObject } from 'react';
+import { createContext, memo, useCallback, useContext, useMemo, useRef, useState, type ComponentType, type ReactElement, type ReactNode, type RefObject } from 'react';
 import { useHappierSearchDisclosure } from './searchDisclosure.js';
 import { Platform, View, type ViewStyle } from 'react-native';
 
@@ -498,37 +498,6 @@ export const HappierListRowFollowedContext = createContext<boolean | null>(null)
  * row. One-line rows part by spacing alone: a line under each one only adds weight (owner ~20:40Z). A selected row's fill
  * parts it from its neighbours, so neither the line under it nor the one above it is drawn, and a hovered row hides its own.
  */
-/** Whether the list a row stands in is ruled: some row of it draws a line under its title. Null outside a scope. */
-const HappierListRowRuledContext = createContext<boolean | null>(null);
-const HappierListRowRuleReportContext = createContext<((multiline: boolean) => () => void) | null>(null);
-const NO_REPORT = () => {};
-
-/**
- * One list, one rule (owner 2026-11-17, decision 7): a list whose rows carry a second line rules every row, a list of
- * one-line rows rules none, never row by row on whether that row has a subtitle. The column provides the scope; each
- * row reports whether it draws a second line and reads the list's answer.
- */
-export function HappierListRowRuleScope(props: Readonly<{ children?: ReactNode }>): ReactElement {
-  const [multilineRows, setMultilineRows] = useState(0);
-  const report = useCallback((multiline: boolean) => {
-    if (!multiline) return NO_REPORT;
-    setMultilineRows((count) => count + 1);
-    return () => setMultilineRows((count) => count - 1);
-  }, []);
-  return (
-    <HappierListRowRuleReportContext.Provider value={report}>
-      <HappierListRowRuledContext.Provider value={multilineRows > 0}>{props.children}</HappierListRowRuledContext.Provider>
-    </HappierListRowRuleReportContext.Provider>
-  );
-}
-
-/** The `multiline` a row's rule decision uses: its list's answer inside a rule scope, else the row's own second line. */
-export function useHappierListRowRuled(ownMultiline: boolean): boolean {
-  const report = useContext(HappierListRowRuleReportContext);
-  const ruled = useContext(HappierListRowRuledContext);
-  useEffect(() => (report ? report(ownMultiline) : undefined), [report, ownMultiline]);
-  return ruled ?? ownMultiline;
-}
 
 export function resolveHappierListRowRuleShown(input: Readonly<{
   followed: boolean | null;
@@ -751,7 +720,6 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
   const surfaceStyle = host.useSurfaceStyle ? host.useSurfaceStyle() : host.surfaceStyle;
   return (
     <HappierCollectionListRowContext.Provider value>
-    <HappierListRowRuleScope>
     <View testID={props.testID} style={[railStyle, surfaceStyle]}>
       {showHeader ? (
         <View style={props.subtitle ? [headerStyle, headerWithSubtitleStyle] : bandOnGrid ? [headerStyle, headerWithBandStyle] : headerStyle}>
@@ -815,7 +783,6 @@ function HappierCollectionListImpl(props: HappierCollectionListProps): ReactElem
       )}
       {props.footer ?? null}
     </View>
-    </HappierListRowRuleScope>
     </HappierCollectionListRowContext.Provider>
   );
 }

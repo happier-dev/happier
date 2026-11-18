@@ -130,9 +130,9 @@ describe("the rule between a column's rows (owner 2026-11-15: inset hairlines in
     }
   });
 
-  // SHELL-ACCEPT-1117 (decision 7): the Workflows column ruled its two-line rows and left its one-line rows bare in the
-  // same list. A list rules every row or none, never by whether one row has a subtitle.
-  it('rules every row of a list that mixes one-line and two-line rows', async () => {
+  // Owner ruling 2026-11-17 23:52Z (DESIGN.md 2026-11-15): a row is ruled only when it has two or more lines, so a list
+  // that mixes them rules its two-line rows and leaves its one-line rows unruled.
+  it('rules only the two-line rows of a list that mixes one-line and two-line rows', async () => {
     const mixed = [0, 1, 2, 3].map((index) => (
       <CollectionNavigationRow key={index} testID={`row-${index}`} title={`Row ${index}`}
         {...(index % 2 === 0 ? { subtitle: `Line under row ${index}` } : {})} selected={false} onPress={noop} />
@@ -141,7 +141,7 @@ describe("the rule between a column's rows (owner 2026-11-15: inset hairlines in
       <CollectionList title="Workflows"><CollectionRows>{mixed}</CollectionRows></CollectionList>,
     );
     try {
-      expect(ruledRows(screen, 4)).toEqual([0, 1, 2]);
+      expect(ruledRows(screen, 4)).toEqual([0, 2]);
     } finally {
       await screen.unmount();
     }

@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -116,7 +117,9 @@ export function useFailureExplainedByUnreachableHome(homeServerIds: readonly str
  * says the Home is unavailable (the same fact the footer's status shows), it says so by name and
  * offers Retry instead of loading forever. A list or page can also keep this gate mounted beside
  * retained rows or waiting widgets (with no children), so the same Home fact and Retry stay visible:
- * the app's one offline line, drawn by the shared freshness line.
+ * the app's one offline line, one quiet state line with its Retry beside the sentence (a column states its
+ * condition in one line, never a bordered strip; WAVE-ACCEPT-1117C). A page header's notice slot keeps the
+ * inline freshness line, which carries when its kept content was read.
  */
 export function HomeReachabilityGate(props: Readonly<{
     /** `pane`: a whole pane (glyph, title, one line, Retry). `line`: one quiet line in a list. */
@@ -147,15 +150,27 @@ export function HomeReachabilityGate(props: Readonly<{
     }), []);
 
     if (!unavailable || !relevant) return <>{props.children}</>;
-    if (props.variant === 'line') {
+    if (props.variant === 'line' && props.presentation === 'inline') {
         return (
             <SurfaceFreshnessLine
                 testID="home-unreachable"
                 glyph="cloud-slash"
                 reason={t('sidebarFooter.homeUnreachableLine', { home })}
                 action={retry}
-                {...(props.presentation ? { presentation: props.presentation } : {})}
+                presentation="inline"
                 {...(props.asOf !== undefined ? { asOf: props.asOf } : {})}
+            />
+        );
+    }
+    if (props.variant === 'line') {
+        return (
+            <SurfaceStateCard
+                testID="home-unreachable"
+                size="line"
+                kind="unavailable"
+                iconName="cloud-slash"
+                title={t('sidebarFooter.homeUnreachableLine', { home })}
+                action={retry}
             />
         );
     }

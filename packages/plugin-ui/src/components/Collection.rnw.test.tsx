@@ -2546,6 +2546,44 @@ describe('Collection table', () => {
     view.unmount();
   });
 
+  // UI refinements ruling (WAVE-ACCEPT-1117C): an index table on its page takes the Services shape, its rows on the
+  // page and each group a section title, never a bordered card with filled group bands (Machines, Workflows Library).
+  const chromeBetween = (from: HTMLElement, stage: HTMLElement) => {
+    const found: string[] = [];
+    for (let node: HTMLElement | null = from; node !== null && node !== stage.parentElement; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (style.borderTopWidth !== '' && style.borderTopWidth !== '0px') found.push(`border ${style.borderTopWidth}`);
+      if (style.backgroundColor !== '' && style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent') {
+        found.push(`fill ${style.backgroundColor}`);
+      }
+    }
+    return found;
+  };
+
+  it('lays a page table flat on its page: no card edge around it, no filled band under a group title', () => {
+    const view = mount({ scroll: 'page' });
+    try {
+      view.measure(1440);
+      const stage = view.query('collection:stage')!;
+      expect(chromeBetween(stage, stage)).toEqual([]);
+      expect(chromeBetween(view.container.querySelector<HTMLElement>('[aria-label="Needs you"]')!, stage)).toEqual([]);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('lays a wide page list flat on its page, as a phone already does', () => {
+    const view = mount({ presentation: 'list', scroll: 'page', grouped: false });
+    try {
+      view.measure(1440);
+      const stage = view.query('collection:stage')!;
+      const firstRow = view.container.querySelector<HTMLElement>('[data-testid^="row:"]')!;
+      expect(chromeBetween(firstRow.parentElement!, stage).filter((entry) => entry.startsWith('border'))).toEqual([]);
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('draws no band for an untitled group: the table header already names its rows', () => {
     const view = mount({
       grouping: {

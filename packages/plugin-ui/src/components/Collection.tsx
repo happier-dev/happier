@@ -49,7 +49,6 @@ import { useOptionalPluginUiPresentationHost, type PluginUiMenuSelection } from 
 import { PluginUiScrollActivityProvider } from '../presentationHost/scrollActivity.js';
 import { HappierCollectionDetailWidthContext, HappierCollectionLayoutContext, resolveHappierCollectionLayoutState } from '../presentation/collection/collectionLayout.js';
 import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HappierCollectionRestingRowsContext, HappierCollectionTableRowContext, resolveHappierCollectionRowRole, type HappierCollectionRowRole, type HappierCollectionRestingRows, HappierCollectionTreeRowContext, type HappierCollectionTableRowFacts, type HappierCollectionTreeRowFacts, HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, HappierListRowRule, resolveHappierCatalogDirectoryRowEdges, resolveHappierListRowRuleShown } from '../presentation/collection/CollectionList.js';
-import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HappierCollectionRestingRowsContext, HappierCollectionTableRowContext, resolveHappierCollectionRowRole, type HappierCollectionRowRole, type HappierCollectionRestingRows, HappierCollectionTreeRowContext, type HappierCollectionTableRowFacts, type HappierCollectionTreeRowFacts, HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, HappierListRowRule, resolveHappierCatalogDirectoryRowEdges, resolveHappierListRowRuleShown, useHappierListRowRuled } from '../presentation/collection/CollectionList.js';
 import { useHappierListRowHovered } from '../presentation/collection/ListItemFrame.js';
 import {
   HAPPIER_COLLECTION_INSTANT_MOTION,
@@ -1765,8 +1764,7 @@ function CollectionListRowRule(props: Readonly<{ startPx: number; multiline: boo
   const open = useContext(HappierListRowOpenContext);
   const precedesSelected = useContext(HappierListRowPrecedesSelectedContext);
   const hovered = useHappierListRowHovered();
-  const multiline = useHappierListRowRuled(props.multiline);
-  return resolveHappierListRowRuleShown({ followed, multiline, selected: selection?.selected === true || open, precedesSelected, hovered })
+  return resolveHappierListRowRuleShown({ followed, multiline: props.multiline, selected: selection?.selected === true || open, precedesSelected, hovered })
     ? <HappierListRowRule startPx={props.startPx} color={color} /> : null;
 }
 
@@ -2796,8 +2794,9 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       } } : { pageSheet: {
         colors: flatBrowseSheet && flatBrowseColors !== null ? flatBrowseColors : palette,
         header: pageSheetHeader,
-        // A browse list on a phone lies flat on the page, its rows parted by their text-inset hairlines (owner 2026-11-15).
-        flatSheet: enclosingPageSheet === null && !narrowRows,
+        // A page list lies flat on the page at every width, its rows parted by their text-inset hairlines: the Services
+        // shape (owner 2026-11-15 "browse flat"; UI refinements ruling WAVE-ACCEPT-1117C: no card on an index list).
+        flatSheet: false,
         ...(enclosingPageSheet === null && narrowRows ? { rowInsetPx: HAPPIER_PAGE_METRICS.headingOpticalInsetPx } : {}),
         stackedHeadings: narrowRows,
       } }),
@@ -2817,13 +2816,22 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         // material's plane is its own, and the heading is not pinned there.
         ...(containingMaterial === undefined ? { backgroundColor: palette?.page ?? theme.colors.surface } : {}),
       },
+    } : pageScroll && rowGeometry === 'table' ? {
+      // A page table's group is a section title over its rows, as a Services list's is, in the band's planned height:
+      // never a filled band (UI refinements ruling WAVE-ACCEPT-1117C; owner rule 11-15 "no card chrome on lists").
+      sectionHeaderTitleRole: 'group' as const,
+      sectionHeaderStyle: {
+        justifyContent: 'flex-end' as const,
+        ...flushGroupBandFrame(metrics.groupHeader, TABLE.insetStart),
+        paddingRight: TABLE.insetTrailing,
+        paddingBottom: HAPPIER_PAGE_METRICS.groupHeadingGapPx,
+      },
     } : {
       sectionHeaderTitleRole: 'micro' as const,
       sectionHeaderStyle: {
         justifyContent: 'center' as const,
-        // Its words on the rows' glyph edge (the row's content inset and its 1 pt ring). A table on its own page sheet
-        // edge (the stage's edge below) is full-bleed: its band is too.
-        ...(pageScroll && rowGeometry === 'table' ? flushGroupBandFrame : groupBandFrame)(metrics.groupHeader, TABLE.insetStart),
+        // Its words on the rows' glyph edge (the row's content inset and its 1 pt ring).
+        ...groupBandFrame(metrics.groupHeader, TABLE.insetStart),
         paddingRight: TABLE.insetTrailing,
         // A list beside its detail reserves each row's ⋯ place after its meta; the band's hint ends on that meta's
         // edge rather than past it, so the group's words and its rows' ages share one right edge.
@@ -3312,13 +3320,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         <View ref={stageRef} testID={props.testID === undefined ? undefined : `${props.testID}:stage`} onLayout={onLayout}
           style={[pageScroll ? pageStageStyle : rootStyle,
             stageOnSheetEdge ? { marginHorizontal: pageSheetInsetPx } : null,
-            // A table among a page's sections is a sheet with an edge; a Collection that IS the page's body (it
-            // fills its region under the page header, lab `merged-list`) lies flat and full-bleed.
-            pageScroll && composition === 'table' && (hasRows || loadingFirstWindow) ? {
-              borderWidth: 1,
-              borderColor: theme.colors.divider,
-              borderRadius: HAPPIER_RADIUS_V1.xl,
-            } : null]}>
+            // A page table lies flat on its page, as a Services list does: no card edge (WAVE-ACCEPT-1117C).
+            ]}>
         <driver.AnimatedView value={progress} tracks={fadeTracks} style={pageScroll ? pageStageRowStyle : stageStyle}>
             <View
               testID={props.listTestID}

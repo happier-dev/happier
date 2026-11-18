@@ -18,7 +18,6 @@ export {
   HappierListRowRule,
   resolveHappierCollectionRowTextStartPx,
   resolveHappierListRowRuleShown,
-  useHappierListRowRuled,
 } from './collection/CollectionList.js';
 // Host-only: the one search-behind-a-magnifier rule a core main screen's head shares with a plugin collection page.
 export { useHappierSearchDisclosure, type HappierSearchDisclosure } from './collection/searchDisclosure.js';

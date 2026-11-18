@@ -6,6 +6,7 @@ import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { t, type TranslationKey } from '@/text';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { isScheduledWorkflowGroupShown, type ScheduledWorkflowRowsRead } from '@/components/workflows/triggers/ScheduledWorkflowSection';
+import { useFailureExplainedByUnreachableHome } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 
 import { SessionsListHeader } from './sessionListChrome';
 import { NewSessionDraftsSection } from './NewSessionDraftsSection';
@@ -18,6 +19,8 @@ import { SESSION_LIST_SUPPORTING_SECTIONS_NODE, type SessionListVirtualizedNode 
 import { SessionListHeaderFrame, type RegisterSessionListTreeRowBounds, type UnregisterSessionListTreeRowBounds } from './SessionListHeaderFrame';
 import type { SessionListLayoutChoice } from '@/sync/domains/session/listing/sessionListLayout';
 import { hasPendingSessionListLayoutFlight, playSessionListLayoutFlight } from './sessionListLayoutFlight';
+
+const NO_HOMES: readonly string[] = Object.freeze([]);
 export { SESSION_LIST_SUPPORTING_SECTIONS_NODE, type SessionListVirtualizedNode } from './sessionListVirtualizedNodes';
 
 type SessionListScrollEvent = Readonly<{
@@ -296,7 +299,12 @@ export const SessionListVirtualizedContent = React.memo(function SessionListVirt
     // One presentation per list: until upcoming work first answers, the list's shared loading rows stand in,
     // so Scheduled never lands above rows already on screen. A later refresh keeps the presented list.
     const presentedRef = React.useRef(false);
-    if (!(scheduledRead?.available === true && scheduledRead.status === 'loading')) presentedRef.current = true;
+    const awaitingScheduled = !presentedRef.current && scheduledRead?.available === true && scheduledRead.status === 'loading';
+    // A Home that cannot be reached will not answer either: its kept rows stand under the column's one line instead
+    // of loading rows that never resolve (WAVE-ACCEPT-1117C).
+    const scheduledUnanswerable = useFailureExplainedByUnreachableHome(
+        awaitingScheduled && scheduledRead?.serverId ? [scheduledRead.serverId] : NO_HOMES);
+    if (!awaitingScheduled || scheduledUnanswerable) presentedRef.current = true;
     const awaitingFirstComposition = !presentedRef.current;
     const isWeb = Platform.OS === 'web';
     // Plays the captured glide once the nodes of the chosen layout are committed and laid out.
