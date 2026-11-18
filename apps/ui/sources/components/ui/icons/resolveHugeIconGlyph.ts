@@ -10,7 +10,7 @@ const listeners = new Set<() => void>();
 export function preloadHugeIconRegistry(): Promise<HugeIconRegistry> {
     if (registry) return Promise.resolve(registry);
     return pending ??= import('./iconRegistryHuge.generated').then(({ HUGE_ICON_REGISTRY }) => {
-        registry = HUGE_ICON_REGISTRY;
+        registry = withDrawableElements(HUGE_ICON_REGISTRY);
         for (const listener of listeners) listener();
         return registry;
     }).catch((error: unknown) => {
@@ -18,6 +18,26 @@ export function preloadHugeIconRegistry(): Promise<HugeIconRegistry> {
         console.warn('[Icon] Unable to load HugeIcons registry', error);
         throw error;
     });
+}
+
+type HugeGlyphElement = readonly [string, Readonly<Record<string, string>>];
+
+/**
+ * `HugeiconsIcon` draws path, circle, rect, line and g, and silently drops any other element: every HugeIcons
+ * cylinder (database) lost its top `ellipse`. An ellipse becomes the same outline as two arcs, once, when the
+ * registry loads; glyphs without one keep their identity.
+ */
+function withDrawableElements(source: HugeIconRegistry): HugeIconRegistry {
+    const drawable: Record<string, unknown> = {};
+    for (const [name, glyph] of Object.entries(source) as Array<[string, ReadonlyArray<HugeGlyphElement>]>) {
+        drawable[name] = glyph.some(([tag]) => tag === 'ellipse') ? glyph.map(([tag, attributes]) => {
+            if (tag !== 'ellipse') return [tag, attributes] as const;
+            const { cx, cy, rx, ry, ...rest } = attributes;
+            const [x, y, width] = [Number(cx) - Number(rx), Number(cy), 2 * Number(rx)];
+            return ['path', { ...rest, d: `M${x} ${y}a${rx} ${ry} 0 1 0 ${width} 0a${rx} ${ry} 0 1 0 ${-width} 0` }] as const;
+        }) : glyph;
+    }
+    return drawable as HugeIconRegistry;
 }
 
 const readRegistry = () => registry;

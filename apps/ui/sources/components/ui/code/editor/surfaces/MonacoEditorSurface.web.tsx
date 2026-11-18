@@ -14,7 +14,6 @@ import { CODE_EDITOR_LANGUAGE_COMMANDS, type CodeEditorLanguageCommand, type Cod
 import { createMonacoPeekZone } from './monacoPeekZone';
 import type { CodeEditorFindSet } from '../bridge/codeEditorFindBridge';
 import type { editor as MonacoEditorApi } from 'monaco-editor';
-import { TextInput } from '@/components/ui/text/Text';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { CODE_EDITOR_FORMATTING_OPTIONS, CODE_GUTTER_METRICS, resolveCodeEditorFontMetrics, resolveCodeEditorGutterMetrics } from '../codeEditorFontMetrics';
 import { resolveCodeMonoFontFamily } from '../../codeTypography';
@@ -31,6 +30,7 @@ import { createMonacoDecorations } from './monacoDecorations';
 import type { EditorDecoration, EditorDecorationLayer } from '../codeEditorTypes';
 import { useKeyboardCommand } from '@/keyboard/KeyboardShortcutProvider';
 import { useMonacoEscapeLayer } from './useMonacoEscapeLayer';
+import { MonacoFallbackSurface } from './MonacoFallbackSurface.web';
 import { t } from '@/text';
 
 
@@ -1037,24 +1037,19 @@ export const MonacoEditorSurface = React.forwardRef<CodeEditorHandle, CodeEditor
         <View ref={textSurfaceRef} style={borderStyle}>
             <View testID={props.testID} ref={containerRef} style={{ flex: 1, backgroundColor: editorTheme.backgroundColor }} />
             {ready ? null : (
-                <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
-                    <TextInput
-                        value={fallbackValue}
-                        onChangeText={onFallbackChange}
-                        editable={!readOnly}
-                        multiline
-                        disableUiFontScaling
-                        style={{
-                            flex: 1,
-                            padding: 10,
-                            color: editorTheme.syntax.defaultColor,
-                            backgroundColor: editorTheme.backgroundColor,
-                            fontFamily: resolveCodeMonoFontFamily(),
-                            fontSize: fontMetrics.fontSize,
-                            lineHeight: fontMetrics.lineHeight,
-                        }}
-                    />
-                </View>
+                <MonacoFallbackSurface
+                    value={fallbackValue}
+                    onChangeText={onFallbackChange}
+                    editable={!readOnly}
+                    theme={editorTheme}
+                    fontMetrics={fontMetrics}
+                    insetLeft={props.contentPaddingHorizontal ?? 0}
+                    paddingVertical={contentPaddingVertical}
+                    showLineNumbers={props.showLineNumbers ?? true}
+                    lineNumberDigits={props.lineNumberDigits ?? 1}
+                    reviewLaneWidth={props.reviewLaneWidth ?? 0}
+                    bare={bareCanvasRef.current}
+                />
             )}
         </View>
     );

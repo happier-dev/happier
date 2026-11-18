@@ -496,6 +496,26 @@ describe('MonacoEditorSurface (web)', () => {
         } finally { await screen.unmount(); setupMonacoGlobals(); }
     });
 
+    // A cold page evaluates Monaco's bundle 2-4 s after the editor first renders; the fallback drew the text 10 px in with
+    // no numbers, and it jumped 46 px when Monaco arrived (DBW-UI-4 9c). It now holds Monaco's numbers and text offset.
+    it('holds the text and line numbers where Monaco draws them while the engine is not mounted', async () => {
+        setupMonacoGlobals();
+        window.monaco = undefined;
+        window.require = Object.assign((_deps: unknown, _ok: unknown, fail: (error: Error) => void) => {
+            fail(new Error('engine chunk unavailable'));
+        }, { config: () => {} }) as typeof window.require;
+        const screen = await renderScreen(<MonacoEditorSurface value={'select 1\nfrom t\nwhere x'} resetKey="fallback" language="sql"
+            onChange={vi.fn()} contentPaddingHorizontal={16} contentPaddingVertical={12} />);
+        try {
+            await flushHookEffects();
+            const { Text, TextInput } = await import('@/components/ui/text/Text');
+            const style = screen.findByType(TextInput).props.style;
+            // Code view: inset 16 + row 8 + 4 + a 24 px number column + 18 = text at 70, first line under the 12 px inset.
+            expect(style).toMatchObject({ paddingLeft: 70, paddingTop: 12 });
+            expect(screen.findAll((node) => node.type === Text && node.props.children === '1\n2\n3')).toHaveLength(1);
+        } finally { await screen.unmount(); setupMonacoGlobals(); }
+    });
+
     it('aligns its measured five-digit gutter with the shared code-view and review inset', async () => {
         setupMonacoGlobals();
         // Monaco sizes its number box in whole digits of the 13 px code font (7.8 px each here); the code view
