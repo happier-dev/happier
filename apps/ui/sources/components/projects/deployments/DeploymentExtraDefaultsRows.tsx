@@ -167,7 +167,9 @@ export function DeploymentExtraDefaultsRows(props: Readonly<{
       }} /> : null}
     <SegmentedChoiceItem testIDPrefix="deployment-defaults.backupRetention"
       title={t('projects.deployments.backupKeeps')}
-      subtitle={props.sourceLabel(resolved.sources.backupRetention)} disabled={props.disabled}
+      // What the counts do is said once, here, not under each count row (sibling rows never repeat a sentence).
+      subtitle={[props.sourceLabel(resolved.sources.backupRetention), t('projects.deployments.settingsSections.keepDescription')]
+        .filter(Boolean).join(' · ')} disabled={props.disabled}
       value={preferences.backupRetention === undefined ? 'inherit' : preferences.backupRetention.kind === 'keepEverything' ? 'all' : 'counts'}
       options={[{ id: 'inherit', label: props.inheritLabel }, { id: 'all', label: t('projects.deployments.backupKeepEverything') },
         { id: 'counts', label: t('projects.deployments.settingsSections.keepTitle'), disabled: true }]}
@@ -177,7 +179,6 @@ export function DeploymentExtraDefaultsRows(props: Readonly<{
       }} />
     {deploymentBackupKeepFields.map(field => <FieldValueItem key={field} testID={`deployment-defaults.backupRetention.${field}`}
       title={t(`projects.deployments.settingsSections.${deploymentBackupKeepLabels[field]}`)}
-      subtitle={t('projects.deployments.settingsSections.keepDescription')}
       kind="integer" allowEmpty disabled={props.disabled} value={retentionDraft[field]}
       stepper={{ min: 0, max: Number.MAX_SAFE_INTEGER, step: 1 }} compactStepper
       onCommit={value => {
