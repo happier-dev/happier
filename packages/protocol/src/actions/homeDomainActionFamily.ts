@@ -5,6 +5,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { PublicProfilePreparedRequestV1Schema, PublicProfileMutationResultV1Schema,
   type PublicProfilePreparedRequestV1 } from '../account/publicProfilePublication.js';
 import { ACTION_ID_FAMILIES_V1 } from './actionIds.js';
+import { REVIEW_HUMAN_ACTION_IDS_V1, type ReviewHumanActionIdV1 } from './actionIdsReviewHumanV1.js';
 import { FriendsMutationErrorSchema } from '../social/friends.js';
 
 import {
@@ -64,6 +65,7 @@ export const HOME_DOMAIN_ACTION_IDS_V1 = [
   ...ACTION_ID_FAMILIES_V1.session_organization_resources,
   ...ACTION_ID_FAMILIES_V1.collection_space_membership,
   ...ACTION_ID_FAMILIES_V1.review_reads,
+  ...Object.values(REVIEW_HUMAN_ACTION_IDS_V1),
   'session.delete',
   'session.section.set',
   'session.tags.set',
@@ -82,6 +84,7 @@ export type HomeDomainActionIdV1 =
   | typeof ACTION_ID_FAMILIES_V1.session_organization_resources[number]
   | typeof ACTION_ID_FAMILIES_V1.collection_space_membership[number]
   | typeof ACTION_ID_FAMILIES_V1.review_reads[number]
+  | ReviewHumanActionIdV1
   | 'session.delete' | 'session.section.set' | 'session.tags.set'
   | 'projects.deploymentDefaults.set';
 
