@@ -223,8 +223,9 @@ function TargetProbe(
       values: fact.values,
       controls,
       facts: machineFacts,
+      directory: fact.directory,
     });
-  }, [agentId, controls, fact.values, key, machineFacts, reportTarget]);
+  }, [agentId, controls, fact.directory, fact.values, key, machineFacts, reportTarget]);
   React.useEffect(() => () => reportTarget(key, null), [key, reportTarget]);
   return null;
 }

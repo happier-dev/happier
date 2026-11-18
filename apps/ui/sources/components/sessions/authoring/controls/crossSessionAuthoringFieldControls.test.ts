@@ -105,6 +105,21 @@ describe('Session-specific field intersection', () => {
         if (model.kind !== 'options') throw new Error('expected mode options');
         expect(model.options.some(option => option.id === model.selectedOptionId)).toBe(false);
     });
+    it('offers Skills/MCP for one Machine scope and shared selection, and says when targets differ', () => {
+        const scoped = (machineId: string, directory: string, skills: string[] = []) => ({ ...target(),
+            facts: { agentTargets, agentPickerContext: { machineId, serverId: 'home', directory: null }, machineName: 'devbox' },
+            directory, values: { agentTarget: claude, capabilitySelection: skills.length
+                ? { skills: { v: 1 as const, forceIncludeSkillIds: skills, forceExcludeSkillIds: [], excludeNativeSkillNames: [] } } : null } });
+        expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection',
+            targets: [scoped('m1', '/repo/a'), scoped('m1', '/repo/b')] }))
+            .toMatchObject({ kind: 'mcp', agentId: 'claude', context: { machineId: 'm1', directory: '/repo/a', machineName: 'devbox' } });
+        expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection',
+            targets: [scoped('m1', '/repo/a', ['pdf']), scoped('m1', '/repo/b')] }))
+            .toMatchObject({ kind: 'unavailable', reason: 'differs_between_targets' });
+        expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'capabilitySelection',
+            targets: [scoped('m1', '/repo/a'), scoped('m2', '/repo/a')] }))
+            .toMatchObject({ kind: 'unavailable', reason: 'differs_between_targets' });
+    });
     it('preserves owner refusals and refuses new-session fields and empty intersections', () => {
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'profileId' })).toMatchObject({ kind: 'unavailable', reason: 'not_supported_on_target' });
         expect(resolveCrossSessionAuthoringFieldControl({ ...base, field: 'permissionMode', targets: [{ ...target(), controls: { ...controls(), permissionModeOptions: [] } }] })).toMatchObject({ kind: 'unavailable', reason: 'agent_has_no_options' });

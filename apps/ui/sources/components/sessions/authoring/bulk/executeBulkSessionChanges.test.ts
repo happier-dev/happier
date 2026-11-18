@@ -67,6 +67,16 @@ describe('bulk Send', () => {
         ]);
     });
 
+    it('keeps the agent switch on a target whose message follows it', async () => {
+        const claude = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+        const plan = planExistingSessionChanges({ agentTarget: claude }, [targets[0]!], 'hello');
+        const results = await executeBulkSessionChanges({ plan, executeConfirmed: async (id) => ({ ok: true, result: { kind: 'fanout', results: [
+            { target: a, result: { ok: true, result: id === 'session.agent.transition' ? { type: 'accepted' } : { status: 'accepted', localId: 'sent-a' } } },
+        ] } }) });
+        expect(results).toEqual([expect.objectContaining({ target: a, state: 'sent',
+            switchedFrom: 'agent', switchedTo: 'happier.agent.claude/claude' })]);
+    });
+
     it('summarizes settings-only work from planner stages, counting distinct addresses', () => {
         const plan = planExistingSessionChanges({ connectedServices: null, permissionMode: 'yolo' }, targets);
         expect(summarizeBulkSessionChanges(plan)).toMatchObject({ restarts: 2, engineSwitches: 0, messages: 0, skipped: 0 });

@@ -114,7 +114,7 @@ export function createRecipientMultiSelectActionChip(params: Readonly<{
         controlId: 'recipient',
         // Every multi-recipient composer seats its To chip on the line above the input (owner 2026-11-17).
         placement: { ...getRecipientActionChipPlacement('discussion'), line: 'header', pending: model.selectedIds.length > 0 },
-        stabilityKey: JSON.stringify([model.selectedIds, model.targets.map((target) => [target.id, target.label])]),
+        stabilityKey: JSON.stringify([model.selectedIds, model.targets.map((target) => [target.id, target.label, target.subtitle ?? null])]),
         collapsedOptionsPopover: {
             presentation: 'list',
             title: t('session.participants.sendToTitle'),

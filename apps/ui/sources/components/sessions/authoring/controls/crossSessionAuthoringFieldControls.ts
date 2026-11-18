@@ -2,6 +2,7 @@ import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/wo
 import { EXISTING_SESSION_FIELD_APPLICATIONS } from '@happier-dev/protocol/sessions/authoring/existingSessionFieldApplication';
 import { readBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { SessionAuthoringControls } from './useSessionAuthoringControls';
+import { areSnapshotProjectionsEquivalent } from '@/sync/domains/state/structuralSharing';
 import { resolveSessionAuthoringFieldControl, type SessionAuthoringControlFacts, type SessionAuthoringFieldControlModel, type SessionAuthoringFieldId } from './sessionAuthoringFieldControls';
 
 /** Each target carries its own published catalogs, resolved for the effective Agent. */
@@ -10,7 +11,17 @@ export type CrossSessionAuthoringControlTarget = Readonly<{
     values: WorkflowSessionAuthoringSelection;
     controls: SessionAuthoringControls;
     facts?: SessionAuthoringControlFacts;
+    /** The folder the Session runs in: its Skills/MCP preview is scoped to its Machine and this folder. */
+    directory?: string | null;
 }>;
+
+/** A Session's own MCP scope: its Machine's facts plus its own folder. */
+function withSessionMcpScope(target: CrossSessionAuthoringControlTarget): SessionAuthoringControlFacts | undefined {
+    const machineId = target.facts?.agentPickerContext?.machineId ?? null;
+    if (!target.facts || !machineId || !target.directory) return target.facts;
+    return { ...target.facts, mcp: { machineId, machineName: target.facts.machineName ?? null, directory: target.directory,
+        serverId: target.facts.agentPickerContext?.serverId ?? null } };
+}
 
 type Options = Extract<SessionAuthoringFieldControlModel, { kind: 'options' }>;
 
@@ -46,7 +57,8 @@ export function resolveCrossSessionAuthoringFieldControl(params: Readonly<{
         }
     }
     const models = targets.map(target => resolveSessionAuthoringFieldControl({
-        field, agentId: target.agentId, controls: target.controls, facts: target.facts,
+        field, agentId: target.agentId, controls: target.controls,
+        facts: field === 'capabilitySelection' ? withSessionMcpScope(target) : target.facts,
         values: { ...target.values, ...selection,
             ...(selection.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: {
                 ...selection.sessionConfigOptionOverrides,
@@ -74,6 +86,17 @@ export function resolveCrossSessionAuthoringFieldControl(params: Readonly<{
                 selectedOptionId: result.selectedOptionId, ...(result.unselectedLabel ? { unselectedLabel: result.unselectedLabel } : {}) }] : [];
         });
         return groups.length ? { ...first, groups } : unavailable('not_supported_on_target');
+    }
+    // Skills/MCP: the canonical draft sheet previews one Machine and folder, and Send writes its whole selection
+    // to every target. That is truthful only while every target shares the Agent, the Machine and the current
+    // selection; otherwise a change made here would reset what each Session has on its own.
+    if (first.kind === 'mcp') {
+        const mcpModels = models.filter(model => model.kind === 'mcp');
+        const shared = mcpModels.length === models.length
+            && mcpModels.every(model => model.agentId === first.agentId && model.context.machineId === first.context.machineId)
+            && targets.every(target => areSnapshotProjectionsEquivalent(target.values.capabilitySelection ?? null,
+                targets[0]!.values.capabilitySelection ?? null));
+        return shared ? first : unavailable('differs_between_targets');
     }
     // Connected Services retain the canonical account picker; the host supplies its exact Home context.
     return first.kind === 'connectedServices' ? first : unavailable('not_supported_on_target');

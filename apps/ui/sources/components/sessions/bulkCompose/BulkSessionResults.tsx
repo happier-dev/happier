@@ -17,6 +17,8 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider, useListPresentation } from '@/components/ui/lists/listPresentation';
+import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { resolveTranscriptPaint } from '@/components/sessions/transcript/transcriptPaint';
@@ -53,9 +55,40 @@ export function BulkSessionResults(
   const skipped = props.rows.filter((row) => row.state === 'skipped');
   const message = Boolean(props.text);
   const recipients = delivered.length;
+  const presentation = useListPresentation();
+  const footer = (
+    <View style={styles.footer}>
+      {summary.notSent > 1 ? (
+        <RoundButton
+          testID="bulk-compose-retry-failed"
+          size="normal"
+          title={t('session.participants.bulk.retryFailed')}
+          leading={
+            <Icon
+              name="arrows-clockwise"
+              size={16}
+              color={theme.colors.button.primary.tint}
+            />
+          }
+          disabled={props.submitting}
+          onPress={props.onRetryFailed}
+        />
+      ) : (
+        <View />
+      )}
+      <TextLinkButton
+        testID="bulk-compose-done"
+        label={t('common.done')}
+        tone="strong"
+        onPress={props.onDone}
+      />
+    </View>
+  );
   return (
+    <View style={styles.screen}>
     <ScrollView
       testID="bulk-compose-results"
+      style={styles.screen}
       contentContainerStyle={styles.scroll}
     >
       <View style={styles.column}>
@@ -85,7 +118,7 @@ export function BulkSessionResults(
             testID="bulk-compose-results-summary"
             variant="neutral"
             labelVariant="phrase"
-            label={formatBulkSummary(summary)}
+            label={formatBulkSummary(summary, message)}
             foregroundColor={theme.colors.text.secondary}
           />
         </View>
@@ -104,6 +137,8 @@ export function BulkSessionResults(
             </View>
           </View>
         ) : null}
+        {/* The column owns its gutters: the record card stands on the header's and the bubble's edges. */}
+        <ListPresentationProvider value={presentation} pageInsets="contained">
         {delivered.length > 0 ? (
           <ItemGroup testID="bulk-compose-results-rows">
             {delivered.map((row) => (
@@ -135,36 +170,13 @@ export function BulkSessionResults(
             ))}
           </ItemGroup>
         ) : null}
-        <View
-          style={[styles.footer, props.compact ? styles.footerCompact : null]}
-        >
-          {summary.notSent > 1 ? (
-            <RoundButton
-              testID="bulk-compose-retry-failed"
-              size="normal"
-              title={t('session.participants.bulk.retryFailed')}
-              leading={
-                <Icon
-                  name="arrows-clockwise"
-                  size={16}
-                  color={theme.colors.button.primary.tint}
-                />
-              }
-              disabled={props.submitting}
-              onPress={props.onRetryFailed}
-            />
-          ) : (
-            <View />
-          )}
-          <TextLinkButton
-            testID="bulk-compose-done"
-            label={t('common.done')}
-            tone="strong"
-            onPress={props.onDone}
-          />
-        </View>
+        </ListPresentationProvider>
+        {/* Desktop: the actions close the column. A phone pins them as the page's foot (lab results on phone). */}
+        {props.compact ? null : footer}
       </View>
     </ScrollView>
+    {props.compact ? <PagePinnedBar testID="bulk-compose-results-foot">{footer}</PagePinnedBar> : null}
+    </View>
   );
 }
 
@@ -227,6 +239,9 @@ const ResultRow = React.memo(function ResultRow(
 });
 
 const styles = StyleSheet.create((theme) => ({
+  screen: {
+    flex: 1,
+  },
   scroll: {
     alignItems: 'center',
     paddingHorizontal: theme.space.s16,
@@ -261,10 +276,5 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginTop: theme.space.s4,
-  },
-  footerCompact: {
-    flexDirection: 'column-reverse',
-    alignItems: 'stretch',
-    rowGap: theme.space.s12,
   },
 }));

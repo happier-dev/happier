@@ -26,6 +26,7 @@ import type {
     AgentInputExtraActionChipCollapsedPopoverRenderContext,
 } from '@/components/sessions/agentInput/agentInputContracts';
 import { AgentInputChipLabel } from '@/components/sessions/agentInput/components/AgentInputChipLabel';
+import { createUnavailableComposerControlChip } from '@/components/sessions/agentInput/definitions/createUnavailableComposerControlChip';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 import { AgentInputChipPickerPopover } from '@/components/sessions/agentInput/components/AgentInputChipPickerPopover';
 import { AgentInputContentPopover } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
@@ -81,21 +82,13 @@ export function createUnavailablePluginComposerControlChip(params: Readonly<{
     reason: string;
 }>): AgentInputExtraActionChip {
     const { controlId, placement } = createPluginComposerControlPlacement(params.control, params.localize);
-    return {
+    return createUnavailableComposerControlChip({
         key: composerControlKey(params.control),
         controlId,
-        placement: { ...placement, defaultPlacement: 'overflow' },
-        composerPreview: () => ({ absent: true }),
-        collapsedAction: ({ tint }) => ({
-            id: composerControlMenuId(params.control),
-            label: placement.title,
-            subtitle: params.reason,
-            disabled: true,
-            icon: <Icon name={placement.icon} size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />,
-            onPress: () => {},
-        }),
-        render: () => null,
-    };
+        placement,
+        menuId: composerControlMenuId(params.control),
+        reason: params.reason,
+    });
 }
 
 function createComposerActionChip(params: Readonly<{

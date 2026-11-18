@@ -1,5 +1,9 @@
 import type { BulkSessionChangeRow } from '@/components/sessions/authoring/bulk/executeBulkSessionChanges';
 import type { SessionAskTargetRowState } from '@/components/sessions/transcript/askRecord/SessionAskRecord';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
+import { isBundledAgentId } from '@/agents/registry/registryCore';
+import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
 import { t } from '@/text';
 
 /** Why a target can't receive this compose, from the authoring-facts owner's typed reason. */
@@ -88,8 +92,28 @@ export function describeBulkRowReason(
     return t('session.participants.bulk.reasonWaking');
   if (row.state === 'approval_pending')
     return t('session.participants.bulk.reasonApproval');
-  if (row.state === 'failed') return row.reason ?? null;
+  if (row.state === 'failed') {
+    if (row.reason) return row.reason;
+    // A typed admission refusal says why in the session composer's own words (one code → copy owner).
+    const key = getSessionInputFailureLabelKey({ code: row.code });
+    return key ? t(key) : null;
+  }
+  // A message that followed an agent switch keeps the switch in its reason line (lab: "Sent · Switched from …").
+  if (row.switchedFrom && row.switchedTo) {
+    return t('session.participants.bulk.reasonSwitched', {
+      from: describeAgentId(row.switchedFrom),
+      to: describeAgentId(row.switchedTo),
+    });
+  }
   return null;
+}
+
+/** A qualified Agent id ("happier.agent.claude/claude") in the words the engine chip uses. */
+function describeAgentId(agentId: string): string {
+  const localId = agentId.slice(agentId.lastIndexOf('/') + 1);
+  return isBundledAgentId(localId)
+    ? resolveAgentCatalogTitle(localId)
+    : formatAgentLikeIdForDisplay(localId);
 }
 
 export type BulkSessionResultSummary = Readonly<{
@@ -114,13 +138,22 @@ export function summarizeBulkRows(
   };
 }
 
-export function formatBulkSummary(summary: BulkSessionResultSummary): string {
+/**
+ * The summary pill. Its finished word is the rows' word: "sent" when the compose carried a message (rows read
+ * Sent), "changed" for settings only (rows read Changed), so one state has one word on the page.
+ */
+export function formatBulkSummary(
+  summary: BulkSessionResultSummary,
+  carriedMessage: boolean,
+): string {
   // While work still moves, one progress figure; once settled, the counts that matter, failures first.
   if (summary.inProgress > 0 && summary.notSent === 0 && summary.waits === 0) {
-    return t('session.participants.bulk.progress', {
-      done: summary.done,
-      total: summary.total,
-    });
+    return t(
+      carriedMessage
+        ? 'session.participants.bulk.progressSent'
+        : 'session.participants.bulk.progressChanged',
+      { done: summary.done, total: summary.total },
+    );
   }
   return [
     summary.notSent > 0
@@ -137,7 +170,12 @@ export function formatBulkSummary(summary: BulkSessionResultSummary): string {
         })
       : null,
     summary.done > 0
-      ? t('session.participants.bulk.summaryDone', { count: summary.done })
+      ? t(
+          carriedMessage
+            ? 'session.participants.bulk.summarySent'
+            : 'session.participants.bulk.summaryChanged',
+          { count: summary.done },
+        )
       : null,
   ]
     .filter((part): part is string => part !== null)

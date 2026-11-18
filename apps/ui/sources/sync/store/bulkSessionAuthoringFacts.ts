@@ -29,6 +29,8 @@ export function projectBulkSessionAuthoringFact(address: ActionSessionAddressV1,
     const { updatedAt: _modelsUpdatedAt, ...modelState } = models ?? {};
     const actionTarget = session ? createSessionActionTarget({ session, serverId: address.serverId, resumeCapabilityOptions: resumeOptions }) : null;
     const machineId = resolveSessionMachineId(metadata);
+    // The folder the Session runs in: a Skills/MCP preview is scoped to one Machine and folder.
+    const directory = typeof metadata?.path === 'string' && metadata.path.trim().length > 0 ? metadata.path : null;
     const agentId = snapshot?.agentTarget ? buildQualifiedPluginContributionKey(snapshot.agentTarget.identity) : null;
     // These are semantic current values, not new write observations. Omit read clocks from chip identity.
     const sessionConfigOptionOverrides = metadata ? parseSessionConfigOptionOverridesState({ v: 1, updatedAt: 0,
@@ -67,6 +69,7 @@ export function projectBulkSessionAuthoringFact(address: ActionSessionAddressV1,
         agentId,
         agentTarget: snapshot?.agentTarget ?? null,
         machineId,
+        directory,
         modelId: snapshot?.modelId ?? null,
         modelSelectionRef: snapshot?.modelSelection?.ref ?? null,
         permissionMode: snapshot?.permissionMode ?? null,

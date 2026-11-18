@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { BulkSessionChangeRow } from '@/components/sessions/authoring/bulk/executeBulkSessionChanges';
 import { BulkSessionResults } from './BulkSessionResults';
+import { t } from '@/text';
 
 afterEach(standardCleanup);
 
@@ -21,11 +22,12 @@ async function render(
   rows: readonly BulkSessionChangeRow[],
   onRetry = vi.fn(),
   onRetryFailed = vi.fn(),
+  text: string | null = 'Rebase and rerun the tests.',
 ) {
   const screen = await renderScreen(
     <BulkSessionResults
       rows={rows}
-      text="Rebase and rerun the tests."
+      text={text}
       submitting={false}
       compact={false}
       onRetry={onRetry}
@@ -62,6 +64,30 @@ describe('BulkSessionResults', () => {
     expect(screen.findByTestId('bulk-compose-retry:a')).toBeTruthy();
     expect(screen.findByTestId('bulk-compose-results-skipped')).toBeTruthy();
     expect(screen.findByTestId('bulk-compose-retry:z')).toBeFalsy();
+  });
+
+  it('says the rows\' own word in the summary: sent for a message, changed for settings only', async () => {
+    const pill = (screen: Awaited<ReturnType<typeof render>>['screen']) =>
+      String(screen.findAll((node) => node.props?.testID === 'bulk-compose-results-summary'
+        && typeof node.props.label === 'string')[0]?.props.label).toLowerCase();
+    const sent = await render([row('a', 'sent'), row('b', 'applying')]);
+    expect(pill(sent.screen)).toContain('sent');
+    const settings = await render([
+      { ...row('c', 'applied'), actionId: 'session.permission_mode.set' },
+      { ...row('d', 'applied'), actionId: 'session.permission_mode.set' },
+    ], vi.fn(), vi.fn(), null);
+    expect(pill(settings.screen)).toContain('changed');
+  });
+
+  it('keeps the agent switch in the reason line of a row whose message followed it', async () => {
+    const { screen } = await render([{ ...row('a', 'sent'), switchedFrom: 'happier.agent.gemini/gemini',
+      switchedTo: 'happier.agent.claude/claude' }]);
+    expect(screen.getTextContent()).toMatch(/Gemini.*Claude/);
+  });
+
+  it('says why a send was refused when the target gave only a typed code', async () => {
+    const { screen } = await render([{ ...row('a', 'failed'), code: 'session_input_target_update_required' }]);
+    expect(screen.getTextContent()).toContain(t('session.pendingMessages.admissionRejected.targetUpdateRequired'));
   });
 
   it('offers Review for a session whose send waits for an approval', async () => {

@@ -9,7 +9,7 @@ import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput
 import type { SelectionListStep } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { buildRecipientMultiSelectRootStep, buildRecipientRootStep } from '../definitions/createRecipientActionChip';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
@@ -76,8 +76,10 @@ export function resolveRecipientMultiSelectLabel(model: Pick<RecipientMultiSelec
 const MultiRecipientChip = React.memo(function MultiRecipientChip(props: MultiRecipientChipProps) {
     const [open, setOpen] = React.useState(false);
     const anchorRef = React.useRef<React.ElementRef<typeof View> | null>(null);
+    const { theme } = useUnistyles();
     const { multi } = props;
     const label = resolveRecipientMultiSelectLabel(multi);
+    const accessibilityLabel = multi.summaryDetail ? `${label} · ${multi.summaryDetail}` : label;
     const selection = React.useMemo(() => ({ kind: 'multiple' as const, selectedIds: new Set(multi.selectedIds) }), [multi.selectedIds]);
     const rootStep = React.useMemo(() => buildRecipientMultiSelectRootStep(multi), [multi]);
     if (multi.targets.length === 0 && multi.selectedIds.length === 0) return null;
@@ -89,17 +91,26 @@ const MultiRecipientChip = React.memo(function MultiRecipientChip(props: MultiRe
                     onPress={() => setOpen((v) => !v)}
                     style={({ pressed }) => props.ctx.chipStyle(Boolean(pressed))}
                     accessibilityRole="button"
-                    accessibilityLabel={label}
+                    accessibilityLabel={accessibilityLabel}
                 >
                     <View style={stylesheet.chipRow}>
                         <Icon name="navigation-arrow" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={props.ctx.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />
-                        {props.ctx.showLabel ? <Text numberOfLines={1} style={[props.ctx.textStyle, stylesheet.label]}>{label}</Text> : null}
+                        {/* The header line names who the message goes to: the count reads in primary ink, the detail quiet. */}
+                        {props.ctx.showLabel ? (
+                            <Text numberOfLines={1} style={[props.ctx.textStyle, stylesheet.label, { color: theme.colors.text.primary }]}>
+                                {label}
+                                {multi.summaryDetail ? (
+                                    <Text style={{ color: theme.colors.text.tertiary }}>{` · ${multi.summaryDetail}`}</Text>
+                                ) : null}
+                            </Text>
+                        ) : null}
                     </View>
                 </Pressable>
             </View>
             <AgentInputSelectionListPopover
                 open={open}
-                anchorRef={props.ctx.popoverAnchorRef ?? anchorRef}
+                // The list grows from the chip on the header line, not from the card's edge (lab bc To list).
+                anchorRef={anchorRef}
                 rootStep={rootStep}
                 selection={selection}
                 // Rows toggle through their own onSelect; a multiple choice never closes the picker.

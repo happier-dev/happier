@@ -217,14 +217,15 @@ export function useAgentInputPopoverLayout(input: Readonly<{
     const caretAnchored = input.anchor === 'caret';
     // A chip's popover opens above its chip (owner 2026-10-18). A composer high in the window (first-run Home,
     // New Session, a Run now form under the page header) leaves less room there than a popover's content needs:
-    // it then opens below instead of clipping to a sliver (calm-shell ruling 2026-11-01). One rule for every chip:
-    // "enough" is what the content needs when it is known (`contentRoom`), else the usual popover room.
+    // it then opens below instead of clipping (calm-shell ruling 2026-11-01). One rule for every chip: "enough" is
+    // what the content needs when it is known (`contentRoom`), else its designed height (`maxHeightCap`), else the
+    // usual popover room; a side short of that yields to the opposite side when that one has more room (BC-D4).
     return {
         maxHeightCap,
         keyboardBottomInset: effectiveKeyboardHeight,
         placement: caretAnchored && Platform.OS === 'web' ? 'bottom' : 'top',
         ...(caretAnchored && Platform.OS === 'web' ? { placementMinSpace: AGENT_INPUT_CARET_MENU_ROOMIER_SIDE_WINS }
-            : { placementMinSpace: input.contentRoom ?? POPOVER_PREFERRED_ROOM_PX }),
+            : { placementMinSpace: input.contentRoom ?? maxHeightCap ?? POPOVER_PREFERRED_ROOM_PX }),
         flip: true,
         // The popover now anchors correctly on every platform (Popover resolves the portal-relative
         // anchor via window-deltas on Android — see `resolvePortalRelativeAnchorRect`), so the gap is

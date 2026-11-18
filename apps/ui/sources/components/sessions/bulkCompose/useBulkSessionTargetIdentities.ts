@@ -5,6 +5,8 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import { selectSessionDisplayNameSource } from '@/sync/store/hooks';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 /**
  * The display name of each frozen target, for the To list. One narrow selector over the target ids only, so a
@@ -30,4 +32,24 @@ export function useBulkSessionTargetNames(
     sessions: targets.map((target) => target.sessionId),
     sessionListRowsByServerId: [...new Set(targets.map((target) => target.serverId))],
   });
+}
+
+/**
+ * Each target's Machine name, for the To list's "Codex · devbox". One selector over the targets' Machines only:
+ * presence heartbeats re-run it, and the retained result keeps the composer from rendering.
+ */
+export function useBulkSessionMachineLabels(
+  machines: readonly Readonly<{ serverId: string; machineId: string | null }>[],
+): readonly (string | null)[] {
+  const store = getStorage();
+  const selector = React.useMemo(() => {
+    let previous: readonly (string | null)[] = [];
+    return (state: ReturnType<typeof store.getState>) => {
+      const labels = machines.map(({ serverId, machineId }) =>
+        machineId ? getSettledMachineDisplayName(resolveServerScopedMachine(state, serverId, machineId)) : null);
+      previous = retainDeep(previous, labels);
+      return previous;
+    };
+  }, [store, machines]);
+  return store(selector, { machines: true, machineListByServerId: true, profileScope: true });
 }

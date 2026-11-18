@@ -22,16 +22,17 @@ import type { SessionAuthoringMcpContext } from './sessionAuthoringFieldControls
 /** An omitted or explicit-automatic selection is previewed as the canonical default policy. */
 const AUTOMATIC_SELECTION: SessionCapabilitySelectionV1 = SessionCapabilitySelectionV1Schema.parse({});
 
-export function SessionAuthoringCapabilitiesField(props: Readonly<{
+/**
+ * The controlled "This session gets" chip descriptor for an authoring value, through the draft owner. A form hosts
+ * it through `SessionAuthoringCapabilitiesField`; a Composer passes it to `AgentInput`, whose overlay owner then
+ * hosts its popover.
+ */
+export function useSessionAuthoringCapabilitiesChip(props: Readonly<{
     agentId: string;
     context: SessionAuthoringMcpContext;
     value: SessionCapabilitySelectionV1 | null | undefined;
     onChange: (value: SessionCapabilitySelectionV1) => void;
-    chipRenderContext: AgentInputExtraActionChipRenderContext;
-    /** `select`: the bordered field select of the `selects` presentation; the composer chip otherwise. */
-    trigger?: 'chip' | 'select';
-    testID: string;
-}>): React.ReactElement {
+}>) {
     const { onChange } = props;
     const selection = props.value ?? AUTOMATIC_SELECTION;
     const selectionRef = React.useRef(selection);
@@ -53,6 +54,21 @@ export function SessionAuthoringCapabilitiesField(props: Readonly<{
         },
         machineName: props.context.machineName ?? '',
     });
+
+    return chip;
+}
+
+export function SessionAuthoringCapabilitiesField(props: Readonly<{
+    agentId: string;
+    context: SessionAuthoringMcpContext;
+    value: SessionCapabilitySelectionV1 | null | undefined;
+    onChange: (value: SessionCapabilitySelectionV1) => void;
+    chipRenderContext: AgentInputExtraActionChipRenderContext;
+    /** `select`: the bordered field select of the `selects` presentation; the composer chip otherwise. */
+    trigger?: 'chip' | 'select';
+    testID: string;
+}>): React.ReactElement {
+    const chip = useSessionAuthoringCapabilitiesChip(props);
 
     const [open, setOpen] = React.useState(false);
     const anchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);

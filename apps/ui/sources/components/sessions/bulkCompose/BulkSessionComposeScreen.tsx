@@ -44,6 +44,14 @@ import type { CrossSessionAuthoringControlTarget } from '@/components/sessions/a
 import { findSessionAuthoringAgentTargetOption } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { useCrossSessionAuthoringFieldControl } from '@/components/sessions/authoring/controls/useCrossSessionAuthoringFieldControl';
 import { useSessionAuthoringEnginePicker } from '@/components/sessions/authoring/controls/useSessionAuthoringEnginePicker';
+import { useSessionAuthoringConnectedServicesChip } from '@/components/sessions/authoring/controls/SessionAuthoringConnectedServicesField';
+import { useSessionAuthoringCapabilitiesChip } from '@/components/sessions/authoring/controls/SessionAuthoringCapabilitiesField';
+import type { SessionAuthoringFieldControlModel } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
+import { createUnavailableComposerControlChip } from '@/components/sessions/agentInput/definitions/createUnavailableComposerControlChip';
+import { getConnectedServicesAuthActionChipPlacement } from '@/components/sessions/agentInput/definitions/createConnectedServicesAuthActionChip';
+import { getLinkedFilesActionChipPlacement } from '@/components/sessions/agentInput/definitions/agentInputActionChipPlacements';
+import { getCapabilitiesActionChipPlacement } from '@/components/sessions/capabilities/createCapabilitiesActionChip';
+import { areSnapshotProjectionsEquivalent } from '@/sync/domains/state/structuralSharing';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 
@@ -55,7 +63,7 @@ import {
 
 import { BulkSessionResults } from './BulkSessionResults';
 import { describeBulkSkipReason } from './bulkSessionComposePresentation';
-import { useBulkSessionTargetNames } from './useBulkSessionTargetIdentities';
+import { useBulkSessionMachineLabels, useBulkSessionTargetNames } from './useBulkSessionTargetIdentities';
 
 /** The column of the New session page (lab bc §6): the composer and the results share it at every width. */
 const COMPOSE_COLUMN_MAX_WIDTH = 760;
@@ -138,11 +146,17 @@ function BulkSessionComposer(
   const [submittedText, setSubmittedText] = React.useState<string | null>(null);
 
   const names = useBulkSessionTargetNames(targets);
+  const targetMachines = React.useMemo(
+    () => facts.map((fact) => ({ serverId: fact.address.serverId, machineId: fact.machineId })),
+    [facts],
+  );
+  const machineLabels = useBulkSessionMachineLabels(targetMachines);
   const toModel = useBulkSessionToModel({
     seedTargets: props.seed.targets,
     targets,
     facts,
     names,
+    machineLabels,
     onChange: editToTargets,
   });
   const toChip = React.useMemo(
@@ -260,16 +274,42 @@ function BulkSessionComposer(
   const engineUnselected = engineSelectedOptionId === null && (engineOpens || !engineAgentType);
   const [enginePickerOpen, setEnginePickerOpen] = React.useState(false);
 
+  // Runs through and Skills/MCP: the existing chips and popovers (owner 20:25Z), fed by the cross-session model.
+  const accountChip = useBulkAccountChip({
+    facts,
+    targets: controlTargets.targets,
+    selection: composer.selection,
+    setSelection: composer.setSelection,
+    agentSwitchingEnabled: composer.agentSwitchingEnabled,
+    mixedLabel,
+  });
+  const capabilitiesChip = useBulkCapabilitiesChip({
+    targets: controlTargets.targets,
+    selection: composer.selection,
+    setSelection: composer.setSelection,
+    agentSwitchingEnabled: composer.agentSwitchingEnabled,
+    mixedLabel,
+  });
+
   // Attachments and plugin controls are per Session; the + menu names them, disabled, with why (lab bc + menu).
   const pluginLocalize = usePluginLocalizedTextResolver({
     projection: controlTargets.pluginProjection,
   });
   const unavailableChips = React.useMemo(
     () => [
+      ...(accountChip ? [accountChip] : []),
+      ...(capabilitiesChip ? [capabilitiesChip] : []),
       createAttachmentActionChip({
         onPickFile: noop,
         onPickImage: noop,
         disabledReason: t('session.participants.bulk.attachmentsUnavailable'),
+      }),
+      // Linked files resolve under one Session's folder; the row stays to say so (lab bc + menu).
+      createUnavailableComposerControlChip({
+        key: 'bulk-linked-files-unavailable',
+        controlId: 'linkedFiles',
+        placement: getLinkedFilesActionChipPlacement(),
+        reason: t('session.participants.bulk.linkedFilesUnavailable'),
       }),
       ...controlTargets.pluginControls.map((control) =>
         createUnavailablePluginComposerControlChip({
@@ -279,7 +319,7 @@ function BulkSessionComposer(
         }),
       ),
     ],
-    [controlTargets.pluginControls, pluginLocalize],
+    [accountChip, capabilitiesChip, controlTargets.pluginControls, pluginLocalize],
   );
   const extraActionChips = React.useMemo(
     () => (toChip ? [toChip, ...unavailableChips] : unavailableChips),
@@ -454,6 +494,119 @@ function countSettingsTargets(
   );
 }
 
+type BulkChipInput = Readonly<{
+  targets: readonly CrossSessionAuthoringControlTarget[] | null;
+  selection: WorkflowSessionAuthoringSelection;
+  setSelection: (selection: WorkflowSessionAuthoringSelection) => void;
+  agentSwitchingEnabled: boolean;
+  mixedLabel: string;
+}>;
+
+/** Why a cross-session control can't be offered, in the + menu's disabled row; null hides the row (nothing to offer). */
+function describeBulkControlUnavailable(
+  model: SessionAuthoringFieldControlModel,
+): string | null {
+  if (model.kind !== 'unavailable') return null;
+  if (model.reason === 'requires_agent_target')
+    return t('session.participants.bulk.engineMixedUnavailable');
+  if (model.reason === 'differs_between_targets')
+    return t('session.participants.bulk.differsUnavailable');
+  return null;
+}
+
+const INERT_MCP_CONTEXT = { machineId: '', machineName: null, directory: '', serverId: null } as const;
+const INERT_ACCOUNT_CONTEXT = { serverId: null } as const;
+const NO_CONNECTED_ACCOUNTS: readonly never[] = [];
+
+/**
+ * Runs through: the existing account chip and popover over the targets' shared Agent. It reads the targets' one
+ * current route, or says Mixed while they differ; a pick edits the pending change set, applied on Send.
+ */
+function useBulkAccountChip(
+  input: BulkChipInput & Readonly<{ facts: readonly BulkSessionAuthoringFact[] }>,
+) {
+  const { targets, selection, setSelection, agentSwitchingEnabled, mixedLabel, facts } = input;
+  const model = useCrossSessionAuthoringFieldControl({
+    field: 'connectedServices',
+    targets: targets ?? NO_CONTROL_TARGETS,
+    selection,
+    agentSwitchingEnabled,
+    mixedLabel,
+  });
+  const current = React.useMemo(() => {
+    const ready = facts.filter((fact) => fact.status === 'ready');
+    const first = ready[0]?.connectedServices ?? null;
+    return {
+      value: first,
+      mixed: ready.some((fact) => !areSnapshotProjectionsEquivalent(fact.connectedServices ?? null, first)),
+    };
+  }, [facts]);
+  const pending = selection.connectedServices;
+  const onChange = useEventCallback((bindings: WorkflowSessionAuthoringSelection['connectedServices']) => {
+    setSelection({ ...selection, connectedServices: bindings });
+  });
+  const available = model.kind === 'connectedServices' ? model : null;
+  const chip = useSessionAuthoringConnectedServicesChip({
+    agentId: available?.agentId ?? '',
+    agentIdentity: available?.agentIdentity ?? null,
+    connectedAccounts: available?.connectedAccounts ?? NO_CONNECTED_ACCOUNTS,
+    context: available?.context ?? INERT_ACCOUNT_CONTEXT,
+    value: pending !== undefined ? pending : current.value,
+    pending: pending !== undefined,
+    onChange,
+    ...(pending === undefined && current.mixed ? { labelOverride: mixedLabel } : {}),
+  });
+  const reason = targets ? describeBulkControlUnavailable(model) : null;
+  return React.useMemo(() => {
+    if (available) return chip;
+    if (!reason) return null;
+    return createUnavailableComposerControlChip({
+      key: 'bulk-connected-services-unavailable',
+      controlId: 'connectedServices',
+      placement: getConnectedServicesAuthActionChipPlacement({ scoped: true }),
+      reason,
+    });
+  }, [available, chip, reason]);
+}
+
+/**
+ * Skills/MCP: the existing draft sheet, previewed on the targets' one Machine. Offered only while every target
+ * holds the same selection there (the cross-session owner decides); otherwise the + menu says why.
+ */
+function useBulkCapabilitiesChip(input: BulkChipInput) {
+  const { targets, selection, setSelection, agentSwitchingEnabled, mixedLabel } = input;
+  const model = useCrossSessionAuthoringFieldControl({
+    field: 'capabilitySelection',
+    targets: targets ?? NO_CONTROL_TARGETS,
+    selection,
+    agentSwitchingEnabled,
+    mixedLabel,
+  });
+  const available = model.kind === 'mcp' ? model : null;
+  const onChange = useEventCallback((next: NonNullable<WorkflowSessionAuthoringSelection['capabilitySelection']>) => {
+    setSelection({ ...selection, capabilitySelection: next });
+  });
+  const chip = useSessionAuthoringCapabilitiesChip({
+    agentId: available?.agentId ?? '',
+    context: available?.context ?? INERT_MCP_CONTEXT,
+    value: selection.capabilitySelection !== undefined
+      ? selection.capabilitySelection
+      : (targets?.[0]?.values.capabilitySelection ?? null),
+    onChange,
+  });
+  const reason = targets ? describeBulkControlUnavailable(model) : null;
+  return React.useMemo(() => {
+    if (available) return chip;
+    if (!reason) return null;
+    return createUnavailableComposerControlChip({
+      key: 'bulk-capabilities-unavailable',
+      controlId: 'capabilities',
+      placement: getCapabilitiesActionChipPlacement({ scoped: true }),
+      reason,
+    });
+  }, [available, chip, reason]);
+}
+
 /**
  * The To chip's controlled model: every frozen target, with the ones that can't receive this (archived, can't
  * resume, read only) in a Skipped group with why. Unchecking a target removes it from this compose only.
@@ -464,10 +617,12 @@ function useBulkSessionToModel(
     targets: readonly ActionSessionAddressV1[];
     facts: readonly BulkSessionAuthoringFact[];
     names: readonly string[];
+    /** Each fact's Machine name, in fact order. */
+    machineLabels: readonly (string | null)[];
     onChange: (next: readonly ActionSessionAddressV1[]) => void;
   }>,
 ): RecipientMultiSelectModel<ActionSessionAddressV1> {
-  const { seedTargets, targets, facts, names, onChange } = input;
+  const { seedTargets, targets, facts, names, machineLabels, onChange } = input;
   return React.useMemo(() => {
     const nameByKey = new Map(
       targets.map((target, index) => [
@@ -477,6 +632,9 @@ function useBulkSessionToModel(
     );
     const factByKey = new Map(
       facts.map((fact) => [sessionAddressKey(fact.address), fact]),
+    );
+    const machineByKey = new Map(
+      facts.map((fact, index) => [sessionAddressKey(fact.address), machineLabels[index] ?? null]),
     );
     const reachable = seedTargets.filter(
       (target) =>
@@ -504,27 +662,28 @@ function useBulkSessionToModel(
         const agentType = resolveBundledAgentIdFromContributionIdentity(
           factByKey.get(sessionAddressKey(target))?.agentTarget?.identity,
         );
+        const machineLabel = machineByKey.get(sessionAddressKey(target)) ?? null;
+        // The row says which agent and where it runs, in words ("Codex · devbox", lab bc To list).
+        const subtitle = [agentType ? resolveAgentCatalogTitle(agentType) : null, machineLabel]
+          .filter((part): part is string => Boolean(part))
+          .join(' · ');
         return {
           id: sessionAddressKey(target),
           label: nameByKey.get(sessionAddressKey(target)) ?? target.sessionId,
           recipient: target,
-          // The agent mark keeps the leading slot (lab bc To list); the row says which agent in words too.
-          ...(agentType
-            ? { subtitle: resolveAgentCatalogTitle(agentType), icon: <AgentIcon agentId={agentType} size={ICON_SIZE.sm} /> }
-            : {}),
+          ...(subtitle ? { subtitle } : {}),
+          // The agent mark keeps the leading slot.
+          ...(agentType ? { icon: <AgentIcon agentId={agentType} size={ICON_SIZE.sm} /> } : {}),
         };
       }),
       selectedIds: recipients.map(sessionAddressKey),
       selectedRecipients: recipients,
       removedRecipients: [],
       skipped,
-      summaryLabel:
-        skipped.length > 0
-          ? t('session.participants.bulk.toWithSkipped', {
-              count: selectedCount,
-              skipped: skipped.length,
-            })
-          : t('session.participants.bulk.to', { count: selectedCount }),
+      summaryLabel: t('session.participants.bulk.to', { count: selectedCount }),
+      ...(skipped.length > 0
+        ? { summaryDetail: t('session.participants.bulk.skippedCount', { count: skipped.length }) }
+        : {}),
       toggle(id) {
         const selected = new Set(targets.map(sessionAddressKey));
         if (selected.has(id)) selected.delete(id);
@@ -538,7 +697,7 @@ function useBulkSessionToModel(
       },
       clear: () => onChange([]),
     };
-  }, [facts, names, onChange, seedTargets, targets]);
+  }, [facts, machineLabels, names, onChange, seedTargets, targets]);
 }
 
 const styles = StyleSheet.create((theme) => ({

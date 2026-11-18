@@ -75,7 +75,9 @@ export type SessionAuthoringFieldUnavailableReason =
     /** The Profile reader settled with a refusal, rather than an empty inventory. */
     | 'profile_catalog_unavailable'
     /** Another owner supplies this field's control and the host did not pass it. */
-    | 'owned_by_host';
+    | 'owned_by_host'
+    /** A control aimed at several Sessions whose current values or scopes differ, so one value can't stand for all. */
+    | 'differs_between_targets';
 
 /**
  * The Machine, folder and Account scope an MCP selection is previewed against.

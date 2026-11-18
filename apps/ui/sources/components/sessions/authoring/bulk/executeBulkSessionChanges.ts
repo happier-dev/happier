@@ -14,6 +14,9 @@ export type BulkSessionChangeRow = Readonly<{
     code?: string;
     reason?: string;
     result?: ActionExecuteResult;
+    /** An earlier stage switched this target's Agent (qualified Agent ids): the row keeps saying so after its message. */
+    switchedFrom?: string;
+    switchedTo?: string;
 }>;
 export const bulkChangeTargetKey = sessionAddressKey;
 
@@ -52,6 +55,7 @@ export async function executeBulkSessionChanges(input: Readonly<{
 }>): Promise<readonly BulkSessionChangeRow[]> {
     const previous: ExistingSessionStageTargetResult[] = [];
     const rows = new Map<string, BulkSessionChangeRow>();
+    const switches = new Map<string, Readonly<{ switchedFrom?: string; switchedTo?: string }>>();
     for (const skipped of input.plan.skippedTargets) {
         const row: BulkSessionChangeRow = {
             target: skipped.address, actionId: 'session.message.send', state: 'skipped', code: skipped.reason, reason: skipped.reason,
@@ -67,7 +71,15 @@ export async function executeBulkSessionChanges(input: Readonly<{
             const key = bulkChangeTargetKey(target);
             if (completed.has(key)) return;
             completed.add(key);
-            const row = projectRow(target, stage.actionId, result);
+            const projected = projectRow(target, stage.actionId, result);
+            if (projected.state === 'switched') {
+                const selection = readRecord(stage.input.selection);
+                switches.set(key, {
+                    ...(typeof stage.input.expectedCurrentAgentId === 'string' ? { switchedFrom: stage.input.expectedCurrentAgentId } : {}),
+                    ...(typeof selection.agentId === 'string' ? { switchedTo: selection.agentId } : {}),
+                });
+            }
+            const row: BulkSessionChangeRow = { ...projected, ...switches.get(key) };
             rows.set(key, row);
             previous.push({ ...target, actionId: stage.actionId,
                 ok: row.state === 'sent' || row.state === 'applied' || row.state === 'switched',

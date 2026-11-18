@@ -35,18 +35,28 @@ import type { SessionAuthoringConnectedServicesContext } from './sessionAuthorin
  * overlay controller would otherwise own.
  */
 
-export function SessionAuthoringConnectedServicesField(props: Readonly<{
+export type SessionAuthoringConnectedServicesChipParams = Readonly<{
     agentId: string;
     agentIdentity: PluginContributionIdentityV1 | null;
     connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
     context: SessionAuthoringConnectedServicesContext;
     value: ConnectedServiceBindingsV2 | null | undefined;
     onChange: (value: ConnectedServiceBindingsV2 | null) => void;
-    chipRenderContext: AgentInputExtraActionChipRenderContext;
-    /** `select`: the bordered field select of the `selects` presentation; the composer chip otherwise. */
-    trigger?: 'chip' | 'select';
-    testID: string;
-}>): React.ReactElement | null {
+    /** The chip's label instead of the route's: a Composer aimed at several Sessions whose routes differ says Mixed. */
+    labelOverride?: string;
+    /**
+     * Whether the value is an edit the person made here (the chip then rides the row). Defaults to any authored
+     * value; a Composer that shows its targets' current value passes only its own pending edit.
+     */
+    pending?: boolean;
+}>;
+
+/**
+ * The controlled "Runs through" chip descriptor for an authoring value: the incumbent New Session owner adapted to
+ * a value-in, `onChange`-out contract. A form hosts it through `SessionAuthoringConnectedServicesField`; a Composer
+ * passes it to `AgentInput`, whose overlay owner then hosts its popover.
+ */
+export function useSessionAuthoringConnectedServicesChip(props: SessionAuthoringConnectedServicesChipParams) {
     const { onChange } = props;
     const router = useRouter();
     const settings = useSettingsSelector((settings) => ({
@@ -108,7 +118,8 @@ export function SessionAuthoringConnectedServicesField(props: Readonly<{
 
     const { connectedServicesBindingsPayload, connectedServicesAuthChip } = useNewSessionConnectedServices({
         placementId: getConnectedServicesAuthActionChipPlacement({ scoped: true }).id,
-        placementPending: props.value !== undefined,
+        placementPending: props.pending ?? props.value !== undefined,
+        ...(props.labelOverride === undefined ? {} : { labelOverride: props.labelOverride }),
         agentCore,
         defaultAuthAgentId: props.agentId,
         defaultAuthConsumer: props.agentIdentity,
@@ -145,6 +156,23 @@ export function SessionAuthoringConnectedServicesField(props: Readonly<{
         pendingUserEditRef.current = false;
         onChange(connectedServicesBindingsPayload);
     }, [connectedServicesBindingsPayload, onChange]);
+
+    return connectedServicesAuthChip;
+}
+
+export function SessionAuthoringConnectedServicesField(props: Readonly<{
+    agentId: string;
+    agentIdentity: PluginContributionIdentityV1 | null;
+    connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
+    context: SessionAuthoringConnectedServicesContext;
+    value: ConnectedServiceBindingsV2 | null | undefined;
+    onChange: (value: ConnectedServiceBindingsV2 | null) => void;
+    chipRenderContext: AgentInputExtraActionChipRenderContext;
+    /** `select`: the bordered field select of the `selects` presentation; the composer chip otherwise. */
+    trigger?: 'chip' | 'select';
+    testID: string;
+}>): React.ReactElement | null {
+    const connectedServicesAuthChip = useSessionAuthoringConnectedServicesChip(props);
 
     const [open, setOpen] = React.useState(false);
     const anchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);

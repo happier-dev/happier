@@ -96,6 +96,8 @@ function resolveDefaultAuthWarningLabel(warningCode: ConnectedServicesAuthWarnin
 export function useNewSessionConnectedServices(params: Readonly<{
   placementId?: string;
   placementPending?: boolean;
+  /** What the chip says instead of the route label: a Composer aimed at several Sessions whose routes differ says Mixed. */
+  labelOverride?: string;
   modelSelection?: RouteSelection;
   providerSources?: readonly ProviderRouteSource[];
   /** The selected Agent's Gateways and Providers for the "Runs through" popover; omitted, it names none. */
@@ -636,7 +638,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
         return createConnectedServicesAuthActionChip({
             placementId: params.placementId,
             pending: params.placementPending === true || authLabel.warningCodes.length > 0 || connectedAccountDefaultsStatus === 'unavailable',
-            label: routeChip?.label ?? (connectedAccountDefaultsStatus !== 'ready' && authLabel.connectedCount === 0
+            label: params.labelOverride ?? routeChip?.label ?? (connectedAccountDefaultsStatus !== 'ready' && authLabel.connectedCount === 0
                 ? t(connectedAccountDefaultsStatus === 'loading' ? 'common.loading' : 'common.unavailable')
                 : authLabel.label),
             connectedCount: authLabel.connectedCount,
@@ -644,7 +646,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
             popoverContent: connectedServicesAuthPopoverContent,
             agentId: defaultAuthAgentId,
         });
-    }, [authLabel, connectedAccountDefaultsStatus, connectedServicesAuthPopoverContent, defaultAuthAgentId, nativeAuthSource, routePresentation, supportedConnectedServiceIds, params.placementId, params.placementPending]);
+    }, [authLabel, connectedAccountDefaultsStatus, connectedServicesAuthPopoverContent, defaultAuthAgentId, nativeAuthSource, routePresentation, supportedConnectedServiceIds, params.placementId, params.placementPending, params.labelOverride]);
 
   const selectedCredentialMachineAgent = React.useMemo(() => projectMachineAgentForCredential(params.machineAgent, {
     credentialBindings: connectedServicesBindingsPayload,

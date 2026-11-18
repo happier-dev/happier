@@ -17,6 +17,8 @@ export type RecipientMultiSelectModel<T> = Readonly<{
     skipped?: readonly RecipientMultiSelectSkipped[];
     /** Replaces the names on the chip when a count reads better ("To: 6 sessions · 1 skipped"). */
     summaryLabel?: string;
+    /** A quiet fact after the summary ("1 skipped"), read in tertiary ink beside the count. */
+    summaryDetail?: string;
     selectedIds: readonly string[];
     selectedRecipients: readonly T[];
     removedRecipients: readonly T[];
