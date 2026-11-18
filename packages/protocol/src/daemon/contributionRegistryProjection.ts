@@ -1365,14 +1365,6 @@ export const PluginProjectedActionV2Schema = lazyZodSchema(() => (<T extends z.Z
       message: 'Projected composer slash metadata requires the UI Action surface.',
     });
   }
-  if (value.dangerLevel === 'safe' && value.confirmation) {
-    context.addIssue({
-      code: "custom",
-      path: ['confirmation'],
-      message: 'Safe projected actions cannot request confirmation.',
-    });
-    return;
-  }
   if (!pluginActionRequiresConfirmationPresentation(value.surfaces, value.dangerLevel) || value.confirmation) return;
   context.addIssue({
     code: "custom",

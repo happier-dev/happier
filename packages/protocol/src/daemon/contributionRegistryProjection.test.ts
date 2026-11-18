@@ -43,6 +43,8 @@ import {
   readDaemonPluginUiTargetedSurfaceMountV1,
 } from './contributionRegistryProjection.js';
 import * as protocol from '../index.js';
+import { PluginActionContributionV2Schema } from '../plugins/actions/v2.js';
+import { pluginActionRequiresPresentUserIntent } from '../plugins/actions/invocation.js';
 import { RPC_METHODS } from '../rpc/index.js';
 import { PluginSettingsContributionV2Schema } from '../plugins/contributions/settings.js';
 import { PluginActionPresentUserAuthorizationFactsSchema } from '../plugins/actions/invocation.js';
@@ -1108,7 +1110,7 @@ describe('daemon contribution registry projection (wire)', () => {
     expect(protocol.PluginUiResourceBindingCapabilityV1Schema.parse(capability)).toEqual(capability);
   });
 
-  it('preserves exact non-safe action confirmation presentation and fails closed on invalid combinations', () => {
+  it('preserves Action confirmation and rejects missing non-safe or unknown metadata', () => {
     const confirmation = {
       title: { key: 'actions.delete.title', fallback: 'Delete workspace?' },
       body: { key: 'actions.delete.body', fallback: 'This cannot be undone.' },
@@ -1134,7 +1136,7 @@ describe('daemon contribution registry projection (wire)', () => {
     expect(PluginProjectedActionV2Schema.safeParse({
       ...projectedAction,
       dangerLevel: 'safe',
-    }).success).toBe(false);
+    }).success).toBe(true);
     expect(PluginProjectedActionV2Schema.safeParse({
       ...projectedAction,
       confirmation: undefined,
@@ -1143,6 +1145,25 @@ describe('daemon contribution registry projection (wire)', () => {
       ...projectedAction,
       confirmation: { ...confirmation, input: { secret: 'must-not-project' } },
     }).success).toBe(false);
+  });
+
+  it('preserves confidential safe Action confirmation through projection and present-user policy', () => {
+    const declaration = {
+      id: 'sensitive/read', title: 'Reveal captured variables',
+      execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } },
+      scopes: ['global'], surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: [],
+      dangerLevel: 'safe',
+      confirmation: { title: 'Reveal captured variables?', body: 'Captured values can contain credentials.' },
+    } as const;
+    const declared = PluginActionContributionV2Schema.parse(declaration);
+    const projected = PluginProjectedActionV2Schema.parse({
+      ...declaration, pluginId: 'acme.errors', occurrenceId: 'account-occurrence-a',
+    });
+    expect(projected.dangerLevel).toBe('safe');
+    expect(projected.confirmation).toEqual(declared.confirmation);
+    for (const surface of declaration.surfaces) {
+      expect(pluginActionRequiresPresentUserIntent(projected, surface)).toBe(true);
+    }
   });
 
   it('projects placement-free Actions without inventing fields and retains empty wire bindings', () => {
