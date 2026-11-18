@@ -205,10 +205,16 @@ export function StoreListingPaneHost(
       mainColumn={mainColumn}
       onCloseDetails={closeStore}
       details={details}
-      main={props.children}
+      main={<StoreListingPaneOpenContext.Provider value={details !== null}>{props.children}</StoreListingPaneOpenContext.Provider>}
     />
   );
 }
+
+/**
+ * A listing stands beside the directory: the directory's head keeps one toolbar row, so what narrows the page by
+ * catalog moves into its search's filter menu (UI refinements 2026-11-18, Store toolbar).
+ */
+export const StoreListingPaneOpenContext = React.createContext(false);
 
 /** `/plugins/listing?selection=…`: the same listing body as the pane, as its own page (Open as page, a phone push). */
 export function StoreListingPage(

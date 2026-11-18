@@ -40,7 +40,7 @@ import { useMcpAdded, useSkillAdded, useAgentAdded, useProviderAdded } from './c
 import { useStoreOpenReference, useOpenStoreCategory } from './catalog/useStoreOpenReference';
 import { StoreItemMark } from './catalog/StoreItemMark';
 import { hydrateStoreRegistryIdentity, StoreRegistryIdentityProvider } from './catalog/StoreRegistryIdentity';
-import { StoreListingPaneHost, useOpenStoreListing, useStoreListingSelection } from './StoreListing';
+import { StoreListingPaneHost, StoreListingPaneOpenContext, useOpenStoreListing, useStoreListingSelection } from './StoreListing';
 import { StoreBrowserExtensionLinkResult } from './StoreBrowserExtensionLinkResult';
 import { readWebStoreExtensionId } from './catalog/storeBrowserExtensions';
 import type { StoreListingReference } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
@@ -295,33 +295,68 @@ export function StoreKindFrame(
       onSourceChange={props.onSourceChange}
     />
   ) : undefined;
-  const accessory = props.accessory ?? registrySelect;
   // Software reads one Machine; Bot templates and portable themes belong to no project.
   const scoped = props.kind !== 'software' && props.kind !== 'bot' && props.kind !== 'theme' && props.kind !== 'pet';
   // A kind's own create entry (Apps' definitions, Create a pet…): the header actions on wide pages, the band on a phone.
   const createEntry = props.kind === 'app' ? <StoreAppDefinitionEntries /> : props.kind === 'pet' ? <CreatePetEntry /> : null;
   return (
     <StoreListingPaneHost title={copy.title} testID={`store.kind.${props.kind}`}>
+    <StoreKindFrameBody kind={props.kind} title={copy.title} description={copy.description} search={copy.search}
+      stacked={stacked} scoped={scoped} createEntry={createEntry} scopeChip={scopeChip} query={props.query}
+      onQueryChange={props.onQueryChange} {...(props.filter ? { filter: props.filter } : {})}
+      {...(props.accessory ? { accessory: props.accessory } : {})} {...(registrySelect ? { registrySelect } : {})}
+      {...(props.condition ? { condition: props.condition } : {})}>
+      {props.children}
+    </StoreKindFrameBody>
+    </StoreListingPaneHost>
+  );
+}
+
+/**
+ * A kind page's head and directory, inside the listing pane host: with a listing open beside it the head keeps one
+ * toolbar row, so the catalog choice leaves the band for the search's filter menu (its Source condition; UI
+ * refinements 2026-11-18, Store toolbar).
+ */
+export function StoreKindFrameBody(props: Readonly<{
+  kind: StoreDirectoryKind | 'software' | 'bot';
+  title: string;
+  description: string;
+  search: string;
+  stacked: boolean;
+  scoped: boolean;
+  createEntry: React.ReactNode;
+  scopeChip: React.ReactNode;
+  query: string;
+  onQueryChange: (query: string) => void;
+  filter?: StoreSearchState['filter'];
+  accessory?: React.ReactNode;
+  registrySelect?: React.ReactNode;
+  condition?: React.ReactNode;
+  children: React.ReactNode;
+}>): React.ReactNode {
+  const paneOpen = React.useContext(StoreListingPaneOpenContext);
+  const accessory = props.accessory ?? (paneOpen ? undefined : props.registrySelect);
+  return (
     <ItemList pageColumn="wide" testID={`store.kind.${props.kind}`}>
       <PageContentColumn>
         {/* The main-screen head every main page draws (ruling 11-13): its search behind the magnifier like any main
             page, the funnel ending the field; what narrows the page (catalog, Machine, conditions) sits in its band. */}
         <MainScreenHeader
           testID={`store.kind.${props.kind}.header`}
-          title={copy.title}
-          description={copy.description}
-          {...(stacked ? {} : scoped ? { actions: createEntry
-            ? <View style={styles.headerActions}>{createEntry}{scopeChip}</View> : scopeChip } : createEntry ? { actions: createEntry } : {})}
+          title={props.title}
+          description={props.description}
+          {...(props.stacked ? {} : props.scoped ? { actions: props.createEntry
+            ? <View style={styles.headerActions}>{props.createEntry}{props.scopeChip}</View> : props.scopeChip } : props.createEntry ? { actions: props.createEntry } : {})}
           search={{
             value: props.query,
             onChangeText: props.onQueryChange,
-            placeholder: copy.search,
+            placeholder: props.search,
             testID: `store.kind.${props.kind}.search`,
             ...(props.filter?.filterButton ? { trailing: props.filter.filterButton } : {}),
           }}
-          band={stacked || accessory || props.condition || props.filter?.tokenRow ? <>
-            {stacked ? <>
-              <View style={styles.phoneScope}>{scoped ? scopeChip : null}{accessory}{createEntry}</View>
+          band={props.stacked || accessory || props.condition || props.filter?.tokenRow ? <>
+            {props.stacked ? <>
+              <View style={styles.phoneScope}>{props.scoped ? props.scopeChip : null}{accessory}{props.createEntry}</View>
               {props.condition ?? null}
             </> : accessory || props.condition ? (
               // One filter row: what narrows the page by catalog leads, the kind's either-or ends it, on one line.
@@ -336,7 +371,6 @@ export function StoreKindFrame(
         {props.children}
       </PageContentColumn>
     </ItemList>
-    </StoreListingPaneHost>
   );
 }
 
