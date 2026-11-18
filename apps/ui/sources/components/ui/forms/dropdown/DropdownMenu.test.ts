@@ -620,7 +620,7 @@ describe('DropdownMenu', () => {
         expect(capped.findByType('Popover' as any)?.props?.placementMinSpace).toBe(240);
     });
 
-    it('titles a submenu by its own name once, never again as the first heading of its phone sheet', async () => {
+    it('retains the chooser heading in an anchored submenu on phone and desktop', async () => {
         const { DropdownMenu } = await import('./DropdownMenu');
         const chooserTitle = 'Move “Client work” to';
         const render = async (phone: boolean) => {
@@ -655,8 +655,7 @@ describe('DropdownMenu', () => {
             act(() => { screen.tree.unmount(); });
             return seen;
         };
-        expect(await render(true)).toEqual({ label: chooserTitle, headings: [''] });
-        // A desktop menu has no title of its own, so its chooser keeps the heading.
+        expect(await render(true)).toEqual({ label: chooserTitle, headings: [chooserTitle] });
         expect(await render(false)).toEqual({ label: chooserTitle, headings: [chooserTitle] });
         popoverDevice.phone = false;
     });

@@ -468,5 +468,5 @@ it('mounts one Session owner for the chip and the apply line, and adds nothing u
   expect(failedRow.line2.status.detail).toBeUndefined();
   const callsAfterFacts = transport.mock.calls.length;
   await act(async () => { hook.getCurrent().chip.onIntent?.(); });
-  await vi.waitFor(() => expect(transport.mock.calls.length).toBeGreaterThan(callsAfterFacts));
+  expect(transport.mock.calls).toHaveLength(callsAfterFacts);
 });
