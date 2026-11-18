@@ -1,6 +1,7 @@
 import { projectPendingDeliveryFailureCauseV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { randomUUID } from 'node:crypto';
+import { isModelRefGrantedByConstraintsV1, type CallerInputConstraintsV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { materializeActionRequestAttributionV1, readAuthenticatedActionRequesterAccountIdV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
@@ -124,7 +125,7 @@ export type SendSessionMessageResult =
        * from `unsupported`, which claims this Session or daemon cannot do it at
        * all — see `InactiveSessionResumeResult`.
        */
-      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'session_inactive' | 'held_by_person' | 'authority_unavailable' | 'machine_target_not_current' | 'takeover_required' | 'unsupported' | 'resume_failed' | 'plugin_disabled' | 'encryption_material_unavailable' | 'timeout' | 'wait_failed' | 'provider_switch_unsupported' | 'admission_rejected' | 'cancelled' | 'machine_admission_transport_unavailable';
+      code: 'session_not_found' | 'session_id_ambiguous' | 'session_lookup_timeout' | 'session_archived' | 'session_inactive' | 'held_by_person' | 'authority_unavailable' | 'machine_target_not_current' | 'takeover_required' | 'unsupported' | 'resume_failed' | 'plugin_disabled' | 'encryption_material_unavailable' | 'timeout' | 'wait_failed' | 'provider_switch_unsupported' | 'admission_rejected' | 'cancelled' | 'machine_admission_transport_unavailable' | 'credential_scope_denied';
       candidates?: string[];
       message?: string;
       providerError?: ProviderErrorV1;
@@ -242,6 +243,8 @@ type SendSessionMessageParams = Readonly<{
   permissionModeOverride?: string;
   modelSelectionInput?: SessionMessageModelSelectionInput;
   modelSelectionUpdatedAt?: number;
+  /** Flat Action aliases need exact receiver Agent/Provider resolution before model admission. */
+  modelInputConstraints?: readonly (CallerInputConstraintsV1 | undefined)[];
   incomingResumeOptions?: Parameters<typeof requestInactiveSessionResume>[0]['incomingOptions'];
   pendingAdmissionMode?: 'continuation_if_no_queued_user_input';
   /** Host recovery qualification against the fresh Session used for authoring. */
@@ -1756,6 +1759,9 @@ export async function sendSessionMessage(
           : Date.now()),
       })
     : { modelId: '', selection: null };
+  if (params.modelInputConstraints && !isModelRefGrantedByConstraintsV1(
+    params.modelInputConstraints, modelResolution.selection?.ref ?? 'automatic',
+  )) return { ok: false, code: 'credential_scope_denied' };
   const callerMeta = stripSessionInputProtectedMeta(sanitizeSessionInputForgeEvidenceMetaV1(params.messageMeta ?? {}));
   delete callerMeta[SESSION_MESSAGE_PROVENANCE_META_KEY];
   const baseMeta = {

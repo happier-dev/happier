@@ -33,8 +33,12 @@ const CURRENT_MACHINE = ExternalActionMachineBootstrapV1Schema.parse({
 });
 
 describe('executePluginSessionMessageAction', () => {
-  it.each(['authored', 'explicit', 'team', 'constrained', 'constrained-default', 'invalid'] as const)('admits %s authored context through the canonical input boundary', async selection => {
-    const constrained = selection === 'constrained' || selection === 'constrained-default';
+  it.each(['authored', 'explicit', 'team', 'constrained', 'constrained-default', 'invalid',
+    'host-allowed', 'host-denied', 'host-provider-denied', 'host-agent-denied', 'host-default-denied', 'credential-denied'] as const)('admits %s authored context through the canonical input boundary', async selection => {
+    const constrained = selection === 'constrained' || selection === 'constrained-default' || selection === 'credential-denied';
+    const hostConstrained = selection.startsWith('host-');
+    const modelDenied = selection === 'host-denied' || selection === 'host-provider-denied'
+      || selection === 'host-agent-denied' || selection === 'host-default-denied' || selection === 'credential-denied';
     const sessionId = 'authored-composer-message';
     const admitted: SessionMessageContent[] = [];
     const currentness = AccountEncryptionCurrentnessResponseSchema.parse({ mode: 'plain', version: 1,
@@ -82,7 +86,10 @@ describe('executePluginSessionMessageAction', () => {
     try {
       const input = { sessionId, message: 'Composer prompt',
         localId: 'authored-composer-local', requestedAction: { v: 1, kind: 'send_now' }, reply: 'none',
-        ...(selection === 'team' ? { permissionModeOverride: 'default', modelSelection: teamSelection }
+        ...(hostConstrained || selection === 'credential-denied' ? { modelOverride: selection === 'host-default-denied' ? null
+          : selection === 'host-denied' || selection === 'credential-denied' ? 'desired-model' : 'allowed-model',
+          providerConnectionId: selection === 'host-provider-denied' ? 'pc_other' : null }
+          : selection === 'team' ? { permissionModeOverride: 'default', modelSelection: teamSelection }
           : selection === 'explicit'
           ? { permissionModeOverride: 'safe-yolo', modelOverride: 'explicit-model', providerConnectionId: 'pc_explicit' }
           : selection === 'authored'
@@ -119,9 +126,18 @@ describe('executePluginSessionMessageAction', () => {
       if (constrained && !requester) throw new Error('Expected verified requester custody');
       const receipt = await executor.execute('session.message.send', input, {
         surface: constrained ? 'api' : 'ui', authority: constrained ? 'account_automation' : 'present_user', actionCaller: { kind: 'host' },
+        ...(hostConstrained ? { callerInputConstraints: { permissionModes: null, models: [{
+          agentTargetKey: selection === 'host-agent-denied' ? 'agent:happier.agent.codex/codex' : desiredModel.ref.agentTargetKey,
+          providerConnectionId: null, modelId: 'allowed-model' }] } } : {}),
         ...(constrained ? { externalActionCredential: credential,
           externalActionExecutionAuthorization: requester ?? undefined, externalActionTarget: target } : {}),
       });
+      if (modelDenied) {
+        expect(receipt).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+        expect(admitted).toHaveLength(0);
+        expect(writes.mock.calls.filter(([url]) => String(url).endsWith('/pending'))).toHaveLength(0);
+        return;
+      }
       if (selection === 'invalid') {
         expect(receipt, JSON.stringify({ receipt, readUrls: http.mock.calls.map(([url]) => String(url)) })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
         expect(admitted).toHaveLength(0);
@@ -137,8 +153,8 @@ describe('executePluginSessionMessageAction', () => {
           appendSystemPrompt: 'Check the changed path.', providerExtra: { choice: 'preserved' },
           sentFrom: 'web', source: 'ui',
           ...(selection === 'team' ? { permissionMode: 'default', modelSelectionV1: teamSelection }
-          : selection === 'constrained-default' ? {} : selection === 'constrained' ? {
-            permissionMode: 'read-only', model: 'allowed-model',
+          : selection === 'constrained-default' ? {} : selection === 'constrained' || selection === 'host-allowed' ? {
+            ...(selection === 'constrained' ? { permissionMode: 'read-only' } : {}), model: 'allowed-model',
             modelSelectionV1: { v: 1, updatedAt: 0, ref: {
               agentTargetKey: desiredModel.ref.agentTargetKey, providerConnectionId: null, modelId: 'allowed-model' } },
           } : {

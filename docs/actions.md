@@ -11511,7 +11511,12 @@ legacy CLI authoring retains its `cli` default.
 Effective configuration travels through admitted Action fields. The canonical
 full `modelSelection` preserves Team source and binding revision; it cannot be
 combined with the legacy flat model aliases. Model grants are enforced before
-dispatch, and metadata cannot override that admitted selection.
+dispatch, and metadata cannot override that admitted selection. Full selections
+spend model admission in the Action executor. Flat aliases use the same grant
+membership owner after exact receiver Agent and Provider resolution, before
+writing input; both the host/member constraint and credential grant must allow
+that resolved ref. An explicit native reset is refused under a model restriction;
+an omitted override keeps the existing inherited-input contract.
 
 The shared native power owner inspects vendor power before Start or Resume.
 Confirmed-running resources skip native power and retain the existing guest

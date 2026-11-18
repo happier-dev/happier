@@ -449,6 +449,11 @@ export function createCliMessageActionDeps(
         serverIdentityId: context?.serverIdentityId ?? params.serverIdentityId,
         ...(sendServerFeaturesSnapshot ? { serverFeaturesSnapshot: sendServerFeaturesSnapshot } : {}),
         ...(modelSelectionInput ? { modelSelectionInput } : {}),
+        // Full selections spent admission in the Action executor. Flat aliases
+        // consume the same membership owner once their receiver identity is known.
+        ...(!modelSelection && normalizedModelOverride !== undefined ? { modelInputConstraints: [
+          context?.callerInputConstraints, callerInputConstraints ?? context?.externalActionCredential?.grant,
+        ] } : {}),
         ...(normalizedPermissionModeOverride ? { permissionModeOverride: normalizedPermissionModeOverride } : {}),
         ...(modelSelection ? { modelSelectionUpdatedAt: modelSelection.updatedAt } : {}),
       } as const;
@@ -616,7 +621,8 @@ export function createCliMessageActionDeps(
           ...sendModelSelection,
           ...(signal ? { signal } : {}),
         });
-        if (!protectedResult.ok && protectedResult.code === 'machine_admission_transport_unavailable') {
+        if (!protectedResult.ok && (protectedResult.code === 'machine_admission_transport_unavailable'
+          || protectedResult.code === 'credential_scope_denied')) {
           return {
             ok: false,
             errorCode: protectedResult.code,
