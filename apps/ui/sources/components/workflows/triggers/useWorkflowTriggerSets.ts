@@ -59,8 +59,11 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
             readRequest && 'managedTarget' in readRequest ? readRequest.managedTarget : undefined),
         [selected, focused, queryKey, sessionId, workflow, requestedScope, readRequest]);
     const changeSignal = getStorage()(changeSelector);
+    // A remounted reader whose query the focused store already answered starts from that answer;
+    // its read below still refreshes it without reverting to loading.
     const [state, setState] = React.useState<{ identity: object; status: 'loading' | 'ready' | 'failed' }>(
-        () => ({ identity, status: request === null ? 'ready' : 'loading' }),
+        () => ({ identity, status: request === null
+            || (focused && getStorage().getState().workflowTriggerSetIdsByQuery[queryKey] !== undefined) ? 'ready' : 'loading' }),
     );
     const snapshot = React.useRef<Readonly<{ identity: object; sets: readonly WorkflowTriggerSetV1[] }> | null>(null);
     const [attachments, setAttachments] = React.useState<Readonly<{ identity: object; page: WorkflowAttachedTriggerPageV1 }> | null>(null);

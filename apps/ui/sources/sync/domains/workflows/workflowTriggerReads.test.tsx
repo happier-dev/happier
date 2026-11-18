@@ -109,6 +109,37 @@ describe('Account trigger reads through real Action and Automation owners', () =
         expect(home.requests.filter(request => request.path === '/v3/automations/query')).toHaveLength(2);
     });
 
+    it('a remounted reader keeps the held sets ready while its re-read runs (sidebar Scheduled, WAVE-ACCEPT-1118D)', async () => {
+        const rows = ['kept-a', 'kept-b'].map((id, index) => {
+            const row = automation(id);
+            return { ...row, triggers: createWorkflowAutomationDetailFixture({ id, revision: 1,
+                triggerId: `00000000-0000-4000-8000-00000000010${index}` }).triggers };
+        });
+        let held: Promise<void> | undefined;
+        home.answer(serverId, 'POST /v3/automations/query', { select: () => ({
+            body: { automations: rows, nextCursor: null }, ...(held ? { respondAfter: held } : {}),
+        }) });
+        const reads = () => home.requests.filter(request => request.path === '/v3/automations/query').length;
+        const first = await renderHook(() => useWorkflowTriggerSets({ scope: 'account_all' }));
+        await waitForHomeGovernance(() => expect(first.getCurrent().status).toBe('ready'));
+        expect(first.getCurrent().sets).toHaveLength(2);
+        await first.unmount();
+
+        const reread = createDeferred<void>(); held = reread.promise;
+        const seen: Array<Readonly<{ status: string; count: number }>> = [];
+        const second = await renderHook(() => {
+            const read = useWorkflowTriggerSets({ scope: 'account_all' });
+            seen.push({ status: read.status, count: read.sets.length });
+            return read;
+        });
+        await waitForHomeGovernance(() => expect(reads()).toBe(2));
+        expect(seen[0]).toEqual({ status: 'ready', count: 2 });
+        expect(seen.every(entry => entry.status === 'ready' && entry.count === 2)).toBe(true);
+        await act(async () => reread.resolve());
+        await waitForHomeGovernance(() => expect(second.getCurrent()).toMatchObject({ status: 'ready' }));
+        expect(second.getCurrent().sets).toHaveLength(2);
+    });
+
     it.each([false, true])('selects one managed target without opening a thousand known unrelated definitions (legacy relationship: %s)', async legacyRelationship => {
         const managedTarget = { homeId: 'home-managed', managedId: 'managed-one' };
         const definition = createWorkflowDefinitionFixture({ blocks: [{ kind: 'action', id: 'stop-managed',
