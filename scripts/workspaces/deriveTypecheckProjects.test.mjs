@@ -698,3 +698,62 @@ test('a project reference cycle names every member and its authored owner', asyn
     return true;
   });
 });
+
+test('a UI source importing a CLI-owned authored declaration needs no declaration producer', async t => {
+  // Reproduced 2026-11-18 (nl1, nl3, controller): UI testkit source imported the
+  // CLI build-owned projector through its authored .d.mts. That declaration is in
+  // no CLI emitting partition, so reference preparation threw "Missing TypeScript
+  // declaration owner" before any compiler started.
+  const root = await mkdtemp(join(tmpdir(), 'happier-ui-cli-declaration-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cli = join(root, 'apps/cli');
+  const ui = join(root, 'apps/ui');
+  const options = namespace => ({ module: 'esnext', moduleResolution: 'bundler', types: [], strict: true,
+    paths: { '@/*': [namespace] } });
+  const files = {
+    'apps/cli/src/entry.ts': 'export const entry = true;',
+    'apps/cli/src/consumer.test.ts': 'export const consumer = true;',
+    'apps/cli/scripts/projector.mjs': 'export const projector = true;\n',
+    'apps/cli/scripts/projector.d.mts': 'export declare const projector: boolean;\n',
+    'apps/cli/tsconfig.json': JSON.stringify({ compilerOptions: options('./src/*'), include: ['src/**/*.ts'] }),
+    'apps/ui/sources/harness.ts': 'export { projector } from "../../cli/scripts/projector.mjs";\n',
+    'apps/ui/sources/entry.ts': 'export const entry = true;',
+    'apps/ui/package.json': JSON.stringify({ name: 'ui-fixture' }),
+    'apps/cli/package.json': JSON.stringify({ name: 'cli-fixture' }),
+    'apps/ui/tsconfig.json': JSON.stringify({ compilerOptions: options('./sources/*'), include: ['sources/**/*.ts'] }),
+    'apps/ui/tsconfig.test.json': JSON.stringify({ extends: './tsconfig.json', compilerOptions: { noEmit: true },
+      files: ['sources/components/check.test.ts', 'sources/domain/check.test.ts'], include: [] }),
+  };
+  for (const name of ['foundation', 'services', 'core', 'source', 'test-ui']) {
+    files[`apps/cli/tsconfig.${name}.json`] = JSON.stringify({ extends: './tsconfig.json', files: [], include: [] });
+  }
+  files['apps/cli/tsconfig.test.json'] = JSON.stringify({ extends: './tsconfig.json', compilerOptions: { noEmit: true },
+    references: [{ path: '../ui/tsconfig.source.json' }], files: [], include: [] });
+  for (const name of ['foundation', 'core', 'source']) {
+    files[`apps/ui/tsconfig.${name}.json`] = JSON.stringify({ extends: './tsconfig.json', files: [], include: [] });
+  }
+  for (const name of ['test-components', 'test-other']) {
+    const dir = name === 'test-components' ? 'components' : 'domain';
+    files[`apps/ui/sources/${dir}/check.test.ts`] = 'export const checked = true;';
+    files[`apps/ui/tsconfig.${name}.json`] = JSON.stringify({ extends: './tsconfig.test.json',
+      include: [`sources/${dir}/**/*.test.ts`] });
+  }
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), content);
+  }
+  await installUiTypecheckFixtureDependencies(t, ui);
+  const names = ['foundation', 'services', 'core', 'source', 'test', 'test-ui'];
+  const projects = names.map(name => {
+    const args = ['--project', `tsconfig.${name}.json`];
+    return { project: `tsconfig.${name}.json`, authoredProject: `tsconfig.${name}.json`, args, authoredArgs: args };
+  });
+  const inventory = await prepareCliTypecheckProjects(projects, cli);
+  const producers = await prepareReferencedTypecheckDeclarations(projects, cli, inventory);
+  const harness = join(ui, 'sources/harness.ts');
+  const owner = producers.find(project => readTypecheckProject(project.project).parsed.fileNames.includes(harness));
+  assert.ok(owner, 'the importing UI source is a declaration producer');
+  const { config } = readTypecheckProject(owner.project);
+  assert.deepEqual((config.references ?? []).map(reference => resolve(dirname(owner.project), reference.path))
+    .filter(path => path.startsWith(cli)), [], 'an authored declaration is read directly, never through a CLI declaration producer');
+});

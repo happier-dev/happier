@@ -142,8 +142,13 @@ export async function prepareReferencedTypecheckDeclarations(projects, cwd, inve
   const referencePath = reference => memberships.get(reference.configPath)?.get(reference.file);
   const writeReferences = async (project, required) => {
     const { config, parsed } = readTypecheckProject(project);
-    const paths = [...new Set(required.map(referencePath))];
-    if (paths.some(path => !path)) throw new Error(`Missing TypeScript declaration owner for ${required.find(reference => !referencePath(reference)).file}`);
+    // An authored declaration is compiled as-is by its consumer; no producer
+    // emits it. It needs a reference only when a producer program owns it (for
+    // its imported implementations), as a UI testkit importing the CLI's
+    // build-owned projector .d.mts does not.
+    const owned = required.filter(reference => referencePath(reference) || !/\.d\.[cm]?ts$/u.test(reference.file));
+    const paths = [...new Set(owned.map(referencePath))];
+    if (paths.some(path => !path)) throw new Error(`Missing TypeScript declaration owner for ${owned.find(reference => !referencePath(reference)).file}`);
     const references = [...new Set([...(config.references ?? []).map(reference => resolve(dirname(project), reference.path)), ...paths])]
       .filter(path => path !== project).map(path => ({ path }));
     const importedJsx = paths.some(path => readTypecheckProject(path).parsed.fileNames.some(file => file.endsWith('.tsx')));
