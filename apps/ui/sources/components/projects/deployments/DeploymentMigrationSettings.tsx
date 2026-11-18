@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import { OwnServerEnvironmentConfigurationV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
+import { InlineFormActions } from '@/components/ui/forms/InlineAddExpander';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -45,7 +46,7 @@ export function DeploymentMigrationSettings(props: Readonly<{
       migration: candidate.data.migration, backupBeforeMigration: backup, migrationFailurePolicy: recovery,
     } })).then(success => { if (success) setEditingCommand(false); });
   };
-  return <ItemGroup testID={id} title={t('projects.deployments.settingsSections.migrationTitle')}
+  return <><ItemGroup testID={id} title={t('projects.deployments.settingsSections.migrationTitle')}
     description={t('projects.deployments.settingsSections.migrationBody')}
     action={editing && !editingCommand ? <SectionActionButton testID={`${id}.edit`}
       icon={policy.migration ? 'pencil' : 'plus'} title={t(policy.migration ? 'common.edit' : 'common.add')} onPress={open} disabled={change.running} /> : undefined}>
@@ -70,9 +71,6 @@ export function DeploymentMigrationSettings(props: Readonly<{
           { id: 'rollbackCodeOnly', label: t('projects.deployments.settingsSections.migrationCode') },
         ]} onChange={setRecovery} />
       {recovery !== 'ask' ? <Item title={t('projects.deployments.settingsSections.migrationWarning')} mode="info" /> : null}
-      <Item title={t('common.save')} rightElement={<SectionActionButton testID={`${id}.save`} icon="check" title={t('common.save')}
-        disabled={change.running || !candidate.success} onPress={save} />} />
-      <Item title={t('common.cancel')} onPress={() => setEditingCommand(false)} testID={`${id}.cancel`} disabled={change.running} />
     </> : <>
       <Item title={policy.migration?.service ?? t('projects.deployments.settingsSections.migrationNone')}
         subtitle={policy.migration?.argv.join(' · ')} mode="info" />
@@ -89,5 +87,9 @@ export function DeploymentMigrationSettings(props: Readonly<{
     </>}
     {change.outcome && editing ? <DeployOutcomeBanner controller={change.banner}
       machine={props.machineName(props.detail.environment.controllerMachineId)} copy="setting" /> : null}
-  </ItemGroup>;
+  </ItemGroup>
+  {/* A form of sheet rows ends after its sheet: its one primary, then a quiet Cancel (R2-D15 ruling). */}
+  {editing && editingCommand ? <ItemGroup surface="none"><InlineFormActions saveLabel={t('common.save')} cancelLabel={t('common.cancel')}
+    onSave={save} saveDisabled={change.running || !candidate.success} saving={change.running}
+    onCancel={() => setEditingCommand(false)} saveTestID={`${id}.save`} cancelTestID={`${id}.cancel`} /></ItemGroup> : null}</>;
 }

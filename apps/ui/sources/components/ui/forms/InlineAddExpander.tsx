@@ -93,13 +93,9 @@ export function InlineAddExpander({
 
                     {/* A form's one primary, then a quiet Cancel: the shared action row and button family. */}
                     <View style={styles.actions}>
-                        <RoundButtonSizeScope size="normal" presentation="uniform">
-                            <SectionButtonRow>
-                                <RoundButton testID={saveTestID} title={saveLabel} accessibilityLabel={saveLabel} onPress={onSave} disabled={saveDisabled} loading={saving} />
-                                {extraActions}
-                                <RoundButton testID={cancelTestID} display="secondary" title={cancelLabel} accessibilityLabel={cancelLabel} onPress={onCancel} />
-                            </SectionButtonRow>
-                        </RoundButtonSizeScope>
+                        <InlineFormActions saveLabel={saveLabel} cancelLabel={cancelLabel} onSave={onSave} onCancel={onCancel}
+                            saveDisabled={saveDisabled} saving={saving} saveTestID={saveTestID} cancelTestID={cancelTestID}
+                            extraActions={extraActions} />
                     </View>
                 </View>
             ) : null}
@@ -107,6 +103,34 @@ export function InlineAddExpander({
     );
 }
 
+
+/**
+ * A form's one primary, then a quiet Cancel, on the section's start edge (patterns "Forms inside pages"): the inline
+ * add form's own row, and the row a form of sheet rows ends with after its sheet (Settings › Migrations, registries).
+ */
+export function InlineFormActions(props: Readonly<{
+    saveLabel: string;
+    cancelLabel: string;
+    onSave: () => void;
+    onCancel: () => void;
+    saveDisabled?: boolean;
+    saving?: boolean;
+    saveTestID?: string;
+    cancelTestID?: string;
+    extraActions?: React.ReactNode;
+}>) {
+    return (
+        <RoundButtonSizeScope size="normal" presentation="uniform">
+            <SectionButtonRow>
+                <RoundButton testID={props.saveTestID} title={props.saveLabel} accessibilityLabel={props.saveLabel} onPress={props.onSave}
+                    disabled={props.saveDisabled === true} loading={props.saving === true} />
+                {props.extraActions}
+                <RoundButton testID={props.cancelTestID} display="secondary" title={props.cancelLabel} accessibilityLabel={props.cancelLabel}
+                    onPress={props.onCancel} />
+            </SectionButtonRow>
+        </RoundButtonSizeScope>
+    );
+}
 
 const stylesheet = StyleSheet.create((theme) => ({
     expandedContainer: {

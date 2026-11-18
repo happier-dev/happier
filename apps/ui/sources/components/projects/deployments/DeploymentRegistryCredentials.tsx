@@ -6,6 +6,7 @@ import { projectEnvironmentSecretBindingIdentityV1 } from '@happier-dev/protocol
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
+import { InlineFormActions } from '@/components/ui/forms/InlineAddExpander';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -66,7 +67,7 @@ export function DeploymentRegistryCredentials(props: Readonly<{
     void change.press(() => setBindings({ environmentId: props.detail.environment.id,
       expectedRevision: props.detail.environment.revision, set: [], remove: [projectEnvironmentSecretBindingIdentityV1(selected)] }));
   };
-  return <ItemGroup testID={id} title={t('projects.deployments.settingsSections.registryTitle')}
+  return <><ItemGroup testID={id} title={t('projects.deployments.settingsSections.registryTitle')}
     description={t('projects.deployments.settingsSections.registryBody')}
     action={editable && !draft && props.detail.runtimeTargetLink ? <SectionActionButton testID={`${id}.add`} icon="plus"
       title={t('common.add')} onPress={() => open(null)} disabled={change.running} /> : undefined}>
@@ -86,9 +87,6 @@ export function DeploymentRegistryCredentials(props: Readonly<{
       <Item title={t('projects.deployments.settingsSections.credentialChoose')}
         subtitle={draft.source ? t('projects.deployments.settingsSections.credentialSet') : t('projects.deployments.settingsSections.credentialMissing')}
         testID={`${id}.secret`} onPress={() => { void choose(); }} disabled={change.running} />
-      <Item title={t('common.save')} rightElement={<SectionActionButton testID={`${id}.save`} icon="check" title={t('common.save')}
-        disabled={change.running || candidate?.success !== true} onPress={() => { void save(); }} />} />
-      <Item testID={`${id}.cancel`} title={t('common.cancel')} onPress={() => setDraft(null)} disabled={change.running} />
     </> : selected ? <>
       {bindings.length > 1 ? <Item title={t('projects.deployments.settingsSections.registryOrigin')} accessoryLayout="adaptive"
         rightElement={<ValueFieldSelect testID={`${id}.selection`} label={t('projects.deployments.settingsSections.registryOrigin')}
@@ -101,5 +99,9 @@ export function DeploymentRegistryCredentials(props: Readonly<{
     </> : <Item title={t('projects.deployments.settingsSections.registryNone')} mode="info" />}
     {change.outcome && editing ? <DeployOutcomeBanner controller={change.banner}
       machine={props.machineName(props.detail.environment.controllerMachineId)} copy="setting" /> : null}
-  </ItemGroup>;
+  </ItemGroup>
+  {/* A form of sheet rows ends after its sheet: its one primary, then a quiet Cancel (R2-D15 ruling). */}
+  {draft ? <ItemGroup surface="none"><InlineFormActions saveLabel={t('common.save')} cancelLabel={t('common.cancel')}
+    onSave={() => { void save(); }} saveDisabled={change.running || candidate?.success !== true} saving={change.running}
+    onCancel={() => setDraft(null)} saveTestID={`${id}.save`} cancelTestID={`${id}.cancel`} /></ItemGroup> : null}</>;
 }
