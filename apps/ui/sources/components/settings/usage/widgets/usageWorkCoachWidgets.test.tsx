@@ -533,9 +533,7 @@ describe('Work and Coach widget bodies', () => {
     const periodOnly = { ...slice, accounting: UsageAnalyticsQueryResponseSchema.parse({ ...slice.accounting,
       breakdowns: { ...slice.accounting!.breakdowns, session: ['s1', 's2'].map(key => ({ ...slice.accounting!.breakdowns!.project![0]!, key })) } }) };
     await screen.update(<UsageCoachWidget {...props} slice={periodOnly} id="usage_coach" testID="coverage-coach" />);
-    expect(metric('sessions')).toBe(2);
-    expect(screen.findHostByTestId('coverage-coach.summary.sessions')?.props.accessibilityLabel)
-      .toContain(`${t('usage.board.coach.summarySessions')}: 2`);
+    expect(metric('sessions')).toBeUndefined();
     // An unknown session count leaves the band rather than standing in it as a dash.
     await screen.update(<UsageCoachWidget {...props} slice={{ ...slice, accounting: undefined }} id="usage_coach" testID="coverage-coach" />);
     expect(metric('sessions')).toBeUndefined();

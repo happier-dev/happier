@@ -41,7 +41,6 @@ import { UsagePlanDisclosure } from './plans/UsagePlanParts';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { UsageCoachSettingsGroup } from '../UsageCoachSettingsGroup';
 import {
-  useUsageAnalyticsView,
   UsageBodyInsufficient,
   UsageBodyReading,
   UsageCoverageLine,
@@ -293,7 +292,6 @@ export function UsageCoachWidget(props: UsageBodyProps) {
   const strip = isUsageCoachStrip(presentation);
   const reading = readUsageCoachState(props.slice) === 'reading';
   // When a read's coverage names no count, the period's own Sessions read is the same fact the Overview shows.
-  const periodSessions = useUsageAnalyticsView(props.slice, props.query)?.hero.sessions ?? null;
   // Preferences are rare: a quiet disclosure after the findings, never a bar above them (lab d2coach).
   const configuration = <UsagePlanDisclosure title={t('usage.board.coach.configure')} testID={`${props.testID}.configure`}>
     <UsageCoachSettingsGroup serverId={props.serverId} testID={`${props.testID}.preferences`} />
@@ -343,11 +341,11 @@ export function UsageCoachWidget(props: UsageBodyProps) {
   // The band holds only what is known (owner ruling 11-13: unknown is never the lead row). Listed findings are
   // counted from the list itself, even while another source still reads; an unread check is not one that needs
   // more evidence, and an unknown session count leaves the band rather than standing in it as a dash.
-  const sessionsChecked = reading ? null : countUsageCheckedSessions(coach.sessionCoverage) ?? periodSessions;
+  const sessionsChecked = reading ? undefined : countUsageCheckedSessions(coach.sessionCoverage);
   const summary = [
     ...(!reading || visible.length > 0 ? [{ key: 'findings', label: t('usage.board.coach.summaryFindings'), value: visible.length,
       caption: t('usage.board.coach.summaryOfChecks', { count: checked }) }] : []),
-    ...(sessionsChecked !== null ? [{ key: 'sessions', label: t('usage.board.coach.summarySessions'), value: sessionsChecked,
+    ...(sessionsChecked !== undefined ? [{ key: 'sessions', label: t('usage.board.coach.summarySessions'), value: sessionsChecked,
       caption: usagePeriodPhrase(props.query) }] : []),
     ...(!reading ? [{ key: 'insufficient', label: t('usage.board.coach.summaryNeedEvidence'), value: insufficient.length,
       caption: clear.length ? t('usage.board.coach.summaryClearCaption', { count: clear.length }) : undefined }] : []),
