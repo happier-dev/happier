@@ -261,6 +261,25 @@ describe('disconnected terminal-host supervision', () => {
     await expect(supervise({ held: heldAgent, alive: false })).resolves.toEqual({ state: 'stopped' });
   });
 
+  // Windows reuses PIDs quickly: present PIDs whose holder does not answer with the recorded
+  // identity are a dead held Agent, never a live one (P03-SPLIT-AUDIT-B S2).
+  it('does not take reused PIDs for a live held PTY Agent', async () => {
+    const ptyHandle = { ...handle, kind: 'pty' as const };
+    const reused = { role: 'primary' as const, socketPath: join('/tmp', 'happy-no-holder', `holder-${process.pid}.sock`),
+      holderPid: process.pid, agentPid: process.pid };
+    const ptyAdapter = { ...adapter({ paneAlive: false, paneDead: true, observedAt: 1 }), kind: 'pty' as const };
+    const result = await superviseDisconnectedTerminalHostCandidate({
+      candidate: { sessionId: 'session-live-1', trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happyHomeDir: '/tmp/happy',
+        attachmentId: handle.attachmentId, handle: ptyHandle, terminalMode: 'pty' as const, controlDescriptorAvailable: true, heldAgent: reused },
+      terminalHostAdapters: { pty: ptyAdapter },
+      readTerminalAttachmentInfo: async () => ({ ...attachment(), handle: ptyHandle }),
+      removeTerminalAttachmentInfo: async () => true,
+      removeSessionMarker: async () => undefined,
+      probeSessionServiceability: async () => ({ state: 'runner_absent' as const }),
+    });
+    expect(result).toEqual({ state: 'stopped' });
+  });
+
   it('retires only a positively dead exact attachment', async () => {
     const hostAdapter = adapter({ paneAlive: false, paneDead: true, observedAt: 1 });
     const removeAttachment = vi.fn(async (_input: unknown) => true);

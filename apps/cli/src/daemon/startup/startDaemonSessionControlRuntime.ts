@@ -4,7 +4,7 @@ import { resolveExecutionRunRuntimeBackendId } from '@/agent/runtime/bridges/exe
 import { withAgentPreflightCatalog } from '@/capabilities/probes/withAgentPreflightCatalog';
 import { createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { createSparedHeldAgentCustody } from '@/daemon/processSupervision/sparedHeldAgents';
+import { createSparedHeldAgentCustody, type HeldAgentOwner } from '@/daemon/processSupervision/sparedHeldAgents';
 import { reachHeldTargetAgent, restoreSessionTargetRelay, type OpenManagedSessionTarget } from '@/daemon/spawn/prepareSessionTargetPlacement';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import type { SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
@@ -3091,18 +3091,18 @@ export async function startDaemonSessionControlRuntime(
     },
     // A placed Session's held Agent lives in its target: reached under a short Session authority of its own.
     target: (() => {
-      const authority = (tracked: TrackedSession, sessionKey: string) => {
+      const authority = (tracked: HeldAgentOwner, sessionKey: string) => {
         const placement = tracked.spawnOptions?.managedTargetPlacement;
         if (!placement || !tracked.happySessionId) return null;
         return { request: placement, sessionKey,
           requesterAccountId: tracked.spawnOptions?.requesterWorkAttributionV1?.accountId ?? readPreviewAccountIdFromToken(params.credentials.token) ?? null,
           holderVersion: configuration.currentCliVersion, openManagedSessionTarget: (request: Parameters<OpenManagedSessionTarget>[0]) => managedMachinePolicyAdapter.openSessionTarget(request) };
       };
-      const reach = (tracked: TrackedSession, held: SessionHeldAgentV1, action: 'probe' | 'end') => {
+      const reach = (tracked: HeldAgentOwner, held: SessionHeldAgentV1, action: 'probe' | 'end') => {
         const request = authority(tracked, `respawn-${tracked.happySessionId}`);
         return request ? reachHeldTargetAgent({ ...request, held, action }) : Promise.resolve(false);
       };
-      return { probe: (tracked: TrackedSession, held: SessionHeldAgentV1) => reach(tracked, held, 'probe'),
+      return { probe: (owner: HeldAgentOwner, held: SessionHeldAgentV1) => reach(owner, held, 'probe'),
         end: async (tracked: TrackedSession, held: SessionHeldAgentV1) => { await reach(tracked, held, 'end'); },
         serveRelay: async (tracked: TrackedSession, held: SessionHeldAgentV1) => {
           const request = authority(tracked, `reattach-${tracked.happySessionId}`);
@@ -3892,6 +3892,7 @@ export async function startDaemonSessionControlRuntime(
     const result = await superviseDisconnectedTerminalHostCandidate({
       candidate,
       terminalHostAdapters: adapters,
+      isHeldAgentAlive: sparedHeldAgents.isHeldAgentAlive,
       probeSessionServiceability: async (sessionId) =>
         await probeSessionRunnerServiceability({
           sessionId,

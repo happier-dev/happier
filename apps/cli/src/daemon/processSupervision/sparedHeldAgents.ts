@@ -10,6 +10,9 @@ import { logger } from '@/ui/logger';
  * other way out of that observation (an early return, a thrown failure), the
  * spared tree is ended (`abandon`). No timer: the observation's own end settles it.
  */
+/** Whose held Agent: a Session placed on a target (`managedTargetPlacement`) holds it there. */
+export type HeldAgentOwner = Pick<TrackedSession, 'happySessionId' | 'spawnOptions'>;
+
 export type SparedHeldAgentTransaction = Readonly<{
     held: SessionHeldAgentV1;
     /** The turn the Agent is still answering: the respawned runner completes it. */
@@ -41,7 +44,7 @@ export function createSparedHeldAgentCustody(input: Readonly<{
      * signalled for them.
      */
     target?: Readonly<{
-        probe(tracked: TrackedSession, held: SessionHeldAgentV1): Promise<boolean>;
+        probe(owner: HeldAgentOwner, held: SessionHeldAgentV1): Promise<boolean>;
         end(tracked: TrackedSession, held: SessionHeldAgentV1): Promise<void>;
         /**
          * Serves a reattached runner's relay again at the address its placement names
@@ -63,6 +66,14 @@ export function createSparedHeldAgentCustody(input: Readonly<{
         return release !== undefined;
     };
     const probe = input.probe ?? probeAdoptableSessionHolder;
+    /**
+     * The one answer to "is this held Agent alive?": its holder answers with the recorded holder and
+     * Agent identity (PIDs alone are reused, quickly on Windows), through the target for a placed Session.
+     */
+    const isHeldAgentAlive = async (owner: HeldAgentOwner, held: SessionHeldAgentV1): Promise<boolean> =>
+        owner.spawnOptions?.managedTargetPlacement !== undefined
+            ? input.target !== undefined && await input.target.probe(owner, held)
+            : await probe(held);
     const end = async (sessionId: string): Promise<void> => {
         const turn = spared.get(sessionId);
         if (!turn) return;
@@ -73,6 +84,7 @@ export function createSparedHeldAgentCustody(input: Readonly<{
         if (turn.activeTurnId) await input.endTurn(turn);
     };
     return Object.freeze({
+        isHeldAgentAlive,
         /**
          * After a daemon restart: a reattached placed runner whose held primary Agent
          * names its relay gets that relay served again, so the runner reaches its target
@@ -95,8 +107,7 @@ export function createSparedHeldAgentCustody(input: Readonly<{
             const held = tracked.heldAgentsV1?.find(agent => agent.role === 'primary');
             const sessionId = tracked.happySessionId?.trim();
             const placed = tracked.spawnOptions?.managedTargetPlacement !== undefined;
-            if (!held || !sessionId) return null;
-            if (placed ? !input.target || !await input.target.probe(tracked, held) : !await probe(held)) return null;
+            if (!held || !sessionId || !await isHeldAgentAlive(tracked, held)) return null;
             const evidence = resolveTrackedSessionExitSettlementEvidence(tracked);
             spared.set(sessionId, { pid: evidence.pid, sessionRunnerPid: evidence.sessionRunnerPid,
                 happySessionId: sessionId, activeTurnId: evidence.activeTurnId, placed: placed ? { tracked, held } : null });

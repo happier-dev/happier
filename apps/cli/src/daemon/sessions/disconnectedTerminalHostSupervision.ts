@@ -18,8 +18,8 @@ import { removeSessionMarker as removeDefaultSessionMarker } from '../sessionReg
 import type { SessionRunnerServiceabilityProbe } from './isSessionRunnerActive';
 import type { ExactTerminalControlServiceabilityRetirement } from './retireTerminalControlServiceability';
 import type { TrackedSession } from '../types';
-import type { SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
-import { isPidPresent } from '@happier-dev/cli-common/process';
+import { probeAdoptableSessionHolder, type SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
+import type { HeldAgentOwner } from '@/daemon/processSupervision/sparedHeldAgents';
 import type { SessionTrackingKey } from './sessionTrackingKey';
 import { resolveTrackedSessionTerminalPresentation } from './resolveTrackedSessionTerminalPresentation';
 
@@ -208,23 +208,26 @@ export function resolveDisconnectedTerminalMode(input: Readonly<{
   return isHostedTerminalMode(mode) && terminalModesRealizedByHostKind(input.hostKind).includes(mode) ? mode : null;
 }
 
-/** A held Agent is alive while its holder and its Agent processes are. */
-async function isHeldAgentProcessAlive(held: SessionHeldAgentV1): Promise<boolean> {
-  return isPidPresent(held.holderPid) && isPidPresent(held.agentPid);
-}
-
 /**
  * A `pty` host's Agent is held by its Session holder, outside every runner and this daemon, so
  * only the holder's record proves it alive or dead. The PTY adapter of a process that never owned
  * the terminal knows nothing; without a record the answer is inconclusive, never dead.
  */
 async function probeHeldAgentForRecovery(
-  held: SessionHeldAgentV1 | undefined,
-  isAlive: (held: SessionHeldAgentV1) => Promise<boolean>,
+  candidate: DisconnectedTerminalHostCandidate,
+  isAlive: HeldAgentLivenessProbe,
 ): Promise<Readonly<{ status: 'alive' | 'dead' | 'inconclusive' }>> {
+  const held = candidate.heldAgent;
   if (!held) return { status: 'inconclusive' };
-  return { status: await isAlive(held) ? 'alive' : 'dead' };
+  const owner = { happySessionId: candidate.sessionId, ...(candidate.spawnOptions ? { spawnOptions: candidate.spawnOptions } : {}) };
+  return { status: await isAlive(owner, held) ? 'alive' : 'dead' };
 }
+
+/** The held-Agent liveness owner (`createSparedHeldAgentCustody().isHeldAgentAlive`, placement-aware). */
+export type HeldAgentLivenessProbe = (owner: HeldAgentOwner, held: SessionHeldAgentV1) => Promise<boolean>;
+
+/** Without the custody's placement-aware owner, a local Session's holder answers for its Agent. */
+const probeLocalHeldAgent: HeldAgentLivenessProbe = async (_owner, held) => await probeAdoptableSessionHolder(held);
 
 export async function superviseDisconnectedTerminalHostCandidate(input: Readonly<{
   candidate: DisconnectedTerminalHostCandidate;
@@ -240,7 +243,7 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
     attachmentInfo: ExactTerminalHostAttachmentInfo;
     terminalMode: TerminalMode;
   }>) => Promise<ExactTerminalControlServiceabilityRetirement | void>;
-  isHeldAgentAlive?: (held: SessionHeldAgentV1) => Promise<boolean>;
+  isHeldAgentAlive?: HeldAgentLivenessProbe;
 }>): Promise<DisconnectedTerminalHostSupervisionResult> {
   const readAttachment = input.readTerminalAttachmentInfo ?? readDefaultTerminalHostAttachmentInfo;
   const current = await readAttachment({
@@ -259,7 +262,7 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
   if (!adapter) return { state: 'unknown', reason: 'adapter_unavailable' };
 
   const probe = current.handle.kind === 'pty'
-    ? await probeHeldAgentForRecovery(input.candidate.heldAgent, input.isHeldAgentAlive ?? isHeldAgentProcessAlive)
+    ? await probeHeldAgentForRecovery(input.candidate, input.isHeldAgentAlive ?? probeLocalHeldAgent)
     : await probeTerminalHostForRecovery({ adapter, handle: current.handle });
   if (input.isCurrent?.() === false) return { state: 'unknown', reason: 'attachment_changed' };
   let destroyOptionalClient = false;
