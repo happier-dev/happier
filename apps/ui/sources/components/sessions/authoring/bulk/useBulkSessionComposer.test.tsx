@@ -1,0 +1,113 @@
+import { act } from 'react-test-renderer';
+import { afterEach, expect, it } from 'vitest';
+import { renderHook, standardCleanup } from '@/dev/testkit';
+import { useBulkSessionComposer } from './useBulkSessionComposer';
+
+afterEach(standardCleanup);
+it('keeps the host quiet while nonempty message text changes and sends the latest text', async () => {
+    const address = { serverId: 'home', sessionId: 'active' };
+    const targets = [{ address, agentId: 'agent', machineId: 'machine' }];
+    let renders = 0;
+    const messages: unknown[] = [];
+    const hook = await renderHook(() => {
+        renders++;
+        return useBulkSessionComposer({ targets, initialText: 'hello', executeConfirmed: async (_id, input) => {
+            messages.push(input);
+            return { ok: true, result: { kind: 'fanout', results: [{ target: address,
+                result: { ok: true, result: { status: 'accepted', localId: 'input' } },
+            }] } };
+        } });
+    });
+    const before = renders;
+    await act(async () => {
+        for (let i = 0; i < 50; i++) hook.getCurrent().setText(`hello ${i}`);
+    });
+    expect(renders - before).toBe(0);
+    await act(async () => { await hook.getCurrent().send(); });
+    expect(messages).toEqual([expect.objectContaining({ message: 'hello 49' })]);
+});
+
+it('includes owner-skipped targets in consequences and the submitted results', async () => {
+    const address = { serverId: 'home', sessionId: 'active' };
+    const skipped = { serverId: 'home', sessionId: 'archived' };
+    const hook = await renderHook(() => useBulkSessionComposer({
+        targets: [{ address, agentId: 'agent', machineId: 'machine' }],
+        skippedTargets: [{ address: skipped, reason: 'archived' }], initialText: 'hello',
+        executeConfirmed: async () => ({ ok: true, result: { kind: 'fanout', results: [{ target: address,
+            result: { ok: true, result: { status: 'accepted', localId: 'input' } },
+        }] } }),
+    }));
+    expect(hook.getCurrent().consequences.skipped).toBe(1);
+    await act(async () => { await hook.getCurrent().send(); });
+    expect(hook.getCurrent().rows).toEqual(expect.arrayContaining([
+        expect.objectContaining({ target: skipped, state: 'skipped', code: 'archived' }),
+    ]));
+});
+
+it('keeps changes pending until Send and retries failures using the captured message and selection', async () => {
+    const a = { serverId: 'home', sessionId: 'a' };
+    const b = { serverId: 'home', sessionId: 'b' };
+    const targets = [a, b].map(address => ({ address, agentId: 'agent', machineId: 'machine' }));
+    const calls: unknown[] = [];
+    const hook = await renderHook(() => useBulkSessionComposer({ targets, initialText: 'original',
+        executeConfirmed: async (actionId, input) => {
+            calls.push({ actionId, input });
+            return { ok: true, result: { kind: 'fanout', results: calls.length === 1 ? [
+                { target: a, result: { ok: true, result: { status: 'accepted', localId: 'a-input' } } },
+                { target: b, result: { ok: false, errorCode: 'target_unavailable', error: 'offline' } },
+            ] : [{ target: b, result: { ok: true, result: { status: 'accepted', localId: 'b-input' } } }] } };
+        } }));
+    await act(async () => hook.getCurrent().setSelection({ permissionMode: 'yolo' }));
+    expect(calls).toEqual([]);
+    await act(async () => { await hook.getCurrent().send(); });
+    await act(async () => { hook.getCurrent().setText('edited'); hook.getCurrent().setSelection({ permissionMode: 'read-only' }); });
+    await act(async () => { await hook.getCurrent().retryFailed(); });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toMatchObject({ actionId: 'session.message.send', input: {
+        message: 'original', permissionModeOverride: 'yolo', sessionId: { selector: 'sessions', addresses: [b] },
+    } });
+    expect(hook.getCurrent().rows.map(row => row.state)).toEqual(['sent', 'sent']);
+});
+
+it('keeps other failed targets retryable after a per-row retry', async () => {
+    const addresses = ['a', 'b'].map(sessionId => ({ serverId: 'home', sessionId }));
+    const targets = addresses.map(address => ({ address, agentId: 'agent', machineId: 'machine' }));
+    let calls = 0;
+    const hook = await renderHook(() => useBulkSessionComposer({ targets, initialText: 'send',
+        executeConfirmed: async (_id, input) => {
+            calls++;
+            const selected = (input as { sessionId: { addresses: typeof addresses } }).sessionId.addresses;
+            return { ok: true, result: { kind: 'fanout', results: selected.map(target => ({ target,
+                result: calls === 1 ? { ok: false, error: 'offline', errorCode: 'target_unavailable' }
+                    : { ok: true, result: { status: 'accepted', localId: `input-${target.sessionId}` } },
+            })) } };
+        } }));
+    await act(async () => { await hook.getCurrent().send(); });
+    await act(async () => { await hook.getCurrent().retryFailed(addresses[0]); });
+    await act(async () => { await hook.getCurrent().retryFailed(addresses[1]); });
+    expect(calls).toBe(3);
+    expect(hook.getCurrent().failedTargets).toEqual([]);
+});
+
+it('replans retry against current Agent facts after a successful switch and failed message', async () => {
+    const address = { serverId: 'home', sessionId: 'a' };
+    let targets = [{ address, agentId: 'old/agent', machineId: 'machine' }];
+    const calls: string[] = [];
+    const hook = await renderHook(() => useBulkSessionComposer({ targets, initialText: 'hello',
+        executeConfirmed: async actionId => {
+            calls.push(actionId);
+            return { ok: true, result: { kind: 'fanout', results: [{ target: address,
+                result: actionId === 'session.agent.transition' ? { ok: true, result: { type: 'accepted' } }
+                    : calls.length === 2 ? { ok: false, error: 'offline', errorCode: 'target_unavailable' }
+                        : { ok: true, result: { status: 'accepted', localId: 'input' } },
+            }] } };
+        } }));
+    await act(async () => hook.getCurrent().setSelection({ agentTarget: {
+        kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+    } }));
+    await act(async () => { await hook.getCurrent().send(); });
+    targets = [{ address, agentId: 'happier.agent.codex/codex', machineId: 'machine' }];
+    await hook.rerender();
+    await act(async () => { await hook.getCurrent().retryFailed(); });
+    expect(calls).toEqual(['session.agent.transition', 'session.message.send', 'session.message.send']);
+});
