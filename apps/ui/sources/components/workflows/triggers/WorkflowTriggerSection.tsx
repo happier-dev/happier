@@ -440,6 +440,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     runsOn={runsOn} whereTarget={props.whereTarget} machines={machines}
                     onChange={(project) => change(editWorkflowTriggerDraft(props.draft, { kind: 'setContext', context: { project } }))} />
             ) : null}
+            {rows.length > 0 ? <WorkflowTriggerSetInputs {...props} /> : null}
             {after ? (
                 <ItemGroup header="none" surface="none">
                     {sharedTriggers.map(trigger => {
@@ -529,7 +530,6 @@ function WorkflowTriggerSetRows(props: WorkflowTriggerSectionProps & Readonly<{
 }>) {
     const change = props.onChangeDraft;
     const setContext = (context: WorkflowTriggerSetContextDraft) => change(editWorkflowTriggerDraft(props.draft, { kind: 'setContext', context }));
-    const constantInputs: Readonly<Record<string, JsonValue>> = props.draft.context?.inputs ?? props.set?.context?.inputs ?? {};
     const readDefinition = () => props.definitionSource?.get() ?? props.definition;
     const definition = React.useSyncExternalStore(props.definitionSource?.subscribe ?? subscribeToNoDefinition,
         readDefinition, readDefinition);
@@ -549,20 +549,6 @@ function WorkflowTriggerSetRows(props: WorkflowTriggerSectionProps & Readonly<{
     const rolesTestID = `${props.testIDPrefix}-trigger-roles`;
     return (
         <>
-            {props.inputs.map((input) => (
-                <WorkflowTriggerInputRow
-                    key={input.name}
-                    testID={`${props.testIDPrefix}-trigger-input-${input.name}`}
-                    name={input.name}
-                    value={formatWorkflowInputValue(constantInputs[input.name] ?? input.default)}
-                    allowEmpty={!input.required}
-                    onCommit={(text) => {
-                        const value = parseWorkflowInputText(input, text);
-                        const { [input.name]: _previous, ...rest } = constantInputs;
-                        setContext({ inputs: value === undefined ? rest : { ...rest, [input.name]: value } });
-                    }}
-                />
-            ))}
             {roleIds.length > 0 && definition ? <>
                 <Item testID={rolesTestID} title={t('workflows.triggers.editor.roles')}
                     subtitle={t('workflows.triggers.editor.sameForAllTriggers')}
@@ -586,6 +572,32 @@ function WorkflowTriggerSetRows(props: WorkflowTriggerSectionProps & Readonly<{
                         : <FieldSelect testID={`${rolesTestID}-visible-to`} title={t('workflows.triggers.editor.visibleTo')}
                             subtitle={visibilityDescription} items={visibility.teams.map(team => ({ id: team.id, title: team.name ?? team.id }))}
                             selectedId={selectedTeamId} onSelect={visibility.onChange} />}
+        </>
+    );
+}
+
+/** The inputs the trigger set gives every run: on the card's text edge and label track, like Runs on (item 5). */
+function WorkflowTriggerSetInputs(props: WorkflowTriggerSectionProps): React.ReactElement | null {
+    const change = props.onChangeDraft;
+    const constantInputs: Readonly<Record<string, JsonValue>> = props.draft.context?.inputs ?? props.set?.context?.inputs ?? {};
+    if (props.inputs.length === 0) return null;
+    return (
+        <>
+            {props.inputs.map((input) => (
+                <WorkflowTriggerInputRow
+                    key={input.name}
+                    testID={`${props.testIDPrefix}-trigger-input-${input.name}`}
+                    name={input.name}
+                    value={formatWorkflowInputValue(constantInputs[input.name] ?? input.default)}
+                    allowEmpty={!input.required}
+                    onCommit={(text) => {
+                        const value = parseWorkflowInputText(input, text);
+                        const { [input.name]: _previous, ...rest } = constantInputs;
+                        change(editWorkflowTriggerDraft(props.draft, { kind: 'setContext',
+                            context: { inputs: value === undefined ? rest : { ...rest, [input.name]: value } } }));
+                    }}
+                />
+            ))}
         </>
     );
 }
