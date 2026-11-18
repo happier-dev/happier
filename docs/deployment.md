@@ -4075,6 +4075,11 @@ admitted Docker endpoint. The caller applies the setup/firewall plans once throu
 the existing interpreter before consuming that result. Route observation and
 removal do not start or recreate the shared container.
 
+On systemd hosts, those setup declarations also install
+`/etc/tmpfiles.d/happier-caddy.conf`. Early boot recreates the root-owned admin
+bind directory with mode `0750` and the daemon group before Docker restarts the
+container. Retained routes and certificate data stay under `/var/lib/happier/caddy`.
+
 Current 0.3 development Domain get/list headers optionally expose
 `routedReplicas: { source: 'recordedTopology', count, replicas }`. Each replica
 contains only its Machine, installation and container dial identity. The native

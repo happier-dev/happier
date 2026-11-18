@@ -33,6 +33,14 @@ export function createCaddyContainerSetupDeclarations(input: Readonly<{
 }>): MachineRecipeStepV1[] | MachineRecipeStepDeclarationV1[] {
     const stateDirectory = input.stateDirectory ?? nativeCaddyProfile.stateDirectory;
     const adminDirectory = input.adminDirectory ?? nativeCaddyProfile.adminDirectory;
+    const daemonGroup = input.daemonGroup;
+    // Docker restarts the retained container after /run has been cleared. Its
+    // bind source must exist before Docker starts, independently of the daemon.
+    const bootRule = `d ${JSON.stringify(adminDirectory.replaceAll('%', '%%'))} 0750 root `;
+    const bootContent: File['content'] = typeof daemonGroup === 'string'
+        ? { kind: 'literal', value: `${bootRule}${daemonGroup} -\n` }
+        : { kind: 'template', value: `${bootRule}${daemonGroup.kind === 'template' ? daemonGroup.value : '{daemonGroup}'} -\n`,
+            variables: daemonGroup.kind === 'template' ? daemonGroup.variables : { daemonGroup } };
     return [
         { ...machineStateRootStep, path: input.stateRootDirectory ?? machineStateRootStep.path },
         { id: 'caddy-state-directory', kind: 'directory', path: stateDirectory, owner: 'root', group: input.daemonGroup, mode: 0o750 },
@@ -43,5 +51,8 @@ export function createCaddyContainerSetupDeclarations(input: Readonly<{
         { id: 'caddy-initial-config', kind: 'file', path: `${stateDirectory}/initial.json`, owner: 'root', group: input.daemonGroup, mode: 0o640,
             ...(input.expectedContentDigest !== undefined ? { expectedContentDigest: input.expectedContentDigest } : {}),
             content: { kind: 'literal', value: input.initialConfig } },
+        { id: 'caddy-boot-config-directory', kind: 'directory', path: '/etc/tmpfiles.d', owner: 'root', group: 'root', mode: 0o755 },
+        { id: 'caddy-admin-boot-directory', kind: 'file', path: '/etc/tmpfiles.d/happier-caddy.conf', owner: 'root', group: 'root', mode: 0o644,
+            content: bootContent },
     ];
 }

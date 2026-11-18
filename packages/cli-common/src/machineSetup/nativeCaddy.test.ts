@@ -98,15 +98,18 @@ it('uses one native listener snapshot when privileged bind probes are denied', a
     expect(readLocalListeners).toHaveBeenCalledTimes(1);
 });
 
-it.skipIf(process.platform === 'win32')('prepares Caddy on a fresh host with no Happier state parent and remains idempotent', async () => {
+it.skipIf(process.platform === 'win32')('prepares Caddy on a non-systemd fresh host with no Happier state parent and remains idempotent', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-caddy-fresh-')); roots.push(root);
     const stateDirectory = join(root, 'happier', 'caddy');
     const adminDirectory = join(root, 'happier-caddy');
     const steps = createCaddyContainerSetupSteps({ containerName: 'happier-caddy', stateDirectory, adminDirectory,
-        daemonGroup: userInfo().username, daemonGroupId: process.getgid!(), initialConfig: '{}', originPort: 8080, routedNetworks: [] });
+        daemonGroup: userInfo().username, daemonGroupId: process.getgid!(), initialConfig: '{}', originPort: 8080, routedNetworks: [] })
+        .map(step => 'path' in step && step.path.startsWith('/etc/tmpfiles.d')
+            ? { ...step, path: join(root, step.path) } : step);
+    await mkdir(join(root, 'etc'));
     // Local identity resolution is the OS boundary; directory creation, exact
     // ownership/modes, file publication and both interpreters stay real.
-    const backend = createMachineSetupNativeBackend({ run: async command => {
+    const backend = createMachineSetupNativeBackend({ platform: 'linux', readNativeInit: async () => 'init', run: async command => {
         if (command.executable !== 'getent') throw new Error('Unexpected native command');
         return ok(command.args.includes('passwd')
             ? `${command.args.at(-1)}:x:${process.getuid!()}:${process.getgid!()}::/home/test:/bin/sh\n`

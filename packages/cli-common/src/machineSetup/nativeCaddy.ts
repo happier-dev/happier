@@ -20,7 +20,7 @@ import type { MachineCaddyFirewallObservationV1 } from '@happier-dev/protocol/ma
 export type NativeCaddyFirewallExposure = NonNullable<Extract<MachineRecipeStepV1, { kind: 'firewall' }>['exposures']>[number];
 export type NativeCaddySetupInput = Readonly<{
     dockerHost?: string; containerName: string;
-    /** Durable host paths: adminDirectory is mounted at /run only inside Caddy. */
+    /** Host paths; setup registers the admin bind directory with the boot owner. */
     stateDirectory: string; adminDirectory: string;
     daemonGroup: string; daemonGroupId: number; initialConfig: string; originPort: number;
     routedNetworks: readonly string[];
