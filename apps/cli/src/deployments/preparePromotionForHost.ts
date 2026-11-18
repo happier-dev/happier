@@ -20,7 +20,10 @@ export async function preparePromotionForHost(request: Readonly<{
     else {
         const { failure: _previousFailure, ...retained } = DeploymentPlatformContentV1Schema.parse(selected.sourceReceipt.content);
         content = DeploymentPlatformContentV1Schema.parse({ ...retained, machineResults: [], steps: [],
-            platform: { ...selected.target.content, targetLinkRevision: link.revision, observation: retained.platform.observation } });
+            platform: { ...selected.target.content, targetLinkRevision: link.revision,
+                // The source deployment is carried separately as priorDeployment.
+                // A new promotion has no native effect to resume yet.
+                observation: { v: 1, state: 'queued', observedAtMs: Date.now() } } });
     }
     const candidate = await host.createCandidate(destination, content);
     return { promotion, environment: destination, input: buildDeploymentPromoteInputV1(request.input, {

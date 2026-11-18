@@ -2349,7 +2349,10 @@ describe('installed deployment storage and target composition', () => {
                     platform: { targetLinkRevision: row.targetLink.revision,
                         credentialPrincipal: row.content.credentialPrincipal, providerIdentity: row.content.providerIdentity,
                         providerEnvironment: row.content.providerEnvironment,
-                        observation: { state: 'succeeded', providerDeploymentId: 'existing-provider-deployment' } } });
+                        observation: { state: 'queued' } } });
+                // The selected source is read separately as priorDeployment at execution.
+                // Reusing its observation makes Vercel skip a fresh traffic write as a resume.
+                expect(content.platform.observation).not.toHaveProperty('providerDeploymentId');
                 expect(content).not.toHaveProperty('buildMachineId');
                 expect(nativeReads).toBe(0);
                 if (scenario === 'rollback retained platform') {

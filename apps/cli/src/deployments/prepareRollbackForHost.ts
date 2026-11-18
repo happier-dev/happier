@@ -20,9 +20,10 @@ export async function prepareRollbackForHost(request: Readonly<{
     // review still proves this candidate against the selected retained content.
     const { ownServer: _priorReview, ...provenance } = retained.content;
     const content = DeploymentContentV1Schema.parse({ ...provenance, machines: link.machines,
-        // Review this attempt against the current Link; the retained provider
-        // deployment and its principal/resource identity remain unchanged.
-        ...(provenance.platform ? { platform: { ...provenance.platform, targetLinkRevision: link.revision } } : {}),
+        // Keep the selected provider identity, but start a new traffic change.
+        // The retained deployment is supplied separately as priorDeployment.
+        ...(provenance.platform ? { platform: { ...provenance.platform, targetLinkRevision: link.revision,
+            observation: { v: 1, state: 'queued', observedAtMs: Date.now() } } } : {}),
         ...(link.source.kind === 'plugin' ? {} : { buildMachineId: environment.environment.buildMachineId ?? environment.environment.controllerMachineId }),
         machineResults: [], steps: [] });
     return { environment, input: DeploymentRollbackInputV1Schema.parse({ ...input,
