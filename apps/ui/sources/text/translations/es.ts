@@ -19255,6 +19255,7 @@ settingsSession: {
       menuRollBack: "Revertir…",
       menuRollBackHint: "Abre el historial y elige una versión guardada",
       menuEdit: "Editar entorno",
+      menuDeployProduction: "Desplegar en producción",
         whoMayDeploy: "Quién puede desplegar",
         whoMayDeployDescription: "Personas que pueden desplegar, revertir y aprobar solicitudes aquí. Todo el proyecto puede verlo.",
         deployers: "Despliegan",

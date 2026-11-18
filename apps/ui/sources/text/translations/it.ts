@@ -19257,6 +19257,7 @@ settingsSession: {
       menuRollBack: "Ripristina…",
       menuRollBackHint: "Apri la cronologia e scegli una release conservata",
       menuEdit: "Modifica ambiente",
+      menuDeployProduction: "Distribuisci in produzione",
         whoMayDeploy: "Chi può distribuire",
         whoMayDeployDescription: "Persone che possono distribuire, ripristinare e approvare richieste qui. Tutto il progetto può vederlo.",
         deployers: "Chi distribuisce",

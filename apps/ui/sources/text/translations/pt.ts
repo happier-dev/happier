@@ -19361,6 +19361,7 @@ settingsSession: {
       menuRollBack: "Reverter…",
       menuRollBackHint: "Abra o histórico e escolha uma versão guardada",
       menuEdit: "Editar ambiente",
+      menuDeployProduction: "Implantar em produção",
         whoMayDeploy: "Quem pode implantar",
         whoMayDeployDescription: "Pessoas que podem implantar, reverter e aprovar pedidos aqui. Todo o projeto pode ver.",
         deployers: "Quem implanta",

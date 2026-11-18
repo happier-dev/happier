@@ -22653,6 +22653,7 @@ const enProjects = {
       menuRollBack: "Roll back…",
       menuRollBackHint: "Open History and pick a kept release",
       menuEdit: "Edit environment",
+      menuDeployProduction: "Deploy to Production",
       whoMayDeploy: "Who may deploy",
       whoMayDeployDescription: "People who may deploy, roll back and approve requests here. Everyone in the project can see it.",
       deployers: "Deployers",

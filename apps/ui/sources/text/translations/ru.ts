@@ -19208,6 +19208,7 @@ settingsSession: {
       menuRollBack: "Откатить…",
       menuRollBackHint: "Откройте историю и выберите сохранённый релиз",
       menuEdit: "Изменить окружение",
+      menuDeployProduction: "Развернуть в продакшн",
         whoMayDeploy: "Кто может развёртывать",
         whoMayDeployDescription: "Люди, которые могут развёртывать, откатывать и одобрять запросы здесь. Весь проект может это видеть.",
         deployers: "Развёртывают",

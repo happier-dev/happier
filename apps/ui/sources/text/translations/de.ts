@@ -19368,6 +19368,7 @@ settingsSession: {
       menuRollBack: "Zurückrollen…",
       menuRollBackHint: "Verlauf öffnen und ein behaltenes Release wählen",
       menuEdit: "Umgebung bearbeiten",
+      menuDeployProduction: "In Produktion bereitstellen",
             whoMayDeploy: "Wer deployen darf",
             whoMayDeployDescription: "Personen, die hier deployen, zurückrollen und Anfragen genehmigen dürfen. Das ganze Projekt kann es sehen.",
             deployers: "Deployer",

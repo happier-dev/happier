@@ -19129,6 +19129,7 @@ settingsSession: {
       menuRollBack: "Revenir en arrière…",
       menuRollBackHint: "Ouvrez l’historique et choisissez une version conservée",
       menuEdit: "Modifier l’environnement",
+      menuDeployProduction: "Déployer en production",
         whoMayDeploy: "Qui peut déployer",
         whoMayDeployDescription: "Les personnes qui peuvent déployer, revenir en arrière et approuver les demandes ici. Tout le projet peut le voir.",
         deployers: "Déployeurs",

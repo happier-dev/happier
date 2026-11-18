@@ -18874,6 +18874,7 @@ settingsSession: {
       menuRollBack: "回滚…",
       menuRollBackHint: "打开历史记录并选择一个保留的发布",
       menuEdit: "编辑环境",
+      menuDeployProduction: "部署到生产环境",
         whoMayDeploy: "谁可以部署",
         whoMayDeployDescription: "可以在这里部署、回滚和批准请求的人。项目中的每个人都可以查看。",
         deployers: "部署者",

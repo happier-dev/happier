@@ -74,6 +74,7 @@ import { DeploymentPlatformTargetEditor, useDeploymentPlatformTargets } from './
 import { DeploymentTargetPlans, DeploymentTargetPlansForAccount } from './DeploymentTargetPlans';
 import { buildPlatformTargetCreateLinkInput, buildPlatformTargetLinkInput, readPreparedPlatformAccount, type PreparedPlatformTargetLink } from './platformTargetLink';
 import type { readDeploymentPlatformTargets } from './platformTargetLink';
+import { DeploymentReviewPreviewForAccount } from './DeploymentReviewPreview';
 import {
   DeploymentRetentionChoice,
   deploymentManagedRetention,
@@ -996,6 +997,9 @@ export const DeploymentEnvironmentDraft = React.memo(
             </View>
           )}
           {draftStep === 'review' ? (partialProgress ?? <>{machineCausedRefusal ? machineAwayNotice : refusalBanner}
+            {/* Opened from a build preview: what it built, and whether it answers, before Production (deploy auto-mode U9). */}
+            {props.previewEnvironmentId && props.lifetime
+              ? <DeploymentReviewPreviewForAccount lifetime={props.lifetime} environmentId={props.previewEnvironmentId} /> : null}
             {reviewBody}</>) : null}
         </View>
       );

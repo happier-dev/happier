@@ -19169,6 +19169,7 @@ settingsSession: {
       menuRollBack: "ロールバック…",
       menuRollBackHint: "履歴を開いて保持中のリリースを選びます",
       menuEdit: "環境を編集",
+      menuDeployProduction: "本番環境にデプロイ",
         whoMayDeploy: "デプロイできる人",
         whoMayDeployDescription: "ここでデプロイ、ロールバック、リクエストの承認ができる人。プロジェクトの全員が閲覧できます。",
         deployers: "デプロイ担当",

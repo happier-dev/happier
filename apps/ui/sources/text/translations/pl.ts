@@ -19080,6 +19080,7 @@ settingsSession: {
       menuRollBack: "Wycofaj…",
       menuRollBackHint: "Otwórz historię i wybierz zachowane wydanie",
       menuEdit: "Edytuj środowisko",
+      menuDeployProduction: "Wdróż na produkcję",
         whoMayDeploy: "Kto może wdrażać",
         whoMayDeployDescription: "Osoby, które mogą tu wdrażać, wycofywać i zatwierdzać prośby. Cały projekt może to zobaczyć.",
         deployers: "Wdrażający",
