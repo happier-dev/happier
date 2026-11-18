@@ -1,11 +1,14 @@
 import { open, readFile, readdir } from 'node:fs/promises';
 import { availableParallelism, freemem, loadavg, totalmem } from 'node:os';
 import { join } from 'node:path';
-import { EXECUTION_PROVENANCE_FILENAME, readExecutionDurationSummaries } from '../dev_targets/execution_provenance.mjs';
+import {
+  EXECUTION_PROVENANCE_FILENAME,
+  readExecutionDurationSummaries,
+  readExecutionProvenanceTail,
+  readSealedExecutionProvenanceSince,
+} from '../dev_targets/execution_provenance.mjs';
 
 const HISTORY_WINDOW_MS = 60 * 60 * 1000;
-// Read granularity for the backward scan, not a retention limit.
-const TAIL_CHUNK_BYTES = 1024 * 1024;
 
 async function readText(path) {
   try {
@@ -109,35 +112,18 @@ function parseAdmission(line) {
   }
 }
 
-/** The append-only audit log is unbounded, so the "last 60m" pane keeps a
+/** The active audit log grows through each UTC day (execution_provenance.mjs
+ * seals it at the boundary), so the "last 60m" pane keeps a
  * retained byte offset: the first read scans backward from EOF only until a
  * record older than the window, later reads parse only appended bytes. A
  * shrunk or replaced file restarts the scan. */
-function createRecentAdmissionsWindow(path) {
+function createRecentAdmissionsWindow(directory) {
+  const path = join(directory, EXECUTION_PROVENANCE_FILENAME);
   let identity = null;
   let offset = 0;
   let admissions = [];
 
   const keep = (record) => record.schemaVersion === 1 && record.phase === 'admitted' && record.target;
-
-  async function scanBackward(handle, size, cutoff) {
-    let position = size;
-    let buffer = Buffer.alloc(0);
-    while (position > 0) {
-      const length = Math.min(TAIL_CHUNK_BYTES, position);
-      position -= length;
-      const chunk = Buffer.alloc(length);
-      const { bytesRead } = await handle.read(chunk, 0, length, position);
-      buffer = Buffer.concat([chunk.subarray(0, bytesRead), buffer]);
-      // The oldest complete line read so far decides whether the window is covered.
-      const start = position > 0 ? buffer.indexOf(10) + 1 : 0;
-      const end = start > 0 || position === 0 ? buffer.indexOf(10, start) : -1;
-      const head = start > 0 || position === 0 ? parseAdmission(buffer.subarray(start, end === -1 ? buffer.length : end).toString('utf8')) : null;
-      if (head && head.timestamp < cutoff) break;
-    }
-    // The first partial line belongs to an older record outside the window.
-    return position > 0 ? buffer.subarray(buffer.indexOf(10) + 1) : buffer;
-  }
 
   return {
     async read(now) {
@@ -157,8 +143,10 @@ function createRecentAdmissionsWindow(path) {
         if (current !== identity || stat.size < offset) {
           identity = current;
           admissions = [];
-          bytes = await scanBackward(handle, stat.size, cutoff);
+          bytes = await readExecutionProvenanceTail(handle, stat.size, cutoff);
           offset = stat.size - bytes.length;
+          // A log sealed at the day boundary within the window still holds recent rows.
+          if (offset === 0) admissions = (await readSealedExecutionProvenanceSince(directory, cutoff)).filter(keep);
         } else {
           const length = stat.size - offset;
           bytes = Buffer.alloc(length);
@@ -204,7 +192,7 @@ function defaultLocalSample() {
 
 /** Live load comes from per-target cache files, run time from the compact
  * per-class duration projection, and recent dispatches from a bounded tail of
- * the append-only audit log (811 MB on repo-dev, 2026-11-14), never a whole-file read. */
+ * the audit log segments, never a whole-file read. */
 export function createExecutionFabricSummaryReader({
   stackBaseDir,
   targetNames,
@@ -212,7 +200,7 @@ export function createExecutionFabricSummaryReader({
   readDurations = readExecutionDurationSummaries,
 }) {
   const cacheDir = join(stackBaseDir, 'dev-target-command-load-native');
-  const recentAdmissions = createRecentAdmissionsWindow(join(cacheDir, EXECUTION_PROVENANCE_FILENAME));
+  const recentAdmissions = createRecentAdmissionsWindow(cacheDir);
   return {
     async read({ now = Date.now() } = {}) {
       // One listing serves every target: the directory also holds per-command cache files.

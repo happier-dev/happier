@@ -719,6 +719,15 @@ queue wait is excluded; commands without admission record their wall time. The b
 an `overruns` entry for each slot strictly older than twice that class p99, and
 `durationHistoryUnavailableCount` when a slot lacks usable duration metadata.
 It never kills overrun work or invents a threshold when history is unavailable.
+
+The `provenance.jsonl` audit log is the active segment of the current UTC day. The
+first row written on a later day seals it as `provenance.<first-row-ms>.<inode>.jsonl`
+(hstack-exec checks the first line and delegates to `execution_provenance.mjs`), and a
+sealed segment is deleted once all of its rows are older than seven days, the longest
+window queue and incident audits compare. Sealing and expiry print one
+`[execution-provenance]` line. Read the latest rows with `tail -n`; for a time window
+across segments use `node apps/stack/scripts/utils/dev_targets/execution_provenance.mjs
+--since <ms|ISO time> <stack>/dev-target-command-load-native`. Never load a segment whole.
 The existing load sentinel watches one broker stream per configured POSIX target
 and posts each overrun slot once per sentinel lifetime. Slot changes and one
 broker-derived threshold wake push updates without polling or rerunning source

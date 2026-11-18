@@ -5446,6 +5446,71 @@ test('native launcher ignores an inherited local preference and dispatches to th
   assert.match(result.stdout, /remote:.*mac2-host.*probe-command.*ok/);
 });
 
+test('native launcher seals the previous day audit log before its first row of a new UTC day', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-provenance-seal-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const binDir = join(root, 'bin');
+  const storageDir = join(root, 'stacks');
+  const stackDir = join(storageDir, `repo-${repoToken}-native`);
+  const cacheDir = join(stackDir, 'dev-target-command-load-native');
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(stackDir, 'mutagen', 'data'), { recursive: true });
+  await mkdir(cacheDir, { recursive: true });
+  const yesterday = JSON.stringify({ schemaVersion: 1, phase: 'admitted', executionId: 'yesterday', timestamp: Date.now() - 86_400_000 });
+  await writeFile(join(cacheDir, 'provenance.jsonl'), `${yesterday}\n`);
+  await writeFile(join(stackDir, 'dev-targets.json'), '{"version":1,"targets":[]}\n');
+  await writeNativeProjectionFixture(join(stackDir, 'dev-target-exec-v1.sh'), [
+    "HSTACK_EXEC_PROJECTION_VERSION='2'",
+    `projection_repo_root='${repoRoot}'`,
+    "command_mode='auto'",
+    "include_local='0'",
+    "fallback_mode='local'",
+    "load_ttl_seconds='15'",
+    "unavailable_ttl_seconds='120'",
+    "target_count='1'",
+    "target_1_name='mac'",
+    "target_1_ssh='mac-host'",
+    "target_1_ssh_config=''",
+    "target_1_repo_dir='/remote/repo'",
+    "target_1_cli_home='/remote/home'",
+    "target_1_remote_path='/usr/bin:/bin'",
+    '',
+  ].join('\n'));
+  await executable(
+    join(binDir, 'mutagen'),
+    '#!/bin/sh\nprintf "%s|Scanning|false|true|1|0/0|0/0|true|1|0/0|0/0|active|7|ok|0|0\\n" "$3"\n',
+  );
+  await executable(join(binDir, 'ssh'), [
+    '#!/bin/sh',
+    'case "$*" in',
+    '  *getconf*) printf "8 1 0.5\\n" ;;',
+    '  *) printf "remote:%s\\n" "$*" ;;',
+    'esac',
+    '',
+  ].join('\n'));
+
+  const result = spawnSync('/bin/sh', [launcher, '--', 'probe-command', 'ok'], {
+    cwd: repoRoot,
+    env: {
+      ...executionNeutralEnv,
+      HOME: root,
+      HAPPIER_STACK_STORAGE_DIR: storageDir,
+      PATH: `${binDir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+      TMPDIR: root,
+    },
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /\[execution-provenance\] sealed provenance\.\d{13}\.\d+\.jsonl/);
+  const sealed = (await readdir(cacheDir)).filter(name => /^provenance\.\d{13}\.\d+\.jsonl$/.test(name));
+  assert.equal(sealed.length, 1);
+  assert.equal(await readFile(join(cacheDir, sealed[0]), 'utf8'), `${yesterday}\n`);
+  const active = (await readFile(join(cacheDir, 'provenance.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(active[0].phase, 'admitted');
+  assert.ok(active.every(row => row.executionId !== 'yesterday'));
+});
+
 test('native launcher automatic placement remains compatible with GNU awk local scoring', async t => {
   const root = await mkdtemp(join(tmpdir(), 'happier-preferred-launcher-gawk-score-'));
   t.after(() => rm(root, { recursive: true, force: true }));

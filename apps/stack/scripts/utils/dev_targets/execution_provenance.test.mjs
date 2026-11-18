@@ -1,7 +1,7 @@
 // @happier-test-preparation source
 import assert from 'node:assert/strict';
 import fsPromises from 'node:fs/promises';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -122,4 +122,37 @@ test('execution provenance preserves existing observations past the former rotat
     syncStatus: 'watching',
     syncSuccessfulCycles: 7,
   });
+});
+
+test('the audit log seals at the UTC day boundary, recent rows stay readable across the seal, and days past retention expire', async t => {
+  const { readExecutionProvenanceSince } = await import('./execution_provenance.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'happier-provenance-rotation-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const directory = join(root, 'dev-target-command-load-native');
+  const day = 86_400_000;
+  const start = Date.UTC(2026, 10, 18);
+  const admit = (timestamp, executionId) => appendExecutionProvenance(root,
+    { phase: 'admitted', executionId, timestamp, target: 'nl3', commandClass: 'targeted-validation' });
+  const reports = [];
+  t.mock.method(process.stderr, 'write', chunk => { reports.push(String(chunk)); return true; });
+  t.after(() => t.mock.restoreAll());
+  const segments = async () => (await readdir(directory)).filter(name => name.startsWith('provenance')).sort();
+
+  await admit(start + 10 * 3_600_000, 'morning');
+  await admit(start + day - 60_000, 'late');
+  assert.deepEqual(await segments(), ['provenance.jsonl'], 'rows of one UTC day share the active log');
+  await admit(start + day + 60_000, 'after-midnight');
+  assert.equal((await segments()).length, 2, 'the first row of a new day seals the previous active log');
+  const active = (await readFile(join(directory, 'provenance.jsonl'), 'utf8')).trim().split('\n');
+  assert.deepEqual(active.map(line => JSON.parse(line).executionId), ['after-midnight']);
+  assert.deepEqual((await readExecutionProvenanceSince(directory, start + day - 3_600_000)).map(row => row.executionId),
+    ['late', 'after-midnight'], 'a window that spans the seal reads the sealed segment too');
+  assert.ok(reports.some(line => /sealed provenance\.\d{13}\.\d+\.jsonl/.test(line)), 'sealing is reported');
+
+  // Every row of the first segment is now older than the retention window; the second still holds recent rows.
+  await admit(start + 9 * day, 'next-week');
+  assert.deepEqual((await readExecutionProvenanceSince(directory, 0)).map(row => row.executionId),
+    ['after-midnight', 'next-week']);
+  assert.equal((await segments()).length, 2);
+  assert.ok(reports.some(line => /expired provenance\.\d{13}\.\d+\.jsonl/.test(line)), 'expiry is reported');
 });

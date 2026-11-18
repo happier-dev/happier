@@ -2210,6 +2210,16 @@ execution_provenance_filename=${execution_provenance_filename-provenance.jsonl}
 provenance_path="$cache_dir/$execution_provenance_filename"
 admitted_at_seconds=$(date +%s)
 admitted_at=$((admitted_at_seconds * 1000))
+# The first row of a new UTC day seals the active audit log; execution_provenance.mjs
+# owns sealing and expiry. The check reads only the first line (same rule as the owner).
+if [ -s "$provenance_path" ]; then
+  provenance_first_ms=$(sed -n '1{s/.*"timestamp":\([0-9][0-9]*\).*/\1/p;q;}' "$provenance_path" 2>/dev/null || true)
+  case "$provenance_first_ms" in ''|*[!0-9]*) provenance_first_ms=0 ;; esac
+  if [ $((provenance_first_ms / 86400000)) -ne $((admitted_at_seconds / 86400)) ]; then
+    node "$script_dir/../scripts/utils/dev_targets/execution_provenance.mjs" --rotate "$cache_dir" "$admitted_at" \
+      || printf '[preferred-execution] audit log rotation failed: %s\n' "$provenance_path" >&2
+  fi
+fi
 printf '{"schemaVersion":%s,"phase":"admitted","executionId":"%s","timestamp":%s,"target":"%s","commandClass":"%s","syncStatus":"%s","syncSuccessfulCycles":%s,"normalizedLoad":%s,"activeReservations":%s,"activeClassReservations":%s,"effectiveScore":%s,"capacity":%s,"platform":"%s","runQueue":%s,"memAvailableKiB":%s,"memTotalKiB":%s,"swapUsedKiB":%s,"swapTotalKiB":%s,"cpuPsiAvg10":%s,"memoryPsiAvg10":%s,"ioPsiAvg10":%s,"swapInPages":%s,"swapOutPages":%s,"diskFreeKiB":%s}\n' \
   "$execution_provenance_schema_version" "$execution_id" "$admitted_at" "$selected_name" "$command_class" "$sync_status" \
   "$sync_successful_cycles" "$selected_base_score" "$selected_active" "$selected_class_active" "$selected_score" \

@@ -9,6 +9,7 @@ import {
   createExecutionFabricSummaryReader,
   formatExecutionFabricSummaryLines,
 } from './execution_fabric_summary.mjs';
+import { appendExecutionProvenance } from '../dev_targets/execution_provenance.mjs';
 
 test('execution fabric summary combines cached target load, live reservations, and the run-time duration projection', async (t) => {
   const stackBaseDir = await mkdtemp(join(tmpdir(), 'happier-fabric-summary-'));
@@ -131,4 +132,21 @@ test('one fabric read lists the reservation directory once, whatever the target 
   const summary = await reader.read({ now: Date.now() });
   assert.equal(listings, 1);
   assert.deepEqual(summary.live.slice(1).map(target => [target.name, target.activeReservations]), [['a', 1], ['b', 1], ['c', 0], ['d', 0]]);
+});
+
+test('recent dispatches still count rows sealed into the previous day segment', async t => {
+  const stackBaseDir = await mkdtemp(join(tmpdir(), 'happier-fabric-sealed-'));
+  t.after(() => rm(stackBaseDir, { recursive: true, force: true }));
+  t.mock.method(process.stderr, 'write', () => true);
+  t.after(() => t.mock.restoreAll());
+  const midnight = Date.UTC(2026, 10, 19);
+  for (const [offset, target] of [[-20 * 60_000, 'nl1'], [-10 * 60_000, 'nl3'], [5 * 60_000, 'nl3']]) {
+    await appendExecutionProvenance(stackBaseDir, { phase: 'admitted', executionId: `e${offset}`, timestamp: midnight + offset,
+      target, commandClass: 'targeted-validation' });
+  }
+  const reader = createExecutionFabricSummaryReader({ stackBaseDir, targetNames: [],
+    sampleLocal: () => ({ name: 'primary' }), readDurations: async () => [] });
+  const summary = await reader.read({ now: midnight + 10 * 60_000 });
+  assert.equal(summary.history.recentAdmissions, 3);
+  assert.deepEqual(summary.history.recentByTarget.map(({ target, count }) => [target, count]), [['nl1', 1], ['nl3', 2]]);
 });
