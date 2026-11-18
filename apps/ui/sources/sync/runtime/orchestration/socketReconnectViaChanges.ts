@@ -1,5 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import type { ChangeEntry } from '@happier-dev/protocol/changes';
+import { isChangesPageFull, type ChangeEntry } from '@happier-dev/protocol/changes';
 import { planSyncActionsFromChanges, type PlannedChangeActions, type SessionChangePlanningContext } from './changesPlanner';
 
 export type FetchChangesFn = (params: {
@@ -7,7 +7,7 @@ export type FetchChangesFn = (params: {
     afterCursor: string | null;
     limit: number;
 }) => Promise<
-    | { status: 'ok'; changes: ChangeEntry[]; nextCursor: string }
+    | { status: 'ok'; changes: ChangeEntry[]; nextCursor: string; full?: boolean }
     | { status: 'cursor-gone'; currentCursor: string }
     | { status: 'error' }
 >;
@@ -260,19 +260,20 @@ export async function runSocketReconnectCatchUpViaChanges(params: {
 
         const { changes, nextCursor } = result;
         reportCursorContractAnomaly({ afterCursor, nextCursor, changes });
+        const pageFull = isChangesPageFull(result, params.changesPageLimit);
 
-        if (changes.length === 0) {
+        if (!pageFull && changes.length === 0) {
             return blockedCheckpoint ?? {
                 status: 'ok',
                 nextCursor,
                 shouldPersistCursor: snapshotCursorAwaitingFinalPersist !== null || nextCursor !== afterCursor,
             };
         }
+        if (pageFull && nextCursor === afterCursor) return blockedCheckpoint ?? { status: 'fallback' };
 
         const numericAfterCursor = parseNumericCursor(afterCursor);
-        const planned = planSyncActionsFromChanges(changes, { ...params.planContext,
-            ...(numericAfterCursor !== null ? { afterCursor: numericAfterCursor } : {}) });
-        const applyResult = await params.applyPlanned(planned);
+        const applyResult = changes.length > 0 ? await params.applyPlanned(planSyncActionsFromChanges(changes, { ...params.planContext,
+            ...(numericAfterCursor !== null ? { afterCursor: numericAfterCursor } : {}) })) : undefined;
         const safeAdvanceCursor = normalizeApplySafeCursor(applyResult, nextCursor);
 
         if (safeAdvanceCursor !== nextCursor) {
@@ -290,7 +291,7 @@ export async function runSocketReconnectCatchUpViaChanges(params: {
                 reportBlockedCursor(applyResult, changes);
                 if (shouldAdvance && params.checkpointCursor && !checkpointPersisted) return blockedCheckpoint;
             }
-            if (changes.length < params.changesPageLimit) return blockedCheckpoint;
+            if (!pageFull) return blockedCheckpoint;
             // Keep the durable cursor before the first unmaterialized change, but
             // still read later pages so an unrelated failure cannot starve pins
             // and other Account projections.
@@ -298,7 +299,7 @@ export async function runSocketReconnectCatchUpViaChanges(params: {
             continue;
         }
 
-        if (changes.length < params.changesPageLimit) {
+        if (!pageFull) {
             if (blockedCheckpoint) return blockedCheckpoint;
             const checkpointPersisted = nextCursor !== afterCursor
                 ? await checkpointApprovedCursor(nextCursor, {

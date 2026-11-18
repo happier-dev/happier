@@ -1,4 +1,5 @@
 import { ChangeKindSchema, HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1, changeRowsAlreadyHeld, isAccountCurrentnessEntityIdV1, type ChangeEntry } from '@happier-dev/protocol/changes';
+import type { ProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
 import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import type { UpdateBody } from '@happier-dev/protocol/updates';
@@ -113,6 +114,8 @@ export type HomeAccountChangeEvent = Readonly<{
     usageQueryAffects?: boolean;
     /** Exact material record scope from a consumed page; absence retains full quota recovery. */
     providerAccountUsageRecordIds?: readonly string[];
+    /** Known accepted-history and summary changes for the paired quota record. */
+    providerAccountUsageDayChange?: ProviderAccountUsageDayChangeV1;
     /** False only when the focused planner proves no server accounting change since its page cursor. */
     usageAccountingAffects?: boolean;
     /** Producer-selected accounting scope; missing/native facts remain conservative. */
@@ -160,6 +163,7 @@ type HomeAccountChangeDetails = Readonly<{
     savedSecretCatalogAffects?: boolean;
     usageQueryAffects?: boolean;
     providerAccountUsageRecordIds?: readonly string[];
+    providerAccountUsageDayChange?: ProviderAccountUsageDayChangeV1;
     /** False only when the focused planner proves no server accounting change since its page cursor. */
     usageAccountingAffects?: boolean;
     usageAccountingChange?: Extract<EphemeralUpdate, { type: 'usage' }>['accountingChange'];
@@ -575,6 +579,8 @@ export function publishHomeAccountChangeForRouting(
         ...(!coarse && usageQueryAffects !== undefined ? { usageQueryAffects } : {}),
         ...(!coarse && details?.providerAccountUsageRecordIds !== undefined
             ? { providerAccountUsageRecordIds: Object.freeze([...details.providerAccountUsageRecordIds]) } : {}),
+        ...(!coarse && details?.providerAccountUsageDayChange !== undefined
+            ? { providerAccountUsageDayChange: details.providerAccountUsageDayChange } : {}),
         ...(usageAccountingAffects !== undefined ? { usageAccountingAffects } : {}),
         ...(details?.usageAccountingChange !== undefined
             ? { usageAccountingChange: Object.freeze({ ...details.usageAccountingChange }) } : {}),

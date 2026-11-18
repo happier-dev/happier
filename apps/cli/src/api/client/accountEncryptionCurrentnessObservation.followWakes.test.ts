@@ -114,6 +114,38 @@ describe('requester Account follow observation wakes', () => {
     }
   });
 
+  it('applies a later Machine change across a short full Account feed page', async () => {
+    let socket: ApiSessionSocketStub | undefined;
+    sockets.connect.mockImplementation(() => {
+      socket = createApiSessionSocketStub({ connected: true });
+      return { socket, transport: createSocketTransportAdapter(socket) };
+    });
+    const pages: number[] = [];
+    vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname !== '/v2/changes') throw new Error(`Unexpected boundary read: ${url}`);
+      const after = Number(parsed.searchParams.get('after') ?? 0);
+      pages.push(after);
+      return after === 0 ? { status: 200, data: { changes: [], nextCursor: 2, full: true } }
+        : { status: 200, data: { changes: [{ cursor: 3, kind: 'machine', entityId: 'target-machine', changedAt: 3 }],
+          nextCursor: 3, full: false } };
+    });
+    const observation = acquireRequesterAccountEncryptionCurrentness({
+      accountId: 'account-full-follow-page', token: 'token-full-follow-page', serverBaseUrl: 'http://home.test',
+    });
+    const machines: string[] = [];
+    const release = observation.subscribeRunFollowAvailability(change => machines.push(change.machineId));
+    try {
+      await vi.waitFor(() => expect(socket).toBeDefined());
+      socket!.trigger('connect');
+      await vi.waitFor(() => expect(machines).toEqual(['target-machine']));
+      expect(pages).toEqual([0, 2]);
+    } finally {
+      release();
+      await observation.dispose();
+    }
+  });
+
   it('classifies the same-process feed owner pages instead of reading the feed per Session wake, and reads again without an owner', async () => {
     let socket: ApiSessionSocketStub | undefined;
     sockets.connect.mockImplementation(() => {

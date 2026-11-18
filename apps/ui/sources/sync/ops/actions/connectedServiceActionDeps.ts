@@ -20,7 +20,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { publishMachineContributionRegistryProjectionRefresh } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import { resolveConnectedAccountPurposeDefaultTargetV1, resolveConnectedAccountPurposeDefaultOriginV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeSelectionV1';
 
-export function createUiConnectedServiceAction(account: LazyActionAccountContext, quotaReadOptions?: Pick<ProviderAccountUsageQuotaReadOptions, 'readAllHistory' | 'projectionDocuments' | 'includePendingWork' | 'historyView' | 'exactHistoryRange'>): NonNullable<ActionExecutorDeps['connectedServiceAction']> {
+export function createUiConnectedServiceAction(account: LazyActionAccountContext, quotaReadOptions?: Pick<ProviderAccountUsageQuotaReadOptions, 'readAllHistory' | 'projectionDocuments' | 'includePendingWork' | 'historyView' | 'exactHistoryRange' | 'dayChange' | 'changesCursor'>): NonNullable<ActionExecutorDeps['connectedServiceAction']> {
     const content = createUiConnectedAccountContent(account);
     const invoke = async ({ actionId, input, signal, context }: Parameters<NonNullable<ActionExecutorDeps['connectedServiceAction']>>[0], prepare: boolean) => {
         const assertCurrent = () => { signal?.throwIfAborted(); account.assertCurrent(); };

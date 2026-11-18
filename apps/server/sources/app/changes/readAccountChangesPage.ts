@@ -5,6 +5,7 @@ import { resolveSessionHostReferencesForAuthenticationInTx } from "@/app/session
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { listQueuedExecutionRunPendingTargetsForSessions } from "@/app/session/pending/pendingMessageService";
 import { readAuthoritativeSessionDeletionChangeV1, type ChangesResponse } from '@happier-dev/protocol/changes';
+import { isPairedProviderAccountUsageChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 
 function isPendingStateChangeHint(value: unknown): value is Record<string, unknown> {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -200,7 +201,7 @@ export async function readAccountChangesPage(input: Readonly<{
         if (after > account.seq) return { status: 'cursor-gone', account, reason: 'cursor-in-future' } as const;
         if (after < account.changesFloor) return { status: 'cursor-gone', account, reason: 'cursor-behind-floor' } as const;
 
-        const rows = await read(tx => tx.accountChange.findMany({
+        const readRows = await read(tx => tx.accountChange.findMany({
             where: {
                 accountId: userId,
                 cursor: { gt: after, ...(hasSelection ? { lte: account.seq } : {}) },
@@ -208,9 +209,16 @@ export async function readAccountChangesPage(input: Readonly<{
                 ...(selectedKinds === undefined ? {} : { kind: { in: [...selectedKinds] } }),
             },
             orderBy: [{ cursor: 'asc' }, { kind: 'asc' }, { entityId: 'asc' }],
-            take: limit,
+            take: limit + 1,
             select: { cursor: true, kind: true, entityId: true, changedAt: true, hint: true },
         }), true);
+        const last = readRows[limit - 1];
+        const next = readRows[limit];
+        // Never acknowledge only the legacy/global half of a verified quota
+        // pair. Defer the pair together, or carry it on a one-row HTTP page.
+        const splitQuotaPair = last && next && isPairedProviderAccountUsageChangeV1(last, next);
+        const rows = readRows.slice(0, splitQuotaPair ? limit === 1 ? 2 : limit - 1 : limit);
+        const full = readRows.length >= limit;
         // Retention advances the floor and removes rows atomically. Keep
         // this second, fresh read after rows, even within one transaction.
         const currentAccount = await read(tx => tx.account.findUnique({
@@ -225,14 +233,14 @@ export async function readAccountChangesPage(input: Readonly<{
         const sessionAccessResolutions = compatibility.supportsSessionAccessWitnessProtocol
             ? await read(tx => readAccountChangeRowsSessionAccess(tx, userId, visibleRows, input.readAuthentication))
             : undefined;
-        return { status: 'ok', account, rows, visibleRows, pendingRunIdsBySessionId, sessionAccessResolutions } as const;
+        return { status: 'ok', account, rows, full, visibleRows, pendingRunIdsBySessionId, sessionAccessResolutions } as const;
     };
     const page = await withAccountChangesReads(readPage);
     if (page.status === 'account-not-found') return page;
     if (page.status === 'cursor-gone') {
         return { status: 'cursor-gone', currentCursor: page.account.seq, changesFloor: page.account.changesFloor, reason: page.reason };
     }
-    const { account, rows } = page;
+    const { account, rows, full } = page;
 
     // `full` is judged on the stored rows the page read, before the compatibility filter: a page
     // the filter shortened still has more rows after `nextCursor`, and its reader must read on.
@@ -242,7 +250,6 @@ export async function readAccountChangesPage(input: Readonly<{
     // was examined; advance directly instead of paging unrelated activity.
     // A full page retains its last row cursor so the next page cannot skip
     // another selected change.
-    const full = rows.length >= limit;
     const nextCursor = hasSelection && !full
         ? account.seq
         : rows.length > 0 ? rows[rows.length - 1]!.cursor : after;

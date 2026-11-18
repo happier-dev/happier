@@ -1511,6 +1511,15 @@ Account cursor. `410 cursor-gone` requires a snapshot rebuild. The separate
 `sessionAccessSessionId` probe cannot be combined with `sessionId` or `kinds`
 (`400 invalid_params`). See the [change-feed contract](protocol.md#session-changes-03-development-source).
 
+Qualified provider usage publications pair the existing Account-wide change
+row with its exact record row. The feed keeps that pair together at page
+boundaries. A request with `limit=1` can return both rows of a pair so it can
+advance without splitting their scope proof. A paired hint can certify one
+changed UTC day for readers that already admitted history through the hint's
+starting cursor. If it also identifies a changed accepted-history suffix, its
+lower bound uses the server's stored observation timestamp. Missing hints or
+insufficiently current readers recover from the ordinary full record read.
+
 ## Endpoint catalog
 ### Automation definitions (0.3 development)
 

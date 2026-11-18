@@ -4,7 +4,8 @@ import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lig
 import { withAuthenticatedTestApp } from '../../../testkit/sqliteFastify';
 import { registerQualifiedConnectedAccountCredentialRoutesV4 } from './registerQualifiedConnectedAccountCredentialRoutesV4';
 import { createUsageSnapshot } from '../providerAccountUsageTestkit';
-import { buildProviderAccountUsageDaySummaryV1, sealProviderAccountUsageDaySummaryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
+import { buildProviderAccountUsageDaySummaryV1, packProviderAccountUsageDaySummaryV1,
+    PROVIDER_ACCOUNT_USAGE_DAY_SUMMARY_ENCODING, sealProviderAccountUsageDaySummaryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { readRetentionPolicyFromEnv } from '@/app/retention/config/readRetentionPolicyFromEnv';
@@ -19,12 +20,76 @@ import { seedSqliteUsageHistory } from '@/testkit/seedSqliteUsageHistory';
 import type { Prisma } from '@prisma/client';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { measureSqliteQueryVisits } from '@/testkit/sqliteQueryCost';
+import { ChangesResponseSchema } from '@happier-dev/protocol/changes';
+import { readProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { changesRoutes } from '../../changes/changesRoutes';
 
 describe('qualified usage day summaries', () => {
     let harness: LightSqliteHarness;
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-usage-days-', initAuth: true, initEncrypt: true }); }, 120_000);
     afterAll(async () => { await harness?.close(); });
     afterEach(async () => { await db.account.deleteMany(); });
+
+    it('certifies one changed accepted-history day only after the last differently scoped publication', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const headers = { 'x-test-user-id': account.id };
+        const ref = { service: { pluginId: 'example.connected-accounts', localId: 'usage-days' }, accountId: 'usage-days' };
+        const firstDay = Date.UTC(2026, 0, 1);
+        const nextDay = Date.UTC(2026, 0, 2);
+        await withAuthenticatedTestApp(app => {
+            changesRoutes(app);
+            registerQualifiedConnectedAccountCredentialRoutesV4(app);
+        }, async app => {
+            const accepted = '/v4/connect/qualified/provider-account-usage';
+            const first = createUsageSnapshot({ fetchedAt: firstDay + 1000 });
+            const credential = await app.inject({ method: 'POST', url: '/v4/connect/qualified/credential', headers, payload: {
+                ref, authenticationModeId: 'api-key', expectedCredentialRevision: null, content: { t: 'plain', v: { token: 'fixture' } },
+                metadata: { scopes: [], providerIdentity: { accountId: first.recordKey.accountSubjectId } },
+            } });
+            expect(credential.statusCode, credential.body).toBe(200);
+            const write = async (snapshot: typeof first) => {
+                const reply = await app.inject({ method: 'POST', url: accepted, headers, payload: {
+                    source: { ref, bindingKind: 'account' }, expectedCredentialRevision: credential.json().credentialRevision,
+                    expectedConfigurationRevision: null, recordId: snapshot.recordId, recordKey: snapshot.recordKey,
+                    payloadMode: 'plain_json_v1', status: 'ok', snapshot, fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs,
+                } });
+                expect(reply.statusCode, reply.body).toBe(200);
+            };
+            const read = async (after: number) => {
+                const reply = await app.inject({ method: 'GET', url: `/v2/changes?after=${after}`, headers });
+                expect(reply.statusCode, reply.body).toBe(200);
+                return ChangesResponseSchema.parse(reply.json());
+            };
+            const prior = (await read(0)).nextCursor;
+            await write(first);
+            const firstPublication = (await read(prior)).nextCursor;
+            const change = (at: number, used: number) => {
+                const snapshot = createUsageSnapshot({ fetchedAt: at });
+                return { ...snapshot, meters: snapshot.meters.map(meter => ({ ...meter, used })) };
+            };
+            const second = change(nextDay + 1000, 41);
+            await write(second);
+            const secondPublication = (await read(firstPublication)).nextCursor;
+            const third = change(nextDay + 2000, 42);
+            await write(third);
+            const coalesced = await read(prior);
+            expect(readProviderAccountUsageDayChangeV1(coalesced.changes)).toEqual({ recordId: first.recordId,
+                dayStartAtMs: nextDay, afterCursor: firstPublication, throughCursor: coalesced.nextCursor,
+                history: { fromAtMs: third.fetchedAtMs, afterCursor: secondPublication } });
+            expect(firstPublication).toBeGreaterThan(prior);
+            expect(secondPublication).toBeGreaterThan(firstPublication);
+            const summary = buildProviderAccountUsageDaySummaryV1({ recordId: first.recordId, dayStartAtMs: firstDay, snapshots: [first] });
+            const retained = await db.providerAccountUsageHistory.findFirstOrThrow({ where: { accountId: account.id, observedAt: new Date(first.fetchedAtMs) }, select: { id: true } });
+            const summaryReply = await app.inject({ method: 'PUT', url: `${accepted}/day-summaries`, headers, payload: {
+                recordId: first.recordId, dayStartAtMs: firstDay, payload: { v: 1, coverage: { observationCount: 1,
+                    frontier: { id: retained.id, observedAtMs: first.fetchedAtMs } }, content: { t: 'plain', v: summary } },
+            } });
+            expect(summaryReply.statusCode, summaryReply.body).toBe(200);
+            const rewritten = await read(coalesced.nextCursor);
+            expect(readProviderAccountUsageDayChangeV1(rewritten.changes)).toEqual({ recordId: first.recordId, dayStartAtMs: firstDay,
+                afterCursor: coalesced.nextCursor, throughCursor: rewritten.nextCursor });
+        });
+    });
 
     it('groups only missing detail and seeks old completed days without fetching their bodies', async () => {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
@@ -177,7 +242,11 @@ describe('qualified usage day summaries', () => {
         }
     });
 
-    it.each(['plain', 'e2ee'] as const)('admits %s summaries only for the exact accepted day and authenticated Account', async mode => {
+    it.each([
+        { mode: 'plain', packed: false },
+        { mode: 'plain', packed: true },
+        { mode: 'e2ee', packed: true },
+    ] as const)('admits $mode summaries (packed: $packed) only for the exact accepted day and authenticated Account', async ({ mode, packed }) => {
         const account = await db.account.create({ data: mode === 'plain' ? { publicKey: null, encryptionMode: 'plain' }
             : { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' }, select: { id: true } });
         const headers = { 'x-test-user-id': account.id };
@@ -226,17 +295,27 @@ describe('qualified usage day summaries', () => {
             } }] });
             const summary = buildProviderAccountUsageDaySummaryV1({ recordId: snapshot.recordId, dayStartAtMs, snapshots: [snapshot] });
             const payload = { v: 1, coverage: backfill.json().missingDays[0].coverage,
-                content: mode === 'plain' ? { t: 'plain', v: summary } : sealProviderAccountUsageDaySummaryV1({ summary, material,
+                ...(packed ? { encoding: PROVIDER_ACCOUNT_USAGE_DAY_SUMMARY_ENCODING } : {}),
+                content: mode === 'plain' ? { t: 'plain', v: packed ? packProviderAccountUsageDaySummaryV1(summary) : summary } : sealProviderAccountUsageDaySummaryV1({ summary, material,
                     randomBytes: length => new Uint8Array(length).fill(5) }) };
             const write = (value: unknown, writeHeaders = headers) => app.inject({ method: 'PUT',
                 url: '/v4/connect/qualified/provider-account-usage/day-summaries', headers: writeHeaders,
                 payload: { recordId: snapshot.recordId, dayStartAtMs, payload: value } });
             const wrongCoverage = await write({ ...payload, coverage: { ...payload.coverage, observationCount: 2 } });
-            expect(wrongCoverage.statusCode, wrongCoverage.body).toBe(409);
+            expect(wrongCoverage.json()).toEqual({ error: 'provider_account_usage_day_summary_conflict' });
             const wrongMode = await write({ ...payload, content: mode === 'plain'
                 ? sealProviderAccountUsageDaySummaryV1({ summary, material, randomBytes: length => new Uint8Array(length).fill(4) })
                 : { t: 'plain', v: summary } });
             expect(wrongMode.statusCode, wrongMode.body).toBe(409);
+            if (mode === 'plain' && packed) {
+                const body = packProviderAccountUsageDaySummaryV1(summary);
+                const foreign = createUsageSnapshot({ fetchedAt: snapshot.fetchedAtMs,
+                    recordKey: { ...snapshot.recordKey, accountSubjectId: 'foreign-provider-subject' } });
+                const wrongRecord = await write({ ...payload, content: { t: 'plain', v: { ...body,
+                    snapshots: { ...body.snapshots, bases: body.snapshots.bases.map(base => ({ ...base,
+                        recordId: foreign.recordId, recordKey: foreign.recordKey, accountSubject: foreign.accountSubject })) } } } });
+                expect(wrongRecord.json()).toEqual({ error: 'provider_account_usage_storage_mode_mismatch' });
+            }
             const written = await write(payload);
             expect(written.statusCode, written.body).toBe(200);
             expect((await app.inject({ method: 'GET', url: url(true), headers })).json())

@@ -16,7 +16,7 @@ import { applyComposerControlAcknowledgementV1, projectComposerOptionsInputV1 } 
 import { evaluateApiTokenGrantV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { EMPTY_PROJECT_AUTHORING_SESSION_INPUTS } from '@/sync/store/domains/projectAuthoringSessions';
-import { readProviderAccountUsageChangedRecordIdsV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { readProviderAccountUsageChangedRecordIdsV1, readProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import {
     publishHomeAccountChange,
     publishHomeAccountChangeWake,
@@ -2584,6 +2584,15 @@ class Sync {
             this.getAppliedTransportTarget()?.serverId
             ?? String(getActiveServerSnapshot().serverId ?? '').trim(),
         );
+    }
+
+    /** Capture the applied Account's feed baseline before starting a protected read. */
+    readAppliedAccountChangesCursor(serverId: string, accountId: string): number | undefined {
+        const current = this.getChangesCursorScope();
+        if (!current || typeof current === 'string' || current.serverScope !== serverId
+            || current.accountId !== accountId || this.changesCursor === null) return undefined;
+        const cursor = Number(this.changesCursor);
+        return Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : undefined;
     }
 
     private getExternalSessionCursorScope(sessionId: string): ChangesCursorScope | null {
@@ -13668,6 +13677,7 @@ class Sync {
                                     usageQueryAffects: materialization?.workflowRunsMaterialized ? false : plannedChangesAffectUsageQuery(publishedPlan),
                                     usageAccountingAffects: materialization?.workflowRunsMaterialized ? false : plannedChangesAffectUsageAccounting(publishedPlan),
                                     providerAccountUsageRecordIds: readProviderAccountUsageChangedRecordIdsV1(changes),
+                                    providerAccountUsageDayChange: readProviderAccountUsageDayChangeV1(changes),
                                 });
                             }
                             publishActivePluginCollectionUiQueryChanges(changes, publishedPlan.kv);

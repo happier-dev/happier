@@ -4,6 +4,7 @@ import type { FetchChangesFn } from './socketReconnectViaChanges';
 import { runSocketReconnectCatchUpViaChanges } from './socketReconnectViaChanges';
 import { plannedChangesAffectUsageAccounting } from './changesPlanner';
 import { applyPlannedChangeActions } from './changesApplier';
+import { fetchChanges } from '@/sync/api/session/apiChanges';
 
 const credentials: AuthCredentials = { token: 't', secret: 's' };
 
@@ -444,6 +445,28 @@ describe('runSocketReconnectCatchUpViaChanges', () => {
             nextCursor: '3',
             shouldPersistCursor: true,
         });
+    });
+
+    it('continues through short and empty full pages from the HTTP feed', async () => {
+        const requests: string[] = [];
+        const applied: string[] = [];
+        const pages = [
+            { changes: [{ cursor: 1, kind: 'account', entityId: 'before', changedAt: 1 }], nextCursor: 1, full: true },
+            { changes: [], nextCursor: 3, full: true },
+            { changes: [{ cursor: 4, kind: 'account', entityId: 'after', changedAt: 1 }], nextCursor: 4, full: false },
+        ];
+        const result = await runSocketReconnectCatchUpViaChanges({
+            credentials, accountId: 'a', afterCursor: '0', changesPageLimit: 2,
+            fetchChanges: params => fetchChanges({ ...params, request: async path => {
+                requests.push(new URL(path, 'https://home.test').searchParams.get('after')!);
+                return Response.json(pages.shift());
+            } }),
+            applyPlanned: async planned => { applied.push(...planned.changes.map(change => change.entityId)); },
+            snapshotRefresh: async () => { throw new Error('An available page must continue without a snapshot'); },
+        });
+        expect(requests).toEqual(['0', '1', '3']);
+        expect(applied).toEqual(['before', 'after']);
+        expect(result).toEqual({ status: 'ok', nextCursor: '4', shouldPersistCursor: true });
     });
 
     it('checkpoints each fully materialized page before fetching the next page', async () => {

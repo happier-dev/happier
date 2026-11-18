@@ -276,7 +276,7 @@ describe('apiProviderAccountUsage', () => {
         }
         const result = await reading;
         if (wire !== 'json') expect(rawReads, 'all history frames arrive in one cold response').toBe(1);
-        const retained = projectionDocuments.get(snapshot.recordId)!.admitted!.opened.history.entries;
+        const retained = projectionDocuments.get(snapshot.recordId)!.exact!.admitted!.opened.history.entries;
         expect(retained.map(entry => [entry.id, entry.observedAtMs, entry.snapshot.meters[0]!.used]))
             .toEqual(samples.map(value => [`accepted-${value.fetchedAtMs}`, value.fetchedAtMs, value.meters[0]!.used]));
         expect(result.pageFacts?.resetWitness?.id).toBe('accepted-256');
@@ -627,7 +627,7 @@ describe('apiProviderAccountUsage', () => {
             expect(result.current?.fetchedAtMs).toBe(90);
             expect(result.pageFacts?.resetWitness?.id).toBe('accepted-90');
             expect(result.history).toBeUndefined();
-            const admitted = projectionDocuments.get(snapshot.recordId)!.admitted!;
+            const admitted = projectionDocuments.get(snapshot.recordId)!.exact!.admitted!;
             // This observation is inside both scopes, but is neither the
             // current record nor the terminal/reset witness retained by facts.
             const interior = admitted.opened.history.entries.find(entry => entry.id === 'accepted-50')!;
@@ -668,8 +668,8 @@ describe('apiProviderAccountUsage', () => {
                 expect(liveCount(references),
                     `forty acquisitions retain only the current ${name}`).toBe(1);
             }
-            expect(generations.at(-1)!.deref()).toBe(projectionDocuments.get(snapshot.recordId)!.admitted!.opened);
-            expect(interiorSnapshots.at(-1)!.deref()).toBe(projectionDocuments.get(snapshot.recordId)!.admitted!.opened.history.entries[0]!.snapshot);
+            expect(generations.at(-1)!.deref()).toBe(projectionDocuments.get(snapshot.recordId)!.exact!.admitted!.opened);
+            expect(interiorSnapshots.at(-1)!.deref()).toBe(projectionDocuments.get(snapshot.recordId)!.exact!.admitted!.opened.history.entries[0]!.snapshot);
         } finally { inspector.disconnect(); }
     });
 
@@ -723,7 +723,7 @@ describe('apiProviderAccountUsage', () => {
             { source, projection: { range: { startAtMs, endAtMs }, resolution: 'accepted_observations' } }, { ...options, nowMs });
         const first = await read(1);
         expect(first.pace[0]?.value.status).toBe('available');
-        const admittedSnapshot = projectionDocuments.get(snapshot.recordId)!.admitted!.opened.history.entries[0]!.snapshot;
+        const admittedSnapshot = projectionDocuments.get(snapshot.recordId)!.exact!.admitted!.opened.history.entries[0]!.snapshot;
         const meters = admittedSnapshot.meters;
         let historyMeterReads = 0;
         // Transparent access instrumentation preserves the real admitted history and derivation logic.

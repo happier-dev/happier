@@ -1,4 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { ChangesResponseSchema } from '@happier-dev/protocol/changes';
+import { buildProviderAccountUsageMaterialChangesV1, readProviderAccountUsageChangedRecordIdsV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/providerAccountUsagePrimitives';
 
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { db } from "@/storage/db";
@@ -62,6 +65,37 @@ describe("changesRoutes automation changes (integration)", () => {
                 ]);
             },
         );
+    });
+
+    it('keeps a quota invalidation narrow when a page ends at its global row', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
+        const recordId = buildProviderAccountUsageRecordId({ providerId: 'claude', accountSubjectId: 'account',
+            subjectKind: 'account', quotaScope: 'account' });
+        const [global, exact] = buildProviderAccountUsageMaterialChangesV1(recordId);
+        await inTx(async tx => {
+            await markAccountChanged(tx, { accountId: account.id, kind: 'automation', entityId: 'before' });
+            await markAccountChanged(tx, { accountId: account.id, ...global });
+            await markAccountChanged(tx, { accountId: account.id, ...exact });
+            await markAccountChanged(tx, { accountId: account.id, kind: 'automation', entityId: 'after' });
+        });
+        await withAuthenticatedTestApp(changesRoutes, async app => {
+            const read = async (after: number, limit: number) => {
+                const response = await app.inject({ method: 'GET', url: `/v2/changes?after=${after}&limit=${limit}`,
+                    headers: { 'x-test-user-id': account.id } });
+                expect(response.statusCode).toBe(200);
+                return ChangesResponseSchema.parse(response.json());
+            };
+            const before = await read(0, 1);
+            expect(before.changes.map(change => change.entityId)).toEqual(['before']);
+            const boundary = await read(0, 2);
+            expect(boundary).toEqual(before);
+            for (const limit of [1, 2]) {
+                const quota = await read(boundary.nextCursor, limit);
+                expect(readProviderAccountUsageChangedRecordIdsV1(quota.changes)).toEqual([recordId]);
+                expect(quota.full).toBe(true);
+                expect((await read(quota.nextCursor, 2)).changes.map(change => change.entityId)).toEqual(['after']);
+            }
+        });
     });
 
     it("keeps a Collection full reread broad when a later exact change coalesces before polling", async () => {

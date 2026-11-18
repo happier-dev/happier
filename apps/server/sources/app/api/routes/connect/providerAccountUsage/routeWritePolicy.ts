@@ -1,11 +1,11 @@
 import type { ConnectedServiceUsageSourceV1, SealedConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { getProviderAccountUsageRefreshErrorAt } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { PROVIDER_ACCOUNT_USAGE_DAY_MS } from '@happier-dev/protocol/connect/providerAccountUsagePrimitives';
 import type { ProviderAccountUsageRecordId, ProviderAccountUsageRecordKeyV1, ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import type { SealedProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/accountUsage';
 import { isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
 import { serializeProviderAccountUsageHistoryMaterialV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
-import { buildProviderAccountUsageMaterialChangesV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
-import { acquireAccountChangePublicationLocksInTx, markAccountChanged } from '@/app/changes/markAccountChanged';
+import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 import { compareConnectedServiceQuotaObservationRecency, isConnectedServiceQuotaObservationAtOrBeforeNow } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { mergeProviderAccountSubscription } from '@happier-dev/protocol/connect/accountSubscription';
 
@@ -27,6 +27,7 @@ import type {
 } from "./types";
 import { ProviderAccountUsagePayloadInvariantError } from "./types";
 import { readProviderAccountUsageLegacyPendingDays } from './daySummaryPendingStorage';
+import { publishUsageRecordChange } from './publishUsageRecordChange';
 
 type ProviderAccountUsagePolicyClient = TransactionClient;
 
@@ -208,9 +209,9 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
                 );
                 if (!await createProviderAccountUsageRecordIfAbsent(initialWrite, params.client)) continue;
                 await retainProviderAccountUsageHistory(initialWrite, params.client);
-                for (const change of buildProviderAccountUsageMaterialChangesV1(params.recordId)) {
-                    await markAccountChanged(params.client, { accountId: params.accountId, ...change });
-                }
+                publishUsageRecordChange(params.client, { accountId: params.accountId, recordId: params.recordId,
+                    dayStartAtMs: Math.floor(initialWrite.fetchedAt / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS,
+                    historyFromAtMs: initialWrite.fetchedAt });
                 return "written";
             } catch (error) {
                 if (isUniqueConstraintError(error)) continue;
@@ -336,9 +337,9 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
             // Opaque writers without a fingerprint remain conservative.
             if (historyChanged || nextWrite.status !== existing.status
                 || nextWrite.staleAfterMs !== existing.staleAfterMs || clearsRefreshRequest || advancesFailure) {
-                for (const change of buildProviderAccountUsageMaterialChangesV1(params.recordId)) {
-                    await markAccountChanged(params.client, { accountId: params.accountId, ...change });
-                }
+                publishUsageRecordChange(params.client, { accountId: params.accountId, recordId: params.recordId,
+                    ...(historyChanged ? { dayStartAtMs: Math.floor(nextWrite.fetchedAt / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS,
+                        historyFromAtMs: nextWrite.fetchedAt } : {}) });
             }
             return "written";
         }

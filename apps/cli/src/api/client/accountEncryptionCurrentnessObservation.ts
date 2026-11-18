@@ -11,7 +11,7 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { logger } from '@/ui/logger';
 import { DEFAULT_ACCOUNT_CHANGES_PAGE_LIMIT, fetchChanges } from '@/api/changes';
 import { readSessionFollowChangeHintV1, readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
-import { readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1,
+import { isChangesPageFull, readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1, readSessionFollowSourceChangedV1, readSessionFollowReceiverAvailabilityChangedV1,
     type ChangeEntry } from '@happier-dev/protocol/changes';
 import { parseConnectedAccountCatalogPhysicalKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import type { RunFollowOriginalV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
@@ -519,7 +519,7 @@ function createObservation(scope: Scope): SharedObservation {
                         classifyFollowPage(result.response.changes, page);
                         followCursor = result.response.nextCursor;
                         followCursorAcknowledged = true;
-                        more = result.response.changes.length === DEFAULT_ACCOUNT_CHANGES_PAGE_LIMIT;
+                        more = isChangesPageFull(result.response, DEFAULT_ACCOUNT_CHANGES_PAGE_LIMIT);
                     } else {
                         // A gap/failed classification cannot preserve a trusted cached rule set.
                         publishFollow(true);

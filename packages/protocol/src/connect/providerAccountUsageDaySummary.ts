@@ -25,6 +25,18 @@ export const ProviderAccountUsageDaySummaryV1Schema = lazyZodSchema(() => z.stri
   windows: z.array(ProviderAccountUsageDaySummaryWindowV1Schema),
 }));
 export type ProviderAccountUsageDaySummaryV1 = z.infer<typeof ProviderAccountUsageDaySummaryV1Schema>;
+type PlainDaySummaryV1 = ProviderAccountUsageDaySummaryV1 | z.infer<typeof PackedProviderAccountUsageDaySummaryV1Schema>;
+
+/** Admit the record and day before opening the protected window observations. */
+export function matchesProviderAccountUsageDaySummaryIdentityV1(
+  value: PlainDaySummaryV1,
+  identity: Readonly<{ recordId: string; dayStartAtMs: number }>,
+): boolean {
+  if (value.recordId !== identity.recordId || value.dayStartAtMs !== identity.dayStartAtMs) return false;
+  return 'encoding' in value
+    ? value.snapshots.recordId === identity.recordId && value.snapshots.bases.every(base => base.recordId === identity.recordId)
+    : value.lastSnapshot.recordId === identity.recordId && value.windows.every(window => window.lastSnapshot.recordId === identity.recordId);
+}
 export const ProviderAccountUsageDaySummaryCoverageV1Schema = lazyZodSchema(() => z.strictObject({
   observationCount: z.number().check(z.int(), z.nonnegative()),
   frontier: z.nullable(z.strictObject({ id: z.string().check(z.minLength(1)), observedAtMs: Time })),
@@ -194,8 +206,7 @@ export function openProviderAccountUsageDaySummaryV1(input: Readonly<{ recordId:
   const opened = input.content.t === 'plain' ? input.content.v : input.material
     ? openAccountScopedBlobCiphertext({ kind: 'provider_account_usage_day_summary', material: input.material, ciphertext: input.content.c })?.value : null;
   const packed = PackedProviderAccountUsageDaySummaryV1Schema.safeParse(opened);
-  const summary = packed.success ? unpackProviderAccountUsageDaySummaryV1(packed.data) : ProviderAccountUsageDaySummaryV1Schema.parse(opened);
-  if (summary.recordId !== input.recordId || summary.dayStartAtMs !== input.dayStartAtMs || summary.lastSnapshot.recordId !== input.recordId
-    || summary.windows.some(window => window.lastSnapshot.recordId !== input.recordId)) throw new Error('provider_account_usage_summary_identity_mismatch');
-  return summary;
+  const summary = packed.success ? packed.data : ProviderAccountUsageDaySummaryV1Schema.parse(opened);
+  if (!matchesProviderAccountUsageDaySummaryIdentityV1(summary, input)) throw new Error('provider_account_usage_summary_identity_mismatch');
+  return 'encoding' in summary ? unpackProviderAccountUsageDaySummaryV1(summary) : summary;
 }

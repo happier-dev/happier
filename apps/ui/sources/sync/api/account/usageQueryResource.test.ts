@@ -4157,7 +4157,7 @@ describe('usage query captured Resource adapter', () => {
     } finally { release(); }
   });
 
-  it('keeps settled daily summaries and closed ranges closed across eight quota wakes', async () => {
+  it('reacquires only named quota sources when a wake has no changed-day hint', async () => {
     const { buildProviderAccountUsageDaySummaryV1 } = await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');
     const now = Date.UTC(2026, 10, 18, 12);
     const day = 86_400_000;
@@ -4175,7 +4175,7 @@ describe('usage query captured Resource adapter', () => {
           resetsAt: now + day, windowDurationMs: day, unit: 'count', status: 'ok', details: {} }] });
     });
     const summaryBody = (snapshot: typeof snapshots[number]) => Array.from({ length: 13 }, (_, index) => {
-      const dayStartAtMs = now - (12 - index) * day;
+      const dayStartAtMs = Math.floor(now / day) * day - (12 - index) * day;
       const historical = { ...snapshot, observedAtMs: dayStartAtMs + 3_600_000, fetchedAtMs: dayStartAtMs + 3_600_000 };
       return { dayStartAtMs, payload: { v: 1, coverage: { observationCount: 1,
         frontier: { id: `day-${snapshot.recordId}-${index}`, observedAtMs: historical.observedAtMs } },

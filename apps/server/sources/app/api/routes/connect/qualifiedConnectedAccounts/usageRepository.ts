@@ -11,8 +11,9 @@ import { readAccountScopedCiphertextKindByte, isAccountScopedBlobCiphertextForKi
 import type { ProviderAccountUsagePageProjectionWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
 import { readProviderAccountUsagePageProjection, writeProviderAccountUsagePageProjection } from '../providerAccountUsage/pageProjectionStorage';
 import { readProviderAccountUsageDaySummaries, writeProviderAccountUsageDaySummary } from '../providerAccountUsage/daySummaryStorage';
-import type { ProviderAccountUsageDaySummaryReadV1Schema, ProviderAccountUsageDaySummaryWriteV1Schema,
-    StoredProviderAccountUsageDaySummaryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
+import { publishUsageRecordChange } from '../providerAccountUsage/publishUsageRecordChange';
+import { matchesProviderAccountUsageDaySummaryIdentityV1, type ProviderAccountUsageDaySummaryReadV1Schema,
+    type ProviderAccountUsageDaySummaryWriteV1Schema, type StoredProviderAccountUsageDaySummaryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { type ConnectedServiceQuotaSnapshotV1, type SealedConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { isConnectedServiceUsageProviderCompatible } from "@happier-dev/agents";
@@ -1429,10 +1430,8 @@ function usageDocumentMatchesMode(value: Readonly<{ content: { t: 'plain'; v: un
 
 function daySummaryMatchesRecord(payload: StoredProviderAccountUsageDaySummaryV1, record: StoredProviderAccountUsageRecord, dayStartAtMs: number) {
     if (!usageDocumentMatchesMode(payload, record, 'provider_account_usage_day_summary')) return false;
-    if (payload.content.t === 'encrypted') return true;
-    const value = payload.content.v;
-    return value.recordId === record.recordId && value.dayStartAtMs === dayStartAtMs
-        && value.lastSnapshot.recordId === record.recordId && value.windows.every(window => window.lastSnapshot.recordId === record.recordId);
+    return payload.content.t === 'encrypted'
+        || matchesProviderAccountUsageDaySummaryIdentityV1(payload.content.v, { recordId: record.recordId, dayStartAtMs });
 }
 
 export async function readQualifiedProviderAccountUsageDaySummaries(params: Readonly<{ accountId: string }> & ReturnType<typeof ProviderAccountUsageDaySummaryReadV1Schema.parse>) {
@@ -1459,7 +1458,9 @@ export async function writeQualifiedProviderAccountUsageDaySummary(params: Reado
         if (admitted.status !== 'resolved') return admitted.status;
         if (!daySummaryMatchesRecord(params.payload, admitted.record, params.dayStartAtMs)) return 'storage_mode_mismatch' as const;
         const { accountId, ...value } = params;
-        return await writeProviderAccountUsageDaySummary({ accountId, value }, tx) ? 'written' as const : 'summary_conflict' as const;
+        if (!await writeProviderAccountUsageDaySummary({ accountId, value }, tx)) return 'summary_conflict' as const;
+        publishUsageRecordChange(tx, { accountId, recordId: value.recordId, dayStartAtMs: value.dayStartAtMs });
+        return 'written' as const;
     }, { isolationLevel: 'ReadCommitted' });
 }
 

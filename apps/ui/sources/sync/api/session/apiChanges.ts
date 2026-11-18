@@ -20,7 +20,7 @@ export async function fetchChanges(params: {
     serverId?: string;
     sessionId?: string;
 }): Promise<
-    | { status: 'ok'; changes: ChangeEntry[]; nextCursor: string }
+    | { status: 'ok'; changes: ChangeEntry[]; nextCursor: string; full?: boolean }
     | { status: 'cursor-gone'; currentCursor: string }
     | { status: 'error' }
 > {
@@ -83,7 +83,8 @@ export async function fetchChanges(params: {
         if (!parsed.success) {
             return { status: 'error' };
         }
-        return { status: 'ok', changes: parsed.data.changes, nextCursor: String(parsed.data.nextCursor) };
+        const { changes, nextCursor, full } = parsed.data;
+        return { status: 'ok', changes, nextCursor: String(nextCursor), ...(full === undefined ? {} : { full }) };
     } catch {
         return { status: 'error' };
     }
