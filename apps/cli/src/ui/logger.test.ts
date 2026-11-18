@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { dirname, join } from 'node:path';
 import { createContext, runInContext } from 'node:vm';
 import { Console } from 'node:console';
+import { AxiosError, AxiosHeaders } from 'axios';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
@@ -300,6 +301,33 @@ describe('logger.debugLargeJson', () => {
             expect(JSON.parse(section.trim())).toMatchObject(marker === 'typed-top'
                 ? { failureCause: cause } : { error: { failureCause: cause } });
         }
+    });
+
+    it('logs a nested HTTP failure without visiting its request configuration graph', async () => {
+        process.env.DEBUG = '1';
+        const { logger } = await import('@/ui/logger');
+
+        let requestGraphVisits = 0;
+        let graph: object = {
+            get diagnosticLeaf() {
+                ++requestGraphVisits;
+                return 'private request state';
+            },
+        };
+        for (let depth = 0; depth < 8; depth++) {
+            graph = { left: graph, right: graph };
+        }
+        // The same subgraph can be reachable through several branches of a live HTTP agent.
+        const requestConfig = { headers: new AxiosHeaders(), httpsAgent: graph };
+        const error = new AxiosError('startup request refused', 'ERR_BAD_REQUEST', requestConfig);
+        logger.debug('failed startup', { errors: [error] });
+        logger.flushSync();
+
+        expect(requestGraphVisits).toBe(0);
+        const log = readFileSync(logger.getLogPath(), 'utf8');
+        expect(log).toContain('startup request refused');
+        expect(log).toContain('ERR_BAD_REQUEST');
+        expect(log).not.toContain('private request state');
     });
 
     it('does not throw when a nested error causes a cycle', async () => {

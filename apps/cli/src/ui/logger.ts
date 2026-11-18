@@ -22,6 +22,7 @@ import { writeConsoleErrorBestEffort, writeConsoleLogBestEffort } from '../utils
 import { BufferedFileAppender } from './logFileAppender'
 import { isFileLogLevelEnabled, resolveFileLogLevel, type FileLogLevel } from './logFileLevel'
 import { pruneLogs } from '@/utils/logs/pruneLogs'
+import { safeJsonStringify } from '@/utils/safeJson'
 import { createTimestampForFilename } from '@/utils/logs/logFileName'
 import {
   DAEMON_LOG_SUFFIX,
@@ -84,7 +85,8 @@ function readUnknownPropertyBestEffort(value: object, key: 'code' | 'cause'): un
   }
 }
 
-function describeErrorForLog(error: object): Record<string, unknown> {
+function describeErrorForLog(error: object): Record<string, unknown> | undefined {
+  if (!isErrorLikeForLog(error)) return undefined
   const name = readStringPropertyBestEffort(error, 'name')
   const message = readStringPropertyBestEffort(error, 'message')
   // `stack` normally opens with `name: message`, but a cross-realm or trimmed
@@ -99,20 +101,6 @@ function describeErrorForLog(error: object): Record<string, unknown> {
     ...(typeof code === 'string' || typeof code === 'number' ? { code } : {}),
     ...(cause === undefined ? {} : { cause }),
     failureCause: readSessionRuntimeFailureCause(error) ?? projectActionFailureCauseV1(error, 'cli.log'),
-  }
-}
-
-/**
- * One replacer per `JSON.stringify` call: the seen-set has to be scoped to the
- * call, or a cause chain that loops back would be dropped from later logs.
- */
-function createErrorAwareLogReplacer(): (key: string, value: unknown) => unknown {
-  const seen = new WeakSet<object>()
-  return (_key, value) => {
-    if (!isErrorLikeForLog(value)) return value
-    if (seen.has(value)) return '[Circular error]'
-    seen.add(value)
-    return describeErrorForLog(value)
   }
 }
 
@@ -374,21 +362,11 @@ export class Logger {
         return truncatedArray
       }
       
-      if (isErrorLikeForLog(obj)) {
-        if (visited.has(obj)) return '[Circular]'
-        visited.add(obj)
-        const described: Record<string, unknown> = {}
-        for (const [key, value] of Object.entries(describeErrorForLog(obj))) {
-          described[key] = truncateStrings(value)
-        }
-        return described
-      }
-
       if (obj && typeof obj === 'object') {
         if (visited.has(obj)) return '[Circular]'
         visited.add(obj)
         const result: Record<string, unknown> = {}
-        for (const [key, value] of Object.entries(obj)) {
+        for (const [key, value] of Object.entries(describeErrorForLog(obj) ?? obj)) {
           if (key === 'usage') {
             // Drop usage, not generally useful for debugging
             continue
@@ -690,7 +668,7 @@ export class Logger {
           level,
           message: `${message} ${args.map(a => {
             if (typeof a === 'object') {
-              try { return JSON.stringify(a, createErrorAwareLogReplacer(), 2) } catch { return String(a) }
+              try { return safeJsonStringify(a, 2, describeErrorForLog) } catch { return String(a) }
             }
             return String(a)
           }).join(' ')}`,
@@ -707,7 +685,7 @@ export class Logger {
     const unredactedLogLine = `${prefix} ${message} ${args.map(arg => {
       if (typeof arg === 'string') return arg
       try {
-        return JSON.stringify(arg, createErrorAwareLogReplacer())
+        return safeJsonStringify(arg, undefined, describeErrorForLog)
       } catch {
         // Circular references, BigInt, exotic getters, etc.
         if (arg && typeof arg === 'object' && 'stack' in arg) return (arg as Error).stack || String(arg)
