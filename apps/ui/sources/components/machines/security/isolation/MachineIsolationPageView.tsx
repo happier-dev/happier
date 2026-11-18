@@ -35,6 +35,8 @@ import {
 export type MachineIsolationEntryRow = MachineIsolationEntryPresentation &
   Readonly<{
     mark?: React.ReactNode;
+    /** Saved policy assignments, in the policy owner's order; the count is this array's length. */
+    usedWorkKinds?: readonly MachineIsolationWorkKind[];
     /** The preset's offer line ("Docker Sandboxes · 2 CPU"); `extra` ends it with this row's note. */
     renderLine?: (extra?: string) => React.ReactNode;
     /** The sandbox type is no longer contributed on this Machine. */
@@ -371,6 +373,9 @@ function MachineIsolationEntryItem(
       testID={`machine-isolation-entry-${entry.id}`}
       title={entry.name}
       icon={entry.mark}
+      detail={entry.usedWorkKinds?.length
+        ? entry.usedWorkKinds.map((kind) => t(`machineDetailPage.isolation.workKinds.${kind}`)).join(' · ')
+        : undefined}
       subtitle={
         entry.renderLine
           ? entry.renderLine(note ?? undefined)

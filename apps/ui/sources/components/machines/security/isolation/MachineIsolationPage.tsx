@@ -19,6 +19,7 @@ import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { t } from '@/text';
 
 import {
+  machineIsolationSandboxUsedWorkKinds,
   withMachineIsolationLifecycle,
   withMachineIsolationSandbox,
   withMachineIsolationWorkTarget,
@@ -249,6 +250,7 @@ function MachineIsolationConfiguredPage(
           );
           return {
             id,
+            usedWorkKinds: machineIsolationSandboxUsedWorkKinds(policy, id),
             name:
               preset?.name ??
               t('machineDetailPage.isolation.sandboxes.presetUnavailable'),
@@ -285,6 +287,7 @@ function MachineIsolationConfiguredPage(
       ),
     [
       policy.configuredSandboxes,
+      policy.workKinds,
       presets.byEntry,
       catalog.provisioners,
       catalogSettled,

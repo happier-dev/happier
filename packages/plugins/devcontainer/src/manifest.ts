@@ -152,7 +152,7 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
       inputSchema: DevcontainerReviewQuerySchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
       inputHints: { fields: [
         // The image is the one thing the form asks; everything else keeps a default and sits under Advanced.
-        { path: 'configuration.image', title: 'Container image', widget: 'text', description: 'Any image this computer can pull, for example ubuntu:24.04.',
+        { path: 'configuration.image', title: 'Container image', widget: 'text', role: 'image', description: 'Any image this computer can pull, for example ubuntu:24.04.',
           visibleWhen: { op: 'eq', path: 'configuration.kind', value: 'image' }, requiredWhen: { op: 'eq', path: 'configuration.kind', value: 'image' } },
         { path: 'configuration.setupScript', title: 'Setup script', widget: 'textarea',
           description: 'Runs inside the container before it joins.', visibleWhen: { op: 'eq', path: 'configuration.kind', value: 'image' } },

@@ -346,7 +346,7 @@ export type AccountProfileActionInputById = {
                                         maxSelections?: number | undefined;
                                         defaultValue?: unknown;
                                         unit?: 'bytes' | undefined;
-                                        role?: 'cpu' | 'disk' | 'memory' | undefined;
+                                        role?: 'cpu' | 'disk' | 'image' | 'memory' | undefined;
                                         visibleWhen?: unknown;
                                         visibleWhenContextSlot?: string | undefined;
                                         requiredWhen?: unknown;
@@ -512,7 +512,7 @@ export type AccountProfileActionInputById = {
                                     maxSelections?: number | undefined;
                                     defaultValue?: unknown;
                                     unit?: 'bytes' | undefined;
-                                    role?: 'cpu' | 'disk' | 'memory' | undefined;
+                                    role?: 'cpu' | 'disk' | 'image' | 'memory' | undefined;
                                     visibleWhen?: unknown;
                                     visibleWhenContextSlot?: string | undefined;
                                     requiredWhen?: unknown;
@@ -997,7 +997,7 @@ export type AccountProfileActionInputById = {
                                         maxSelections?: number | undefined;
                                         defaultValue?: unknown;
                                         unit?: 'bytes' | undefined;
-                                        role?: 'cpu' | 'disk' | 'memory' | undefined;
+                                        role?: 'cpu' | 'disk' | 'image' | 'memory' | undefined;
                                         visibleWhen?: unknown;
                                         visibleWhenContextSlot?: string | undefined;
                                         requiredWhen?: unknown;
@@ -1163,7 +1163,7 @@ export type AccountProfileActionInputById = {
                                     maxSelections?: number | undefined;
                                     defaultValue?: unknown;
                                     unit?: 'bytes' | undefined;
-                                    role?: 'cpu' | 'disk' | 'memory' | undefined;
+                                    role?: 'cpu' | 'disk' | 'image' | 'memory' | undefined;
                                     visibleWhen?: unknown;
                                     visibleWhenContextSlot?: string | undefined;
                                     requiredWhen?: unknown;
@@ -1650,7 +1650,7 @@ export type AccountProfileActionInputById = {
                                         maxSelections?: number | undefined;
                                         defaultValue?: unknown;
                                         unit?: 'bytes' | undefined;
-                                        role?: 'cpu' | 'disk' | 'memory' | undefined;
+                                        role?: 'cpu' | 'disk' | 'image' | 'memory' | undefined;
                                         visibleWhen?: unknown;
                                         visibleWhenContextSlot?: string | undefined;
                                         requiredWhen?: unknown;
@@ -1816,7 +1816,7 @@ export type AccountProfileActionInputById = {
                                     maxSelections?: number | undefined;
                                     defaultValue?: unknown;
                                     unit?: 'bytes' | undefined;
-                                    role?: 'cpu' | 'disk' | 'memory' | undefined;
+                                    role?: 'cpu' | 'disk' | 'image' | 'memory' | undefined;
                                     visibleWhen?: unknown;
                                     visibleWhenContextSlot?: string | undefined;
                                     requiredWhen?: unknown;

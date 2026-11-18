@@ -24,7 +24,7 @@ import type { PluginLocalizedStringV2 } from '@happier-dev/protocol/plugins/cont
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { presentQualifiedConnectedAccountTarget, presentConnectedAccountPurposeTeamResource, type QualifiedConnectedAccountTargetPresentation } from '@/sync/domains/connectedServices/qualifiedConnectedAccountTargetPresentation';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import { savedConfigurationSize } from './savedConfigurationSize';
+import { savedConfigurationFacts } from './savedConfigurationSize';
 
 /** These are display targets from already validated selections, never new purpose authorizations. */
 export function managedCredentialReceiptTargets(launch: ValidatedLaunchSnapshotV1) {
@@ -119,12 +119,13 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
     const billingLocation = (facts?.billing ?? input.declaredBilling)?.location;
     // The size is the receipt's spec line; the other dimensions are its facts, image first for a local
     // VM (what you will see on this computer) and place first in the cloud (lab m-config receipts).
-    const size = facts?.nativeFacts?.size ?? savedConfigurationSize(input.launch, input.savedLaunchPresentation?.inputHints);
+    const savedFacts = savedConfigurationFacts(input.launch, input.savedLaunchPresentation?.inputHints);
+    const size = facts?.nativeFacts?.size ?? savedFacts.size;
     for (const dimension of billingLocation === 'local' ? ['image', 'location', 'network'] as const : ['location', 'image', 'network'] as const) {
-        const fact = facts?.nativeFacts?.[dimension];
+        const fact = facts?.nativeFacts?.[dimension] ?? (dimension === 'image' ? savedFacts.image : undefined);
         if (!fact) continue;
         const value = localized(fact.title);
-        nativeLabels.push(value);
+        if (facts?.nativeFacts?.[dimension]) nativeLabels.push(value);
         // A place leads with its country's flag wherever the receipt names it, as in the location choices.
         const flag = dimension === 'location' ? countryFlag('countryCode' in fact ? fact.countryCode : undefined) : '';
         rows.push({ id: dimension, label: t(`managedMachines.config.${dimension}`), value: flag ? `${flag} ${value}` : value });
@@ -143,9 +144,9 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
         for (const field of resolveEffectiveActionInputFields({ inputHints: hints }, savedChoices)) {
             // Only a declared title names a choice; a title derived from its schema key ("Disk Gi B") names nothing.
             if (!inputHints?.fields.some(hint => hint.path === field.path) && !declaredSchemaTitle(schema, field.path)) continue;
-            if (size && field.role) continue;
             const savedValue = readInputPath(savedChoices, field.path);
             if (savedValue === undefined || savedValue === null) continue;
+            if (field.role === 'image' ? savedFacts.image?.id === savedValue : size && field.role) continue;
             const presentation = resolveActionFieldPresentationForInput(field, savedChoices);
             if (!presentation || presentation.kind === 'text' && presentation.secure) continue;
             const value = presentation.kind === 'text' ? presentation.value : presentation.kind === 'toggle'
@@ -275,6 +276,8 @@ function managedSummaryDimensions(facts: ManagedConfigurationFactsV1, localized:
  * captured at review never stands in for the current one.
  */
 export function describeManagedPresetOffer(preset: Readonly<{
+    /** The row already names the preset, so its identical provider title adds no information. */
+    name?: string;
     reviewedFacts?: ManagedConfigurationFactsV1; retention?: MachineRetentionOverrideV1['retention']; wakeOnAcceptedMessage?: boolean;
     /** The provider's declared title; `null` while it is read. */
     providerTitle?: string | null;
@@ -282,13 +285,14 @@ export function describeManagedPresetOffer(preset: Readonly<{
     savedLaunchPresentation?: ManagedConfigurationReceiptInput['savedLaunchPresentation'];
 }>, localized: (value: PluginLocalizedStringV2) => string = fallbackLocalized): string | undefined {
     const dimensions = preset.reviewedFacts ? managedSummaryDimensions(preset.reviewedFacts, localized) : [];
-    if (!preset.reviewedFacts?.nativeFacts?.size && preset.launch) {
-        const size = savedConfigurationSize(preset.launch, preset.savedLaunchPresentation?.inputHints);
-        if (size) dimensions.unshift(...managedSizeDimensions(size));
+    if (preset.launch) {
+        const savedFacts = savedConfigurationFacts(preset.launch, preset.savedLaunchPresentation?.inputHints);
+        if (!preset.reviewedFacts?.nativeFacts?.size && savedFacts.size) dimensions.unshift(...managedSizeDimensions(savedFacts.size));
+        if (!preset.reviewedFacts?.nativeFacts?.image && savedFacts.image) dimensions.push(localized(savedFacts.image.title));
     }
     const keep = preset.retention
         ? describeRetentionPolicy({ retention: preset.retention, wakeOnAcceptedMessage: preset.wakeOnAcceptedMessage === true }) : null;
-    return [...(preset.providerTitle ? [preset.providerTitle] : []), ...dimensions, ...(keep ? [keep] : [])].join(' · ') || undefined;
+    return [...(preset.providerTitle && preset.providerTitle !== preset.name ? [preset.providerTitle] : []), ...dimensions, ...(keep ? [keep] : [])].join(' · ') || undefined;
 }
 
 /**

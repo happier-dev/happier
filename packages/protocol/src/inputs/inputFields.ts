@@ -36,6 +36,8 @@ export const InputWidgetSchema = lazyZodSchema(() => z.enum([
 ]));
 export type InputWidget = z.infer<typeof InputWidgetSchema>;
 
+const inputFieldRoles = ['cpu', 'memory', 'disk', 'image'] as const;
+
 /**
  * Choices carry strict JSON so plugin schemas can describe primitives and
  * semantic refs. Connected Account refs retain their exact closed shape;
@@ -93,8 +95,8 @@ const InputHintCoreFieldSchema = lazyZodSchema(() => z.strictObject({
   defaultValue: z.optional(StrictJsonValueSchema),
   /** Display hint for an integer: `bytes` is entered in GiB while the stored and submitted value stays bytes. */
   unit: z.optional(z.literal('bytes')),
-  /** Saved provisioner size: CPU cores; memory/disk in GiB unless unit is bytes. */
-  role: z.optional(z.enum(['cpu', 'memory', 'disk'])),
+  /** Saved provisioner facts: CPU cores, memory/disk in GiB unless unit is bytes, or a displayable image. */
+  role: z.optional(z.enum(inputFieldRoles)),
   visibleWhen: z.optional(InputPredicateSchema),
   /** Surface-aware editors show this field only when the host declares the named context slot. */
   visibleWhenContextSlot: z.optional(InputPathSchema),
@@ -154,8 +156,8 @@ export type InputFieldHintDescriptor<TText, TValue = InputOptionValue> = Readonl
   defaultValue?: JsonValue;
   /** An integer declared as `bytes` is entered in GiB; the stored and submitted value stays bytes. */
   unit?: 'bytes';
-  /** Saved provisioner size: CPU cores; memory/disk in GiB unless unit is bytes. */
-  role?: 'cpu' | 'memory' | 'disk';
+  /** Saved provisioner facts: CPU cores, memory/disk in GiB unless unit is bytes, or a displayable image. */
+  role?: typeof inputFieldRoles[number];
   /** Choices restrict admitted values unless allowCustomValue is true; they never widen a type schema. */
   options?: readonly InputHintOptionDescriptor<TText, TValue>[];
   optionsSourceId?: string;

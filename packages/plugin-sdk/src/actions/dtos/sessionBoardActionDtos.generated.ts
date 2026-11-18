@@ -167,7 +167,7 @@ export type SessionBoardActionInputById = {
                                     maxSelections?: number | undefined;
                                     defaultValue?: unknown;
                                     unit?: 'bytes' | undefined;
-                                    role?: 'cpu' | 'disk' | 'memory' | undefined;
+                                    role?: 'cpu' | 'disk' | 'image' | 'memory' | undefined;
                                     visibleWhen?: unknown;
                                     visibleWhenContextSlot?: string | undefined;
                                     requiredWhen?: unknown;
@@ -525,7 +525,7 @@ export type SessionBoardActionResultById = {
                                         maxSelections?: number | undefined;
                                         defaultValue?: JsonValue | undefined;
                                         unit?: 'bytes' | undefined;
-                                        role?: 'cpu' | 'disk' | 'memory' | undefined;
+                                        role?: 'cpu' | 'disk' | 'image' | 'memory' | undefined;
                                         visibleWhen?: InputPredicate | undefined;
                                         visibleWhenContextSlot?: string | undefined;
                                         requiredWhen?: InputPredicate | undefined;

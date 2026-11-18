@@ -12338,7 +12338,7 @@ export type ActionInputFieldHint = {
     maxSelections?: number | undefined;
     defaultValue?: JsonValue | undefined;
     unit?: 'bytes' | undefined;
-    role?: 'cpu' | 'disk' | 'memory' | undefined;
+    role?: 'cpu' | 'disk' | 'image' | 'memory' | undefined;
     visibleWhen?: InputPredicate | undefined;
     visibleWhenContextSlot?: string | undefined;
     requiredWhen?: InputPredicate | undefined;
@@ -12398,7 +12398,7 @@ export type ActionInputHints = {
         maxSelections?: number | undefined;
         defaultValue?: JsonValue | undefined;
         unit?: 'bytes' | undefined;
-        role?: 'cpu' | 'disk' | 'memory' | undefined;
+        role?: 'cpu' | 'disk' | 'image' | 'memory' | undefined;
         visibleWhen?: InputPredicate | undefined;
         visibleWhenContextSlot?: string | undefined;
         requiredWhen?: InputPredicate | undefined;
@@ -12511,7 +12511,7 @@ export type EffectiveActionInputField = {
     maxSelections?: number | undefined;
     defaultValue?: JsonValue | undefined;
     unit?: 'bytes' | undefined;
-    role?: 'cpu' | 'disk' | 'memory' | undefined;
+    role?: 'cpu' | 'disk' | 'image' | 'memory' | undefined;
     visibleWhen?: InputPredicate | undefined;
     visibleWhenContextSlot?: string | undefined;
     requiredWhen?: InputPredicate | undefined;
@@ -12930,7 +12930,7 @@ export type PluginActionContributionV2 = {
             maxSelections?: number | undefined;
             defaultValue?: JsonValue | undefined;
             unit?: 'bytes' | undefined;
-            role?: 'cpu' | 'disk' | 'memory' | undefined;
+            role?: 'cpu' | 'disk' | 'image' | 'memory' | undefined;
             visibleWhen?: InputPredicate | undefined;
             visibleWhenContextSlot?: string | undefined;
             requiredWhen?: InputPredicate | undefined;
@@ -16040,7 +16040,7 @@ export type ActionSpec = {
             maxSelections?: number | undefined;
             defaultValue?: JsonValue | undefined;
             unit?: 'bytes' | undefined;
-            role?: 'cpu' | 'disk' | 'memory' | undefined;
+            role?: 'cpu' | 'disk' | 'image' | 'memory' | undefined;
             visibleWhen?: InputPredicate | undefined;
             visibleWhenContextSlot?: string | undefined;
             requiredWhen?: InputPredicate | undefined;
@@ -17777,7 +17777,7 @@ export type SessionBoardItemUpsertSchemaInputV1 = {
                                 maxSelections?: number | undefined;
                                 defaultValue?: unknown;
                                 unit?: 'bytes' | undefined;
-                                role?: 'cpu' | 'disk' | 'memory' | undefined;
+                                role?: 'cpu' | 'disk' | 'image' | 'memory' | undefined;
                                 visibleWhen?: unknown;
                                 visibleWhenContextSlot?: string | undefined;
                                 requiredWhen?: unknown;

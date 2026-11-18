@@ -9025,16 +9025,19 @@ and `RPC_OUTCOME_UNKNOWN` values remain accepted.
 
 ## Plugin Platform direct-cut frontier
 
-### Saved provisioner size roles (unreleased 0.3)
+### Saved provisioner display roles (unreleased 0.3)
 
 The shared Action input-hint field grammar admits optional `role: 'cpu' |
-'memory' | 'disk'`. Roles describe saved numeric provisioner choices only: CPU
-is cores; memory/disk are GiB unless the existing `unit: 'bytes'` is declared.
+'memory' | 'disk' | 'image'`. CPU is cores; memory/disk are GiB unless the
+existing `unit: 'bytes'` is declared. Image roles describe visible text, URL or
+select fields; secret and source-body fields never become image facts.
 Strict manifest admission rejects unknown roles. Stored declaration readers keep
 their existing tolerant projection; declarations without roles retain generic
 saved-choice presentation. Localization preserves roles through the shared hint
-normalizer. The receipt and preset offer share one size projection and the
-existing native-size formatter; they do not infer roles from provider ids or keys.
+normalizer. The receipt and preset offer share one saved-fact projection and use
+the existing native-size formatter; they do not infer roles from provider ids or
+keys. Unrelated saved choices remain visible
+when these saved facts, rather than native review, describe the configuration.
 Input fields and their executable Action/manifest envelopes remain closed; this
 optional presentation fact grants no execution or credential authority. Matching
 0.3 Protocol, SDK, plugin declarations and UI reload together under the direct

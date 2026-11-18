@@ -143,6 +143,10 @@ For example, `{ path: 'ram', title: 'Memory', widget: 'integer', role: 'memory',
 unit: 'bytes' }` describes a byte-valued memory choice. Older declarations without
 roles retain their ordinary saved-choice presentation.
 
+In 0.3 development, declare `role: 'image'` on a visible text, URL or select
+field to include its saved image in receipts and preset offers without a native
+review call. Secret, JSON and multiline source fields do not become image facts.
+
 If your Action opens its own editor, declare exactly `inputHints: { fields: [] }`
 to omit the host input form. Hints containing only a form title, description or
 submit label still derive fields. The input schema continues validating operands

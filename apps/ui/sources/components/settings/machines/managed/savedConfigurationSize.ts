@@ -4,13 +4,20 @@ import type { ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/m
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
 type Size = NonNullable<NonNullable<ManagedConfigurationFactsV1['nativeFacts']>['size']>;
+type SavedFacts = Pick<NonNullable<ManagedConfigurationFactsV1['nativeFacts']>, 'size' | 'image'>;
 
 /** Interpret only declared roles on saved choices, using the shared field visibility rules. */
-export function savedConfigurationSize(launch: ValidatedLaunchSnapshotV1, inputHints?: ActionInputHints): Size | undefined {
+export function savedConfigurationFacts(launch: ValidatedLaunchSnapshotV1, inputHints?: ActionInputHints): SavedFacts {
     const dimensions: Pick<Size, 'cpuCores' | 'memoryBytes' | 'diskBytes'> = {};
+    let image: SavedFacts['image'];
     for (const field of resolveEffectiveActionInputFields({ inputHints }, launch.choices)) {
         if (!field.role) continue;
         const value = readInputPath(launch.choices, field.path);
+        if (field.role === 'image') {
+            if ((field.widget === 'text' || field.widget === 'url' || field.widget === 'select')
+                && typeof value === 'string' && value.trim()) image = { id: value, title: value };
+            continue;
+        }
         if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) continue;
         const amount = field.unit === 'bytes' ? value : value * 1024 ** 3;
         switch (field.role) {
@@ -19,5 +26,8 @@ export function savedConfigurationSize(launch: ValidatedLaunchSnapshotV1, inputH
             case 'disk': dimensions.diskBytes = amount; break;
         }
     }
-    return Object.keys(dimensions).length ? { id: 'saved-options', title: launch.name, ...dimensions } : undefined;
+    return {
+        ...(Object.keys(dimensions).length ? { size: { id: 'saved-options', title: launch.name, ...dimensions } } : {}),
+        ...(image ? { image } : {}),
+    };
 }

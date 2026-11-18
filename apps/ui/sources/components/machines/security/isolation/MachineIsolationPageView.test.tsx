@@ -11,6 +11,9 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { Text } from '@/components/ui/text/Text';
+import { describeManagedPresetOffer } from '@/components/settings/machines/managed/managedConfigurationPresentation';
+import { InputHintsSchema } from '@happier-dev/protocol/inputs/inputFields';
 
 installMachinesSettingsCommonModuleMocks();
 
@@ -38,6 +41,23 @@ async function render(overrides: Record<string, unknown> = {}) {
 }
 
 describe('Machine isolation page', () => {
+    it('shows a configured image and its assigned work without repeating the row title', async () => {
+        const saved = { name: 'Docker container', providerTitle: 'Docker container',
+            launch: { provider: docker, schemaVersion: 1, name: 'Docker container', choices: { system: 'node:22' } },
+            savedLaunchPresentation: { schema: { type: 'object' as const }, inputHints: InputHintsSchema.parse({ fields: [
+                { path: 'system', title: 'System', widget: 'text', role: 'image' },
+            ] }) } };
+        const { screen } = await render({ policy: CONFIGURED, entries: [{ id: 'node', name: saved.name,
+            supportsAgentNativeSandbox: true, usedWorkKinds: ['sessions', 'botsChannels'],
+            renderLine: (extra?: string) => <Text>{[describeManagedPresetOffer(saved), extra].filter(Boolean).join(' · ')}</Text> }] });
+        const row = findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-isolation-entry-node' });
+        expect(row?.props.title).toBe('Docker container');
+        expect.soft(row?.props.subtitle.props.children).toBe('node:22');
+        expect.soft(row?.props.detail).toBe('machineDetailPage.isolation.workKinds.sessions · machineDetailPage.isolation.workKinds.botsChannels');
+        const unassigned = findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-isolation-entry-py' });
+        expect(unassigned?.props.detail).toBeUndefined();
+    });
+
     it('runs every kind of work directly when nothing is set, with no lifecycle to pick and the Agent’s own sandbox off', async () => {
         const { target, lifecycle, nativeSwitch, native } = await render();
         for (const kind of ['sessions', 'botsChannels', 'automationsWorkflows']) {
