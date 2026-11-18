@@ -19,6 +19,7 @@ import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUr
 import { t } from '@/text';
 import { PhoneWelcomeDoorway } from '@/components/homes/journeys/phone/PhoneWelcomeDoorway';
 import { loginOffersQr, useLoginLeadsWithLink } from '@/components/onboarding/restore/loginWays';
+import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { OrganizationPolicyFieldNotice, OrganizationPolicyInvalidNextStep, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { useReturningGreeting } from './useReturningGreeting';
 import { WELCOME_ACTION_TEXT_INSET, WelcomeActionCard } from './WelcomeActionCard';
@@ -77,6 +78,9 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     const handleLogin = props.onOpenRestore;
     // The Login door promises the ways Login leads with on this device (the same decision orders that screen).
     const loginLeadsWithLink = useLoginLeadsWithLink();
+    // welcome-1115 r2: the wide panel reads its intro at the reading size with a s24 step to the doors; a phone
+    // column is tighter (40 px headline, body-size intro, s10 and s16 steps).
+    const compactViewport = useViewportClass() === 'compact';
     // Returning users (those who have authenticated on this device before) get
     // a warmer copy variant — a randomly-rotating warm greeting + an inverted
     // button hierarchy (Login becomes primary because that's the most likely
@@ -348,7 +352,9 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                         {model.notice.kind !== 'service_loading' && accountServiceEntry ? <WelcomeActionCard testID="welcome-account-service-retry" presentation="button" title={t('common.retry')} onPress={accountServiceEntry.retry} /> : null}
                     </View>
                 ) : null}
-                {doors.map((row) => renderAction(row, model.actions.indexOf(row)))}
+                {/* The quiet ways hang off the doors: one short step below them, not a full stack gap. */}
+                <View style={styles.ways}>
+                <View style={styles.doors}>{doors.map((row) => renderAction(row, model.actions.indexOf(row)))}</View>
                 {quietWays.length > 0 ? (
                     <View testID="welcome-quiet-ways" style={styles.quietWays}>
                         {!isReturningUser && !hasLoginDoor ? (
@@ -357,6 +363,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                         {quietWays.map((row) => renderAction(row, model.actions.indexOf(row)))}
                     </View>
                 ) : null}
+                </View>
                 {selfHostingFooter && model.actions.some(({ action }) => action.kind === 'choose_home') ? (
                     <View style={styles.selfHosting}>
                         <Text style={styles.selfHostingLabel}>{t('welcome.welcomeFooterRelay')}</Text>
@@ -374,7 +381,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     };
 
     return (
-        <View testID="welcome-decision-panel" style={styles.root}>
+        <View testID="welcome-decision-panel" style={[styles.root, compactViewport ? styles.rootCompact : null]}>
             {/*
               * The mobile wordmark is rendered by WorkflowPanel (absolutely
               * pinned to the top-left of the pane) so it stays anchored at the
@@ -383,16 +390,16 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
               * the same logo position across both mobile screens.
               */}
             {props.showGreeting !== false ? <View style={styles.headingBlock}>
-                <Text accessibilityRole="header" style={styles.title}>
+                <Text accessibilityRole="header" style={[styles.title, compactViewport ? styles.headlineCompact : null]}>
                     {terminalWaiting ? t('welcome.terminalContinuationTitle')
                         : isReturningUser ? returningGreeting.title : t('welcome.welcomeQuestionTitle')}
                 </Text>
-                <Text accessibilityRole="header" style={styles.subtitleTitle}>
+                <Text accessibilityRole="header" style={[styles.subtitleTitle, compactViewport ? styles.headlineCompact : null]}>
                     {terminalWaiting ? t('welcome.terminalContinuationSubtitle')
                         : isReturningUser ? returningGreeting.subtitle : t('welcome.welcomeQuestionSubtitle')}
                 </Text>
                 {!terminalWaiting && !isReturningUser ? (
-                    <Text testID="welcome-intro" style={styles.intro}>
+                    <Text testID="welcome-intro" style={[styles.intro, compactViewport ? styles.introCompact : null]}>
                         {t(newHereCreatesKey && !firstRunDoorway ? 'welcome.welcomeQuestionBodyWithKey' : 'welcome.welcomeQuestionBody')}
                     </Text>
                 ) : null}
@@ -425,7 +432,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         maxWidth: 520,
         alignSelf: 'center',
-        gap: 30,
+        gap: theme.space.s24,
+    },
+    rootCompact: {
+        gap: theme.space.s16,
     },
     headingBlock: {
         // No vertical gap between the two title lines — matches the brand
@@ -456,15 +466,31 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: theme.space.s12,
         width: '100%',
     },
+    ways: {
+        width: '100%',
+    },
+    doors: {
+        gap: theme.space.s12,
+        width: '100%',
+    },
     // The cards' own text edge, so the quiet ways line up under the doors.
     quietWays: {
         marginTop: theme.space.s8,
         gap: theme.space.s2,
     },
     intro: {
-        ...Typography.variant('body'),
+        ...Typography.variant('reading'),
         color: theme.colors.text.secondary,
         marginTop: theme.space.s16,
+    },
+    introCompact: {
+        ...Typography.variant('body'),
+        marginTop: theme.space.s10,
+    },
+    headlineCompact: {
+        fontSize: 40,
+        lineHeight: 40,
+        letterSpacing: -1.4,
     },
     selfHosting: {
         paddingHorizontal: WELCOME_ACTION_TEXT_INSET,
