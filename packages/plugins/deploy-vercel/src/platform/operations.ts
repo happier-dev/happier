@@ -1,4 +1,4 @@
-import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
+import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectPluginFailureText } from '@happier-dev/plugin-sdk';
 import type {
@@ -118,11 +118,22 @@ function endpoint(path: string, accountId: string) {
 async function send(context: VercelPlatformContext, url: string, method: HttpMethod,
   content?: Readonly<{ headers: Readonly<Record<string, string>>; body: Uint8Array }>, phase?: Phase | 'branch', repositoryKind: Repository['kind'] = 'github') {
   context.signal.throwIfAborted();
-  const response = await context.http.request({ url, method, redirect: 'error',
-    credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy.manage', origin, method,
-      headerNames: ['authorization'] },
-    ...content,
-  }, { signal: context.signal });
+  let response: HttpResponse;
+  try {
+    response = await context.http.request({ url, method, redirect: 'error',
+      credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy.manage', origin, method,
+        headerNames: ['authorization'] },
+      ...content,
+    }, { signal: context.signal });
+  } catch (error) {
+    // The host raises this after receiving the provider response, so a mutation's effect is unknown.
+    if (method !== 'GET' && isPluginError(error) && error.code === 'plugin_fetch_response_too_large') {
+      const operationPhase = phase ?? 'send';
+      throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase: operationPhase },
+        failureCause: projectActionFailureCauseV1(error, `deployment.provider.${operationPhase}`) });
+    }
+    throw error;
+  }
   // A received response remains evidence even if cancellation arrives with it.
   const value = response.status < 200 || response.status >= 300 ? body(response) : null;
   if (record(value) && record(value.error)) {
