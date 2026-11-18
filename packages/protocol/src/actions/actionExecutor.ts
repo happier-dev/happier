@@ -1567,8 +1567,16 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
     const executionOutcomeUnknown = projectApprovalExecutionOutcomeUnknownV1;
     const finishExecution = async (request: ApprovalRequest, exec: ActionExecuteResult) => {
-      const settlementFailure = await settleApprovalExecutionPublication(args.artifactId, request, args.ctx);
-      return settlementFailure ?? { ok: true as const, request, exec };
+      try {
+        const settlementFailure = await settleApprovalExecutionPublication(args.artifactId, request, args.ctx);
+        return settlementFailure ?? { ok: true as const, request, exec };
+      } catch (error) {
+        // The terminal Artifact receipt is already durable. A publication
+        // transport throw leaves delivery uncertain and must surface to the
+        // caller without re-entering the generic pre-execution failure path,
+        // which would retry the publication in the same decision call.
+        return executionOutcomeUnknown({ ok: false, ...normalizeActionExecutorThrownError(error, 'approval.settlement') });
+      }
     };
     if (args.replayOutcomeUnknown) return observeApprovalReplayOutcome({
       readRequest: async () => deps.approvalsGet
