@@ -62,14 +62,13 @@ type NativeDaemonStatus = import('@/components/settings/machines/localControl/us
 
 let homes: HomeHarness;
 let connection: AccountConnection | undefined;
-let syncBridge: Awaited<ReturnType<typeof import('@/dev/testkit/harness/syncSingletonLoader').loadSyncSingletonForTests>>;
 let secureStorage: ReturnType<typeof import('@/dev/testkit/mocks/desktopSecureStorage').createDesktopSecureStorageBoundary>;
-let owners: Awaited<ReturnType<typeof loadOwners>>;
 let homeId = '';
 const sockets: Socket[] = [];
 const emissions: Array<Readonly<{ event: string; payload: unknown }>> = [];
 const nativeCalls: Array<Readonly<{ command: string; args?: Record<string, unknown> }>> = [];
 const nativeTasks = new Map<string, SystemTaskSpec>();
+let nextNativeTaskId = 0;
 const nativeEventHandles = new Map<number, Readonly<{ event: string; handler: (event: unknown) => void }>>();
 let nativeStatus: NativeDaemonStatus;
 let homeUrl = 'https://runtime.example.test';
@@ -82,8 +81,10 @@ vi.stubGlobal('__TAURI_INTERNALS__', { get invoke() { return host.desktop ? invo
 vi.stubEnv('EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE', 'tauri');
 const bootstrapHomes = await import('@/dev/testkit/harness/homeGovernanceHarness');
 bootstrapHomes.installHomeGovernanceBoundaries(bootstrapHomes.createHomeGovernanceHarness());
+const { installDisconnectedServerSocketBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+installDisconnectedServerSocketBoundary();
 await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
-await loadOwners();
+const owners = await loadOwners();
 
 async function invokeNative(command: string, args?: Record<string, unknown>): Promise<unknown> {
     nativeCalls.push({ command, args });
@@ -121,7 +122,7 @@ async function invokeNative(command: string, args?: Record<string, unknown>): Pr
         || command === 'desktop_secure_storage_remove') return await secureStorage.invoke(command, args);
     if (command === 'start_system_task') {
         const spec = SystemTaskSpecSchema.parse(JSON.parse(String(args?.specJson)));
-        const taskId = 'runtime-task-' + nativeTasks.size;
+        const taskId = 'runtime-task-' + (++nextNativeTaskId);
         nativeTasks.set(taskId, spec);
         return { taskId };
     }
@@ -162,11 +163,8 @@ beforeEach(async () => {
     // Remote release-note assets are an independent external HTTP boundary.
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 })));
     const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');
-    const { installDisconnectedServerSocketBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
     homes = createHomeGovernanceHarness();
     installHomeGovernanceBoundaries(homes);
-    installDisconnectedServerSocketBoundary();
-    syncBridge = await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
     homeId = await homes.addHome({ name: 'Runtime Home', serverUrl: homeUrl,
         serverIdentityId: 'srv_authenticated_runtime', accountId });
     homes.answer(homeId, '/v1/kv/bulk', { body: { values: [] } });
@@ -178,11 +176,15 @@ afterEach(async () => {
     await connection?.dispose();
     connection = undefined;
     await homes?.reset();
-    syncBridge?.dispose();
+    if (nativeTasks.size > 0) {
+        // Each native fixture starts a fresh renderer with no retained daemon answer.
+        const { getSystemTasksRunner } = await import('@/components/systemTasks/systemTasksRuntime');
+        const { publishLocalDaemonStatus } = await import('@/components/settings/machines/localControl/localDaemonSharedState');
+        publishLocalDaemonStatus(getSystemTasksRunner(), null);
+    }
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
-    vi.resetModules();
 });
 
 async function loadOwners() {
@@ -255,8 +257,14 @@ async function mount(props: RuntimeProps, machineIds: readonly string[] = [], se
         vi.stubGlobal('__TAURI_INTERNALS__', nativeWindow.__TAURI_INTERNALS__);
     }
     const { createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { createEmptyAccountBootstrapHttpResponse } = await import('@/dev/testkit/fixtures/accountBootstrapHttpBoundary');
     const machines = machineIds.map(id => createPlainMachineRowFixture({ id, accountId }));
     homes.answer(homeId, '/v1/machines', { body: machines });
+    for (const path of ['/v2/sessions', '/v2/sessions/active', '/v2/sessions/metadata-upgrades']) {
+        homes.answer(homeId, `GET ${path}`, { select: async () => ({
+            body: await createEmptyAccountBootstrapHttpResponse(path)!.json(),
+        }) });
+    }
     if (host.realSocket) for (const machine of machines) {
         homes.answer(homeId, `/v1/machines/${machine.id}`, { body: { machine } });
     }
@@ -288,7 +296,10 @@ async function mount(props: RuntimeProps, machineIds: readonly string[] = [], se
             });
         }
     });
-    owners = await loadOwners();
+    // HTTP inventory and the daemon's first liveness push are different inputs.
+    storage.getState().applyMachineActivityUpdates(machines.map(({ id, active, activeAt }) => ({ id, active, activeAt })), {
+        sourceServerId: connection.serverId,
+    });
     const screen = await (await import('@/dev/testkit')).renderScreen(<RuntimeComposition {...props} />);
     return screen;
 }
@@ -302,18 +313,17 @@ function emittedMethods(event: string): string[] {
 async function waitForDaemonStatus() {
     const { getSystemTasksRunner } = await import('@/components/systemTasks/systemTasksRuntime');
     const { readLocalDaemonSharedState } = await import('@/components/settings/machines/localControl/localDaemonSharedState');
-    const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
     const { flushHookEffects } = await import('@/dev/testkit');
-    await waitForHomeGovernance(async () => {
+    await vi.waitFor(async () => {
         await flushHookEffects();
-        expect([...nativeTasks.values()].map(spec => spec.kind)).toContain('daemon.service.status.v1');
+        expect([...nativeTasks.values()].map(spec => spec.kind), nativeCalls.map(call => call.command).join(', ')).toContain('daemon.service.status.v1');
     });
     for (const [taskId, spec] of nativeTasks) {
         if (spec.kind === 'daemon.service.status.v1') {
             expect(getSystemTasksRunner().getSnapshot(taskId)?.result?.ok).not.toBe(false);
         }
     }
-    await waitForHomeGovernance(async () => {
+    await vi.waitFor(async () => {
         // Native subscription/snapshot promises settle after the initial render's act.
         // Commit the real hook's status projection before reading its dependent RPC registration.
         await flushHookEffects();
@@ -322,6 +332,26 @@ async function waitForDaemonStatus() {
 }
 
 describe('AuthenticatedAppRuntimeMounts', () => {
+    // The role snapshot settles once in a renderer. Exercise native role delivery before
+    // the other cases vary runtime props, renderer URL and bridge capabilities.
+    it('mounts desktop runtime components only for Tauri desktop hosts', async () => {
+        host.desktop = true;
+        const screen = await mount({ isAuthenticated: true, isDesktopShell: false });
+        expect(screen.findAllByType(owners.DesktopActivityOverlayRuntime)).toHaveLength(0);
+        const { getDesktopHostAvailability } = await import('@/utils/platform/desktopHost');
+        expect((await getDesktopHostAvailability()).activity).toEqual({ kind: 'available' });
+        const { storage } = await import('@/sync/domains/state/storage');
+        await act(async () => {
+            storage.setState(state => ({ localSettings: { ...state.localSettings, desktopOverlayEnabled: true } }));
+        });
+        expect(storage.getState().localSettings.desktopOverlayEnabled).toBe(true);
+        await screen.update(<RuntimeComposition isAuthenticated isDesktopShell />);
+        expect(screen.findAllByType(owners.DesktopActivityOverlayRuntime)).toHaveLength(1);
+        const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        await waitForHomeGovernance(() =>
+            expect(nativeCalls.some(call => call.command === 'desktop_activity_overlay_sync')).toBe(true));
+    });
+
     it('reconciles the full secondary route locally without acquiring primary native ingress', async () => {
         host.desktop = true;
         const location = new URL('https://runtime.example.test/desktop/app-window');
@@ -357,121 +387,6 @@ describe('AuthenticatedAppRuntimeMounts', () => {
         expect([...nativeListeners.values()].every(listeners => listeners.size === 0)).toBe(true);
     });
 
-    it('keeps settled authenticated Home runtimes on their Account socket without scoped-pool churn or registration replay', async () => {
-        const http = createServer();
-        const relay = new Server(http, { path: '/v1/updates/' });
-        const counts = { scopedAcquisitions: 0, connections: 0, disconnects: 0, polling: 0, upgrades: 0, postUpgradePolling: 0, registrations: 0 };
-        const upgradedConnections = new Set<string>();
-        http.prependListener('request', request => {
-            const query = new URL(request.url ?? '/', 'http://127.0.0.1').searchParams;
-            if (query.get('transport') !== 'polling') return;
-            counts.polling++;
-            if (upgradedConnections.has(query.get('sid') ?? '')) counts.postUpgradePolling++;
-        });
-        relay.engine.on('connection', engine => {
-            counts.connections++;
-            engine.on('upgrade', () => { counts.upgrades++; upgradedConnections.add(engine.id); });
-            engine.on('close', () => { counts.disconnects++; });
-        });
-        relay.on('connection', socket => {
-            socket.on(SOCKET_RPC_EVENTS.REGISTER, () => { counts.registrations++; });
-            socket.onAny(async (event, ...args: unknown[]) => {
-                const ack = args.at(-1);
-                if (typeof ack !== 'function') return;
-                const packet = args[0];
-                if (event === SOCKET_RPC_EVENTS.CALL && packet && typeof packet === 'object'
-                    && 'method' in packet && typeof packet.method === 'string' && 'params' in packet) {
-                    const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, packet.params, packet.method);
-                    const response = packet.method.endsWith(`:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)
-                        ? DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
-                            projection: { v: 2, generation: 1, familiesById: {} } })
-                        : packet.method.endsWith(`:${RPC_METHODS.CAPABILITIES_DETECT}`)
-                            ? { protocolVersion: 1, results: {} } : null;
-                    if (response) {
-                        ack({ ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, response, decoded.callId) });
-                        return;
-                    }
-                }
-                ack(event === SOCKET_RPC_EVENTS.CALL
-                    ? { ok: false, error: 'Method not available in idle fixture', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }
-                    : { v: 1, ok: true, admittedSessionIds: [] });
-            });
-        });
-        await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
-        const address = http.address();
-        if (!address || typeof address === 'string') throw new Error('Missing idle Home address');
-        homeUrl = `http://127.0.0.1:${address.port}`;
-        host.realSocket = true;
-        const { allowRealServerSocketBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
-        const realSocketBoundary = allowRealServerSocketBoundary(homeUrl);
-        homeId = await homes.addHome({ name: 'Real idle runtime', serverUrl: homeUrl,
-            serverIdentityId: 'srv_authenticated_runtime_idle', accountId });
-        homes.answer(homeId, '/v1/kv/bulk', { body: { values: [] } });
-        homes.answer(homeId, '/v1/account/activity/badge-snapshot', { body: { badgeCount: 0 } });
-        const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
-        const machineRpc = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
-        const calls = vi.spyOn(machineRpc, 'machineRpcWithServerScope');
-        const acquire = serverScopedRpcSocketPool.acquire;
-        vi.stubGlobal('__HAPPIER_PERF_DIAGNOSTICS__', true);
-        const setupPhases: Array<Readonly<{ phase: string; atMs: number; connectionId: number }>> = [];
-        const performanceApi = (globalThis as typeof globalThis & { __HAPPIER_SYNC_PERFORMANCE__?: {
-            subscribeScopedRpcSetup?: (listener: (event: Readonly<{ phase: string; atMs: number; connectionId: number }>) => void) => () => void;
-        } }).__HAPPIER_SYNC_PERFORMANCE__;
-        const detachSetup = performanceApi?.subscribeScopedRpcSetup?.(event => {
-            setupPhases.push({ phase: event.phase, atMs: event.atMs, connectionId: event.connectionId });
-        }) ?? (() => {});
-        const acquisition = vi.spyOn(serverScopedRpcSocketPool, 'acquire').mockImplementation(async params => {
-            counts.scopedAcquisitions++;
-            return await acquire(params);
-        });
-        try {
-            const screen = await mount({ isAuthenticated: true, isDesktopShell: false }, ['machine-idle'], 'srv_authenticated_runtime_idle');
-            const { readDaemonMergedProjectionSummary } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
-            await vi.waitFor(() => {
-                expect(counts.registrations).toBeGreaterThan(0);
-                expect(counts.upgrades).toBeGreaterThan(0);
-                expect(readDaemonMergedProjectionSummary({ machineId: 'machine-idle', serverId: homeId }).current).toBe(true);
-            });
-            // Finite mount reads may borrow the pool. Let its existing idle
-            // retirement settle before measuring an otherwise unchanged Home.
-            await vi.waitFor(() => expect(counts.disconnects).toBe(counts.connections - 1), { timeout: 10_000 });
-            expect(setupPhases.map(event => event.phase)).toEqual(expect.arrayContaining(['acquire', 'connect', 'connected']));
-            const settled = { ...counts };
-            const settledMethods = calls.mock.calls.map(([request]) => request.method);
-            // Keep the real Machine online with its named 20 s liveness push;
-            // an expired fixture must not make a polling test pass by going offline.
-            for (let heartbeat = 0; heartbeat < 3; heartbeat++) await act(async () => {
-                await new Promise(resolve => setTimeout(resolve, 20_000));
-                relay.emit('ephemeral', EphemeralUpdateSchema.parse({ type: 'machine-activity',
-                    id: 'machine-idle', active: true, activeAt: Date.now() }));
-            });
-            const { storage } = await import('@/sync/domains/state/storage');
-            const { isMachineSelectableForFleet } = await import('@/sync/domains/machines/administration/fleetUnion');
-            const machine = storage.getState().machines['machine-idle'];
-            if (!machine) throw new Error('The idle Machine left its Account inventory');
-            expect(isMachineSelectableForFleet({ serverId: homeId, accountId }, machine)).toBe(true);
-            expect({ counts, methods: calls.mock.calls.map(([request]) => request.method) })
-                .toEqual({ counts: settled, methods: settledMethods });
-            expect(counts.postUpgradePolling).toBe(0);
-            console.info('[scoped-pool-churn-1025]', JSON.stringify({ idleMs: 60_000,
-                idleDelta: { acquisitions: counts.scopedAcquisitions - settled.scopedAcquisitions,
-                    connections: counts.connections - settled.connections, disconnects: counts.disconnects - settled.disconnects,
-                    polling: counts.polling - settled.polling, registrations: counts.registrations - settled.registrations,
-                    rpcCalls: calls.mock.calls.length - settledMethods.length },
-                setup: setupPhases.map(event => ({ ...event, atMs: event.atMs - (setupPhases[0]?.atMs ?? 0) })) }));
-            await screen.unmount();
-        } finally {
-            acquisition.mockRestore();
-            calls.mockRestore();
-            detachSetup();
-            await connection?.dispose();
-            connection = undefined;
-            await serverScopedRpcSocketPool.stopAll();
-            await new Promise<void>(resolve => relay.close(() => resolve()));
-            realSocketBoundary.dispose();
-        }
-    }, 90_000);
-
     it.each([
         { isDesktopShell: false, label: 'mobile' },
         { isDesktopShell: true, label: 'desktop' },
@@ -497,24 +412,6 @@ describe('AuthenticatedAppRuntimeMounts', () => {
         await screen.update(<RuntimeComposition isAuthenticated isDesktopShell={false} />);
         retainedTypes.forEach((type, index) =>
             expect(screen.findByType(renderedType(type))).toBe(retained[index]));
-    });
-
-    it('mounts desktop runtime components only for Tauri desktop hosts', async () => {
-        host.desktop = true;
-        const screen = await mount({ isAuthenticated: true, isDesktopShell: false });
-        expect(screen.findAllByType(owners.DesktopActivityOverlayRuntime)).toHaveLength(0);
-        const { getDesktopHostAvailability } = await import('@/utils/platform/desktopHost');
-        expect((await getDesktopHostAvailability()).activity).toEqual({ kind: 'available' });
-        const { storage } = await import('@/sync/domains/state/storage');
-        await act(async () => {
-            storage.setState(state => ({ localSettings: { ...state.localSettings, desktopOverlayEnabled: true } }));
-        });
-        expect(storage.getState().localSettings.desktopOverlayEnabled).toBe(true);
-        await screen.update(<RuntimeComposition isAuthenticated isDesktopShell />);
-        expect(screen.findAllByType(owners.DesktopActivityOverlayRuntime)).toHaveLength(1);
-        const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
-        await waitForHomeGovernance(() =>
-            expect(nativeCalls.some(call => call.command === 'desktop_activity_overlay_sync')).toBe(true));
     });
 
     it('installs browser recording reverse capture from the authenticated desktop runtime', async () => {
@@ -574,7 +471,7 @@ describe('AuthenticatedAppRuntimeMounts', () => {
         const screen = await mount({ isAuthenticated: true, isDesktopShell: false,
             children: <MountedControl title="Open details" value={0} /> }, [machineId]);
         const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
-        const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const { storage } = await import('@/sync/domains/state/storage');
         await waitForHomeGovernance(() => expect(machineMethods(SOCKET_RPC_EVENTS.REGISTER)).toContain(readRoom));
         // An opaque command id is never its own Socket room.
         expect(machineMethods(SOCKET_RPC_EVENTS.REGISTER).filter(method => method.includes('.current-context.command.'))).toEqual([]);
@@ -585,7 +482,9 @@ describe('AuthenticatedAppRuntimeMounts', () => {
                 await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
                 // Named Machine liveness is allowed at idle; it changes no command fact.
                 if (second % 20 === 0) await act(async () => {
-                    observeMachinePresenceForTest({ serverId: homeId, accountId }, [machineId]);
+                    storage.getState().applyMachineActivityUpdates([{ id: machineId, active: true, activeAt: Date.now() }], {
+                        sourceServerId: homeId,
+                    });
                 });
                 await screen.update(tree('Open details', second));
             }
@@ -661,4 +560,124 @@ describe('AuthenticatedAppRuntimeMounts', () => {
         expect(emittedMethods(SOCKET_RPC_EVENTS.UNREGISTER)).toContain(method);
         expect(await invoke()).toMatchObject({ errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
     });
+
+    it('keeps settled authenticated Home runtimes on their Account socket without scoped-pool churn or registration replay', async () => {
+        const http = createServer();
+        const relay = new Server(http, { path: '/v1/updates/' });
+        const counts = { scopedAcquisitions: 0, connections: 0, disconnects: 0, polling: 0, upgrades: 0, postUpgradePolling: 0, registrations: 0 };
+        const upgradedConnections = new Set<string>();
+        http.prependListener('request', request => {
+            const query = new URL(request.url ?? '/', 'http://127.0.0.1').searchParams;
+            if (query.get('transport') !== 'polling') return;
+            counts.polling++;
+            if (upgradedConnections.has(query.get('sid') ?? '')) counts.postUpgradePolling++;
+        });
+        relay.engine.on('connection', engine => {
+            counts.connections++;
+            engine.on('upgrade', () => { counts.upgrades++; upgradedConnections.add(engine.id); });
+            engine.on('close', () => { counts.disconnects++; });
+        });
+        relay.on('connection', socket => {
+            socket.on(SOCKET_RPC_EVENTS.REGISTER, () => { counts.registrations++; });
+            socket.onAny(async (event, ...args: unknown[]) => {
+                const ack = args.at(-1);
+                if (typeof ack !== 'function') return;
+                const packet = args[0];
+                if (event === SOCKET_RPC_EVENTS.CALL && packet && typeof packet === 'object'
+                    && 'method' in packet && typeof packet.method === 'string' && 'params' in packet) {
+                    const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, packet.params, packet.method);
+                    const response = packet.method.endsWith(`:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)
+                        ? DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+                            projection: { v: 2, generation: 1, familiesById: {} } })
+                        : packet.method.endsWith(`:${RPC_METHODS.CAPABILITIES_DETECT}`)
+                            ? { protocolVersion: 1, results: {} } : null;
+                    if (response) {
+                        ack({ ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, response, decoded.callId) });
+                        return;
+                    }
+                }
+                ack(event === SOCKET_RPC_EVENTS.CALL
+                    ? { ok: false, error: 'Method not available in idle fixture', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }
+                    : { v: 1, ok: true, admittedSessionIds: [] });
+            });
+        });
+        await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
+        const address = http.address();
+        if (!address || typeof address === 'string') throw new Error('Missing idle Home address');
+        homeUrl = `http://127.0.0.1:${address.port}`;
+        host.realSocket = true;
+        const { allowRealServerSocketBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const realSocketBoundary = allowRealServerSocketBoundary(homeUrl);
+        homeId = await homes.addHome({ name: 'Real idle runtime', serverUrl: homeUrl,
+            serverIdentityId: 'srv_authenticated_runtime_idle', accountId });
+        homes.answer(homeId, '/v1/kv/bulk', { body: { values: [] } });
+        homes.answer(homeId, '/v1/account/activity/badge-snapshot', { body: { badgeCount: 0 } });
+        const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+        const machineRpc = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
+        const calls = vi.spyOn(machineRpc, 'machineRpcWithServerScope');
+        const acquire = serverScopedRpcSocketPool.acquire;
+        vi.stubGlobal('__HAPPIER_PERF_DIAGNOSTICS__', true);
+        const setupPhases: Array<Readonly<{ phase: string; atMs: number; connectionId: number }>> = [];
+        const performanceApi = (globalThis as typeof globalThis & { __HAPPIER_SYNC_PERFORMANCE__?: {
+            subscribeScopedRpcSetup?: (listener: (event: Readonly<{ phase: string; atMs: number; connectionId: number }>) => void) => () => void;
+        } }).__HAPPIER_SYNC_PERFORMANCE__;
+        const detachSetup = performanceApi?.subscribeScopedRpcSetup?.(event => {
+            setupPhases.push({ phase: event.phase, atMs: event.atMs, connectionId: event.connectionId });
+        }) ?? (() => {});
+        const acquisition = vi.spyOn(serverScopedRpcSocketPool, 'acquire').mockImplementation(async params => {
+            counts.scopedAcquisitions++;
+            return await acquire(params);
+        });
+        try {
+            const screen = await mount({ isAuthenticated: true, isDesktopShell: false }, ['machine-idle'], 'srv_authenticated_runtime_idle');
+            const { loadDaemonMergedProjectionInputs, readDaemonMergedProjectionSummary } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+            // Demand the projection as a mounted plugin surface would. The app shell owns
+            // the Account socket and stays idle after the finite Machine read settles.
+            await act(async () => {
+                await loadDaemonMergedProjectionInputs({ machineId: 'machine-idle', serverId: homeId, sections: ['agentsById'] });
+            });
+            await vi.waitFor(() => {
+                expect(counts.registrations).toBeGreaterThan(0);
+                expect(counts.upgrades).toBeGreaterThan(0);
+                expect(readDaemonMergedProjectionSummary({ machineId: 'machine-idle', serverId: homeId }).current).toBe(true);
+            });
+            // Finite mount reads may borrow the pool. Let its existing idle
+            // retirement settle before measuring an otherwise unchanged Home.
+            await vi.waitFor(() => expect(counts.disconnects).toBe(counts.connections - 1), { timeout: 10_000 });
+            expect(setupPhases.map(event => event.phase)).toEqual(expect.arrayContaining(['acquire', 'connect', 'connected']));
+            const settled = { ...counts };
+            const settledMethods = calls.mock.calls.map(([request]) => request.method);
+            // Keep the real Machine online with its named 20 s liveness push;
+            // an expired fixture must not make a polling test pass by going offline.
+            for (let heartbeat = 0; heartbeat < 3; heartbeat++) await act(async () => {
+                await new Promise(resolve => setTimeout(resolve, 20_000));
+                relay.emit('ephemeral', EphemeralUpdateSchema.parse({ type: 'machine-activity',
+                    id: 'machine-idle', active: true, activeAt: Date.now() }));
+            });
+            const { storage } = await import('@/sync/domains/state/storage');
+            const { isMachineSelectableForFleet } = await import('@/sync/domains/machines/administration/fleetUnion');
+            const machine = storage.getState().machines['machine-idle'];
+            if (!machine) throw new Error('The idle Machine left its Account inventory');
+            expect(isMachineSelectableForFleet({ serverId: homeId, accountId }, machine)).toBe(true);
+            expect({ counts, methods: calls.mock.calls.map(([request]) => request.method) })
+                .toEqual({ counts: settled, methods: settledMethods });
+            expect(counts.postUpgradePolling).toBe(0);
+            console.info('[scoped-pool-churn-1025]', JSON.stringify({ idleMs: 60_000,
+                idleDelta: { acquisitions: counts.scopedAcquisitions - settled.scopedAcquisitions,
+                    connections: counts.connections - settled.connections, disconnects: counts.disconnects - settled.disconnects,
+                    polling: counts.polling - settled.polling, registrations: counts.registrations - settled.registrations,
+                    rpcCalls: calls.mock.calls.length - settledMethods.length },
+                setup: setupPhases.map(event => ({ ...event, atMs: event.atMs - (setupPhases[0]?.atMs ?? 0) })) }));
+            await screen.unmount();
+        } finally {
+            acquisition.mockRestore();
+            calls.mockRestore();
+            detachSetup();
+            await connection?.dispose();
+            connection = undefined;
+            await serverScopedRpcSocketPool.stopAll();
+            await new Promise<void>(resolve => relay.close(() => resolve()));
+            realSocketBoundary.dispose();
+        }
+    }, 90_000);
 });

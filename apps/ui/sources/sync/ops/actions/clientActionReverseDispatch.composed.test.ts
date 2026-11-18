@@ -11,6 +11,7 @@ import { RPC_METHODS} from '@happier-dev/protocol/rpc/methods';
 import { UiActionDispatchRequestV1Schema} from '@happier-dev/protocol/actions/clientDispatchV1';
 import { ActionIdSchema} from '@happier-dev/protocol/actions/actionIds';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { SessionAuthoringOpenResultV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { SessionResumeRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
@@ -19,6 +20,7 @@ import { configureConnectedServerSocketBoundary, installDisconnectedServerSocket
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { createSessionFixture, createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSessionDetailAccessProjectionQuery } from '@/sync/api/session/sessionDetailAccessProjection';
 import { SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -103,11 +105,13 @@ beforeEach(async () => {
       return { status: response.status, body: await response.json() };
     } });
   }
-  homes.answer(serverId, 'GET /v2/sessions/metadata-upgrades', { select: async () => {
-    const response = createEmptyAccountBootstrapHttpResponse('/v2/sessions/metadata-upgrades');
-    if (!response) throw new Error('Missing metadata-upgrade bootstrap fixture');
-    return { body: await response.json() };
-  } });
+  for (const path of ['/v2/sessions/metadata-upgrades', AUTOMATION_ACTION_INDEX_HTTP_PATH_V1]) {
+    homes.answer(serverId, `GET ${path}`, { select: async () => {
+      const response = createEmptyAccountBootstrapHttpResponse(path);
+      if (!response) throw new Error(`Missing empty Account fixture: ${path}`);
+      return { body: await response.json() };
+    } });
+  }
   connection = await restoreServerAccountForTest({ serverUrl: 'https://relay.test', accountId: 'relay-account', request: homes.request });
   installHomeGovernanceBoundaries(homes);
   const features = createRootLayoutFeaturesResponse();
@@ -131,6 +135,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const { selectRpcTarget } = await import('../../../../../server/sources/app/api/socket/rpc/rpcTargetSelection');
     const { usePluginDetailNavigation } = await import('@/components/plugins/pages/pluginDetailNavigation');
+    const { PresentedDetailNavigationProvider } = await import('@/components/appShell/rightSidebar/usePresentedDetailNavigation');
     const { registerShellColumnActionOwner } = await import('./scopeActionFamily');
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Restored Account lifetime is unavailable');
@@ -158,7 +163,9 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       React.useEffect(() => { if (request) { selections++; setActiveId(request); } }, [request]);
       return React.createElement(Body, { key: activeId, value: activeId });
     }
-    const screen = await renderScreen(React.createElement(Detail));
+    const screen = await renderScreen(React.createElement(PresentedDetailNavigationProvider, {
+      children: React.createElement(Detail),
+    }));
     releases.push(registerShellColumnActionOwner('side', () => ({ present: true, visible: true, available: true,
       tabs: ['other-scope'], activeTab: 'other-scope', selectTab: () => { sideEffects++; }, setVisible: () => { sideEffects++; } })));
     const initialBodyLoads = bodyLoads;
@@ -188,6 +195,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
         .toMatchObject({ ok: false, errorCode: 'client_ambiguous' });
       expect([issued, delivered, selections, bodyLoads - initialBodyLoads, sideEffects, otherDeliveries]).toEqual([0, 0, 0, 0, 0, 0]);
       const read = await caller.execute('shell.column.get', { column: 'main', clientId: chosen.id }, context);
+      expect(read.ok, read.ok ? undefined : JSON.stringify(read)).toBe(true);
       expect(read).toMatchObject({ ok: true, result: { activeTab: 'page-0', tabs: items.map(item => item.value) } });
       expect([issued, delivered, selections, bodyLoads - initialBodyLoads]).toEqual([1, 1, 0, 0]);
       let selection: Awaited<ReturnType<typeof caller.execute>> | undefined;
@@ -234,6 +242,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const removeLocal = registerMountedWorkflowDraftOwner({ kind: 'review', getAddress: () => localAddress,
       execute: async () => ({ status: 'unavailable' }) });
     const machine = createMachineFixture({ id: 'window-method-machine', activeAt: Date.now() });
+    publishMachineActivityForTest([machine]);
     await act(async () => {
       storage.setState(state => ({ profile: { ...state.profile!, id: scope.accountId },
         machines: { [machine.id]: machine }, machineListByServerId: {} }));
@@ -365,6 +374,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const machine = createMachineFixture({ id: 'account-action-machine', activeAt: Date.now(),
       storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
     const offline = createMachineFixture({ id: 'account-action-offline', active: false, activeAt: 1 });
+    publishMachineActivityForTest([machine, offline]);
     storage.setState(state => ({ profile: { ...state.profile!, id: 'relay-account' },
       machines: { [machine.id]: machine, [offline.id]: offline }, machineListByServerId: {},
       sessions: {}, sessionListRowsByServerId: {} }));
@@ -441,6 +451,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const { createDeferred, flushHookEffects } = await import('@/dev/testkit');
     const machine = createMachineFixture({ id: 'declaration-bound-machine', activeAt: Date.now() });
     const other = createMachineFixture({ id: 'next-declaration-machine', activeAt: Date.now() });
+    publishMachineActivityForTest([machine, other]);
     await act(async () => {
       storage.setState(state => ({ profile: { ...state.profile!, id: 'relay-account' },
         machines: { [machine.id]: machine, [other.id]: other }, machineListByServerId: {} }));
@@ -544,6 +555,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     navigation.segments = ['session', '[id]'];
     navigation.sessionId = sessionId;
     const machine = createMachineFixture({ id: 'viewed-machine', activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
+    publishMachineActivityForTest([machine]);
     storage.setState(state => ({ profile: { ...state.profile!, id: 'relay-account' }, machines: { [machine.id]: machine },
       sessions: { [sessionId]: createSessionFixture({ id: sessionId, serverId }) }, machineListByServerId: {} }));
     setFocusedSessionId(sessionId, serverId);
@@ -709,6 +721,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const machines = Array.from({ length: 46 }, (_, index) => createMachineFixture({
       id: `usage-command-machine-${index}`, activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
     }));
+    publishMachineActivityForTest(machines);
     await act(async () => { storage.setState(state => ({ profile: { ...state.profile!, id: 'relay-account' },
       machines: Object.fromEntries(machines.map(machine => [machine.id, machine])), machineListByServerId: {} })); });
     const authority = captureActiveServerAccountScopeLifetime();
@@ -825,7 +838,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       expect(await invoke(filterId)).toMatchObject({ ok: false });
     } finally { await runtime.unmount(); }
   });
-  it('keeps reverse registrations stable across fresh current-UI snapshots and retires replaced commands', async () => {
+  it('keeps reverse registrations stable across current-UI publications and retires replaced commands', async () => {
     const insertionUpdates: Error[] = [];
     const originalConsoleError = console.error;
     const diagnostics = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
@@ -844,6 +857,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const revoked = createMachineFixture({ id: 'revoked-machine', activeAt: Date.now(), revokedAt: 1 });
     const replaced = createMachineFixture({ id: 'replaced-machine', activeAt: Date.now(), replacedByMachineId: machine.id });
     const foreign = createMachineFixture({ id: 'foreign-home-machine', activeAt: Date.now() });
+    publishMachineActivityForTest([machine, offline, revoked, replaced, foreign]);
     await act(async () => {
       storage.setState(state => ({ profile: { ...state.profile!, id: 'relay-account' },
         machines: { [machine.id]: machine, [offline.id]: offline, [revoked.id]: revoked, [replaced.id]: replaced },
@@ -888,9 +902,8 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     try {
       const snapshot = readContext?.();
       expect(snapshot?.commands).toHaveLength(1);
-      // This is a fresh presentational DTO, not a valid external-store snapshot.
-      expect(readContext?.()).not.toBe(snapshot);
-      expect(readContext?.()).toEqual(snapshot);
+      // The owner reuses its qualified snapshot until the publication changes.
+      expect(readContext?.()).toBe(snapshot);
       const command = snapshot!.commands[0]!;
       const method = (id: string) => `${machine.id}:${currentUiContextCommandClientRpcMethod(id)}`;
       expect(registered.has(`${machine.id}:${RPC_METHODS.UI_ACTION_EXECUTE}`)).toBe(true);
@@ -899,10 +912,11 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       expect([...new Set([...registered].map(method => method.slice(0, method.indexOf(':'))))]).toEqual([machine.id]);
       const beforeRefresh = [...registrations];
       await act(async () => { refreshDeclaration?.(); });
+      expect(readContext?.()?.detail).toEqual({ revision: 1 });
       expect(readContext?.()?.commands[0]?.id).toBe(command.id);
       expect(registrations).toEqual(beforeRefresh);
       await act(async () => {
-        storage.setState(state => ({ machines: { ...state.machines, [offline.id]: { ...offline, active: true, activeAt: Date.now() } } }));
+        publishMachineActivityForTest([offline], { active: true, activeAt: Date.now() });
       });
       expect(registered.has(`${offline.id}:${currentUiContextReadClientRpcMethod()}`)).toBe(true);
       const stableRegistrations = registrations.filter(method => method.startsWith(`${machine.id}:`));
@@ -929,6 +943,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
     const { usePublishCurrentUiContext } = await import('@/components/appShell/currentUiContext/CurrentUiContextProvider');
     const machine = createMachineFixture({ id: 'current-ui-machine', activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
+    publishMachineActivityForTest([machine]);
     await act(async () => {
       storage.setState(state => ({ ...state, profile: { ...state.profile!, id: 'relay-account' },
         machines: { [machine.id]: machine }, machineListByServerId: {} }));
@@ -997,6 +1012,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const { registerMountedWorkReadOwner } = await import('./mountedWorkReadAction');
     const { projectWork } = await import('@/components/sessions/work/workProjection');
     const machine = createMachineFixture({ id: 'work-machine', activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
+    publishMachineActivityForTest([machine]);
     await act(async () => {
       storage.setState(state => ({ ...state, profile: { ...state.profile!, id: 'relay-account' },
         machines: { [machine.id]: machine }, machineListByServerId: {} }));
@@ -1058,6 +1074,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       return null;
     }
     const machine = createMachineFixture({ id: 'driver-machine', activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
+    publishMachineActivityForTest([machine]);
     await act(async () => {
       storage.setState(state => ({ ...state, profile: { ...state.profile!, id: 'relay-account' },
         machines: { [machine.id]: machine }, machineListByServerId: {} }));
@@ -1211,7 +1228,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
         : { defaultRules: { assigned: true, direct: true, team: false, group: true } },
     })]));
   });
-  it('returns nested Account Home approval with original requester identity without executing the Home write', async () => {
+  it('presents nested Account Home confirmation with the original requester and honors cancellation', async () => {
     const key = 'HAPPIER_API_CORS_MAX_AGE_SECONDS';
     const anchor = `homeAdministration.serverSettings.${key}`;
     // UI danger writes are normally direct; this Home policy explicitly requires
@@ -1220,17 +1237,19 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     await homes.requireUiApproval(serverId, 'home.settings.set');
     homes.answer(serverId, '/v1/home/settings/get', { body: { revision: 3, startedAt: null, entries: [{ key, value: 600,
       source: 'home', fixed: false, editable: 'home', apply: 'restart', declaration: { type: 'int', section: 'server' } }] } });
-    const caller = createDefaultActionExecutor();
+    const confirm = vi.fn<NonNullable<ActionExecutorDeps['presentUserActionConfirmation']>>(async () => false);
+    const caller = createDefaultActionExecutor({ presentUserActionConfirmation: confirm });
     const result = await caller.execute('settings.set', { anchor, value: 900 }, {
       surface: 'ui', authority: 'present_user', serverId, bypassApprovals: true, actionRequestId: 'nested-home-request',
     });
     expect(homes.requestsFor('/v1/home/settings/set').map(request => request.path)).toEqual([]);
-    expect(result).toEqual({ ok: true, result: { kind: 'approval_request_created', actionId: 'home.settings.set', artifactId: expect.any(String) } });
-    expect(homes.artifacts(serverId).list()).toHaveLength(1);
-    const artifact = homes.artifacts(serverId).list()[0];
-    expect(JSON.parse(homes.artifacts(serverId).readPlainBody(artifact.id)!)).toMatchObject({
-      executionOriginV1: { requestId: 'nested-home-request', surface: 'ui', authority: 'present_user', caller: { kind: 'host' } },
-    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      actionId: 'home.settings.set', context: expect.objectContaining({
+        actionRequestId: 'nested-home-request', surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      }),
+    }));
+    expect(homes.artifacts(serverId).list()).toEqual([]);
   });
   it('opens one canonical editable authoring draft through the real answering-client owner', async () => {
     const actionId = ActionIdSchema.parse('session.authoring.open');
@@ -1253,7 +1272,9 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
       selectedMachineId: 'machine-authoring', selectedPath: '/checkout',
     });
     expect(listNewSessionDraftProjections(scope)).toHaveLength(before + 1);
-    expect(navigation.push).toHaveBeenLastCalledWith({ pathname: '/new', params: { draftId: acknowledgement.draftId } });
+    expect(navigation.push).toHaveBeenLastCalledWith({ pathname: '/new', params: {
+      draftId: acknowledgement.draftId, draftServerId: scope.serverId, draftAccountId: scope.accountId,
+    } });
     expect(storage.getState().sessions).toBe(sessionsBefore);
   });
   it('routes CLI Find to its mounted surface and preserves no-surface and no-client results', async () => {
@@ -1343,6 +1364,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const carrierId = 'teleport-carrier';
     const machine = createMachineFixture({ id: 'teleport-machine', activeAt: Date.now(),
       storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
+    publishMachineActivityForTest([machine]);
     const machineRow = createPlainMachineRowFixture({ id: machine.id, accountId: 'relay-account' });
     homes.answer(serverId, '/v1/machines', { body: [machineRow] });
     homes.answer(serverId, `/v1/machines/${machine.id}`, { body: { machine: machineRow } });
@@ -1547,6 +1569,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
     const machine = createMachineFixture({ id: 'machine-one', activeAt: Date.now() });
     const another = createMachineFixture({ id: 'machine-two', activeAt: Date.now() });
+    publishMachineActivityForTest([machine]);
     await act(async () => {
       storage.setState(state => ({ ...state, profile: { ...(state.profile ?? {}), id: 'relay-account' },
         machines: { [machine.id]: machine }, machineListByServerId: {} }));
@@ -1562,6 +1585,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     expect(await receive(request, { signal: new AbortController().signal }))
       .toEqual({ v: 1, execution: { ok: true, result: { status: 'noMountedSurface' } } });
     await act(async () => {
+      publishMachineActivityForTest([another]);
       storage.setState(state => ({ ...state, machines: { [machine.id]: machine, [another.id]: another } }));
     });
     expect(await receive(request, { signal: new AbortController().signal }))
@@ -1586,6 +1610,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     }]);
     let stopObserving: (() => void) | undefined;
     const machine = createMachineFixture({ id: 'window-actions-machine', activeAt: Date.now() });
+    publishMachineActivityForTest([machine]);
     await act(async () => storage.setState(current => ({ profile: { ...current.profile!, id: scope.accountId },
       machines: { [machine.id]: machine }, machineListByServerId: {} })));
     const registered = vi.spyOn(apiSocket, 'registerMachineScopedRpcHandler');

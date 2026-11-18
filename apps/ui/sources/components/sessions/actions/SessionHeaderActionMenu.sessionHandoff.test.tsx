@@ -557,7 +557,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     });
     expect(clipboardMock).toHaveBeenCalledWith([
       'Happier session ID: header-information',
-      'agentInput.agent.codex session ID: current-id',
+      'Codex session ID: current-id',
       'Happier logs: /tmp/session.log',
     ].join('\n'));
     for (const [itemId, expected] of [
@@ -2475,16 +2475,13 @@ describe('SessionHeaderActionMenu handoff', () => {
   });
 
   it('adds teleport only for the exact retained global binding, not a shared carrier alone', async () => {
-    voiceSettingState.current = {
-      providerId: 'local_conversation',
-      ui: { scopeDefault: 'global', surfaceLocation: 'auto', activityFeedEnabled: false },
-      providers: {
-        local_conversation: { schemaVersion: 1, config: {
-          conversationMode: 'agent',
-          agent: { backend: 'daemon', stayInVoiceHome: false, teleportEnabled: true },
-        } },
-      },
-    };
+    const { voiceSettingsParse, readLocalConversationVoiceSettings, writeVoiceProviderSettingsConfig } = await import('@/sync/domains/settings/voiceSettings');
+    const voice = voiceSettingsParse({ providerId: 'local_conversation', ui: { scopeDefault: 'global' } });
+    const config = readLocalConversationVoiceSettings(voice);
+    voiceSettingState.current = writeVoiceProviderSettingsConfig(voice, 'local_conversation', {
+      ...config, conversationMode: 'agent',
+      agent: { ...config.agent, backend: 'daemon', stayInVoiceHome: false, teleportEnabled: true },
+    });
     storageState.current.settings.voice = voiceSettingState.current;
     // Even an eligible carrier on this Home does not choose the device's
     // retained global conversation; the exact binding below does.
@@ -2500,6 +2497,8 @@ describe('SessionHeaderActionMenu handoff', () => {
         },
       },
     };
+    const { syncPersistedVoiceConversationBindings, voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+    syncPersistedVoiceConversationBindings();
     voiceSessionSnapshotState.current = {
       adapterId: null,
       sessionId: null,
@@ -2523,7 +2522,6 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const dropdown = screen.findByType('DropdownMenu' as any);
     expect(dropdown.props.items.find((item: { id: string }) => item.id === 'voice.teleport')).toBeUndefined();
-    const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
     const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
     await act(async () => {
       voiceSessionBindingStore.getState().bind({

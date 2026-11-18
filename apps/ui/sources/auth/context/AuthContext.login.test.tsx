@@ -355,14 +355,14 @@ describe('AuthContext.login', () => {
         await storeCredentials(home, outgoing);
         await focusHome(home);
         await connection.switchConnectionToActiveServer();
-        // Another realm completed the persisted mutation while main retained its in-memory auth.
-        await TokenStorage.removeCredentialsForServerUrl(home.serverUrl, { serverId: home.serverId });
         installDesktopBoundary();
         const screen = await mountAuth(outgoing);
         try {
             expect(getCurrentAuth()?.credentials).toEqual(outgoing);
             expect(sync.getCredentials()).toEqual(outgoing);
             await vi.waitFor(() => expect(desktopEvents.get('desktopAppWindow://account-teardown')?.size).toBe(1));
+            // The other realm commits the persisted mutation before broadcasting it to the mounted primary.
+            await TokenStorage.removeCredentialsForServerUrl(home.serverUrl, { serverId: home.serverId });
             await act(async () => {
                 for (const listener of desktopEvents.get('desktopAppWindow://account-teardown') ?? []) {
                     listener({ payload: { sourceWindowLabel: 'destination_other', mutations: [
@@ -541,13 +541,15 @@ describe('AuthContext.login', () => {
 
     it('clears stale auth state when the active server changes during a login-triggered rebind', async () => {
         const { first, second } = await prepareHomes('first', 'second');
+        const credentials = { token: buildTokenWithSub('server-test'), secret: LEGACY_SECRET };
+        network.accountCurrentness = createAccountEncryptionCurrentnessFixtureForCredentials(credentials);
         await focusHome(first);
         const screen = await mountAuth(null);
 
         try {
             const auth = getCurrentAuth()!;
             await act(async () => {
-                await auth.login(buildTokenWithSub('server-test'), LEGACY_SECRET);
+                await auth.login(credentials.token, credentials.secret);
             });
             expect(getCurrentAuth()?.isAuthenticated).toBe(true);
 
@@ -638,6 +640,7 @@ describe('AuthContext.login', () => {
         const { home } = await prepareHomes('home');
         await focusHome(home);
         const credentials = { token: buildTokenWithSub('server-test'), secret: LEGACY_SECRET };
+        network.accountCurrentness = createAccountEncryptionCurrentnessFixtureForCredentials(credentials);
         await storeCredentials(home, credentials);
         const screen = await mountAuth(credentials);
 

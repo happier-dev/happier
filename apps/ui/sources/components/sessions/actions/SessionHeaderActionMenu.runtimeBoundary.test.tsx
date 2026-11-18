@@ -13,6 +13,7 @@ import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/e
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
+import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 import { storage } from '@/sync/domains/state/storage';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -27,7 +28,7 @@ import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindi
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { resetVoiceSessionStoreForTests } from '@/voice/session/voiceSessionStore';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
 import { useSessionMachineControlTarget, useSessionMachineControlTargetState } from '@/components/sessions/model/useSessionMachineTarget';
 import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
@@ -127,6 +128,14 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
 
     beforeEach(async () => {
         restorePopoverGlobals = withPopoverWebGlobals();
+        // A renderer has one host for its lifetime, including before menu owners subscribe.
+        const secureStorage = createDesktopSecureStorageBoundary();
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async (command: string, args?: Record<string, unknown>) => {
+            if (command === 'desktop_host_get_availability') return {
+                activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' },
+            };
+            return await secureStorage.invoke(command, args);
+        } });
         previousState = storage.getState();
         readStateReply = null;
         externalAction = null;
@@ -160,7 +169,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             },
         });
         const homeId = homes.homes.projection!.id;
-        const machine = createMachineFixture({ id: MACHINE_ID });
+        const machine = createMachineFixture({ id: MACHINE_ID, activeAt: Date.now(), presenceProtocolVersion: 1 });
         const session = createSessionFixture({
             id: 'sess_1', serverId: homeId,
             metadata: { machineId: MACHINE_ID, path: '/workspace', host: 'projection.local' },
@@ -183,6 +192,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         resetScopedMachineTransportCacheForTests();
         resetServerFeaturesClientForTests();
         await homes?.dispose();
+        vi.unstubAllGlobals();
         storage.setState(previousState, true);
         voiceSessionBindingStore.setState({
             bindingsByConversationSessionId: {}, runtimeBindingsByConversationSessionId: {}, persistedBindingsByConversationSessionId: {},
@@ -260,9 +270,6 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
     });
 
     it('offers the shared window presentation from the Session header menu', async () => {
-        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async () => ({
-            activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' },
-        }) });
         const session = storage.getState().sessions.sess_1!;
         const state = createWorkspaceState({ id: 'session-tab', target: { kind: 'session', params: { id: session.id } }, pinned: false, preview: false });
         const workspace = {
@@ -272,14 +279,12 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
             registerBackStep: () => () => {}, back: () => {}, forward: () => {},
         } satisfies WorkspaceNavigationContextValue;
-        try {
-            const screen = await renderOpenMenu(<WorkspaceNavigationProvider value={workspace}>
-                <SessionHeaderActionMenu sessionId={session.id} session={session} />
-            </WorkspaceNavigationProvider>);
-            await vi.waitFor(() => {
-                expect(screen.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id)).toContain('workspace.open.window');
-            });
-        } finally { vi.unstubAllGlobals(); }
+        const screen = await renderOpenMenu(<WorkspaceNavigationProvider value={workspace}>
+            <SessionHeaderActionMenu sessionId={session.id} session={session} />
+        </WorkspaceNavigationProvider>);
+        await vi.waitFor(() => {
+            expect(screen.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id)).toContain('workspace.open.window');
+        });
     });
 
     it('updates mounted Machine controls through presence alone without replacing inventory', async () => {
@@ -290,7 +295,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             sessionListRowsByServerId: { [serverId]: { [session.id]: buildSessionListRenderableFromSession(session) } },
             ordinarySessionListMembershipByServerId: { [serverId]: [session.id] },
         });
-        observeMachinePresenceForTest({ serverId, accountId: 'header-account' }, [machine.id]);
+        publishMachineActivityForTest([machine]);
         const before = storage.getState();
         let renders = 0;
         const targets = await renderHook(() => {
@@ -299,7 +304,9 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
                 state: useSessionMachineControlTargetState(session.id, serverId) };
         });
         try {
-            expect(targets.getCurrent().control).toMatchObject({ machineId: machine.id, basePath: '/workspace' });
+            expect(targets.getCurrent().control).toMatchObject({
+                machineId: machine.id, basePath: '/workspace', confidence: 'reachable',
+            });
             const mountedRenders = renders;
             const other = createMachineFixture({ id: 'unrelated-presence-machine' });
             for (let beat = 1; beat <= 5; beat += 1) {
@@ -311,17 +318,23 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             expect(renders).toBe(mountedRenders);
             await act(async () => {
                 const root = storage.getState();
-                publishMachineActivity(machine, { active: false, activeAt: machine.activeAt + 5 }, []);
+                publishMachineActivity(machine, { active: false, activeAt: machine.activeAt + 6 }, []);
                 expect(storage.getState()).toBe(root);
             });
-            expect(targets.getCurrent()).toMatchObject({ control: null, state: { status: 'unavailable' } });
+            // The Home still needs the exact Machine identity to admit a wake.
+            expect(targets.getCurrent()).toMatchObject({
+                control: { machineId: machine.id, basePath: '/workspace', confidence: 'metadata_direct' },
+                state: { status: 'ready', confidence: 'metadata_direct' },
+            });
             expect(storage.getState().machines).toBe(before.machines);
             await act(async () => {
                 const root = storage.getState();
-                publishMachineActivity(machine, { active: true, activeAt: machine.activeAt + 6 }, []);
+                publishMachineActivity(machine, { active: true, activeAt: machine.activeAt + 7 }, []);
                 expect(storage.getState()).toBe(root);
             });
-            expect(targets.getCurrent().control).toMatchObject({ machineId: machine.id, basePath: '/workspace' });
+            expect(targets.getCurrent().control).toMatchObject({
+                machineId: machine.id, basePath: '/workspace', confidence: 'reachable',
+            });
             expect(storage.getState().machines).toBe(before.machines);
         } finally { await targets.unmount(); }
     });
@@ -330,7 +343,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         const serverId = homes.homes.projection!.id;
         const focusedServerId = homes.homes.focused!.id;
         const machine = storage.getState().machines[MACHINE_ID]!;
-        const focusedMachine = createMachineFixture({ id: 'focused-machine', active: true });
+        const focusedMachine = createMachineFixture({ id: 'focused-machine', activeAt: Date.now(), presenceProtocolVersion: 1 });
         const session = createSessionFixture({ ...storage.getState().sessions.sess_1!, active: false,
             metadata: { machineId: MACHINE_ID, path: '/projection', host: 'projection.local', flavor: 'codex' } });
         const focusedSession = createSessionFixture({ id: session.id, serverId: focusedServerId, active: false,
@@ -342,8 +355,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
                 [serverId]: { [session.id]: buildSessionListRenderableFromSession(session) },
                 [focusedServerId]: { [session.id]: buildSessionListRenderableFromSession(focusedSession) },
             } });
-        observeMachinePresenceForTest({ serverId, accountId: 'header-account' }, [machine.id]);
-        observeMachinePresenceForTest({ serverId: focusedServerId, accountId: 'header-account' }, [focusedMachine.id]);
+        publishMachineActivityForTest([machine, focusedMachine]);
         const targets = await renderHook(() => ({ bare: useSessionReachableMachineTarget(session.id),
             routed: useSessionReachableMachineTarget(session.id, serverId),
             control: useSessionMachineControlTarget(session.id, serverId) }));

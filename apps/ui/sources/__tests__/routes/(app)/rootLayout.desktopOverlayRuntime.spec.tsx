@@ -2,9 +2,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
-import { ActivityBadgeRuntime } from '@/activity/badges/ActivityBadgeRuntime';
-import { AuthenticatedAppRuntimeMounts } from '@/components/appShell/runtime/AuthenticatedAppRuntimeMounts';
-
 import { flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { initializeRootLayoutRuntimeForTests, renderRootLayoutRoute, installRootLayoutRouteCommonModuleMocks } from './rootLayoutRouteTestHelpers';
 
@@ -47,6 +44,8 @@ installRootLayoutRouteCommonModuleMocks({
 });
 
 await initializeRootLayoutRuntimeForTests();
+const { ActivityBadgeRuntime } = await import('@/activity/badges/ActivityBadgeRuntime');
+const { AuthenticatedAppRuntimeMounts } = await import('@/components/appShell/runtime/AuthenticatedAppRuntimeMounts');
 
 afterEach(() => {
     routeState.pathname = '/terminal/connect';
