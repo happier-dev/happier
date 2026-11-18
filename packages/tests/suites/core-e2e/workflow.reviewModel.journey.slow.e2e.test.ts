@@ -4,6 +4,7 @@ import { delimiter, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { reviewReviewerIdForSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { WorkflowInvocationListResultV1Schema, WorkflowRunStartResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { readMuseLoginRecording, readMuseMspProcessAudit } from '../../../plugins/muse/src/agent/testkit/mspProcess';
 import { startFinJourneyFixture, type FinJourneyFixture } from '../../src/testkit/finJourney';
@@ -101,7 +102,7 @@ describe('FIN selected Muse Review and convergence through public Actions', () =
     const review = held.invocationDetails?.find(row => row.progress.invocationPath.blockId === 'review');
     expect(review, JSON.stringify(review?.progress.result))
       .toMatchObject({ index: { lifecycle: 'completed' }, progress: { result: {
-        perEngineOutcome: [{ key: 'muse', runId: expect.any(String), outcome: 'completed' }],
+        perEngineOutcome: [{ key: reviewReviewerIdForSelectionV1(0), runId: expect.any(String), outcome: 'completed' }],
       } } });
     // This is the native process's received selection, below every internal
     // Workflow/Review/default-selection owner implicated in 10e094ddb785.
