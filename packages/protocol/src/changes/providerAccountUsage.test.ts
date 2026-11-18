@@ -23,4 +23,22 @@ describe('Provider usage change scope', () => {
     expect(readProviderAccountUsageChangedRecordIdsV1([{ ...page(first)[0]!, cursor: 5 }, page(first)[1]!])).toBeUndefined();
     expect(readProviderAccountUsageChangedRecordIdsV1([page(first)[1]!])).toEqual([first]);
   });
+
+  it('retains eight quota records through heterogeneous non-authority account rows', () => {
+    const records = Array.from({ length: 8 }, (_, index) => `paug_v1_${String(index).padStart(2, '0')}abcdefgh`);
+    const changes = records.flatMap((id, index) => page(id, index * 2 + 1));
+    changes.push(
+      { kind: 'account', entityId: 'home-governance', cursor: 100 },
+      { kind: 'account', entityId: 'c8e100dc-0565-4c09-9bc9-a02222cfbc87', cursor: 101 },
+      { kind: 'machine', entityId: 'machine-a', cursor: 102 },
+      { kind: 'pluginDomain', entityId: 'pluginDomain/example/data-kv', cursor: 103 },
+    );
+    expect(readProviderAccountUsageChangedRecordIdsV1(changes)).toEqual(records);
+  });
+
+  it('keeps authority-bearing connected-service and Team rows conservative', () => {
+    const changes = [...page(first), { kind: 'account', entityId: 'teams', cursor: 3 }];
+    expect(readProviderAccountUsageChangedRecordIdsV1(changes)).toBeUndefined();
+    expect(readProviderAccountUsageChangedRecordIdsV1([...page(first), { kind: 'account', entityId: 'connected-services', cursor: 3 }])).toBeUndefined();
+  });
 });

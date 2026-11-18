@@ -48,8 +48,10 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { buildProviderAccountUsageMaterialChangesV1, readProviderAccountUsageChangedRecordIdsV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { QualifiedConnectedAccountQuotaResponseV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedProviderAccountUsageHistoryRequestV4Schema, ProviderAccountUsagePageProjectionReadV1Schema, ProviderAccountUsagePageProjectionWriteV1Schema, ConnectedServiceQuotaGetResultV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
+import { ProviderAccountUsageDaySummaryReadV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { parseQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { buildProviderAccountUsageScopeKey } from '@/sync/domains/connectedServices/accountUsage/providerAccountUsageLoadRoute';
@@ -4152,6 +4154,113 @@ describe('usage query captured Resource adapter', () => {
         await expect.poll(() => counts()).toEqual(before.map(count => ({ resolves: count.resolves + 1, records: count.records + 1 })));
         await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
       }
+    } finally { release(); }
+  });
+
+  it('keeps settled daily summaries and closed ranges closed across eight quota wakes', async () => {
+    const { buildProviderAccountUsageDaySummaryV1 } = await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');
+    const now = Date.UTC(2026, 10, 18, 12);
+    const day = 86_400_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const refs = Array.from({ length: 8 }, (_, index) => ({
+      service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: `quota-${index}`,
+    }));
+    const sources = refs.map(ref => ({ bindingKind: 'account' as const, ref }));
+    const snapshots = refs.map(ref => {
+      const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account' as const, quotaScope: 'account' as const };
+      return ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+        providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: now, fetchedAtMs: now,
+        staleAfterMs: day, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+        meters: [{ meterId: 'daily', label: 'Daily', used: 10, limit: 100, remaining: 90, utilizationPct: 10,
+          resetsAt: now + day, windowDurationMs: day, unit: 'count', status: 'ok', details: {} }] });
+    });
+    const summaryBody = (snapshot: typeof snapshots[number]) => Array.from({ length: 13 }, (_, index) => {
+      const dayStartAtMs = now - (12 - index) * day;
+      const historical = { ...snapshot, observedAtMs: dayStartAtMs + 3_600_000, fetchedAtMs: dayStartAtMs + 3_600_000 };
+      return { dayStartAtMs, payload: { v: 1, coverage: { observationCount: 1,
+        frontier: { id: `day-${snapshot.recordId}-${index}`, observedAtMs: historical.observedAtMs } },
+        content: { t: 'plain' as const, v: buildProviderAccountUsageDaySummaryV1({ recordId: snapshot.recordId, dayStartAtMs, snapshots: [historical] }) } } };
+    });
+    const historyReads = new Map(snapshots.map(snapshot => [snapshot.recordId, 0]));
+    const summaryReads = new Map(snapshots.map(snapshot => [snapshot.recordId, 0]));
+    const captured = await context(async request => {
+      if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: { connectedServices: { enabled: true, quotas: { enabled: true } } } }));
+      if (request.path === '/v2/usage/query') return Response.json(value);
+      if (request.path === '/v4/connect/qualified/quotas') {
+        const index = refs.findIndex(ref => request.url.searchParams.get('ref')?.includes(ref.accountId));
+        return Response.json({ ref: refs[index], sourceResolution: { source: sources[index], recordId: snapshots[index]!.recordId,
+          providerAccountId: refs[index]!.accountId, fetchedAt: now, staleAfterMs: day },
+          content: { t: 'plain', v: { v: 1, ref: refs[index], activeAccountId: refs[index]!.accountId, fetchedAt: now,
+            staleAfterMs: day, planLabel: null, accountLabel: null, meters: snapshots[index]!.meters } },
+          metadata: { fetchedAt: now, staleAfterMs: day, status: 'ok' } });
+      }
+      if (request.path.endsWith('/sources/resolve')) {
+        const source = JSON.parse(request.url.searchParams.get('source')!);
+        const index = refs.findIndex(ref => ref.accountId === source.ref.accountId);
+        return Response.json({ source: sources[index], recordId: snapshots[index]!.recordId, providerAccountId: refs[index]!.accountId, fetchedAt: now, staleAfterMs: day });
+      }
+      if (request.path.endsWith('/record')) {
+        const recordId = request.url.searchParams.get('recordId')!;
+        const index = snapshots.findIndex(snapshot => snapshot.recordId === recordId);
+        return Response.json({ content: { t: 'plain', v: snapshots[index] }, metadata: { fetchedAt: now, staleAfterMs: day, status: 'ok' }, sources: [sources[index]] });
+      }
+      if (request.path.endsWith('/day-summaries')) {
+        const query = parseQualifiedConnectedAccountV4StructuredQueryValue(ProviderAccountUsageDaySummaryReadV1Schema,
+          request.url.searchParams.get('query'));
+        const recordId = query.recordId;
+        summaryReads.set(recordId, (summaryReads.get(recordId) ?? 0) + 1);
+        const snapshot = snapshots.find(candidate => candidate.recordId === recordId)!;
+        return Response.json({ summaries: summaryBody(snapshot), missingDays: [] });
+      }
+      if (request.path.endsWith('/history')) {
+        const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
+          request.url.searchParams.get('query'));
+        const recordId = query.recordId;
+        historyReads.set(recordId, (historyReads.get(recordId) ?? 0) + 1);
+        return new Response(JSON.stringify({ entries: [], nextCursor: null }) + '\n', { headers: { 'Content-Type': 'application/x-ndjson' } });
+      }
+      if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
+      return undefined;
+    }, { connectedAccountsV4: refs.map(ref => ({ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] })) });
+    const { sync } = await import('@/sync/sync');
+    await sync.resumeSync('manual');
+    await getServerFeaturesSnapshot({ serverId: captured.accountLifetime.scope.serverId, force: true });
+    const basis = getActiveServerSnapshot();
+    const credentialScope = resolveAuthCredentialsScopeKey(captured.credentials);
+    const quotaContexts = refs.map(ref => ({ credentials: captured.credentials, ref,
+      serverBasis: { serverId: basis.serverId, generation: basis.generation }, credentialScope: [basis.serverId, String(basis.generation), credentialScope].join('\u0000') }));
+    for (const quotaContext of quotaContexts) loadQualifiedQuotaSnapshotOnce(buildQualifiedQuotaSnapshotScopeKey(quotaContext), quotaContext);
+    await expect.poll(() => quotaContexts.every(quotaContext => getQualifiedQuotaSnapshotEntry(buildQualifiedQuotaSnapshotScopeKey(quotaContext)).read)).toBe(true);
+    const query = normalizeUsageQuery({ period: { relative: 'year' }, includeAccounting: false, includeQuota: true, includeQuotaHistory: true,
+      includeQuotaExactHistory: false, includeComparison: false, includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
+    await readUiUsageQueryBatch(captured, { queries: [query] });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const release = entry.subscribe(() => {}, true);
+    const reads = () => snapshots.map(snapshot => ({ history: historyReads.get(snapshot.recordId)!, summaries: summaryReads.get(snapshot.recordId)! }));
+    try {
+      await entry.refresh();
+      await flushHookEffects({ cycles: 20 });
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      const baseline = reads();
+      for (const index of [0, 1, 2, 3]) {
+        const snapshot = snapshots[index]!;
+        snapshots[index] = { ...snapshot, meters: snapshot.meters.map(meter => ({ ...meter, used: 20 + index, remaining: 80 - index, utilizationPct: 20 + index })) };
+        const page = buildProviderAccountUsageMaterialChangesV1(snapshots[index]!.recordId).map((change, offset) => ({ ...change, cursor: index * 2 + offset + 1 }));
+        const providerAccountUsageRecordIds = readProviderAccountUsageChangedRecordIdsV1([
+          ...page,
+          { kind: 'account', entityId: 'home-governance', cursor: 100 + index },
+          { kind: 'account', entityId: `c8e100dc-0565-4c09-9bc9-a02222cfbc${String(index).padStart(2, '0')}`, cursor: 200 + index },
+          { kind: 'machine', entityId: `machine-${index}`, cursor: 300 + index },
+        ]);
+        publishHomeAccountChange(captured.accountLifetime.scope.serverId, page.map(change => change.entityId),
+          { changeKinds: ['account'], usageQueryAffects: true, providerAccountUsageRecordIds });
+        await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      }
+      const after = reads();
+      expect(after.map((count, index) => ({ history: count.history - baseline[index]!.history, summaries: count.summaries - baseline[index]!.summaries })))
+        .toEqual([{ history: 1, summaries: 1 }, { history: 1, summaries: 1 }, { history: 1, summaries: 1 }, { history: 1, summaries: 1 },
+          { history: 0, summaries: 0 }, { history: 0, summaries: 0 }, { history: 0, summaries: 0 }, { history: 0, summaries: 0 }]);
     } finally { release(); }
   });
 

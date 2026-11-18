@@ -1,4 +1,7 @@
 import { ProviderAccountUsageRecordIdSchema } from '../connect/providerAccountUsagePrimitives.js';
+import { ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1,
+  TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
+  readConnectedServicesAccountChangeV1 } from './index.js';
 
 /** Retained for clients that consume the Account-wide allowance invalidation. */
 export const PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'provider-account-usage' as const;
@@ -25,6 +28,19 @@ export function buildProviderAccountUsageMaterialChangesV1(recordId: string) {
   ] as const;
 }
 
+/**
+ * Account feed pages also carry projection rows unrelated to quota history.
+ * Only rows that can change source/credential authority make a provider scope
+ * unknown; other account rows do not erase exact provider record identities.
+ */
+function isProviderAccountUsageAuthorityChangeV1(entityId: string): boolean {
+  return entityId === 'self'
+    || entityId === ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1
+    || entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1
+    || entityId === TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1
+    || readConnectedServicesAccountChangeV1({ kind: 'account', entityId }) !== null;
+}
+
 /** Undefined is unknown/full. A split page or a predecessor key cannot prove a narrow scope. */
 export function readProviderAccountUsageChangedRecordIdsV1(
   changes: readonly Readonly<{ kind: string; entityId: string; cursor: number; hint?: unknown }>[],
@@ -34,7 +50,7 @@ export function readProviderAccountUsageChangedRecordIdsV1(
     if (change.kind !== 'account') continue;
     const id = readProviderAccountUsageChangeRecordIdV1(change.entityId);
     if (id !== null) records.set(id, change.cursor);
-    else if (change.entityId !== PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1) return undefined;
+    else if (isProviderAccountUsageAuthorityChangeV1(change.entityId)) return undefined;
   }
   for (const change of changes) {
     if (change.kind !== 'account' || change.entityId !== PROVIDER_ACCOUNT_USAGE_ACCOUNT_CHANGE_ENTITY_ID_V1) continue;
