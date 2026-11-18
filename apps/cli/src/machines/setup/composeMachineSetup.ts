@@ -116,7 +116,15 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
 }>): Pick<ActionExecutorDeps, 'machineSetupPlan' | 'prepareMachineSetupApply' | 'machineSetupApply'> {
   const targetPlan: typeof host.targetPlan = async request => {
     let result: unknown;
-    try { result = await host.targetPlan(request); }
+    // The nested Plan spends the admitted Apply's daemon credential. Keep the
+    // signed proof on the context, but do not let a retained requester
+    // projection replace that credential with a stale Account transport.
+    const nestedContext = request.context.externalActionExecutionAuthorization?.requesterAccountProjection === undefined
+      ? request.context
+      : { ...request.context, externalActionExecutionAuthorization: {
+          ...request.context.externalActionExecutionAuthorization, requesterAccountProjection: undefined,
+        } };
+    try { result = await host.targetPlan({ ...request, context: nestedContext }); }
     catch (error) { result = { ok: false, ...normalizeActionExecutorThrownError(error, 'machines.setup.plan') }; }
     const refused = ActionExecuteFailureSchema.safeParse(result);
     if (!refused.success || 'targets' in request.input) return result;

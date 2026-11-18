@@ -108,6 +108,32 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
 }
 
 describe('Combined Machine setup child settlement', () => {
+  it('keeps the admitted Apply credential for a nested opaque-source Plan', async () => {
+    const source = { kind: 'accountPresetOpaque' as const, presetId: 'saved', presetRevision: 1, contentEncryptionMode: 'plain' as const };
+    const direct = { kind: 'direct' as const, setup: {} };
+    const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'home', machineId: 'machine', targets: [{
+      homeId: 'home', machineId: 'machine', desiredRevision: 1, sources: [source, direct], exclusions: [], recipePlans: [],
+    }] });
+    const authorization = { ...ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted', binding: {
+      accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+      serverIdentityId: 'home', machineId: 'machine', installationId: 'installation', actionId: 'machines.setup.apply', requestId: 'apply',
+      target: { kind: 'machine', machineId: 'machine' }, requestEnvelopeDigest: 'a'.repeat(43),
+    } }), requesterAccountProjection: {} as ExternalActionRequesterAccountProjectionV1 };
+    let nestedContext: ActionExecutorContext | undefined;
+    const deps = createCombinedMachineSetupActionDeps({ readDeps: createUnavailableActionTransportDeps,
+      targetPlan: async request => {
+        nestedContext = request.context;
+        return { desiredRevision: 1, sources: [source, direct], exclusions: [], support: [], recipePlans: [] };
+      }, readHostFacts: async () => ({ machines: [{ machineId: 'machine', online: true }] }), orchestrationDirectory: '/setup',
+      startCombined: async () => undefined, waitForRun: async () => undefined, readInvocations: async () => undefined });
+    const result = await deps.prepareMachineSetupApply!({ input, context: {
+      surface: 'rpc', authority: 'present_user', serverId: 'home', actionRequestId: 'apply',
+      externalActionExecutionAuthorization: authorization,
+    } });
+    expect(result).toMatchObject({ preview: { kind: 'machineSetup' } });
+    expect(nestedContext?.externalActionExecutionAuthorization).toMatchObject({ token: 'admitted' });
+    expect(nestedContext?.externalActionExecutionAuthorization?.requesterAccountProjection).toBeUndefined();
+  });
   it('settles an interrupted Setup from its exact retained terminal native failure without parent attention', async () => {
     const child = { version: 1, operationId: 'native-child', revision: 5,
       actionId: 'machines.setup.apply', state: 'failed', scope: { accountId: 'actor', machineId: 'guest' },
