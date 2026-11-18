@@ -33,7 +33,6 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { deploymentEnvironmentRoute } from '@/components/projects/deployments/deploymentNavigation';
 import { MachineTabSubHead } from '@/components/machines/page/MachineTabSubHead';
 import { t } from '@/text';
-import { useDeviceType } from '@/utils/platform/responsive';
 import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 import {
@@ -155,7 +154,6 @@ function MachineServicesList(
     if (!next.delete(environmentId)) next.add(environmentId);
     return next;
   }), []);
-  const phone = useDeviceType() === 'phone';
   const environmentTitle = React.useCallback((environmentId: string) => {
     // The app's band names the Source, so the row says the Environment alone.
     const header = environments.headers.get(environmentId);
@@ -250,8 +248,9 @@ function MachineServicesList(
       // members: the whole member row moves in, its mark-to-title gap unchanged. The list draws one level.
       wrapItem: (item, content) => item.kind === 'service' && listItemGroup(item) === 'deployed'
         ? <View style={{ paddingLeft: theme.space.s20 }}>{content}</View> : content,
-      // The Environment row's disclosure says whether its services are shown; on a phone its Open environment link
-      // ends the byline instead of standing beside the title.
+      // The Environment row's disclosure says whether its services are shown, and its Open environment link stands
+      // beside it at every width: a trailing action would take the row's end and shift its Port, Memory and Up cells
+      // off the columns its services and the header share.
       titleControls: (item) => item.kind !== 'environment' ? null : (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
           <IconButton testID={`machine-services-environment-${item.environmentId}:disclosure`} variant="plain"
@@ -259,7 +258,7 @@ function MachineServicesList(
             expanded={!closedEnvironments.has(item.environmentId)}
             accessibilityLabel={t('machineServices.environmentRow.disclosure', { environment: environmentTitle(item.environmentId) })}
             onPress={() => toggleEnvironment(item.environmentId)} />
-          {phone ? environmentLink(item.environmentId) : null}
+          {environmentLink(item.environmentId)}
         </View>
       ),
       title: (item) => item.kind === 'environment' ? environmentTitle(item.environmentId) : machineServiceDisplayName(item.row),
@@ -276,7 +275,6 @@ function MachineServicesList(
       titleMetaAlign: 'row',
       // Ports, Memory and Up line up in tabular columns (lab `services/list`); the shared list drops them on a phone.
       fields: machineServiceColumnFields<ServicesListItem>((item) => item.kind === 'service' ? item.row : null),
-      action: (item) => item.kind === 'environment' && !phone ? environmentLink(item.environmentId) : null,
       accessibilityLabel: (item) => item.kind === 'environment'
         ? `${environmentTitle(item.environmentId)}, ${t('machineServices.environmentRow.services', { count: item.rows.length })}`
         : `${machineServiceDisplayName(item.row)}, ${t(`machineServices.state.${item.row.state}`)}`,
@@ -284,7 +282,7 @@ function MachineServicesList(
         ? `machine-services-environment-${item.environmentId}` : `machine-service-${item.row.serviceId}`,
       columnTitles: { title: t('machineServices.columns.service'), titleMeta: t('machineServices.columns.port') },
     }),
-    [closedEnvironments, environmentLink, environmentTitle, phone, theme.colors.text.secondary, theme.space.s20, theme.space.s8,
+    [closedEnvironments, environmentLink, environmentTitle, theme.colors.text.secondary, theme.space.s20, theme.space.s8,
       toggleEnvironment],
   );
 

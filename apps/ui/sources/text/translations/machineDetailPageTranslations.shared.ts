@@ -2375,8 +2375,8 @@ export const english = {
     },
     machineScheduled: {
         title: "Scheduled",
-        description: ({ machine }: { machine: string }) => `What runs on a schedule on ${machine}: its crontabs and timers, read when you open it.`,
-        refresh: "Read again",
+        sectionTitle: "Cron and timers on this machine",
+        description: "What the system itself runs, read when you open this tab. Cron changes appear as they happen; timers update on Refresh. Commands are never shown.",
         none: "None",
         more: "Show more",
         nextRun: ({ time }: { time: string }) => `Next ${time}`,
@@ -2391,8 +2391,6 @@ export const english = {
         systemdTimers: "systemd timers",
         launchd: "launchd",
         taskScheduler: "Task Scheduler",
-        oneJob: "1 job",
-        jobs: ({ count }: { count: number }) => `${count} jobs`,
     },
     machineServices: {
         unresolvedEnvironment: 'Unresolved environment service',

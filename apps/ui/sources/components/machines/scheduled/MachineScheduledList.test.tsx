@@ -99,7 +99,7 @@ describe('Machine → Scheduled (lab mSched; MACH-SCHEDULED-READ-1112)', () => {
     // A source with more jobs than shown offers the next page.
     await screen.pressByTestIdAsync('machine-scheduled.more');
     expect(onMore).toHaveBeenCalledOnce();
-    expect(screen.getTextContent()).toContain(t('machineScheduled.description', { machine: 'hetzner-fsn1' }));
+    expect(screen.getTextContent()).toContain(t('machineScheduled.description'));
   });
 
   it('says why nothing could be read and offers to read again', async () => {

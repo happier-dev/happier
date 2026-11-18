@@ -520,7 +520,7 @@ export function MachineProjectWorkSection(
 
       {/* Present only once something runs here (MPG-8, lab s-workers MACHINE): an empty "Running here" is noise. */}
       {running.length > 0 ? (
-        <ItemGroup title={t('projectWorkers.runningHere')}>
+        <ItemGroup surface="none" title={t('projectWorkers.runningHere')}>
           {running.map((operation) => (
             <RunningHereRow
               machineName={props.machineName}
@@ -532,7 +532,9 @@ export function MachineProjectWorkSection(
         </ItemGroup>
       ) : null}
 
+      {/* Running work and fresh copies are records to browse: flat on the page (DESIGN "browse flat"). */}
       <ItemGroup
+        surface="none"
         title={t('projectWorkers.freshCopies')}
         description={t('projectWorkers.freshCopiesDetail')}
         action={

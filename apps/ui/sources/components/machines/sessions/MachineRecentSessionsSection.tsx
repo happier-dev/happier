@@ -22,7 +22,8 @@ export const MachineRecentSessionsSection = React.memo(function MachineRecentSes
 
     if (recent.length === 0) return null;
     return (
-        <ItemGroup title={t('machineDetailPage.recentSessionsTitle')} description={t('machineDetailPage.recentSessionsDescription')}>
+        // Sessions are records to browse: flat on the page, never a card (DESIGN "browse flat").
+        <ItemGroup surface="none" title={t('machineDetailPage.recentSessionsTitle')} description={t('machineDetailPage.recentSessionsDescription')}>
             {recent.map((session) => (
                 <Item
                     key={session.id}

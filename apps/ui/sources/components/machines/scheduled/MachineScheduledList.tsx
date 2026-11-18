@@ -1,13 +1,18 @@
 import * as React from 'react';
 import type { MachineScheduledSourceV1 } from '@happier-dev/protocol/machines/scheduled/scheduledV1';
 
-import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
+import { Typography } from '@/constants/Typography';
 import type { MachineScheduledState } from '@/sync/domains/machines/scheduled/machineScheduledStore';
 import { t } from '@/text';
 
@@ -29,19 +34,11 @@ function sourceTitle(source: string): string {
   return source;
 }
 
-function jobsLine(
-  source: Extract<MachineScheduledSourceV1, { kind: 'available' }>,
-): string {
-  if (source.totalJobs === 0) return t('machineScheduled.none');
-  return source.totalJobs === 1
-    ? t('machineScheduled.oneJob')
-    : t('machineScheduled.jobs', { count: source.totalJobs });
-}
-
 /**
- * Machine → Scheduled (lab mSched): one section per source the daemon read, with its jobs; an empty source says none
- * and an unreadable one says so on its own row while the others still show. Never command text; the read is on open,
- * with Read again (no polling). Renders the store owner's reported state only.
+ * Machine → Scheduled (lab mSched, "Cron and timers on the Machine"): one flat titled section per source the daemon
+ * read, its job count beside the title, each job's schedule (code, mono) with what it runs as or its unit; an empty
+ * source says none once and an unreadable one says so on its own row while the others still show. Never command text;
+ * the read is on open, with Refresh (no polling). Renders the store owner's reported state only.
  */
 export function MachineScheduledList(
   props: Readonly<{
@@ -52,16 +49,20 @@ export function MachineScheduledList(
   }>,
 ) {
   const { state } = props;
+  const { theme } = useUnistyles();
   const snapshot = state.snapshot;
-  // The tab's lede (the Services and Setup tabs' pattern): what this is for, and Read again once there is a read.
+  // The tab's section head (lab mSched): what the system runs, how it is read, and Refresh once there is a read.
   const header = (
     <ItemGroup
       surface="none"
       testID="machine-scheduled-lede"
       actionLayout="adaptive"
-      description={t('machineScheduled.description', { machine: props.machineName })}
+      title={t('machineScheduled.sectionTitle')}
+      description={t('machineScheduled.description')}
       action={snapshot ? (
-        <TextLinkButton testID="machine-scheduled.refresh" label={t('machineScheduled.refresh')} size="meta" onPress={props.onRefresh} />
+        <RoundButton testID="machine-scheduled.refresh" size="small" display="secondary" title={t('common.refresh')}
+          leading={<Icon name="arrow-clockwise" size={ICON_SIZE.sm} color={theme.colors.text.primary} />}
+          onPress={props.onRefresh} />
       ) : undefined}
     >
       {null}
@@ -114,13 +115,14 @@ export function MachineScheduledList(
         </ItemGroup>
       ) : (
         snapshot.sources.map((source) => (
+          // Jobs are records to browse: a flat titled section with its count, never a card (DESIGN "browse flat").
           <ItemGroup
             key={source.source}
+            surface="none"
             testID={`machine-scheduled.source.${source.source}`}
             title={sourceTitle(source.source)}
-            description={
-              source.kind === 'available' ? jobsLine(source) : undefined
-            }
+            titleAccessory={source.kind === 'available' && source.totalJobs > 0
+              ? <ManagedSectionCount count={source.totalJobs} testID={`machine-scheduled.source.${source.source}.count`} /> : undefined}
           >
             {source.kind === 'available' && source.observation?.kind === 'unavailable' ? <SurfaceFreshnessLine
               testID={`machine-scheduled.source.${source.source}.observation`}
@@ -146,8 +148,8 @@ export function MachineScheduledList(
                   key={job.id}
                   testID={`machine-scheduled.job.${job.id}`}
                   title={job.schedule}
+                  titleStyle={styles.schedule}
                   subtitle={[
-                    job.name,
                     job.nextRun
                       ? t('machineScheduled.nextRun', { time: job.nextRun })
                       : null,
@@ -156,12 +158,9 @@ export function MachineScheduledList(
                       : null,
                   ]
                     .filter(Boolean)
-                    .join(' · ')}
-                  detail={
-                    job.enabled === false
-                      ? t('machineScheduled.off')
-                      : undefined
-                  }
+                    .join(' · ') || undefined}
+                  // What it runs as (cron) or its unit (systemd): the lab's trailing column, beneath on a phone.
+                  detail={job.enabled === false ? `${job.name} · ${t('machineScheduled.off')}` : job.name}
                   mode="info"
                 />
               ))
@@ -182,3 +181,8 @@ export function MachineScheduledList(
     </>
   );
 }
+
+const styles = StyleSheet.create(() => ({
+  // A schedule is code (a cron line, an OnCalendar spec): mono, at the row's own type role.
+  schedule: { fontFamily: Typography.mono().fontFamily },
+}));

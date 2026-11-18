@@ -18,7 +18,8 @@ export function MachineProjectTerminalsSection(props: Readonly<{ machineId: stri
     const roots = refs.filter(ref => ref.machineId === props.machineId
         && areServerProfileIdentifiersEquivalent(ref.serverId, props.serverId));
     if (!roots.length) return null;
-    return <ItemGroup title={t('settings.terminal')}>
+    // Terminals are records to browse: flat on the page, never a card (DESIGN "browse flat").
+    return <ItemGroup surface="none" title={t('settings.terminal')}>
         {roots.map(ref => <Item key={ref.id} testID={`machine-project-terminal-${ref.id}`}
             title={resolveWorkspaceRefDisplayName(ref)} subtitle={ref.rootPath} onPress={() => {
                 const lifetime = captureActiveServerAccountScopeLifetime();
