@@ -25,8 +25,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { spawnSupervisedPluginProcess, type SupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
 import { observeProcessLaunch } from '@/processes/launchNotification';
 import { resolveAgentSessionHolderLaunch } from '@/subprocess/supervision/sessionHolder';
-import { createSessionHolderAdoption, JSON_RPC_FRAME_CODEC, type SessionHolderAdoption, type SessionHolderHandshake }
-  from '@/subprocess/supervision/sessionHolderAdoption';
+import { createSessionHolderAdoption, type SessionHolderAdoption } from '@/subprocess/supervision/sessionHolderAdoption';
+import { ACP_SESSION_HOLDER_HANDSHAKE } from './acpSessionHolderHandshake';
 import { SpawnFailureError } from '@/processes/spawnFailure/classifySpawnFailure';
 import {
   RequestError,
@@ -211,24 +211,6 @@ class AcpStartupTimeoutError extends Error {
   }
 }
 
-/**
- * ACP's startup handshake for a held Agent: `initialize` and the Session it
- * opened or loaded. A respawned runner that adopts the Agent gets these answers
- * locally (the live Agent is not asked to load its own open Session again), and
- * the Agent's held output waits until the backend knows that Session again.
- */
-const ACP_SESSION_HOLDER_HANDSHAKE: SessionHolderHandshake = Object.freeze({
-  codec: JSON_RPC_FRAME_CODEC,
-  requests: Object.freeze({ initialize: 'initialize', 'session/new': 'session', 'session/load': 'session' }),
-  record: (method, params, result) => {
-    const sessionId = method === 'session/load' ? asRecord(params)?.sessionId : asRecord(result)?.sessionId;
-    return { ...asRecord(result), ...(typeof sessionId === 'string' ? { sessionId } : {}) };
-  },
-  // Only a load of the same Session is answered locally; anything else reaches the Agent.
-  answer: (method, params, stored) => method === 'initialize' ? stored
-    : method === 'session/load' && asRecord(stored)?.sessionId === asRecord(params)?.sessionId ? stored : undefined,
-  readyAfter: Object.freeze([]),
-});
 
 const MAX_RECENT_STDERR_DIAGNOSTICS = 3;
 const MAX_STARTUP_DIAGNOSTIC_CHARS = 1_200;

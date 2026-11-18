@@ -11,6 +11,9 @@ import { createJsonRpcProcessClient } from '@/plugins/runtime/exec/jsonRpc';
 import { createJsonStreamProcessClient } from '@/plugins/runtime/exec/jsonStream';
 import { adaptStablePluginExecLegacyProcessHandle } from '@/plugins/runtime/invocation/services/exec';
 import { createAcpNdJsonStream } from '@/agent/acp/createAcpNdJsonStream';
+import { ACP_SESSION_HOLDER_HANDSHAKE } from '@/agent/acp/acpSessionHolderHandshake';
+
+import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
 
 import { createSessionHolderSocketPath, SessionHolderChild } from './sessionHolder';
 import { createSessionHolderAdoption, JSON_RPC_FRAME_CODEC, JSON_RPC_INITIALIZE_HANDSHAKE, JSON_STREAM_ADOPT_HANDSHAKES, JSON_STREAM_CONTROL_HANDSHAKE } from './sessionHolderAdoption';
@@ -24,7 +27,8 @@ import { createSessionHolderAdoption, JSON_RPC_FRAME_CODEC, JSON_RPC_INITIALIZE_
  */
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../../..');
-const prebuiltHolder = process.env.HAPPIER_SESSION_HOLDER_TEST_EXECUTABLE;
+// The prepared native holder (the one every Agent launch uses) when no explicit test build is named.
+const prebuiltHolder = process.env.HAPPIER_SESSION_HOLDER_TEST_EXECUTABLE ?? resolveSessionHolderExecutablePath() ?? undefined;
 const cargoAvailable = Boolean(prebuiltHolder) || spawnSync('cargo', ['--version']).status === 0;
 
 // Answers `slow` after a delay and everything else at once; counts handshakes.
@@ -380,5 +384,51 @@ describeHolder('per-Session holder adopt contract', () => {
         expect(sent.map(record => record.type)).toEqual(['get_state', 'prompt', 'get_state']);
         expect(new Set(sent.map(record => record.id)).size).toBe(sent.length);
         await second.supervised.dispose('caller');
+    }, 30_000);
+
+    it('parked ACP Agent (A2): the park\'s Session-independent initialize is recorded in the holder; the adopter is answered from it and its session/new reaches the Agent', async () => {
+        const log = join(directory, 'acp-parked.log');
+        const socketPath = createSessionHolderSocketPath();
+        const launch = { command: process.execPath, args: [join(directory, 'agent.mjs')], env: { ...process.env, T_LOG: log } };
+        const initializeParams = { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } } };
+
+        // The park: the host JSON-RPC client sends only initialize (no Session data), then hands over.
+        const parked = spawnSupervisedPluginProcess({ ...launch, pipeStdout: true,
+            sessionHolder: { kind: 'spawn', executablePath: holderExecutable, socketPath, role: 'primary' } });
+        own(parked.child as SessionHolderChild);
+        const parkClient = createJsonRpcProcessClient({ stdout: parked.child.stdout,
+            write: async data => parked.handle.write(typeof data === 'string' ? new Uint8Array(Buffer.from(data)) : data),
+            sessionHolderAdoption: deliver => createSessionHolderAdoption({ child: parked.child, handshake: ACP_SESSION_HOLDER_HANDSHAKE, deliver }) });
+        expect(await parkClient.sessionHolderAdoption!.adopted).toBe(false);
+        const parkedReply = await parkClient.client.request('initialize', initializeParams);
+        await (parked.child as SessionHolderChild).handOver();
+        parkClient.dispose();
+
+        // The adopting runner speaks ACP from id 0, as the SDK does on a fresh connection.
+        const adopter = spawnSupervisedPluginProcess({ ...launch, pipeStdout: true,
+            sessionHolder: { kind: 'adopt', socketPath, role: 'primary' } });
+        const child = adopter.child as SessionHolderChild;
+        const stream = createAcpNdJsonStream(
+            new WritableStream<Uint8Array>({ write: chunk => adopter.handle.write(chunk) }),
+            new ReadableStream<Uint8Array>({ start(controller) {
+                child.stdout.on('data', (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)));
+            } }),
+            { sessionHolderAdoption: deliver => createSessionHolderAdoption({ child, handshake: ACP_SESSION_HOLDER_HANDSHAKE, deliver }) });
+        const adoption = stream.sessionHolderAdoption!;
+        expect(await adoption.adopted).toBe(true);
+        expect(child.pid).toBe(parked.child.pid);
+        const writer = stream.writable.getWriter();
+        const reader = stream.readable.getReader();
+        await writer.write({ jsonrpc: '2.0', id: 0, method: 'initialize', params: initializeParams });
+        expect((await reader.read()).value).toMatchObject({ id: 0, result: parkedReply });
+        await writer.write({ jsonrpc: '2.0', id: 1, method: 'session/new', params: { cwd: directory, mcpServers: [] } });
+        expect((await reader.read()).value).toMatchObject({ id: 1, result: { sessionId: 'agent-session-1' } });
+        adoption.release();
+        expect(adoption.heldRequests()).toEqual([]);
+
+        const sent = await readLog(log);
+        expect(sent.map(entry => entry.method)).toEqual(['initialize', 'session/new']);
+        expect(new Set(sent.map(entry => entry.id)).size).toBe(sent.length);
+        await adopter.dispose('caller');
     }, 30_000);
 });
