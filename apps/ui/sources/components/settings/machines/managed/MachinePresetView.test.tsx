@@ -3071,6 +3071,29 @@ describe('reachable preset detail', () => {
     } finally { await screen.unmount(); }
   });
 
+  it('says when the ready prepared image was built and from which revision (lab scene 5 ready)', async () => {
+    const serverId = await seed();
+    const { replaceManagedMachinePresetPreparationV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+    const { formatAsOfTime } = await import('@/utils/time/formatAsOfTime');
+    const stored = createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } });
+    const builtAt = Date.UTC(2026, 10, 17, 9, 45);
+    const built = replaceManagedMachinePresetPreparationV1({ presetId: preset.id, mode: 'plain',
+      content: stored.content, expectedOperationId: null, prepared: { operationId: 'dated-image-build', status: 'ready',
+        builtAt, builtFromRevision: 7,
+        artifact: { contributionRef: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, value: { image: 'dated-image' } },
+        binding: { cliIdentity: 'supplier-identity', machineId: 'original-builder', credentialConfigurations: [],
+          configuration: { launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices } } } } });
+    if (!built) throw new Error('Expected a ready preparation');
+    harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: { ...stored, content: built.content } } });
+    const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId={preset.id} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.preparation')).not.toBeNull());
+      const text = screen.getTextContent();
+      expect(text).toContain(formatAsOfTime(builtAt));
+      expect(text).toMatch(/\b7\b/);
+    } finally { await screen.unmount(); }
+  });
+
   it('archives and restores the preset with its reviewed revision: explains retained image cleanup after opting out of Prepare', async () => {
     const serverId = await seed();
     const { replaceManagedMachinePresetPreparationV1, replaceManagedMachinePresetAuthorContentV1 } =

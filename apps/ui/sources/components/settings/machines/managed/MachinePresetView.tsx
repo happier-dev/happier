@@ -28,6 +28,7 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
+import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { MachinePresetDetail, managedPresetLimitRow, type MachinePresetDetailModel } from './MachinePresetDetail';
 import { MachinePresetProjectFilesSection } from './MachinePresetProjectFilesSection';
 import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
@@ -99,16 +100,22 @@ function MachinePresetPrepareSection(props: Readonly<{
     const onChange = props.onPreparationChange;
     // Off, the switch says it all; an image kept from before is Archive's to explain (its cleanup help).
     const showsImage = enabled;
+    const summary = preparation.readySummary;
+    const readyLine = [
+        summary?.builtAt != null ? t('machinePresets.prepareBuiltAt', { time: formatAsOfTime(summary.builtAt) }) : null,
+        summary?.builtFromRevision != null ? t('machinePresets.prepareBuiltRevision', { revision: summary.builtFromRevision }) : null,
+        summary?.storageBytes != null ? t('machinePresets.prepareStorageKept', { size: formatMachineBytes(summary.storageBytes, 'storage') }) : null,
+    ].filter(Boolean).join(' · ');
     return <ItemGroup testID="machine-preset.prepare" title={t('machinePresets.prepareSection')} description={t('machinePresets.prepareSectionHelp')}>
         {/* A standing preference of the preset: a switch, and building is its consequence (lab scene 5). */}
         <Item testID="machine-preset.prepare.keep" title={t('machinePresets.prepareKeep')} subtitle={t('machinePresets.prepareKeepHelp')}
             subtitleLines={0} mode="info" showChevron={false}
             rightElement={<Switch testID="machine-preset.prepare.keep.switch" accessibilityLabel={t('machinePresets.prepareKeep')}
                 value={enabled} disabled={!onChange} onValueChange={next => onChange?.({ ...props.preparation, enabled: next })} />} />
-        {/* A ready image says the storage it keeps when the builder measured it; an unknown size stays unsaid (S1). */}
+        {/* A ready image says when and from which revision it was built (lab scene 5 `ready`), then the storage it keeps
+            when the builder measured it; an unknown fact stays unsaid (S1). */}
         {showsImage ? <Item testID="machine-preset.preparation" title={status}
-            {...(preparation.estimates?.storageBytes != null ? { subtitle: t('machinePresets.prepareStorageKept',
-                { size: formatMachineBytes(preparation.estimates.storageBytes, 'storage') }) } : {})}
+            {...(readyLine ? { subtitle: readyLine } : {})}
             subtitleLines={0} mode="info" showChevron={false}
             loading={active} accessoryLayout="adaptive" rightElement={action ?? undefined} /> : null}
         {/* Only while an image is kept ready: what a Happier update does to it, with its cost (lab F5). */}
