@@ -10,6 +10,7 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { enqueuePendingQueueV2MessageViaHttp } from '@/api/session/pendingQueueV2Transport';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { registerSessionUserMessageSendHandler } from '@/rpc/handlers/sessionUserMessageSend';
+import { registerSessionControlHandlers } from '@/rpc/handlers/sessionControls';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { withCodexNativeAttachFixture } from '../../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime.nativeAttach.test-support';
@@ -18,6 +19,52 @@ import { createSessionUsageLimitRecoveryRuntime } from './createSessionUsageLimi
 
 describe('native usage-limit recovery composition', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it.each(['known reset', 'reset learned on probe'] as const)('checks an armed live Session and retains the same cancellable wait (%s)', async timing => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const sessionId = 'active-quota-check';
+    const credentials = { token: 'active-quota-check-test', encryption: null };
+    const knownTiming = timing === 'known reset';
+    const issue: SessionRuntimeIssueV1 = { v: 1, scope: 'primary_session', status: 'failed', source: 'usage_limit',
+      code: 'usage_limit', agentId: 'claude', agentTurnId: 'quota-turn', occurredAt: 1_000,
+      usageLimit: { v: 1, resetAtMs: knownTiming ? 60_000 : null, retryAfterMs: knownTiming ? 59_000 : null,
+        quotaScope: 'account', recoverability: 'wait' } };
+    const issueFingerprint = buildUsageLimitIssueFingerprint(issue);
+    let metadata = createTestMetadata({ flavor: 'claude', machineId: 'machine-local' });
+    const rawSession = createSessionRecordFixture({ id: sessionId, active: true, encryptionMode: 'plain',
+      latestTurnStatus: 'failed', latestTurnId: 'quota-turn', lastRuntimeIssue: issue });
+    const recoveryWrites: Array<SessionUsageLimitRecoveryV1['status'] | undefined> = [];
+    const recovery = createSessionUsageLimitRecoveryRuntime({ sessionId, currentMachineId: 'machine-local',
+      getMetadata: () => metadata, updateMetadata: async update => {
+        metadata = update(metadata);
+        recoveryWrites.push(metadata.sessionUsageLimitRecoveryV1?.status);
+      },
+      readContext: async () => ({ credentials, rawSession, metadata, mode: 'plain', ctx: null }),
+      runRequest: async operation => await operation(), getAccountSettings: () => null,
+      ...(knownTiming ? {} : { readNativeReadiness: async () => ({ status: 'waiting', retryAfterMs: 59_000 }) }),
+    });
+    const rpc = new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain' });
+    registerSessionControlHandlers(rpc, { getSessionMetadata: () => metadata,
+      sessionRuntimeControls: recovery.controls, isUsageLimitRecoveryEnabled: () => true });
+    try {
+      await expect(rpc.invokeLocal(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE, {
+        sessionId, issueFingerprint, resumePromptMode: 'off',
+      })).resolves.toMatchObject({ ok: true, status: 'waiting' });
+      const armed = metadata.sessionUsageLimitRecoveryV1;
+      expect(armed).toMatchObject({ status: 'waiting', issueFingerprint, resetAtMs: 60_000, nextCheckAtMs: 60_000 });
+      recoveryWrites.length = 0;
+      await expect(rpc.invokeLocal(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW, {
+        sessionId, resumePromptMode: 'off',
+      })).resolves.toMatchObject({ ok: true, status: 'waiting' });
+      expect(metadata.sessionUsageLimitRecoveryV1).toEqual(armed);
+      expect(recoveryWrites).toEqual(['checking', 'waiting']);
+      await expect(rpc.invokeLocal(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL, {
+        sessionId, issueFingerprint, armedAtMs: armed?.armedAtMs,
+      })).resolves.toMatchObject({ ok: true, status: 'cancelled' });
+      expect(metadata.sessionUsageLimitRecoveryV1).toMatchObject({ status: 'cancelled', nextCheckAtMs: null });
+    } finally { recovery.dispose(); rpc.clearHandlers(); vi.useRealTimers(); }
+  });
 
   it.each(['publication', 'restore'] as const)('retains an admitted wait without polling and wakes on %s', async edge => {
     vi.useFakeTimers();

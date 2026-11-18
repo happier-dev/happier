@@ -69,6 +69,7 @@ export function resolveInactiveUsageLimitRecoverySchedulerResult(input: Readonly
     return {
       status: 'wait',
       nextCheckAtMs: recovery.nextCheckAtMs,
+      resetAtMs: recovery.resetAtMs,
       lastProbeError: recovery.lastProbeError,
       selectedAuth: recovery.selectedAuth,
     };

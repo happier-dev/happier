@@ -29,7 +29,7 @@ export type UsageLimitRecoverySchedulerRecoveryResult =
   | Readonly<{ status: 'ready'; selectedAuth?: SessionUsageLimitRecoveryAuthSelectionV1 }>
   | Readonly<{ status: 'resumed'; selectedAuth?: SessionUsageLimitRecoveryAuthSelectionV1 }>
   | Readonly<{ status: 'pause'; selectedAuth?: SessionUsageLimitRecoveryAuthSelectionV1 }>
-  | Readonly<{ status: 'wait'; nextCheckAtMs: number | null; selectedAuth?: SessionUsageLimitRecoveryAuthSelectionV1; lastProbeError?: string | null }>
+  | Readonly<{ status: 'wait'; nextCheckAtMs: number | null; resetAtMs?: number | null; selectedAuth?: SessionUsageLimitRecoveryAuthSelectionV1; lastProbeError?: string | null }>
   | Readonly<{ status: 'exhausted'; lastProbeError?: string | null }>
   /**
    * The probe proved the intent is stale (e.g. the interrupted turn later
@@ -406,11 +406,13 @@ export class UsageLimitRecoveryScheduler {
     }
 
     const nextCheckAtMs = recovery.nextCheckAtMs;
+    const intent = { ...checking,
+      resetAtMs: recovery.resetAtMs === undefined ? checking.resetAtMs : recovery.resetAtMs,
+      selectedAuth: recovery.selectedAuth ?? checking.selectedAuth };
     if (nextCheckAtMs === null || nextCheckAtMs <= this.deps.nowMs()) {
       return {
         status: 'pending' as const,
-        intent: { ...checking, status: 'waiting' as const, nextCheckAtMs: null,
-          selectedAuth: recovery.selectedAuth ?? checking.selectedAuth,
+        intent: { ...intent, status: 'waiting' as const, nextCheckAtMs: null,
           lastProbeError: recovery.lastProbeError ?? null },
         wakeResult: { status: 'waiting' },
       };
@@ -418,12 +420,7 @@ export class UsageLimitRecoveryScheduler {
     return {
       status: 'wait' as const,
       nextRetryAtMs: nextCheckAtMs,
-      intent: recovery.selectedAuth
-        ? {
-            ...checking,
-            selectedAuth: recovery.selectedAuth,
-          }
-        : checking,
+      intent,
       lastError: recovery.lastProbeError ?? null,
     };
   }

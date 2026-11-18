@@ -10,7 +10,6 @@ import type { Metadata } from '@/api/types';
 import type { StoredCredentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import type { SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionEncryptionContext';
-import { applyRegisteredSessionStateFieldMutationToMetadata } from '@/api/session/client/transport/mutations/applyRegisteredSessionStateFieldMutation';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import { resolveUsageLimitRecoveryEnabled } from '@/features/usageLimitRecoveryFeatureGate';
 import { UsageLimitRecoveryScheduler } from '@/daemon/connectedServices/usageLimitRecovery/UsageLimitRecoveryScheduler';
@@ -92,15 +91,12 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
     const context = await deps.readContext();
     if (!context) return null;
     return { ...context, token: context.credentials.token, sessionId: deps.sessionId,
-      currentMachineId: deps.currentMachineId,
-      stageUsageLimitRecoveryMutation: async (mutation: Parameters<typeof applyRegisteredSessionStateFieldMutationToMetadata>[1]) => {
-        await deps.updateMetadata(metadata => applyRegisteredSessionStateFieldMutationToMetadata(metadata, mutation, context.metadata));
-      } };
+      currentMachineId: deps.currentMachineId };
   }
 
   async function runRoutedCheck(context: NonNullable<Awaited<ReturnType<typeof readContext>>>, intent: SessionUsageLimitRecoveryV1) {
       return await deps.runRequest(async () => {
-      const result = await routeSessionUsageLimitRecoveryCheckNow({ ...context,
+      return await routeSessionUsageLimitRecoveryCheckNow({ ...context,
         request: { sessionId: deps.sessionId },
         readCurrentUsageLimitRecovery: () => read(),
         callLiveSessionRpc: async () => {
@@ -126,13 +122,6 @@ export function createSessionUsageLimitRecoveryRuntime(deps: Readonly<{
           return continued;
         },
       });
-      const record = result && typeof result === 'object' ? result as Record<string, unknown> : null;
-      const nextMetadata = record?.metadata;
-      if (nextMetadata && typeof nextMetadata === 'object') {
-        const next = storedUsageLimitRecoverySchema.safeParse((nextMetadata as Record<string, unknown>)[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]);
-        if (next.success) await persist(next.data, intent);
-      }
-      return result;
       });
   }
 

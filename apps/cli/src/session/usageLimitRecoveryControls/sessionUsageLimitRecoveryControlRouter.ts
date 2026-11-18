@@ -50,7 +50,8 @@ type RouteSessionUsageLimitRecoveryControlParams = Readonly<{
   currentMachineHomeDir?: string | null;
   callLiveSessionRpc: () => Promise<unknown>;
   checkRuntimeAuthUsageLimitRecovery?: CheckRuntimeAuthUsageLimitRecovery;
-  stageUsageLimitRecoveryMutation: StageUsageLimitRecoveryMutation;
+  /** The live Session leaves the routed result for its scheduler to settle. */
+  stageUsageLimitRecoveryMutation?: StageUsageLimitRecoveryMutation;
   resolveAdapter?: ResolveSessionUsageLimitRecoveryControlAdapter;
   readTemporaryThrottleRecovery?: (sessionId: string) => Readonly<{ issueFingerprint: string; armedAtMs: number }> | null;
   cancelTemporaryThrottleRecovery?: (input: Readonly<{ sessionId: string; issueFingerprint?: string; armedAtMs?: number }>) => Promise<unknown> | unknown;
@@ -82,6 +83,7 @@ type RouteSessionUsageLimitRecoveryControlParams = Readonly<{
 
 type RouteSessionUsageLimitRecoveryWaitResumeEnableParams =
   RouteSessionUsageLimitRecoveryControlParams & Readonly<{
+    stageUsageLimitRecoveryMutation: StageUsageLimitRecoveryMutation;
     request: Readonly<{
       sessionId: string;
       issueFingerprint?: string;
@@ -93,6 +95,7 @@ type RouteSessionUsageLimitRecoveryWaitResumeEnableParams =
 
 type RouteSessionUsageLimitRecoveryWaitResumeCancelParams =
   RouteSessionUsageLimitRecoveryControlParams & Readonly<{
+    stageUsageLimitRecoveryMutation: StageUsageLimitRecoveryMutation;
     request: Readonly<{
       sessionId: string;
       issueFingerprint?: string | null;
@@ -210,28 +213,19 @@ function readUsageLimitRecoveryMetadataValue(metadata: Record<string, unknown>):
   return parsed.success ? parsed.data : null;
 }
 
-async function persistAdapterMetadataResult(
+async function applyAdapterMetadataResult(
   params: RouteSessionUsageLimitRecoveryControlParams,
   result: unknown,
 ): Promise<unknown> {
   const nextMetadata = readMetadataResult(result);
   const usageLimitRecovery = nextMetadata ? readUsageLimitRecoveryMetadataValue(nextMetadata) : null;
   if (!usageLimitRecovery || !params.credentials) return result;
-  const persisted = await persistUsageLimitRecoveryFieldDurably({
-    sessionId: params.sessionId,
-    currentMetadata: params.metadata ?? {},
-    nextMetadata: writeSessionStateFieldToMetadata(
-      (params.metadata ?? {}) as SessionMetadata,
-      'runtime.usageLimitRecovery',
-      usageLimitRecovery,
-    ) as Record<string, unknown>,
-    stageUsageLimitRecoveryMutation: params.stageUsageLimitRecoveryMutation,
-  });
-
-  return {
-    ...(result as Record<string, unknown>),
-    metadata: persisted,
-  };
+  const metadata = await applyUsageLimitRecoveryMetadata(params, currentMetadata => writeSessionStateFieldToMetadata(
+    currentMetadata as SessionMetadata,
+    'runtime.usageLimitRecovery',
+    usageLimitRecovery,
+  ) as Record<string, unknown>);
+  return { ...(result as Record<string, unknown>), metadata };
 }
 
 /**
@@ -308,7 +302,7 @@ async function buildEnabledRecoveryIntent(
   };
 }
 
-async function persistUsageLimitRecoveryMetadata(
+async function applyUsageLimitRecoveryMetadata(
   params: RouteSessionUsageLimitRecoveryControlParams,
   updater: (metadata: Record<string, unknown>) => Record<string, unknown>,
   mode: 'converge' | 'rearm' | 'explicit_rearm' | 'cancel' = 'converge',
@@ -316,6 +310,7 @@ async function persistUsageLimitRecoveryMetadata(
   if (!params.credentials) return null;
   const currentMetadata = params.metadata ?? {};
   const nextMetadata = updater(currentMetadata);
+  if (!params.stageUsageLimitRecoveryMutation) return nextMetadata;
   return await persistUsageLimitRecoveryFieldDurably({
     sessionId: params.sessionId,
     currentMetadata,
@@ -395,7 +390,7 @@ export async function routeSessionUsageLimitRecoveryWaitResumeEnable(
   const nextIntent = await buildEnabledRecoveryIntent(params, context.metadata);
   if (!nextIntent) return stableError('session_usage_limit_recovery_control_inactive', params.sessionId);
 
-  const persistedMetadata = await persistUsageLimitRecoveryMetadata(params, (currentMetadata) => ({
+  const persistedMetadata = await applyUsageLimitRecoveryMetadata(params, (currentMetadata) => ({
     ...currentMetadata,
     [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: nextIntent,
   }), 'explicit_rearm');
@@ -463,7 +458,7 @@ export async function routeSessionUsageLimitRecoveryWaitResumeCancel(
     return stableError('session_usage_limit_recovery_control_issue_mismatch', params.sessionId);
   }
 
-  const persistedMetadata = await persistUsageLimitRecoveryMetadata(params, (currentMetadata) => ({
+  const persistedMetadata = await applyUsageLimitRecoveryMetadata(params, (currentMetadata) => ({
     ...currentMetadata,
     [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: {
       ...existing,
@@ -608,7 +603,7 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
             : probeRecovery.nextCheckAtMs,
       } } }
     : { ...normalizedProbe, ...(readMetadataResult(probeResult) ? { metadata: readMetadataResult(probeResult) } : {}) };
-  const result = await persistAdapterMetadataResult(params, preparedResult);
+  const result = await applyAdapterMetadataResult(params, preparedResult);
   const resultMetadata = readMetadataResult(result);
   const normalizedResult = normalizeUsageLimitRecoveryOperationResult(result, { sessionId: params.sessionId });
   if (normalizedResult.ok && normalizedResult.status === 'ready' && resumePromptMode !== 'off'
@@ -621,7 +616,7 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
     const continuationStatus = typeof resumed === 'boolean'
       ? resumed ? 'continued' : 'runtime_unavailable' : resumed.status;
     if (continuationStatus === 'continued' || continuationStatus === 'suppressed' || continuationStatus === 'superseded') {
-      const settledMetadata = await persistUsageLimitRecoveryMetadata(params, currentMetadata => {
+      const settledMetadata = await applyUsageLimitRecoveryMetadata(params, currentMetadata => {
         const currentRecovery = parseRecoveryIntent(currentMetadata) ?? (resultMetadata ? parseRecoveryIntent(resultMetadata) : null);
         return !currentRecovery ? currentMetadata : { ...currentMetadata,
           [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: { ...currentRecovery, status: 'cancelled', nextCheckAtMs: null } };
@@ -630,7 +625,7 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
         metadata: settledMetadata ?? resultMetadata };
     }
     if (continuationStatus === 'disabled') return result;
-    const retryMetadata = await persistUsageLimitRecoveryMetadata(params, currentMetadata => {
+    const retryMetadata = await applyUsageLimitRecoveryMetadata(params, currentMetadata => {
       const current = parseRecoveryIntent(currentMetadata);
       return !current || current.status === 'cancelled' || current.status === 'exhausted' ? currentMetadata : {
         ...currentMetadata, [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: { ...current, status: 'waiting',
