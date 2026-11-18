@@ -86,11 +86,16 @@ function testIdForPage(page: ResolvedSettingsPageNode): string {
     return LEGACY_ROW_TEST_IDS[page.id] ?? `settings-catalog-page-item.${page.id}`;
 }
 
-function SettingsCatalogDestinationRows({
+/**
+ * The destination rows themselves, not a component wrapping them: `ItemGroup` positions and divides its direct rows, and
+ * a wrapper element would read as one row that is first and last, so every row inside dropped its hairline (G1).
+ */
+function renderSettingsCatalogDestinationRows({
     onNavigate,
     pages,
     resolveSubtitle,
     router,
+    theme,
 }: Readonly<{
     onNavigate?: (route: string) => void | Promise<void>;
     pages: readonly ResolvedSettingsPageNode[];
@@ -99,37 +104,33 @@ function SettingsCatalogDestinationRows({
         defaultSubtitle: React.ReactNode | undefined,
     ) => React.ReactNode | undefined;
     router: ReturnType<typeof useRouter>;
-}>) {
+    theme: ReturnType<typeof useUnistyles>['theme'];
+}>): React.ReactNode[] {
     // Destinations carry their catalog glyph (navigation rows are landmarks; the row owner sizes and
     // colours it and keeps the section's leading column).
-    const { theme } = useUnistyles();
-    return (
-        <>
-            {pages.map((page) => {
-                const defaultSubtitle = readSubtitle(page);
-                const subtitle = resolveSubtitle
-                    ? resolveSubtitle(page, defaultSubtitle)
-                    : defaultSubtitle;
-                const route = page.route!;
-                return (
-                    <Item
-                        key={page.id}
-                        testID={testIdForPage(page)}
-                        title={readTitle(page)}
-                        subtitle={subtitle}
-                        icon={page.icon?.({ theme })}
-                        onPress={() => {
-                            if (onNavigate) {
-                                void onNavigate(route);
-                                return;
-                            }
-                            router.push(route as never);
-                        }}
-                    />
-                );
-            })}
-        </>
-    );
+    return pages.map((page) => {
+        const defaultSubtitle = readSubtitle(page);
+        const subtitle = resolveSubtitle
+            ? resolveSubtitle(page, defaultSubtitle)
+            : defaultSubtitle;
+        const route = page.route!;
+        return (
+            <Item
+                key={page.id}
+                testID={testIdForPage(page)}
+                title={readTitle(page)}
+                subtitle={subtitle}
+                icon={page.icon?.({ theme })}
+                onPress={() => {
+                    if (onNavigate) {
+                        void onNavigate(route);
+                        return;
+                    }
+                    router.push(route as never);
+                }}
+            />
+        );
+    });
 }
 
 /**
@@ -144,6 +145,7 @@ export const SettingsCatalogOverviewGroup = React.memo(function SettingsCatalogO
     resolveSubtitle,
     router,
 }: SettingsCatalogOverviewGroupProps) {
+    const { theme } = useUnistyles();
     const catalog = useResolvedSettingsPageNavigation();
     const group = React.useMemo(
         () => resolveSettingsCatalogOverviewGroup(catalog.tree, groupId),
@@ -158,12 +160,7 @@ export const SettingsCatalogOverviewGroup = React.memo(function SettingsCatalogO
 
     return (
         <ItemGroup title={readTitle(group)}>
-            <SettingsCatalogDestinationRows
-                onNavigate={onNavigate}
-                pages={pages}
-                resolveSubtitle={resolveSubtitle}
-                router={router}
-            />
+            {renderSettingsCatalogDestinationRows({ onNavigate, pages, resolveSubtitle, router, theme })}
             {append}
         </ItemGroup>
     );
@@ -179,6 +176,7 @@ export const SettingsCatalogPageChildren = React.memo(function SettingsCatalogPa
     title,
     router,
 }: SettingsCatalogPageChildrenProps) {
+    const { theme } = useUnistyles();
     const catalog = useResolvedSettingsPageNavigation();
     const pages = React.useMemo(
         () => (resolveSettingsCatalogPage(catalog.tree, parentPageId)?.children ?? [])
@@ -190,11 +188,7 @@ export const SettingsCatalogPageChildren = React.memo(function SettingsCatalogPa
 
     return (
         <ItemGroup title={title}>
-            <SettingsCatalogDestinationRows
-                onNavigate={onNavigate}
-                pages={pages}
-                router={router}
-            />
+            {renderSettingsCatalogDestinationRows({ onNavigate, pages, router, theme })}
         </ItemGroup>
     );
 });
