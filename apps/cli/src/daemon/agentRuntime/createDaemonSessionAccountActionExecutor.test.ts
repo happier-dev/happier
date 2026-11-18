@@ -1,7 +1,9 @@
 import axios from 'axios';
+import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ProjectSourcesMoveToTeamOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { AgentRuntimeDaemonServiceRequestV1Schema, type AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
@@ -39,7 +41,7 @@ import { signMachineInstallationProof } from '@happier-dev/protocol/machines/ide
 import { resolveExternalActionMachineTarget } from '../externalActions/reconcileExternalActionTarget';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ApprovalRequestV2Schema, StoredApprovalRequestSchema, type StoredApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
@@ -113,11 +115,25 @@ function plainSessionAdmission(token: string) {
 }
 
 /** Bob's plain Session as Home returns it; its owner metadata carries the approval profile. */
-function ownedSessionRecord(owner: Readonly<{ approvalProfileId?: string }> = {}) {
-  const fields = buildSessionMetadataEnvelopeCreateFields({ credentials: plainSessionAdmission('alice-daemon-token').credentials, accountEncryptionMode: 'plain',
-    storedContentMode: 'plain', metadata: { ...createTestMetadata({ machineId: 'alice-machine' }), ...owner }, agentState: null });
+function ownedSessionRecord(owner: Readonly<{ approvalProfileId?: string }> = {}, token = 'alice-daemon-token', machineId = 'alice-machine') {
+  const fields = buildSessionMetadataEnvelopeCreateFields({ credentials: plainSessionAdmission(token).credentials, accountEncryptionMode: 'plain',
+    storedContentMode: 'plain', metadata: { ...createTestMetadata({ machineId, permissionMode: 'default' }), ...owner }, agentState: null });
   return { ...createSessionRecordFixture({ id: 'bob-session', share: null }), encryptionMode: 'plain',
+    effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+      capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) },
     metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata };
+}
+
+/** Seed the approving device's CAS before testing the separate origin replay RPC. */
+function approveWithoutAutomationChecks(request: StoredApprovalRequestV2) {
+  const updatedAtMs = request.updatedAtMs + 1;
+  const decision = { kind: 'approve' as const, decidedAtMs: updatedAtMs, authority: 'present_user' as const };
+  const checks = request.automaticChecks;
+  if (checks) expect(checks).toMatchObject({
+    phase: 'consent', selectionStatus: 'ready', humanApprovalRequired: true, selected: [], consents: [],
+  });
+  return ApprovalRequestV2Schema.parse({ ...request, status: 'approved', updatedAtMs, decision,
+    ...(checks ? { automaticChecks: { ...checks, phase: 'passed', humanDecision: decision } } : {}) });
 }
 
 function createHarness(prepareExternalActionAuthorization?: Parameters<typeof createDaemonSessionAccountActionExecutor>[0]['prepareExternalActionAuthorization']) {
@@ -860,11 +876,9 @@ describe('daemon Session Account authority', () => {
       : { kind: 'session' as const, sessionId: 'bob-session' };
     const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
     const mutations: unknown[] = [];
-    const rawSession = createSessionRecordFixture({ id: 'bob-session', share: null,
-      ...(sourceMoveRemote ? { active: true } : {}),
-      encryptionMode: 'plain', metadata: JSON.stringify({ machineId: source.machineId, permissionMode: 'default' }),
-      effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
-        capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } });
+    const rawSession = { ...ownedSessionRecord({}, credentials.token, source.machineId),
+      ...(runnerCarrier || sourceMoveRemote ? { active: true } : {}),
+    };
     const rows = new Map<string, Record<string, unknown>>();
     const resultPublications = new Set<string>();
     const mintedRequests: unknown[] = [];
@@ -873,10 +887,15 @@ describe('daemon Session Account authority', () => {
     let accountCurrent = true;
     let accountContent: unknown = settings;
     let invocationRequestId = operation.requestId;
-    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify(FeaturesResponseSchema.parse({
+    const refusalDiagnostics = vi.spyOn(logger, 'warnLocalFile');
+    const readRefusalDiagnostics = () => JSON.stringify(refusalDiagnostics.mock.calls
+      .filter(([message]) => message === '[Session Account Action] Refused' || message === '[external-action-phase]'));
+    const fetchFeatures = async () => new Response(JSON.stringify(FeaturesResponseSchema.parse({
       features: { sessions: { enabled: true, board: { enabled: true } } },
       capabilities: { serverIdentity: { serverIdentityId: currentHomeId } },
-    })), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    })), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(fetchFeatures);
+    if (!runnerCarrier) stubUndiciFetch(fetchFeatures);
     vi.spyOn(axios, 'get').mockImplementation(async url => {
       expect(new URL(String(url)).origin).toBe(serverHttpBaseUrl);
       const path = new URL(String(url)).pathname;
@@ -893,6 +912,12 @@ describe('daemon Session Account authority', () => {
       } } };
       if (path.startsWith('/v1/artifacts/')) return { status: rows.has(path.split('/').at(-1)!) ? 200 : 404,
         data: rows.get(path.split('/').at(-1)!) };
+      if (path.startsWith('/v2/sessions/bob-session/messages/by-local-id/')) {
+        throw Object.assign(new Error('Message not found'), {
+          isAxiosError: true,
+          response: { status: 404, data: { error: 'Message not found' } },
+        });
+      }
       if (path === '/v2/sessions/bob-session') return { status: 200, data: { session: rawSession } };
       if (path === '/v2/sessions/lead-session') return { status: 200, data: { session: { ...rawSession, id: 'lead-session' } } };
       if (path === '/v2/sessions/bob-session/system-records/record') return { status: 200, data: { record: null } };
@@ -900,6 +925,8 @@ describe('daemon Session Account authority', () => {
     });
     vi.spyOn(axios, 'request').mockImplementation(async config => {
       expect(new URL(String(config.url)).origin).toBe(serverHttpBaseUrl);
+      if (config.method === 'GET' && new URL(String(config.url)).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1)
+        return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
       if (sourceMoveRemote && config.method === 'GET') {
         const path = new URL(String(config.url)).pathname;
         if (path === '/v1/projects/sources/personal-source') return { status: 200, data: { ok: true, canManage: true,
@@ -936,15 +963,6 @@ describe('daemon Session Account authority', () => {
       if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Expected HTTP object body');
       expect(new URL(String(url)).origin).toBe(serverHttpBaseUrl);
       const path = new URL(String(url)).pathname;
-      if (sourceMoveRemote && path === '/v2/sessions/bob-session/pending') {
-        const localId = Reflect.get(body, 'localId');
-        expect(localId).toEqual(expect.stringMatching(/^approval-result:/));
-        if (typeof localId !== 'string') throw new Error('Missing approval result input identity');
-        expect(Reflect.get(body, 'requestedAction')).toEqual({ v: 1, kind: 'enqueue' });
-        const didWrite = !resultPublications.has(localId);
-        resultPublications.add(localId);
-        return { status: 200, data: { didWrite } };
-      }
       if (path === '/v2/account/settings') {
         const content = Reflect.get(body, 'content');
         if (!content || typeof content !== 'object' || Reflect.get(content, 't') !== 'plain') throw new Error('Expected plain settings');
@@ -1036,6 +1054,15 @@ describe('daemon Session Account authority', () => {
         serverId: configuration.activeServerId, serverApiUrl: serverHttpBaseUrl, serverIdentityId: homeId,
         externalActionMachineRequestPrivateKey: keys.secretKey, externalActionMachineInstallationId: source.installationId,
         getCurrentTurnWorkDepth, isApprovalExecutionOriginCurrent: currentness,
+        ...(runnerCarrier || sourceMoveRemote ? { machineAdmissionTransport: async (request) => {
+          expect(request.sessionId).toBe('bob-session');
+          expect(request.targetMachineId).toBe(source.machineId);
+          expect(request.localId).toEqual(expect.stringMatching(/^approval-result:/));
+          expect(request.requestedAction).toEqual({ v: 1, kind: 'enqueue' });
+          const status = resultPublications.has(request.localId) ? 'alreadyAccepted' as const : 'accepted' as const;
+          resultPublications.add(request.localId);
+          return { status, localId: request.localId };
+        } } : {}),
         ...(runnerCarrier ? { readCredentials: async () => credentials } : {}),
         clientActionExecute: reverse, pluginActionExecutionOwner: 'current_process' });
       return executor;
@@ -1087,9 +1114,8 @@ describe('daemon Session Account authority', () => {
           normalizedModulePath: '/immutable/runtime.mjs', loadMode: 'immutable-js' }) };
       await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: 31004, capability: 'R'.repeat(43) });
       vi.stubEnv(HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY, path);
-      const fetchFeatures = globalThis.fetch;
-      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
-        if (new URL(String(url)).port !== '31004') return await fetchFeatures(url, init);
+      stubUndiciFetch(async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        if (new URL(String(url)).port !== '31004') return await fetchFeatures();
         const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
         if (request.operation.kind !== 'action.execute') throw new Error('Expected runner Action');
         const outcome = await execute(request.operation, { sessionId: 'bob-session', isCurrent: async () => true });
@@ -1143,17 +1169,20 @@ describe('daemon Session Account authority', () => {
     const callMcp = async () => {
       if (!mcp) throw new Error('Missing MCP factory');
       if (kind !== 'unsigned-visual' && kind !== 'unsigned-server-error') {
-        return await mcp.executeTool({ toolName: 'session_board_item_upsert', args: input, toolCallId: 'unsigned-visual' });
+        return await mcp.executeTool({ toolName: 'action_execute', args: { actionId, input }, toolCallId: 'unsigned-visual' });
       }
       mcpClient = new Client({ name: 'daemon-visual-agent', version: '1' });
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
       await mcp.mcp.connect(serverTransport);
       await mcpClient.connect(clientTransport);
       await mcpClient.listTools();
-      const result = await mcpClient.callTool({ name: 'session_board_item_upsert', arguments: input }, CallToolResultSchema);
+      const result = await mcpClient.callTool({ name: 'action_execute', arguments: { actionId, input } }, CallToolResultSchema);
       expect(result.isError, JSON.stringify(result)).not.toBe(true);
-      expect(result.structuredContent).toMatchObject({ kind: 'approval_request_created', artifactId: expect.any(String) });
-      return { ok: true as const, result: result.structuredContent };
+      const block = result.content.find(item => item.type === 'text');
+      if (!block || block.type !== 'text') throw new Error('Missing action_execute text result');
+      const execution: unknown = JSON.parse(block.text);
+      expect(execution).toMatchObject({ kind: 'approval_request_created', artifactId: expect.any(String) });
+      return { ok: true as const, result: execution };
     };
     let settled = false;
     const pending = (runnerClient ? runnerClient.callTool({ name: 'action_execute', arguments: { actionId, input } }).then(raw => {
@@ -1175,7 +1204,7 @@ describe('daemon Session Account authority', () => {
       return;
     }
     if (requester === 'unknown') {
-      expect(await pending).toMatchObject({ ok: false, result: { errorCode: 'approval_requester_unavailable' } });
+      expect(await pending, readRefusalDiagnostics()).toMatchObject({ ok: false, result: { errorCode: 'approval_requester_unavailable' } });
       expect(rows.size).toBe(0);
       expect(deliveries).toEqual([]);
       expect(mutations).toEqual([]);
@@ -1184,7 +1213,7 @@ describe('daemon Session Account authority', () => {
     await vi.waitFor(async () => {
       if (settled && rows.size === 0) {
         const result = await pending;
-        expect(result.ok, JSON.stringify(result)).toBe(true);
+        expect(result.ok, readRefusalDiagnostics()).toBe(true);
       }
       expect(rows.size).toBe(1);
     });
@@ -1292,8 +1321,9 @@ describe('daemon Session Account authority', () => {
     // The approving device writes the strict approved Artifact, then calls the
     // actual public replay RPC with its authenticated human transport authority.
     expect(await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => store.approvalsUpdate({ artifactId, serverId: null,
-      request: { ...open, status: 'approved', updatedAtMs: open.updatedAtMs + 1,
-        decision: { kind: 'approve', decidedAtMs: open.updatedAtMs + 1 } } }))).toEqual({ ok: true });
+      request: approveWithoutAutomationChecks(open) }))).toEqual({ ok: true });
+    expect(await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => store.approvalsGet({ artifactId, serverId: null })))
+      .toMatchObject({ status: 'approved' });
     if (resolveApprovalExecutor(open).kind !== 'daemon') {
       expect(deliveries).toEqual([]);
       expect(mutations).toEqual([]);
