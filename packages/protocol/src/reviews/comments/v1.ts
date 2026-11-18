@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 
 import { StoredJsonContentEnvelopeSchema } from '../../storage/storedJsonContentEnvelope.js';
 import { ReviewFindingSeveritySchema, ReviewFindingScopeAttributionSchema } from '../reviewFindingClassification.js';
@@ -567,6 +568,8 @@ export const ReviewCommentEventKindV1Schema = lazyZodSchema(() => z.enum([
 ]));
 export type ReviewCommentEventKindV1 = z.infer<typeof ReviewCommentEventKindV1Schema>;
 
+export const ReviewCommentEventPayloadV1Schema = lazyZodSchema(() => z.record(z.string(), StrictJsonValueSchema));
+
 export const ReviewCommentEventV1Schema = lazyZodSchema(() => z.strictObject({
   eventId: z.string().check(z.minLength(1)),
   commentId: z.string().check(z.minLength(1)),
@@ -579,6 +582,6 @@ export const ReviewCommentEventV1Schema = lazyZodSchema(() => z.strictObject({
   bulkActionId: z.optional(z.string().check(z.minLength(1))),
   authorDeviceId: z.optional(z.string().check(z.minLength(1))),
   clientLamport: z.optional(z.number().check(z.int(), z.nonnegative())),
-  event: z.record(z.string(), z.unknown()),
+  event: ReviewCommentEventPayloadV1Schema,
 }).check(z.superRefine(validateReviewCommentScopeV1)));
 export type ReviewCommentEventV1 = z.infer<typeof ReviewCommentEventV1Schema>;

@@ -16,6 +16,15 @@ import {
 } from './v1.js';
 
 describe('ReviewCommentV1Schema', () => {
+  it('accepts JSON event payloads and rejects values that cannot cross JSON transport', () => {
+    const event = { eventId: 'event', commentId: 'comment', accountId: 'account', reviewId: 'review',
+      eventKind: 'created', actor: { kind: 'user', userId: 'account' }, createdAt: 1, serverRevision: 1,
+      event: { nested: { values: ['finding', 1, true, null] } } };
+    expect(ReviewCommentEventV1Schema.safeParse(event).success).toBe(true);
+    for (const invalid of [undefined, BigInt(1), new Date(1), () => 'secret']) {
+      expect(ReviewCommentEventV1Schema.safeParse({ ...event, event: { invalid } }).success).toBe(false);
+    }
+  });
   it('retains classic nested JSON projection and refinement error identity', () => {
     for (const target of ['draft-7', 'draft-2020-12'] as const) {
       expect(zodSchemaToJsonSchemaObject(ReviewCommentCreateRequestV1Schema, { target })).toMatchObject({

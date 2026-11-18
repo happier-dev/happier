@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { projectNativeJsonValueForTransport } from '../../json/strictJsonValue.js';
 
 import {
   isAccountScopedBlobCiphertextForKind,
@@ -20,6 +21,7 @@ import {
   ReviewCommentEditV1Schema,
   ReviewCommentEvidenceV1Schema,
   ReviewCommentEventV1Schema,
+  ReviewCommentEventPayloadV1Schema,
   ReviewCommentEventKindV1Schema,
   ReviewCommentFingerprintV1Schema,
   ReviewCommentLinkedRefV1Schema,
@@ -812,7 +814,7 @@ export const ReviewCommentEventSensitivePayloadV1Schema = lazyZodSchema(() => z.
   v: z.literal(1),
   requestBinding: ReviewCommentEventRequestBindingV1Schema,
   binding: z.optional(ReviewCommentEventSensitiveBindingV1Schema),
-  details: z.record(z.string(), z.unknown()),
+  details: ReviewCommentEventPayloadV1Schema,
 }));
 export type ReviewCommentEventSensitivePayloadV1 = z.infer<typeof ReviewCommentEventSensitivePayloadV1Schema>;
 
@@ -924,7 +926,7 @@ export function sealReviewCommentEventSensitiveEnvelopeV1(params: Readonly<{
 export function buildReviewCommentEventSensitivePayloadV1(params: Readonly<{
   event: ReviewCommentEventV1;
   requestBinding: ReviewCommentEventRequestBindingV1;
-  details: Record<string, unknown>;
+  details: ReviewCommentEventV1['event'];
 }>): ReviewCommentEventSensitivePayloadV1 {
   return ReviewCommentEventSensitivePayloadV1Schema.parse({
     v: 1,
@@ -936,9 +938,9 @@ export function buildReviewCommentEventSensitivePayloadV1(params: Readonly<{
 
 export function reviewCommentMutationInputWithoutEventEnvelopeV1(
   input: Readonly<Record<string, unknown>>,
-): Record<string, unknown> {
+): ReviewCommentEventV1['event'] {
   const { eventEnvelope: _eventEnvelope, ...logicalInput } = input;
-  return logicalInput;
+  return ReviewCommentEventPayloadV1Schema.parse(projectNativeJsonValueForTransport(logicalInput));
 }
 
 export function buildReviewCommentMutationEventEnvelopeV1(params: Readonly<{
