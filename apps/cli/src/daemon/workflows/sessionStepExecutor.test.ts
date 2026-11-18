@@ -1670,7 +1670,11 @@ describe('workflow Session step executor', () => {
       machineAdmissionTransport: vi.fn(), createFreshConversation: async () => { throw new Error('Existing target'); },
       resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
       resolveExistingSessionConversation: async () => ({ sessionId: 'retained', machineId: 'machine-1', directory: '/repo', agentTarget: target,
-        runtimeSnapshot: { permissionMode: { value: 'read-only' as const, updatedAt: 200 }, modelSelection: { value: savedClear ? null : model('saved-model'), updatedAt: 200 } },
+        runtimeSnapshot: {
+          permissionMode: { value: 'read-only' as const, updatedAt: 200 },
+          modelSelection: { value: savedClear ? null : model('saved-model'), updatedAt: 200 },
+          teamModelSelection: null,
+        },
       }),
       sessionInput: { enqueue: async (request) => { admitted.push(request); return { status: 'accepted', localId: 'input' }; },
         observe: async ({ sessionId, localId }) => ({ ok: true, sessionId, localId, result: { kind: 'final_text', text: 'done' } }),

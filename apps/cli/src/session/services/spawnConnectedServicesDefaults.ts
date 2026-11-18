@@ -403,7 +403,7 @@ export function resolvePurposeTeamCredentialBindingIntents(params: Readonly<{
  */
 export function mergeSessionTeamCredentialBindingIntents(params: Readonly<{
   explicit: SessionTeamCredentialBindingIntentListV1 | undefined;
-  admitted: SessionTeamCredentialBindingIntentListV1 | null;
+  admitted: SessionTeamCredentialBindingIntentListV1 | null | undefined;
 }>): SessionTeamCredentialBindingIntentListV1 | undefined {
   if (!params.admitted || params.admitted.length === 0) return params.explicit;
   const explicitSlotKeys = new Set(
