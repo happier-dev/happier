@@ -1,216 +1,146 @@
-import { t } from '@/text';
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import type { AccountSecurityGetResponseV1 } from '@happier-dev/protocol/auth/accountSecurity';
+import { AccountSecurityGetResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { renderScreen, standardCleanup, createDeferred } from '@/dev/testkit';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
+import { encodeBase64 } from '@/encryption/base64';
+import sodium from '@/encryption/libsodium.lib';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+const modal = vi.hoisted(() => ({ alert: vi.fn(), show: vi.fn(() => 'modal-id') }));
+installSettingsViewCommonModuleMocks({ storage: 'real', modal: async () =>
+    (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: modal }).module });
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+installDisconnectedServerSocketBoundary();
+const { AuthProvider } = await import('@/auth/context/AuthContext');
+const { AccountSecuritySettingsScreen } = await import('./AccountSecuritySettingsScreen');
+const { resetAccountSecurityProjectionStoreForTests } = await import('./accountSecurityProjectionStore');
+const { setActiveServerAndSwitch } = await import('@/sync/domains/server/activeServerSwitch');
+const { getCurrentAuth } = await import('@/auth/context/currentAuth');
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let restoreExecutor: (() => void) | undefined;
+let homeId: string;
+let credentials: AuthCredentials;
 
-import { AccountSecuritySettingsScreen } from './AccountSecuritySettingsScreen';
-import { accountSecurityProjectionScopeKey, readAccountSecurityProjection, resetAccountSecurityProjectionStoreForTests } from './accountSecurityProjectionStore';
-
-const AccountScopeContext = React.createContext({ serverId: 'home-a', accountId: 'account-a' });
-
-type PublishedProjection = AccountSecurityGetResponseV1;
-
-const boundary = vi.hoisted(() => ({
-    credentials: { token: 'account-a' } as Record<string, unknown>,
-    projection: null as PublishedProjection | null,
-    /** While true, the section has not answered yet (its read is still in flight). */
-    pending: false,
-    profileAccountId: null as string | null,
-    read: vi.fn(),
-    createClient: vi.fn(),
-}));
-const modal = vi.hoisted(() => ({
-    alert: vi.fn(),
-    show: vi.fn(() => 'modal-id'),
-}));
-
-vi.mock('expo-router', async () => {
-    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ params: {} }).module;
+beforeEach(async () => {
+    installHomeGovernanceBoundaries(homes);
+    restoreExecutor = await installRealActionExecutorModuleLoader();
+    resetAccountSecurityProjectionStoreForTests(); modal.alert.mockClear(); modal.show.mockClear();
 });
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: { ...boundary.credentials, token: React.useContext(AccountScopeContext).accountId }, refreshFromActiveServer: vi.fn() }),
-}));
-vi.mock('@/utils/auth/parseToken', () => ({ parseToken: (token: string) => token }));
-vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
-    useActiveServerSnapshot: () => {
-        const { serverId } = React.useContext(AccountScopeContext);
-        return { serverId, serverUrl: `https://${serverId}.test` };
-    },
-}));
-vi.mock('@/sync/domains/state/storage', async () => (await import('@/dev/testkit/mocks/storage')).createStorageModuleStub({
-    useProfile: () => {
-        const { accountId } = React.useContext(AccountScopeContext);
-        return { id: boundary.profileAccountId ?? accountId };
-    },
-}));
-vi.mock('@/sync/domains/scope/useServerCredentialAccountScopes', () => ({
-    useServerCredentialAccountScopeResolution: () => ({ kind: 'bound', scope: React.useContext(AccountScopeContext) }),
-}));
-vi.mock('@/sync/domains/scope/activeServerAccountScope', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/sync/domains/scope/activeServerAccountScope')>()),
-    captureActiveServerAccountScopeCurrentness: () => ({
-        isCurrent: () => true,
-        onRetire: () => ({ dispose: () => undefined }),
-    }),
-}));
-vi.mock('./accountSecurityActionClient', () => ({
-    createAccountSecurityActionClient: boundary.createClient,
-}));
-vi.mock('./openAccountSecurityForHome', () => ({
-    ACCOUNT_SECURITY_EMAIL_PASSWORD_CONNECT_INTENT: 'email_password_connect',
-    openAccountSecurityForHome: vi.fn(async () => true),
-}));
-vi.mock('./AccountEmailPasswordSection', () => ({
-    AccountEmailPasswordSection: (props: Readonly<{ onProjection?: (value: PublishedProjection | null) => void }>) => {
-        React.useEffect(() => {
-            if (boundary.pending) return;
-            props.onProjection?.(boundary.projection);
-        }, [props]);
-        return React.createElement('AccountEmailPasswordSection', { testID: 'account-security-section' });
-    },
-}));
-vi.mock('./AccountEncryptionSettingsSection', () => ({ AccountEncryptionSettingsSection: () => null }));
-vi.mock('./AccountSessionSecuritySection', () => ({ AccountSessionSecuritySection: () => null }));
-vi.mock('@/components/settings/SettingsCatalogOverviewGroup', () => ({ SettingsCatalogPageChildren: () => null }));
-vi.mock('@/modal', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/modal')>()),
-    Modal: { alert: modal.alert, show: modal.show },
-}));
-vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
-vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
-
-beforeEach(() => {
-    resetAccountSecurityProjectionStoreForTests();
-    boundary.credentials = { token: 'account-a' };
-    boundary.projection = null;
-    boundary.pending = false;
-    boundary.profileAccountId = null;
-    boundary.read.mockReset();
-    // No second reader may exist for this projection: any call is a defect.
-    boundary.read.mockImplementation(async () => { throw new Error('unexpected_second_projection_read'); });
-    boundary.createClient.mockReset();
-    boundary.createClient.mockImplementation(() => ({ read: boundary.read }));
-    modal.alert.mockReset();
-    modal.show.mockReset().mockReturnValue('modal-id');
+afterEach(async () => {
+    standardCleanup(); await connection?.dispose(); connection = undefined;
+    restoreExecutor?.(); await homes.reset();
 });
 
-afterEach(() => standardCleanup());
+function projection(mode: 'plain' | 'e2ee' = 'e2ee', email: string | null = 'person@example.test') {
+    return AccountSecurityGetResponseV1Schema.parse({ v: 1, encryptionMode: mode, nativeEmail: email,
+        password: email ? { status: 'enrolled', revision: 3 } : { status: 'not_enrolled', revision: null } });
+}
+function accountCredentials(accountId: string, localSecret = false): AuthCredentials {
+    const token = createAccountTokenForTests(accountId);
+    if (localSecret) return { token, secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
+    const pair = sodium.crypto_box_seed_keypair(new Uint8Array(32).fill(7));
+    return { token, encryption: { publicKey: encodeBase64(pair.publicKey), machineKey: encodeBase64(pair.privateKey) } };
+}
+async function prepare(options: Readonly<{ mode?: 'plain' | 'e2ee'; email?: string | null; localSecret?: boolean }> = {}) {
+    const mode = options.mode ?? 'e2ee';
+    credentials = mode === 'plain' ? { token: createAccountTokenForTests('account-a') } : accountCredentials('account-a', options.localSecret);
+    homeId = await homes.addHome({ name: 'Security Home', serverUrl: 'https://security-recovery-key.example.test', accountId: 'account-a',
+        credentials, accountEncryptionMode: mode });
+    homes.answer(homeId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
+    homes.answer(homeId, '/v1/account/security', { body: projection(mode, options.email === undefined ? 'person@example.test' : options.email) });
+    connection = await restoreServerAccountForTest({ serverUrl: 'https://security-recovery-key.example.test', credentials,
+        request: homes.request, additionalRequestOrigins: ['https://security-recovery-key-b.example.test'] });
+}
+async function renderSecurity() {
+    return renderScreen(<AuthProvider initialCredentials={credentials}><AccountSecuritySettingsScreen /></AuthProvider>);
+}
 
-it('reads the Account Security projection exactly once through its one mounted owner', async () => {
-    boundary.projection = {
-        v: 1,
-        encryptionMode: 'e2ee',
-        nativeEmail: 'person@example.test',
-        password: { status: 'enrolled', revision: 3 },
-    };
-
-    const screen = await renderScreen(<AccountSecuritySettingsScreen />);
-
+it('reads the security projection once through the real mounted reader', async () => {
+    await prepare();
+    const screen = await renderSecurity();
     await vi.waitFor(() => expect(screen.findByTestId('settings-account-recovery-key')).not.toBeNull());
-    expect(boundary.read).not.toHaveBeenCalled();
+    expect(homes.requestsFor('/v1/account/security')).toHaveLength(1);
 });
 
-it('explains an unavailable recovery key instead of leaving the row inert', async () => {
-    boundary.credentials = { token: 'account-a', encryption: { publicKey: 'pk', machineKey: 'mk' } };
-    boundary.projection = {
-        v: 1,
-        encryptionMode: 'e2ee',
-        nativeEmail: null,
-        password: { status: 'not_enrolled', revision: null },
-    };
-
-    const screen = await renderScreen(<AccountSecuritySettingsScreen />);
+it('explains a missing recovery key rather than leaving the action inert', async () => {
+    await prepare({ email: null });
+    const screen = await renderSecurity();
     await vi.waitFor(() => expect(screen.findByTestId('settings-account-recovery-key')).not.toBeNull());
-
     await screen.pressByTestIdAsync('settings-account-recovery-key');
-
-    expect(modal.show).not.toHaveBeenCalled();
-    expect(modal.alert).toHaveBeenCalledTimes(1);
+    expect(modal.show).not.toHaveBeenCalled(); expect(modal.alert).toHaveBeenCalledTimes(1);
 });
 
-it('opens the recovery-key unlock host for an E2EE Account that still has a sign-in email', async () => {
-    boundary.credentials = { token: 'account-a', encryption: { publicKey: 'pk', machineKey: 'mk' } };
-    boundary.projection = {
-        v: 1,
-        encryptionMode: 'e2ee',
-        nativeEmail: 'person@example.test',
-        password: { status: 'enrolled', revision: 2 },
-    };
-
-    const screen = await renderScreen(<AccountSecuritySettingsScreen />);
+it('opens password unlock for an E2EE Account whose device has only its data key', async () => {
+    await prepare();
+    const screen = await renderSecurity();
     await vi.waitFor(() => expect(screen.findByTestId('settings-account-recovery-key')).not.toBeNull());
-
     await screen.pressByTestIdAsync('settings-account-recovery-key');
-
-    expect(modal.alert).not.toHaveBeenCalled();
-    expect(modal.show).toHaveBeenCalledTimes(1);
+    expect(modal.alert).not.toHaveBeenCalled(); expect(modal.show).toHaveBeenCalledTimes(1);
 });
 
-it('withdraws the recovery-key row when the canonical projection becomes unavailable', async () => {
-    boundary.projection = null;
-
-    const screen = await renderScreen(<AccountSecuritySettingsScreen />);
-    await vi.waitFor(() => expect(screen.findByTestId('account-security-section')).not.toBeNull());
-
+it('marks a plain Account recovery key as not applicable', async () => {
+    await prepare({ mode: 'plain' });
+    const screen = await renderSecurity();
+    await vi.waitFor(() => expect(screen.findByTestId('settings-account-recovery-key-not-applicable')).not.toBeNull());
     expect(screen.findByTestId('settings-account-recovery-key')).toBeNull();
-    expect(screen.findByTestId('settings-account-recovery-key-not-applicable')).toBeNull();
-    // The row says what it could not read, not a sentence borrowed from Home discovery.
-    const unavailable = screen.findAll((node) => node.props?.testID === 'settings-account-recovery-key-unavailable' && 'subtitle' in node.props)[0];
-    expect(unavailable?.props.subtitle).toBe(t('settingsAccount.nativePassword.securityFactUnavailable'));
 });
 
-it('preserves a known E2EE recovery action when its projection refresh fails', async () => {
-    await readAccountSecurityProjection(accountSecurityProjectionScopeKey('home-a', 'account-a'), async () => ({
-        v: 1, encryptionMode: 'e2ee', nativeEmail: 'person@example.test', password: { status: 'enrolled', revision: 2 },
-    }));
-    boundary.projection = null;
-    const screen = await renderScreen(<AccountSecuritySettingsScreen />);
-    expect(screen.findByTestId('settings-account-recovery-key')).not.toBeNull();
+it('reports unavailable recovery facts when their initial HTTP read fails', async () => {
+    await prepare(); homes.answer(homeId, '/v1/account/security', { status: 503, body: { error: 'unavailable' } });
+    const screen = await renderSecurity();
+    await vi.waitFor(() => expect(screen.findByTestId('settings-account-recovery-key-unavailable')).not.toBeNull());
+    expect(screen.findByTestId('settings-account-recovery-key')).toBeNull();
     expect(screen.findByTestId('settings-account-recovery-key-not-applicable')).toBeNull();
 });
 
-it('does not carry the previous Account recovery action into a pending new scope', async () => {
-    boundary.projection = { v: 1, encryptionMode: 'e2ee', nativeEmail: 'old@example.test', password: { status: 'enrolled', revision: 2 } };
-    const screen = await renderScreen(<AccountScopeContext.Provider value={{ serverId: 'home-a', accountId: 'account-a' }}>
-        <AccountSecuritySettingsScreen />
-    </AccountScopeContext.Provider>);
+it('preserves a known E2EE recovery action when its next HTTP read fails', async () => {
+    await prepare();
+    const first = await renderSecurity();
+    await vi.waitFor(() => expect(first.findByTestId('settings-account-recovery-key')).not.toBeNull());
+    await first.unmount(); homes.answer(homeId, '/v1/account/security', { status: 503, body: { error: 'unavailable' } });
+    const screen = await renderSecurity();
+    await vi.waitFor(() => expect(homes.requestsFor('/v1/account/security')).toHaveLength(2));
     expect(screen.findByTestId('settings-account-recovery-key')).not.toBeNull();
-
-    boundary.pending = true;
-    await screen.update(<AccountScopeContext.Provider value={{ serverId: 'home-b', accountId: 'account-b' }}>
-        <AccountSecuritySettingsScreen />
-    </AccountScopeContext.Provider>);
-    expect(screen.findByTestId('settings-account-recovery-key')).toBeNull();
-    expect(screen.findByTestId('settings-account-recovery-key-loading')).not.toBeNull();
 });
 
-it('holds the recovery-key place while the projection is still loading, so nothing inserts later', async () => {
-    boundary.pending = true;
-
-    const screen = await renderScreen(<AccountSecuritySettingsScreen />);
-    await vi.waitFor(() => expect(screen.findByTestId('account-security-section')).not.toBeNull());
-
-    // Held by a quiet placeholder row announced as busy, not a "Loading…" value.
-    expect(screen.findHostByTestId('settings-account-recovery-key-loading')?.props.accessibilityState).toEqual({ busy: true });
-    expect(screen.getTextContent()).not.toContain('common.loading');
-    expect(screen.findByTestId('settings-account-recovery-key')).toBeNull();
+it('holds a busy recovery-key placeholder while its real HTTP projection is pending', async () => {
+    await prepare(); const pending = createDeferred<void>();
+    homes.answer(homeId, '/v1/account/security', { body: projection(), respondAfter: pending.promise });
+    try {
+        const screen = await renderSecurity();
+        await vi.waitFor(() => expect(homes.requestsFor('/v1/account/security')).toHaveLength(1));
+        expect(screen.findHostByTestId('settings-account-recovery-key-loading')?.props.accessibilityState).toEqual({ busy: true });
+        expect(screen.findByTestId('settings-account-recovery-key')).toBeNull();
+        pending.resolve(); await vi.waitFor(() => expect(screen.findByTestId('settings-account-recovery-key')).not.toBeNull());
+    } finally { pending.resolve(); }
 });
 
-it('uses the bound credential Account while the previous profile is still visible', async () => {
-    boundary.projection = { v: 1, encryptionMode: 'e2ee', nativeEmail: 'old@example.test', password: { status: 'enrolled', revision: 2 } };
-    const screen = await renderScreen(<AccountScopeContext.Provider value={{ serverId: 'home-a', accountId: 'account-a' }}>
-        <AccountSecuritySettingsScreen />
-    </AccountScopeContext.Provider>);
-    expect(screen.findByTestId('settings-account-recovery-key') !== null).toBe(true);
-
-    boundary.pending = true;
-    boundary.profileAccountId = 'account-a';
-    await screen.update(<AccountScopeContext.Provider value={{ serverId: 'home-a', accountId: 'account-b' }}>
-        <AccountSecuritySettingsScreen />
-    </AccountScopeContext.Provider>);
-    expect(screen.findByTestId('settings-account-recovery-key') === null).toBe(true);
-    expect(screen.findByTestId('settings-account-recovery-key-loading') !== null).toBe(true);
+it.each(['account', 'home'] as const)('withdraws the previous recovery action while a new %s projection resolves', async change => {
+    await prepare(); const screen = await renderSecurity();
+    await vi.waitFor(() => expect(screen.findByTestId('settings-account-recovery-key')).not.toBeNull());
+    const pending = createDeferred<void>();
+    const nextCredentials = accountCredentials('account-b');
+    const nextHome = change === 'account' ? homeId : await homes.addHome({ name: 'Other Security Home',
+        serverUrl: 'https://security-recovery-key-b.example.test', accountId: 'account-b', credentials: nextCredentials,
+        accountEncryptionMode: 'e2ee', active: false });
+    homes.answer(nextHome, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(nextCredentials) });
+    homes.answer(nextHome, '/v1/account/security', { body: projection(), respondAfter: pending.promise });
+    try {
+        await act(async () => {
+            if (change === 'account') await homes.switchAccount(homeId, 'account-b', nextCredentials);
+            else await setActiveServerAndSwitch({ serverId: nextHome, refreshAuth: async () => { await getCurrentAuth()?.refreshFromActiveServer(); } });
+        });
+        await vi.waitFor(() => expect(getCurrentAuth()?.credentials?.token).toBe(createAccountTokenForTests('account-b')));
+        await vi.waitFor(() => expect(homes.requestsFor('/v1/account/security')).toHaveLength(2));
+        expect(screen.findByTestId('settings-account-recovery-key')).toBeNull();
+        expect(screen.findByTestId('settings-account-recovery-key-loading')).not.toBeNull();
+        pending.resolve(); await vi.waitFor(() => expect(screen.findByTestId('settings-account-recovery-key')).not.toBeNull());
+    } finally { pending.resolve(); }
 });

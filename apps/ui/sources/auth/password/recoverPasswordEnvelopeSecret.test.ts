@@ -1,33 +1,21 @@
-import { expect, it, vi } from 'vitest';
+import { installPasswordKdfWorkerBoundary } from '@/dev/testkit/mocks/passwordKdfWorker';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { preparePasswordCredentialMaterialV1 } from './preparePasswordCredential';
 import { recoverPasswordEnvelopeSecret } from './recoverPasswordEnvelopeSecret';
+import { KeyChallengeV2IssueResponseSchema } from '@happier-dev/protocol/auth/keyChallenge';
+import { NativeEmailPasswordPreloginResponseV1Schema, NativeEmailPasswordUnlockResponseV1Schema } from '@happier-dev/protocol/auth/nativeAuthEmailRoutes';
 
-// The memory-hard KDF runs in a platform worker, which is a genuine system
-// boundary unavailable in Vitest. Keep the envelope/auth-key path real while
-// supplying the same deterministic worker stand-in to both writer and reader.
-vi.mock('./derivePasswordEnvelopeKey', () => ({
-    derivePasswordEnvelopeKey: async (input: {
-        password: string;
-        kdf: { salt: string; opsLimit: number; memLimitBytes: number };
-    }) => {
-        const seed = new TextEncoder().encode(
-            `${input.password}|${input.kdf.salt}|${input.kdf.opsLimit}|${input.kdf.memLimitBytes}`,
-        );
-        const root = new Uint8Array(32);
-        for (let index = 0; index < seed.length; index += 1) {
-            root[index % 32] = (root[index % 32]! * 31 + seed[index]! + index) & 0xff;
-        }
-        return root;
-    },
-}));
+// Keep KDF validation, key splitting and envelope crypto on the real path.
+beforeEach(installPasswordKdfWorkerBoundary);
+afterEach(() => vi.unstubAllGlobals());
 
-const issuedChallenge = {
+const issuedChallenge = KeyChallengeV2IssueResponseSchema.parse({
     challengeId: 'password-recovery-challenge',
     nonce: 'password-recovery-nonce',
     issuedAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
     audience: { origin: 'https://home.example.test', serverIdentityId: 'srv_home' },
-} as const;
+});
 
 it('opens the existing E2EE password envelope locally and never sends password text', async () => {
     const secret = new Uint8Array(32).fill(19);
@@ -39,13 +27,13 @@ it('opens the existing E2EE password envelope locally and never sends password t
     const request = async (path: string, init?: RequestInit) => {
         bodies.push(String(init?.body ?? ''));
         if (path.endsWith('/prelogin')) {
-            return Response.json({ v: 1, kind: 'e2ee_password_unlock', kdf: prepared.envelope.kdf });
+            return Response.json(NativeEmailPasswordPreloginResponseV1Schema.parse({ v: 1, kind: 'e2ee_password_unlock', kdf: prepared.envelope.kdf }));
         }
-        return Response.json({
+        return Response.json(NativeEmailPasswordUnlockResponseV1Schema.parse({
             envelope: prepared.envelope,
             expectedAccountId: 'account-a',
             challenge: issuedChallenge,
-        });
+        }));
     };
 
     const recovered = await recoverPasswordEnvelopeSecret({
@@ -63,12 +51,12 @@ it('rejects a wrong password without returning secret material', async () => {
     const secret = new Uint8Array(32).fill(23);
     const prepared = await preparePasswordCredentialMaterialV1({ password: 'right password value', secret });
     const request = async (path: string) => path.endsWith('/prelogin')
-        ? Response.json({ v: 1, kind: 'e2ee_password_unlock', kdf: prepared.envelope.kdf })
-        : Response.json({
+        ? Response.json(NativeEmailPasswordPreloginResponseV1Schema.parse({ v: 1, kind: 'e2ee_password_unlock', kdf: prepared.envelope.kdf }))
+        : Response.json(NativeEmailPasswordUnlockResponseV1Schema.parse({
             envelope: prepared.envelope,
             expectedAccountId: 'account-a',
             challenge: issuedChallenge,
-        });
+        }));
 
     await expect(recoverPasswordEnvelopeSecret({
         request,

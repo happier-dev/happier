@@ -4,7 +4,17 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
 import { formatRecoveryKeyForDisplay } from '@/auth/recovery/secretKeyBackup';
 
-import { AccountRecoveryKeyItem } from './AccountRecoveryKeyItem';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { encodeBase64 } from '@/encryption/base64';
+import sodium from '@/encryption/libsodium.lib';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+installDisconnectedServerSocketBoundary();
+const { AuthProvider } = await import('@/auth/context/AuthContext');
+const { AccountRecoveryKeyItem } = await import('./AccountRecoveryKeyItem');
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
 // A 32-byte recovery secret, as a legacy credential holds it (base64url).
@@ -12,7 +22,6 @@ const LOCAL_SECRET = 'AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA';
 const UNLOCKED_SECRET = new Uint8Array(32).fill(7);
 
 const boundary = vi.hoisted(() => ({
-    credentials: {} as Record<string, unknown>,
     clipboard: [] as string[],
 }));
 const modal = vi.hoisted(() => ({
@@ -20,9 +29,6 @@ const modal = vi.hoisted(() => ({
     show: vi.fn((_config: unknown) => 'modal-id'),
 }));
 
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: boundary.credentials }),
-}));
 vi.mock('expo-clipboard', () => ({
     setStringAsync: async (value: string) => { boundary.clipboard.push(value); return true; },
 }));
@@ -33,18 +39,25 @@ vi.mock('@/modal', async (importOriginal) => ({
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
-beforeEach(() => {
-    boundary.credentials = { token: 'account-a', secret: LOCAL_SECRET };
+let credentials: AuthCredentials;
+beforeEach(async () => {
+    installHomeGovernanceBoundaries(homes);
+    credentials = { token: createAccountTokenForTests('account-a'), secret: LOCAL_SECRET };
     boundary.clipboard = [];
     installBrowserClipboardBoundary(async text => { boundary.clipboard.push(text); });
+    await homes.addHome({ name: 'Recovery Home', serverUrl: 'https://account-recovery.example.test', accountId: 'account-a', credentials });
     modal.alert.mockReset();
     modal.show.mockReset().mockReturnValue('modal-id');
 });
-afterEach(() => standardCleanup());
+afterEach(async () => { standardCleanup(); await homes.reset(); });
+
+async function renderRecoveryItem(props: React.ComponentProps<typeof AccountRecoveryKeyItem>) {
+    return renderScreen(<AuthProvider initialCredentials={credentials}><AccountRecoveryKeyItem {...props} /></AuthProvider>);
+}
 
 it('keeps the key masked until revealed, and forgets it again when hidden', async () => {
     const formatted = formatRecoveryKeyForDisplay(LOCAL_SECRET);
-    const screen = await renderScreen(<AccountRecoveryKeyItem recoveryEmail={null} />);
+    const screen = await renderRecoveryItem({ recoveryEmail: null });
 
     expect(screen.getTextContent()).not.toContain(formatted);
     await screen.pressByTestIdAsync('settings-account-recovery-key-reveal');
@@ -54,7 +67,7 @@ it('keeps the key masked until revealed, and forgets it again when hidden', asyn
 });
 
 it('copies the formatted key without revealing it and confirms the copy', async () => {
-    const screen = await renderScreen(<AccountRecoveryKeyItem recoveryEmail={null} />);
+    const screen = await renderRecoveryItem({ recoveryEmail: null });
 
     await screen.pressByTestIdAsync('settings-account-recovery-key-copy');
 
@@ -64,8 +77,9 @@ it('copies the formatted key without revealing it and confirms the copy', async 
 });
 
 it('asks for the sign-in password before revealing a key this device does not hold', async () => {
-    boundary.credentials = { token: 'account-a', encryption: { publicKey: 'pk', machineKey: 'mk' } };
-    const screen = await renderScreen(<AccountRecoveryKeyItem recoveryEmail="person@example.test" />);
+    const pair = sodium.crypto_box_seed_keypair(new Uint8Array(32).fill(7));
+    credentials = { token: createAccountTokenForTests('account-a'), encryption: { publicKey: encodeBase64(pair.publicKey), machineKey: encodeBase64(pair.privateKey) } };
+    const screen = await renderRecoveryItem({ recoveryEmail: 'person@example.test' });
 
     await screen.pressByTestIdAsync('settings-account-recovery-key-reveal');
     expect(modal.show).toHaveBeenCalledTimes(1);
@@ -79,11 +93,11 @@ it('asks for the sign-in password before revealing a key this device does not ho
 
 it('opens an account-service key only through that service password, never from this Home key', async () => {
     const serviceRequest = vi.fn(async () => new Response('{}'));
-    const screen = await renderScreen(<AccountRecoveryKeyItem
-        recoveryEmail={null}
-        source={{ kind: 'account_service', request: serviceRequest, reminderTarget: { kind: 'account_service', serverIdentityId: 'srv_accounts' } }}
-        testIDPrefix="svc-recovery-key"
-    />);
+    const screen = await renderRecoveryItem({
+        recoveryEmail: null,
+        source: { kind: 'account_service', request: serviceRequest, reminderTarget: { kind: 'account_service', serverIdentityId: 'srv_accounts' } },
+        testIDPrefix: 'svc-recovery-key',
+    });
 
     await screen.pressByTestIdAsync('svc-recovery-key-reveal');
     // This device holds the Home Account key, which is a different key: it must not be shown.

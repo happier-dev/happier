@@ -1,38 +1,31 @@
+import { ExternalOAuthFinalizeAuthSuccessResponseSchema } from '@happier-dev/protocol/auth/externalOAuth';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
-import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { setOAuthRuntimeFetch as setRuntimeFetch, OAuthHarnessProvider, prepareOAuthHarness } from '@/auth/providers/github/test/oauthReturnHarness';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import {
   clearPendingExternalAuthMock,
   flushOAuthEffects,
   getRandomBytesSpy,
   localSearchParamsMock,
-  loginSpy,
-  loginWithCredentialsSpy,
   replaceSpy,
   resetOAuthHarness,
   setActiveServerSnapshot,
   setPendingExternalAuthState,
+  oauthDefaultHome,
 } from '@/auth/providers/github/test/oauthReturnHarness';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@shopify/react-native-skia', () => ({}));
-
-const setActiveServerAndSwitchSpy = vi.hoisted(() => vi.fn<
-  (input: unknown) => Promise<'switched'>
->(async () => 'switched'));
-vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
-  setActiveServerAndSwitch: (input: unknown) => setActiveServerAndSwitchSpy(input),
-}));
 
 afterEach(() => {
   vi.unstubAllGlobals();
   resetRuntimeFetch();
   resetOAuthHarness();
-  setActiveServerAndSwitchSpy.mockReset();
-  setActiveServerAndSwitchSpy.mockResolvedValue('switched');
 });
 
 describe('oauth/[provider] return (provisioning choice)', () => {
@@ -41,8 +34,9 @@ describe('oauth/[provider] return (provisioning choice)', () => {
   }
 
   async function renderOAuthReturnScreen() {
+    await prepareOAuthHarness();
     const { default: Screen } = await import('@/app/(app)/oauth/[provider]');
-    const screen = await renderScreen(<Screen />);
+    const screen = await renderScreen(<OAuthHarnessProvider><Screen /></OAuthHarnessProvider>);
     await flushOAuthEffects();
     expect(screen.findByTestId('oauth-return-wizard')).toBeTruthy();
     return screen;
@@ -50,8 +44,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
   it('shows the encryption choice on optional servers and finalizes plaintext (keyless) when chosen', async () => {
     replaceSpy.mockReset();
-    loginWithCredentialsSpy.mockReset();
-    clearPendingExternalAuthMock.mockReset();
+    clearPendingExternalAuthMock.mockClear();
 
     localSearchParamsMock.mockReturnValue({
       provider: 'github',
@@ -60,9 +53,9 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       storagePolicy: 'optional',
       provisioning: 'required',
     });
-    setPendingExternalAuthState({ provider: 'github', proof: 'proof_3' });
+    setPendingExternalAuthState({ ...oauthDefaultHome, provider: 'github', proof: 'proof_3' });
 
-    const fetchMock = vi.fn(async (url: any, init?: any) => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       const rawUrl = String(url);
       if (isReachabilityProbeUrl(rawUrl)) {
         return new Response('', { status: 200 });
@@ -72,14 +65,14 @@ describe('oauth/[provider] return (provisioning choice)', () => {
         if (body?.pending !== 'p3' || body?.proof !== 'proof_3') {
           return new Response(JSON.stringify({ error: 'invalid' }), { status: 400 });
         }
-        return new Response(JSON.stringify({ success: true, token: 'tok_3' }), {
+        return new Response(JSON.stringify(ExternalOAuthFinalizeAuthSuccessResponseSchema.parse({ success: true, token: createAccountTokenForTests('tok_3') })), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
       }
       return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
     });
-    setRuntimeFetch(fetchMock as unknown as typeof fetch);
+    setRuntimeFetch(fetchMock);
 
     const screen = await renderOAuthReturnScreen();
     try {
@@ -95,13 +88,11 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       expect(typeof choice.props.onPress).toBe('function');
 
       await pressTestInstanceAsync(choice, 'oauth-provisioning-choice-plain');
-      await vi.waitFor(() => {
+      await vi.waitFor(async () => {
         expect(screen.findAllByTestId('oauth-provisioning-choice-plain')).toHaveLength(0);
         expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize-keyless'))).toBe(true);
         expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-        expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: 'tok_3' }, { signInMethodId: 'github' });
-        expect(loginSpy).not.toHaveBeenCalled();
-        expect(getRandomBytesSpy).not.toHaveBeenCalled();
+        expect(await TokenStorage.getCredentials()).toEqual({ token: createAccountTokenForTests('tok_3') });
         expect(replaceSpy).toHaveBeenCalledWith('/');
       });
     } finally {
@@ -144,7 +135,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       if (rawUrl.includes('/v1/auth/external/github/finalize-keyless')) return await finalizeResponse;
       return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
     });
-    setRuntimeFetch(fetchMock as unknown as typeof fetch);
+    setRuntimeFetch(fetchMock);
 
     const screen = await renderOAuthReturnScreen();
     try {
@@ -159,29 +150,18 @@ describe('oauth/[provider] return (provisioning choice)', () => {
         serverUrl: 'https://oauth-home-b.test',
         generation: 2,
       });
-      resolveFinalize(new Response(JSON.stringify({ success: true, token: 'token-home-a' }), {
+      await prepareOAuthHarness();
+      resolveFinalize(new Response(JSON.stringify(ExternalOAuthFinalizeAuthSuccessResponseSchema.parse({ success: true, token: createAccountTokenForTests('token-home-a') })), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }));
       await press;
 
       // The choice is the shared button, whose press settles before the finalize it started.
-      await vi.waitFor(() => expect(loginWithCredentialsSpy).toHaveBeenCalledWith(
-        { token: 'token-home-a' },
-        {
-          signInMethodId: 'github',
-          target: {
-            serverUrl: 'https://oauth-home-a.test',
-            serverId: 'srv_oauth_home_a',
-          },
-        },
-      ));
-      await vi.waitFor(() => expect(setActiveServerAndSwitchSpy).toHaveBeenCalled());
-      expect(setActiveServerAndSwitchSpy).toHaveBeenCalledWith({
-        serverId: 'srv_oauth_home_a',
-        scope: 'device',
-        refreshAuth: expect.any(Function),
-      });
+      await vi.waitFor(() => expect(profiles.getActiveServerId()).toBe('srv_oauth_home_a'));
+      expect(await TokenStorage.getCredentialsForServerUrl('https://oauth-home-a.test', { serverId: 'srv_oauth_home_a' }))
+        .toEqual({ token: createAccountTokenForTests('token-home-a') });
+      expect(await TokenStorage.getCredentialsForServerUrl('https://oauth-home-b.test', { serverId: 'srv_oauth_home_b' })).toBeNull();
     } finally {
       await screen.unmount();
     }
@@ -189,8 +169,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
   it('auto-finalizes plaintext (keyless) when provisioningModes only allows plain', async () => {
     replaceSpy.mockReset();
-    loginWithCredentialsSpy.mockReset();
-    clearPendingExternalAuthMock.mockReset();
+    clearPendingExternalAuthMock.mockClear();
 
     localSearchParamsMock.mockReturnValue({
       provider: 'github',
@@ -200,9 +179,9 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       provisioning: 'required',
       provisioningModes: 'plain',
     });
-    setPendingExternalAuthState({ provider: 'github', proof: 'proof_4' });
+    setPendingExternalAuthState({ ...oauthDefaultHome, provider: 'github', proof: 'proof_4' });
 
-    const fetchMock = vi.fn(async (url: any, init?: any) => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       const rawUrl = String(url);
       if (isReachabilityProbeUrl(rawUrl)) {
         return new Response('', { status: 200 });
@@ -212,14 +191,14 @@ describe('oauth/[provider] return (provisioning choice)', () => {
         if (body?.pending !== 'p4' || body?.proof !== 'proof_4') {
           return new Response(JSON.stringify({ error: 'invalid' }), { status: 400 });
         }
-        return new Response(JSON.stringify({ success: true, token: 'tok_4' }), {
+        return new Response(JSON.stringify(ExternalOAuthFinalizeAuthSuccessResponseSchema.parse({ success: true, token: createAccountTokenForTests('tok_4') })), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
       }
       return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
     });
-    setRuntimeFetch(fetchMock as unknown as typeof fetch);
+    setRuntimeFetch(fetchMock);
 
     const screen = await renderOAuthReturnScreen();
     try {
@@ -227,9 +206,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
       expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize-keyless'))).toBe(true);
       expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-      expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: 'tok_4' }, { signInMethodId: 'github' });
-      expect(loginSpy).not.toHaveBeenCalled();
-      expect(getRandomBytesSpy).not.toHaveBeenCalled();
+      expect(await TokenStorage.getCredentials()).toEqual({ token: createAccountTokenForTests('tok_4') });
       expect(replaceSpy).toHaveBeenCalledWith('/');
 
       expect(screen.findAllByTestId('oauth-provisioning-choice-plain')).toHaveLength(0);
@@ -247,43 +224,38 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       storagePolicy: 'optional',
       provisioning: 'required',
     });
-    setPendingExternalAuthState({ provider: 'github', proof: 'proof_5' });
+    setPendingExternalAuthState({ ...oauthDefaultHome, provider: 'github', proof: 'proof_5' });
 
-    const fetchMock = vi.fn(async (url: any) => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
       const rawUrl = String(url);
       if (isReachabilityProbeUrl(rawUrl)) {
         return new Response('', { status: 200 });
       }
       if (rawUrl.includes('/v1/auth/external/github/finalize')) {
-        return new Response(JSON.stringify({ success: true, token: 'tok_5' }), {
+        return new Response(JSON.stringify(ExternalOAuthFinalizeAuthSuccessResponseSchema.parse({ success: true, token: createAccountTokenForTests('tok_5') })), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
       }
       return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
     });
-    setRuntimeFetch(fetchMock as unknown as typeof fetch);
+    setRuntimeFetch(fetchMock);
 
     const screen = await renderOAuthReturnScreen();
     try {
       expect(getRandomBytesSpy).not.toHaveBeenCalled();
-      expect(loginSpy).not.toHaveBeenCalled();
-      expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
+      expect(await TokenStorage.getCredentials()).toBeNull();
 
       await pressTestInstanceAsync(
         screen.findByTestId('oauth-provisioning-choice-e2ee'),
         'oauth-provisioning-choice-e2ee',
       );
 
-      await vi.waitFor(() => {
+      await vi.waitFor(async () => {
         expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize'))).toBe(true);
         expect(getRandomBytesSpy).toHaveBeenCalled();
-        expect(loginSpy).toHaveBeenCalledWith(
-          'tok_5',
-          encodeBase64(new Uint8Array(32).fill(9), 'base64url'),
-        { signInMethodId: 'github' },
-        );
-        expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
+        expect(await TokenStorage.getCredentials()).toEqual({ token: createAccountTokenForTests('tok_5'),
+          secret: encodeBase64(new Uint8Array(32).fill(9), 'base64url') });
         expect(replaceSpy).toHaveBeenCalledWith('/');
       });
     } finally {

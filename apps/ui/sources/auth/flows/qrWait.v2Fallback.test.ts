@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import {
     sealTerminalProvisioningV3Payload,
@@ -10,17 +10,16 @@ import { encryptBox } from '@/encryption/libsodium';
 import { generateAuthKeyPair } from './qrStart';
 import { authQRWait, type AuthQrWaitOptions, type HomeQrEnrollmentTarget } from './qrWait';
 import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 const endpointFetchMock = vi.hoisted(() => vi.fn());
-const createServerFetchAtEndpointMock = vi.hoisted(() => vi.fn<(input: unknown) => typeof endpointFetchMock>(() => endpointFetchMock));
-const serverFetchMock = vi.hoisted(() => vi.fn());
 const trackAuthEnrollmentTransientRetryMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/http/client', () => ({
-    createServerFetchAtEndpoint: (input: unknown) => createServerFetchAtEndpointMock(input),
-    serverFetch: (...args: unknown[]) => serverFetchMock(...args),
-}));
-vi.mock('@/utils/runtime/isRuntimeActive', () => ({ isRuntimeActive: () => true }));
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({ AppState: { currentState: 'active' } });
+});
 vi.mock('@/track', () => ({
     trackAuthEnrollmentTransientRetry: trackAuthEnrollmentTransientRetryMock,
 }));
@@ -29,13 +28,13 @@ function json(status: number, payload: unknown): Response {
     return new Response(JSON.stringify(payload), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
-const HOME_B_DESCRIPTOR = {
+const HOME_B_DESCRIPTOR = HomeConnectionDescriptorV1Schema.parse({
         v: 1 as const,
         homeServerIdentityId: 'srv_home_b',
         canonicalServerUrl: 'https://home-b.test',
         revision: 1,
         endpoints: [{ kind: 'https' as const, url: 'https://home-b.test' }],
-};
+});
 let HOME_B_TARGET: HomeQrEnrollmentTarget;
 
 function createV2Context(overrides: Partial<NonNullable<AuthQrWaitOptions['v2Context']>> = {}) {
@@ -94,11 +93,10 @@ async function settle<T>(promise: Promise<T>): Promise<T> {
 }
 
 describe('authQRWait explicit-target enrollment', () => {
+    beforeEach(() => setRuntimeFetch(endpointFetchMock));
     afterEach(() => {
         endpointFetchMock.mockReset();
-        createServerFetchAtEndpointMock.mockClear();
-        createServerFetchAtEndpointMock.mockImplementation(() => endpointFetchMock);
-        serverFetchMock.mockReset();
+        resetRuntimeFetch();
         trackAuthEnrollmentTransientRetryMock.mockReset();
         vi.useRealTimers();
     });
@@ -112,19 +110,13 @@ describe('authQRWait explicit-target enrollment', () => {
         const result = await settle(authQRWait(keypair, HOME_B_TARGET, { v2Context: context }));
 
         expect(result).toEqual({ ok: true, credentials: { token: 'home-b-token' }, homeServerIdentityId: 'srv_home_b' });
-        expect(createServerFetchAtEndpointMock).toHaveBeenCalledWith(expect.objectContaining({
-            endpointUrl: 'https://home-b.test',
-            serverId: 'profile-b',
-            credentials: null,
-        }));
-        expect(endpointFetchMock).toHaveBeenCalledWith('/v2/auth/account/request', expect.objectContaining({
+        expect(endpointFetchMock).toHaveBeenCalledWith('https://home-b.test/v2/auth/account/request', expect.objectContaining({
             body: JSON.stringify({
                 publicKey: encodeBase64(keypair.publicKey),
                 pairId: context.pairId,
                 homeServerIdentityId: context.homeServerIdentityId,
             }),
-        }), expect.anything());
-        expect(serverFetchMock).not.toHaveBeenCalled();
+        }));
     });
 
     it('maps canonical dataKey v3 material using X25519 scalar public derivation', async () => {
@@ -341,7 +333,7 @@ describe('authQRWait explicit-target enrollment', () => {
         const result = await settle(authQRWait(keypair, HOME_B_TARGET, { v2Context: context }));
         expect(result).toEqual({ ok: false, reason });
         expect(JSON.stringify(result)).not.toContain('plaintext');
-        expect(endpointFetchMock.mock.calls.map((call) => call[0])).toEqual(['/v2/auth/account/request']);
+        expect(endpointFetchMock.mock.calls.map((call) => call[0])).toEqual(['https://home-b.test/v2/auth/account/request']);
     });
 
     it('fails closed before network use without immutable V2 binding context', async () => {
@@ -351,6 +343,5 @@ describe('authQRWait explicit-target enrollment', () => {
             reason: 'update_required',
         });
         expect(endpointFetchMock).not.toHaveBeenCalled();
-        expect(serverFetchMock).not.toHaveBeenCalled();
     });
 });

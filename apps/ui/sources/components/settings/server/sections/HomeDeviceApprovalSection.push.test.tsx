@@ -1,3 +1,4 @@
+import { homeDeviceApprovalRequestFixture } from '@/dev/testkit/fixtures/accountDirectoryFixtures';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,8 +13,7 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
-// No AuthProvider is mounted; this suite never opens a Home or changes authentication.
-vi.mock('@/auth/context/AuthContext', () => ({ useAuth: () => ({ refreshFromActiveServer: async () => {} }) }));
+const { AuthProvider } = await import('@/auth/context/AuthContext');
 
 const h = await createConcurrentCacheNetworkHarness('approval-push');
 const { HomeDeviceApprovalSection } = await import('./HomeDeviceApprovalSection');
@@ -23,7 +23,7 @@ const pending = new Map<string, HomeDeviceApprovalRequestV1[]>();
 const approvalReads = () => h.httpRequests.filter(({ url }) => url.pathname === HOME_LOGIN_APPROVALS_HTTP_PATH_V1);
 const card = (id: string) => screen?.findByTestId(`settings.server.homeApprovals.${id}`);
 const view = (visible = true) => <PluginSurfaceFocusEligibilityProvider active={visible} presentationActive={visible}>
-    <HomeDeviceApprovalSection homes={homes} />
+    <AuthProvider initialCredentials={null}><HomeDeviceApprovalSection homes={homes} /></AuthProvider>
 </PluginSurfaceFocusEligibilityProvider>;
 
 beforeEach(async () => {
@@ -51,10 +51,7 @@ afterEach(async () => {
 afterAll(() => h.dispose());
 
 function request(id: string, expiresAtMs = Date.now() + 600_000): HomeDeviceApprovalRequestV1 {
-    return { approvalId: id, accountId: 'account-b', flow: 'account_assertion',
-        requesterBoxPublicKeyBase64: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-        issuerServerIdentityId: 'srv_directory', issuerSubjectId: 'account-directory',
-        deviceLabel: id, status: 'pending', expiresAtMs, decidedAtMs: null };
+    return homeDeviceApprovalRequestFixture({ approvalId: id, accountId: 'account-b', deviceLabel: id, expiresAtMs });
 }
 async function start() {
     await h.start();

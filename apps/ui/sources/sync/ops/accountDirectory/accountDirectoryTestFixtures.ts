@@ -1,4 +1,5 @@
 import tweetnacl from 'tweetnacl';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import type { AccountDirectoryMeResponseV1 } from '@happier-dev/protocol/auth/accountDirectory';
@@ -32,6 +33,7 @@ export function createDirectoryHttpFixture(options: Readonly<{
         ? tweetnacl.box.keyPair.fromSecretKey(deriveAccountMachineKeyFromRecoverySecret(options.directoryRecoverySecret)).publicKey
         : null;
     const homeRecoverySecret = new Uint8Array(32).fill(7);
+    const directoryToken = createAccountTokenForTests('account-directory');
     const endpoint = 'https://directory.test';
     const identity = 'srv_directory';
     const home: AccountDirectoryHomeEntryV1 = {
@@ -146,8 +148,8 @@ export function createDirectoryHttpFixture(options: Readonly<{
                 contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(tweetnacl.box.keyPair.fromSecretKey(deriveAccountMachineKeyFromRecoverySecret(homeRecoverySecret)).publicKey),
                 updatedAt: 0, recipientEnvelopeReadiness: { status: 'available' } }));
         if (path.includes('/finalize')) return state.exchangeStatus === 200
-            ? json({ token: 'directory-token' }) : json({ error: state.exchangeError }, state.exchangeStatus);
+            ? json({ token: directoryToken }) : json({ error: state.exchangeError }, state.exchangeStatus);
         throw new Error(`Unexpected HTTP fixture request: ${requestEndpoint}${path}`);
     };
-    return { service, home, state, token, request, homeRecoverySecret };
+    return { service, home, state, token, directoryToken, request, homeRecoverySecret };
 }

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { AccountEncryptionMigrateRequestSchema,
-    createAccountEncryptionMigrateRequestBindingDigestV1 } from '@happier-dev/protocol/account/encryptionMigrate';
+import { createAccountEncryptionMigrateRequestBindingDigestV1 } from '@happier-dev/protocol/account/encryptionMigrate';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { computeAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { renderScreen } from '@/dev/testkit';
@@ -11,8 +10,8 @@ import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHel
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { AuthProvider } from '@/auth/context/AuthContext';
 import { deriveAccountSigningPublicKey } from '@/auth/flows/challenge';
-import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
-import { encodeBase64, decodeBase64 } from '@/encryption/base64';
+import { createAccountEncryptionFirstKeyFixture } from '@/dev/testkit/fixtures/accountEncryptionFirstKey';
+import { decodeBase64 } from '@/encryption/base64';
 import { adoptHomeProfile, getActiveServerId, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { subscribeActiveServer } from '@/sync/domains/server/serverRuntime';
 import { guardAccountEncryptionFirstKeyCredentialMutation } from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
@@ -46,17 +45,8 @@ it.each(['rejected', 'committed'])('finishes %s Home B first-key custody through
     await setActiveServerId(homeA.id, { scope: 'device' });
     const activeHomeA = getActiveServerId();
     const target = { serverId: homeB.id, serverUrl: homeB.serverUrl };
-    const seed = new Uint8Array(32).fill(7);
-    const secret = encodeBase64(seed, 'base64url');
-    const binding = await buildContentKeyBinding(seed);
-    const request = AccountEncryptionMigrateRequestSchema.parse({ toMode: 'e2ee', expectedAccountVersion: 8,
-        expectedSigningKeyFingerprint: null, expectedContentKeyFingerprint: null, expectedSettingsVersion: 3,
-        settingsContent: { t: 'encrypted', c: 'ciphertext' }, connectedServices: { action: 'assert_empty' },
-        automations: { action: 'assert_empty' }, machines: { action: 'assert_empty' }, todos: { action: 'assert_empty' },
-        artifacts: { action: 'assert_empty' }, sessions: { action: 'assert_empty' }, reviewComments: { action: 'assert_empty' },
-        sessionOrganization: { action: 'assert_empty' }, pets: { action: 'assert_empty' },
-        keyProof: { v: 1, publicKey: encodeBase64(deriveAccountSigningPublicKey(seed)), ...binding, signature: 'request-signature' },
-    });
+    const { seed, contentBinding: binding, proposedCredentials: { secret }, request } =
+        await createAccountEncryptionFirstKeyFixture({ accountId: 'account-home', token: fixture.token });
     expect(await TokenStorage.setPendingExternalAuth({ provider: 'github', proof: 'proof-b', secret, ...target,
         returnTo: '/settings/account', accountEncryptionFirstKey: { accountId: 'account-home',
             requestDigest: createAccountEncryptionMigrateRequestBindingDigestV1({ request, accountId: 'account-home', sourceMode: 'plain' }),

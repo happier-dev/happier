@@ -12,13 +12,18 @@ import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
 import { IrohError } from '@happier-dev/iroh-native';
 installTokenStorageWebPlatformMocks();
 const boundary = vi.hoisted(() => ({ request: vi.fn<(endpoint: string, path: string, init?: RequestInit) => Promise<Response>>() }));
-vi.mock('@/utils/system/runtimeFetch', () => ({
-    runtimeFetch: (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = new URL(input instanceof Request ? input.url : String(input));
-        return boundary.request(url.origin, `${url.pathname}${url.search}`, init);
-    },
-    get runtimeFetchManualResponse() { return this.runtimeFetch; },
-}));
+vi.mock('@/utils/system/runtimeFetch', () => {
+    // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type.
+    const mocked = {
+        runtimeFetch: (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = new URL(input instanceof Request ? input.url : String(input));
+            return boundary.request(url.origin, `${url.pathname}${url.search}`, init);
+        },
+        resetRuntimeFetch: () => {},
+        get runtimeFetchManualResponse() { return this.runtimeFetch; },
+    };
+    return mocked;
+});
 import { accountDirectoryAuthClient, acquireAccountServiceAuthTransport } from './accountDirectoryAuthClient';
 
 describe('Account Directory OAuth exchange custody', () => {
@@ -88,7 +93,7 @@ describe('Account Directory OAuth exchange custody', () => {
         const input = await storedInput();
         const result = await accountDirectoryAuthClient.exchangeOAuth(input);
         expect(result).toMatchObject({ kind: 'authenticated', destination: { pathname: '/setup/wizard', params: { mode: 'account-entry', accountServiceReturn: '1' } } });
-        expect(await TokenStorage.accountDirectoryAuthCredentials.get({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId })).toEqual({ token: 'directory-token' });
+        expect(await TokenStorage.accountDirectoryAuthCredentials.get({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId })).toEqual({ token: fixture.directoryToken });
         expect(await TokenStorage.getPendingAccountDirectoryAuth({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId })).toBeNull();
         expect(fixture.state.calls.map(({ path }) => path)).toEqual(['/v1/features', '/v1/auth/external/github/finalize-keyless']);
         expect(JSON.stringify(result)).not.toContain('bound-proof');
@@ -127,7 +132,7 @@ describe('Account Directory OAuth exchange custody', () => {
         expect(await TokenStorage.accountDirectoryAuthCredentials.get({
             endpoint: fixture.service.endpointUrl,
             serverIdentityId: fixture.service.serverIdentityId,
-        })).toEqual({ token: 'directory-token' });
+        })).toEqual({ token: fixture.directoryToken });
         expect(TokenStorage.readAccountDirectoryOAuthReturn({
             endpoint: fixture.service.endpointUrl,
             serverIdentityId: fixture.service.serverIdentityId,
@@ -242,7 +247,7 @@ describe('Account Directory OAuth exchange custody', () => {
             accountCredentialCommitted: true,
         });
         await expect(TokenStorage.accountDirectoryAuthCredentials.get(target)).resolves.toEqual({
-            token: 'directory-token',
+            token: fixture.directoryToken,
         });
         await expect(TokenStorage.getPendingAccountDirectoryAuth(target)).resolves.toEqual(input.pending);
         expect(TokenStorage.readAccountDirectoryOAuthReturn({

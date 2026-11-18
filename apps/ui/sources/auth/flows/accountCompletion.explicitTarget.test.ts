@@ -1,26 +1,27 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { completeAccountAuthRequest } from './accountCompletion';
 import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import tweetnacl from 'tweetnacl';
+import { sealTerminalProvisioningV3Payload, sealTerminalProvisioningV3TokenOnlyPayload } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
+import { encodeBase64 } from '@/encryption/base64';
+import { generateAuthKeyPair } from './qrStart';
 import type { HomeQrEnrollmentTarget } from './qrStart';
 
 const endpointFetchMock = vi.hoisted(() => vi.fn());
-const createServerFetchAtEndpointMock = vi.hoisted(() => vi.fn<(input: unknown) => typeof endpointFetchMock>(() => endpointFetchMock));
-const serverFetchMock = vi.hoisted(() => vi.fn());
-
-vi.mock('@/sync/http/client', () => ({
-    createServerFetchAtEndpoint: (input: unknown) => createServerFetchAtEndpointMock(input),
-    serverFetch: (...args: unknown[]) => serverFetchMock(...args),
-}));
-
-const descriptor = {
+const descriptor = HomeConnectionDescriptorV1Schema.parse({
         v: 1 as const,
         homeServerIdentityId: 'srv_home_b',
         canonicalServerUrl: 'https://home-b.test',
         revision: 1,
         endpoints: [{ kind: 'https' as const, url: 'https://home-b.test' }],
-};
+});
 let target: HomeQrEnrollmentTarget;
+
+let publicKey: Uint8Array;
+let responses: Record<'tokenOnly' | 'dataKey', Uint8Array>;
 
 describe('completeAccountAuthRequest explicit target', () => {
     beforeAll(async () => {
@@ -28,10 +29,18 @@ describe('completeAccountAuthRequest explicit target', () => {
         if (!resolution.ok) throw new Error('Expected test Home transport');
         target = { ...resolution.transport, serverId: 'profile-b' };
     });
+    beforeEach(() => {
+        setRuntimeFetch(endpointFetchMock);
+        publicKey = generateAuthKeyPair().publicKey;
+        const createdAtMs = Date.now();
+        const input = { terminalEphemeralPublicKey: publicKey, pairingSecret: new Uint8Array(32).fill(7),
+            createdAtMs, expiresAtMs: createdAtMs + 60_000, randomBytes: tweetnacl.randomBytes };
+        responses = { tokenOnly: sealTerminalProvisioningV3TokenOnlyPayload(input),
+            dataKey: sealTerminalProvisioningV3Payload({ ...input, contentPrivateKey: new Uint8Array(32).fill(9) }) };
+    });
     afterEach(() => {
         endpointFetchMock.mockReset();
-        createServerFetchAtEndpointMock.mockClear();
-        serverFetchMock.mockReset();
+        resetRuntimeFetch();
     });
 
     it('sends the strict bound terminal-v3 admission body only to the selected Home', async () => {
@@ -41,45 +50,42 @@ describe('completeAccountAuthRequest explicit target', () => {
             token: 'home-b-token',
             target,
             pairId: 'pair-b',
-            publicKey: new Uint8Array([1, 2, 3]),
-            response: new Uint8Array([4, 5, 6]),
+            publicKey,
+            response: responses.tokenOnly,
             homeServerIdentityId: 'srv_home_b',
             responseKind: 'tokenOnly',
         })).resolves.toBe('completed');
 
-        expect(createServerFetchAtEndpointMock).toHaveBeenCalledWith(expect.objectContaining({
-            endpointUrl: 'https://home-b.test',
-            serverId: 'profile-b',
-            credentials: { token: 'home-b-token' },
-        }));
-        expect(endpointFetchMock).toHaveBeenCalledWith('/v1/auth/account/response', expect.objectContaining({
+        expect(endpointFetchMock).toHaveBeenCalledWith('https://home-b.test/v1/auth/account/response', expect.objectContaining({
             body: JSON.stringify({
                 pairId: 'pair-b',
-                publicKey: 'AQID',
-                response: 'BAUG',
+                publicKey: encodeBase64(publicKey),
+                response: encodeBase64(responses.tokenOnly),
                 homeServerIdentityId: 'srv_home_b',
                 responseKind: 'tokenOnly',
             }),
-        }), expect.objectContaining({ includeAuth: true }));
-        expect(serverFetchMock).not.toHaveBeenCalled();
+        }));
+        expect(new Headers((endpointFetchMock.mock.calls[0]?.[1] as RequestInit).headers).get('Authorization')).toBe('Bearer home-b-token');
     });
 
     it('forwards lifecycle cancellation to the authenticated completion request', async () => {
-        endpointFetchMock.mockResolvedValueOnce(new Response(null, { status: 200 }));
         const controller = new AbortController();
+        endpointFetchMock.mockImplementationOnce((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init?.signal?.reason), { once: true });
+            controller.abort();
+        }));
 
         await expect(completeAccountAuthRequest({
             token: 'home-b-token',
             target,
             pairId: 'pair-b',
-            publicKey: new Uint8Array(32),
-            response: new Uint8Array([1]),
+            publicKey,
+            response: responses.tokenOnly,
             homeServerIdentityId: 'srv_home_b',
             responseKind: 'tokenOnly',
             signal: controller.signal,
-        })).resolves.toBe('completed');
-
-        expect((endpointFetchMock.mock.calls[0]?.[1] as RequestInit).signal).toBe(controller.signal);
+        })).rejects.toMatchObject({ code: 'account_completion_failed', status: 0, retryable: true });
+        expect((endpointFetchMock.mock.calls[0]?.[1] as RequestInit).signal?.aborted).toBe(true);
     });
 
     it('rejects a mismatched target identity before any request', async () => {
@@ -87,13 +93,12 @@ describe('completeAccountAuthRequest explicit target', () => {
             token: 'home-b-token',
             target,
             pairId: 'pair-b',
-            publicKey: new Uint8Array(32),
-            response: new Uint8Array([1]),
+            publicKey,
+            response: responses.tokenOnly,
             homeServerIdentityId: 'srv_home_a',
-            responseKind: 'dataKey',
+            responseKind: 'tokenOnly',
         })).rejects.toMatchObject({ code: 'invalid_target' });
         expect(endpointFetchMock).not.toHaveBeenCalled();
-        expect(serverFetchMock).not.toHaveBeenCalled();
     });
 
     it('treats the typed already-completed replay as successful completion', async () => {
@@ -105,8 +110,8 @@ describe('completeAccountAuthRequest explicit target', () => {
             token: 'home-b-token',
             target,
             pairId: 'pair-b',
-            publicKey: new Uint8Array(32),
-            response: new Uint8Array([1]),
+            publicKey,
+            response: responses.tokenOnly,
             homeServerIdentityId: 'srv_home_b',
             responseKind: 'tokenOnly',
         })).resolves.toBe('already_completed');
@@ -119,8 +124,8 @@ describe('completeAccountAuthRequest explicit target', () => {
             token: 'home-b-token',
             target,
             pairId: 'pair-b',
-            publicKey: new Uint8Array(32),
-            response: new Uint8Array([1]),
+            publicKey,
+            response: responses.tokenOnly,
             homeServerIdentityId: 'srv_home_b',
             responseKind: 'tokenOnly',
         })).rejects.toMatchObject({ code: 'account_completion_failed', status: 409, retryable: false });

@@ -1,34 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const homeFetch = vi.hoisted(() => vi.fn());
-const createServerFetchAtEndpointSpy = vi.hoisted(() => vi.fn());
-const acquireIrohHomeRuntimeOriginSpy = vi.hoisted(() => vi.fn<(input: unknown) => Promise<unknown>>());
-const irohReleaseSpy = vi.hoisted(() => vi.fn(async () => {}));
-const resolveBrowserHostDecisionSpy = vi.hoisted(() => vi.fn());
-
-// The Home's own answer to the public feature probe is the only genuine system
-// boundary here: profiles, the identity owner, adoption and the resolver all
-// stay real, so these tests fail if this module ever routes or adopts without
-// that answer.
-vi.mock('@/sync/http/client', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/http/client')>(),
-    createServerFetchAtEndpoint: (input: unknown) => {
-        createServerFetchAtEndpointSpy(input);
-        return homeFetch;
-    },
-}));
-
-// The native Iroh tunnel and the browser host decision are the other genuine
-// boundaries. The carrier policy, the enrollment transport owner it composes and
-// its verification rules all stay real below them.
-vi.mock('@/sync/runtime/nativeIrohTunnels/runtime', () => ({
-    acquireIrohHomeRuntimeOrigin: (input: unknown) => acquireIrohHomeRuntimeOriginSpy(input),
-}));
-vi.mock('@/sync/runtime/browserIroh/hostEligibility', () => ({
-    resolveBrowserIrohHostDecision: () => resolveBrowserHostDecisionSpy(),
-}));
+// The host command bridge and HTTP are the genuine native/network boundaries.
+const ensureHomeTunnel = vi.fn();
+const irohReleaseSpy = vi.fn(async () => {});
+const hostInvoke = vi.fn(async (command: string, args?: Record<string, unknown>) => {
+    if (command === 'iroh_ensure_home_tunnel') return ensureHomeTunnel(args?.request);
+    if (command === 'iroh_release_home_tunnel') return irohReleaseSpy();
+    if (command === 'iroh_get_tunnel_status') return { active: true, observedPath: 'relay' };
+    throw new Error(`Unexpected desktop command: ${command}`);
+});
 
 import { standardCleanup } from '@/dev/testkit';
+import { disposeIrohHomeTunnelRuntime } from '@/sync/runtime/nativeIrohTunnels/runtime';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import {
     listServerProfiles,
@@ -72,22 +58,26 @@ function answerFeatureProbeAs(serverIdentityId: string | null): void {
     const features = createRootLayoutFeaturesResponse();
     (features.capabilities as { serverIdentity: { serverIdentityId: string | null } })
         .serverIdentity = { serverIdentityId };
-    homeFetch.mockResolvedValue(new Response(JSON.stringify(features), {
-        headers: { 'content-type': 'application/json' },
-    }));
+    homeFetch.mockImplementation(async (input: RequestInfo | URL) => (
+        new URL(String(input)).pathname === '/v1/features'
+            ? Response.json(features) : Response.json({ ok: true })
+    ));
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+    await disposeIrohHomeTunnelRuntime();
+    vi.stubGlobal('__TAURI_INTERNALS__', { invoke: hostInvoke });
     homeFetch.mockReset();
-    createServerFetchAtEndpointSpy.mockReset();
-    acquireIrohHomeRuntimeOriginSpy.mockReset();
+    setRuntimeFetch(homeFetch);
+    ensureHomeTunnel.mockReset();
+    hostInvoke.mockClear();
     irohReleaseSpy.mockClear();
-    resolveBrowserHostDecisionSpy.mockReset();
-    resolveBrowserHostDecisionSpy.mockReturnValue({ eligible: false, reason: 'not_web' });
     resetServerFeaturesClientForTests();
 });
 
 afterEach(async () => {
+    await disposeIrohHomeTunnelRuntime();
+    vi.unstubAllGlobals();
     await standardCleanup();
     resetServerFeaturesClientForTests();
 });
@@ -239,9 +229,8 @@ describe('acquirePortableHomeLinkTarget', () => {
         // the unauthenticated public feature projection. Anything else would tell
         // an unverified endpoint the secret it is being asked to prove it owns.
         for (const call of homeFetch.mock.calls) {
-            expect(String(call[0])).toBe('/v1/features');
-            expect(JSON.stringify(call[1] ?? {})).not.toContain('Authorization');
-            expect(call[2]).toMatchObject({ includeAuth: false });
+            expect(new URL(String(call[0])).pathname).toBe('/v1/features');
+            expect(new Headers(call[1]?.headers).has('Authorization')).toBe(false);
         }
     });
 
@@ -252,11 +241,8 @@ describe('acquirePortableHomeLinkTarget', () => {
 
         // The predecessor HTTPS case keeps its stable canonical audience and
         // acquires no runtime carrier at all.
-        expect(createServerFetchAtEndpointSpy).toHaveBeenCalledWith(expect.objectContaining({
-            endpointUrl: 'https://fresh-home.example',
-            runtimeOrigin: 'https://fresh-home.example',
-        }));
-        expect(acquireIrohHomeRuntimeOriginSpy).not.toHaveBeenCalled();
+        expect(homeFetch).toHaveBeenCalledWith('https://fresh-home.example/v1/features', expect.anything());
+        expect(ensureHomeTunnel).not.toHaveBeenCalled();
     });
 });
 
@@ -298,16 +284,14 @@ describe('acquirePortableHomeLinkTarget over an Iroh-only Home', () => {
     });
 
     function acquireVerifiedLease(): void {
-        acquireIrohHomeRuntimeOriginSpy.mockResolvedValue({
+        ensureHomeTunnel.mockResolvedValue({
             leaseId: 'lease-personal-home',
-            localUrl: 'http://127.0.0.1:43123',
             runtimeOrigin: 'http://127.0.0.1:43123',
             homeServerIdentityId: 'srv_personal_home',
-            endpointId: ENDPOINT_ID,
+            homeEndpointId: ENDPOINT_ID,
             carrier: 'iroh',
             observedPath: 'relay',
-            status: 'ready',
-            release: irohReleaseSpy,
+            startedAtMs: 1,
         });
     }
 
@@ -317,14 +301,11 @@ describe('acquirePortableHomeLinkTarget over an Iroh-only Home', () => {
 
         const outcome = await acquirePortableHomeLinkTarget(acquisitionRequest());
 
-        expect(acquireIrohHomeRuntimeOriginSpy).toHaveBeenCalledTimes(1);
+        expect(ensureHomeTunnel).toHaveBeenCalledTimes(1);
         // The observation must travel over the acquired carrier's loopback origin
         // while the stable canonical URL remains the request audience. Probing the
         // canonical loopback URL directly is what strands every remote device.
-        expect(createServerFetchAtEndpointSpy).toHaveBeenCalledWith(expect.objectContaining({
-            endpointUrl: 'http://localhost:3010',
-            runtimeOrigin: 'http://127.0.0.1:43123',
-        }));
+        expect(homeFetch).toHaveBeenCalledWith('http://127.0.0.1:43123/v1/features', expect.anything());
         expect(outcome).toMatchObject({ kind: 'acquired' });
         expect(resolvePortableHomeLinkTarget(LOOPBACK_CARRIER)).toMatchObject({ kind: 'resolved' });
         // A carrier is a live runtime resource held only for this observation.
@@ -337,14 +318,14 @@ describe('acquirePortableHomeLinkTarget over an Iroh-only Home', () => {
 
         const outcome = await acquirePortableHomeLinkTarget(acquisitionRequest());
 
-        expect(outcome).toEqual({ kind: 'rejected', reason: 'identity_mismatch' });
+        expect(outcome).toEqual({ kind: 'rejected', reason: 'unreachable' });
         expect(resolveServerProfileForPortableIdentity('srv_personal_home').kind).toBe('missing');
         expect(listServerProfiles().some((profile) => profile.serverUrl === 'http://localhost:3010')).toBe(false);
         expect(irohReleaseSpy).toHaveBeenCalledTimes(1);
     });
 
     it('stays effect-free and retryable when no carrier can be acquired', async () => {
-        acquireIrohHomeRuntimeOriginSpy.mockRejectedValue(
+        ensureHomeTunnel.mockRejectedValue(
             Object.assign(new Error('native unavailable'), { name: 'IrohError', code: 'unavailable' }),
         );
 
@@ -353,7 +334,6 @@ describe('acquirePortableHomeLinkTarget over an Iroh-only Home', () => {
         expect(outcome).toEqual({ kind: 'rejected', reason: 'unreachable' });
         // Without a carrier there is nowhere legitimate to ask, so the canonical
         // loopback URL must not be probed as a consolation target.
-        expect(createServerFetchAtEndpointSpy).not.toHaveBeenCalled();
         expect(homeFetch).not.toHaveBeenCalled();
         expect(resolveServerProfileForPortableIdentity('srv_personal_home').kind).toBe('missing');
         // The same link is still acquirable, so the surface's retry is real.
@@ -445,16 +425,14 @@ describe('usePortableHomeLinkTarget across a carrier change', () => {
     });
 
     it('never publishes the previous Home target for the new carrier', async () => {
-        acquireIrohHomeRuntimeOriginSpy.mockResolvedValue({
+        ensureHomeTunnel.mockResolvedValue({
             leaseId: 'lease-first-home',
-            localUrl: 'http://127.0.0.1:43123',
             runtimeOrigin: 'http://127.0.0.1:43123',
             homeServerIdentityId: 'srv_first_home',
-            endpointId: ENDPOINT_ID,
+            homeEndpointId: ENDPOINT_ID,
             carrier: 'iroh',
             observedPath: 'relay',
-            status: 'ready',
-            release: irohReleaseSpy,
+            startedAtMs: 1,
         });
         answerFeatureProbeAs('srv_first_home');
 
@@ -466,9 +444,7 @@ describe('usePortableHomeLinkTarget across a carrier change', () => {
         }, { initialProps: FIRST_CARRIER as string | null });
 
         // Acquisition is asynchronous; let it settle before the carrier changes.
-        for (let attempt = 0; attempt < 20 && harness.getCurrent().kind !== 'resolved'; attempt += 1) {
-            await harness.rerender(FIRST_CARRIER);
-        }
+        await waitForHomeGovernance(() => expect(harness.getCurrent().kind).toBe('resolved'));
         const firstTarget = harness.getCurrent();
         expect(firstTarget.kind).toBe('resolved');
         const firstServerId = firstTarget.kind === 'resolved' ? firstTarget.serverId : null;

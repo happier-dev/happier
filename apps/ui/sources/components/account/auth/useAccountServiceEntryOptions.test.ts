@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
@@ -8,13 +8,9 @@ import { resolveAccountServiceEntryProbeTarget } from './useAccountServiceEntryO
 
 const endpointRequestMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/sync/http/client', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/http/client')>();
-    return {
-        ...actual,
-        createServerFetchAtEndpoint: () => endpointRequestMock,
-    };
-});
+import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
 const deviceSelection = {
     url: 'https://api.happier.dev',
@@ -25,7 +21,13 @@ describe('resolveAccountServiceEntryProbeTarget', () => {
     beforeEach(() => {
         resetServerFeaturesClientForTests();
         endpointRequestMock.mockReset();
+        setRuntimeFetch((input, init) => {
+            const url = new URL(String(input));
+            return endpointRequestMock(`${url.pathname}${url.search}`, init);
+        });
     });
+
+    afterEach(() => resetRuntimeFetch());
 
     it('offers no discovery target before an unconfigured source build selects a service', () => {
         expect(resolveAccountServiceEntryProbeTarget({
@@ -81,7 +83,7 @@ describe('resolveAccountServiceEntryProbeTarget', () => {
 
     it('settles a default no-target discovery across an unrelated caller render', async () => {
         const features = buildServerFeaturesResponse();
-        const featuresResponse = {
+        const featuresResponse = FeaturesResponseSchema.parse({
             ...features,
             capabilities: {
                 ...features.capabilities,
@@ -105,8 +107,8 @@ describe('resolveAccountServiceEntryProbeTarget', () => {
                     keyChallenge: { v2: true },
                 },
             },
-        };
-        const authEntryResponse = {
+        });
+        const authEntryResponse = AuthEntryProjectionV1Schema.parse({
             v: 1,
             state: 'ready',
             scope: { kind: 'home' },
@@ -119,7 +121,7 @@ describe('resolveAccountServiceEntryProbeTarget', () => {
                 presentation: { displayName: 'Device key' },
             }],
             autoRedirect: null,
-        };
+        });
         endpointRequestMock.mockImplementation(async (path: string) => new Response(JSON.stringify(
             path === '/v1/features' ? featuresResponse : authEntryResponse,
         ), {

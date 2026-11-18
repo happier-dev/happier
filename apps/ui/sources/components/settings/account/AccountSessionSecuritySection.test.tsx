@@ -10,12 +10,15 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { AccountSessionsSignOutEverywhereServerOutputV1Schema, ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountSessions';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
 const boundary = vi.hoisted(() => ({
     confirm: vi.fn(async () => false),
     alertAsync: vi.fn(async () => undefined),
-    logout: vi.fn(async () => ({ kind: 'completed' as const })),
 }));
 installDisconnectedServerSocketBoundary();
 installSettingsViewCommonModuleMocks({
@@ -25,21 +28,26 @@ installSettingsViewCommonModuleMocks({
         return createModalModuleMock({ spies: { confirm: boundary.confirm, alertAsync: boundary.alertAsync } }).module;
     },
 });
-// The authenticated device session is supplied by the platform auth boundary.
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: { token: 'test-token' }, logout: boundary.logout }),
-}));
-
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+const { AuthProvider } = await import('@/auth/context/AuthContext');
 
 describe('Account session Security confirmation', () => {
     let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
+    let restoreExecutor: (() => void) | undefined;
+    let homeId: string;
     beforeEach(async () => {
         await loadSyncSingletonForTests();
         boundary.confirm.mockReset().mockResolvedValue(false);
         boundary.alertAsync.mockClear();
-        boundary.logout.mockClear();
+        installHomeGovernanceBoundaries(homes);
+        restoreExecutor = await installRealActionExecutorModuleLoader();
+        homeId = await homes.addHome({ name: 'Sign-out Home', serverUrl: 'https://sign-out-home.example.test', accountId: 'account-a' });
+        homes.answer(homeId, ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1, {
+            body: AccountSessionsSignOutEverywhereServerOutputV1Schema.parse({ status: 'signed_out' }),
+        });
         // A real applied Home and Account: the confirmation binds to them.
-        account = await restoreServerAccountForTest({ serverUrl: 'https://sign-out-home.example.test', accountId: 'account-a' });
+        account = await restoreServerAccountForTest({ serverUrl: 'https://sign-out-home.example.test', accountId: 'account-a', request: homes.request });
         storage.getState().activateProfileScope({ serverId: getActiveServerSnapshot().serverId, accountId: 'account-a' });
     });
     afterEach(async () => {
@@ -47,14 +55,17 @@ describe('Account session Security confirmation', () => {
         retireActiveServerAccountScopeLifetime();
         storage.getState().clearProfileScope();
         standardCleanup();
+        restoreExecutor?.();
+        await homes.reset();
     });
 
     it('keeps this device signed in when the person cancels global sign-out', async () => {
         const { AccountSessionSecuritySection } = await import('./AccountSessionSecuritySection');
-        const screen = await renderScreen(<AccountSessionSecuritySection />);
+        const screen = await renderScreen(<AuthProvider initialCredentials={account.credentials}><AccountSessionSecuritySection /></AuthProvider>);
         await screen.pressByTestIdAsync('settings-account-sign-out-everywhere');
         expect(boundary.confirm).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.objectContaining({ destructive: true }));
-        expect(boundary.logout).not.toHaveBeenCalled();
+        expect(homes.requestsFor(ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1)).toHaveLength(0);
+        await expect(TokenStorage.getCredentialsForServerUrl(account.home.serverUrl, { serverId: account.serverId })).resolves.toEqual(account.credentials);
     });
 
     it('does not apply an old Account confirmation to the newly active Account', async () => {
@@ -63,9 +74,10 @@ describe('Account session Security confirmation', () => {
             return true;
         });
         const { AccountSessionSecuritySection } = await import('./AccountSessionSecuritySection');
-        const screen = await renderScreen(<AccountSessionSecuritySection />);
+        const screen = await renderScreen(<AuthProvider initialCredentials={account.credentials}><AccountSessionSecuritySection /></AuthProvider>);
         await screen.pressByTestIdAsync('settings-account-sign-out-everywhere');
-        expect(boundary.logout).not.toHaveBeenCalled();
+        expect(homes.requestsFor(ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1)).toHaveLength(0);
+        await expect(TokenStorage.getCredentialsForServerUrl(account.home.serverUrl, { serverId: account.serverId })).resolves.toEqual(account.credentials);
         // The settings view mocks render translation keys.
         expect(boundary.alertAsync).toHaveBeenCalledWith(expect.any(String), 'settingsApiTokens.errors.accountChanged');
     });
@@ -73,8 +85,9 @@ describe('Account session Security confirmation', () => {
     it('signs out the Account it was confirmed for when nothing changed', async () => {
         boundary.confirm.mockResolvedValueOnce(true);
         const { AccountSessionSecuritySection } = await import('./AccountSessionSecuritySection');
-        const screen = await renderScreen(<AccountSessionSecuritySection />);
+        const screen = await renderScreen(<AuthProvider initialCredentials={account.credentials}><AccountSessionSecuritySection /></AuthProvider>);
         await screen.pressByTestIdAsync('settings-account-sign-out-everywhere');
-        expect(boundary.logout).toHaveBeenCalledTimes(1);
+        await vi.waitFor(async () => expect(await TokenStorage.getCredentialsForServerUrl(account.home.serverUrl, { serverId: account.serverId })).toBeNull());
+        expect(homes.requestsFor(ACCOUNT_SESSIONS_SIGN_OUT_EVERYWHERE_HTTP_PATH_V1)).toHaveLength(1);
     });
 });

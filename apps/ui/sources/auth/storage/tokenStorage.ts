@@ -134,7 +134,7 @@ export type HomeCredentialMutationNotice = Pick<HomeCredentialMutationEvent, 'ki
 export type HomeCredentialContext = Readonly<{ serverId: string; accountId: string | null }>;
 
 /** Routing facts only. Bearers and encryption material remain with this credential owner. */
-function homeAccountCredentialScope(serverId: string | null, token: string | undefined): ServerAccountScope | null {
+export function homeAccountCredentialScope(serverId: string | null, token: string | undefined): ServerAccountScope | null {
     if (!serverId || !token) return null;
     try { return { serverId, accountId: parseToken(token) }; }
     catch { return null; } // Malformed stored credentials cannot identify an eligible Account context.

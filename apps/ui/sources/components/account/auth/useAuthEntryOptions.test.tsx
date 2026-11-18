@@ -1,170 +1,82 @@
 import React from 'react';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
+import { homeConnectionDescriptorFixture } from '@/dev/testkit/fixtures/homeConnectionFixtures';
+import { ServerRetentionPolicyV2Schema } from '@happier-dev/protocol/retention/serverRetentionPolicyV2';
+import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { getActiveServerSnapshot, setActiveServer, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
+import { adoptPersonalHomeProfileAndComplete, captureActiveServerRuntimeTarget,
+    publishActiveServerRuntimeOrigin, resetServerProfilesRuntimeForTests, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { expireServerFeaturesSnapshotForReconnect, primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
+import { resetServerRetentionPolicyClientForTests } from '@/sync/api/capabilities/serverRetentionPolicyClient';
+import { useAuthEntryOptions } from './useAuthEntryOptions';
+import { seedPersistedHomeProfilesForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 
-import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
-
-const getServerFeaturesSnapshotMock = vi.hoisted(() => vi.fn());
-const getCachedServerFeaturesSnapshotMock = vi.hoisted(() => vi.fn());
-const subscribeServerFeaturesSnapshotMock = vi.hoisted(() => vi.fn());
-const getActiveServerSnapshotMock = vi.hoisted(() => vi.fn());
-const getActiveServerHomeCarrierMock = vi.hoisted(() => vi.fn());
-const subscribeActiveServerMock = vi.hoisted(() => vi.fn());
-const getAuthProviderMock = vi.hoisted(() => vi.fn());
-const getServerRetentionPolicyMock = vi.hoisted(() => vi.fn());
-const fetchHomeAuthEntryMock = vi.hoisted(() => vi.fn());
-const getServerProfileByIdMock = vi.hoisted(() => vi.fn());
-
-// Some shared store modules read the active runtime while the test graph is
-// being collected, before `beforeEach` installs the per-case snapshot.
-getActiveServerSnapshotMock.mockReturnValue({
-    serverId: 'server-example',
-    serverUrl: 'http://api.example.test',
-    generation: 1,
-});
-
-vi.mock('@/auth/entry/authEntryClient', () => ({
-    fetchHomeAuthEntry: fetchHomeAuthEntryMock,
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+    Platform: { OS: 'ios', select: (values: Record<string, unknown>) => values.ios ?? values.default },
 }));
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
-vi.mock('@/sync/api/capabilities/serverFeaturesClient', () => ({
-    getCachedServerFeaturesSnapshot: getCachedServerFeaturesSnapshotMock,
-    getServerFeaturesSnapshot: getServerFeaturesSnapshotMock,
-    subscribeServerFeaturesSnapshot: subscribeServerFeaturesSnapshotMock,
-}));
+function signedOut({ children }: React.PropsWithChildren) {
+    return <InjectedAuthProvider credentials={null}>{children}</InjectedAuthProvider>;
+}
+const endpoint = 'https://api.example.test';
+const network = vi.fn<(input: string | URL | Request, init?: RequestInit) => Promise<Response>>();
+let features: () => Response | Promise<Response>;
+let entry: () => Response | Promise<Response>;
+let retention: () => Response | Promise<Response>;
+function keyFeatures(provision = true, login = true) {
+    return createRootLayoutFeaturesResponse({ capabilities: { auth: { methods: [{ id: 'key_challenge', actions: [
+        { id: 'login', enabled: login, mode: 'keyed' }, { id: 'provision', enabled: provision, mode: 'keyed' },
+    ] }] } } });
+}
+function calls(path: string) { return network.mock.calls.filter(([url]) => new URL(String(url)).pathname === path); }
+async function settle() { await flushHookEffects({ cycles: 4, turns: 4 }); }
+function mount() { return renderHook(() => useAuthEntryOptions(), { wrapper: signedOut }); }
+function cache(value = keyFeatures(true, false)) {
+    primeServerFeaturesSnapshot({ serverId: getActiveServerSnapshot().serverId, snapshot: { status: 'ready', features: value } });
+}
 
-vi.mock('@/sync/domains/server/serverRuntime', () => ({
-    getActiveServerSnapshot: () => getActiveServerSnapshotMock() ?? {
-        serverId: 'server-example',
-        serverUrl: 'http://api.example.test',
-        generation: 1,
-    },
-    getActiveServerHomeCarrier: getActiveServerHomeCarrierMock,
-    subscribeActiveServer: subscribeActiveServerMock,
-}));
-
-vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/domains/server/serverProfiles')>(),
-    getServerProfileById: getServerProfileByIdMock,
-}));
-
-vi.mock('@/auth/providers/registry', () => ({
-    getAuthProvider: getAuthProviderMock,
-}));
-
-vi.mock('@/sync/api/capabilities/serverRetentionPolicyClient', () => ({
-    getServerRetentionPolicy: getServerRetentionPolicyMock,
-}));
-
-const textMock = vi.hoisted(() => {
-    const translate = (key: string, params?: Record<string, unknown>) => {
-        if (key === 'welcome.signUpWithProvider' && typeof params?.provider === 'string') {
-            return `Sign up with ${params.provider}`;
+beforeEach(async () => {
+    resetServerProfilesRuntimeForTests();
+    resetServerFeaturesClientForTests();
+    resetServerRetentionPolicyClientForTests();
+    await upsertAndActivateServer({ serverUrl: endpoint, name: 'Example Home' });
+    features = () => Response.json(keyFeatures());
+    entry = () => new Response('', { status: 404 });
+    retention = () => new Response('', { status: 503 });
+    network.mockReset();
+    network.mockImplementation(async (input) => {
+        switch (new URL(String(input)).pathname) {
+            case '/v1/features': return await features();
+            case '/v1/auth/entry': return await entry();
+            case '/v2/retention-policy': return await retention();
+            default: return new Response('', { status: 404 });
         }
-        if (key === 'welcome.signInWithCertificate') return 'Sign in with certificate';
-        if (key === 'welcome.createAccount') return 'Create account';
-        if (key === 'status.unknown') return 'Unknown';
-        return key;
-    };
-    return {
-        t: translate,
-        tLoose: translate,
-        getPreferredLanguage: () => 'en',
-        hasTranslation: () => false,
-    };
+    });
+    setRuntimeFetch(network);
 });
-
-vi.mock('@/text', () => textMock);
+afterEach(() => {
+    standardCleanup();
+    vi.useRealTimers();
+    resetRuntimeFetch();
+    resetServerProfilesRuntimeForTests();
+});
 
 describe('useAuthEntryOptions', () => {
-    type TestActiveServerSnapshot = Readonly<{
-        serverId: string;
-        serverUrl: string;
-        generation: number;
-        isSelectionExplicit?: boolean;
-    }>;
-    let activeServerListener: ((snapshot: TestActiveServerSnapshot) => void) | null = null;
-    let serverFeaturesSnapshotListener: (() => void) | null = null;
-    let currentActiveServerSnapshot: TestActiveServerSnapshot;
-
-    beforeEach(() => {
-        getServerFeaturesSnapshotMock.mockReset();
-        getCachedServerFeaturesSnapshotMock.mockReset();
-        subscribeServerFeaturesSnapshotMock.mockReset();
-        getActiveServerSnapshotMock.mockReset();
-        getActiveServerHomeCarrierMock.mockReset();
-        getActiveServerHomeCarrierMock.mockReturnValue(null);
-        subscribeActiveServerMock.mockReset();
-        getAuthProviderMock.mockReset();
-        getServerRetentionPolicyMock.mockReset();
-        getServerRetentionPolicyMock.mockResolvedValue({ status: 'failed' });
-        fetchHomeAuthEntryMock.mockReset();
-        getServerProfileByIdMock.mockReset();
-        getServerProfileByIdMock.mockReturnValue(null);
-        fetchHomeAuthEntryMock.mockResolvedValue({ kind: 'unsupported' });
-        currentActiveServerSnapshot = {
-            serverId: 'server-example',
-            serverUrl: 'http://api.example.test',
-            generation: 1,
-        };
-        getActiveServerSnapshotMock.mockImplementation(() => currentActiveServerSnapshot);
-        activeServerListener = null;
-        serverFeaturesSnapshotListener = null;
-        getCachedServerFeaturesSnapshotMock.mockReturnValue(null);
-        subscribeServerFeaturesSnapshotMock.mockImplementation((listener: () => void) => {
-            serverFeaturesSnapshotListener = listener;
-            return () => {
-                if (serverFeaturesSnapshotListener === listener) {
-                    serverFeaturesSnapshotListener = null;
-                }
-            };
-        });
-        subscribeActiveServerMock.mockImplementation((listener: (snapshot: TestActiveServerSnapshot) => void) => {
-            activeServerListener = listener;
-            return () => {
-                if (activeServerListener === listener) {
-                    activeServerListener = null;
-                }
-            };
-        });
-        getAuthProviderMock.mockImplementation((id: string) => (
-            id === 'github' ? { id, displayName: 'GitHub' } : null
-        ));
-    });
-
     it('uses current auth-entry presentation for a dynamic provider absent from static features', async () => {
-        getServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'ready',
-            features: {
-                capabilities: {
-                    serverIdentity: { serverIdentityId: 'srv_current' },
-                    auth: { methods: [], keyChallenge: { v2: true } },
-                    oauth: { providers: {} },
-                },
-            },
-        });
-        fetchHomeAuthEntryMock.mockResolvedValue({
-            kind: 'ready',
-            projection: {
-                v: 1,
-                state: 'ready',
-                scope: { kind: 'home' },
-                actions: [{
-                    kind: 'authenticate',
-                    methodId: 'acme',
-                    action: 'login',
-                    mode: 'keyless',
-                    origin: 'home',
-                    presentation: { displayName: 'Acme Workforce' },
-                }],
-                autoRedirect: null,
-            },
-        });
-
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
+        features = () => Response.json(createRootLayoutFeaturesResponse({ capabilities: {
+            serverIdentity: { serverIdentityId: 'srv_current' }, auth: { methods: [], keyChallenge: { v2: true } }, oauth: { providers: {} },
+        } }));
+        entry = () => Response.json(AuthEntryProjectionV1Schema.parse({ v: 1, state: 'ready', scope: { kind: 'home' },
+            actions: [{ kind: 'authenticate', methodId: 'acme', action: 'login', mode: 'keyless', origin: 'home',
+                presentation: { displayName: 'Acme Workforce' } }], autoRedirect: null }));
+        const hook = await mount();
+        await settle();
         expect(hook.getCurrent().serverAvailability).toBe('ready');
         expect(hook.getCurrent().authenticationActions).toEqual([expect.objectContaining({
             execution: { kind: 'oauth', providerId: 'acme', mode: 'keyless' },
@@ -174,142 +86,57 @@ describe('useAuthEntryOptions', () => {
     });
 
     it('renders the active Home cached feature catalog on first paint while live probes are pending', async () => {
-        const pendingFeatures = createDeferred<never>();
-        const pendingAuthEntry = createDeferred<never>();
-        getCachedServerFeaturesSnapshotMock.mockReturnValue({
-            status: 'ready',
-            features: {
-                capabilities: {
-                    auth: {
-                        methods: [{
-                            id: 'key_challenge',
-                            actions: [{ id: 'provision', enabled: true, mode: 'keyed' }],
-                        }],
-                    },
-                },
-            },
-        });
-        getServerFeaturesSnapshotMock.mockReturnValue(pendingFeatures.promise);
-        fetchHomeAuthEntryMock.mockReturnValue(pendingAuthEntry.promise);
-
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-
-        expect(getCachedServerFeaturesSnapshotMock).toHaveBeenCalledWith({ serverId: 'server-example' });
-        expect(hook.getCurrent()).toMatchObject({
-            serverAvailability: 'ready',
-            showAuthActions: true,
-            authenticationActions: [expect.objectContaining({ execution: { kind: 'generated_key' } })],
-        });
+        const pendingFeatures = createDeferred<Response>();
+        const pendingEntry = createDeferred<Response>();
+        cache();
+        // Expiry retains the last-known catalog while the real cache starts a live read.
+        expireServerFeaturesSnapshotForReconnect({ serverId: getActiveServerSnapshot().serverId });
+        features = () => pendingFeatures.promise;
+        entry = () => pendingEntry.promise;
+        const hook = await mount();
+        expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'ready', showAuthActions: true,
+            authenticationActions: [expect.objectContaining({ execution: { kind: 'generated_key' } })] });
+        await hook.unmount();
+        pendingFeatures.resolve(new Response('', { status: 503 }));
+        pendingEntry.resolve(new Response('', { status: 404 }));
     });
 
     it('falls back to the active Home cached catalog when live feature refresh fails', async () => {
-        getCachedServerFeaturesSnapshotMock.mockReturnValue({
-            status: 'ready',
-            features: {
-                capabilities: {
-                    auth: {
-                        methods: [{
-                            id: 'key_challenge',
-                            actions: [{ id: 'provision', enabled: true, mode: 'keyed' }],
-                        }],
-                    },
-                },
-            },
-        });
-        getServerFeaturesSnapshotMock.mockResolvedValue({ status: 'error', reason: 'network' });
-
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        expect(hook.getCurrent()).toMatchObject({
-            serverAvailability: 'ready',
-            showAuthActions: true,
-            authenticationActions: [expect.objectContaining({ execution: { kind: 'generated_key' } })],
-            authEntryUnavailable: true,
-        });
+        cache();
+        expireServerFeaturesSnapshotForReconnect({ serverId: getActiveServerSnapshot().serverId });
+        features = () => new Response('', { status: 503 });
+        entry = () => new Response('', { status: 503 });
+        const hook = await mount();
+        await settle();
+        expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'ready', showAuthActions: true,
+            authenticationActions: [expect.objectContaining({ execution: { kind: 'generated_key' } })], authEntryUnavailable: true });
     });
 
     it('keeps valid Home actions visible while a forced live probe is pending', async () => {
-        const readyFeatures = {
-            status: 'ready' as const,
-            features: {
-                capabilities: {
-                    auth: {
-                        methods: [{
-                            id: 'key_challenge',
-                            actions: [{ id: 'provision', enabled: true, mode: 'keyed' as const }],
-                        }],
-                    },
-                },
-            },
-        };
-        getServerFeaturesSnapshotMock.mockResolvedValueOnce(readyFeatures);
-
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'ready', showAuthActions: true });
-
-        const pendingFeatures = createDeferred<never>();
-        const pendingAuthEntry = createDeferred<never>();
-        getServerFeaturesSnapshotMock.mockReturnValueOnce(pendingFeatures.promise);
-        fetchHomeAuthEntryMock.mockReturnValueOnce(pendingAuthEntry.promise);
-
-        await act(async () => {
-            hook.getCurrent().retryServerCheck();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        expect(hook.getCurrent()).toMatchObject({
-            serverAvailability: 'ready',
-            showAuthActions: true,
-            authenticationActions: [expect.objectContaining({ execution: { kind: 'generated_key' } })],
-        });
+        features = () => Response.json(keyFeatures(true, false));
+        const hook = await mount();
+        await settle();
+        expect(hook.getCurrent().serverAvailability).toBe('ready');
+        const pending = createDeferred<Response>();
+        features = () => pending.promise;
+        await act(async () => hook.getCurrent().retryServerCheck());
+        await settle();
+        expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'ready', showAuthActions: true,
+            authenticationActions: [expect.objectContaining({ execution: { kind: 'generated_key' } })] });
+        await hook.unmount();
+        pending.resolve(new Response('', { status: 503 }));
     });
 
     it('derives ready-state auth options from server features', async () => {
-        getServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'ready',
-            features: {
-                capabilities: {
-                    oauth: { providers: { github: { configured: true } } },
-                    auth: {
-                        methods: [
-                            {
-                                id: 'key_challenge',
-                                actions: [
-                                    { id: 'login', enabled: true, mode: 'keyed' },
-                                    { id: 'provision', enabled: true, mode: 'keyed' },
-                                ],
-                            },
-                            {
-                                id: 'mtls',
-                                actions: [{ id: 'login', enabled: true, mode: 'keyless' }],
-                            },
-                            {
-                                id: 'github',
-                                actions: [{ id: 'provision', enabled: true, mode: 'keyed' }],
-                            },
-                        ],
-                        signup: { methods: [{ id: 'anonymous', enabled: true }, { id: 'github', enabled: true }] },
-                        login: { methods: [{ id: 'key_challenge', enabled: true }, { id: 'mtls', enabled: true }], requiredProviders: [] },
-                        ui: { autoRedirect: { enabled: false, providerId: null } },
-                    },
-                },
-            },
-        });
-
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        const options = hook.getCurrent();
-        expect(options.serverAvailability).toBe('ready');
-        expect(options.serverUrlForCopy).toBe('http://api.example.test');
-        expect(options.showAuthActions).toBe(true);
-        expect(options.authenticationActions).toEqual(expect.arrayContaining([
+        features = () => Response.json(createRootLayoutFeaturesResponse({ capabilities: { auth: { methods: [
+            { id: 'key_challenge', actions: [{ id: 'provision', enabled: true, mode: 'keyed' }] },
+            { id: 'github', actions: [{ id: 'provision', enabled: true, mode: 'keyed' }] },
+            { id: 'mtls', actions: [{ id: 'login', enabled: true, mode: 'keyless' }] },
+        ] }, oauth: { providers: { github: { enabled: true, configured: true } } } } }));
+        const hook = await mount();
+        await settle();
+        expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'ready', serverUrlForCopy: endpoint, showAuthActions: true });
+        expect(hook.getCurrent().authenticationActions).toEqual(expect.arrayContaining([
             expect.objectContaining({ execution: { kind: 'generated_key' } }),
             expect.objectContaining({ execution: { kind: 'oauth', providerId: 'github', mode: 'keyed' } }),
             expect.objectContaining({ execution: { kind: 'mtls' } }),
@@ -317,395 +144,163 @@ describe('useAuthEntryOptions', () => {
     });
 
     it('says it could not check the Home\'s data retention, with a retry, instead of saying nothing', async () => {
-        getServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'ready',
-            features: { capabilities: { auth: { methods: [], signup: { methods: [] }, login: { methods: [], requiredProviders: [] }, ui: { autoRedirect: { enabled: false, providerId: null } } } } },
-        });
-        getServerRetentionPolicyMock.mockResolvedValue({ status: 'failed' });
-
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        // Sign-in never waits on retention: the Home stays usable while the disclosure is unreadable.
+        const hook = await mount();
+        await settle();
         expect(hook.getCurrent().serverAvailability).toBe('ready');
         const unreadable = hook.getCurrent().retentionDisclosure;
         expect(unreadable).toMatchObject({ kind: 'unreadable' });
-
-        getServerRetentionPolicyMock.mockResolvedValue({
-            status: 'ready',
-            policy: { enabled: true, completeness: 'complete', domains: [{ id: 'sessionSidechainMessages', policy: { mode: 'delete_older_than', days: 7 } }] },
-        });
-        const { act } = await import('react-test-renderer');
-        await act(async () => { (unreadable as { retry: () => void }).retry(); });
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        expect(getServerRetentionPolicyMock).toHaveBeenLastCalledWith(expect.objectContaining({ force: true }));
+        retention = () => Response.json(ServerRetentionPolicyV2Schema.parse({ version: 2, enabled: true, complete: true,
+            domains: [{ id: 'sessionSidechainMessages', policy: { mode: 'delete_older_than', days: 7 } }] }));
+        if (unreadable?.kind !== 'unreadable') throw new Error('Expected actionable unreadable disclosure');
+        await act(async () => unreadable.retry());
+        await settle();
+        expect(calls('/v2/retention-policy')).toHaveLength(2);
         expect(hook.getCurrent().retentionDisclosure).toMatchObject({ kind: 'summary', summary: expect.any(String) });
     });
 
     it('projects the active Home carrier as the exact authentication transport', async () => {
-        const homeCarrier = {
-            endpointId: 'home-carrier-a',
-            readObservedPath: vi.fn(),
-            request: vi.fn(),
-            createWebSocket: vi.fn(),
-        };
-        getActiveServerHomeCarrierMock.mockReturnValue(homeCarrier);
-        getServerFeaturesSnapshotMock.mockResolvedValue({ status: 'unsupported', reason: 'legacy' });
-
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
+        // The byte carrier is a genuine transport boundary, published through the real runtime owner.
+        const homeCarrier = { endpointId: 'a'.repeat(64), readObservedPath: () => 'relay' as const,
+            request: async (url: string, init: RequestInit) => network(url, init), createWebSocket: vi.fn() };
+        expect(publishActiveServerRuntimeOrigin({ target: captureActiveServerRuntimeTarget(), leaseId: 'carrier-a',
+            homeCarrier, carrier: 'iroh' })).toBe(true);
+        const hook = await mount();
+        await settle();
         expect(hook.getCurrent().homeTransport).toEqual({ homeCarrier });
     });
 
     it('distinguishes a seeded fallback Home from an explicitly requested Home', async () => {
-        getServerFeaturesSnapshotMock.mockResolvedValue({ status: 'unsupported', reason: 'legacy' });
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        expect(hook.getCurrent().homeTarget).toEqual({ kind: 'saved_profile', profileRef: 'server-example' });
+        resetServerProfilesRuntimeForTests();
+        const profile = await upsertServerProfile({ serverUrl: 'https://seeded.example.test', name: 'Seeded Home' });
+        await seedPersistedHomeProfilesForTests({ profiles: [profile], activeServerId: profile.id, activeServerIdIsExplicit: false });
+        const hook = await mount();
+        await settle();
+        expect(hook.getCurrent().homeTarget).toEqual({ kind: 'saved_profile', profileRef: profile.id });
         expect(hook.getCurrent().requestedHomeTarget).toBeUndefined();
-
-        await act(async () => {
-            currentActiveServerSnapshot = { ...currentActiveServerSnapshot, isSelectionExplicit: true, generation: 2 };
-            activeServerListener?.(currentActiveServerSnapshot);
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
-        expect(hook.getCurrent().requestedHomeTarget).toEqual({ kind: 'saved_profile', profileRef: 'server-example' });
+        await act(async () => setActiveServer({ serverId: profile.id, scope: 'device' }));
+        await settle();
+        expect(hook.getCurrent().requestedHomeTarget).toEqual({ kind: 'saved_profile', profileRef: profile.id });
     });
 
     it('clears target A policy and identity as soon as target B observation starts', async () => {
-        let resolveTargetB: ((value: unknown) => void) | null = null;
-        getServerFeaturesSnapshotMock
-            .mockResolvedValueOnce({
-                status: 'ready',
-                features: {
-                    signInService: { v: 1, mode: 'external', endpoint: 'https://accounts-a.example.test' },
-                    capabilities: {
-                        serverIdentity: { serverIdentityId: 'srv_a' },
-                        auth: { methods: [] },
-                    },
-                },
-            })
-            .mockImplementationOnce(() => new Promise((resolve) => { resolveTargetB = resolve; }));
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        features = () => Response.json(createRootLayoutFeaturesResponse({ signInService: { v: 1, mode: 'external', endpoint: 'https://accounts-a.example.test' },
+            capabilities: { serverIdentity: { serverIdentityId: 'srv_a' }, auth: { methods: [] } } }));
+        const hook = await mount();
+        await settle();
         expect(hook.getCurrent().observedHomeServerIdentityId).toBe('srv_a');
         expect(hook.getCurrent().signInServicePolicy).toBeTruthy();
-
-        await act(async () => {
-            currentActiveServerSnapshot = { serverId: 'server-b', serverUrl: 'https://home-b.example.test', generation: 2 };
-            activeServerListener?.(currentActiveServerSnapshot);
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
+        const pending = createDeferred<Response>();
+        features = () => pending.promise;
+        await act(async () => { await upsertAndActivateServer({ serverUrl: 'https://home-b.example.test', name: 'Home B' }); });
+        await settle();
         expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'loading', showAuthActions: false });
         expect(hook.getCurrent().observedHomeServerIdentityId).toBeUndefined();
         expect(hook.getCurrent().signInServicePolicy).toBeUndefined();
-
-        await act(async () => resolveTargetB?.({ status: 'unsupported', reason: 'invalid_payload' }));
+        await hook.unmount();
+        pending.resolve(Response.json({ invalid: true }));
     });
 
     it('removes stale provisioning while retaining login after a forced policy refresh', async () => {
-        getServerFeaturesSnapshotMock
-            .mockResolvedValueOnce({
-                status: 'ready',
-                features: {
-                    capabilities: {
-                        auth: {
-                            methods: [
-                                {
-                                    id: 'key_challenge',
-                                    actions: [
-                                        { id: 'login', enabled: true, mode: 'keyed' },
-                                        { id: 'provision', enabled: true, mode: 'keyed' },
-                                    ],
-                                },
-                            ],
-                        },
-                    },
-                },
-            })
-            .mockResolvedValueOnce({
-                status: 'ready',
-                features: {
-                    capabilities: {
-                        auth: {
-                            methods: [
-                                {
-                                    id: 'key_challenge',
-                                    actions: [
-                                        { id: 'login', enabled: true, mode: 'keyed' },
-                                        { id: 'provision', enabled: false, mode: 'keyed' },
-                                    ],
-                                },
-                            ],
-                        },
-                    },
-                },
-            });
-
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
+        const hook = await mount();
+        await settle();
         expect(hook.getCurrent().authenticationActions).toEqual(expect.arrayContaining([
-            expect.objectContaining({ execution: { kind: 'generated_key' } }),
-            expect.objectContaining({ execution: { kind: 'key_entry' } }),
+            expect.objectContaining({ execution: { kind: 'generated_key' } }), expect.objectContaining({ execution: { kind: 'key_entry' } }),
         ]));
-
-        await act(async () => {
-            hook.getCurrent().retryServerCheck();
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(2);
-        expect(getServerFeaturesSnapshotMock.mock.calls[1]?.[0]?.force).toBe(true);
+        features = () => Response.json(keyFeatures(false));
+        await act(async () => hook.getCurrent().retryServerCheck());
+        await settle();
+        expect(calls('/v1/features')).toHaveLength(2);
         expect(hook.getCurrent().authenticationActions).toEqual([expect.objectContaining({ execution: { kind: 'key_entry' } })]);
     });
 
     it('marks invalid server payloads as incompatible and hides auth actions', async () => {
-        getServerFeaturesSnapshotMock.mockResolvedValue({ status: 'unsupported', reason: 'invalid_payload' });
-
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        const options = hook.getCurrent();
-        expect(options.serverAvailability).toBe('incompatible');
-        expect(options.showAuthActions).toBe(false);
-        expect(options.retryServerCheck).toEqual(expect.any(Function));
+        features = () => Response.json({ invalid: true });
+        const hook = await mount();
+        await settle();
+        expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'incompatible', showAuthActions: false, retryServerCheck: expect.any(Function) });
     });
 
     it('re-checks auth options when the active server changes', async () => {
-        getServerFeaturesSnapshotMock
-            .mockResolvedValueOnce({
-                status: 'ready',
-                features: {
-                    capabilities: {
-                        auth: {
-                            methods: [
-                                {
-                                    id: 'key_challenge',
-                                    actions: [
-                                        { id: 'login', enabled: true, mode: 'keyed' },
-                                        { id: 'provision', enabled: true, mode: 'keyed' },
-                                    ],
-                                },
-                            ],
-                            signup: { methods: [] },
-                            login: { methods: [], requiredProviders: [] },
-                            ui: { autoRedirect: { enabled: false, providerId: null } },
-                        },
-                    },
-                },
-            })
-            .mockResolvedValueOnce({ status: 'unsupported', reason: 'invalid_payload' });
-
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        expect(hook.getCurrent().serverAvailability).toBe('ready');
-        expect(hook.getCurrent().serverUrlForCopy).toBe('http://api.example.test');
-        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(1);
-
-        await act(async () => {
-            currentActiveServerSnapshot = {
-                serverId: 'server-other',
-                serverUrl: 'http://api.other.test',
-                generation: 2,
-            };
-            activeServerListener?.(currentActiveServerSnapshot);
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        const options = hook.getCurrent();
-        expect(options.serverUrlForCopy).toBe('http://api.other.test');
-        expect(options.serverAvailability).toBe('incompatible');
-        expect(options.showAuthActions).toBe(false);
-        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(2);
+        const hook = await mount();
+        await settle();
+        expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'ready', serverUrlForCopy: endpoint });
+        features = () => Response.json({ invalid: true });
+        await act(async () => { await upsertAndActivateServer({ serverUrl: 'https://other.example.test', name: 'Other Home' }); });
+        await settle();
+        expect(hook.getCurrent()).toMatchObject({ serverUrlForCopy: 'https://other.example.test', serverAvailability: 'incompatible', showAuthActions: false });
+        expect(calls('/v1/features').map(([url]) => new URL(String(url)).origin)).toEqual([endpoint, 'https://other.example.test']);
     });
 
     it('does not schedule an automatic retry and reconciles only when the canonical feature cache reports recovery', async () => {
+        features = () => new Response('', { status: 503 });
         vi.useFakeTimers();
-        try {
-            const readySnapshot = {
-                status: 'ready' as const,
-                features: {
-                    capabilities: {
-                        auth: {
-                            methods: [
-                                {
-                                    id: 'key_challenge',
-                                    actions: [
-                                        { id: 'login', enabled: true, mode: 'keyed' },
-                                        { id: 'provision', enabled: true, mode: 'keyed' },
-                                    ],
-                                },
-                            ],
-                            signup: { methods: [] },
-                            login: { methods: [], requiredProviders: [] },
-                            ui: { autoRedirect: { enabled: false, providerId: null } },
-                        },
-                    },
-                },
-            };
-            getServerFeaturesSnapshotMock.mockResolvedValue({ status: 'error', reason: 'network' });
-
-            const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-            const hook = await renderHook(() => useAuthEntryOptions());
-            await flushHookEffects({ cycles: 2, turns: 2 });
-            await act(async () => {
-                await vi.advanceTimersByTimeAsync(10_000);
-            });
-            await flushHookEffects({ cycles: 2, turns: 2 });
-
-            expect(hook.getCurrent().serverAvailability).toBe('unavailable');
-            expect(hook.getCurrent().showAuthActions).toBe(false);
-            expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(1);
-
-            getCachedServerFeaturesSnapshotMock.mockReturnValue(readySnapshot);
-            getServerFeaturesSnapshotMock.mockResolvedValue(readySnapshot);
-            await act(async () => {
-                serverFeaturesSnapshotListener?.();
-            });
-            await flushHookEffects({ cycles: 2, turns: 2 });
-
-            expect(hook.getCurrent().serverAvailability).toBe('ready');
-            expect(hook.getCurrent().showAuthActions).toBe(true);
-            expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(2);
-            expect(getServerFeaturesSnapshotMock.mock.calls[1]?.[0]?.force).toBe(false);
-        } finally {
-            vi.useRealTimers();
-        }
+        const hook = await mount();
+        await settle();
+        await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+        await settle();
+        expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'unavailable', showAuthActions: false });
+        expect(calls('/v1/features')).toHaveLength(1);
+        features = () => Response.json(keyFeatures());
+        await act(async () => cache());
+        await settle();
+        expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'ready', showAuthActions: true });
+        expect(calls('/v1/features')).toHaveLength(1);
     });
 
     it('issues both probes concurrently and keeps the observed feature catalog when auth-entry is unavailable', async () => {
-        const features = createDeferred<{ status: 'ready'; features: unknown }>();
-        getServerFeaturesSnapshotMock.mockReturnValue(features.promise);
-        fetchHomeAuthEntryMock.mockResolvedValue({ kind: 'unavailable' });
-
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 1, turns: 2 });
-
-        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(1);
-        expect(fetchHomeAuthEntryMock).toHaveBeenCalledTimes(1);
+        const pending = createDeferred<Response>();
+        features = () => pending.promise;
+        entry = () => new Response('', { status: 503 });
+        const hook = await mount();
+        await settle();
+        expect(calls('/v1/features')).toHaveLength(1);
+        expect(calls('/v1/auth/entry')).toHaveLength(1);
         expect(hook.getCurrent().serverAvailability).toBe('loading');
-
-        features.resolve({
-            status: 'ready',
-            features: {
-                capabilities: {
-                    oauth: { providers: { github: { configured: true } } },
-                    auth: {
-                        methods: [{ id: 'github', actions: [{ id: 'provision', enabled: true, mode: 'keyed' }] }],
-                        signup: { methods: [{ id: 'github', enabled: true }] },
-                        login: { methods: [], requiredProviders: [] },
-                        ui: { autoRedirect: { enabled: false, providerId: null } },
-                    },
-                },
-            },
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        const options = hook.getCurrent();
-        expect(options.serverAvailability).toBe('ready');
-        expect(options.authEntryUnavailable).toBe(true);
-        expect(options.showAuthActions).toBe(true);
-        expect(options.authenticationActions).toEqual([expect.objectContaining({ execution: { kind: 'oauth', providerId: 'github', mode: 'keyed' } })]);
+        pending.resolve(Response.json(createRootLayoutFeaturesResponse({ capabilities: { auth: {
+            methods: [{ id: 'github', actions: [{ id: 'provision', enabled: true, mode: 'keyed' }] }],
+        }, oauth: { providers: { github: { enabled: true, configured: true } } } } })));
+        await settle();
+        expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'ready', authEntryUnavailable: true, showAuthActions: true });
+        expect(hook.getCurrent().authenticationActions).toEqual([expect.objectContaining({ execution: { kind: 'oauth', providerId: 'github', mode: 'keyed' } })]);
     });
 
     it('keeps a Home-denied auth entry blocked instead of substituting the feature catalog', async () => {
-        getServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'ready',
-            features: { capabilities: { auth: { methods: [] } } },
-        });
-        fetchHomeAuthEntryMock.mockResolvedValue({ kind: 'ready', projection: { v: 1, scope: { kind: 'home' }, state: 'denied' } });
-
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        expect(hook.getCurrent().serverAvailability).toBe('unavailable');
-        expect(hook.getCurrent().showAuthActions).toBe(false);
+        entry = () => Response.json(AuthEntryProjectionV1Schema.parse({ v: 1, scope: { kind: 'home' }, state: 'denied',
+            reason: 'entry_not_available', autoRedirect: null }));
+        const hook = await mount();
+        await settle();
+        expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'unavailable', showAuthActions: false });
     });
 
     it('consumes a forced retry once when a successful identity-bearing response advances the server generation', async () => {
-        let allowReadyResponse = false;
-        let identityGenerationBumpsRemaining = 3;
-        getServerFeaturesSnapshotMock.mockImplementation(async (params?: { force?: boolean }) => {
-            if (!allowReadyResponse) {
-                return { status: 'error', reason: 'network' };
-            }
-
-            if (params?.force === true && identityGenerationBumpsRemaining > 0) {
-                identityGenerationBumpsRemaining -= 1;
-                currentActiveServerSnapshot = {
-                    ...currentActiveServerSnapshot,
-                    generation: currentActiveServerSnapshot.generation + 1,
-                };
-                activeServerListener?.(currentActiveServerSnapshot);
-            }
-            return {
-                status: 'ready',
-                features: { capabilities: { auth: { methods: [] } } },
-            };
-        });
-
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        await act(async () => {
-            hook.getCurrent().retryServerCheck();
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        features = () => new Response('', { status: 503 });
+        const hook = await mount();
+        await settle();
+        await act(async () => hook.getCurrent().retryServerCheck());
+        await settle();
         expect(hook.getCurrent().serverAvailability).toBe('unavailable');
-
-        allowReadyResponse = true;
-        await act(async () => {
-            hook.getCurrent().retryServerCheck();
-        });
-        await flushHookEffects({ cycles: 8, turns: 4 });
-
-        expect(hook.getCurrent().serverAvailability).toBe('ready');
-        expect(hook.getCurrent().showAuthActions).toBe(true);
-        expect(hook.getCurrent().authenticationActions).toEqual([]);
-        expect(getServerFeaturesSnapshotMock).toHaveBeenCalledTimes(3);
-        expect(getServerFeaturesSnapshotMock.mock.calls.map(([params]) => params?.force)).toEqual([
-            false,
-            true,
-            true,
-        ]);
-        expect(identityGenerationBumpsRemaining).toBe(2);
+        const before = getActiveServerSnapshot().generation;
+        features = () => Response.json(createRootLayoutFeaturesResponse({ capabilities: {
+            serverIdentity: { serverIdentityId: 'srv_observed' }, auth: { methods: [] },
+        } }));
+        const beforeRetry = calls('/v1/features').length;
+        await act(async () => hook.getCurrent().retryServerCheck());
+        await settle();
+        expect(getActiveServerSnapshot().generation).toBeGreaterThan(before);
+        expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'ready', showAuthActions: true, authenticationActions: [] });
+        expect(calls('/v1/features')).toHaveLength(beforeRetry + 1);
     });
 
     it('projects the identity-bound Personal Home receipt into auth presentation context', async () => {
-        getServerProfileByIdMock.mockReturnValue({
-            id: 'server-example',
-            name: 'Personal Home',
-            serverUrl: 'http://api.example.test',
-            serverIdentityId: 'srv_personal_home',
-            personalHomeBootstrapCompleted: true,
-            createdAt: 1,
-            updatedAt: 1,
-            lastUsedAt: 1,
-        });
-        getServerFeaturesSnapshotMock.mockResolvedValue({
-            status: 'ready',
-            features: { capabilities: { auth: { methods: [] } } },
-        });
-
-        const { useAuthEntryOptions } = await import('./useAuthEntryOptions');
-        const hook = await renderHook(() => useAuthEntryOptions());
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
+        features = () => Response.json(createRootLayoutFeaturesResponse({ capabilities: {
+            serverIdentity: { serverIdentityId: 'srv_personal_home' },
+        } }));
+        const profile = await adoptPersonalHomeProfileAndComplete({ source: 'desktop-personal-home', descriptorAuthority: 'current_connection_observation',
+            descriptor: homeConnectionDescriptorFixture({ v: 1, homeServerIdentityId: 'srv_personal_home', canonicalServerUrl: endpoint,
+                revision: 1, endpoints: [{ kind: 'https', url: endpoint }] }) });
+        await setActiveServer({ serverId: profile.id, scope: 'device' });
+        const hook = await mount();
+        await settle();
         expect(hook.getCurrent().isPersonalHome).toBe(true);
     });
 });

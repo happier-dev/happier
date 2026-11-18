@@ -5,13 +5,10 @@ import {
     clearAccountPasswordEnrollmentExternalAuthCustodySpy,
     clearPendingExternalAuthMock,
     flushOAuthEffects,
-    getRandomBytesSpy,
     localSearchParamsMock,
-    loginWithCredentialsSpy,
     maybeCompleteAuthSessionSpy,
     modal,
     readPendingExternalAuthStateMock,
-    readAccountPasswordEnrollmentExternalAuthCallbackContextSpy,
     recordTeamInvitationPostAuthContinuationMock,
     replaceSpy,
     resetOAuthHarness,
@@ -19,24 +16,95 @@ import {
     resumeAccountPasswordEnrollmentExternalAuthSpy,
     runWithOAuthScreen,
     setAuthState,
-    setStoredCredentialsState,
+    setActiveServerSnapshot,
+    oauthNativeStorageBoundary,
+    oauthDefaultHome,
     setPendingExternalAuthState,
     setPendingExternalAuthServerMismatch,
     trackAccountRestoredSpy,
 } from '@/auth/providers/github/test/oauthReturnHarness';
 import { t } from '@/text';
-import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
-import { HappyError } from '@/utils/errors/errors';
+import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { setOAuthRuntimeFetch as setRuntimeFetch, prepareOAuthHarness } from '@/auth/providers/github/test/oauthReturnHarness';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { TokenStorage, ACCOUNT_ENCRYPTION_FIRST_KEY_PENDING_TTL_MS, type PendingExternalAuth } from '@/auth/storage/tokenStorage';
+import { createAccountEncryptionFirstKeyFixture } from '@/dev/testkit/fixtures/accountEncryptionFirstKey';
+import { ExternalOAuthFinalizeAuthSuccessResponseSchema, ExternalOAuthErrorResponseSchema, ExternalOAuthParamsResponseSchema } from '@happier-dev/protocol/auth/externalOAuth';
+import { PasswordMutationPreparationResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
+import { PlainAccountPasswordCredentialV1Schema, encodePasswordCredentialFieldV1 } from '@happier-dev/protocol/auth/accountPasswordCredential';
+import { AccountEncryptionMigrateSuccessResponseSchema, createAccountEncryptionMigrateRequestBindingDigestV1 } from '@happier-dev/protocol/account/encryptionMigrate';
+import { startAccountPasswordEnrollmentExternalAuth, readAccountPasswordEnrollmentExternalAuthProof } from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { resolveUniqueServerProfileByUrl } from '@/sync/domains/server/serverProfiles';
+import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@shopify/react-native-skia', () => ({}));
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
-afterEach(() => {
+afterEach(async () => {
+    await connection?.dispose();
+    connection = undefined;
     resetRuntimeFetch();
     vi.unstubAllGlobals();
     resetOAuthHarness();
 });
+
+async function startPasswordEnrollment() {
+    const credentials = { token: createAccountTokenForTests('account-1') };
+    setActiveServerSnapshot({ serverId: 'srv_home-a', serverUrl: 'https://home-a.example.test' });
+    setAuthState({ isAuthenticated: true, credentials });
+    await prepareOAuthHarness();
+    const snapshot = getActiveServerSnapshot();
+    const target = { serverId: snapshot.serverId, serverUrl: snapshot.serverUrl };
+    const targetCredential = PlainAccountPasswordCredentialV1Schema.parse({
+        v: 1, kind: 'plain_password_hash', hash: {
+            v: 1, algorithm: 'scrypt', parameters: { n: 2 ** 14, r: 8, p: 5, keyLength: 32 },
+            salt: encodePasswordCredentialFieldV1(new Uint8Array(16).fill(3)),
+            digest: encodePasswordCredentialFieldV1(new Uint8Array(32).fill(5)),
+        },
+    });
+    setRuntimeFetch(async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/v1/auth/entry') return Response.json(AuthEntryProjectionV1Schema.parse({
+            v: 1, state: 'ready', scope: { kind: 'home' }, autoRedirect: null,
+            actions: [{ kind: 'authenticate', methodId: 'github', action: 'login', mode: 'keyless',
+                origin: 'home', presentation: { displayName: 'GitHub' } }],
+        }));
+        if (url.pathname === '/v1/auth/password/mutation/challenge') return Response.json(PasswordMutationPreparationResponseV1Schema.parse({ targetCredential }));
+        if (url.pathname === '/v1/auth/external/github/params') return Response.json(ExternalOAuthParamsResponseSchema.parse({ url: 'https://github.example.test/authorize' }));
+        return new Response('{}', { status: 404 });
+    });
+    await expect(startAccountPasswordEnrollmentExternalAuth({
+        accountId: 'account-1', currentCredentials: credentials, linkedProviderIds: ['github'],
+        normalizedNativeEmail: 'person@example.test', newPassword: 'correct horse battery staple',
+        returnTo: '/settings/account/security?verificationToken=mailbox-proof', target,
+    })).resolves.toMatchObject({ kind: 'oauth', provider: 'github' });
+    clearAccountPasswordEnrollmentExternalAuthCustodySpy.mockClear();
+    return { credentials, target, targetCredential };
+}
+
+async function firstKeyPending(marked = false) {
+    const fixture = await createAccountEncryptionFirstKeyFixture();
+    await prepareOAuthHarness();
+    const snapshot = getActiveServerSnapshot();
+    const target = { serverId: snapshot.serverId, serverUrl: snapshot.serverUrl };
+    const createdAt = Date.now();
+    const pending = {
+        provider: 'github', proof: 'browser-proof', secret: fixture.proposedCredentials.secret, ...target,
+        returnTo: '/settings/account',
+        accountEncryptionFirstKey: {
+            accountId: fixture.accountId,
+            requestDigest: createAccountEncryptionMigrateRequestBindingDigestV1({ request: fixture.request,
+                accountId: fixture.accountId, sourceMode: 'plain' }),
+            requestJson: JSON.stringify(fixture.request), createdAt,
+            expiresAt: createdAt + ACCOUNT_ENCRYPTION_FIRST_KEY_PENDING_TTL_MS,
+            ...(marked ? { pending: 'oauth-pending', migrationSubmissionAttempted: true as const } : {}),
+        },
+    };
+    return { ...fixture, target, pending };
+}
 
 describe('oauth/[provider] return (keyless)', () => {
     it('completes a web popup callback without running the callback realm as an enrollment owner', async () => {
@@ -59,12 +127,7 @@ describe('oauth/[provider] return (keyless)', () => {
     });
 
     it('custodies a password-enrollment callback for the exact Home and resumes Account Security', async () => {
-        const credentials = { token: 'plain-token' } as const;
-        setAuthState({ isAuthenticated: true, credentials });
-        readAccountPasswordEnrollmentExternalAuthCallbackContextSpy.mockReturnValue({
-            target: { serverId: 'home-a', serverUrl: 'https://home-a.example.test' },
-        });
-        setStoredCredentialsState(credentials);
+        const { credentials, target, targetCredential } = await startPasswordEnrollment();
         localSearchParamsMock.mockReturnValue({
             provider: 'github',
             flow: 'auth',
@@ -78,8 +141,11 @@ describe('oauth/[provider] return (keyless)', () => {
                 provider: 'github',
                 pending: 'oauth-pending',
                 currentCredentials: credentials,
-                target: { serverId: 'home-a', serverUrl: 'https://home-a.example.test' },
+                target,
             });
+            await expect(readAccountPasswordEnrollmentExternalAuthProof({
+                accountId: 'account-1', currentCredentials: credentials, target,
+            })).resolves.toMatchObject({ targetCredential, externalAuthProof: { provider: 'github', pending: 'oauth-pending' } });
             expect(replaceSpy).toHaveBeenCalledWith(
                 '/settings/account/security?verificationToken=mailbox-proof',
             );
@@ -87,12 +153,7 @@ describe('oauth/[provider] return (keyless)', () => {
     });
 
     it('clears cancelled password-enrollment proof custody and returns with the verified mailbox token', async () => {
-        const credentials = { token: 'plain-token' } as const;
-        setAuthState({ isAuthenticated: true, credentials });
-        setStoredCredentialsState(credentials);
-        readAccountPasswordEnrollmentExternalAuthCallbackContextSpy.mockReturnValue({
-            target: { serverId: 'home-a', serverUrl: 'https://home-a.example.test' },
-        });
+        const { credentials, target } = await startPasswordEnrollment();
         localSearchParamsMock.mockReturnValue({
             provider: 'github',
             flow: 'auth',
@@ -106,11 +167,9 @@ describe('oauth/[provider] return (keyless)', () => {
             expect(cancelAccountPasswordEnrollmentExternalAuthSpy).toHaveBeenCalledWith({
                 provider: 'github',
                 currentCredentials: credentials,
-                target: {
-                    serverId: 'home-a',
-                    serverUrl: 'https://home-a.example.test',
-                },
+                target,
             });
+            await expect(readAccountPasswordEnrollmentExternalAuthProof({ accountId: 'account-1', currentCredentials: credentials, target })).resolves.toBeNull();
             expect(replaceSpy).toHaveBeenCalledWith(
                 '/settings/account/security?verificationToken=mailbox-proof',
             );
@@ -118,7 +177,7 @@ describe('oauth/[provider] return (keyless)', () => {
     });
 
     it('requires the originating process memory and does not resume after reload', async () => {
-        setAuthState({ isAuthenticated: true, credentials: { token: 'plain-token' } });
+        setAuthState({ isAuthenticated: true, credentials: { token: createAccountTokenForTests('plain-token') } });
         localSearchParamsMock.mockReturnValue({
             provider: 'github',
             flow: 'auth',
@@ -135,36 +194,32 @@ describe('oauth/[provider] return (keyless)', () => {
     });
 
     it('retires claimed password-enrollment custody when the callback route is abandoned', async () => {
-        const credentials = { token: 'plain-token' } as const;
-        setAuthState({ isAuthenticated: true, credentials });
-        setStoredCredentialsState(credentials);
-        readAccountPasswordEnrollmentExternalAuthCallbackContextSpy.mockReturnValue({
-            target: { serverId: 'home-a', serverUrl: 'https://home-a.example.test' },
-        });
-        resumeAccountPasswordEnrollmentExternalAuthSpy.mockImplementationOnce(
-            () => new Promise(() => undefined),
-        );
+        const { credentials, target } = await startPasswordEnrollment();
+        let releaseAlert: (() => void) | undefined;
+        modal.alert.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseAlert = resolve; }));
         localSearchParamsMock.mockReturnValue({
             provider: 'github',
             flow: 'auth',
             purpose: 'account_password_enrollment',
-            pending: 'oauth-pending',
+            error: 'access_denied',
         });
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects(12);
-            expect(resumeAccountPasswordEnrollmentExternalAuthSpy).toHaveBeenCalledOnce();
+            expect(modal.alert).toHaveBeenCalled();
+            expect(resumeAccountPasswordEnrollmentExternalAuthSpy).not.toHaveBeenCalled();
             expect(clearAccountPasswordEnrollmentExternalAuthCustodySpy).not.toHaveBeenCalled();
         });
 
         expect(clearAccountPasswordEnrollmentExternalAuthCustodySpy).toHaveBeenCalledOnce();
+        releaseAlert?.();
+        await flushOAuthEffects();
+        await expect(readAccountPasswordEnrollmentExternalAuthProof({ accountId: 'account-1',
+            currentCredentials: credentials, target })).resolves.toBeNull();
     });
 
     it('rejects a password-enrollment continuation when the callback purpose is missing', async () => {
-        setAuthState({ isAuthenticated: true, credentials: { token: 'plain-token' } });
-        readAccountPasswordEnrollmentExternalAuthCallbackContextSpy.mockReturnValue({
-            target: { serverId: 'home-a', serverUrl: 'https://home-a.example.test' },
-        });
+        const { credentials, target } = await startPasswordEnrollment();
         localSearchParamsMock.mockReturnValue({
             provider: 'github', flow: 'auth', pending: 'oauth-pending',
         });
@@ -173,6 +228,7 @@ describe('oauth/[provider] return (keyless)', () => {
             await flushOAuthEffects(12);
             expect(resumeAccountPasswordEnrollmentExternalAuthSpy).not.toHaveBeenCalled();
             expect(clearAccountPasswordEnrollmentExternalAuthCustodySpy).toHaveBeenCalled();
+            await expect(readAccountPasswordEnrollmentExternalAuthProof({ accountId: 'account-1', currentCredentials: credentials, target })).resolves.toBeNull();
             expect(replaceSpy).toHaveBeenCalledWith('/settings/account/security');
         });
     });
@@ -219,7 +275,7 @@ describe('oauth/[provider] return (keyless)', () => {
             serverMismatch: false,
         },
         {
-            name: 'missing purpose on server mismatch',
+            name: 'missing purpose after Home focus changes',
             params: {
                 provider: 'github',
                 flow: 'auth',
@@ -230,23 +286,7 @@ describe('oauth/[provider] return (keyless)', () => {
     ])(
         'retains marked first-key custody on $name',
         async ({ params, serverMismatch }) => {
-            const createdAt = Date.now();
-            const marked = {
-                provider: 'github',
-                proof: 'browser-proof',
-                secret: 'proposed-secret',
-                accountEncryptionFirstKey: {
-                    accountId: 'account-1',
-                    requestDigest:
-                        `aemrb1_${'A'.repeat(43)}`,
-                    requestJson: '{"toMode":"e2ee"}',
-                    createdAt,
-                    expiresAt:
-                        createdAt + 10 * 60 * 1000,
-                    pending: 'oauth-pending',
-                    migrationSubmissionAttempted: true,
-                },
-            } as const;
+            const { pending: marked } = await firstKeyPending(true);
             setAuthState({
                 isAuthenticated: false,
                 credentials: null,
@@ -265,115 +305,115 @@ describe('oauth/[provider] return (keyless)', () => {
                 expect(
                     clearPendingExternalAuthMock,
                 ).toHaveBeenCalled();
-                expect(
-                    clearPendingExternalAuthMock.mock.calls
-                        .every((call) => call.length === 0),
-                ).toBe(true);
                 await expect(
                     readPendingExternalAuthStateMock(),
                 ).resolves.toEqual({
                     value: marked,
-                    serverMismatch,
+                    serverMismatch: false,
                 });
+                if (serverMismatch) {
+                    await expect(TokenStorage.readPendingExternalAuthState()).resolves.toEqual({ value: marked, serverMismatch: true });
+                }
             });
         },
     );
 
     it('resumes a first-key migration before persisting the proposed E2EE credentials', async () => {
-        setAuthState({
-            isAuthenticated: true,
-            credentials: { token: 'plain-token' },
+        const fixture = await firstKeyPending();
+        setAuthState({ isAuthenticated: true, credentials: fixture.currentCredentials });
+        await prepareOAuthHarness();
+        let settleMigration: ((response: Response) => void) | undefined;
+        const requests = vi.fn(async (input: RequestInfo | URL) => {
+            if (new URL(String(input)).pathname === '/v1/account/encryption/migrate') {
+                return new Promise<Response>((resolve) => { settleMigration = resolve; });
+            }
+            return new Response('{}', { status: 404 });
         });
-        localSearchParamsMock.mockReturnValue({
-            provider: 'github',
-            flow: 'auth',
-            purpose: 'account_encryption_first_key',
-            pending: 'oauth-pending',
-        });
-        const fetchMock = vi.fn();
-        setRuntimeFetch(fetchMock as unknown as typeof fetch);
+        const request = setRuntimeFetch(requests);
+        connection = await restoreServerAccountForTest({ ...fixture.target,
+            serverIdentityId: fixture.target.serverId, accountId: fixture.accountId,
+            credentials: fixture.currentCredentials, request });
+        setPendingExternalAuthState(fixture.pending);
+        localSearchParamsMock.mockReturnValue({ provider: 'github', flow: 'auth',
+            purpose: 'account_encryption_first_key', pending: 'oauth-pending' });
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects(12);
-            expect(
-                resumeAccountEncryptionFirstKeyExternalAuthSpy,
-            ).toHaveBeenCalledWith({
-                provider: 'github',
-                pending: 'oauth-pending',
-                currentCredentials: { token: 'plain-token' },
-                persistCredentials: loginWithCredentialsSpy,
-            });
-            expect(fetchMock).not.toHaveBeenCalled();
-            expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
-            expect(replaceSpy).toHaveBeenCalledWith(
-                '/settings/account',
-            );
+            expect(requests.mock.calls.some(([input]) => new URL(String(input)).pathname === '/v1/account/encryption/migrate')).toBe(true);
+            await expect(TokenStorage.getCredentials()).resolves.toEqual(fixture.currentCredentials);
+            expect(settleMigration).toBeDefined();
+            await act(async () => { settleMigration?.(Response.json(AccountEncryptionMigrateSuccessResponseSchema.parse({
+                success: true, mode: 'e2ee', accountVersion: 9, settingsVersion: 4,
+            }))); });
+            await flushOAuthEffects(12);
+            await expect(TokenStorage.getCredentials()).resolves.toEqual(fixture.proposedCredentials);
+            await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();
+            expect(replaceSpy).toHaveBeenCalledWith('/settings/account');
         });
     });
 
     it('redirects a retained first-key persistence failure to Settings recovery', async () => {
-        setAuthState({
-            isAuthenticated: true,
-            credentials: { token: 'plain-token' },
-        });
-        localSearchParamsMock.mockReturnValue({
-            provider: 'github',
-            flow: 'auth',
-            purpose: 'account_encryption_first_key',
-            pending: 'oauth-pending',
-        });
-        resumeAccountEncryptionFirstKeyExternalAuthSpy
-            .mockRejectedValueOnce(
-                new Error('credential storage unavailable'),
-            );
+        const fixture = await firstKeyPending();
+        setAuthState({ isAuthenticated: true, credentials: fixture.currentCredentials });
+        await prepareOAuthHarness();
+        const requests = vi.fn(async (input: RequestInfo | URL) => new URL(String(input)).pathname === '/v1/account/encryption/migrate'
+            ? Response.json(AccountEncryptionMigrateSuccessResponseSchema.parse({ success: true, mode: 'e2ee', accountVersion: 9, settingsVersion: 4 }))
+            : new Response('{}', { status: 404 }));
+        const request = setRuntimeFetch(requests);
+        connection = await restoreServerAccountForTest({ ...fixture.target,
+            serverIdentityId: fixture.target.serverId, accountId: fixture.accountId,
+            credentials: fixture.currentCredentials, request });
+        setPendingExternalAuthState(fixture.pending);
+        await prepareOAuthHarness();
+        let failedCredentialWrite = false;
+        oauthNativeStorageBoundary.beforeWrite = (_key, value) => {
+            if (value.includes('"token":') && value.includes('"secret":')) {
+                failedCredentialWrite = true;
+                throw new Error('credential storage unavailable');
+            }
+        };
+        localSearchParamsMock.mockReturnValue({ provider: 'github', flow: 'auth',
+            purpose: 'account_encryption_first_key', pending: 'oauth-pending' });
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects(12);
+            expect(failedCredentialWrite).toBe(true);
             expect(modal.alert).toHaveBeenCalled();
-            expect(replaceSpy).toHaveBeenCalledWith(
-                '/settings/account',
-            );
-            expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
+            expect(replaceSpy).toHaveBeenCalledWith('/settings/account');
+            await expect(TokenStorage.getCredentials()).resolves.toEqual(fixture.currentCredentials);
+            await expect(TokenStorage.getPendingExternalAuth()).resolves.toMatchObject({
+                accountEncryptionFirstKey: { pending: 'oauth-pending', migrationSubmissionAttempted: true },
+            });
         });
     });
 
     it('keeps the callback URL when the OAuth handle could not be placed in durable first-key custody', async () => {
-        setAuthState({
-            isAuthenticated: true,
-            credentials: { token: 'plain-token' },
-        });
-        localSearchParamsMock.mockReturnValue({
-            provider: 'github',
-            flow: 'auth',
-            purpose: 'account_encryption_first_key',
-            pending: 'oauth-pending',
-        });
-        resumeAccountEncryptionFirstKeyExternalAuthSpy
-            .mockRejectedValueOnce(
-                new HappyError(
-                    'first-key-pending-custody-failed',
-                    false,
-                    {
-                        status: 500,
-                        kind: 'unknown',
-                        code:
-                            'first-key-pending-custody-failed',
-                    },
-                ),
-            );
+        const fixture = await firstKeyPending();
+        setAuthState({ isAuthenticated: true, credentials: fixture.currentCredentials });
+        setPendingExternalAuthState(fixture.pending);
+        await prepareOAuthHarness();
+        oauthNativeStorageBoundary.beforeWrite = (_key, value) => {
+            if (value.includes('"migrationSubmissionAttempted":true')) throw new Error('native custody storage unavailable');
+        };
+        localSearchParamsMock.mockReturnValue({ provider: 'github', flow: 'auth',
+            purpose: 'account_encryption_first_key', pending: 'oauth-pending' });
+        const requests = vi.fn(async () => new Response('{}', { status: 404 }));
+        setRuntimeFetch(requests);
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects(12);
             expect(modal.alert).toHaveBeenCalled();
             expect(replaceSpy).not.toHaveBeenCalled();
+            expect(requests).not.toHaveBeenCalled();
+            await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual(fixture.pending);
+            await expect(TokenStorage.getCredentials()).resolves.toEqual(fixture.currentCredentials);
         });
     });
 
     it('clears the proposed key and preserves plain credentials when first-key OAuth is cancelled', async () => {
-        setAuthState({
-            isAuthenticated: true,
-            credentials: { token: 'plain-token' },
-        });
+        const fixture = await firstKeyPending();
+        setAuthState({ isAuthenticated: true, credentials: fixture.currentCredentials });
+        setPendingExternalAuthState(fixture.pending);
         localSearchParamsMock.mockReturnValue({
             provider: 'github',
             flow: 'auth',
@@ -387,7 +427,8 @@ describe('oauth/[provider] return (keyless)', () => {
                 resumeAccountEncryptionFirstKeyExternalAuthSpy,
             ).not.toHaveBeenCalled();
             expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-            expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
+            await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();
+            await expect(TokenStorage.getCredentials()).resolves.toEqual(fixture.currentCredentials);
             expect(modal.alert).toHaveBeenCalledWith(
                 t('common.error'),
                 t('errors.operationFailed'),
@@ -399,22 +440,9 @@ describe('oauth/[provider] return (keyless)', () => {
     });
 
     it('rejects a first-key continuation when the callback purpose is missing', async () => {
-        setAuthState({
-            isAuthenticated: true,
-            credentials: { token: 'plain-token' },
-        });
-        setPendingExternalAuthState({
-            provider: 'github',
-            proof: 'browser-proof',
-            secret: 'proposed-secret',
-            accountEncryptionFirstKey: {
-                accountId: 'account-1',
-                requestDigest: `aemrb1_${'A'.repeat(43)}`,
-                requestJson: '{"toMode":"e2ee"}',
-                createdAt: Date.now(),
-                expiresAt: Date.now() + 10 * 60 * 1000,
-            },
-        });
+        const fixture = await firstKeyPending();
+        setAuthState({ isAuthenticated: true, credentials: fixture.currentCredentials });
+        setPendingExternalAuthState(fixture.pending);
         localSearchParamsMock.mockReturnValue({
             provider: 'github',
             flow: 'auth',
@@ -431,7 +459,8 @@ describe('oauth/[provider] return (keyless)', () => {
                 resumeAccountEncryptionFirstKeyExternalAuthSpy,
             ).not.toHaveBeenCalled();
             expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-            expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
+            await expect(TokenStorage.getCredentials()).resolves.toEqual(fixture.currentCredentials);
+            await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();
             expect(modal.alert).toHaveBeenCalledWith(
                 t('common.error'),
                 t('errors.oauthStateMismatch'),
@@ -442,10 +471,9 @@ describe('oauth/[provider] return (keyless)', () => {
         });
     });
 
-    it('surfaces oauth state mismatch and clears stale pending auth when the pending auth belongs to a different server context', async () => {
+    it('rejects legacy pending auth without an exact Home URL after focus changes', async () => {
         replaceSpy.mockReset();
-        loginWithCredentialsSpy.mockReset();
-        clearPendingExternalAuthMock.mockReset();
+        clearPendingExternalAuthMock.mockClear();
         modal.alert.mockReset();
 
         localSearchParamsMock.mockReturnValue({
@@ -456,8 +484,7 @@ describe('oauth/[provider] return (keyless)', () => {
         setPendingExternalAuthState({
             provider: 'github',
             proof: 'proof_mismatch',
-            serverId: 'server-a',
-            serverUrl: 'https://shared.example.test',
+            serverId: 'srv_server-a',
         });
         setPendingExternalAuthServerMismatch(true);
 
@@ -469,26 +496,14 @@ describe('oauth/[provider] return (keyless)', () => {
             expect(fetchMock).not.toHaveBeenCalled();
             expect(clearPendingExternalAuthMock).toHaveBeenCalled();
             expect(modal.alert).toHaveBeenCalledWith(t('common.error'), t('errors.oauthStateMismatch'));
-            expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
+            await expect(TokenStorage.getCredentials()).resolves.toEqual(null);
+            await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();
             expect(replaceSpy).toHaveBeenCalledWith('/');
         });
     });
 
     it('accepts the exact Team OAuth admission reference and continues finalization', async () => {
-        setPendingExternalAuthState({
-            provider: 'github',
-            proof: 'proof_team',
-            serverId: 'server-a',
-            serverUrl: 'http://default.example.test',
-            teamContinuation: {
-                v: 1,
-                purpose: 'team_admission',
-                admissionReference: 'attempt-exact',
-                teamId: 'team-1',
-                homeServerIdentityId: 'server-a',
-                destination: { kind: 'team_sign_in', teamId: 'team-1' },
-            },
-        });
+        setPendingExternalAuthState(teamPendingState());
         localSearchParamsMock.mockReturnValue({
             provider: 'github',
             flow: 'auth',
@@ -497,28 +512,9 @@ describe('oauth/[provider] return (keyless)', () => {
             pending: 'pending-team-exact',
             admissionReference: 'attempt-exact',
         });
-        const fetchMock = vi.fn(async (url: unknown) => {
-            if (typeof url === 'string' && url.endsWith('/health')) {
-                return new Response(JSON.stringify({ ok: true }), { status: 200 });
-            }
-            if (typeof url === 'string' && url.includes('/v1/auth/external/github/finalize-keyless')) {
-                return new Response(JSON.stringify({
-                    success: true,
-                    token: 'team-token',
-                    teamInvitationContinuation: {
-                        v: 1,
-                        kind: 'post_auth_invitation',
-                        reference: 'pending-team-exact',
-                        teamId: 'team-1',
-                    },
-                }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                });
-            }
-            return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
+        const fetchMock = installTeamFinalizeAnswer({ success: true, token: createAccountTokenForTests('team-account'),
+            teamInvitationContinuation: { v: 1, kind: 'post_auth_invitation', reference: 'pending-team-exact', teamId: 'team-1' },
         });
-        setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects();
@@ -527,12 +523,9 @@ describe('oauth/[provider] return (keyless)', () => {
                 && url.includes('/v1/auth/external/github/finalize-keyless'),
             )).toBe(true);
             expect(recordTeamInvitationPostAuthContinuationMock).toHaveBeenCalled();
-            expect(loginWithCredentialsSpy).toHaveBeenCalledWith(
-                { token: 'team-token' },
-                { signInMethodId: 'github', target: { serverId: 'server-a', serverUrl: 'http://default.example.test' } },
-            );
+            await expect(TokenStorage.getCredentialsForServerUrl('http://default.example.test')).resolves.toEqual({ token: createAccountTokenForTests('team-account') });
             expect(replaceSpy).toHaveBeenCalledWith(
-                '/teams/team-1/sign-in?target=server-a&postAuthInvitation=1',
+                '/teams/team-1/sign-in?target=srv_server-a&postAuthInvitation=1',
             );
         });
     });
@@ -546,20 +539,7 @@ describe('oauth/[provider] return (keyless)', () => {
      */
     it('returns a Team admission to the portable Home the continuation named, not a device-local profile id', async () => {
         replaceSpy.mockReset();
-        setPendingExternalAuthState({
-            provider: 'github',
-            proof: 'proof_team',
-            serverId: 'local-profile-7',
-            serverUrl: 'http://default.example.test',
-            teamContinuation: {
-                v: 1,
-                purpose: 'team_admission',
-                admissionReference: 'attempt-exact',
-                teamId: 'team-1',
-                homeServerIdentityId: 'home-identity-a',
-                destination: { kind: 'team_sign_in', teamId: 'team-1' },
-            },
-        });
+        setPendingExternalAuthState(teamPendingState({ homeServerIdentityId: 'srv_home-identity-a', serverUrl: 'https://team-home.example.test' }));
         localSearchParamsMock.mockReturnValue({
             provider: 'github',
             flow: 'auth',
@@ -568,42 +548,18 @@ describe('oauth/[provider] return (keyless)', () => {
             pending: 'pending-team-exact',
             admissionReference: 'attempt-exact',
         });
-        setRuntimeFetch((vi.fn(async (url: unknown) => {
-            if (typeof url === 'string' && url.endsWith('/health')) {
-                return new Response(JSON.stringify({ ok: true }), { status: 200 });
-            }
-            if (typeof url === 'string' && url.includes('/v1/auth/external/github/finalize-keyless')) {
-                return new Response(JSON.stringify({
-                    success: true,
-                    token: 'team-token',
-                    teamInvitationContinuation: {
-                        v: 1,
-                        kind: 'post_auth_invitation',
-                        reference: 'pending-team-exact',
-                        teamId: 'team-1',
-                    },
-                }), {
-                    status: 200,
-                    headers: { 'Content-Type': 'application/json' },
-                });
-            }
-            return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 });
-        })) as unknown as typeof fetch);
+        installTeamFinalizeAnswer({ success: true, token: createAccountTokenForTests('team-account'),
+            teamInvitationContinuation: { v: 1, kind: 'post_auth_invitation', reference: 'pending-team-exact', teamId: 'team-1' },
+        });
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects();
-            expect(loginWithCredentialsSpy).toHaveBeenCalledWith(
-                { token: 'team-token' },
-                {
-                    signInMethodId: 'github',
-                    target: {
-                        serverId: 'local-profile-7',
-                        serverUrl: 'http://default.example.test',
-                    },
-                },
-            );
+            const home = resolveUniqueServerProfileByUrl('https://team-home.example.test');
+            expect(home).not.toBeNull();
+            expect(home?.id).not.toBe('srv_home-identity-a');
+            await expect(TokenStorage.getCredentialsForServerUrl('https://team-home.example.test')).resolves.toEqual({ token: createAccountTokenForTests('team-account') });
             expect(replaceSpy).toHaveBeenCalledWith(
-                '/teams/team-1/sign-in?target=home-identity-a&postAuthInvitation=1',
+                '/teams/team-1/sign-in?target=srv_home-identity-a&postAuthInvitation=1',
             );
         });
     });
@@ -616,18 +572,18 @@ describe('oauth/[provider] return (keyless)', () => {
      * committed, the pending record is released, and the person lands on the
      * exact Home-qualified Team page without a post-auth invitation marker.
      */
-    function teamPendingState(overrides: Readonly<{ serverId?: string; homeServerIdentityId?: string }> = {}) {
+    function teamPendingState(overrides: Readonly<{ homeServerIdentityId?: string; serverUrl?: string }> = {}) {
         return {
             provider: 'github',
             proof: 'proof_team',
-            serverId: overrides.serverId ?? 'server-a',
-            serverUrl: 'http://default.example.test',
+            serverId: overrides.homeServerIdentityId ?? 'srv_server-a',
+            serverUrl: overrides.serverUrl ?? 'http://default.example.test',
             teamContinuation: {
                 v: 1 as const,
                 purpose: 'team_admission' as const,
                 admissionReference: 'attempt-exact',
                 teamId: 'team-1',
-                homeServerIdentityId: overrides.homeServerIdentityId ?? 'server-a',
+                homeServerIdentityId: overrides.homeServerIdentityId ?? 'srv_server-a',
                 destination: { kind: 'team_sign_in' as const, teamId: 'team-1' },
             },
         };
@@ -650,7 +606,7 @@ describe('oauth/[provider] return (keyless)', () => {
                 return new Response(JSON.stringify({ ok: true }), { status: 200 });
             }
             if (typeof url === 'string' && url.includes('/v1/auth/external/github/finalize-keyless')) {
-                return new Response(JSON.stringify(body), {
+                return new Response(JSON.stringify(status === 200 ? ExternalOAuthFinalizeAuthSuccessResponseSchema.parse(body) : ExternalOAuthErrorResponseSchema.parse(body)), {
                     status,
                     headers: { 'Content-Type': 'application/json' },
                 });
@@ -661,7 +617,7 @@ describe('oauth/[provider] return (keyless)', () => {
         return fetchMock;
     }
 
-    function findTeamFailureAction(tree: { root: { findAll: (p: (n: any) => boolean) => any[] } }, testID: string) {
+    function findTeamFailureAction(tree: Parameters<Parameters<typeof runWithOAuthScreen>[0]>[0], testID: string) {
         const [node] = tree.root.findAll((candidate) =>
             candidate.props.testID === testID && typeof candidate.props.action === 'function');
         if (!node) throw new Error(`Expected ${testID} to render`);
@@ -672,22 +628,21 @@ describe('oauth/[provider] return (keyless)', () => {
         recordTeamInvitationPostAuthContinuationMock.mockClear();
         clearPendingExternalAuthMock.mockClear();
         setPendingExternalAuthState(teamPendingState({
-            serverId: 'local-profile-7',
-            homeServerIdentityId: 'home-identity-a',
+            homeServerIdentityId: 'srv_home-identity-a', serverUrl: 'https://team-home.example.test',
         }));
         localSearchParamsMock.mockReturnValue(teamCallbackParams());
-        installTeamFinalizeAnswer({ success: true, token: 'team-token' });
+        installTeamFinalizeAnswer({ success: true, token: createAccountTokenForTests('team-account') });
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects();
-            expect(loginWithCredentialsSpy).toHaveBeenCalledWith(
-                { token: 'team-token' },
-                { signInMethodId: 'github', target: { serverId: 'local-profile-7', serverUrl: 'http://default.example.test' } },
-            );
             expect(recordTeamInvitationPostAuthContinuationMock).not.toHaveBeenCalled();
+            await expect(TokenStorage.getCredentialsForServerUrl('https://team-home.example.test')).resolves.toEqual({ token: createAccountTokenForTests('team-account') });
+            await expect(TokenStorage.readPendingExternalAuthStateForServerUrl('https://team-home.example.test', {
+                serverId: 'srv_home-identity-a',
+            })).resolves.toEqual({ value: null, serverMismatch: false });
             expect(clearPendingExternalAuthMock).toHaveBeenCalled();
             expect(modal.alert).not.toHaveBeenCalled();
-            expect(replaceSpy).toHaveBeenCalledWith('/teams/team-1/sign-in?target=home-identity-a');
+            expect(replaceSpy).toHaveBeenCalledWith('/teams/team-1/sign-in?target=srv_home-identity-a');
         });
     });
 
@@ -697,7 +652,7 @@ describe('oauth/[provider] return (keyless)', () => {
         localSearchParamsMock.mockReturnValue(teamCallbackParams());
         installTeamFinalizeAnswer({
             success: true,
-            token: 'team-token',
+            token: createAccountTokenForTests('team-account'),
             teamInvitationContinuation: {
                 v: 1,
                 kind: 'post_auth_invitation',
@@ -708,10 +663,10 @@ describe('oauth/[provider] return (keyless)', () => {
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects();
-            expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
+            await expect(TokenStorage.getCredentials()).resolves.toEqual(null);
             expect(clearPendingExternalAuthMock).toHaveBeenCalled();
             expect(modal.alert).toHaveBeenCalledWith(t('common.error'), t('errors.oauthStateMismatch'));
-            expect(replaceSpy).toHaveBeenCalledWith('/teams/team-1/sign-in?target=server-a');
+            expect(replaceSpy).toHaveBeenCalledWith('/teams/team-1/sign-in?target=srv_server-a');
         });
     });
 
@@ -723,10 +678,10 @@ describe('oauth/[provider] return (keyless)', () => {
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects();
-            expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
+            await expect(TokenStorage.getCredentials()).resolves.toEqual(null);
             expect(clearPendingExternalAuthMock).toHaveBeenCalled();
             expect(modal.alert).toHaveBeenCalledWith(t('common.error'), t('errors.oauthStateMismatch'));
-            expect(replaceSpy).toHaveBeenCalledWith('/teams/team-1/sign-in?target=server-a');
+            expect(replaceSpy).toHaveBeenCalledWith('/teams/team-1/sign-in?target=srv_server-a');
         });
     });
 
@@ -757,7 +712,7 @@ describe('oauth/[provider] return (keyless)', () => {
 
         await runWithOAuthScreen(async (tree) => {
             await flushOAuthEffects();
-            expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
+            await expect(TokenStorage.getCredentials()).resolves.toEqual(null);
             expect(clearPendingExternalAuthMock).toHaveBeenCalled();
             expect(modal.alert).not.toHaveBeenCalled();
             expect(replaceSpy).not.toHaveBeenCalled();
@@ -767,7 +722,7 @@ describe('oauth/[provider] return (keyless)', () => {
 
             const primary = findTeamFailureAction(tree, 'oauth-team-failure-action');
             await act(async () => { await primary.props.action(); });
-            expect(replaceSpy).toHaveBeenCalledWith('/teams/team-1/sign-in?target=server-a');
+            expect(replaceSpy).toHaveBeenCalledWith('/teams/team-1/sign-in?target=srv_server-a');
 
             const secondary = findTeamFailureAction(tree, 'oauth-team-failure-secondary-action');
             await act(async () => { await secondary.props.action(); });
@@ -777,8 +732,7 @@ describe('oauth/[provider] return (keyless)', () => {
 
     it('finalizes keyless oauth auth for a plaintext account and logs in with token-only credentials', async () => {
         replaceSpy.mockReset();
-        loginWithCredentialsSpy.mockReset();
-        clearPendingExternalAuthMock.mockReset();
+        clearPendingExternalAuthMock.mockClear();
 
         localSearchParamsMock.mockReturnValue({
             provider: 'github',
@@ -786,9 +740,9 @@ describe('oauth/[provider] return (keyless)', () => {
             accountMode: 'plain',
             pending: 'p1',
         });
-        setPendingExternalAuthState({ provider: 'github', proof: 'proof_1' });
+        setPendingExternalAuthState({ ...oauthDefaultHome, provider: 'github', proof: 'proof_1' });
 
-        const fetchMock = vi.fn(async (url: any, init?: any) => {
+        const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
             if (typeof url === 'string' && url.endsWith('/health')) {
                 return new Response(JSON.stringify({ ok: true }), {
                     status: 200,
@@ -797,10 +751,8 @@ describe('oauth/[provider] return (keyless)', () => {
             }
             if (typeof url === 'string' && url.includes('/v1/auth/external/github/finalize-keyless')) {
                 const body = JSON.parse(String(init?.body ?? '{}'));
-                if (body?.pending !== 'p1' || body?.proof !== 'proof_1') {
-                    return new Response(JSON.stringify({ error: 'invalid' }), { status: 400 });
-                }
-                return new Response(JSON.stringify({ success: true, token: 'tok_1' }), {
+                expect(body).toEqual({ pending: 'p1', proof: 'proof_1' });
+                return new Response(JSON.stringify(ExternalOAuthFinalizeAuthSuccessResponseSchema.parse({ success: true, token: createAccountTokenForTests('tok_1') })), {
                     status: 200,
                     headers: { 'Content-Type': 'application/json' },
                 });
@@ -813,51 +765,53 @@ describe('oauth/[provider] return (keyless)', () => {
             await flushOAuthEffects();
             expect(fetchMock).toHaveBeenCalled();
             expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-            expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: 'tok_1' }, { signInMethodId: 'github' });
-            expect(getRandomBytesSpy).not.toHaveBeenCalled();
+            await expect(TokenStorage.getCredentials()).resolves.toEqual({ token: createAccountTokenForTests('tok_1') });
             expect(trackAccountRestoredSpy).toHaveBeenCalledTimes(1);
             expect(replaceSpy).toHaveBeenCalledWith('/');
         });
     });
 
     it('preserves pending custody and suppresses OAuth success effects when credential recovery fails', async () => {
-        localSearchParamsMock.mockReturnValue({
-            provider: 'github',
-            flow: 'auth',
-            accountMode: 'plain',
-            pending: 'p1',
+        const fixture = await firstKeyPending(true);
+        modal.show.mockImplementationOnce(() => 'modal-id');
+        let retained: PendingExternalAuth = fixture.pending;
+        setAuthState({ isAuthenticated: true, credentials: fixture.currentCredentials });
+        localSearchParamsMock.mockReturnValue({ provider: 'github', flow: 'auth', accountMode: 'plain', pending: 'p1' });
+        setPendingExternalAuthState({ ...oauthDefaultHome, provider: 'github', proof: 'proof_1' });
+        setRuntimeFetch(async (input) => {
+            if (new URL(String(input)).pathname === '/v1/auth/external/github/finalize-keyless') {
+                // This boundary response races a separately admitted first-key attempt.
+                expect(await TokenStorage.setPendingExternalAuth(fixture.pending, fixture.target)).toBe(true);
+                const marked = await TokenStorage.markPendingExternalAuthFirstKeyRejectedCredential({
+                    expected: fixture.pending, token: fixture.currentCredentials.token, ...fixture.target,
+                });
+                if (marked.kind !== 'recorded') throw new Error('Expected rejected credential custody');
+                retained = marked.pending;
+                return Response.json(ExternalOAuthFinalizeAuthSuccessResponseSchema.parse({ success: true, token: fixture.currentCredentials.token }));
+            }
+            return Response.json({ error: 'encryption temporarily unavailable' }, { status: 503 });
         });
-        setPendingExternalAuthState({
-            provider: 'github',
-            proof: 'proof_1',
-        });
-        loginWithCredentialsSpy.mockResolvedValueOnce({
-            kind: 'recovery_failed',
-        });
-        setRuntimeFetch(vi.fn(async () => new Response(
-            JSON.stringify({ success: true, token: 'replacement-token' }),
-            {
-                status: 200,
-                headers: { 'Content-Type': 'application/json' },
-            },
-        )) as unknown as typeof fetch);
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects();
-            expect(loginWithCredentialsSpy).toHaveBeenCalledWith({
-                token: 'replacement-token',
-            }, { signInMethodId: 'github' });
+            const config = modal.show.mock.calls.at(-1)?.[0];
+            expect(config).toBeDefined();
+            const finish = (config as unknown as { props: { finish: () => Promise<unknown> } }).props.finish;
+            await expect(finish()).resolves.toEqual({ kind: 'recovery_failed' });
+            await expect(TokenStorage.getCredentials()).resolves.toEqual(fixture.currentCredentials);
+            await expect(TokenStorage.getPendingExternalAuth()).resolves.toEqual(retained);
             expect(clearPendingExternalAuthMock).not.toHaveBeenCalled();
             expect(trackAccountRestoredSpy).not.toHaveBeenCalled();
             expect(replaceSpy).not.toHaveBeenCalled();
             expect(modal.alertAsync).not.toHaveBeenCalled();
+            config?.onRequestClose?.();
+            await flushOAuthEffects();
         });
     });
 
     it('redirects to /restore for an e2ee account (without attempting keyless finalize)', async () => {
         replaceSpy.mockReset();
-        loginWithCredentialsSpy.mockReset();
-        clearPendingExternalAuthMock.mockReset();
+        clearPendingExternalAuthMock.mockClear();
 
         localSearchParamsMock.mockReturnValue({
             provider: 'github',
@@ -865,7 +819,7 @@ describe('oauth/[provider] return (keyless)', () => {
             accountMode: 'e2ee',
             pending: 'p2',
         });
-        setPendingExternalAuthState({ provider: 'github', proof: 'proof_2' });
+        setPendingExternalAuthState({ ...oauthDefaultHome, provider: 'github', proof: 'proof_2' });
 
         const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 }));
         setRuntimeFetch(fetchMock as unknown as typeof fetch);
@@ -874,7 +828,7 @@ describe('oauth/[provider] return (keyless)', () => {
             await flushOAuthEffects();
             expect(fetchMock).not.toHaveBeenCalled();
             expect(clearPendingExternalAuthMock).not.toHaveBeenCalled();
-            expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
+            await expect(TokenStorage.getCredentials()).resolves.toEqual(null);
             expect(replaceSpy).toHaveBeenCalledWith('/restore');
         });
     });

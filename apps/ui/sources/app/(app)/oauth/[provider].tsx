@@ -16,6 +16,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import {
     TokenStorage,
+    homeAccountCredentialScope,
     normalizeAccountDirectoryEndpoint,
     type PendingAccountDirectoryAuth,
     type AccountHomeAuthenticationContinuation,
@@ -1530,9 +1531,10 @@ function OAuthProviderReturnBody() {
                 const replacement = await provider.finalizeConnect(credentials, input, connectRequestContext);
                 if (!replacement.token) return true;
                 const adopted = { ...credentials, token: replacement.token };
-                const lifecycle = connectTarget
-                    ? await auth.loginWithCredentials(adopted, { target: connectTarget })
-                    : await auth.loginWithCredentials(adopted);
+                const lifecycle = await auth.loginWithCredentials(adopted, {
+                    ...(connectTarget ? { target: connectTarget } : {}),
+                    expectedCredentials: credentials,
+                });
                 return lifecycle.kind === 'completed';
             };
             const presentTeamConnectFailure = async (error: unknown): Promise<boolean> => {
@@ -1678,7 +1680,10 @@ function OAuthProviderReturnBody() {
         resolvedDirectoryReturn,
         auth.login,
         auth.loginWithCredentials,
-        resolvedFlow === 'auth' ? '' : auth.credentials?.token ?? '',
+        resolvedFlow === 'auth' ? '' : homeAccountCredentialScope(
+            getActiveServerSnapshot().serverId,
+            auth.credentials?.token,
+        )?.accountId ?? '',
     ]);
 
     const handleBack = React.useCallback(() => {

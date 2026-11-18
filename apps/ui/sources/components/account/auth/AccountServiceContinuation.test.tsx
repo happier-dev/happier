@@ -11,7 +11,7 @@ import { initializeTerminalRouteRuntimeForTests } from '@/__tests__/routes/(app)
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { digestAccountDirectoryCredentialToken, parseAuthCredentials, TokenStorage } from '@/auth/storage/tokenStorage';
 import {
     adoptHomeProfile,
     listServerProfiles,
@@ -37,13 +37,6 @@ vi.mock('socket.io-client', async (importOriginal) => (
 const boundary = vi.hoisted(() => ({ request: vi.fn<(endpoint: string, path: string, init?: RequestInit) => Promise<Response>>(
     async () => new Response('{}', { status: 404 }),
 ) }));
-vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/utils/system/runtimeFetch')>(),
-    runtimeFetch: (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
-        return boundary.request(url.origin, `${url.pathname}${url.search}`, init);
-    },
-}));
 const routerHarness = vi.hoisted(() => ({ replace: null as null | ReturnType<typeof vi.fn> }));
 vi.mock('expo-router', async () => {
     const router = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock();
@@ -72,6 +65,7 @@ vi.doMock('expo-router', async () => {
 // before importing this copy-bearing continuation and use the real text owner.
 vi.doUnmock('@/text');
 await (await import('@/text')).preloadTranslations('en');
+const { t } = await import('@/text');
 const { AccountServiceContinuation } = await import('./AccountServiceContinuation');
 const { HomesJourneysSpecimen } = await import('@/components/dev/homesJourneys/HomesJourneysSpecimen');
 const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
@@ -109,7 +103,7 @@ function PublicationProbe() {
 }
 
 /** Non-secret binding to the Account credential a continuation was created under. */
-const ACCOUNT_CREDENTIAL_TOKEN_DIGEST = 'C0jknAf55a-WIBFlxj8xId4cq00hoNQDzcbt4__9tlM';
+let accountCredentialTokenDigest: string;
 
 let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
 /** The visible label of the card action rendered under `testID`. */
@@ -124,10 +118,11 @@ describe('exact invoking-surface continuation', () => {
         browserRuntime = await installBrowserRuntimeForTests({ url: 'https://app.happier.dev' });
         resetServerFeaturesClientForTests();
         fixture = createDirectoryHttpFixture();
+        accountCredentialTokenDigest = await digestAccountDirectoryCredentialToken(fixture.directoryToken);
         boundary.request.mockImplementation(fixture.request);
         setRuntimeFetch(async (input, init) => {
             const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
-            return fixture.request(url.origin, `${url.pathname}${url.search}`, init);
+            return boundary.request(url.origin, `${url.pathname}${url.search}`, init);
         });
     });
     afterEach(async () => {
@@ -292,24 +287,22 @@ describe('exact invoking-surface continuation', () => {
                 return Response.json({}, { status: 404 });
             } });
         try {
-        expect(await TokenStorage.setCredentialsForServerUrl(fixture.home.canonicalServerUrl,
-            { serverId: target.id }, connection.credentials)).toBe(true);
         let rotatedVaultEntry: readonly [string, string] | undefined;
         if (vault) {
-            const rotated = { ...connection.credentials, token: `${connection.credentials.token}-rotated` };
-            const prepared = await TokenStorage.setCredentialsForServerUrlWithRollback('https://home-a.test',
-                { serverId: connection.serverId }, rotated);
-            if (!prepared) throw new Error('Expected the canonical credential writer to prepare replacement bytes');
-            rotatedVaultEntry = [...vault.values.entries()].find(([, value]) => {
-                try { return JSON.parse(value).token === rotated.token; } catch { return false; }
+            const storedEntry = [...vault.values.entries()].find(([, value]) => {
+                try { return parseAuthCredentials(JSON.parse(value))?.token === connection.credentials.token; }
+                catch { return false; }
             });
-            await prepared.rollback();
-            expect(rotatedVaultEntry, JSON.stringify({
-                vaultEntries: vault.values.size,
-                host: (await import('@/utils/platform/desktopHost')).desktopHostKind(),
-                platform: (await import('react-native')).Platform.OS,
-            })).toBeDefined();
+            if (!storedEntry) throw new Error('Expected the canonical credential writer to populate the Desktop vault');
+            const stored = parseAuthCredentials(JSON.parse(storedEntry[1]));
+            if (!stored) throw new Error('Expected valid stored Home credentials');
+            // Prepare another OS writer's bytes without mutating the live Account lifetime.
+            const rotated = parseAuthCredentials({ ...stored, token: `${stored.token}-rotated` });
+            if (!rotated) throw new Error('Expected valid external replacement credentials');
+            rotatedVaultEntry = [storedEntry[0], JSON.stringify(rotated)];
         }
+        expect(await TokenStorage.setCredentialsForServerUrl(fixture.home.canonicalServerUrl,
+            { serverId: target.id }, connection.credentials)).toBe(true);
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'alice', encryptionMode: 'plain' });
         const requestHome = async (url: RequestInfo | URL, init?: RequestInit) => {
             const requestUrl = new URL(String(url));
@@ -329,7 +322,7 @@ describe('exact invoking-surface continuation', () => {
         setRuntimeFetch(requestHome);
         boundary.request.mockImplementation((endpoint, path, init) => requestHome(`${endpoint}${path}`, init));
         const cancellation = new AbortController();
-        const input = { service: fixture.service, credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST, signal: cancellation.signal,
+        const input = { service: fixture.service, credentialTokenDigest: accountCredentialTokenDigest, signal: cancellation.signal,
             session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
             intent: { kind: 'enroll' as const, homeServerIdentityId: fixture.home.homeServerIdentityId } };
         routerHarness.replace?.mockClear();
@@ -433,7 +426,7 @@ describe('exact invoking-surface continuation', () => {
 
     it('requests exact service reauthentication rather than treating recovery as Back', async () => {
         const input = { service: fixture.service,
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
             intent: { kind: 'enroll' as const, homeServerIdentityId: fixture.home.homeServerIdentityId } };
         let received: unknown;
@@ -446,7 +439,7 @@ describe('exact invoking-surface continuation', () => {
 
     it('explains each typed continuation failure with its own copy instead of one enrollment body', async () => {
         const input = { service: fixture.service,
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
             intent: { kind: 'enroll' as const, homeServerIdentityId: fixture.home.homeServerIdentityId } };
         screen = await renderScreen(<AccountServiceContinuation input={input}
@@ -466,7 +459,7 @@ describe('exact invoking-surface continuation', () => {
     // `stop` is what the directory projects for a declined approval; `retry_stage` must not demote it to Retry.
     it.each(['stop', 'retry_stage'] as const)('keeps a rejected approval on the fresh-attempt action (%s recovery)', async (recovery) => {
         const input = { service: fixture.service,
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
             intent: { kind: 'enroll' as const, homeServerIdentityId: fixture.home.homeServerIdentityId } };
         screen = await renderScreen(<AccountServiceContinuation input={input}
@@ -479,7 +472,7 @@ describe('exact invoking-surface continuation', () => {
 
     it('presents a completed account connection as success rather than warning', async () => {
         const input = { service: fixture.service,
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
             intent: { kind: 'refresh' as const } };
         const onBack = vi.fn();
@@ -510,7 +503,7 @@ describe('exact invoking-surface continuation', () => {
         expect(await TokenStorage.setCredentialsForServerUrl(fixture.home.canonicalServerUrl,
             { serverId: profile.id }, { token: fixture.token })).toBe(true);
         const input = { service: fixture.service,
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
             intent: { kind: 'enroll' as const, homeServerIdentityId: fixture.home.homeServerIdentityId } };
         const onBack = vi.fn();
@@ -548,7 +541,7 @@ describe('exact invoking-surface continuation', () => {
             suggestedName: fixture.home.label,
         });
         const input = { service: fixture.service,
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
             intent: { kind: 'enroll' as const, homeServerIdentityId: fixture.home.homeServerIdentityId } };
         const onBack = vi.fn();
@@ -618,7 +611,7 @@ describe('exact invoking-surface continuation', () => {
 
     it('stops offering Open when the enrolled Home has no saved profile to open', async () => {
         const input = { service: fixture.service,
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
             intent: { kind: 'enroll' as const, homeServerIdentityId: 'srv_unsaved_home' } };
         const onBack = vi.fn();
@@ -633,7 +626,7 @@ describe('exact invoking-surface continuation', () => {
 
     it('offers a Homeless account its refresh first and scanning second, with a body that names both', async () => {
         const input = { service: fixture.service,
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
             intent: { kind: 'enter' as const, target: { kind: 'automatic' as const } } };
         screen = await renderScreen(<AccountServiceContinuation input={input}
@@ -641,7 +634,7 @@ describe('exact invoking-surface continuation', () => {
 
         expect(actionTitle('account-service-continuation-account_connected_no_homes-action')).toBe('Refresh');
         expect(actionTitle('account-service-continuation-account_connected_no_homes-secondary-action'))
-            .toBe('Scan a QR or paste a Home link');
+            .toBe(t('connect.scanExistingHomeQrTitle'));
         expect(screen.getTextContent()).not.toContain('Open Account settings');
         // Refresh and scan are the card's own pair; no escape or bare button competes.
         expect(screen.getTextContent()).not.toContain('Back');
@@ -649,7 +642,7 @@ describe('exact invoking-surface continuation', () => {
 
     it('tells the waiting user what to do and confirms the sign-in survived stop-waiting', async () => {
         const input = { service: fixture.service,
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
             intent: { kind: 'enroll' as const, homeServerIdentityId: fixture.home.homeServerIdentityId } };
         let backs = 0;
@@ -672,7 +665,7 @@ describe('exact invoking-surface continuation', () => {
     it('names each choosable Home by address and marks the preferred one', async () => {
         const { service } = fixture;
         const input = { service, session: new AccountDirectorySession({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { capability: service.capability }),
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             intent: { kind: 'enter' as const, target: { kind: 'automatic' as const } } };
         const other = { ...fixture.home, homeServerIdentityId: 'srv_other', label: 'Other Home', canonicalServerUrl: 'https://other.example.test', preferred: false };
         screen = await renderScreen(<AccountServiceContinuation input={input}
@@ -686,7 +679,7 @@ describe('exact invoking-surface continuation', () => {
 
     it('reports an unlinked Home as a status with direct sign-in first and scan-or-paste second', async () => {
         const input = { service: fixture.service,
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
             intent: { kind: 'enter' as const, target: { kind: 'explicit' as const, homeServerIdentityId: fixture.home.homeServerIdentityId } } };
         const previous = { kind: 'explicit_target_not_linked' as const, homeServerIdentityId: fixture.home.homeServerIdentityId };
@@ -712,14 +705,14 @@ describe('exact invoking-surface continuation', () => {
         await screen.pressByTestIdAsync('account-service-continuation-explicit_target_not_linked-action');
         expect(onOpenHomeAuthentication).toHaveBeenCalledWith(input, fixture.home.homeServerIdentityId, previous);
         expect(actionTitle('account-service-continuation-explicit_target_not_linked-secondary-action'))
-            .toBe('Scan a QR or paste a Home link');
+            .toBe(t('connect.scanExistingHomeQrTitle'));
         await screen.unmount();
 
         screen = await renderScreen(<AccountServiceContinuation input={input} result={previous}
             onResult={() => {}} onBack={() => {}} />);
         // Without a direct Home sign-in host, scan-or-paste is the one way forward.
         expect(actionTitle('account-service-continuation-explicit_target_not_linked-action'))
-            .toBe('Scan a QR or paste a Home link');
+            .toBe(t('connect.scanExistingHomeQrTitle'));
         expect(screen.findByTestId('account-service-continuation-explicit_target_not_linked-reason')?.props.children)
             .toBe('Scan the QR code of Home or paste its Home link to connect it.');
         expect(screen.findAllByTestId('account-service-continuation-explicit_target_not_linked-secondary-action')).toHaveLength(0);
@@ -727,7 +720,7 @@ describe('exact invoking-surface continuation', () => {
 
     it('leads a Home-auth recovery with signing in to that Home inside the card, scan second', async () => {
         const input = { service: fixture.service,
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
             intent: { kind: 'enroll' as const, homeServerIdentityId: fixture.home.homeServerIdentityId } };
         const previous: AccountPostAuthResult = { kind: 'failure', stage: 'material', code: { source: 'local', code: 'account_mode_unavailable' },
@@ -740,7 +733,7 @@ describe('exact invoking-surface continuation', () => {
         // One card, one primary: direct sign-in is the card's own action, never a heavier bare button beneath it.
         // No saved profile or directory entry names this Home, so the product noun stands in.
         expect(actionTitle('account-service-continuation-failure-action')).toBe('Sign in to Home');
-        expect(actionTitle('account-service-continuation-failure-secondary-action')).toBe('Scan a QR or paste a Home link');
+        expect(actionTitle('account-service-continuation-failure-secondary-action')).toBe(t('connect.scanExistingHomeQrTitle'));
         expect(screen.findAllByTestId('account-service-direct-home-auth')).toHaveLength(0);
         expect(screen.findByTestId('account-service-continuation-failure-reason')?.props.children)
             .toBe('Sign in to Home directly, or scan its QR code or paste its Home link.');
@@ -750,23 +743,23 @@ describe('exact invoking-surface continuation', () => {
 
     it('offers scanning as the key form\'s own secondary choice when Home material is missing', async () => {
         const input = { service: fixture.service,
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
             intent: { kind: 'enroll' as const, homeServerIdentityId: fixture.home.homeServerIdentityId } };
         screen = await renderScreen(<AccountServiceContinuation input={input}
             result={{ kind: 'home_material_required', homeServerIdentityId: fixture.home.homeServerIdentityId, homeAccountId: 'account-home', intent: input.intent, reason: 'missing_material' }}
             onResult={() => {}} onBack={() => {}} />);
 
-        const scanButtons = screen.findAll((node) => node.props.title === 'Scan a QR or paste a Home link' && typeof node.props.testID === 'string');
+        const scanButtons = screen.findAll((node) => node.props.title === t('connect.scanExistingHomeQrTitle') && typeof node.props.testID === 'string');
         expect(scanButtons.map((node) => node.props.testID)).toEqual(['restore-manual-secondary']);
         expect(scanButtons[0]?.props.display).toBe('inverted');
     });
 
     it('admits only one Home choice while the shared coordinator is refreshing', async () => {
         const { service } = fixture;
-        await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { token: 'directory-token' });
+        await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { token: fixture.directoryToken });
         const input = { service, session: new AccountDirectorySession({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { capability: service.capability }),
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             intent: { kind: 'enter' as const, target: { kind: 'automatic' as const } } };
         const other = { ...fixture.home, homeServerIdentityId: 'srv_other', label: 'Other Home' };
         let release!: () => void;
@@ -795,9 +788,9 @@ describe('exact invoking-surface continuation', () => {
     it('resumes retained authority even when device service selection changes', async () => {
         const { service } = fixture;
         const controller = new AbortController();
-        await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { token: 'directory-token' });
+        await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { token: fixture.directoryToken });
         const input = { service,
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { capability: service.capability }),
             intent: { kind: 'enroll' as const, homeServerIdentityId: fixture.home.homeServerIdentityId },
             signal: controller.signal,

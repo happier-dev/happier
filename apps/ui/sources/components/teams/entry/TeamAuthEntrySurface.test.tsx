@@ -4,16 +4,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import 'fake-indexeddb/auto';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { teamInvitationPreviewFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { createSignInServiceFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries,
+    waitForHomeGovernance, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
+import { TeamInvitationAcceptResultV1Schema } from '@happier-dev/protocol/teams';
+import { parseToken } from '@/utils/auth/parseToken';
 import { t } from '@/text';
-import { setActiveServerId, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 
-import { TeamAuthEntrySurface } from './TeamAuthEntrySurface';
 
-const endpointFetch = vi.hoisted(() => vi.fn());
-const authorityFetch = vi.hoisted(() => vi.fn());
-const runWithServerRequestAuthorityForServerAccountScope = vi.hoisted(() => vi.fn());
-const acceptTeamInvitation = vi.hoisted(() => vi.fn());
+// These handlers answer only HTTP boundary requests. Internal discovery,
+// request authority, invitation Actions and error classification stay real.
+const endpointFetch = vi.fn();
+const authorityFetch = vi.fn();
+const acceptHttpResponse = vi.fn<() => HomeDomainAnswer>();
 
 const routerReplaceSpy = vi.hoisted(() => vi.fn());
 const routerPushSpy = vi.hoisted(() => vi.fn());
@@ -21,43 +30,6 @@ vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({ router: { replace: routerReplaceSpy, push: routerPushSpy } }).module;
 });
-
-/**
- * The account service is a separate endpoint this page never owns. Only its
- * discovery probe is replaced; the sign-in-service policy, the effective-service
- * resolution and the entry-href builder stay real.
- */
-const accountServiceDiscovery = vi.hoisted(() => ({
-    value: null as null | Record<string, unknown>,
-}));
-vi.mock('@/auth/accountDirectory/accountDirectoryAuthClient', () => ({
-    accountDirectoryAuthClient: {
-        discoverAuthenticationMethods: async () => accountServiceDiscovery.value
-            ?? { kind: 'unavailable' },
-    },
-    createVerifiedAccountServiceAuthority: () => null,
-}));
-
-vi.mock('@/sync/http/client', () => ({
-    serverFetch: vi.fn(),
-    createServerFetchAtEndpoint: vi.fn(() => endpointFetch),
-}));
-
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope', () => ({
-    runWithServerRequestAuthorityForServerAccountScope,
-}));
-
-vi.mock('@/sync/ops/teams/teamInvitationOperations', () => ({
-    acceptTeamInvitation,
-}));
-
-// Only the pending-error predicate is consumed here; the registration binding it
-// describes is owned and proven by `teamActionClient` and its own suite.
-vi.mock('@/sync/ops/teams/teamActionClient', () => ({
-    isTeamActionApprovalPendingError: (value: unknown) => (
-        typeof value === 'object' && value !== null && 'registration' in value
-    ),
-}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -70,6 +42,39 @@ vi.mock('@/assets/onboarding/planet-dark.jpg', () => ({ default: 'planet-dark.jp
 vi.mock('@/assets/onboarding/planet-light.jpg', () => ({ default: 'planet-light.jpg' }));
 vi.mock('@/assets/images/logotype-light.png', () => ({ default: 'logotype-light.png' }));
 
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
+
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
+installDisconnectedServerSocketBoundary();
+const { TeamAuthEntrySurface } = await import('./TeamAuthEntrySurface');
+const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
+
+const ENTRY_PATH = '/v1/auth/entry';
+const PREVIEW_PATH = '/v1/team-invitations/preview';
+const ACCEPT_PATH = '/v1/team-invitations/accept';
+let homeId: string;
+let accountServiceAvailable = false;
+
+function authenticatedEntryRequests() {
+    return home.requestsFor(ENTRY_PATH).filter(request => request.token !== null);
+}
+function expectEntryAccount(accountScope: { serverId: string; accountId: string }) {
+    const request = authenticatedEntryRequests().at(-1);
+    expect(request).toMatchObject({ serverUrl: 'https://home.example.test', path: ENTRY_PATH });
+    expect(request?.token && parseToken(request.token)).toBe(accountScope.accountId);
+}
+function expectAcceptedAs(accountScope: { serverId: string; accountId: string }, admission: object) {
+    const request = home.requestsFor(ACCEPT_PATH).at(-1);
+    expect(request).toMatchObject({ serverUrl: 'https://home.example.test', input: { v: 1, ...admission } });
+    expect(request?.token && parseToken(request.token)).toBe(accountScope.accountId);
+}
+async function setAccount(accountId: string) {
+    expect(await TokenStorage.setCredentialsForServerUrl('https://home.example.test', { serverId: homeId },
+        { token: createAccountTokenForTests(accountId, { currentAccount: true }) })).toBe(true);
+}
+
 const target: HomeTargetInput = Object.freeze({
     kind: 'descriptor',
     authority: 'trusted_enrollment',
@@ -78,7 +83,7 @@ const target: HomeTargetInput = Object.freeze({
         homeServerIdentityId: 'srv_team-home',
         canonicalServerUrl: 'https://home.example.test',
         revision: 1,
-        endpoints: [{ kind: 'https' as const, url: 'https://edge.example.test' }],
+        endpoints: [{ kind: 'https' as const, url: 'https://home.example.test' }],
     },
 });
 
@@ -105,7 +110,7 @@ function readyResponse(
         ? [{ kind: 'switch_account' }]
         : [])],
 ) {
-    return new Response(JSON.stringify({
+    return new Response(JSON.stringify(AuthEntryProjectionV1Schema.parse({
         v: 1,
         state: 'admission_required',
         scope: { kind: scope },
@@ -127,7 +132,7 @@ function readyResponse(
         ...(currentAccountRecipientStatus ? { currentAccountRecipientStatus } : {}),
         ...(entryInvitationPreview ? { preview: entryInvitationPreview } : {}),
         autoRedirect: null,
-    }), { status: 200 });
+    })), { status: 200 });
 }
 
 function nativeMtlsReadyResponse() {
@@ -146,22 +151,12 @@ function nativeMtlsReadyResponse() {
  * join screen states comes from here, so a test that changes what the person is
  * agreeing to changes this fixture rather than the screen's own wording.
  */
-function activePreview(overrides: Record<string, unknown> = {}) {
-    return {
-        home: { serverId: 'srv_team-home', displayName: 'home.example.test', storageMode: null, hosting: null },
-        team: {
-            teamId: 'team-1',
-            name: 'A very long Team name that remains fully available to assistive technology',
-            logo: null,
-            accentSeed: 'team-1',
-        },
-        role: 'member',
-        historyAccess: 'from_membership',
-        state: 'active',
-        expiresAt: Date.UTC(2030, 0, 1),
-        recipientEmailMask: null,
+function activePreview(overrides: Parameters<typeof teamInvitationPreviewFixture>[0] = {}) {
+    return teamInvitationPreviewFixture({
         ...overrides,
-    };
+        home: { serverId: 'srv_team-home', displayName: 'home.example.test', ...overrides?.home },
+        team: { name: 'A very long Team name that remains fully available to assistive technology', ...overrides?.team },
+    });
 }
 
 function actionIconNames(
@@ -177,14 +172,11 @@ async function waitForTestId(
     screen: Awaited<ReturnType<typeof renderScreen>>,
     testID: string,
 ) {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-        const node = screen.findByTestId(testID);
-        if (node) return node;
-        await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 0));
-        });
-    }
-    throw new Error(`Timed out waiting for ${testID}; rendered=${screen.getTextContent()}; fetchCalls=${endpointFetch.mock.calls.length}`);
+    await waitForHomeGovernance(() => expect(screen.findByTestId(testID), JSON.stringify({
+        text: screen.getTextContent(),
+        requests: home.requests.map(({ path, serverUrl, token }) => ({ path, serverUrl, authenticated: Boolean(token) })),
+    })).not.toBeNull());
+    return screen.findByTestId(testID)!;
 }
 
 let entryScope: 'team' | 'invitation' = 'team';
@@ -194,25 +186,30 @@ let invitationEmailVerificationRequired = true;
 let entryInvitationPreview: unknown;
 
 /** The endpoint calls a join page makes, separated from the preview reads. */
-function authEntryCalls(): unknown[][] {
-    return [...endpointFetch.mock.calls, ...authorityFetch.mock.calls]
-        .filter((call: unknown[]) => String(call[0]).includes('/v1/auth/entry'));
+function authEntryCalls() {
+    return home.requestsFor(ENTRY_PATH);
 }
 
 describe('TeamAuthEntrySurface', () => {
     beforeEach(async () => {
         standardCleanup();
-        if (target.kind !== 'descriptor') throw new Error('Expected the canonical Home descriptor fixture');
-        const profile = await upsertServerProfile({ serverUrl: target.descriptor.canonicalServerUrl, name: 'Acme Home' });
-        await setServerProfileIdentityForUrl(profile.serverUrl, target.descriptor.homeServerIdentityId);
-        await setActiveServerId(profile.id, { scope: 'device' });
+        await home.reset();
+        homeId = await home.addHome({ name: 'Acme Home', serverUrl: 'https://home.example.test',
+            serverIdentityId: 'srv_team-home', accountId: 'account-1', currentAccount: true, teamsEnabled: true });
+        const binding = await resolveServerCredentialAccountScope(homeId);
+        if (binding.kind !== 'bound' || binding.scope.accountId !== 'account-1') {
+            throw new Error(`Expected the fixture's saved Home Account, received ${JSON.stringify(binding)}`);
+        }
+        homeId = binding.scope.serverId;
+        const credentials = await TokenStorage.getCredentialsForServerUrl('https://home.example.test', { serverId: homeId });
+        expect(credentials && parseToken(credentials.token)).toBe('account-1');
         endpointFetch.mockReset();
         authorityFetch.mockReset();
-        acceptTeamInvitation.mockReset();
+        acceptHttpResponse.mockReset().mockReturnValue({ body: TeamInvitationAcceptResultV1Schema.parse({ outcome: 'joined', teamId: 'team-1' }) });
         entryScope = 'team';
         entrySignInService = undefined;
         entryInvitationPreview = undefined;
-        accountServiceDiscovery.value = null;
+        accountServiceAvailable = false;
         routerPushSpy.mockReset();
         invitationEmailVerificationRequired = true;
         previewResult = { outcome: 'ok', preview: activePreview() };
@@ -222,14 +219,29 @@ describe('TeamAuthEntrySurface', () => {
                 : readyResponse(entryScope)
         ));
         authorityFetch.mockImplementation(async () => readyResponse(entryScope));
-        runWithServerRequestAuthorityForServerAccountScope.mockReset();
-        // The authenticated transport records the exact Account scope its authority was bound to.
-        runWithServerRequestAuthorityForServerAccountScope.mockImplementation(
-            async (params: Readonly<{ scope: unknown }>, operation: (authority: unknown) => Promise<unknown>) =>
-                await operation({
-                    request: (path: string, init?: RequestInit) => authorityFetch(path, init, { accountScope: params.scope }),
-                }),
-        );
+        home.answer(homeId, ENTRY_PATH, { select: async (_input, request) => {
+            const handler = new Headers(request.init?.headers).has('Authorization') ? authorityFetch : endpointFetch;
+            const response: Response = await handler(ENTRY_PATH, request.init);
+            return { status: response.status, body: await response.clone().json() };
+        } });
+        home.answer(homeId, PREVIEW_PATH, { select: async (_input, request) => {
+            const response: Response = await endpointFetch(PREVIEW_PATH, request.init);
+            return { status: response.status, body: await response.clone().json() };
+        } });
+        home.answer(homeId, ACCEPT_PATH, { select: () => acceptHttpResponse() });
+        const serviceId = await home.addHome({ name: 'Acme Accounts', serverUrl: 'https://accounts.example.test',
+            serverIdentityId: 'srv_accounts', accountId: null, active: false });
+        const features = createSignInServiceFeaturesResponse('https://accounts.example.test');
+        features.capabilities.serverIdentity = { serverIdentityId: 'srv_accounts' };
+        features.accountServicePresentation = { v: 1, displayName: 'Acme Accounts' };
+        home.answer(serviceId, '/v1/features', { select: () => accountServiceAvailable
+            ? { body: features } : { dispatchThenFail: true } });
+        home.answer(serviceId, ENTRY_PATH, { body: AuthEntryProjectionV1Schema.parse({
+            v: 1, state: 'ready', scope: { kind: 'home' },
+            actions: [{ kind: 'authenticate', methodId: 'key_challenge', action: 'login', mode: 'keyed', origin: 'home',
+                presentation: { displayName: 'Account key' } }],
+            autoRedirect: null,
+        }) });
     });
 
     afterEach(() => standardCleanup());
@@ -269,9 +281,9 @@ describe('TeamAuthEntrySurface', () => {
             target,
         });
         expect(onSelectAction.mock.calls[0]?.[0].target).toBe(target);
-        expect(endpointFetch).toHaveBeenCalledWith('/v1/auth/entry', expect.objectContaining({
-            body: JSON.stringify({ v: 1, scope: { kind: 'team', teamId: 'team-1' } }),
-        }), { includeAuth: false, retry: 'none' });
+        expect(home.requestsFor(ENTRY_PATH)).toEqual([expect.objectContaining({
+            input: { v: 1, scope: { kind: 'team', teamId: 'team-1' } }, token: null,
+        })]);
     });
 
     it('renders native mTLS for invitation entry when the Home admits it', async () => {
@@ -360,7 +372,7 @@ describe('TeamAuthEntrySurface', () => {
             t('welcome.welcomePrimaryButton'),
             t('welcome.continueWithKey'),
             t('settingsAccount.nativePassword.title'),
-            t('settingsAccount.nativePassword.createAccount'),
+            t('settingsAccount.nativePassword.signUpWithEmail'),
         ]);
         expect(unique.map((card) => card.primary === true)).toEqual([true, false, false, false]);
     });
@@ -637,7 +649,7 @@ describe('TeamAuthEntrySurface', () => {
     });
 
     it('offers an already-admitted member continuation instead of another sign-in', async () => {
-        const accountScope = Object.freeze({ serverId: 'srv_team-home', accountId: 'account-1' });
+        const accountScope = Object.freeze({ serverId: homeId, accountId: 'account-1' });
         authorityFetch.mockResolvedValueOnce(new Response(JSON.stringify({
             v: 1,
             state: 'already_member',
@@ -662,7 +674,7 @@ describe('TeamAuthEntrySurface', () => {
         await waitForTestId(screen, 'team-auth-entry-ready');
 
         // The projection is asked for as this exact Account, not anonymously.
-        expect(authorityFetch).toHaveBeenCalledWith('/v1/auth/entry', expect.anything(), { accountScope });
+        expectEntryAccount(accountScope);
         expect(endpointFetch).not.toHaveBeenCalled();
         expect(screen.findAllByTestId('team-auth-entry-action:home-password')).toHaveLength(0);
         expect(screen.findByTestId('team-auth-entry-account-label')?.props.children)
@@ -681,8 +693,9 @@ describe('TeamAuthEntrySurface', () => {
             .mockResolvedValueOnce(readyResponse('team', undefined, {
                 firstName: 'Bob', lastName: null, username: 'bob', avatarUrl: null,
             }));
-        const firstScope = Object.freeze({ serverId: 'srv_team-home', accountId: 'account-alice' });
-        const secondScope = Object.freeze({ serverId: 'srv_team-home', accountId: 'account-bob' });
+        const firstScope = Object.freeze({ serverId: homeId, accountId: 'account-alice' });
+        const secondScope = Object.freeze({ serverId: homeId, accountId: 'account-bob' });
+        await setAccount('account-alice');
         const screen = await renderScreen(
             <TeamAuthEntrySurface
                 teamId="team-1"
@@ -696,6 +709,7 @@ describe('TeamAuthEntrySurface', () => {
         expect(screen.findByTestId('team-auth-entry-account-label')?.props.children)
             .toBe('Signed in as Alice Chen');
 
+        await setAccount('account-bob');
         await screen.update(
             <TeamAuthEntrySurface
                 teamId="team-1"
@@ -717,7 +731,7 @@ describe('TeamAuthEntrySurface', () => {
             <TeamAuthEntrySurface
                 teamId="team-1"
                 target={target}
-                accountScope={{ serverId: 'srv_team-home', accountId: 'account-1' }}
+                accountScope={{ serverId: homeId, accountId: 'account-1' }}
                 onContinue={onContinue}
                 onSelectAction={() => {}}
             />,
@@ -746,9 +760,7 @@ describe('TeamAuthEntrySurface', () => {
         expect(screen.findByTestId('team-auth-entry-join')).toBeNull();
         expect(await waitForTestId(screen, 'team-join-preview')).toBeTruthy();
         expect(screen.getTextContent()).toContain(t('teams.entry.readyStatus'));
-        expect(endpointFetch).toHaveBeenCalledWith('/v1/team-invitations/preview', expect.objectContaining({
-            body: JSON.stringify({ v: 1, token }),
-        }), { includeAuth: false, retry: 'none' });
+        expect(home.requestsFor(PREVIEW_PATH)).toEqual([expect.objectContaining({ input: { v: 1, token }, token: null })]);
         await screen.pressByTestIdAsync('team-auth-entry-action:home-password');
         expect(onSelectAction).toHaveBeenCalledWith(expect.objectContaining({
             action: expect.objectContaining({ methodId: 'home-password', origin: 'home' }),
@@ -812,12 +824,9 @@ describe('TeamAuthEntrySurface', () => {
 
     it('accepts an existing-Account invitation only after explicit Join confirmation', async () => {
         entryScope = 'invitation';
-        acceptTeamInvitation.mockResolvedValueOnce({
-            kind: 'succeeded',
-            value: { outcome: 'joined', teamId: 'team-1' },
-        });
+        acceptHttpResponse.mockReturnValueOnce({ body: TeamInvitationAcceptResultV1Schema.parse({ outcome: 'joined', teamId: 'team-1' }) });
         const onAdmissionComplete = vi.fn();
-        const accountScope = Object.freeze({ serverId: 'srv_team-home', accountId: 'account-1' });
+        const accountScope = Object.freeze({ serverId: homeId, accountId: 'account-1' });
         const token = 'A'.repeat(43);
         const screen = await renderScreen(
             <TeamAuthEntrySurface
@@ -829,8 +838,8 @@ describe('TeamAuthEntrySurface', () => {
         );
         await waitForTestId(screen, 'team-auth-entry-ready');
 
-        expect(acceptTeamInvitation).not.toHaveBeenCalled();
-        expect(authorityFetch).toHaveBeenCalledWith('/v1/auth/entry', expect.anything(), { accountScope });
+        expect(home.requestsFor(ACCEPT_PATH)).toHaveLength(0);
+        expectEntryAccount(accountScope);
 
         // The consequences of joining are stated before the confirmation exists.
         await waitForTestId(screen, 'team-join-preview');
@@ -842,10 +851,7 @@ describe('TeamAuthEntrySurface', () => {
         expect(screen.getTextContent()).not.toContain(t('teams.entry.readyStatus'));
 
         await screen.pressByTestIdAsync('team-auth-entry-join');
-        expect(acceptTeamInvitation).toHaveBeenCalledWith(expect.objectContaining({
-            scope: accountScope,
-            admission: { token },
-        }));
+        expectAcceptedAs(accountScope, { token });
 
         // Success does not navigate on the person's behalf: opening the Team is
         // an explicit transition they choose from the success state.
@@ -859,11 +865,8 @@ describe('TeamAuthEntrySurface', () => {
         entryScope = 'invitation';
         entryInvitationPreview = activePreview({ role: 'guest', recipientEmailMask: 'i•••@example.test' });
         authorityFetch.mockImplementation(async () => readyResponse('invitation', 'verification_required'));
-        acceptTeamInvitation.mockResolvedValueOnce({
-            kind: 'succeeded',
-            value: { outcome: 'joined', teamId: 'team-1' },
-        });
-        const accountScope = Object.freeze({ serverId: 'srv_team-home', accountId: 'account-1' });
+        acceptHttpResponse.mockReturnValueOnce({ body: TeamInvitationAcceptResultV1Schema.parse({ outcome: 'joined', teamId: 'team-1' }) });
+        const accountScope = Object.freeze({ serverId: homeId, accountId: 'account-1' });
         const continuation = Object.freeze({
             v: 1 as const,
             kind: 'post_auth_invitation' as const,
@@ -880,18 +883,15 @@ describe('TeamAuthEntrySurface', () => {
             />,
         );
         await waitForTestId(screen, 'team-auth-entry-ready');
-        expect(acceptTeamInvitation).not.toHaveBeenCalled();
+        expect(home.requestsFor(ACCEPT_PATH)).toHaveLength(0);
         expect(screen.findByTestId('team-join-preview')).not.toBeNull();
         expect(screen.findByTestId('team-auth-entry-use-another-account')).not.toBeNull();
         expect(screen.getTextContent()).toContain('i•••@example.test');
-        const entryRequest = JSON.parse(authorityFetch.mock.calls[0]?.[1]?.body as string);
+        const entryRequest = authenticatedEntryRequests()[0]!.input as { scope: unknown };
         expect(entryRequest.scope).toEqual({ kind: 'invitation', continuation });
 
         await screen.pressByTestIdAsync('team-auth-entry-join');
-        expect(acceptTeamInvitation).toHaveBeenCalledWith(expect.objectContaining({
-            scope: accountScope,
-            admission: { continuation },
-        }));
+        expectAcceptedAs(accountScope, { continuation });
     });
 
     it.each([undefined, 'expired'] as const)('withholds held-continuation Join without an active offer (%s)', async (state) => {
@@ -900,7 +900,7 @@ describe('TeamAuthEntrySurface', () => {
         const screen = await renderScreen(<TeamAuthEntrySurface
             invitation={{
                 continuation: { v: 1, kind: 'post_auth_invitation', reference: 'oauth_pending_exact_1', teamId: 'team-1' },
-                accountScope: { serverId: 'srv_team-home', accountId: 'account-1' },
+                accountScope: { serverId: homeId, accountId: 'account-1' },
             }}
             target={target}
             onSelectAction={() => {}}
@@ -908,7 +908,7 @@ describe('TeamAuthEntrySurface', () => {
         />);
         await waitForTestId(screen, 'team-auth-entry-ready');
         expect(screen.findByTestId('team-auth-entry-join')).toBeNull();
-        expect(acceptTeamInvitation).not.toHaveBeenCalled();
+        expect(home.requestsFor(ACCEPT_PATH)).toHaveLength(0);
     });
 
     it.each([200, 404] as const)('does not infer an old Home from an unreadable preview (%s)', async (status) => {
@@ -917,7 +917,7 @@ describe('TeamAuthEntrySurface', () => {
             ? new Response(JSON.stringify({ malformed: true }), { status })
             : readyResponse('invitation'));
         const screen = await renderScreen(<TeamAuthEntrySurface
-            invitation={{ token: 'G'.repeat(43), accountScope: { serverId: 'srv_team-home', accountId: 'account-1' } }}
+            invitation={{ token: 'G'.repeat(43), accountScope: { serverId: homeId, accountId: 'account-1' } }}
             target={target}
             onSelectAction={() => {}}
             onAdmissionComplete={() => {}}
@@ -935,7 +935,7 @@ describe('TeamAuthEntrySurface', () => {
         };
         authorityFetch.mockResolvedValueOnce(readyResponse('invitation', 'verification_required'));
         const onRecoverIdentity = vi.fn();
-        const accountScope = Object.freeze({ serverId: 'srv_team-home', accountId: 'account-1' });
+        const accountScope = Object.freeze({ serverId: homeId, accountId: 'account-1' });
         const token = 'G'.repeat(43);
         const screen = await renderScreen(
             <TeamAuthEntrySurface
@@ -949,17 +949,17 @@ describe('TeamAuthEntrySurface', () => {
         await waitForTestId(screen, 'team-auth-entry-ready');
         await waitForTestId(screen, 'team-join-preview');
 
-        expect(authorityFetch).toHaveBeenCalledWith('/v1/auth/entry', expect.anything(), { accountScope });
+        expectEntryAccount(accountScope);
         expect(screen.findByTestId('team-auth-entry-join')).toBeTruthy();
         expect(screen.getTextContent()).toContain('Join with this Account');
         expect(screen.getTextContent())
             .toContain('p•••@example.test will be added as a verified address on this Account.');
         expect(screen.findByTestId('team-auth-entry-use-another-account')).toBeTruthy();
-        expect(acceptTeamInvitation).not.toHaveBeenCalled();
+        expect(home.requestsFor(ACCEPT_PATH)).toHaveLength(0);
 
         await screen.pressByTestIdAsync('team-auth-entry-use-another-account');
         expect(onRecoverIdentity).toHaveBeenCalledTimes(1);
-        expect(acceptTeamInvitation).not.toHaveBeenCalled();
+        expect(home.requestsFor(ACCEPT_PATH)).toHaveLength(0);
     });
 
     it('accepts the explicit current-Account choice and lets the Home attach the addressed mailbox atomically', async () => {
@@ -969,11 +969,8 @@ describe('TeamAuthEntrySurface', () => {
             preview: activePreview({ recipientEmailMask: 'p•••@example.test' }),
         };
         authorityFetch.mockResolvedValueOnce(readyResponse('invitation', 'verification_required'));
-        acceptTeamInvitation.mockResolvedValueOnce({
-            kind: 'succeeded',
-            value: { outcome: 'joined', teamId: 'team-1' },
-        });
-        const accountScope = Object.freeze({ serverId: 'srv_team-home', accountId: 'account-1' });
+        acceptHttpResponse.mockReturnValueOnce({ body: TeamInvitationAcceptResultV1Schema.parse({ outcome: 'joined', teamId: 'team-1' }) });
+        const accountScope = Object.freeze({ serverId: homeId, accountId: 'account-1' });
         const token = 'J'.repeat(43);
         const screen = await renderScreen(
             <TeamAuthEntrySurface
@@ -988,10 +985,7 @@ describe('TeamAuthEntrySurface', () => {
 
         await screen.pressByTestIdAsync('team-auth-entry-join');
 
-        expect(acceptTeamInvitation).toHaveBeenCalledWith(expect.objectContaining({
-            scope: accountScope,
-            admission: { token },
-        }));
+        expectAcceptedAs(accountScope, { token });
         expect(await waitForTestId(screen, 'team-auth-entry-admission-complete')).toBeTruthy();
     });
 
@@ -1016,7 +1010,7 @@ describe('TeamAuthEntrySurface', () => {
         await screen.pressByTestIdAsync('team-auth-entry-use-current-account');
 
         expect(onUseCurrentAccount).toHaveBeenCalledTimes(1);
-        expect(acceptTeamInvitation).not.toHaveBeenCalled();
+        expect(home.requestsFor(ACCEPT_PATH)).toHaveLength(0);
     });
 
     it('opens an invitation Team directly when the authenticated producer proves effective membership', async () => {
@@ -1036,7 +1030,7 @@ describe('TeamAuthEntrySurface', () => {
             <TeamAuthEntrySurface
                 invitation={{
                     token: 'K'.repeat(43),
-                    accountScope: { serverId: 'srv_team-home', accountId: 'account-1' },
+                    accountScope: { serverId: homeId, accountId: 'account-1' },
                 }}
                 target={target}
                 onSelectAction={() => {}}
@@ -1046,10 +1040,10 @@ describe('TeamAuthEntrySurface', () => {
         await waitForTestId(screen, 'team-auth-entry-continue');
 
         expect(screen.getTextContent()).toContain('Open Acme Team');
-        expect(acceptTeamInvitation).not.toHaveBeenCalled();
+        expect(home.requestsFor(ACCEPT_PATH)).toHaveLength(0);
         await screen.pressByTestIdAsync('team-auth-entry-continue');
         expect(onAdmissionComplete).toHaveBeenCalledWith({ outcome: 'already_member', teamId: 'team-1' });
-        expect(acceptTeamInvitation).not.toHaveBeenCalled();
+        expect(home.requestsFor(ACCEPT_PATH)).toHaveLength(0);
     });
 
     it('keeps matching-address invitation acceptance concise', async () => {
@@ -1063,7 +1057,7 @@ describe('TeamAuthEntrySurface', () => {
             <TeamAuthEntrySurface
                 invitation={{
                     token: 'H'.repeat(43),
-                    accountScope: { serverId: 'srv_team-home', accountId: 'account-1' },
+                    accountScope: { serverId: homeId, accountId: 'account-1' },
                 }}
                 target={target}
                 onSelectAction={() => {}}
@@ -1085,7 +1079,7 @@ describe('TeamAuthEntrySurface', () => {
             <TeamAuthEntrySurface
                 invitation={{
                     token: 'D'.repeat(43),
-                    accountScope: { serverId: 'srv_team-home', accountId: 'account-1' },
+                    accountScope: { serverId: homeId, accountId: 'account-1' },
                 }}
                 target={target}
                 onSelectAction={() => {}}
@@ -1097,7 +1091,7 @@ describe('TeamAuthEntrySurface', () => {
         // Confirming something the Home has already retired would burn a press on
         // an answer the preview already gave.
         expect(screen.findByTestId('team-auth-entry-join')).toBeNull();
-        expect(acceptTeamInvitation).not.toHaveBeenCalled();
+        expect(home.requestsFor(ACCEPT_PATH)).toHaveLength(0);
         // The preview explains the retired link; the page does not also ask the signed-in person to sign in.
         expect(screen.getTextContent()).not.toContain(t('teams.entry.readyStatus'));
     });
@@ -1116,7 +1110,7 @@ describe('TeamAuthEntrySurface', () => {
             <TeamAuthEntrySurface
                 invitation={{
                     token: 'E'.repeat(43),
-                    accountScope: { serverId: 'srv_team-home', accountId: 'account-1' },
+                    accountScope: { serverId: homeId, accountId: 'account-1' },
                 }}
                 target={target}
                 onSelectAction={() => {}}
@@ -1174,7 +1168,7 @@ describe('TeamAuthEntrySurface', () => {
             <TeamAuthEntrySurface
                 invitation={{
                     token: 'F'.repeat(43),
-                    accountScope: { serverId: 'srv_team-home', accountId: 'account-1' },
+                    accountScope: { serverId: homeId, accountId: 'account-1' },
                 }}
                 target={target}
                 onSelectAction={() => {}}
@@ -1192,16 +1186,13 @@ describe('TeamAuthEntrySurface', () => {
 
     it('keeps invitation terminal outcomes distinct and never admits through another Home scope', async () => {
         entryScope = 'invitation';
-        acceptTeamInvitation.mockResolvedValueOnce({
-            kind: 'succeeded',
-            value: { outcome: 'revoked' },
-        });
+        acceptHttpResponse.mockReturnValueOnce({ body: TeamInvitationAcceptResultV1Schema.parse({ outcome: 'revoked' }) });
         const token = 'B'.repeat(43);
         const screen = await renderScreen(
             <TeamAuthEntrySurface
                 invitation={{
                     token,
-                    accountScope: { serverId: 'srv_team-home', accountId: 'account-1' },
+                    accountScope: { serverId: homeId, accountId: 'account-1' },
                 }}
                 target={target}
                 onSelectAction={() => {}}
@@ -1227,20 +1218,17 @@ describe('TeamAuthEntrySurface', () => {
         );
         await waitForTestId(mismatched, 'team-auth-entry-unavailable');
         expect(authEntryCalls()).toHaveLength(authEntriesBeforeMismatchedScope);
-        expect(acceptTeamInvitation).toHaveBeenCalledTimes(1);
+        expect(home.requestsFor(ACCEPT_PATH)).toHaveLength(1);
     });
 
     it('recovers from an admission result that names a different Team by reloading the exact entry', async () => {
         entryScope = 'invitation';
-        acceptTeamInvitation.mockResolvedValueOnce({
-            kind: 'succeeded',
-            value: { outcome: 'joined', teamId: 'team-other' },
-        });
+        acceptHttpResponse.mockReturnValueOnce({ body: TeamInvitationAcceptResultV1Schema.parse({ outcome: 'joined', teamId: 'team-other' }) });
         const screen = await renderScreen(
             <TeamAuthEntrySurface
                 invitation={{
                     token: 'M'.repeat(43),
-                    accountScope: { serverId: 'srv_team-home', accountId: 'account-1' },
+                    accountScope: { serverId: homeId, accountId: 'account-1' },
                 }}
                 target={target}
                 onSelectAction={() => {}}
@@ -1255,31 +1243,22 @@ describe('TeamAuthEntrySurface', () => {
         await screen.pressByTestIdAsync('team-auth-entry-admission-incompatible-action');
         await waitForTestId(screen, 'team-auth-entry-ready');
         expect(authEntryCalls().length).toBeGreaterThan(requestsBeforeRetry);
-        expect(acceptTeamInvitation).toHaveBeenCalledTimes(1);
+        expect(home.requestsFor(ACCEPT_PATH)).toHaveLength(1);
     });
 
     it('retries an outcome-unknown invitation acceptance without requiring a second Join confirmation', async () => {
         entryScope = 'invitation';
-        acceptTeamInvitation
-            .mockResolvedValueOnce({
-                kind: 'failed',
-                // The write left this client, so the shared Home transport
-                // deliberately refuses to call it generically retryable. This
-                // screen can offer the same accept again only because the
-                // invitation owner proves a committed first request re-enters
-                // as `already_member` for this authenticated Account.
-                failure: { kind: 'outcome_unknown', retryable: false, code: null },
-            })
-            .mockResolvedValueOnce({
-                kind: 'succeeded',
-                value: { outcome: 'already_member', teamId: 'team-1' },
-            });
+        // The request crosses the network before its response is lost; real
+        // transport classification must produce outcome_unknown and permit recovery.
+        acceptHttpResponse
+            .mockReturnValueOnce({ dispatchThenFail: true })
+            .mockReturnValueOnce({ body: TeamInvitationAcceptResultV1Schema.parse({ outcome: 'already_member', teamId: 'team-1' }) });
         const onAdmissionComplete = vi.fn();
         const screen = await renderScreen(
             <TeamAuthEntrySurface
                 invitation={{
                     token: 'C'.repeat(43),
-                    accountScope: { serverId: 'srv_team-home', accountId: 'account-1' },
+                    accountScope: { serverId: homeId, accountId: 'account-1' },
                 }}
                 target={target}
                 onSelectAction={() => {}}
@@ -1293,7 +1272,7 @@ describe('TeamAuthEntrySurface', () => {
         expect(screen.getTextContent()).toContain('We could not confirm whether you joined');
         await screen.pressByTestIdAsync('team-auth-entry-admission-failure-outcome_unknown-action');
 
-        expect(acceptTeamInvitation).toHaveBeenCalledTimes(2);
+        expect(home.requestsFor(ACCEPT_PATH)).toHaveLength(2);
         await waitForTestId(screen, 'team-auth-entry-admission-complete');
         await screen.pressByTestIdAsync('team-auth-entry-admission-complete-action');
         expect(onAdmissionComplete).toHaveBeenCalledWith({
@@ -1303,20 +1282,6 @@ describe('TeamAuthEntrySurface', () => {
     });
 
     describe('account-service sign-in handoff', () => {
-        const service = {
-            kind: 'supported_account_service',
-            endpointUrl: 'https://accounts.example.test',
-            serverIdentityId: 'srv_accounts',
-            canonicalServerUrl: 'https://accounts.example.test',
-            capability: {},
-            keyLoginAvailable: true,
-            oauthProviderIds: [],
-            preferredProvisionProviderId: null,
-            authenticationCatalog: { methods: [] },
-            authenticationActions: [],
-            accountServiceDisplayName: 'Acme Accounts',
-            snapshot: { status: 'ready' },
-        };
 
         it('hands off to the Home-named account service instead of offering only local methods', async () => {
             entrySignInService = {
@@ -1325,7 +1290,7 @@ describe('TeamAuthEntrySurface', () => {
                 endpoint: 'https://accounts.example.test',
                 expectedServerIdentityId: 'srv_accounts',
             };
-            accountServiceDiscovery.value = service;
+            accountServiceAvailable = true;
             const screen = await renderScreen(
                 <TeamAuthEntrySurface target={target} teamId="team-1" onSelectAction={vi.fn()} />,
             );
@@ -1356,11 +1321,7 @@ describe('TeamAuthEntrySurface', () => {
                 expectedServerIdentityId: 'srv_accounts',
             };
             // The Home still names the service; only the service's own probe fails.
-            accountServiceDiscovery.value = {
-                kind: 'endpoint_unavailable',
-                endpointUrl: 'https://accounts.example.test',
-                reason: 'probe_failed',
-            };
+            accountServiceAvailable = false;
             const screen = await renderScreen(
                 <TeamAuthEntrySurface target={target} teamId="team-1" onSelectAction={vi.fn()} />,
             );
@@ -1377,14 +1338,14 @@ describe('TeamAuthEntrySurface', () => {
             ).at(0)?.props as { title: string; onPress: () => void };
             expect(notice.title).toBe(t('welcome.signInServiceUnavailableTitle'));
 
-            accountServiceDiscovery.value = service;
+            accountServiceAvailable = true;
             await act(async () => { notice.onPress(); });
             await waitForTestId(screen, 'team-auth-entry-account-service');
         });
 
         it('offers no handoff when the Home signs Accounts in itself', async () => {
             entrySignInService = { v: 1, mode: 'self' };
-            accountServiceDiscovery.value = service;
+            accountServiceAvailable = true;
             const screen = await renderScreen(
                 <TeamAuthEntrySurface target={target} teamId="team-1" onSelectAction={vi.fn()} />,
             );

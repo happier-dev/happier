@@ -1,30 +1,22 @@
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { TeamInvitationPreviewV1 } from '@happier-dev/protocol/teams';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { teamInvitationPreviewFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
 
 import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
 
 const request = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/http/client', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/http/client')>(),
-    createServerFetchAtEndpoint: () => request,
-}));
+
 
 import { useTeamInvitationPreview } from './useTeamInvitationPreview';
 
-const preview: TeamInvitationPreviewV1 = {
-    home: { serverId: 'srv_acme', displayName: 'Acme Home', storageMode: null, hosting: null },
-    team: { teamId: 'team-1', name: 'Acme', logo: null, accentSeed: 'team-1' },
-    role: 'guest',
-    historyAccess: 'all_existing',
-    state: 'active',
-    expiresAt: Date.UTC(2030, 0, 1),
-    recipientEmailMask: null,
-    inviterLabel: null,
-};
+const preview = teamInvitationPreviewFixture({ home: { serverId: 'srv_acme', displayName: 'Acme Home', hosting: null },
+    team: { name: 'Acme' }, role: 'guest', historyAccess: 'all_existing' });
 
 describe('useTeamInvitationPreview', () => {
+    beforeEach(() => setRuntimeFetch(request));
     it('keeps the decoded bearer reason for the join presenter', async () => {
         request.mockResolvedValueOnce(Response.json({ outcome: 'unavailable', reason: 'expired' }));
         const target = { kind: 'descriptor', authority: 'trusted_enrollment', descriptor: {
@@ -32,7 +24,7 @@ describe('useTeamInvitationPreview', () => {
             endpoints: [{ kind: 'https', url: 'https://acme.example.test' }],
         }} satisfies HomeTargetInput;
         const hook = await renderHook(useTeamInvitationPreview, { initialProps: { target, token: 'a'.repeat(43) } });
-        expect(hook.getCurrent()).toEqual({ kind: 'unavailable', reason: 'expired' });
+        await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ kind: 'unavailable', reason: 'expired' }));
     });
     afterEach(async () => {
         await standardCleanup();
@@ -58,12 +50,12 @@ describe('useTeamInvitationPreview', () => {
         const hook = await renderHook(useTeamInvitationPreview, {
             initialProps: { target, token: 'a'.repeat(43), revision: 0 },
         });
-        expect(hook.getCurrent()).toEqual({ kind: 'ready', preview });
+        await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ kind: 'ready', preview }));
 
         await hook.rerender({ target, token: 'a'.repeat(43), revision: 1 });
         expect(hook.getCurrent()).toEqual({ kind: 'ready', preview, refreshing: true });
 
         await act(async () => { second.reject(new Error('offline')); });
-        expect(hook.getCurrent()).toEqual({ kind: 'ready', preview, refreshFailure: { retryable: true } });
+        await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ kind: 'ready', preview, refreshFailure: { retryable: true } }));
     });
 });

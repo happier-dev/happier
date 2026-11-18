@@ -1,15 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-    serverFetch: vi.fn(),
-    createServerFetchAtEndpoint: vi.fn(),
     endpointFetch: vi.fn(),
 }));
 
-vi.mock('@/sync/http/client', () => ({
-    serverFetch: mocks.serverFetch,
-    createServerFetchAtEndpoint: mocks.createServerFetchAtEndpoint,
-}));
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import tweetnacl from 'tweetnacl';
+import { sealTerminalProvisioningV3Payload, sealTerminalProvisioningV3TokenOnlyPayload } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
+import { encodeBase64 } from '@/encryption/base64';
+import { generateAuthKeyPair } from './qrStart';
 
 import { authApproveAtEndpoint } from './approve';
 
@@ -20,13 +19,22 @@ function jsonResponse(body: unknown, status = 200): Response {
     });
 }
 
+let publicKey: Uint8Array;
+let responses: Record<'tokenOnly' | 'dataKey', Uint8Array>;
+
 describe('authApproveAtEndpoint explicit target', () => {
     beforeEach(() => {
-        mocks.serverFetch.mockReset();
         mocks.endpointFetch.mockReset();
-        mocks.createServerFetchAtEndpoint.mockReset();
-        mocks.createServerFetchAtEndpoint.mockImplementation(() => mocks.endpointFetch);
+        setRuntimeFetch(mocks.endpointFetch);
+        publicKey = generateAuthKeyPair().publicKey;
+        const createdAtMs = Date.now();
+        const input = { terminalEphemeralPublicKey: publicKey, pairingSecret: new Uint8Array(32).fill(7),
+            createdAtMs, expiresAtMs: createdAtMs + 60_000, randomBytes: tweetnacl.randomBytes };
+        responses = { tokenOnly: sealTerminalProvisioningV3TokenOnlyPayload(input),
+            dataKey: sealTerminalProvisioningV3Payload({ ...input, contentPrivateKey: new Uint8Array(32).fill(9) }) };
     });
+
+    afterEach(() => resetRuntimeFetch());
 
     it('refuses approval when the requesting client is cancelled during the status read', async () => {
         const controller = new AbortController();
@@ -35,16 +43,13 @@ describe('authApproveAtEndpoint explicit target', () => {
             return jsonResponse({ status: 'pending', supportsV2: true });
         });
         await expect(authApproveAtEndpoint(Object.assign({ endpointUrl: 'https://requester-home.test',
-            token: 'requester-bearer', publicKeyBase64: 'guest-public-key', responseBase64: 'sealed-requester-response',
+            token: 'requester-bearer', publicKeyBase64: encodeBase64(publicKey), responseBase64: encodeBase64(responses.tokenOnly),
             responseKind: 'tokenOnly' as const }, { signal: controller.signal }))).rejects.toMatchObject({ name: 'AbortError' });
-        expect(mocks.endpointFetch.mock.calls.map(([path]) => String(path).split('?')[0])).toEqual(['/v1/auth/request/status']);
+        expect(mocks.endpointFetch.mock.calls.map(([path]) => new URL(String(path)).pathname)).toEqual(['/v1/auth/request/status']);
     });
 
-    it.each([
-        { responseKind: 'tokenOnly' as const, responseBase64: 'opaque-response-b64' },
-        // The declared kind is forwarded, never hard-coded to tokenOnly.
-        { responseKind: 'dataKey' as const, responseBase64: 'opaque-datakey-response-b64' },
-    ])('posts the $responseKind response to the explicit endpoint with the supplied token and no focused-Home use', async ({ responseKind, responseBase64 }) => {
+    it.each(['tokenOnly', 'dataKey'] as const)('posts the %s response to the explicit endpoint with the supplied token', async (responseKind) => {
+        const responseBase64 = encodeBase64(responses[responseKind]);
         mocks.endpointFetch
             .mockResolvedValueOnce(jsonResponse({ status: 'pending', supportsV2: true }))
             .mockResolvedValueOnce(jsonResponse({ success: true }));
@@ -53,30 +58,23 @@ describe('authApproveAtEndpoint explicit target', () => {
             endpointUrl: 'http://127.0.0.1:3005',
             serverId: 'srv_home_b',
             token: 'home-b-bearer',
-            publicKeyBase64: 'pub-key-b64',
+            publicKeyBase64: encodeBase64(publicKey),
             responseBase64,
             responseKind,
         })).resolves.toBe('approved');
 
-        expect(mocks.createServerFetchAtEndpoint).toHaveBeenCalledWith(expect.objectContaining({
-            endpointUrl: 'http://127.0.0.1:3005',
-            serverId: 'srv_home_b',
-        }));
-        expect(mocks.serverFetch).not.toHaveBeenCalled();
-
         const statusCall = mocks.endpointFetch.mock.calls[0];
-        expect(String(statusCall?.[0])).toContain('/v1/auth/request/status?publicKey=pub-key-b64');
+        expect(new URL(String(statusCall?.[0])).searchParams.get('publicKey')).toBe(encodeBase64(publicKey));
         const postCall = mocks.endpointFetch.mock.calls[1];
-        expect(postCall?.[0]).toBe('/v1/auth/response');
+        expect(postCall?.[0]).toBe('http://127.0.0.1:3005/v1/auth/response');
         const init = postCall?.[1] as RequestInit;
-        expect((init.headers as Record<string, string>).Authorization).toBe('Bearer home-b-bearer');
+        expect(new Headers(init.headers).get('Authorization')).toBe('Bearer home-b-bearer');
         expect(JSON.parse(String(init.body))).toEqual({
-            publicKey: 'pub-key-b64',
+            publicKey: encodeBase64(publicKey),
             response: responseBase64,
             responseKind,
             authorizeUnattendedTeamAccess: true,
         });
-        expect(postCall?.[2]).toMatchObject({ includeAuth: false });
     });
 
     it.each([
@@ -89,11 +87,11 @@ describe('authApproveAtEndpoint explicit target', () => {
         await expect(authApproveAtEndpoint({
             endpointUrl: 'http://127.0.0.1:3005',
             token: 'home-b-bearer',
-            publicKeyBase64: 'pub-key-b64',
-            responseBase64: 'opaque-response-b64',
+            publicKeyBase64: encodeBase64(publicKey),
+            responseBase64: encodeBase64(responses.tokenOnly),
             responseKind: 'tokenOnly',
         })).resolves.toBe(result);
 
-        expect(mocks.endpointFetch.mock.calls.map(([path]) => String(path).split('?')[0])).toEqual(['/v1/auth/request/status']);
+        expect(mocks.endpointFetch.mock.calls.map(([path]) => new URL(String(path)).pathname)).toEqual(['/v1/auth/request/status']);
     });
 });

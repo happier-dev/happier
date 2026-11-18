@@ -54,7 +54,7 @@ describe('Account Directory callback route contraction', () => {
             pathname: '/setup/wizard', params: expect.objectContaining({ accountServiceReturn: '1' }),
         })));
         expect(fixture.state.calls.map(({ path }) => path)).toEqual(['/v1/features', '/v1/auth/external/github/finalize-keyless']);
-        expect(await TokenStorage.accountDirectoryAuthCredentials.get({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId })).toEqual({ token: 'directory-token' });
+        expect(await TokenStorage.accountDirectoryAuthCredentials.get({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId })).toEqual({ token: fixture.directoryToken });
         expect(getPendingDirectoryHomeEnrollment()).toBeNull();
     });
 

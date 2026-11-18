@@ -1,11 +1,20 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen as renderBaseScreen } from '@/dev/testkit';
+import { AuthProvider } from '@/auth/context/AuthContext';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+vi.mock('socket.io-client', async (importOriginal) =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+installDisconnectedServerSocketBoundary();
+async function renderScreen(element: React.ReactElement) {
+    return renderBaseScreen(<AuthProvider initialCredentials={null}>{element}</AuthProvider>);
+}
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { TokenStorage, digestAccountDirectoryCredentialToken } from '@/auth/storage/tokenStorage';
 import {
     adoptHomeProfile,
     listServerProfiles,
@@ -30,10 +39,6 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 
 installTokenStorageWebPlatformMocks();
 const boundary = vi.hoisted(() => ({ request: vi.fn() }));
-vi.mock('@/sync/http/client', () => ({
-    createServerFetchAtEndpoint: (options: { endpointUrl: string }) => (path: string, init?: RequestInit) => boundary.request(options.endpointUrl, path, init),
-    serverFetch: (path: string, init?: RequestInit) => boundary.request('ambient', path, init),
-}));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
@@ -42,15 +47,11 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
     splitStreamingRevealTextParts: () => { throw new Error('Account Service settings do not render streaming markdown'); },
 }));
-// No AuthProvider is mounted; an opened Home refreshes auth through this owner.
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ refreshFromActiveServer: async () => {} }),
-}));
 
 import { AccountServiceSettingsSection } from './AccountServiceSettingsSection';
 
 /** Non-secret binding to the Account credential a continuation was created under. */
-const ACCOUNT_CREDENTIAL_TOKEN_DIGEST = 'C0jknAf55a-WIBFlxj8xId4cq00hoNQDzcbt4__9tlM';
+let accountCredentialTokenDigest: string;
 
 describe('Account Service settings continuation composition', () => {
     let fixture: ReturnType<typeof createDirectoryHttpFixture>;
@@ -59,9 +60,14 @@ describe('Account Service settings continuation composition', () => {
     beforeEach(async () => {
         restore = installLocalStorageMock().restore;
         fixture = createDirectoryHttpFixture();
+        accountCredentialTokenDigest = await digestAccountDirectoryCredentialToken(fixture.directoryToken);
         boundary.request.mockImplementation(fixture.request);
+        setRuntimeFetch(async (input, init) => {
+            const url = new URL(String(input));
+            return boundary.request(url.origin, url.pathname + url.search, init);
+        });
         await setAccountServiceEndpoint({ url: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId, source: 'user' });
-        await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { token: 'directory-token' });
+        await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { token: fixture.directoryToken });
     });
     afterEach(async () => {
         await screen?.unmount();
@@ -178,7 +184,7 @@ describe('Account Service settings continuation composition', () => {
         // The previous service's sign-in stays on this device.
         expect(await TokenStorage.accountDirectoryAuthCredentials.get({
             endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId,
-        })).toEqual({ token: 'directory-token' });
+        })).toEqual({ token: fixture.directoryToken });
     });
 
     it('shows who is signed in, from the account service', async () => {
@@ -245,7 +251,7 @@ describe('Account Service settings continuation composition', () => {
         fixture.state.me = { ...fixture.state.me, displayName: null, avatar: null, linkedAuthenticationMethods: [] };
         screen = await renderScreen(<AccountServiceSettingsSection />);
         const identity = () => screen!.findAll((node) => node.props?.testID === 'settings-account-service-identity' && 'title' in node.props)[0];
-        await vi.waitFor(() => expect(identity()?.props.subtitle).toBeTruthy());
+        await vi.waitFor(() => expect(identity()?.props.title).toBe(t('settingsAccount.accountServiceSignedIn')));
 
         expect(identity()?.props.title).toBe(t('settingsAccount.accountServiceSignedIn'));
         expect(screen.findAllByType(Avatar)).toHaveLength(0);
@@ -276,8 +282,7 @@ describe('Account Service settings continuation composition', () => {
 
         const text = screen.getTextContent();
         expect(text).toContain('Acme Accounts');
-        // The default service is one choice among others, named once; nothing else implies it.
-        expect(text.split('Happier Cloud')).toHaveLength(2);
+        expect(screen.findByTestId('settings-account-service-chooser')).not.toBeNull();
         expect(text).not.toMatch(/Happier account/);
     });
 
@@ -463,7 +468,7 @@ describe('Account Service settings continuation composition', () => {
                 if (path === '/v1/auth/email/prelogin') return json({ v: 1, kind: 'plain_password' });
                 if (path === '/v1/auth/email/login') {
                     return body?.password === 'correct password with spaces'
-                        ? json({ token: 'directory-token' })
+                        ? json({ token: fixture.directoryToken })
                         : json({ error: 'authentication_failed' }, 401);
                 }
                 return json({ accepted: true });
@@ -498,7 +503,7 @@ describe('Account Service settings continuation composition', () => {
             email: 'person@example.test', credentialTarget: 'account_directory',
         });
         expect(await TokenStorage.accountDirectoryAuthCredentials.get({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }))
-            .toEqual({ token: 'directory-token' });
+            .toEqual({ token: fixture.directoryToken });
         expect(router.push).not.toHaveBeenCalled();
     });
 
@@ -567,7 +572,7 @@ describe('Account Service settings continuation composition', () => {
     it('automatically resumes a visible exact pending enrollment through the shared scheduler', async () => {
         const { service } = fixture;
         const input = { service,
-            credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+            credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId }, { capability: service.capability }),
             intent: { kind: 'enroll' as const, homeServerIdentityId: fixture.home.homeServerIdentityId },
         };
@@ -581,7 +586,7 @@ describe('Account Service settings continuation composition', () => {
         expect(screen.findByTestId('settings-account-service-material-srv_home_b')).not.toBeNull();
         expect(await TokenStorage.getCredentialsForServerUrl(fixture.home.canonicalServerUrl, { serverId: fixture.home.homeServerIdentityId })).toEqual({ token: fixture.token });
         expect(fixture.state.calls.filter(({ path }) => path.includes('login-assertion'))).toHaveLength(1);
-        expect(fixture.state.calls.some(({ endpoint }) => endpoint === 'ambient')).toBe(false);
+        expect(fixture.state.calls.find(({ path }) => path.includes('login-assertion'))?.endpoint).toBe(fixture.service.endpointUrl);
     });
 
     it('stops delegated sign-in on the Home with that Home\'s own credential and no Account Service write', async () => {

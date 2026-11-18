@@ -1,36 +1,29 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 
 import { authQRStart, generateAuthKeyPair } from './qrStart';
 import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 const endpointFetchMock = vi.hoisted(() => vi.fn());
-const createServerFetchAtEndpointMock = vi.hoisted(() => vi.fn<(input: unknown) => typeof endpointFetchMock>(() => endpointFetchMock));
-const serverFetchMock = vi.hoisted(() => vi.fn());
-
-vi.mock('@/sync/http/client', () => ({
-    createServerFetchAtEndpoint: (input: unknown) => createServerFetchAtEndpointMock(input),
-    serverFetch: (...args: unknown[]) => serverFetchMock(...args),
-}));
-
 describe('authQRStart explicit target', () => {
-    const descriptor = {
+    const descriptor = HomeConnectionDescriptorV1Schema.parse({
         v: 1 as const,
         homeServerIdentityId: 'srv_home_b',
         canonicalServerUrl: 'https://home-b.test',
         revision: 1,
         endpoints: [{ kind: 'https' as const, url: 'https://home-b.test' }],
-    };
+    });
     const enrollmentTarget = async (endpointUrl: string, serverId?: string) => {
         const resolved = await resolveHomeEnrollmentTransport(descriptor);
         if (!resolved.ok) throw new Error('Expected test Home transport');
         return { ...resolved.transport, endpointUrl, ...(serverId ? { serverId } : {}) };
     };
+    beforeEach(() => setRuntimeFetch(endpointFetchMock));
     afterEach(() => {
         endpointFetchMock.mockReset();
-        createServerFetchAtEndpointMock.mockClear();
-        createServerFetchAtEndpointMock.mockImplementation(() => endpointFetchMock);
-        serverFetchMock.mockReset();
+        resetRuntimeFetch();
     });
 
     it('generates an X25519 public key from the retained secret scalar', () => {
@@ -41,26 +34,28 @@ describe('authQRStart explicit target', () => {
 
     it('sends the enrollment request to the explicit Home endpoint without consulting the active server', async () => {
         endpointFetchMock.mockResolvedValueOnce(new Response(null, { status: 200 }));
-        const controller = new AbortController();
 
         await expect(authQRStart(
             generateAuthKeyPair(),
             await enrollmentTarget('https://home-b.test', 'profile-b'),
-            { signal: controller.signal },
         )).resolves.toEqual({ ok: true });
 
-        expect(createServerFetchAtEndpointMock).toHaveBeenCalledWith(expect.objectContaining({
-            endpointUrl: 'https://home-b.test',
-            serverId: 'profile-b',
-            credentials: null,
-        }));
-        expect(endpointFetchMock.mock.calls[0]?.[0]).toBe('/v2/auth/account/request');
+        expect(endpointFetchMock.mock.calls[0]?.[0]).toBe('https://home-b.test/v2/auth/account/request');
         const init = endpointFetchMock.mock.calls[0]?.[1] as RequestInit;
-        expect(init.signal).toBe(controller.signal);
         expect(JSON.parse(String(init.body))).toEqual({
             publicKey: expect.any(String),
         });
-        expect(serverFetchMock).not.toHaveBeenCalled();
+    });
+
+    it('reports cancellation when the initiating lifecycle aborts the actual network request', async () => {
+        const controller = new AbortController();
+        endpointFetchMock.mockImplementationOnce((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init?.signal?.reason), { once: true });
+            controller.abort();
+        }));
+        await expect(authQRStart(generateAuthKeyPair(), await enrollmentTarget('https://home-b.test'), {
+            signal: controller.signal,
+        })).resolves.toEqual({ ok: false, reason: 'cancelled', status: 0 });
     });
 
     it('reports failure without retrying through the active-server wrapper', async () => {
@@ -72,7 +67,6 @@ describe('authQRStart explicit target', () => {
             status: 0,
         });
 
-        expect(serverFetchMock).not.toHaveBeenCalled();
     });
 
     it('rejects a target without a usable endpoint URL', async () => {
@@ -81,6 +75,6 @@ describe('authQRStart explicit target', () => {
             reason: 'invalid_target',
             status: 0,
         });
-        expect(createServerFetchAtEndpointMock).not.toHaveBeenCalled();
+        expect(endpointFetchMock).not.toHaveBeenCalled();
     });
 });

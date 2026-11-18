@@ -7,6 +7,10 @@ import { installAccountCommonModuleMocks } from './accountTestHelpers';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { AuthEntryProjectionV1Schema, type AuthEntryProjectionV1 } from '@happier-dev/protocol/auth/entry';
+
+type AuthEntryHttpReply = Readonly<{ status: 200; body: AuthEntryProjectionV1 }>
+    | Readonly<{ status: 404 | 503 }>;
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -14,14 +18,9 @@ const shared = vi.hoisted(() => ({
     canOpenURL: vi.fn(async () => true),
     openURL: vi.fn(async () => true),
     pendingConnectAtRequest: null as Awaited<ReturnType<typeof TokenStorage.getPendingExternalConnect>>,
-    authEntryResult: { current: { kind: 'unsupported' } as any },
-    fetchHomeAuthEntry: vi.fn(async (_request?: Readonly<{ signal?: AbortSignal | null }>) => shared.authEntryResult.current),
-    featuresSnapshot: {
-        current: {
-            status: 'ready' as const,
-            features: { capabilities: { auth: { providers: {} } } },
-        } as any,
-    },
+    authEntryReply: { current: { status: 404 } as AuthEntryHttpReply },
+    readAuthEntryReply: vi.fn(async (_request?: Readonly<{ signal?: AbortSignal | null }>): Promise<AuthEntryHttpReply> => shared.authEntryReply.current),
+    featuresResponse: { current: null as ReturnType<typeof createRootLayoutFeaturesResponse> | null },
     routerPush: vi.fn(),
     connectFailure: false,
 }));
@@ -96,10 +95,10 @@ describe('ProviderIdentityItems', () => {
         shared.canOpenURL.mockClear();
         shared.openURL.mockClear();
         shared.routerPush.mockClear();
-        shared.fetchHomeAuthEntry.mockReset();
-        shared.fetchHomeAuthEntry.mockImplementation(async () => shared.authEntryResult.current);
-        shared.authEntryResult.current = { kind: 'unsupported' };
-        shared.featuresSnapshot.current = { status: 'ready', features: createRootLayoutFeaturesResponse() };
+        shared.readAuthEntryReply.mockReset();
+        shared.readAuthEntryReply.mockImplementation(async () => shared.authEntryReply.current);
+        shared.authEntryReply.current = { status: 404 };
+        shared.featuresResponse.current = createRootLayoutFeaturesResponse();
         shared.connectFailure = false;
         shared.pendingConnectAtRequest = null;
         setRuntimeFetch(async (input, init) => {
@@ -107,12 +106,12 @@ describe('ProviderIdentityItems', () => {
             if (path === '/health') return Response.json({ status: 'ok' });
             if (path === '/v1/auth/ping') return Response.json({});
             if (path === '/v1/auth/entry') {
-                const result = await shared.fetchHomeAuthEntry({ signal: init?.signal });
-                return result.kind === 'ready'
-                    ? Response.json(result.projection)
-                    : Response.json({}, { status: result.kind === 'unsupported' ? 404 : 503 });
+                const result = await shared.readAuthEntryReply({ signal: init?.signal });
+                return result.status === 200
+                    ? Response.json(AuthEntryProjectionV1Schema.parse(result.body))
+                    : Response.json({}, { status: result.status });
             }
-            if (path === '/v1/features') return Response.json(FeaturesResponseSchema.parse(shared.featuresSnapshot.current.features));
+            if (path === '/v1/features') return Response.json(FeaturesResponseSchema.parse(shared.featuresResponse.current));
             if (path.startsWith('/v1/connect/external/')) {
                 shared.pendingConnectAtRequest = await TokenStorage.getPendingExternalConnect();
                 // Current connect route failures use the global server error projection,
@@ -140,7 +139,7 @@ describe('ProviderIdentityItems', () => {
         storage.setState(initialStorageState, true);
     });
     it('fails closed when linked-identity management metadata is absent', async () => {
-        shared.authEntryResult.current = { kind: 'ready', projection: { v: 1, state: 'ready', scope: { kind: 'home' }, actions: [], autoRedirect: null } };
+        shared.authEntryReply.current = { status: 200, body: { v: 1, state: 'ready', scope: { kind: 'home' }, actions: [], autoRedirect: null } };
 
         await renderScreen(
             <ProviderIdentityItems
@@ -168,7 +167,7 @@ describe('ProviderIdentityItems', () => {
         // An exact supported older Home: it cannot host a managed identity, so
         // absent management metadata is its normal answer rather than a fact the
         // client failed to classify.
-        shared.authEntryResult.current = { kind: 'unsupported' };
+        shared.authEntryReply.current = { status: 404 };
 
         await renderScreen(
             <ProviderIdentityItems
@@ -194,7 +193,7 @@ describe('ProviderIdentityItems', () => {
 
     it('renders disconnect and profile publication from independent server permissions', async () => {
         shared.routerPush.mockClear();
-        shared.authEntryResult.current = { kind: 'ready', projection: { v: 1, state: 'ready', scope: { kind: 'home' }, actions: [], autoRedirect: null } };
+        shared.authEntryReply.current = { status: 200, body: { v: 1, state: 'ready', scope: { kind: 'home' }, actions: [], autoRedirect: null } };
 
         await renderScreen(
             <ProviderIdentityItems
@@ -233,11 +232,11 @@ describe('ProviderIdentityItems', () => {
     });
 
     it('discards a stale provider projection after the selected Home changes', async () => {
-        let resolveHomeA: ((value: any) => void) | undefined;
-        const homeA = new Promise((resolve) => { resolveHomeA = resolve; });
-        const ready = (id: string, displayName: string) => ({
-            kind: 'ready',
-            projection: {
+        let resolveHomeA: ((value: AuthEntryHttpReply) => void) | undefined;
+        const homeA = new Promise<AuthEntryHttpReply>((resolve) => { resolveHomeA = resolve; });
+        const ready = (id: string, displayName: string): AuthEntryHttpReply => ({
+            status: 200,
+            body: {
                 v: 1,
                 state: 'ready',
                 scope: { kind: 'home' },
@@ -248,9 +247,9 @@ describe('ProviderIdentityItems', () => {
                 autoRedirect: null,
             },
         });
-        shared.fetchHomeAuthEntry.mockReset();
-        shared.fetchHomeAuthEntry.mockImplementationOnce(async () => await homeA);
-        shared.fetchHomeAuthEntry.mockResolvedValueOnce(ready('provider-b', 'Provider B'));
+        shared.readAuthEntryReply.mockReset();
+        shared.readAuthEntryReply.mockImplementationOnce(async () => await homeA);
+        shared.readAuthEntryReply.mockResolvedValueOnce(ready('provider-b', 'Provider B'));
 
         const element = (
             <ProviderIdentityItems
@@ -279,11 +278,9 @@ describe('ProviderIdentityItems', () => {
     });
 
     it('discovers an unlinked deployment OIDC provider from the supported-old-server feature payload', async () => {
-        shared.fetchHomeAuthEntry.mockImplementation(async () => shared.authEntryResult.current);
-        shared.authEntryResult.current = { kind: 'unsupported' };
-        shared.featuresSnapshot.current = {
-            status: 'ready',
-            features: createRootLayoutFeaturesResponse({
+        shared.readAuthEntryReply.mockImplementation(async () => shared.authEntryReply.current);
+        shared.authEntryReply.current = { status: 404 };
+        shared.featuresResponse.current = createRootLayoutFeaturesResponse({
                 capabilities: {
                     auth: {
                         providers: {
@@ -297,8 +294,7 @@ describe('ProviderIdentityItems', () => {
                         },
                     },
                 },
-            }),
-        };
+        });
 
         await getServerFeaturesSnapshot({ force: true });
         await renderScreen(
@@ -319,10 +315,10 @@ describe('ProviderIdentityItems', () => {
     });
 
     it('keeps the canonical first presentation and connect action when later rows share a method', async () => {
-        shared.fetchHomeAuthEntry.mockImplementation(async () => shared.authEntryResult.current);
-        shared.authEntryResult.current = {
-            kind: 'ready',
-            projection: {
+        shared.readAuthEntryReply.mockImplementation(async () => shared.authEntryReply.current);
+        shared.authEntryReply.current = {
+            status: 200,
+            body: {
                 v: 1,
                 state: 'ready',
                 scope: { kind: 'home' },
@@ -367,9 +363,9 @@ describe('ProviderIdentityItems', () => {
     });
 
     it('keeps a linked provider visible when it is absent from the current catalog', async () => {
-        shared.authEntryResult.current = {
-            kind: 'ready',
-            projection: {
+        shared.authEntryReply.current = {
+            status: 200,
+            body: {
                 v: 1,
                 state: 'ready',
                 scope: { kind: 'home' },
@@ -403,9 +399,9 @@ describe('ProviderIdentityItems', () => {
     });
 
     it('presents provider failures through localized identity copy without exposing raw text', async () => {
-        shared.authEntryResult.current = {
-            kind: 'ready',
-            projection: {
+        shared.authEntryReply.current = {
+            status: 200,
+            body: {
                 v: 1,
                 state: 'ready',
                 scope: { kind: 'home' },
@@ -467,7 +463,7 @@ describe('ProviderIdentityItems', () => {
     });
 
     it('clears pending connect state and blocks unsafe connect URLs', async () => {
-        shared.authEntryResult.current = { kind: 'unsupported' };
+        shared.authEntryReply.current = { status: 404 };
         shared.canOpenURL.mockClear();
         shared.openURL.mockClear();
 

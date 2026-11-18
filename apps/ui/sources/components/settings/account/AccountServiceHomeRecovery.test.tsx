@@ -5,10 +5,11 @@ import { afterEach, expect, it, vi } from 'vitest';
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 import { renderScreen } from '@/dev/testkit';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { TokenStorage, digestAccountDirectoryCredentialToken } from '@/auth/storage/tokenStorage';
 import { AuthProvider } from '@/auth/context/AuthContext';
 import { adoptHomeProfile, getActiveServerId, setActiveServerId, setAccountServiceEndpoint } from '@/sync/domains/server/serverProfiles';
 import { AccountDirectorySession } from '@/sync/domains/accountDirectory/accountDirectorySession';
@@ -26,8 +27,6 @@ installTokenStorageWebPlatformMocks();
 installDisconnectedServerSocketBoundary();
 const boundary = vi.hoisted(() => ({ request: vi.fn() }));
 
-/** Non-secret binding to the Account credential a continuation was created under. */
-const ACCOUNT_CREDENTIAL_TOKEN_DIGEST = 'C0jknAf55a-WIBFlxj8xId4cq00hoNQDzcbt4__9tlM';
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ pathname: '/settings/account' }).module);
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
@@ -65,11 +64,11 @@ it.each(['account', 'approval'])('%s Settings resumes exact Home authentication 
         source: 'account-directory', descriptorAuthority: 'current_connection_observation' });
     await setActiveServerId(homeA.id, { scope: 'device' });
     const activeHomeA = getActiveServerId();
-    const credentialsA = { token: 'header.eyJzdWIiOiJhY2NvdW50LWEifQ.signature' };
+    const credentialsA = { token: createAccountTokenForTests('account-a') };
     await TokenStorage.setCredentialsForServerUrl(homeA.serverUrl, { serverId: 'srv_home_a' }, credentialsA);
     await setAccountServiceEndpoint({ url: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId, source: 'user' });
     await TokenStorage.accountDirectoryAuthCredentials.set({ endpoint: fixture.service.endpointUrl,
-        serverIdentityId: fixture.service.serverIdentityId }, { token: 'directory-token' });
+        serverIdentityId: fixture.service.serverIdentityId }, { token: fixture.directoryToken });
     let linkMissing = false;
     const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
     boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
@@ -109,7 +108,7 @@ it.each(['account', 'approval'])('%s Settings resumes exact Home authentication 
         return boundary.request(url.origin, url.pathname, init);
     });
     await completeAccountServicePostAuth({ service: fixture.service,
-        credentialTokenDigest: ACCOUNT_CREDENTIAL_TOKEN_DIGEST,
+        credentialTokenDigest: await digestAccountDirectoryCredentialToken(fixture.directoryToken),
         session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
         intent: { kind: 'enroll', homeServerIdentityId: fixture.home.homeServerIdentityId } });
     screen = await renderScreen(<AuthProvider initialCredentials={credentialsA}>
@@ -120,6 +119,7 @@ it.each(['account', 'approval'])('%s Settings resumes exact Home authentication 
         </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
     </AuthProvider>);
     fixture.state.approval = 'expired';
+    if (surface === 'approval') await screen.pressByTestIdAsync('settings.server.homeEnrollment.pending.retry');
     await vi.waitFor(() => expect(getPendingDirectoryHomeEnrollment()).toBeNull(), { timeout: 3000 });
     // The mounted host publishes the real Account command after restoration finishes.
     await vi.waitFor(async () => {
@@ -143,7 +143,7 @@ it.each(['account', 'approval'])('%s Settings resumes exact Home authentication 
     await act(async () => { screen!.findByTestId('restore-manual-secret-input')!.props.onChangeText('A'.repeat(43)); });
     await screen.pressByTestIdAsync('restore-manual-submit');
     await vi.waitFor(async () => expect(await TokenStorage.getCredentialsForServerUrl(fixture.home.canonicalServerUrl,
-        { serverId: fixture.home.homeServerIdentityId })).toEqual({ token: fixture.token }));
+        { serverId: fixture.home.homeServerIdentityId })).toEqual({ token: fixture.token, secret: 'A'.repeat(43), custody: 'historical' }));
     expect(screen.findByTestId('restore-manual-secret-input')).toBeNull();
     expect(getActiveServerId()).toBe(activeHomeA);
     expect(boundary.request.mock.calls.filter(([, path]) => path.includes('/login-assertion'))).toHaveLength(requestsBeforeAuth);

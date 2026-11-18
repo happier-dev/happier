@@ -1,20 +1,14 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import sodium from '@/encryption/libsodium.lib';
 import { generateAuthKeyPair } from './qrStart';
-import { authQRWait } from './qrWait';
+import { authQRWait, type HomeQrEnrollmentTarget } from './qrWait';
+import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 const appState = vi.hoisted(() => ({ currentState: 'background' as string }));
 const endpointFetchMock = vi.hoisted(() => vi.fn());
-
-vi.mock('@/sync/http/client', () => ({
-    createServerFetchAtEndpoint: () => endpointFetchMock,
-    serverFetch: vi.fn(),
-}));
-
-vi.mock('@/utils/runtime/isRuntimeActive', () => ({
-    isRuntimeActive: () => appState.currentState === 'active',
-}));
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -30,12 +24,23 @@ vi.mock('react-native', async () => {
     );
 });
 
+let target: HomeQrEnrollmentTarget;
+
 describe('authQRWait runtime active gating', () => {
     beforeAll(async () => {
         await sodium.ready;
+        const resolution = await resolveHomeEnrollmentTransport(HomeConnectionDescriptorV1Schema.parse({
+            v: 1, homeServerIdentityId: 'srv_home_b', canonicalServerUrl: 'https://home-b.test', revision: 1,
+            endpoints: [{ kind: 'https', url: 'https://home-b.test' }],
+        }));
+        if (!resolution.ok) throw new Error('Expected test Home transport');
+        target = resolution.transport;
     });
 
+    beforeEach(() => setRuntimeFetch(endpointFetchMock));
+
     afterEach(() => {
+        resetRuntimeFetch();
         endpointFetchMock.mockReset();
         appState.currentState = 'background';
         vi.useRealTimers();
@@ -48,30 +53,10 @@ describe('authQRWait runtime active gating', () => {
         const keypair = generateAuthKeyPair();
         const issuedAtMs = Date.now();
         const expiresAtMs = issuedAtMs + 5_000;
-        const descriptor = {
-            v: 1 as const,
-            homeServerIdentityId: 'srv_home_b',
-            canonicalServerUrl: 'https://home-b.test',
-            revision: 1,
-            endpoints: [{ kind: 'https' as const, url: 'https://home-b.test' }],
-        };
-        const outPromise = authQRWait(keypair, {
-            descriptor,
-            canonicalServerUrl: descriptor.canonicalServerUrl,
-            homeServerIdentityId: descriptor.homeServerIdentityId,
-            endpointUrl: descriptor.canonicalServerUrl,
-            runtimeOrigin: descriptor.canonicalServerUrl,
-            carrier: 'https',
-            authenticatedCredentialDestination: {
-                kind: 'https',
-                applicationUrl: descriptor.canonicalServerUrl,
-            },
-            createRequest: () => endpointFetchMock,
-            close: async () => {},
-        }, {
+        const outPromise = authQRWait(keypair, target, {
             v2Context: {
                 pairId: 'pair-background',
-                homeServerIdentityId: descriptor.homeServerIdentityId,
+                homeServerIdentityId: target.homeServerIdentityId,
                 bindingSecret: new Uint8Array(32).fill(7),
                 bindingProof: 'proof',
                 direction: 'trusted_home_displays',
@@ -96,31 +81,11 @@ describe('authQRWait runtime active gating', () => {
         const issuedAtMs = Date.now();
         const expiresAtMs = issuedAtMs + 60_000;
         const controller = new AbortController();
-        const descriptor = {
-            v: 1 as const,
-            homeServerIdentityId: 'srv_home_b',
-            canonicalServerUrl: 'https://home-b.test',
-            revision: 1,
-            endpoints: [{ kind: 'https' as const, url: 'https://home-b.test' }],
-        };
-        const outPromise = authQRWait(keypair, {
-            descriptor,
-            canonicalServerUrl: descriptor.canonicalServerUrl,
-            homeServerIdentityId: descriptor.homeServerIdentityId,
-            endpointUrl: descriptor.canonicalServerUrl,
-            runtimeOrigin: descriptor.canonicalServerUrl,
-            carrier: 'https',
-            authenticatedCredentialDestination: {
-                kind: 'https',
-                applicationUrl: descriptor.canonicalServerUrl,
-            },
-            createRequest: () => endpointFetchMock,
-            close: async () => {},
-        }, {
+        const outPromise = authQRWait(keypair, target, {
             signal: controller.signal,
             v2Context: {
                 pairId: 'pair-background-cancel',
-                homeServerIdentityId: descriptor.homeServerIdentityId,
+                homeServerIdentityId: target.homeServerIdentityId,
                 bindingSecret: new Uint8Array(32).fill(7),
                 bindingProof: 'proof',
                 direction: 'trusted_home_displays',

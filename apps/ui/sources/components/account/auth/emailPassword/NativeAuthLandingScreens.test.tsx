@@ -1,842 +1,397 @@
 import * as React from 'react';
+import ReactDOM from 'react-dom';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-
+import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { AuthEntryProjectionV1Schema, AuthEntryRequestV1Schema } from '@happier-dev/protocol/auth/entry';
+import { NativeAuthBearerPreviewRequestV1Schema, NativeEmailVerifyPreviewResponseV1Schema, NativePasswordResetPreviewResponseV1Schema, NativeEmailPasswordProvisionRequestV1Schema, NativeEmailPasswordProvisionResponseV1Schema, NativeEmailPasswordLoginResponseV1Schema, NativeEmailPasswordPreloginResponseV1Schema } from '@happier-dev/protocol/auth/nativeAuthEmailRoutes';
+import { AccountEmailChangeCompleteRequestV1Schema, AccountPasswordMutationResponseV1Schema, PlainPasswordResetSubmitRequestV1Schema, PlainPasswordResetSubmitResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { maskEmailForNativeAuthPreview } from '@happier-dev/protocol/auth/nativeAuthOneTimeOperation';
 import { createRootLayoutFeaturesResponse, renderScreen, standardCleanup } from '@/dev/testkit';
-import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
-import {
-    listServerProfiles,
-    setServerProfileIdentityForUrl,
-    upsertServerProfile,
-} from '@/sync/domains/server/serverProfiles';
-import { HappyError } from '@/utils/errors/errors';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import type { HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { initializeAuthRouteRuntimeForTests } from '@/dev/testkit/harness/authRouteRuntimeHarness';
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
+import { installTokenStorageTestIsolation } from '@/auth/storage/tokenStorage.testHelpers';
+import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { rememberNativeEmailVerificationContinuation, readNativeEmailVerificationContinuation, clearNativeEmailVerificationContinuation } from '@/sync/api/auth/nativeAuthEmail';
+import { listServerProfiles, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { teamInvitationPreviewFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { t } from '@/text';
-import { NativeAuthEmailVerifyScreen, NativeAuthPasswordResetScreen } from './NativeAuthLandingScreens';
 
-const boundary = vi.hoisted(() => ({
-    preview: vi.fn(),
-    resetPreview: vi.fn(),
-    fetchAuthEntry: vi.fn(),
-    fetchScopedAuthEntry: vi.fn(),
-    request: vi.fn(),
-    authenticatedRequest: vi.fn(),
-    changeEmail: vi.fn(),
-    submitReset: vi.fn(),
-    readInvitationContinuation: vi.fn(),
-    clearInvitationContinuation: vi.fn(),
-    replace: vi.fn(),
-    openAccountSecurityForHome: vi.fn(),
-    refreshFromActiveServer: vi.fn(),
-    setActiveServerAndSwitch: vi.fn(),
-    scopeKind: 'signed_out' as 'signed_out' | 'bound',
-    flowProps: null as Record<string, unknown> | null,
-}));
-
-vi.mock('expo-router', () => ({ useRouter: () => ({ replace: boundary.replace }) }));
-vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ refreshFromActiveServer: boundary.refreshFromActiveServer }),
-    useOptionalAuth: () => ({ isAuthenticated: false }),
-}));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+installTokenStorageTestIsolation('native-email-landings', { preserveGenerations: true });
+const router = vi.hoisted(() => ({ replace: vi.fn() }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router }).module);
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
-vi.mock('@/sync/domains/scope/useServerCredentialAccountScopes', () => ({
-    useServerCredentialAccountScopeResolution: () => boundary.scopeKind === 'bound'
-        ? ({ kind: 'bound', scope: { serverId: 'home-a', accountId: 'account-a' } })
-        : ({ kind: 'signed_out' }),
-}));
-vi.mock('@/sync/api/auth/nativeAuthEmail', () => ({
-    previewNativeEmailVerification: boundary.preview,
-    previewNativePasswordReset: boundary.resetPreview,
-    submitNativePasswordReset: boundary.submitReset,
-    readNativeEmailVerificationContinuation: boundary.readInvitationContinuation,
-    clearNativeEmailVerificationContinuation: boundary.clearInvitationContinuation,
-}));
-vi.mock('@/sync/api/auth/accountSecurity', () => ({
-    changeAccountSignInEmail: boundary.changeEmail,
-}));
-// The portable Home link owner, the profile/identity owner and the Home
-// authentication target resolver all stay real: a landing that routed a bearer
-// without a genuinely saved, identity-matched Home has to fail here.
-// Focus itself stays real: `focusExactHomeAndRefresh` decides `requireExactProfile`,
-// the already-active refresh, and the blocked/failed outcome. Only the connection
-// switch underneath it — a genuine runtime boundary — is replaced.
-vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
-    setActiveServerAndSwitch: boundary.setActiveServerAndSwitch,
-}));
-vi.mock('@/components/settings/account/openAccountSecurityForHome', () => ({
-    openAccountSecurityForHome: boundary.openAccountSecurityForHome,
-}));
-vi.mock('@/sync/http/client', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/sync/http/client')>(),
-    createServerFetchAtEndpoint: (params: { credentials?: unknown }) => (
-        params.credentials === null ? boundary.request : boundary.authenticatedRequest
-    ),
-}));
-vi.mock('@/auth/entry/authEntryClient', () => ({
-    fetchHomeAuthEntry: boundary.fetchAuthEntry,
-    fetchAuthEntry: boundary.fetchScopedAuthEntry,
-}));
-vi.mock('@/components/account/auth/HomeAuthenticationFlow', () => ({
-    HomeAuthenticationFlow: (props: Record<string, unknown>) => {
-        boundary.flowProps = props;
-        const testID = props.nativeAdmission
-            ? 'native-auth-admission-flow'
-            : props.returnTo === '/'
-                ? 'native-auth-reset-sign-in-flow'
-                : 'native-auth-email-change-flow';
-        return React.createElement('HomeAuthenticationFlow', { testID });
-    },
-}));
-
-let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
-/** The device-local profile id of the saved Home; it is not the portable identity. */
-let savedHomeProfileId = '';
-
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+const browser = await installBrowserRuntimeForTests({ url: 'https://device.example.test' });
+afterAll(() => browser.restore());
+await initializeAuthRouteRuntimeForTests();
+const { AuthProvider } = await import('@/auth/context/AuthContext');
+const { NativeAuthEmailVerifyScreen, NativeAuthPasswordResetScreen } = await import('./NativeAuthLandingScreens');
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+const VERIFY = 'V'.repeat(43);
+const RESET = 'R'.repeat(43);
+const OLD = 'O'.repeat(43);
+const NEW = 'N'.repeat(43);
 const SAVED_HOME_URL = 'https://saved.example.test';
 const SAVED_HOME_IDENTITY = 'srv_saved_home';
 const FRESH_HOME_URL = 'https://fresh.example.test';
 const FRESH_HOME_IDENTITY = 'srv_fresh_home';
+const PREVIEW = '/v1/auth/email/verify/preview';
+const RESET_PREVIEW = '/v1/auth/password/reset/preview';
+const RESET_SUBMIT = '/v1/auth/password/reset/submit';
+const EMAIL_CHANGE = '/v1/account/email/change';
+const ENTRY = '/v1/auth/entry';
+const PROVISION = '/v1/auth/email/provision';
+const LOGIN = '/v1/auth/email/login';
+const PASSWORD = 'correct horse battery staple';
+const MASKED_EMAIL = maskEmailForNativeAuthPreview('person@example.test');
+const token = createAccountTokenForTests('account-a');
+let savedHomeProfileId = '';
+let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
+let local: ReturnType<typeof installLocalStorageMock>;
+let blockFocus = false;
+let restorePortal: (() => void) | null = null;
 
-/** A current link: the Home's own strict descriptor, as the mail producer emits it. */
-function currentLinkCarrier(params: Readonly<{ identity: string; url: string }>): string {
-    return JSON.stringify({
-        kind: 'descriptor',
-        authority: 'trusted_enrollment',
-        descriptor: {
-            v: 1,
-            homeServerIdentityId: params.identity,
-            canonicalServerUrl: params.url,
-            revision: 1,
-            endpoints: [{ kind: 'https', url: params.url }],
-        },
-    });
+function currentLinkCarrier(identity: string, url: string): string {
+    return JSON.stringify({ kind: 'descriptor', authority: 'trusted_enrollment', descriptor: {
+        v: 1, homeServerIdentityId: identity, canonicalServerUrl: url, revision: 1, endpoints: [{ kind: 'https', url }],
+    } });
 }
-
-/** How the unverified endpoints answer the public feature probe. */
-function answerFeatureProbeAs(serverIdentityId: string | null): void {
-    const features = createRootLayoutFeaturesResponse();
-    (features.capabilities as { serverIdentity: { serverIdentityId: string | null } })
-        .serverIdentity = { serverIdentityId };
-    boundary.request.mockImplementation(async () => new Response(JSON.stringify(features), {
-        headers: { 'content-type': 'application/json' },
-    }));
+function currentContinuation() {
+    return readNativeEmailVerificationContinuation({ homeServerIdentityId: SAVED_HOME_IDENTITY, maskedDestination: MASKED_EMAIL });
 }
-
+function preview(continuation: 'account_admission' | 'password_enrollment' | 'sign_in_email_change' | null = 'account_admission', valid = true, extra: Partial<HomeDomainAnswer> = {}) {
+    homes.answer(savedHomeProfileId, PREVIEW, { body: NativeEmailVerifyPreviewResponseV1Schema.parse({ v: 1, valid, maskedDestination: valid ? MASKED_EMAIL : null, continuation }), ...extra });
+}
+function answerEntry(options: { failOnce?: boolean; publicClosed?: boolean } = {}) {
+    let fail = options.failOnce ?? false;
+    homes.answer(savedHomeProfileId, ENTRY, { select: input => {
+        const request = AuthEntryRequestV1Schema.parse(input);
+        if (fail) { fail = false; return { status: 503, body: { error: 'unavailable' } }; }
+        const provision = { kind: 'authenticate', methodId: 'email_password', action: 'provision', mode: 'keyless', origin: 'home', presentation: { displayName: 'Email and password' } };
+        const login = { ...provision, action: 'login' };
+        const invitation = teamInvitationPreviewFixture({ home: { serverId: SAVED_HOME_IDENTITY }, team: { teamId: 'team-a', name: 'Team A' } });
+        return { body: AuthEntryProjectionV1Schema.parse(request.scope.kind === 'invitation' ? {
+            v: 1, scope: { kind: 'invitation' }, state: 'admission_required', home: invitation.home,
+            team: { teamId: invitation.team.teamId, name: invitation.team.name, logo: invitation.team.logo },
+            invitationEmailVerificationRequired: true, autoRedirect: null, actions: [{ ...provision, origin: 'team' }],
+        } : {
+            v: 1, scope: { kind: 'home' }, state: 'ready', autoRedirect: null,
+            actions: options.publicClosed && request.scope.kind === 'home' ? [] : [login, provision],
+        }) };
+    } });
+}
+function root(child: React.ReactNode) { return <AuthProvider initialCredentials={null}>{child}</AuthProvider>; }
+async function mountVerify(options: { bearer?: string; home?: string | null } = {}) {
+    screen = await renderScreen(root(<NativeAuthEmailVerifyScreen token={options.bearer ?? VERIFY} homeTarget={options.home === undefined ? SAVED_HOME_IDENTITY : options.home} />));
+}
+async function mountReset(bearer = RESET, home: string | null = SAVED_HOME_IDENTITY) {
+    screen = await renderScreen(root(<NativeAuthPasswordResetScreen token={bearer} homeTarget={home} />));
+}
+async function waitForId(id: string) { await waitForHomeGovernance(() => expect(screen?.findByTestId(id), id).not.toBeNull()); }
+async function openProvision() {
+    await waitForId('native-auth-verify-create-account');
+    await screen!.pressByTestIdAsync('native-auth-verify-create-account');
+    await waitForId('home-auth-email_password-provision-keyless');
+    await screen!.pressByTestIdAsync('home-auth-email_password-provision-keyless');
+    await waitForId('email-password-password');
+}
+async function fill(id: string, value: string) { await act(async () => { screen!.findByTestId(id)!.props.onChangeText(value); }); }
+async function waitForDestination() {
+    await waitForHomeGovernance(() => expect(
+        router.replace.mock.calls.length > 0
+            || screen!.findByTestId('native-auth-verify-destination-home-error') !== null
+            || screen!.findByTestId('native-auth-reset-destination-home-error') !== null,
+        screen!.getTextContent(),
+    ).toBe(true));
+}
+async function createAccount(teamId: string | null = null) {
+    homes.answer(savedHomeProfileId, PROVISION, { body: NativeEmailPasswordProvisionResponseV1Schema.parse({ token, accountId: 'account-a', teamId }) });
+    await fill('email-password-email', 'person@example.test');
+    await fill('email-password-password', PASSWORD);
+    await fill('email-password-confirm', PASSWORD);
+    await screen!.pressByTestIdAsync('email-password-create');
+    await waitForDestination();
+}
+async function submitReset(wait = true) {
+    await waitForId('native-auth-reset-password');
+    await fill('native-auth-reset-password', PASSWORD);
+    await fill('native-auth-reset-confirm', PASSWORD);
+    if (wait) await screen!.pressByTestIdAsync('native-auth-reset-submit');
+    else {
+        await act(async () => { screen!.pressByTestId('native-auth-reset-submit'); });
+        await waitForHomeGovernance(() => expect(homes.requestsFor(RESET_SUBMIT)).toHaveLength(1));
+    }
+}
+async function chooseLoginMethod() {
+    await waitForId('home-auth-email_password-login-keyless');
+    await screen!.pressByTestIdAsync('home-auth-email_password-login-keyless');
+    await waitForId('email-password-email');
+}
+async function openResetLogin() { await submitReset(); await waitForId('native-auth-reset-sign-in'); await screen!.pressByTestIdAsync('native-auth-reset-sign-in'); await chooseLoginMethod(); }
+async function submitLogin() {
+    if (!screen!.findByTestId('email-password-email')) await chooseLoginMethod();
+    await waitForId('email-password-email');
+    await fill('email-password-email', 'person@example.test');
+    await fill('email-password-password', PASSWORD);
+    await screen!.pressByTestIdAsync('email-password-submit');
+    await waitForDestination();
+}
+async function bound() { await homes.switchAccount(savedHomeProfileId, 'account-a'); }
+function expectSecurity(verificationToken?: string) {
+    expect(router.replace).toHaveBeenCalledWith({ pathname: '/settings/account/security', params: { serverId: savedHomeProfileId, ...(verificationToken ? { verificationToken } : {}) } });
+}
 beforeEach(async () => {
-    boundary.scopeKind = 'signed_out';
-    boundary.flowProps = null;
-    boundary.preview.mockReset();
-    boundary.resetPreview.mockReset();
-    boundary.fetchAuthEntry.mockReset();
-    boundary.fetchScopedAuthEntry.mockReset();
-    boundary.request.mockReset();
-    boundary.changeEmail.mockReset();
-    boundary.submitReset.mockReset();
-    boundary.readInvitationContinuation.mockReset();
-    boundary.clearInvitationContinuation.mockReset();
-    boundary.openAccountSecurityForHome.mockReset();
-    boundary.openAccountSecurityForHome.mockResolvedValue(true);
-    boundary.refreshFromActiveServer.mockReset();
-    boundary.refreshFromActiveServer.mockResolvedValue(undefined);
-    boundary.setActiveServerAndSwitch.mockReset();
-    boundary.setActiveServerAndSwitch.mockResolvedValue('switched');
-    boundary.replace.mockReset();
-    boundary.changeEmail.mockResolvedValue(undefined);
-    boundary.submitReset.mockResolvedValue(undefined);
-    boundary.readInvitationContinuation.mockReturnValue(null);
-    resetServerFeaturesClientForTests();
-    savedHomeProfileId = (await upsertServerProfile({ serverUrl: SAVED_HOME_URL, name: 'Saved Home' })).id;
-    await setServerProfileIdentityForUrl(SAVED_HOME_URL, SAVED_HOME_IDENTITY);
-    answerFeatureProbeAs(FRESH_HOME_IDENTITY);
-    boundary.fetchAuthEntry.mockResolvedValue({
-        kind: 'ready',
-        projection: {
-            v: 1,
-            scope: { kind: 'home' },
-            state: 'ready',
-            signInService: undefined,
-            autoRedirect: null,
-            actions: [
-                {
-                    kind: 'authenticate', methodId: 'email_password', action: 'login', mode: 'either', origin: 'home',
-                    presentation: { displayName: 'Email and password' },
-                },
-                {
-                    kind: 'authenticate', methodId: 'email_password', action: 'provision', mode: 'either', origin: 'home',
-                    presentation: { displayName: 'Email and password' },
-                },
-            ],
-        },
+    // The host renderer cannot mount a DOM portal; retain its actual children.
+    const portal = vi.spyOn(ReactDOM, 'createPortal').mockImplementation(children => children as React.ReactPortal);
+    restorePortal = () => portal.mockRestore();
+    browser.activate();
+    local = installLocalStorageMock();
+    blockFocus = false;
+    local.setItemMock.mockImplementation((key, value) => {
+        const previous = local.store.get(key);
+        if (blockFocus && key.includes('server-profiles') && previous
+            && JSON.parse(value).activeServerId !== JSON.parse(previous).activeServerId) throw new Error('Device storage unavailable');
+        local.store.set(key, value);
     });
-    boundary.fetchScopedAuthEntry.mockResolvedValue({
-        kind: 'ready',
-        projection: {
-            v: 1,
-            scope: { kind: 'invitation' },
-            state: 'admission_required',
-            team: { teamId: 'team-a', name: 'Team A', logo: null },
-            autoRedirect: null,
-            actions: [{
-                kind: 'authenticate', methodId: 'email_password', action: 'provision', mode: 'either', origin: 'team',
-                presentation: { displayName: 'Email and password' },
-            }],
-        },
-    });
-    boundary.preview.mockResolvedValue({
-        v: 1,
-        valid: true,
-        maskedDestination: 'p***@example.test',
-        continuation: 'account_admission',
-    });
-    boundary.resetPreview.mockResolvedValue({ v: 1, valid: true });
+    await homes.reset();
+    savedHomeProfileId = await homes.addHome({ name: 'Saved Home', serverUrl: SAVED_HOME_URL, serverIdentityId: SAVED_HOME_IDENTITY, accountId: 'account-a', credentials: { token } });
+    // The authenticated HTTP responses own an Account; this device starts signed out.
+    await TokenStorage.removeCredentialsForServerUrl(SAVED_HOME_URL, { serverId: savedHomeProfileId });
+    await homes.addHome({ name: 'Focused Home', serverUrl: 'https://focused.example.test', serverIdentityId: 'srv_focused_home', accountId: null });
+    preview();
+    answerEntry();
+    homes.answer(savedHomeProfileId, RESET_PREVIEW, { body: NativePasswordResetPreviewResponseV1Schema.parse({ v: 1, valid: true }) });
+    homes.answer(savedHomeProfileId, RESET_SUBMIT, { body: PlainPasswordResetSubmitResponseV1Schema.parse({ v: 1, status: 'password_reset' }) });
+    homes.answer(savedHomeProfileId, EMAIL_CHANGE, { body: AccountPasswordMutationResponseV1Schema.parse({ v: 1, status: 'updated' }) });
+    homes.answer(savedHomeProfileId, '/v1/auth/email/prelogin', { body: NativeEmailPasswordPreloginResponseV1Schema.parse({ v: 1, kind: 'plain_password' }) });
+    homes.answer(savedHomeProfileId, LOGIN, { body: NativeEmailPasswordLoginResponseV1Schema.parse({ token }) });
+    router.replace.mockClear();
 });
-
 afterEach(async () => {
-    await screen?.unmount();
-    screen = null;
+    blockFocus = false;
+    await screen?.unmount(); screen = null;
+    const continuation = currentContinuation();
+    if (continuation) clearNativeEmailVerificationContinuation(continuation);
+    await homes.reset();
+    local.restore();
     await standardCleanup();
-    resetServerFeaturesClientForTests();
+    restorePortal?.(); restorePortal = null;
 });
 
 it('continues a verified mailbox proof into the exact Home provision controller without losing its bearer', async () => {
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="verification-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await screen.pressByTestIdAsync('native-auth-verify-create-account');
-
-    expect(screen.findByTestId('native-auth-admission-flow')).not.toBeNull();
-    expect(boundary.flowProps).toMatchObject({
-        target: { kind: 'saved_profile', profileRef: savedHomeProfileId },
-        nativeAdmission: { kind: 'native_email_verification', token: 'verification-bearer' },
-    });
-    expect(boundary.preview).toHaveBeenCalledWith(boundary.request, 'verification-bearer');
+    await mountVerify(); await openProvision(); await createAccount();
+    expect(NativeEmailPasswordProvisionRequestV1Schema.parse(homes.requestsFor(PROVISION)[0]?.input).admission).toEqual({ kind: 'native_email_verification', token: VERIFY });
+    expect(homes.requestsFor(PROVISION)[0]?.serverId).toBe(savedHomeProfileId);
+    expect(NativeAuthBearerPreviewRequestV1Schema.parse(homes.requestsFor(PREVIEW)[0]?.input).token).toBe(VERIFY);
 });
-
 it('retries authentication discovery after a valid verification preview without replaying the preview', async () => {
-    boundary.fetchScopedAuthEntry.mockRejectedValueOnce(new TypeError('offline'));
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="verification-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-retry-auth')).not.toBeNull());
-
-    await screen.pressByTestIdAsync('native-auth-verify-retry-auth');
-    await screen.pressByTestIdAsync('native-auth-verify-create-account');
-
-    expect(screen.findByTestId('native-auth-admission-flow')).not.toBeNull();
-    expect(boundary.flowProps).toMatchObject({
-        target: { kind: 'saved_profile', profileRef: savedHomeProfileId },
-        nativeAdmission: { kind: 'native_email_verification', token: 'verification-bearer' },
-    });
-    expect(boundary.preview).toHaveBeenCalledTimes(1);
+    answerEntry({ failOnce: true }); await mountVerify(); await waitForId('native-auth-verify-retry-auth');
+    await screen!.pressByTestIdAsync('native-auth-verify-retry-auth'); await openProvision();
+    expect(homes.requestsFor(PREVIEW)).toHaveLength(1);
+    expect(homes.requestsFor(ENTRY)).toHaveLength(2);
 });
-
 it('opens a mailed link as a step of the welcome split, not a bare page', async () => {
-    screen = await renderScreen(<NativeAuthPasswordResetScreen token="reset-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-password')).not.toBeNull());
-    expect(screen.findByTestId('unauth-shell-native-auth-reset')).not.toBeNull();
-    expect(screen.findByTestId('native-auth-reset-title')).not.toBeNull();
+    await mountReset(); await waitForId('native-auth-reset-password');
+    expect(screen!.findByTestId('unauth-shell-native-auth-reset')).not.toBeNull();
+    expect(screen!.findByTestId('native-auth-reset-title')).not.toBeNull();
 });
-
 it('recovers sign-in discovery after a completed reset without resetting the password again', async () => {
-    boundary.fetchAuthEntry.mockRejectedValueOnce(new TypeError('offline'));
-    screen = await renderScreen(<NativeAuthPasswordResetScreen token="reset-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await act(async () => {
-        screen?.changeTextByTestId('native-auth-reset-password', 'a valid new password');
-        screen?.changeTextByTestId('native-auth-reset-confirm', 'a valid new password');
-    });
-    await screen.pressByTestIdAsync('native-auth-reset-submit');
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-done')).not.toBeNull());
-
-    await screen.pressByTestIdAsync('native-auth-reset-retry-auth');
-    await screen.pressByTestIdAsync('native-auth-reset-sign-in');
-
-    expect(screen.findByTestId('native-auth-reset-sign-in-flow')).not.toBeNull();
-    expect(boundary.flowProps).toMatchObject({ target: { kind: 'saved_profile', profileRef: savedHomeProfileId } });
-    expect(boundary.submitReset).toHaveBeenCalledTimes(1);
-    expect(boundary.resetPreview).toHaveBeenCalledTimes(1);
+    answerEntry({ failOnce: true }); await mountReset(); await submitReset(); await waitForId('native-auth-reset-retry-auth');
+    await screen!.pressByTestIdAsync('native-auth-reset-retry-auth');
+    await screen!.pressByTestIdAsync('native-auth-reset-sign-in'); await chooseLoginMethod();
+    expect(homes.requestsFor(RESET_SUBMIT)).toHaveLength(1); expect(homes.requestsFor(RESET_PREVIEW)).toHaveLength(1);
 });
-
 it('resumes transferable invitation provision with the unchanged admission and exact mailbox bearer', async () => {
     const admission = { kind: 'team_invitation' as const, token: 'I'.repeat(43) };
-    boundary.readInvitationContinuation.mockReturnValue({
-        homeServerIdentityId: SAVED_HOME_IDENTITY,
-        normalizedEmail: 'person@example.test',
-        admission,
-    });
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="verification-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await screen.pressByTestIdAsync('native-auth-verify-create-account');
-
-    expect(boundary.flowProps).toMatchObject({
-        nativeAdmission: { ...admission, emailVerificationToken: 'verification-bearer' },
-    });
-    expect(boundary.readInvitationContinuation).toHaveBeenCalledWith({
-        homeServerIdentityId: SAVED_HOME_IDENTITY,
-        maskedDestination: 'p***@example.test',
-    });
-
-    await act(async () => {
-        await (boundary.flowProps?.onAuthenticated as (value: unknown) => Promise<void>)({
-            homeServerIdentityId: SAVED_HOME_IDENTITY,
-            credentials: { token: 'created' },
-        });
-    });
-    expect(boundary.clearInvitationContinuation).toHaveBeenCalledWith({
-        homeServerIdentityId: SAVED_HOME_IDENTITY,
-        normalizedEmail: 'person@example.test',
-        admission,
-    });
+    rememberNativeEmailVerificationContinuation({ homeServerIdentityId: SAVED_HOME_IDENTITY, normalizedEmail: 'person@example.test', admission });
+    await mountVerify(); await openProvision(); await createAccount();
+    expect(NativeEmailPasswordProvisionRequestV1Schema.parse(homes.requestsFor(PROVISION)[0]?.input).admission).toEqual({ ...admission, emailVerificationToken: VERIFY });
+    expect(currentContinuation()).toBeNull();
 });
-
 it('brings the mailbox it just verified back to self-service Account creation', async () => {
-    // Same running client, no invitation: the landing proved this address, so the panel
-    // must not ask for it again.
-    boundary.readInvitationContinuation.mockReturnValue({
-        homeServerIdentityId: SAVED_HOME_IDENTITY,
-        normalizedEmail: 'person@example.test',
-    });
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="verification-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await screen.pressByTestIdAsync('native-auth-verify-create-account');
-
-    expect(boundary.flowProps).toMatchObject({
-        nativeAdmission: { kind: 'native_email_verification', token: 'verification-bearer' },
-        initialEmail: 'person@example.test',
-    });
+    rememberNativeEmailVerificationContinuation({ homeServerIdentityId: SAVED_HOME_IDENTITY, normalizedEmail: 'person@example.test' });
+    await mountVerify(); await openProvision();
+    expect(screen!.findByTestId('email-password-email')?.props.value).toBe('person@example.test');
 });
-
 it('uses invitation-scoped admission actions when the ordinary Home is invitation-only', async () => {
     const admission = { kind: 'team_invitation' as const, token: 'I'.repeat(43) };
-    boundary.readInvitationContinuation.mockReturnValue({
-        homeServerIdentityId: SAVED_HOME_IDENTITY,
-        normalizedEmail: 'person@example.test',
-        admission,
-    });
-    boundary.fetchAuthEntry.mockResolvedValueOnce({
-        kind: 'ready',
-        projection: {
-            v: 1,
-            scope: { kind: 'home' },
-            state: 'ready',
-            autoRedirect: null,
-            actions: [],
-        },
-    });
-
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="verification-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-create-account')).not.toBeNull());
-
-    expect(boundary.fetchScopedAuthEntry).toHaveBeenCalledWith(expect.objectContaining({
-        scope: { kind: 'invitation', token: admission.token },
-        endpointUrl: SAVED_HOME_URL,
-        serverId: savedHomeProfileId,
-    }));
-    await screen.pressByTestIdAsync('native-auth-verify-create-account');
-    expect(boundary.flowProps).toMatchObject({
-        actions: [expect.objectContaining({ action: expect.objectContaining({ id: 'provision' }) })],
-        nativeAdmission: { ...admission, emailVerificationToken: 'verification-bearer' },
-    });
+    rememberNativeEmailVerificationContinuation({ homeServerIdentityId: SAVED_HOME_IDENTITY, normalizedEmail: 'person@example.test', admission });
+    answerEntry({ publicClosed: true }); await mountVerify(); await openProvision();
+    expect(AuthEntryRequestV1Schema.parse(homes.requestsFor(ENTRY)[0]?.input).scope).toEqual({ kind: 'invitation', token: admission.token });
+    expect(homes.requestsFor(ENTRY)[0]?.serverId).toBe(savedHomeProfileId);
 });
-
 it('uses the verification-scoped entry after a fresh-document invitation link and routes its Team result', async () => {
-    boundary.readInvitationContinuation.mockReturnValue(null);
-    boundary.fetchAuthEntry.mockResolvedValueOnce({
-        kind: 'ready',
-        projection: {
-            v: 1,
-            scope: { kind: 'home' },
-            state: 'ready',
-            autoRedirect: null,
-            actions: [],
-        },
-    });
-
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="verification-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-create-account')).not.toBeNull());
-
-    expect(boundary.fetchScopedAuthEntry).toHaveBeenCalledWith(expect.objectContaining({
-        scope: { kind: 'native_email_verification', token: 'verification-bearer' },
-        endpointUrl: SAVED_HOME_URL,
-        serverId: savedHomeProfileId,
-    }));
-    expect(boundary.fetchAuthEntry).not.toHaveBeenCalled();
-
-    await screen.pressByTestIdAsync('native-auth-verify-create-account');
-    expect(boundary.flowProps).toMatchObject({
-        nativeAdmission: { kind: 'native_email_verification', token: 'verification-bearer' },
-    });
-    await act(async () => {
-        await (boundary.flowProps?.onAuthenticated as (value: unknown) => Promise<void>)({
-            homeServerIdentityId: SAVED_HOME_IDENTITY,
-            credentials: { token: 'created' },
-            teamId: 'team-a',
-        });
-    });
-    expect(boundary.replace).toHaveBeenCalledWith(`/settings/teams/${SAVED_HOME_IDENTITY}/team-a`);
+    answerEntry({ publicClosed: true }); await mountVerify(); await openProvision(); await createAccount('team-a');
+    expect(AuthEntryRequestV1Schema.parse(homes.requestsFor(ENTRY)[0]?.input).scope).toEqual({ kind: 'native_email_verification', token: VERIFY });
+    expect(router.replace).toHaveBeenCalledWith(`/settings/teams/${SAVED_HOME_IDENTITY}/team-a`);
 });
-
 it('signs in to the carried Home before continuing password enrollment with the same bearer', async () => {
-    boundary.preview.mockResolvedValueOnce({
-        v: 1,
-        valid: true,
-        maskedDestination: 'p***@example.test',
-        continuation: 'password_enrollment',
-    });
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="enrollment-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-sign-in')).not.toBeNull());
-    await screen.pressByTestIdAsync('native-auth-verify-sign-in');
-    expect(boundary.flowProps).toMatchObject({
-        target: { kind: 'saved_profile', profileRef: savedHomeProfileId },
-        returnTo: '/auth/email/verify/enrollment-bearer?target=' + SAVED_HOME_IDENTITY,
-    });
-
-    await act(async () => {
-        await (boundary.flowProps?.onAuthenticated as (value: unknown) => Promise<void>)({
-            homeServerIdentityId: SAVED_HOME_IDENTITY,
-            credentials: { token: 'fresh-home-a-token' },
-        });
-    });
-    expect(boundary.changeEmail).not.toHaveBeenCalled();
-    expect(boundary.openAccountSecurityForHome).toHaveBeenCalledWith({
-        serverId: savedHomeProfileId,
-        router: { replace: boundary.replace },
-        refreshAuth: boundary.refreshFromActiveServer,
-        verificationToken: 'enrollment-bearer',
-    });
+    preview('password_enrollment'); await mountVerify(); await waitForId('native-auth-verify-sign-in');
+    await screen!.pressByTestIdAsync('native-auth-verify-sign-in'); await submitLogin();
+    expect(homes.requestsFor(EMAIL_CHANGE)).toHaveLength(0); expectSecurity(VERIFY);
+    expect(homes.requestsFor(LOGIN)[0]?.serverId).toBe(savedHomeProfileId);
 });
-
 it('fails closed without a portable Home target and never previews the bearer against the focused Home', async () => {
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="verification-bearer" homeTarget={null} />);
-
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-invalid')).not.toBeNull());
-    expect(boundary.preview).not.toHaveBeenCalled();
+    await mountVerify({ home: null }); await waitForId('native-auth-verify-invalid'); expect(homes.requestsFor(PREVIEW)).toHaveLength(0);
 });
-
 it('fails a password-reset landing closed when the Home profile cannot be resolved', async () => {
-    screen = await renderScreen(<NativeAuthPasswordResetScreen token="reset-bearer" homeTarget={null} />);
-
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-invalid')).not.toBeNull());
-    expect(boundary.resetPreview).not.toHaveBeenCalled();
+    await mountReset(RESET, null); await waitForId('native-auth-reset-invalid'); expect(homes.requestsFor(RESET_PREVIEW)).toHaveLength(0);
 });
-
 it('authenticates a signed-out email-change recipient against the carried Home and consumes the bearer only in the owning mutation', async () => {
-    boundary.preview.mockResolvedValueOnce({
-        v: 1,
-        valid: true,
-        maskedDestination: 'n***@example.test',
-        continuation: 'sign_in_email_change',
-    });
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="email-change-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-sign-in')).not.toBeNull());
-    expect(boundary.changeEmail).not.toHaveBeenCalled();
-    await screen.pressByTestIdAsync('native-auth-verify-sign-in');
-
-    expect(screen.findByTestId('native-auth-email-change-flow')).not.toBeNull();
-    expect(boundary.flowProps).toMatchObject({
-        target: { kind: 'saved_profile', profileRef: savedHomeProfileId },
-        returnTo: '/auth/email/verify/email-change-bearer?target=' + SAVED_HOME_IDENTITY,
-    });
-    expect(boundary.flowProps?.actions).toEqual([
-        expect.objectContaining({ action: expect.objectContaining({ id: 'login' }) }),
-    ]);
-
-    await act(async () => {
-        await (boundary.flowProps?.onAuthenticated as (value: unknown) => Promise<void>)({
-            homeServerIdentityId: SAVED_HOME_IDENTITY,
-            credentials: { token: 'fresh-home-a-token' },
-        });
-    });
-
-    expect(boundary.changeEmail).toHaveBeenCalledWith(
-        boundary.authenticatedRequest,
-        { verificationToken: 'email-change-bearer' },
-    );
-    expect(boundary.openAccountSecurityForHome).toHaveBeenCalledWith({
-        serverId: savedHomeProfileId,
-        router: { replace: boundary.replace },
-        refreshAuth: boundary.refreshFromActiveServer,
-    });
+    preview('sign_in_email_change'); await mountVerify(); await waitForId('native-auth-verify-sign-in');
+    expect(homes.requestsFor(EMAIL_CHANGE)).toHaveLength(0);
+    await screen!.pressByTestIdAsync('native-auth-verify-sign-in'); await submitLogin();
+    expect(AccountEmailChangeCompleteRequestV1Schema.parse(homes.requestsFor(EMAIL_CHANGE)[0]?.input)).toEqual({ v: 1, verificationToken: VERIFY });
+    expect(homes.requestsFor(EMAIL_CHANGE)[0]?.token).toBe(token); expectSecurity();
 });
-
 it('makes a previous verification preview inert while a replacement bearer is being checked', async () => {
-    boundary.preview.mockResolvedValueOnce({
-        v: 1,
-        valid: true,
-        maskedDestination: 'n***@example.test',
-        continuation: 'sign_in_email_change',
-    });
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="old-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-sign-in')).not.toBeNull());
-
-    let finishReplacementPreview!: (value: unknown) => void;
-    boundary.preview.mockReturnValueOnce(new Promise((resolve) => { finishReplacementPreview = resolve; }));
-    await screen.update(<NativeAuthEmailVerifyScreen token="new-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-
-    expect(screen.findByTestId('native-auth-verify-sign-in')).toBeNull();
-    expect(boundary.preview).toHaveBeenLastCalledWith(boundary.request, 'new-bearer');
-
-    await act(async () => {
-        finishReplacementPreview({ v: 1, valid: false, maskedDestination: null, continuation: null });
-    });
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-invalid')).not.toBeNull());
-    expect(boundary.changeEmail).not.toHaveBeenCalled();
+    preview('sign_in_email_change'); await mountVerify({ bearer: OLD }); await waitForId('native-auth-verify-sign-in');
+    let release!: () => void;
+    preview(null, false, { respondAfter: new Promise<void>(resolve => { release = resolve; }) });
+    await screen!.update(root(<NativeAuthEmailVerifyScreen token={NEW} homeTarget={SAVED_HOME_IDENTITY} />));
+    expect(screen!.findByTestId('native-auth-verify-sign-in')).toBeNull();
+    await act(async () => { release(); }); await waitForId('native-auth-verify-invalid');
+    expect(NativeAuthBearerPreviewRequestV1Schema.parse(homes.requestsFor(PREVIEW).at(-1)?.input).token).toBe(NEW);
+    expect(homes.requestsFor(EMAIL_CHANGE)).toHaveLength(0);
 });
-
 it('makes the old reset form inert while a replacement bearer is being checked', async () => {
-    screen = await renderScreen(<NativeAuthPasswordResetScreen token="old-reset-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-password')).not.toBeNull());
-    expect(boundary.resetPreview).toHaveBeenCalledWith(boundary.request, 'old-reset-bearer');
-
-    let finishReplacementPreview!: (value: unknown) => void;
-    boundary.resetPreview.mockReturnValueOnce(new Promise((resolve) => { finishReplacementPreview = resolve; }));
-    await screen.update(<NativeAuthPasswordResetScreen token="new-reset-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-
-    expect(screen.findByTestId('native-auth-reset-password')).toBeNull();
-    expect(boundary.resetPreview).toHaveBeenLastCalledWith(boundary.request, 'new-reset-bearer');
-
-    await act(async () => {
-        finishReplacementPreview({ v: 1, valid: false });
-    });
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-invalid')).not.toBeNull());
-    expect(boundary.submitReset).not.toHaveBeenCalled();
+    await mountReset(OLD); await waitForId('native-auth-reset-password');
+    let release!: () => void;
+    homes.answer(savedHomeProfileId, RESET_PREVIEW, { body: NativePasswordResetPreviewResponseV1Schema.parse({ v: 1, valid: false }), respondAfter: new Promise<void>(resolve => { release = resolve; }) });
+    await screen!.update(root(<NativeAuthPasswordResetScreen token={NEW} homeTarget={SAVED_HOME_IDENTITY} />));
+    expect(screen!.findByTestId('native-auth-reset-password')).toBeNull();
+    await act(async () => { release(); }); await waitForId('native-auth-reset-invalid');
+    expect(NativeAuthBearerPreviewRequestV1Schema.parse(homes.requestsFor(RESET_PREVIEW).at(-1)?.input).token).toBe(NEW);
+    expect(homes.requestsFor(RESET_SUBMIT)).toHaveLength(0);
 });
-
-
 it('clears password material when a replacement reset bearer becomes current', async () => {
-    screen = await renderScreen(<NativeAuthPasswordResetScreen token="old-reset-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-password')).not.toBeNull());
-    await act(async () => {
-        screen?.changeTextByTestId('native-auth-reset-password', 'old bearer password');
-        screen?.changeTextByTestId('native-auth-reset-confirm', 'old bearer password');
-    });
-
-    boundary.resetPreview.mockResolvedValueOnce({ v: 1, valid: true });
-    await screen.update(<NativeAuthPasswordResetScreen token="new-reset-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-password')).not.toBeNull());
-
-    expect(screen.findByTestId('native-auth-reset-password')?.props.value).toBe('');
-    expect(screen.findByTestId('native-auth-reset-confirm')?.props.value).toBe('');
+    await mountReset(OLD); await waitForId('native-auth-reset-password');
+    await fill('native-auth-reset-password', PASSWORD); await fill('native-auth-reset-confirm', PASSWORD);
+    await screen!.update(root(<NativeAuthPasswordResetScreen token={NEW} homeTarget={SAVED_HOME_IDENTITY} />)); await waitForId('native-auth-reset-password');
+    expect(screen!.findByTestId('native-auth-reset-password')?.props.value).toBe(''); expect(screen!.findByTestId('native-auth-reset-confirm')?.props.value).toBe('');
 });
-
 it('ignores a completed reset mutation after its bearer has been replaced', async () => {
-    let finishOldReset!: () => void;
-    boundary.submitReset.mockReturnValueOnce(new Promise<void>((resolve) => { finishOldReset = resolve; }));
-    screen = await renderScreen(<NativeAuthPasswordResetScreen token="old-reset-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-password')).not.toBeNull());
-    await act(async () => {
-        screen?.changeTextByTestId('native-auth-reset-password', 'old bearer password');
-        screen?.changeTextByTestId('native-auth-reset-confirm', 'old bearer password');
-    });
-    await act(async () => { screen?.pressByTestId('native-auth-reset-submit'); });
-
-    boundary.resetPreview.mockResolvedValueOnce({ v: 1, valid: true });
-    await screen.update(<NativeAuthPasswordResetScreen token="new-reset-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-password')).not.toBeNull());
-    await act(async () => { finishOldReset(); });
-
-    expect(screen.findByTestId('native-auth-reset-done')).toBeNull();
-    expect(screen.findByTestId('native-auth-reset-password')).not.toBeNull();
-    expect(boundary.submitReset).toHaveBeenCalledTimes(1);
+    let release!: () => void;
+    homes.answer(savedHomeProfileId, RESET_SUBMIT, { body: PlainPasswordResetSubmitResponseV1Schema.parse({ v: 1, status: 'password_reset' }), respondAfter: new Promise<void>(resolve => { release = resolve; }) });
+    await mountReset(OLD); await submitReset(false);
+    await screen!.update(root(<NativeAuthPasswordResetScreen token={NEW} homeTarget={SAVED_HOME_IDENTITY} />)); await waitForId('native-auth-reset-password');
+    await act(async () => { release(); }); expect(screen!.findByTestId('native-auth-reset-done')).toBeNull();
+    expect(screen!.findByTestId('native-auth-reset-password')).not.toBeNull(); expect(homes.requestsFor(RESET_SUBMIT)).toHaveLength(1);
 });
-
 it('shows a specific update-required landing when the exact Home lacks the public reset operation', async () => {
-    boundary.resetPreview.mockRejectedValueOnce(new HappyError('unsupported', false, {
-        status: 404,
-        code: 'client_update_required',
-    }));
-
-    screen = await renderScreen(<NativeAuthPasswordResetScreen token="reset-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-invalid')).not.toBeNull());
-
-    expect(screen.findByTestId('native-auth-reset-invalid')?.props.children).toBe(
-        t('welcome.serverIncompatibleBody', { serverUrl: 'Saved Home' }),
-    );
-    expect(boundary.submitReset).not.toHaveBeenCalled();
+    homes.answer(savedHomeProfileId, RESET_PREVIEW, { status: 404, body: { error: 'not_found' } });
+    await mountReset(); await waitForId('native-auth-reset-invalid');
+    expect(screen!.findByTestId('native-auth-reset-invalid')?.props.children).toBe(t('welcome.serverIncompatibleBody', { serverUrl: 'Saved Home' }));
+    expect(homes.requestsFor(RESET_SUBMIT)).toHaveLength(0);
 });
-
 it('signs in to the exact carried Home after a successful reset instead of falling back to the focused Home', async () => {
-    screen = await renderScreen(<NativeAuthPasswordResetScreen token="reset-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-password')).not.toBeNull());
-    await act(async () => {
-        screen?.changeTextByTestId('native-auth-reset-password', 'correct horse battery staple');
-        screen?.changeTextByTestId('native-auth-reset-confirm', 'correct horse battery staple');
-    });
-    await screen.pressByTestIdAsync('native-auth-reset-submit');
-
-    expect(boundary.submitReset).toHaveBeenCalledWith(boundary.request, {
-        token: 'reset-bearer',
-        password: 'correct horse battery staple',
-    });
-    await screen.pressByTestIdAsync('native-auth-reset-sign-in');
-
-    expect(screen.findByTestId('native-auth-reset-sign-in-flow')).not.toBeNull();
-    expect(boundary.flowProps).toMatchObject({
-        target: { kind: 'saved_profile', profileRef: savedHomeProfileId },
-        returnTo: '/',
-    });
-    expect(boundary.flowProps?.actions).toEqual([
-        expect.objectContaining({ action: expect.objectContaining({ id: 'login' }) }),
-    ]);
+    await mountReset(); await openResetLogin(); await submitLogin();
+    expect(PlainPasswordResetSubmitRequestV1Schema.parse(homes.requestsFor(RESET_SUBMIT)[0]?.input)).toEqual({ v: 1, token: RESET, password: PASSWORD });
+    expect(homes.requestsFor(LOGIN)[0]?.serverId).toBe(savedHomeProfileId);
+    expect(await TokenStorage.getCredentialsForServerUrl(SAVED_HOME_URL, { serverId: savedHomeProfileId })).toEqual({ token });
 });
-
+function freshHomeBoundary(identity: string) {
+    const features = createRootLayoutFeaturesResponse();
+    Object.assign(features.capabilities, { serverIdentity: { serverIdentityId: identity } });
+    const calls: Array<{ path: string; input: unknown }> = [];
+    setRuntimeFetch(async (input, init) => {
+        const url = new URL(String(input));
+        if (url.origin !== FRESH_HOME_URL) return homes.request(input, init);
+        calls.push({ path: url.pathname, input: typeof init?.body === 'string' ? JSON.parse(init.body) : null });
+        if (url.pathname === '/v1/features') return Response.json(features);
+        if (url.pathname === PREVIEW) return Response.json(NativeEmailVerifyPreviewResponseV1Schema.parse({ v: 1, valid: true, maskedDestination: MASKED_EMAIL, continuation: 'account_admission' }));
+        return new Response('{}', { status: 404 });
+    });
+    return calls;
+}
 it('acquires the exact Home a fresh-device link names, then previews the bearer against it', async () => {
-    answerFeatureProbeAs(FRESH_HOME_IDENTITY);
-    const carrier = currentLinkCarrier({ identity: FRESH_HOME_IDENTITY, url: FRESH_HOME_URL });
-
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="verification-bearer" homeTarget={carrier} />);
-
-    // A fresh device has nothing saved for this Home. The link carries the
-    // Home's own descriptor, so the landing stays on the link and acquires it
-    // rather than dead-ending on an identity it cannot reach.
-    await vi.waitFor(() => expect(boundary.preview).toHaveBeenCalledTimes(1));
-    const acquired = listServerProfiles().find((profile) => profile.serverIdentityId === FRESH_HOME_IDENTITY);
-    expect(acquired).toBeDefined();
-    expect(boundary.preview).toHaveBeenCalledWith(boundary.request, 'verification-bearer');
-    expect(screen.findByTestId('native-auth-verify-invalid')).toBeNull();
+    const calls = freshHomeBoundary(FRESH_HOME_IDENTITY);
+    expect(listServerProfiles().some(profile => profile.serverIdentityId === FRESH_HOME_IDENTITY)).toBe(false);
+    await mountVerify({ home: currentLinkCarrier(FRESH_HOME_IDENTITY, FRESH_HOME_URL) });
+    await waitForHomeGovernance(() => expect(calls.filter(call => call.path === PREVIEW)).toHaveLength(1));
+    expect(listServerProfiles().some(profile => profile.serverIdentityId === FRESH_HOME_IDENTITY)).toBe(true);
+    expect(NativeAuthBearerPreviewRequestV1Schema.parse(calls.find(call => call.path === PREVIEW)?.input).token).toBe(VERIFY);
+    expect(screen!.findByTestId('native-auth-verify-invalid')).toBeNull();
 });
-
 it('never presents the bearer to endpoints that answer as a different Home', async () => {
-    answerFeatureProbeAs('srv_impostor_home');
-    const carrier = currentLinkCarrier({ identity: FRESH_HOME_IDENTITY, url: FRESH_HOME_URL });
-
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="verification-bearer" homeTarget={carrier} />);
-
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-invalid')).not.toBeNull());
-    expect(boundary.preview).not.toHaveBeenCalled();
-    expect(listServerProfiles().some((profile) => profile.serverIdentityId === FRESH_HOME_IDENTITY)).toBe(false);
-    // A Home that cannot be verified now may simply be unreachable now.
-    expect(screen.findByTestId('native-auth-verify-retry-home')).not.toBeNull();
+    const calls = freshHomeBoundary('srv_impostor_home');
+    await mountVerify({ home: currentLinkCarrier(FRESH_HOME_IDENTITY, FRESH_HOME_URL) }); await waitForId('native-auth-verify-invalid');
+    expect(calls.filter(call => call.path === PREVIEW)).toHaveLength(0);
+    expect(listServerProfiles().some(profile => profile.serverIdentityId === FRESH_HOME_IDENTITY)).toBe(false);
+    expect(screen!.findByTestId('native-auth-verify-retry-home')).not.toBeNull();
 });
-
 it('focuses the exact Home a reset signed in to before showing its content', async () => {
-    screen = await renderScreen(<NativeAuthPasswordResetScreen token="reset-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-password')).not.toBeNull());
-    await act(async () => {
-        screen?.changeTextByTestId('native-auth-reset-password', 'correct horse battery staple');
-        screen?.changeTextByTestId('native-auth-reset-confirm', 'correct horse battery staple');
-    });
-    await screen.pressByTestIdAsync('native-auth-reset-submit');
-    await screen.pressByTestIdAsync('native-auth-reset-sign-in');
-
-    await act(async () => {
-        await (boundary.flowProps?.onAuthenticated as (value: unknown) => Promise<void>)({
-            homeServerIdentityId: SAVED_HOME_IDENTITY,
-            credentials: { token: 'reset-home-token' },
-        });
-    });
-
-    // Home A may still be focused. Replacing the route without moving focus
-    // would show Home A's content and read as the reset having done nothing.
-    expect(boundary.setActiveServerAndSwitch).toHaveBeenCalledWith({
-        serverId: savedHomeProfileId,
-        scope: 'device',
-        refreshAuth: boundary.refreshFromActiveServer,
-        requireExactProfile: true,
-    });
-    expect(boundary.replace).toHaveBeenCalledWith('/');
+    await mountReset(); await openResetLogin(); await submitLogin();
+    expect(getActiveServerSnapshot().serverId).toBe(resolveServerProfileScopeIdForIdentifier(savedHomeProfileId)); expect(router.replace).toHaveBeenCalledWith('/');
 });
-
 it('stays on the reset landing with a retry when the exact Home cannot be focused', async () => {
-    boundary.setActiveServerAndSwitch.mockResolvedValue('blocked');
-    screen = await renderScreen(<NativeAuthPasswordResetScreen token="reset-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-password')).not.toBeNull());
-    await act(async () => {
-        screen?.changeTextByTestId('native-auth-reset-password', 'correct horse battery staple');
-        screen?.changeTextByTestId('native-auth-reset-confirm', 'correct horse battery staple');
-    });
-    await screen.pressByTestIdAsync('native-auth-reset-submit');
-    await screen.pressByTestIdAsync('native-auth-reset-sign-in');
-
-    await act(async () => {
-        await (boundary.flowProps?.onAuthenticated as (value: unknown) => Promise<void>)({
-            homeServerIdentityId: SAVED_HOME_IDENTITY,
-            credentials: { token: 'reset-home-token' },
-        });
-    });
-
-    expect(boundary.replace).not.toHaveBeenCalled();
-    expect(screen.findByTestId('native-auth-reset-destination-home-error')).not.toBeNull();
-
-    boundary.setActiveServerAndSwitch.mockResolvedValue('switched');
-    await screen.pressByTestIdAsync('native-auth-reset-destination-home-retry');
-    expect(boundary.replace).toHaveBeenCalledWith('/');
+    await mountReset(); await openResetLogin(); blockFocus = true; await submitLogin();
+    expect(router.replace).not.toHaveBeenCalled(); await waitForId('native-auth-reset-destination-home-error');
+    blockFocus = false; await screen!.pressByTestIdAsync('native-auth-reset-destination-home-retry');
+    await waitForHomeGovernance(() => expect(router.replace).toHaveBeenCalledWith('/'));
+    expect(router.replace).toHaveBeenCalledWith('/'); expect(homes.requestsFor(LOGIN)).toHaveLength(1);
 });
-
 it('focuses the exact Home a native Account was created on before showing its content', async () => {
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="verification-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await screen.pressByTestIdAsync('native-auth-verify-create-account');
-
-    await act(async () => {
-        await (boundary.flowProps?.onAuthenticated as (value: unknown) => Promise<void>)({
-            homeServerIdentityId: SAVED_HOME_IDENTITY,
-            credentials: { token: 'created' },
-        });
-    });
-
-    expect(boundary.setActiveServerAndSwitch).toHaveBeenCalledWith({
-        serverId: savedHomeProfileId,
-        scope: 'device',
-        refreshAuth: boundary.refreshFromActiveServer,
-        requireExactProfile: true,
-    });
-    expect(boundary.replace).toHaveBeenCalledWith('/');
+    await mountVerify(); await openProvision(); await createAccount();
+    expect(getActiveServerSnapshot().serverId).toBe(resolveServerProfileScopeIdForIdentifier(savedHomeProfileId)); expect(router.replace).toHaveBeenCalledWith('/');
 });
-
 it('waits for the exact Home before opening a Team the same admission atomically joined', async () => {
-    // Atomic Team admission is still an Account created on the Home the link
-    // named. Opening the Team route first would render the previously focused
-    // Home's Teams stack and read as the join having silently failed.
-    boundary.setActiveServerAndSwitch.mockResolvedValue('blocked');
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="verification-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await screen.pressByTestIdAsync('native-auth-verify-create-account');
-
-    await act(async () => {
-        await (boundary.flowProps?.onAuthenticated as (value: unknown) => Promise<void>)({
-            homeServerIdentityId: SAVED_HOME_IDENTITY,
-            credentials: { token: 'created' },
-            teamId: 'team-a',
-        });
-    });
-
-    expect(boundary.replace).not.toHaveBeenCalled();
-    expect(screen.findByTestId('native-auth-verify-destination-home-error')).not.toBeNull();
-    // The admission affordance is retired, so nothing here can create a second
-    // Account or resubmit the verification bearer.
-    expect(screen.findByTestId('native-auth-admission-flow')).toBeNull();
-
-    boundary.setActiveServerAndSwitch.mockResolvedValue('switched');
-    await screen.pressByTestIdAsync('native-auth-verify-destination-home-retry');
-
-    expect(boundary.replace).toHaveBeenCalledWith(`/settings/teams/${SAVED_HOME_IDENTITY}/team-a`);
-    expect(boundary.replace).toHaveBeenCalledOnce();
-    // Retry re-ran the focus and nothing else.
-    expect(boundary.setActiveServerAndSwitch).toHaveBeenCalledTimes(2);
+    await mountVerify(); await openProvision(); blockFocus = true; await createAccount('team-a');
+    expect(router.replace).not.toHaveBeenCalled(); await waitForId('native-auth-verify-destination-home-error');
+    expect(screen!.findByTestId('email-password-create')).toBeNull();
+    blockFocus = false; await screen!.pressByTestIdAsync('native-auth-verify-destination-home-retry');
+    await waitForHomeGovernance(() => expect(router.replace).toHaveBeenCalledWith(`/settings/teams/${SAVED_HOME_IDENTITY}/team-a`));
+    expect(router.replace).toHaveBeenCalledWith(`/settings/teams/${SAVED_HOME_IDENTITY}/team-a`);
+    expect(router.replace).toHaveBeenCalledOnce(); expect(homes.requestsFor(PROVISION)).toHaveLength(1);
 });
-
 it('consumes an email-change confirmation once even when the recipient taps again while it is in flight', async () => {
-    boundary.scopeKind = 'bound';
-    boundary.preview.mockResolvedValueOnce({
-        v: 1,
-        valid: true,
-        maskedDestination: 'n***@example.test',
-        continuation: 'sign_in_email_change',
-    });
-    let finishChange!: () => void;
-    boundary.changeEmail.mockReturnValueOnce(new Promise<void>((resolve) => { finishChange = resolve; }));
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="email-change-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-confirm-change')).not.toBeNull());
-
-    await act(async () => { screen?.pressByTestId('native-auth-verify-confirm-change'); });
-    // The card must read as working rather than untouched while the Home answers.
-    expect(screen.findByTestId('native-auth-verify-confirm-change-icon')).toBeNull();
-
-    await act(async () => { screen?.pressByTestId('native-auth-verify-confirm-change'); });
-    // The one-time bearer must never be submitted twice.
-    expect(boundary.changeEmail).toHaveBeenCalledTimes(1);
-
-    await act(async () => { finishChange(); });
-    await vi.waitFor(() => expect(boundary.openAccountSecurityForHome).toHaveBeenCalledTimes(1));
+    await bound(); preview('sign_in_email_change'); let release!: () => void;
+    homes.answer(savedHomeProfileId, EMAIL_CHANGE, { body: AccountPasswordMutationResponseV1Schema.parse({ v: 1, status: 'updated' }), respondAfter: new Promise<void>(resolve => { release = resolve; }) });
+    await mountVerify(); await waitForId('native-auth-verify-confirm-change');
+    await act(async () => { screen!.pressByTestId('native-auth-verify-confirm-change'); });
+    expect(screen!.findByTestId('native-auth-verify-confirm-change-icon')).toBeNull();
+    await act(async () => { screen!.pressByTestId('native-auth-verify-confirm-change'); });
+    expect(homes.requestsFor(EMAIL_CHANGE)).toHaveLength(1);
+    await act(async () => { release(); }); await waitForHomeGovernance(() => expectSecurity());
 });
-
 it('keeps a committed email change on a retryable activation state instead of offering the mutation again', async () => {
-    boundary.scopeKind = 'bound';
-    boundary.preview.mockResolvedValueOnce({
-        v: 1,
-        valid: true,
-        maskedDestination: 'n***@example.test',
-        continuation: 'sign_in_email_change',
-    });
-    boundary.openAccountSecurityForHome.mockResolvedValueOnce(false);
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="email-change-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-confirm-change')).not.toBeNull());
-
-    await screen.pressByTestIdAsync('native-auth-verify-confirm-change');
-
-    // The address already changed on the exact Home; only reaching it failed.
-    // Leaving the Confirm affordance mounted would invite a second submission of
-    // a one-time bearer that has already been consumed.
-    expect(boundary.changeEmail).toHaveBeenCalledTimes(1);
-    expect(screen.findByTestId('native-auth-verify-confirm-change')).toBeNull();
-    expect(screen.findByTestId('native-auth-verify-destination-home-error')).not.toBeNull();
-
-    await screen.pressByTestIdAsync('native-auth-verify-destination-home-retry');
-
-    // Retry re-runs activation alone.
-    expect(boundary.openAccountSecurityForHome).toHaveBeenCalledTimes(2);
-    expect(boundary.changeEmail).toHaveBeenCalledTimes(1);
+    await bound(); preview('sign_in_email_change'); await mountVerify(); await waitForId('native-auth-verify-confirm-change');
+    blockFocus = true; await act(async () => { screen!.pressByTestId('native-auth-verify-confirm-change'); });
+    await waitForId('native-auth-verify-destination-home-error');
+    expect(homes.requestsFor(EMAIL_CHANGE)).toHaveLength(1); expect(screen!.findByTestId('native-auth-verify-confirm-change')).toBeNull();
+    blockFocus = false;
+    await screen!.pressByTestIdAsync('native-auth-verify-destination-home-retry'); await waitForHomeGovernance(() => expectSecurity()); expect(homes.requestsFor(EMAIL_CHANGE)).toHaveLength(1);
 });
-
 it('keeps a verified password-enrollment continuation retryable when its Home cannot be activated', async () => {
-    boundary.scopeKind = 'bound';
-    boundary.preview.mockResolvedValueOnce({
-        v: 1,
-        valid: true,
-        maskedDestination: 'n***@example.test',
-        continuation: 'password_enrollment',
-    });
-    boundary.openAccountSecurityForHome.mockResolvedValueOnce(false);
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="enrollment-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-password-enrollment')).not.toBeNull());
-
-    await screen.pressByTestIdAsync('native-auth-verify-password-enrollment');
-
-    expect(screen.findByTestId('native-auth-verify-destination-home-error')).not.toBeNull();
-
-    await screen.pressByTestIdAsync('native-auth-verify-destination-home-retry');
-
-    // The bearer travels to Account Security unchanged, first time and on retry; retry never re-mints it.
-    const activation = {
-        serverId: savedHomeProfileId,
-        router: { replace: boundary.replace },
-        refreshAuth: boundary.refreshFromActiveServer,
-        verificationToken: 'enrollment-bearer',
-    };
-    expect(boundary.openAccountSecurityForHome.mock.calls).toEqual([[activation], [activation]]);
+    await bound(); preview('password_enrollment'); await mountVerify(); await waitForId('native-auth-verify-password-enrollment');
+    blockFocus = true; await act(async () => { screen!.pressByTestId('native-auth-verify-password-enrollment'); }); await waitForId('native-auth-verify-destination-home-error');
+    blockFocus = false; await screen!.pressByTestIdAsync('native-auth-verify-destination-home-retry'); await waitForHomeGovernance(() => expectSecurity(VERIFY));
+    expect(homes.requestsFor(EMAIL_CHANGE)).toHaveLength(0);
 });
-
 it('shows the reset submission as working until the Home answers', async () => {
-    screen = await renderScreen(<NativeAuthPasswordResetScreen token="reset-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-password')).not.toBeNull());
-    await act(async () => {
-        screen?.changeTextByTestId('native-auth-reset-password', 'correct horse battery staple');
-        screen?.changeTextByTestId('native-auth-reset-confirm', 'correct horse battery staple');
-    });
-
-    let finishReset!: () => void;
-    boundary.submitReset.mockReturnValueOnce(new Promise<void>((resolve) => { finishReset = resolve; }));
-    await act(async () => { screen?.pressByTestId('native-auth-reset-submit'); });
-
-    expect(screen.findByTestId('native-auth-reset-submit-icon')).toBeNull();
-    expect(boundary.submitReset).toHaveBeenCalledTimes(1);
-
-    await act(async () => { finishReset(); });
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-reset-done')).not.toBeNull());
+    let release!: () => void;
+    homes.answer(savedHomeProfileId, RESET_SUBMIT, { body: PlainPasswordResetSubmitResponseV1Schema.parse({ v: 1, status: 'password_reset' }), respondAfter: new Promise<void>(resolve => { release = resolve; }) });
+    await mountReset(); await submitReset(false); expect(screen!.findByTestId('native-auth-reset-submit-icon')).toBeNull(); expect(homes.requestsFor(RESET_SUBMIT)).toHaveLength(1);
+    await act(async () => { release(); }); await waitForId('native-auth-reset-done');
 });
-
 it('retries the verification preview in place once the exact Home is already acquired', async () => {
-    boundary.preview.mockReset();
-    boundary.preview.mockRejectedValueOnce(new HappyError('Home unreachable', true, { kind: 'network' }));
-    boundary.preview.mockResolvedValue({
-        v: 1, valid: true, maskedDestination: 'p***@example.test', continuation: 'account_admission',
-    });
-
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="verification-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-invalid')).not.toBeNull());
-
-    // The Home resolved; only the read failed, so the Home-acquisition retry is
-    // not the affordance this state needs — the preview owns its own.
-    expect(screen.findByTestId('native-auth-verify-retry-home')).toBeNull();
-    await screen.pressByTestIdAsync('native-auth-verify-retry');
-
-    expect(boundary.preview).toHaveBeenCalledTimes(2);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-create-account')).not.toBeNull());
+    let fail = true;
+    homes.answer(savedHomeProfileId, PREVIEW, { select: () => {
+        if (fail) { fail = false; return { status: 503, body: { error: 'upstream_error' } }; }
+        return { body: NativeEmailVerifyPreviewResponseV1Schema.parse({ v: 1, valid: true, maskedDestination: MASKED_EMAIL, continuation: 'account_admission' }) };
+    } });
+    await mountVerify(); await waitForId('native-auth-verify-invalid'); expect(screen!.findByTestId('native-auth-verify-retry-home')).toBeNull();
+    await screen!.pressByTestIdAsync('native-auth-verify-retry'); expect(homes.requestsFor(PREVIEW)).toHaveLength(2); await waitForId('native-auth-verify-create-account');
 });
-
 it('offers no preview retry when the verification link itself is expired', async () => {
-    boundary.preview.mockReset();
-    boundary.preview.mockResolvedValue({ v: 1, valid: false });
-
-    screen = await renderScreen(<NativeAuthEmailVerifyScreen token="verification-bearer" homeTarget={SAVED_HOME_IDENTITY} />);
-    await vi.waitFor(() => expect(screen?.findByTestId('native-auth-verify-invalid')).not.toBeNull());
-
-    // An expired or revoked bearer is terminal: re-reading it cannot change it.
-    expect(screen.findByTestId('native-auth-verify-retry')).toBeNull();
-    expect(screen.findByTestId('native-auth-verify-retry-home')).toBeNull();
-    expect(boundary.preview).toHaveBeenCalledTimes(1);
+    preview(null, false); await mountVerify(); await waitForId('native-auth-verify-invalid');
+    expect(screen!.findByTestId('native-auth-verify-retry')).toBeNull(); expect(screen!.findByTestId('native-auth-verify-retry-home')).toBeNull(); expect(homes.requestsFor(PREVIEW)).toHaveLength(1);
 });

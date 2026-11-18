@@ -1,33 +1,18 @@
+import { installPasswordKdfWorkerBoundary } from '@/dev/testkit/mocks/passwordKdfWorker';
 import {
     PASSWORD_ENVELOPE_WRITER_PROFILE_V1,
     PasswordWrappedRecoverySecretV1Schema,
     encodePasswordCredentialFieldV1,
 } from '@happier-dev/protocol/auth/accountPasswordCredential';
-import { expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { deriveAccountSigningPublicKey } from '@/auth/flows/challenge';
 import { derivePasswordKeys, openPasswordEnvelope } from './passwordEnvelope';
 import { preparePasswordCredentialMaterialV1 } from './preparePasswordCredential';
 
-// The memory-hard KDF runs in a platform worker (Web Worker / native crypto
-// worker), a genuine system boundary that does not exist under the test
-// runtime. It is replaced by a deterministic stand-in so the envelope, AAD
-// binding and wrap/auth key split below are exercised for real.
-vi.mock('./derivePasswordEnvelopeKey', () => ({
-    derivePasswordEnvelopeKey: async (input: {
-        password: string;
-        kdf: { salt: string; opsLimit: number; memLimitBytes: number };
-    }) => {
-        const seed = new TextEncoder().encode(
-            `${input.password}|${input.kdf.salt}|${input.kdf.opsLimit}|${input.kdf.memLimitBytes}`,
-        );
-        const root = new Uint8Array(32);
-        for (let index = 0; index < seed.length; index += 1) {
-            root[index % 32] = (root[index % 32]! * 31 + seed[index]! + index) & 0xff;
-        }
-        return root;
-    },
-}));
+// Keep KDF validation, key splitting and envelope crypto on the real path.
+beforeEach(installPasswordKdfWorkerBoundary);
+afterEach(() => vi.unstubAllGlobals());
 
 const SECRET = new Uint8Array(32).map((_, index) => (index * 7 + 3) & 0xff);
 const PASSWORD = '  exact é password 🔑  ';

@@ -1,23 +1,15 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred, createRootLayoutFeaturesResponse, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 
 const network = vi.hoisted(() => ({ request: vi.fn() }));
 
-vi.mock('@/sync/http/client', async () => {
-    const actual = await vi.importActual<typeof import('@/sync/http/client')>('@/sync/http/client');
-    return {
-        ...actual,
-        createServerFetchAtEndpoint: ({ endpointUrl }: { endpointUrl: string }) => (
-            path: string,
-            init?: RequestInit,
-            options?: unknown,
-        ) => network.request(endpointUrl, path, init, options),
-    };
-});
+import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
+import { selectAccountServiceEndpoint } from '@/sync/ops/accountDirectory/selectAccountServiceEndpoint';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -38,7 +30,12 @@ vi.mock('@/text', async () => {
 await import('./AccountServiceSelectionForm');
 
 describe('AccountServiceSelectionForm', () => {
+    beforeEach(() => setRuntimeFetch((input, init) => {
+        const url = new URL(String(input));
+        return network.request(url.origin, `${url.pathname}${url.search}`, init);
+    }));
     afterEach(() => {
+        resetRuntimeFetch();
         network.request.mockReset();
         standardCleanup();
         vi.unstubAllGlobals();
@@ -111,7 +108,7 @@ describe('AccountServiceSelectionForm', () => {
     }
 
     function supportedAuthEntry() {
-        return {
+        return AuthEntryProjectionV1Schema.parse({
             v: 1,
             state: 'ready',
             scope: { kind: 'home' },
@@ -124,7 +121,7 @@ describe('AccountServiceSelectionForm', () => {
                 presentation: { displayName: 'Recovery key' },
             }],
             autoRedirect: null,
-        } as const;
+        });
     }
 
     function authEntryResponse(): Response {
@@ -146,7 +143,9 @@ describe('AccountServiceSelectionForm', () => {
     } satisfies AuthEntryOptions;
 
     it('retains an unsupported URL and reports the semantic result inline', async () => {
-        const onSelect = vi.fn(async () => ({ kind: 'unsupported' as const }));
+        network.request.mockImplementation(async (_endpoint: string, path: string) => path === '/v1/auth/entry'
+            ? new Response('', { status: 404 }) : Response.json(createRootLayoutFeaturesResponse()));
+        const onSelect = vi.fn(selectAccountServiceEndpoint);
         const { AccountServiceSelectionForm } = await import('./AccountServiceSelectionForm');
         const screen = await renderScreen(
             <AccountServiceSelectionForm currentEndpoint={null} onBack={vi.fn()} onSelect={onSelect} />,
@@ -159,6 +158,7 @@ describe('AccountServiceSelectionForm', () => {
             input.props.onChangeText('https://home.example.test');
         });
         await screen.pressByTestIdAsync('account-service-url-submit');
+        await vi.waitFor(() => expect(screen.findByTestId('account-service-url-error')?.props.children).toBe('welcome.signInServiceUnsupportedBody'));
 
         expect(onSelect).toHaveBeenCalledWith(
             'https://home.example.test',
@@ -181,8 +181,10 @@ describe('AccountServiceSelectionForm', () => {
     });
 
     it('selects the current service from its own choice without opening the address form', async () => {
-        const selection = createDeferred<{ kind: 'selected' }>();
-        const onSelect = vi.fn(async () => await selection.promise);
+        const selection = createDeferred<Response>();
+        network.request.mockImplementation(async (_endpoint: string, path: string) => path === '/v1/auth/entry'
+            ? authEntryResponse() : await selection.promise);
+        const onSelect = vi.fn(selectAccountServiceEndpoint);
         const currentEndpoint = {
             url: 'https://current.example.test',
             serverIdentityId: 'srv_current_service',
@@ -202,8 +204,8 @@ describe('AccountServiceSelectionForm', () => {
 
         expect(onSelect).toHaveBeenCalledWith('https://current.example.test', expect.objectContaining({ signal: expect.any(Object) }));
         await act(async () => {
-            selection.resolve({ kind: 'selected' });
-            await selection.promise;
+            selection.resolve(Response.json(supportedAccountService(currentEndpoint.serverIdentityId)));
+            await onSelect.mock.results[0]!.value;
         });
         expect(screen.findByTestId('account-service-url-input')).toBeNull();
         expect(screen.findByTestId('account-service-url-error')).toBeNull();

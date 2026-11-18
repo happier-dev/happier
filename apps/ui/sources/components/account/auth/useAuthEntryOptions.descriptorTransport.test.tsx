@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { createDeferred, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -10,35 +10,33 @@ import { WelcomeDecisionPanel } from '@/components/onboarding/preAuth/WelcomeDec
 import { adoptHomeProfile, resetServerProfilesRuntimeForTests } from '@/sync/domains/server/serverProfiles';
 import { getActiveServerSnapshot, setActiveServer, upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { useAuthEntryOptions } from './useAuthEntryOptions';
+import { disposeIrohHomeTunnelRuntime, getIrohHomeTunnelRuntime } from '@/sync/runtime/nativeIrohTunnels/runtime';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import { homeConnectionDescriptorFixture } from '@/dev/testkit/fixtures/homeConnectionFixtures';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({ Platform: { OS: 'ios', select: (values: Record<string, unknown>) => values.ios ?? values.default } });
 });
-const boundary = vi.hoisted(() => ({ fetch: vi.fn(), acquire: vi.fn() }));
-vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/utils/system/runtimeFetch')>(),
-    runtimeFetch: boundary.fetch,
-}));
-// The native bridge is the IO boundary; carrier policy and enrollment resolution stay real.
-vi.mock('@/sync/runtime/nativeIrohTunnels/runtime', () => ({ acquireIrohHomeRuntimeOrigin: boundary.acquire }));
+const boundary = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 
 function signedOut({ children }: React.PropsWithChildren) {
     return <InjectedAuthProvider credentials={null}>{children}</InjectedAuthProvider>;
 }
 function descriptor(id: string, carrier: 'https' | 'iroh'): HomeConnectionDescriptorV1 {
-    return {
+    return homeConnectionDescriptorFixture({
         v: 1, homeServerIdentityId: id, canonicalServerUrl: 'http://localhost:3010', revision: 1,
         endpoints: carrier === 'https'
             ? [{ kind: 'https', url: `https://${id}.example.test` }]
             : [{ kind: 'iroh', endpointId: 'a'.repeat(64) }],
-    };
+    });
 }
-function lease(home: HomeConnectionDescriptorV1, release: () => Promise<void>) {
-    return { homeServerIdentityId: home.homeServerIdentityId, endpointId: 'a'.repeat(64),
-        leaseId: home.homeServerIdentityId, runtimeOrigin: `http://127.0.0.1:43123`, status: 'ready', release };
+function lease(home: HomeConnectionDescriptorV1) {
+    return { homeServerIdentityId: home.homeServerIdentityId, homeEndpointId: 'a'.repeat(64),
+        leaseId: home.homeServerIdentityId, runtimeOrigin: 'http://127.0.0.1:43123', carrier: 'iroh' as const,
+        observedPath: 'relay' as const, startedAtMs: 1 };
 }
 async function focus(home: HomeConnectionDescriptorV1) {
     const profile = await adoptHomeProfile({ descriptor: home, source: 'qr', descriptorAuthority: 'advisory' });
@@ -57,12 +55,14 @@ function network(home: HomeConnectionDescriptorV1, origin: string) {
             } })), { status: 200, headers: { 'content-type': 'application/json' } });
     });
 }
-afterEach(() => {
+beforeEach(() => setRuntimeFetch(boundary.fetch));
+afterEach(async () => {
+    await disposeIrohHomeTunnelRuntime();
     vi.useRealTimers();
     standardCleanup();
     resetServerProfilesRuntimeForTests();
     boundary.fetch.mockReset();
-    boundary.acquire.mockReset();
+    resetRuntimeFetch();
 });
 
 it('offers Retry while Welcome discovery is pending and replaces its abandoned observation', async () => {
@@ -180,8 +180,14 @@ it('releases the retained enrollment carrier when Home focus changes and on unmo
     const second = { ...descriptor('srv_entry_iroh_second', 'iroh'), canonicalServerUrl: 'http://localhost:3011' };
     const releaseFirst = vi.fn(async () => {});
     const releaseSecond = vi.fn(async () => {});
-    boundary.acquire.mockImplementation(async (input: { homeServerIdentityId: string }) =>
-        input.homeServerIdentityId === first.homeServerIdentityId ? lease(first, releaseFirst) : lease(second, releaseSecond));
+    // Only the native lifecycle SDK is replaced; the supervisor verifies features and health.
+    getIrohHomeTunnelRuntime({ native: {
+        ensureHomeTunnel: async (input) => input.homeServerIdentityId === first.homeServerIdentityId ? lease(first) : lease(second),
+        releaseHomeTunnel: async (leaseId) => {
+            if (leaseId === first.homeServerIdentityId) await releaseFirst();
+            else if (leaseId === second.homeServerIdentityId) await releaseSecond();
+        },
+    } });
     network(first, 'http://127.0.0.1:43123');
     await focus(first);
     const hook = await renderHook(() => useAuthEntryOptions(), { wrapper: signedOut });
@@ -199,12 +205,15 @@ it('releases an enrollment carrier whose acquisition finishes after the auth ent
     const home = descriptor('srv_entry_obsolete', 'iroh');
     const release = vi.fn(async () => {});
     const acquired = createDeferred<ReturnType<typeof lease>>();
-    boundary.acquire.mockReturnValue(acquired.promise);
+    const acquire = vi.fn(async () => acquired.promise);
+    getIrohHomeTunnelRuntime({ native: { ensureHomeTunnel: acquire, releaseHomeTunnel: release } });
+    network(home, 'http://127.0.0.1:43123');
     await focus(home);
     const hook = await renderHook(() => useAuthEntryOptions(), { wrapper: signedOut });
-    await vi.waitFor(() => expect(boundary.acquire).toHaveBeenCalled());
+    await vi.waitFor(() => expect(acquire).toHaveBeenCalled());
     await hook.unmount();
-    await act(async () => { acquired.resolve(lease(home, release)); });
+    await act(async () => { acquired.resolve(lease(home)); });
     await vi.waitFor(() => expect(release).toHaveBeenCalledOnce());
-    expect(boundary.fetch).not.toHaveBeenCalled();
+    expect(boundary.fetch.mock.calls.some(([url]) => String(url).endsWith('/v1/auth/entry'))).toBe(false);
+    expect(boundary.fetch.mock.calls.some(([url]) => String(url).endsWith('/v1/auth'))).toBe(false);
 });

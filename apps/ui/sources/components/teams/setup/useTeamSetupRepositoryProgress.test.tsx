@@ -1,21 +1,50 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-const operationRpc = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<unknown>>());
-// Only the Machine transport is replaced; owner reading, subscriptions and selectors stay real.
-vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: operationRpc }));
+import 'fake-indexeddb/auto';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+
+// The Socket.IO port supplies daemon answers; Machine routing, credential
+// currentness and operation observation remain in the production owners.
+const daemonReply = vi.fn<(...args: unknown[]) => Promise<unknown>>();
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+const daemonRequests = installSessionActionRpcBoundary((request, context) => daemonReply(request, context));
 const { useTeamSetupRepositoryProgress } = await import('./useTeamSetupRepositoryProgress');
 const { useTeamSetupBatchProgress } = await import('./useTeamSetupBatchProgress');
 import type { TeamSetupBatch } from './useTeamSetupPlan';
 await import('@/sync/domains/actionOperations/observeActionOperationByRequestId');
-afterEach(() => { standardCleanup(); actionOperationStore.reset(); operationRpc.mockReset(); });
+const { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } =
+    await import('@/sync/domains/scope/serverCredentialAccountScope');
+let lifetime: ServerAccountScopeLifetime;
+beforeEach(async () => {
+    await homes.reset();
+    daemonRequests.length = 0;
+    daemonReply.mockReset();
+    const profileId = await homes.addHome({ name: 'Team Home', serverUrl: 'https://team-home.test',
+        serverIdentityId: 'team-home', accountId: 'member', currentAccount: true });
+    query.serverId = profileId;
+    preparedResult = preparedResultFixture();
+    homes.answer(profileId, '/v1/machines/member-machine', { body: { machine: createPlainMachineRowFixture({
+        id: 'member-machine', accountId: 'member',
+    }) } });
+    const resolution = await resolveServerCredentialAccountScope(profileId);
+    if (resolution.kind !== 'bound') throw new Error(`Expected bound Home Account, received ${resolution.kind}`);
+    lifetime = captureServerCredentialAccountScopeLifetime(resolution);
+});
+afterEach(async () => {
+    standardCleanup();
+    actionOperationStore.reset();
+    const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
+    await serverScopedRpcSocketPool.stopAll();
+});
 const query = { serverId: 'team-home', accountId: 'member', machineId: 'member-machine', sourceId: 'source' };
-const lifetime: ServerAccountScopeLifetime = { scope: { serverId: 'team-home', accountId: 'member' },
-    isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
 function opening(overrides: Partial<ActionOperationSnapshotV1> = {}): ActionOperationSnapshotV1 {
     const createdAt = overrides.createdAt ?? 1;
     return ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'open', revision: 1, actionId: 'projects.open', state: 'running',
@@ -30,8 +59,11 @@ function selectedBatch(): TeamSetupBatch {
             { repositoryId: 'next', source: { id: 'next', revision: 1, name: 'Next repository' }, requestId: 'next-request' },
         ] }, dispatched: new Set(['source']), running: true, settlement: null };
 }
-const preparedResult = OpenProjectResultV1Schema.parse({ kind: 'opened', setup: 'prepared', directory: '/repo',
-    workspace: { serverId: query.serverId, machineId: query.machineId, workspaceId: 'repo', rootPath: '/repo' } });
+function preparedResultFixture() {
+    return OpenProjectResultV1Schema.parse({ kind: 'opened', setup: 'prepared', directory: '/repo',
+        workspace: { serverId: query.serverId, machineId: query.machineId, workspaceId: 'repo', rootPath: '/repo' } });
+}
+let preparedResult = preparedResultFixture();
 function setupOperation(overrides: Partial<ActionOperationSnapshotV1> = {}): ActionOperationSnapshotV1 {
     return ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'setup', revision: 1, actionId: 'projects.prepare',
         state: 'running', scope: { accountId: query.accountId, machineId: query.machineId }, title: 'Prepare',
@@ -51,7 +83,7 @@ describe('selected Team batch progress', () => {
         expect(hook.getCurrent().pending).toMatchObject({ phase: 'queued', queued: true, ready: false, dispatched: false,
             source: { id: 'next', revision: 1, name: 'Next repository' } });
         expect(hook.getCurrent().unrelated).toBeNull();
-        expect(operationRpc).not.toHaveBeenCalled();
+        expect(daemonReply).not.toHaveBeenCalled();
         current = { ...batch, running: false, settlement: { machine: { ok: false, errorCode: 'setup_failed', error: 'Setup failed' },
             machineSettlement: null, repositories: [] } };
         await hook.rerender();
@@ -63,7 +95,7 @@ describe('selected Team batch progress', () => {
         await hook.unmount();
     });
     it('requires actual setup success, retains native failure, and announces only a live ready transition', async () => {
-        operationRpc.mockReturnValue(new Promise(() => {}));
+        daemonReply.mockReturnValue(new Promise(() => {}));
         const batch = selectedBatch();
         const onReady = vi.fn();
         act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshotComplete: true,
@@ -94,7 +126,7 @@ describe('selected Team batch progress', () => {
     });
     it('does not announce an old terminal summary when its native full result hydrates', async () => {
         const full = createDeferred<unknown>();
-        operationRpc.mockReturnValue(full.promise);
+        daemonReply.mockReturnValue(full.promise);
         const batch = selectedBatch();
         const onReady = vi.fn();
         const summary = opening({ requestId: 'selected-request', state: 'succeeded', settledAt: 2 });
@@ -107,7 +139,7 @@ describe('selected Team batch progress', () => {
         await hook.unmount();
     });
     it('does not replay completion received through reconnect', async () => {
-        operationRpc.mockReturnValue(new Promise(() => {}));
+        daemonReply.mockReturnValue(new Promise(() => {}));
         const batch = selectedBatch();
         const onReady = vi.fn();
         act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [opening({ requestId: 'selected-request' })] }));
@@ -134,7 +166,7 @@ describe('selected Team batch progress', () => {
         await hook.unmount();
     });
     it('announces a locally dispatched native no-setup completion once, without replay on reopening', async () => {
-        operationRpc.mockReturnValue(new Promise(() => {}));
+        daemonReply.mockReturnValue(new Promise(() => {}));
         let batch: TeamSetupBatch | null = null;
         const onReady = vi.fn();
         const hook = await renderHook(() => useTeamSetupBatchProgress(batch, 'source', onReady));
@@ -156,7 +188,7 @@ describe('selected Team batch progress', () => {
 describe('Team repository setup progress', () => {
     it('joins only the selected native request on the exact Source and target', async () => {
         const discovery = createDeferred<unknown>();
-        operationRpc.mockReturnValue(new Promise(() => {})).mockReturnValueOnce(discovery.promise);
+        daemonReply.mockReturnValue(new Promise(() => {})).mockReturnValueOnce(discovery.promise);
         const selectedQuery = { ...query, requestId: 'selected-request' };
         act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshotComplete: true,
             snapshots: [opening({ operationId: 'previous-open', requestId: 'previous-request', state: 'succeeded', settledAt: 2,
@@ -164,14 +196,14 @@ describe('Team repository setup progress', () => {
                     workspace: { serverId: query.serverId, machineId: query.machineId, workspaceId: 'old', rootPath: '/old' } } })] }));
         const hook = await renderHook(() => useTeamSetupRepositoryProgress(selectedQuery, lifetime));
         expect(hook.getCurrent().openOperation).toBeNull();
-        await vi.waitFor(() => expect(operationRpc).toHaveBeenCalledWith(expect.objectContaining({
-            serverId: query.serverId, accountId: query.accountId, machineId: query.machineId,
-            payload: { requestIdentity: { actionId: 'projects.open', requestId: 'selected-request' } },
+        await vi.waitFor(() => expect(daemonRequests).toContainEqual(expect.objectContaining({
+            method: expect.stringContaining(`${query.machineId}:`),
+            params: { requestIdentity: { actionId: 'projects.open', requestId: 'selected-request' } },
         })));
         discovery.resolve({ items: [opening({ operationId: 'selected-open', requestId: 'selected-request', createdAt: 3 })], nextCursor: null });
         await vi.waitFor(() => expect(hook.getCurrent().openOperation?.snapshot.operationId).toBe('selected-open'));
         // The first matching snapshot joins this same observer instead of starting an operation-id reader too.
-        await vi.waitFor(() => expect(operationRpc).toHaveBeenCalledTimes(2));
+        await vi.waitFor(() => expect(daemonReply).toHaveBeenCalledTimes(2));
         act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [
             opening({ operationId: 'concurrent-open', requestId: 'other-request', createdAt: 4 }),
             opening({ operationId: 'wrong-target', requestId: 'selected-request', createdAt: 5,
@@ -182,14 +214,14 @@ describe('Team repository setup progress', () => {
     });
     it('observes in-flight Open before its checkout exists, then rejoins its full result and pushed setup after navigation', async () => {
         const terminal = createDeferred<unknown>();
-        operationRpc.mockReturnValue(terminal.promise);
-        act(() => actionOperationStore.mergeSnapshots({ serverId: 'team-home', snapshots: [opening()] }));
+        daemonReply.mockReturnValue(terminal.promise);
+        act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [opening()] }));
         let renders = 0;
         const hook = await renderHook(() => { renders += 1; return useTeamSetupRepositoryProgress(query, lifetime); });
         expect(hook.getCurrent()).toMatchObject({ openOperation: { snapshot: { state: 'running' } }, result: null, setupOperation: null });
-        await vi.waitFor(() => expect(operationRpc).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(daemonReply).toHaveBeenCalledTimes(1));
         const before = renders;
-        act(() => actionOperationStore.mergeSnapshots({ serverId: 'team-home', snapshots: [
+        act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [
             opening({ operationId: 'foreign-account', createdAt: 20, scope: { accountId: 'other', machineId: 'member-machine' } }),
             opening({ operationId: 'foreign-machine', createdAt: 30, scope: { accountId: 'member', machineId: 'other' } }),
             opening({ operationId: 'foreign-source', createdAt: 40, domainRef: { kind: 'projectOpen', sourceId: 'other' } }),
@@ -198,20 +230,20 @@ describe('Team repository setup progress', () => {
         expect(renders).toBe(before);
         await hook.unmount();
         const summary = opening({ revision: 2, state: 'succeeded', settledAt: 10 });
-        act(() => actionOperationStore.mergeSnapshots({ serverId: 'team-home', snapshots: [summary] }));
+        act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [summary] }));
         const opened = OpenProjectResultV1Schema.parse({ kind: 'opened', setup: 'prepared', directory: '/repo',
-            workspace: { serverId: 'team-home', machineId: 'member-machine', workspaceId: 'repo', rootPath: '/repo' } });
-        operationRpc.mockResolvedValue({ kind: 'found', operation: { ...summary, result: opened } });
+            workspace: { serverId: query.serverId, machineId: 'member-machine', workspaceId: 'repo', rootPath: '/repo' } });
+        daemonReply.mockResolvedValue({ kind: 'found', operation: { ...summary, result: opened } });
         const reopened = await renderHook(() => useTeamSetupRepositoryProgress(query, lifetime));
         await vi.waitFor(() => expect(reopened.getCurrent().result).toEqual(opened));
-        const setup: ActionOperationSnapshotV1 = { version: 1, operationId: 'setup', revision: 1,
+        const setup = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'setup', revision: 1,
             actionId: 'projects.prepare', state: 'running', scope: { accountId: 'member', machineId: 'member-machine' },
             title: 'Prepare', createdAt: 11, startedAt: 11, cancellation: 'supported',
-            domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: 'team-home', machineId: 'member-machine',
-                workspaceRefId: 'repo', cwd: '/repo', sourceWorkspace: opened.kind === 'opened' && 'machineId' in opened.workspace ? opened.workspace : undefined } };
-        act(() => actionOperationStore.mergeSnapshots({ serverId: 'team-home', snapshots: [setup] }));
+            domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: query.serverId, machineId: 'member-machine',
+                workspaceRefId: 'repo', cwd: '/repo', sourceWorkspace: opened.kind === 'opened' && 'machineId' in opened.workspace ? opened.workspace : undefined } });
+        act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [setup] }));
         expect(reopened.getCurrent().setupOperation?.snapshot.state).toBe('running');
-        act(() => actionOperationStore.mergeSnapshots({ serverId: 'team-home', snapshots: [{ ...setup, revision: 2,
+        act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [{ ...setup, revision: 2,
             state: 'failed', settledAt: 12, error: { errorCode: 'setup_exit_nonzero', error: 'Setup failed' } }] }));
         expect(reopened.getCurrent().setupOperation?.snapshot).toMatchObject({ state: 'failed', error: { errorCode: 'setup_exit_nonzero' } });
         expect(reopened.getCurrent().result).toEqual(opened);
@@ -220,16 +252,17 @@ describe('Team repository setup progress', () => {
     it.each([
         { kind: 'refused', code: 'destination_exists', effectAttempted: false },
         { kind: 'outcomeUnknown', operationId: 'open' },
-        { kind: 'opened', setup: 'failed', directory: '/repo', workspace: { serverId: 'team-home', machineId: 'member-machine', workspaceId: 'repo', rootPath: '/repo' } },
+        { kind: 'opened', setup: 'failed', directory: '/repo', workspace: { serverId: query.serverId, machineId: 'member-machine', workspaceId: 'repo', rootPath: '/repo' } },
     ])('preserves the canonical $kind result without inventing readiness', async value => {
-        const result = OpenProjectResultV1Schema.parse(value);
-        operationRpc.mockReturnValue(new Promise(() => {}));
+        const result = OpenProjectResultV1Schema.parse({ ...value,
+            ...('workspace' in value ? { workspace: { ...value.workspace, serverId: query.serverId } } : {}) });
+        daemonReply.mockReturnValue(new Promise(() => {}));
         const outcome = result.kind === 'refused'
             ? { state: 'failed' as const, settledAt: 2, error: { errorCode: result.code, error: result.code } }
             : result.kind === 'outcomeUnknown'
                 ? { observation: { kind: 'outcome_uncertain' as const, code: 'action_outcome_unknown' } }
                 : { state: 'succeeded' as const, settledAt: 2 };
-        act(() => actionOperationStore.mergeSnapshots({ serverId: 'team-home', snapshotComplete: true,
+        act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshotComplete: true,
             snapshots: [opening({ ...outcome, result })] }));
         const hook = await renderHook(() => useTeamSetupRepositoryProgress(query, lifetime));
         expect(hook.getCurrent()).toMatchObject({ result, setupOperation: null });

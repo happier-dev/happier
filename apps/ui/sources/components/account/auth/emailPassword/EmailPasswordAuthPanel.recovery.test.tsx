@@ -1,39 +1,51 @@
+import { installPasswordKdfWorkerBoundary } from '@/dev/testkit/mocks/passwordKdfWorker';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { readNativeEmailVerificationContinuation, clearNativeEmailVerificationContinuation } from '@/sync/api/auth/nativeAuthEmail';
+import { NativeAuthEmailAcceptedResponseV1Schema, NativeEmailPasswordPreloginResponseV1Schema, NativeEmailPasswordLoginResponseV1Schema, NativeEmailPasswordProvisionRequestV1Schema, NativeEmailPasswordProvisionResponseV1Schema, NativeEmailVerifyRequestV1Schema } from '@happier-dev/protocol/auth/nativeAuthEmailRoutes';
+import { maskEmailForNativeAuthPreview } from '@happier-dev/protocol/auth/nativeAuthOneTimeOperation';
+import { keyChallengeV2Fixture } from '@/dev/testkit/fixtures/authChallengeFixtures';
+import { derivePasswordKeys, openPasswordEnvelope } from '@/auth/password/passwordEnvelope';
 import { EmailPasswordAuthPanel } from './EmailPasswordAuthPanel';
 
 const router = vi.hoisted(() => ({ push: vi.fn() }));
-const passwordLogin = vi.hoisted(() => ({ login: vi.fn() }));
-const nativeEmail = vi.hoisted(() => ({
-    requestVerification: vi.fn(),
-    rememberInvitation: vi.fn(),
-}));
-const provision = vi.hoisted(() => ({ account: vi.fn() }));
-
 vi.mock('expo-router', () => ({ useRouter: () => router }));
-vi.mock('@/auth/password/loginEmailPassword', () => ({ loginEmailPassword: passwordLogin.login }));
-vi.mock('@/auth/password/provisionEmailPasswordAccount', () => ({ provisionEmailPasswordAccount: provision.account }));
-vi.mock('@/sync/api/auth/nativeAuthEmail', () => ({
-    requestNativeEmailVerification: nativeEmail.requestVerification,
-    rememberNativeEmailVerificationContinuation: nativeEmail.rememberInvitation,
-    requestNativePasswordReset: vi.fn(),
-}));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
 let screen: Awaited<ReturnType<typeof renderScreen>> | null = null;
+let homeA = '';
+let homeB = '';
+function continuation() {
+    return readNativeEmailVerificationContinuation({ homeServerIdentityId: 'srv_home_a', maskedDestination: maskEmailForNativeAuthPreview('person@example.test') });
+}
+
+beforeEach(async () => {
+    await homes.reset();
+    homeA = await homes.addHome({ name: 'Home A', serverUrl: 'https://home-a.example.test', serverIdentityId: 'srv_home_a', accountId: null });
+    homeB = await homes.addHome({ name: 'Home B', serverUrl: 'https://home-b.example.test', serverIdentityId: 'srv_home_b', accountId: null });
+    homes.answer(homeA, '/v1/auth/email/verify/request', { body: NativeAuthEmailAcceptedResponseV1Schema.parse({ accepted: true }) });
+    homes.answer(homeA, '/v1/auth/email/prelogin', { body: NativeEmailPasswordPreloginResponseV1Schema.parse({ v: 1, kind: 'plain_password' }) });
+    homes.answer(homeA, '/v1/auth/email/login', { body: NativeEmailPasswordLoginResponseV1Schema.parse({ token: 'late-token' }) });
+    homes.answer(homeA, '/v1/auth/email/provision', { body: NativeEmailPasswordProvisionResponseV1Schema.parse({ token: 'created', accountId: 'account-a', teamId: 'team-a' }) });
+});
 
 afterEach(async () => {
     await screen?.unmount();
     screen = null;
+    const retained = continuation();
+    if (retained) clearNativeEmailVerificationContinuation(retained);
     router.push.mockReset();
-    passwordLogin.login.mockReset();
-    nativeEmail.requestVerification.mockReset();
-    nativeEmail.rememberInvitation.mockReset();
-    provision.account.mockReset();
+    await homes.reset();
+    await standardCleanup();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
 });
 
 /**
@@ -51,14 +63,13 @@ async function fillProvisionForm(rendered: NonNullable<typeof screen>) {
 
 it('binds a transferable invitation to the verification request and retains its exact continuation', async () => {
     const admission = { kind: 'team_invitation' as const, token: 'A'.repeat(43) };
-    nativeEmail.requestVerification.mockResolvedValue(undefined);
     screen = await renderScreen(
         <EmailPasswordAuthPanel
             target={{
                 endpointUrl: 'https://home-a.example.test',
                 canonicalServerUrl: 'https://home-a.example.test',
                 addressAnchorUrl: 'https://home-a.example.test',
-                serverId: 'home-a',
+                serverId: homeA,
                 serverIdentityId: 'srv_home_a',
             }}
             recoveryTarget="srv_home_a"
@@ -73,28 +84,24 @@ it('binds a transferable invitation to the verification request and retains its 
 
     await screen.pressByTestIdAsync('email-password-create');
 
-    expect(nativeEmail.requestVerification).toHaveBeenCalledWith(expect.any(Function), {
-        email: 'person@example.test',
-        admission,
-    });
-    expect(nativeEmail.rememberInvitation).toHaveBeenCalledWith({
+    expect(NativeEmailVerifyRequestV1Schema.parse(homes.requestsFor('/v1/auth/email/verify/request')[0]?.input)).toEqual({ v: 1, email: 'person@example.test', admission });
+    expect(continuation()).toEqual({
         homeServerIdentityId: 'srv_home_a',
         normalizedEmail: 'person@example.test',
         admission,
     });
-    expect(provision.account).not.toHaveBeenCalled();
+    expect(homes.requestsFor('/v1/auth/email/provision')).toHaveLength(0);
 });
 
 it('provisions an addressed invitation directly without redundant mailbox verification', async () => {
     const admission = { kind: 'team_invitation' as const, token: 'B'.repeat(43) };
-    provision.account.mockResolvedValue({ credentials: { token: 'created' }, accountId: 'account-a', teamId: 'team-a' });
     screen = await renderScreen(
         <EmailPasswordAuthPanel
             target={{
                 endpointUrl: 'https://home-a.example.test',
                 canonicalServerUrl: 'https://home-a.example.test',
                 addressAnchorUrl: 'https://home-a.example.test',
-                serverId: 'home-a',
+                serverId: homeA,
                 serverIdentityId: 'srv_home_a',
             }}
             recoveryTarget="srv_home_a"
@@ -109,16 +116,14 @@ it('provisions an addressed invitation directly without redundant mailbox verifi
 
     await screen.pressByTestIdAsync('email-password-create');
 
-    expect(provision.account).toHaveBeenCalledWith(expect.objectContaining({ admission }));
-    expect(nativeEmail.requestVerification).not.toHaveBeenCalled();
-    expect(nativeEmail.rememberInvitation).not.toHaveBeenCalled();
+    expect(NativeEmailPasswordProvisionRequestV1Schema.parse(homes.requestsFor('/v1/auth/email/provision')[0]?.input)).toMatchObject({ admission });
+    expect(homes.requestsFor('/v1/auth/email/verify/request')).toHaveLength(0);
+    expect(continuation()).toBeNull();
 });
 
 it('does not retain a transferable invitation after its verification request loses navigation custody', async () => {
     let finishRequest!: () => void;
-    nativeEmail.requestVerification.mockImplementation(async () => await new Promise<void>((resolve) => {
-        finishRequest = resolve;
-    }));
+    homes.answer(homeA, '/v1/auth/email/verify/request', { body: NativeAuthEmailAcceptedResponseV1Schema.parse({ accepted: true }), respondAfter: new Promise<void>(resolve => { finishRequest = resolve; }) });
     const admission = { kind: 'team_invitation' as const, token: 'C'.repeat(43) };
     const renderPanel = (suffix: 'a' | 'b') => (
         <EmailPasswordAuthPanel
@@ -126,7 +131,7 @@ it('does not retain a transferable invitation after its verification request los
                 endpointUrl: `https://home-${suffix}.example.test`,
                 canonicalServerUrl: `https://home-${suffix}.example.test`,
                 addressAnchorUrl: `https://home-${suffix}.example.test`,
-                serverId: `home-${suffix}`,
+                serverId: suffix === 'a' ? homeA : homeB,
                 serverIdentityId: `srv_home_${suffix}`,
             }}
             recoveryTarget={`srv_home_${suffix}`}
@@ -144,16 +149,17 @@ it('does not retain a transferable invitation after its verification request los
         await Promise.resolve();
     });
 
+    await vi.waitFor(() => expect(homes.requestsFor('/v1/auth/email/verify/request')).toHaveLength(1));
     await screen.update(renderPanel('b'));
     await act(async () => finishRequest());
 
-    expect(nativeEmail.rememberInvitation).not.toHaveBeenCalled();
+    expect(continuation()).toBeNull();
     expect(screen.findByTestId('email-password-sent-detail')).toBeNull();
 });
 
 it('retires a pending login when the exact Home target changes', async () => {
-    let resolveLogin!: (credentials: { token: string }) => void;
-    passwordLogin.login.mockImplementation(async () => await new Promise((resolve) => { resolveLogin = resolve; }));
+    let resolveLogin!: () => void;
+    homes.answer(homeA, '/v1/auth/email/login', { body: NativeEmailPasswordLoginResponseV1Schema.parse({ token: 'late-token' }), respondAfter: new Promise<void>(resolve => { resolveLogin = resolve; }) });
     const onAuthenticated = vi.fn();
     const recoveryTarget = 'srv_home_a';
     const renderPanel = (suffix: 'a' | 'b') => <EmailPasswordAuthPanel
@@ -161,7 +167,7 @@ it('retires a pending login when the exact Home target changes', async () => {
             endpointUrl: `https://home-${suffix}.example.test`,
             canonicalServerUrl: `https://home-${suffix}.example.test`,
             addressAnchorUrl: `https://home-${suffix}.example.test`,
-            serverId: `home-${suffix}`,
+            serverId: suffix === 'a' ? homeA : homeB,
             serverIdentityId: `srv_home_${suffix}`,
         }}
         recoveryTarget={recoveryTarget}
@@ -179,54 +185,50 @@ it('retires a pending login when the exact Home target changes', async () => {
         await Promise.resolve();
     });
 
-    await act(async () => { screen!.tree.update(renderPanel('b')); });
-    await act(async () => { resolveLogin({ token: 'late-token' }); });
+    await vi.waitFor(() => expect(homes.requestsFor('/v1/auth/email/login')).toHaveLength(1));
+    await screen.update(renderPanel('b'));
+    await act(async () => { resolveLogin(); });
 
     expect(onAuthenticated).not.toHaveBeenCalled();
     expect(screen.findByTestId('email-password-email')!.props.value).toBe('');
 });
 
-it('erases a retired provision result recovery key instead of leaving it in memory', async () => {
-    let resolveProvision!: (result: unknown) => void;
-    provision.account.mockImplementation(async () => await new Promise((resolve) => { resolveProvision = resolve; }));
+it('erases the generated recovery secret when provisioning retires at the network boundary', async () => {
+    installPasswordKdfWorkerBoundary();
+    homes.answer(homeA, '/v1/auth/challenge', { body: keyChallengeV2Fixture({
+        challengeId: 'provision-challenge',
+        audience: { origin: 'https://home-a.example.test', serverIdentityId: 'srv_home_a' },
+    }) });
+    let resolveProvision!: () => void;
+    homes.answer(homeA, '/v1/auth/email/provision', { body: NativeEmailPasswordProvisionResponseV1Schema.parse({ token: 'late-token', accountId: 'account-a', teamId: null }), respondAfter: new Promise<void>(resolve => { resolveProvision = resolve; }) });
+    const erased: Array<{ before: Uint8Array; buffer: Uint8Array }> = [];
+    const realFill = Uint8Array.prototype.fill;
+    vi.spyOn(Uint8Array.prototype, 'fill').mockImplementation(function (this: Uint8Array, value, start, end) {
+        if (value === 0 && this.length === 32) erased.push({ before: this.slice(), buffer: this });
+        return realFill.call(this, value, start, end);
+    });
     const onAuthenticated = vi.fn();
-    const admission = { kind: 'team_invitation' as const, token: 'D'.repeat(43) };
-    const renderPanel = (suffix: 'a' | 'b') => (
-        <EmailPasswordAuthPanel
-            target={{
-                endpointUrl: `https://home-${suffix}.example.test`,
-                canonicalServerUrl: `https://home-${suffix}.example.test`,
-                addressAnchorUrl: `https://home-${suffix}.example.test`,
-                serverId: `home-${suffix}`,
-                serverIdentityId: `srv_home_${suffix}`,
-            }}
-            recoveryTarget={`srv_home_${suffix}`}
-            action="provision"
-            mode="either"
-            admission={admission}
-            invitationEmailVerificationRequired={false}
-            onAuthenticated={onAuthenticated}
-        />
-    );
+    const renderPanel = (home: 'a' | 'b') => <EmailPasswordAuthPanel
+        target={{ endpointUrl: `https://home-${home}.example.test`, canonicalServerUrl: `https://home-${home}.example.test`, addressAnchorUrl: `https://home-${home}.example.test`, serverId: home === 'a' ? homeA : homeB, serverIdentityId: `srv_home_${home}` }}
+        recoveryTarget={`srv_home_${home}`} action="provision" mode="keyed"
+        admission={{ kind: 'team_invitation', token: 'D'.repeat(43) }} invitationEmailVerificationRequired={false}
+        onAuthenticated={onAuthenticated}
+    />;
     screen = await renderScreen(renderPanel('a'));
     await fillProvisionForm(screen);
-    await act(async () => {
-        screen!.pressByTestId('email-password-create');
-        await Promise.resolve();
-    });
-
-    const recoverySecret = new Uint8Array(32).fill(7);
-    const fill = vi.spyOn(recoverySecret, 'fill');
-    await act(async () => { screen!.tree.update(renderPanel('b')); });
-    await act(async () => resolveProvision({
-        credentials: { token: 'late-token', secret: 'late-secret' },
-        accountId: 'account-a',
-        teamId: null,
-        recoverySecret,
-    }));
-
+    await act(async () => { screen!.pressByTestId('email-password-create'); });
+    await vi.waitFor(() => expect(homes.requestsFor('/v1/auth/email/provision')).toHaveLength(1));
+    const request = NativeEmailPasswordProvisionRequestV1Schema.parse(homes.requestsFor('/v1/auth/email/provision')[0]?.input);
+    if (request.account.mode !== 'e2ee') throw new Error('Expected encrypted provisioning');
+    const keys = await derivePasswordKeys('a sufficiently long password', request.account.envelope.kdf);
+    const secret = await openPasswordEnvelope(request.account.envelope, keys.wrapKey);
+    await screen.update(renderPanel('b'));
+    await act(async () => { resolveProvision(); });
     expect(onAuthenticated).not.toHaveBeenCalled();
-    expect(fill).toHaveBeenCalledTimes(1);
-    expect(fill).toHaveBeenCalledWith(0);
-    expect(Array.from(recoverySecret).every((byte) => byte === 0)).toBe(true);
+    const retiredSecret = erased.find(entry => entry.before.every((byte, index) => byte === secret[index]));
+    expect(retiredSecret).toBeDefined();
+    expect(retiredSecret?.buffer).toEqual(new Uint8Array(32));
+    keys.authKey.fill(0);
+    keys.wrapKey.fill(0);
+    secret.fill(0);
 });

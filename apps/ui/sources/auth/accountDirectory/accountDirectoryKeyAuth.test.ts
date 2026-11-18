@@ -95,7 +95,7 @@ describe('supplied Account key operation', () => {
     });
 
     it('authenticates a supplied key into a Directory session holding only the restricted credential', async () => {
-        serveKeyChallenge(() => json({ token: 'directory-token' }));
+        serveKeyChallenge(() => json({ token: fixture.directoryToken }));
         const { service } = fixture;
         const target = { endpoint: service.endpointUrl, serverIdentityId: service.serverIdentityId };
 
@@ -105,9 +105,9 @@ describe('supplied Account key operation', () => {
             kind: 'authenticated',
             service,
             serviceKey: createAccountDirectoryServiceKey(target),
-            credentialTokenDigest: await digestAccountDirectoryCredentialToken('directory-token'),
+            credentialTokenDigest: await digestAccountDirectoryCredentialToken(fixture.directoryToken),
         });
-        await expect(TokenStorage.accountDirectoryAuthCredentials.get(target)).resolves.toEqual({ token: 'directory-token' });
+        await expect(TokenStorage.accountDirectoryAuthCredentials.get(target)).resolves.toEqual({ token: fixture.directoryToken });
     });
 
     it('authenticates a Plain Account by email and password without holding an Account key', async () => {
