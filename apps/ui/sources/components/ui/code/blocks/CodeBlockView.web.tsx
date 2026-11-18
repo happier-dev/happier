@@ -22,11 +22,12 @@ import { CODE_BLOCK_LINE_HEIGHT, CodeBlockViewFrame } from './CodeBlockViewFrame
 // one unbreakable unit, so a wrapped command breaks only at whitespace; a word wider than the block still folds.
 const wholeWordStyle = { display: 'inline-block', maxWidth: '100%', overflowWrap: 'anywhere' } as unknown as TextStyle;
 
-function WholeWords(props: Readonly<{ text: string; selectable: boolean }>) {
+// Each word is a span of the block's one app Text, which owns typography, scaling and selectability.
+function WholeWords(props: Readonly<{ text: string }>) {
     return (
         <>
             {props.text.split(/(\s+)/).map((part, index) => (part && !/^\s/.test(part)
-                ? <Text key={index} useDefaultTypography={false} selectable={props.selectable} style={wholeWordStyle}>{part}</Text>
+                ? <TextSpan key={index} style={wholeWordStyle}>{part}</TextSpan>
                 : part))}
         </>
     );
@@ -187,7 +188,7 @@ export const CodeBlockView = React.memo<CodeBlockViewProps>(({
                 webWhitespaceStyle,
             ]}
         >
-            {findRanges?.length ? <FindHighlightedText text={code} ranges={findRanges} selectable={selectable} /> : wrap ? <WholeWords text={code} selectable={selectable} /> : code}
+            {findRanges?.length ? <FindHighlightedText text={code} ranges={findRanges} selectable={selectable} /> : wrap ? <WholeWords text={code} /> : code}
         </Text>
     );
 

@@ -421,6 +421,30 @@ describe('CodeLineRow', () => {
         expect(flattened.some((s: any) => s?.whiteSpace === 'pre-wrap')).toBe(true);
     });
 
+    it('mounts semantic, problem and intra-line diff runs as spans of the line text, not more app text components', async () => {
+        // A file or diff view mounts these per run on every visible line; only the line's own app Text resolves
+        // typography, scaling and selectability.
+        const { CodeLineRow } = await import('./CodeLineRow');
+        const theme = createThemeFixture();
+        const appTexts = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.tree.root
+            .findAll((node) => (node.type as { render?: { name?: string } } | null)?.render?.name === 'AppText').length;
+        const base = { sourceIndex: 0, hunkIndex: null, oldLine: null, newLine: 1, renderPrefixText: '+', renderCodeText: 'const target = 1;',
+            renderIsHeaderLine: false, selectable: true } as const;
+        const highlighting = { mode: 'simple', language: 'typescript', maxLineLength: 100 } as const;
+        const plainFile = await renderScreen(<CodeLineRow line={{ ...base, id: 'plain-file', kind: 'file' }} selected={false} syntaxHighlighting={highlighting} />);
+        const plainAdd = await renderScreen(<CodeLineRow line={{ ...base, id: 'plain-add', kind: 'add' }} selected={false} syntaxHighlighting={highlighting} />);
+        const runs = await renderScreen(<CodeLineRow line={{ ...base, id: 'runs', kind: 'file' }} selected={false}
+            syntaxHighlighting={{ ...highlighting, mode: 'advanced' }}
+            advancedTokens={[{ text: 'const ', color: theme.colors.syntax.keyword }, { text: 'target = 1;', color: theme.colors.syntax.default }]}
+            semanticTokens={[{ start: 6, end: 12, role: 'function' }]}
+            diagnostics={[{ start: 6, end: 12, severity: 'error' }]} />);
+        const segments = await renderScreen(<CodeLineRow line={{ ...base, id: 'segments', kind: 'add', renderIntraLineDiffSegments: [
+            { text: 'const ', kind: 'context' }, { text: 'target', kind: 'added' }, { text: ' = 1;', kind: 'context' }] } as any}
+            selected={false} syntaxHighlighting={highlighting} />);
+        expect(appTexts(runs)).toBe(appTexts(plainFile));
+        expect(appTexts(segments)).toBe(appTexts(plainAdd));
+    });
+
     it('renders intra-line diff segments when provided', async () => {
         const { glassSurfaceBackgroundColor } = await import('@/components/ui/glass/glassSurfacePaint');
         const { CodeLineRow } = await import('./CodeLineRow');

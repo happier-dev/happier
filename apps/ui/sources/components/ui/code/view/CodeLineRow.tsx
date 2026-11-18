@@ -121,9 +121,10 @@ function renderFindText(
   diagnostics?: readonly CodeLineDiagnosticRange[],
   squiggles?: DiagnosticSquiggleStyles,
   semantic?: readonly CodeLineSemanticToken[],
-  colors?: Readonly<Record<CodeSemanticRole, string>>,
+  /** A role's resolved ink: semantic runs are spans of the line's app Text. */
+  colorOf?: (role: CodeSemanticRole) => string | undefined,
 ): React.ReactNode {
-  if (semantic?.length && colors) {
+  if (semantic?.length && colorOf) {
     const edges = [
       ...new Set([
         0,
@@ -146,14 +147,9 @@ function renderFindText(
         squiggles,
       );
       return role ? (
-        <Text
-          key={start}
-          useDefaultTypography={false}
-          selectable={selectable}
-          style={{ color: colors[role] }}
-        >
+        <TextSpan key={start} style={{ color: colorOf(role) }}>
           {content}
-        </Text>
+        </TextSpan>
       ) : (
         <React.Fragment key={start}>{content}</React.Fragment>
       );
@@ -197,14 +193,9 @@ function renderFindText(
     const style = problem ? squiggles[problem.severity] : null;
     pieces.push(
       style ? (
-        <Text
-          key={start}
-          useDefaultTypography={false}
-          selectable={selectable}
-          style={style}
-        >
+        <TextSpan key={start} style={style}>
           {inner}
-        </Text>
+        </TextSpan>
       ) : (
         <React.Fragment key={start}>{inner}</React.Fragment>
       ),
@@ -276,7 +267,7 @@ export function CodeLineRow(props: {
           start: Math.max(0, token.start - offset),
           end: Math.min(text.length, token.end - offset),
         })),
-      semanticColors,
+      (role) => ink(semanticColors[role]),
     );
   const squiggles = React.useMemo<DiagnosticSquiggleStyles | undefined>(
     () =>
@@ -730,10 +721,8 @@ export function CodeLineRow(props: {
                             : textColor;
 
                       return (
-                        <Text
+                        <TextSpan
                           key={segIndex}
-                          useDefaultTypography={false}
-                          selectable={textSelectable}
                           style={
                             segment.kind === 'context'
                               ? null
@@ -783,11 +772,7 @@ export function CodeLineRow(props: {
                               ),
                             )
                           ) : (
-                            <Text
-                              useDefaultTypography={false}
-                              selectable={textSelectable}
-                              style={{ color: segmentFg }}
-                            >
+                            <TextSpan style={{ color: ink(segmentFg) }}>
                               {renderFindText(
                                 segment.text,
                                 sliceFindRanges(
@@ -803,9 +788,9 @@ export function CodeLineRow(props: {
                                 ),
                                 squiggles,
                               )}
-                            </Text>
+                            </TextSpan>
                           )}
-                        </Text>
+                        </TextSpan>
                       );
                     },
                   )

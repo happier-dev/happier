@@ -232,5 +232,7 @@ describe('CodeBlockView (web)', () => {
         const style = ([] as any[]).concat(unit!.props.style).flat();
         expect(style.some((entry: any) => entry?.display === 'inline-block')).toBe(true);
         expect(JSON.stringify(screen.tree.toJSON())).toContain('127.0.0.1');
+        // Each word is a span of the block's one app Text, not an app text component per word.
+        expect(screen.tree.root.findAll((n) => (n.type as { render?: { name?: string } } | null)?.render?.name === 'AppText')).toHaveLength(1);
     });
 });
