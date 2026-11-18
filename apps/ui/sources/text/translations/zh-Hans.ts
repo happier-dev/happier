@@ -11348,6 +11348,7 @@ export const zhHans: TranslationStructure = {
       startedBy: ({ name }: { name: string }) => `由 ${name} 启动`,
       startedByOn: ({ name, machine }: { name: string; machine: string }) => `由 ${name} 在 ${machine} 上启动`,
       waitingAddress: '已启动，正在等待地址。',
+      portWhenStarts: '启动时分配端口',
       noAddress: '无地址',
       reviewOutput: '查看输出',
       address: '地址',

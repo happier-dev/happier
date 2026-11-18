@@ -9497,6 +9497,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             startedBy: ({ name }: { name: string }) => `由 ${name} 啟動`,
             startedByOn: ({ name, machine }: { name: string; machine: string }) => `由 ${name} 在 ${machine} 上啟動`,
             waitingAddress: '已啟動，正在等待位址。',
+            portWhenStarts: '啟動時分配連接埠',
             noAddress: '無位址',
             reviewOutput: '查看輸出',
             address: '位址',

@@ -534,10 +534,13 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
         [backLine, backOnHeader, headerAction, headerLine],
     ));
 
+    // The ports owner's answer for this checkout: its services take their ports when they start.
+    const portsAssignedAtStart = launcherState.worktreePorts?.result.kind === 'ready';
     const renderRow = React.useCallback((row: ServiceRow) => (
         <TargetServiceRow
             key={row.id}
             row={row}
+            portsAssignedAtStart={portsAssignedAtStart}
             // Rows breathe on their own padding, as the lab draws them: no hairline between or after them.
             showDivider={false}
             onOpenServiceInBrowser={props.onOpenServiceInBrowser}
@@ -577,6 +580,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
         animationEnabled,
         expandedId,
         findRunningOpenTarget,
+        portsAssignedAtStart,
         props.sourceMachineId,
         props.serverId,
         props.machine,

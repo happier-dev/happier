@@ -13464,6 +13464,7 @@ const enLocalServices = {
     startedBy: ({ name }: { name: string }) => `Started by ${name}`,
     startedByOn: ({ name, machine }: { name: string; machine: string }) => `Started by ${name} on ${machine}`,
     waitingAddress: 'Started. Waiting for an address.',
+    portWhenStarts: 'Gets its port when it starts',
     noAddress: 'No address',
     reviewOutput: 'Review output',
     address: 'Address',

@@ -12011,6 +12011,7 @@ localTailscale: {
       startedBy: ({ name }: { name: string }) => `${name} が起動`,
       startedByOn: ({ name, machine }: { name: string; machine: string }) => `${name} が ${machine} で起動`,
       waitingAddress: '起動しました。アドレスを待っています。',
+      portWhenStarts: '起動時にポートが割り当てられます',
       noAddress: 'アドレスなし',
       reviewOutput: '出力を確認',
       address: 'アドレス',

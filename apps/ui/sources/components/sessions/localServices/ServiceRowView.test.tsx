@@ -907,6 +907,17 @@ describe('ServiceRowView', () => {
         expect(screen.findByTestId('row-start')).toBeTruthy();
     });
 
+    it('says a not-started service in a checkout with its own ports gets its port when it starts (lab L8)', async () => {
+        const row = projectRow(projectTarget({ commandPreview: 'yarn storybook', declaration: { workspaceRefId: 'accepted',
+            selection: { kind: 'native', source: { kind: 'native', tool: 'package_script', file: 'apps/ui/package.json', target: 'storybook' } } } }));
+        const { t } = await import('@/text');
+        const screen = await renderScreen(<ServiceRowView row={row} portsAssignedAtStart onStartLauncherTarget={vi.fn()} machineName="devbox" testID="row" />);
+        const text = screen.getTextContent();
+        expect(text).toContain(t('localServices.row.portWhenStarts'));
+        expect(text).not.toContain('yarn storybook');
+        expect(screen.findByTestId('row-source')).toBeTruthy();
+    });
+
     it('says a live service with no endpoint has no address and keeps Restart, Stop and Hide on the row', async () => {
         const target = projectTarget({ state: 'available', serviceState: 'running', actions: ['manage'] });
         const row = projectRow(target);

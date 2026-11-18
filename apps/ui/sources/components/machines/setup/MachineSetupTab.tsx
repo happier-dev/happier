@@ -255,11 +255,13 @@ function MachineSetupRoot(
         surface="none"
         testID="machine-setup-lede"
         actionLayout="adaptive"
-        description={
-          nothingSetUp
+        // "Nothing is set up" only while that is true: a Machine with a setup run (live or retained) has had
+        // something set up, so the empty intro would be a false status there and is left out.
+        {...(nothingSetUp && setup.operationId !== null ? {} : {
+          description: nothingSetUp
             ? t('machinePresets.setup.tab.ledeEmpty', { machine })
-            : t('machinePresets.setup.tab.lede', { machine })
-        }
+            : t('machinePresets.setup.tab.lede', { machine }),
+        })}
         action={freshness}
       >
         {null}
@@ -359,16 +361,19 @@ function MachineSetupRoot(
                   accessoryLayout="adaptive"
                   rightElement={
                     editable ? (
-                      <RoundButton
-                        testID={`machine-setup-preset-review:${entry.id}`}
-                        size="small"
-                        display={index === 0 ? 'default' : 'secondary'}
-                        title={t('machinePresets.setup.review.reviewRun')}
-                        disabled={setup.pending !== null}
-                        onPress={() => {
-                          void setup.prepare({ kind: 'preset', preset: entry });
-                        }}
-                      />
+                      // Natural width when the row stacks it under the words on a phone.
+                      <View style={styles.naturalWidth}>
+                        <RoundButton
+                          testID={`machine-setup-preset-review:${entry.id}`}
+                          size="small"
+                          display={index === 0 ? 'default' : 'secondary'}
+                          title={t('machinePresets.setup.review.reviewRun')}
+                          disabled={setup.pending !== null}
+                          onPress={() => {
+                            void setup.prepare({ kind: 'preset', preset: entry });
+                          }}
+                        />
+                      </View>
                     ) : undefined
                   }
                 />
@@ -1050,4 +1055,5 @@ function describePreset(preset: MachineSetupPresetChoice): string {
 
 const styles = StyleSheet.create((theme) => ({
   rowActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+  naturalWidth: { alignSelf: 'flex-start' },
 }));

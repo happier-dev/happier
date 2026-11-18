@@ -11565,6 +11565,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       startedBy: ({ name }: { name: string }) => `Запустил(а) ${name}`,
       startedByOn: ({ name, machine }: { name: string; machine: string }) => `Запустил(а) ${name} на ${machine}`,
       waitingAddress: 'Запущен. Ожидание адреса.',
+      portWhenStarts: 'Получит порт при запуске',
       noAddress: 'Нет адреса',
       reviewOutput: 'Посмотреть вывод',
       address: 'Адрес',

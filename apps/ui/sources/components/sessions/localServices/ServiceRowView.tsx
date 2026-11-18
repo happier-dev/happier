@@ -273,7 +273,8 @@ function ServiceRowTitle(props: Readonly<{
  * The address is text here; copying it is the expansion's job, so a collapsed row carries no
  * controls of its own. Lab `s-services`: `localhost:3005 · [project.json] on devbox`.
  */
-function resolveRowFacts(row: ServiceRow, machineName: string | null, startedByName: string | null, unavailableMachineName: string | null): Readonly<{
+function resolveRowFacts(row: ServiceRow, machineName: string | null, startedByName: string | null, unavailableMachineName: string | null,
+    portsAssignedAtStart: boolean): Readonly<{
     lead: readonly string[];
     tail: readonly string[];
     /** The tail is the reason the row cannot act (lab `db`: "Docker isn't available on devbox"). */
@@ -304,7 +305,11 @@ function resolveRowFacts(row: ServiceRow, machineName: string | null, startedByN
         if (row.status === 'failed') return { lead, tail: [], tailReason: null, reason };
         if (reason) return { lead, tail: [reason.body], tailReason: reason, reason: null };
         // "Ready to start" already says it is not started: one quiet line, the command then the same
-        // source chip a running row draws (lab s-services).
+        // source chip a running row draws (lab s-services). In a checkout whose services take their ports
+        // at start, a row with no port yet says that instead (lab L8 "Gets its port when it starts").
+        if (portsAssignedAtStart && isNotStarted(row) && !row.portLabel) {
+            return { lead: [t('localServices.row.portWhenStarts')], tail: [], tailReason: null, reason: null };
+        }
         return { lead, tail: [], tailReason: null, reason: null };
     }
     const address = formatServiceRowDisplayAddress(row)
@@ -344,11 +349,13 @@ function ServiceRowFacts(props: Readonly<{
     machineName: string | null;
     startedByName: string | null;
     unavailableMachineName: string | null;
+    portsAssignedAtStart: boolean;
     testID: string;
 }>): React.ReactElement {
     const styles = stylesheet;
     const { row } = props;
-    const facts = resolveRowFacts(row, props.machineName, props.startedByName, props.unavailableMachineName);
+    const facts = resolveRowFacts(row, props.machineName, props.startedByName, props.unavailableMachineName,
+        props.portsAssignedAtStart);
     const badge = row.sourceBadge ?? null;
     const lead = facts.lead.join(' · ');
     const tail = facts.tail.join(' · ');
@@ -468,6 +475,11 @@ export function ServiceRowView(props: Readonly<{
      * someone other than the viewer. Never a name made from a bare id.
      */
     startedByName?: string | null;
+    /**
+     * The checkout gives its services their ports when they start (the ports owner's ready worktree-ports
+     * result): a not-started row with no port yet says so instead of its command (lab L8).
+     */
+    portsAssignedAtStart?: boolean;
     /**
      * Where the service runs next (plan 32 "Runs on" / "If it can't run there"), drawn by its
      * placement owner inside the expansion under the row's controls. The row only hosts it.
@@ -747,6 +759,7 @@ export function ServiceRowView(props: Readonly<{
     const machineName = props.machineName ?? null;
     const title = <ServiceRowTitle row={row} operationText={operationText} offline={offline} machineName={machineName} animationEnabled={props.animationEnabled} testID={props.testID} />;
     const subtitle = <ServiceRowFacts row={row} machineName={machineName} startedByName={props.startedByName ?? null}
+        portsAssignedAtStart={props.portsAssignedAtStart === true}
         unavailableMachineName={props.unavailableMachineName ?? null} testID={props.testID} />;
     const identity = <ServiceMark row={row} testID={`${props.testID}-identity`} />;
     // One tap: a running row's signature action sits on the row itself, like ▶ on a row that can be

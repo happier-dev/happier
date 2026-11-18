@@ -783,6 +783,10 @@ describe('Machine → Setup tab (P-M1)', () => {
     const { t } = await import('@/text');
     // Where the run is, under its row: the step that runs, then the step it stopped at (lab L7).
     const runLine = (text: string) => screen.tree.findAll((node) => node.props?.subtitle === text).length > 0;
+    // A Machine with a setup run is not "nothing set up": the empty intro would be a false status.
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-operation')).not.toBeNull());
+    const emptyIntro = t('machinePresets.setup.tab.ledeEmpty', { machine: 'devbox' });
+    expect(screen.tree.findAll((node) => node.props?.description === emptyIntro)).toHaveLength(0);
     await waitForHomeGovernance(() => expect(runLine(t('machinePresets.setup.tab.stepOf', { current: 1, total: 2, machine: 'devbox' })))
       .toBe(true));
     await act(async () => { finishNative!(); });
