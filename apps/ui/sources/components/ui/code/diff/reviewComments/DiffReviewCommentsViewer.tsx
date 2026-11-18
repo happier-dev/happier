@@ -33,7 +33,7 @@ export type DiffReviewCommentsViewerProps = Pick<UnifiedDiffViewerProps, 'findAc
     externalScrollView?: CodeLinesExternalScrollView;
     reviewCommentsEnabled: boolean;
     reviewCommentDrafts: readonly ReviewCommentDraft[];
-    onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
+    onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void | Promise<void>;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
     wrapLines?: boolean;

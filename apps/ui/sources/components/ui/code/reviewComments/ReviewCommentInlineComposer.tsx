@@ -19,6 +19,7 @@ export function ReviewCommentInlineComposer(props: {
     onSave: () => void;
     onCancel: () => void;
     onDelete?: () => void;
+    saving?: boolean;
     /** Take the keyboard on open: a host whose Comment came from a toolbar, not a typed line. */
     autoFocus?: boolean;
 }) {
@@ -32,16 +33,17 @@ export function ReviewCommentInlineComposer(props: {
                 placeholder={t('files.reviewComments.placeholder')}
                 placeholderTextColor={theme.colors.text.secondary}
                 multiline
+                editable={!props.saving}
                 autoFocus={props.autoFocus}
                 style={[reviewCommentDraftText.body, styles.input]}
             />
             <View style={styles.actions}>
                 {props.onDelete ? (
-                    <RoundButton testID="review-comment-composer-delete" size="small" display="destructive" title={t('common.delete')} accessibilityLabel={t('common.delete')} onPress={props.onDelete} />
+                    <RoundButton testID="review-comment-composer-delete" size="small" display="destructive" title={t('common.delete')} accessibilityLabel={t('common.delete')} onPress={props.onDelete} disabled={props.saving} />
                 ) : null}
                 <View style={styles.grow} />
-                <RoundButton testID="review-comment-composer-cancel" size="small" display="secondary" title={t('common.cancel')} accessibilityLabel={t('common.cancel')} onPress={props.onCancel} />
-                <RoundButton testID="review-comment-composer-save" size="small" title={t('common.save')} accessibilityLabel={t('common.save')} onPress={props.onSave} />
+                <RoundButton testID="review-comment-composer-cancel" size="small" display="secondary" title={t('common.cancel')} accessibilityLabel={t('common.cancel')} onPress={props.onCancel} disabled={props.saving} />
+                <RoundButton testID="review-comment-composer-save" size="small" title={t('common.save')} accessibilityLabel={t('common.save')} onPress={props.onSave} disabled={props.saving} loading={props.saving} />
             </View>
         </ReviewCommentDraftFrame>
     );

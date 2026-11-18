@@ -30,6 +30,33 @@ vi.mock('react-native-unistyles', async () => {
 });
 
 describe('useCodeLinesReviewComments', () => {
+    it('keeps the gutter text after a failed durable write and retries the same draft', async () => {
+        const onUpsertDraft = vi.fn<(draft: ReviewCommentDraft) => Promise<void>>()
+            .mockRejectedValueOnce(new Error('Disconnected'))
+            .mockResolvedValueOnce(undefined);
+        const onError = vi.fn();
+        const lines = buildCodeLinesFromUnifiedDiff({ unifiedDiff: '@@ -1 +1 @@\n-old()\n+next()' });
+        const line = lines.find((line) => line.kind === 'add')!;
+        function Harness() {
+            const controls = useCodeLinesReviewComments({ enabled: true, filePath: 'src/a.ts', source: 'diff', lines,
+                drafts: [], onUpsertDraft, onError })!;
+            return <>
+                <Pressable testID="open-gutter" onPress={() => controls.onPressAddComment(line)} />
+                {controls.renderAfterLine(line)}
+            </>;
+        }
+        const screen = await renderScreen(<Harness />);
+        await screen.pressByTestIdAsync('open-gutter');
+        expect(onUpsertDraft).not.toHaveBeenCalled();
+        await act(async () => { screen.findAllByType('TextInput' as any)[0]!.props.onChangeText('Check the next value'); });
+        await screen.pressByTestIdAsync('review-comment-composer-save');
+        expect(onError).toHaveBeenCalledWith('Disconnected');
+        expect(screen.findAllByType('TextInput' as any)[0]?.props.value).toBe('Check the next value');
+        await screen.pressByTestIdAsync('review-comment-composer-save');
+        expect(onUpsertDraft.mock.calls[1]?.[0].id).toBe(onUpsertDraft.mock.calls[0]?.[0].id);
+        expect(screen.findAllByType('TextInput' as any)).toHaveLength(0);
+    });
+
     it('does not attach moved repeated lines or ranges with changed interior content', async () => {
         const lines = buildCodeLinesFromFile({ text: 'first();\nchanged();\nlast();\nsame();\nsame();' });
         const drafts: ReviewCommentDraft[] = [

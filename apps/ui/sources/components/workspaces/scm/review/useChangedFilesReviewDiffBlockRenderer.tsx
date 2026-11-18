@@ -22,7 +22,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     onRetryDiff?: ChangedFilesReviewDiffBlockProps['onRetryDiff'];
     reviewCommentsEnabled?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
-    onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
+    onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void | Promise<void>;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
     onScrollToLine?: (windowY: number) => void;

@@ -252,7 +252,7 @@ type ChangedFilesReviewProps = {
     comparisonFiles?: readonly import('@happier-dev/protocol/scm/comparison').ScmComparisonFile[];
     reviewCommentsEnabled?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
-    onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
+    onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void | Promise<void>;
     onDeleteReviewCommentDraft?: (commentId: string) => void;
     onReviewCommentError?: (message: string) => void;
     onScroll?: ScrollViewProps['onScroll'];

@@ -42,7 +42,7 @@ export function useCodeLinesReviewComments(params: {
     lines: readonly CodeLine[];
     drafts: readonly ReviewCommentDraft[];
     contextRadius?: number;
-    onUpsertDraft?: (draft: ReviewCommentDraft) => void;
+    onUpsertDraft?: (draft: ReviewCommentDraft) => void | Promise<void>;
     onDeleteDraft?: (commentId: string) => void;
     onError?: (message: string) => void;
 }): {
@@ -65,6 +65,16 @@ export function useCodeLinesReviewComments(params: {
     const [activeCommentRangeLines, setActiveCommentRangeLines] = React.useState<readonly CodeLine[] | null>(null);
     const [activeEditingDraftId, setActiveEditingDraftId] = React.useState<string | null>(null);
     const [commentBody, setCommentBody] = React.useState('');
+    const [saving, setSaving] = React.useState(false);
+    const attemptedDraft = React.useRef<ReviewCommentDraft | null>(null);
+
+    const closeComposer = React.useCallback(() => {
+        attemptedDraft.current = null;
+        setActiveCommentLineId(null);
+        setActiveCommentRangeLines(null);
+        setActiveEditingDraftId(null);
+        setCommentBody('');
+    }, []);
 
     const draftsByLineId = React.useMemo(() => buildDraftsByResolvedLineId({
         filePath,
@@ -81,18 +91,19 @@ export function useCodeLinesReviewComments(params: {
     }, [activeCommentLineId, activeCommentRangeLines, enabled]);
 
     const onPressAddComment = React.useCallback((line: CodeLine) => {
-        if (!enabled) return;
+        if (!enabled || saving) return;
         if (line.renderIsHeaderLine) return;
 
+        attemptedDraft.current = null;
         const existingDraft = (draftsByLineId.get(line.id) ?? [])[0] ?? null;
         setActiveCommentLineId((prev) => (prev === line.id ? null : line.id));
         setActiveCommentRangeLines(null);
         setActiveEditingDraftId(existingDraft?.id ?? null);
         setCommentBody(existingDraft?.body ?? '');
-    }, [draftsByLineId, enabled]);
+    }, [draftsByLineId, enabled, saving]);
 
     const onPressAddCommentRange = React.useCallback((rangeLines: readonly CodeLine[]) => {
-        if (!enabled) return;
+        if (!enabled || saving) return;
         const filtered = rangeLines.filter((line) => !line.renderIsHeaderLine);
         if (resolveReviewCommentRangeSide(source, filtered) === null) {
             onError?.(t('files.selectionFailed'));
@@ -101,21 +112,23 @@ export function useCodeLinesReviewComments(params: {
         const endLine = filtered[filtered.length - 1];
         if (!endLine) return;
 
+        attemptedDraft.current = null;
         const existingDraft = (draftsByLineId.get(endLine.id) ?? [])[0] ?? null;
         setActiveCommentLineId(endLine.id);
         setActiveCommentRangeLines(filtered);
         setActiveEditingDraftId(existingDraft?.id ?? null);
         setCommentBody(existingDraft?.body ?? '');
-    }, [draftsByLineId, enabled, onError, source]);
+    }, [draftsByLineId, enabled, onError, saving, source]);
 
     const startEditingDraft = React.useCallback((line: CodeLine, draft: ReviewCommentDraft) => {
-        if (!enabled) return;
+        if (!enabled || saving) return;
         if (line.renderIsHeaderLine) return;
+        attemptedDraft.current = null;
         setActiveCommentLineId(line.id);
         setActiveCommentRangeLines(null);
         setActiveEditingDraftId(draft.id);
         setCommentBody(draft.body);
-    }, [enabled]);
+    }, [enabled, saving]);
 
     const renderAfterLine = React.useCallback((line: CodeLine) => {
         if (!enabled) return null;
@@ -148,27 +161,22 @@ export function useCodeLinesReviewComments(params: {
                     <ReviewCommentInlineComposer
                         value={commentBody}
                         onChange={setCommentBody}
-                        onCancel={() => {
-                            setActiveCommentLineId(null);
-                            setActiveCommentRangeLines(null);
-                            setActiveEditingDraftId(null);
-                            setCommentBody('');
-                        }}
+                        saving={saving}
+                        onCancel={closeComposer}
                         onDelete={existing ? () => {
                             onDeleteDraft?.(existing.id);
-                            setActiveCommentLineId(null);
-                            setActiveCommentRangeLines(null);
-                            setActiveEditingDraftId(null);
-                            setCommentBody('');
+                            closeComposer();
                         } : undefined}
                         onSave={() => {
+                            if (saving) return;
                             const body = commentBody.trim();
                             if (!body) {
                                 onError?.(t('files.reviewComments.errors.empty'));
                                 return;
                             }
 
-                            const draft = activeCommentRangeLines && activeCommentRangeLines.length > 1
+                            const previous = attemptedDraft.current;
+                            const draft = previous?.body === body ? previous : activeCommentRangeLines && activeCommentRangeLines.length > 1
                                 ? buildReviewCommentDraftFromCodeLineRange({
                                     filePath,
                                     source,
@@ -187,14 +195,29 @@ export function useCodeLinesReviewComments(params: {
                                     contextRadius,
                                     existing: existing ? { id: existing.id, createdAt: existing.createdAt } : null,
                                 });
-                            onUpsertDraft?.({
+                            const submittedDraft = {
                                 ...draft,
                                 ...(existing?.includeInPrompt !== undefined ? { includeInPrompt: existing.includeInPrompt } : {}),
-                            });
-                            setActiveCommentLineId(null);
-                            setActiveCommentRangeLines(null);
-                            setActiveEditingDraftId(null);
-                            setCommentBody('');
+                            };
+                            attemptedDraft.current = submittedDraft;
+                            const fail = (error: unknown) => {
+                                setSaving(false);
+                                onError?.(error instanceof Error ? error.message : t('common.error'));
+                            };
+                            try {
+                                const write = onUpsertDraft?.(submittedDraft);
+                                if (write) {
+                                    setSaving(true);
+                                    void write.then(() => {
+                                        closeComposer();
+                                        setSaving(false);
+                                    }, fail);
+                                } else {
+                                    closeComposer();
+                                }
+                            } catch (error) {
+                                fail(error);
+                            }
                         }}
                     />
                 ) : null}
@@ -204,6 +227,7 @@ export function useCodeLinesReviewComments(params: {
         activeCommentLineId,
         activeCommentRangeLines,
         activeEditingDraftId,
+        closeComposer,
         commentBody,
         contextRadius,
         draftsByLineId,
@@ -213,6 +237,7 @@ export function useCodeLinesReviewComments(params: {
         onDeleteDraft,
         onError,
         onUpsertDraft,
+        saving,
         source,
         startEditingDraft,
     ]);
