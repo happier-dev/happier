@@ -111,14 +111,16 @@ function ConnectedAccountCompactCard(props: React.ComponentProps<typeof Connecte
             accessibilityLabel={props.title}
             onOpen={props.onOpen}
             frameStyle="card"
+            // The lab's card: the mark on its own row, the account under it, then its kind and use (p4-creds).
+            anatomy="item"
             fill
             placement="home"
             bodyHeight="content"
             rows={0}
             mark={<ConnectedServiceMark service={props.service} legacyServiceId={props.legacyServiceMarkId} pluginId={props.pluginId} size="column" />}
-            title={<ConnectedAccountIdentityText value={props.title} style={styles.title} numberOfLines={1} />}
+            // At half a phone's width a default name ("Anthropic API key account") takes a second line rather than a cut.
+            title={<ConnectedAccountIdentityText value={props.title} style={styles.title} numberOfLines={2} />}
             source={kind ? <ConnectedAccountIdentityText value={kind} style={styles.subtitle} numberOfLines={1} /> : undefined}
-            sourcePlacement="below"
             facts={props.compact.usedBy.length > 0
                 ? <Text style={styles.subtitle} numberOfLines={1}>{formatAgentNames(props.compact.usedBy)}</Text>
                 : undefined}
