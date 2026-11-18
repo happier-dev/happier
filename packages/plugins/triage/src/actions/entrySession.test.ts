@@ -245,9 +245,9 @@ function reviewStartFanout(
     return {
         intent: 'review',
         sessionId: 'session-a',
-        results: Object.entries(outcomes).map(([key, outcome]) => (outcome === 'started'
+        results: Object.entries(outcomes).map(([key, outcome], index) => (outcome === 'started'
             ? {
-                key,
+                key: `step-1-reviewer-${index + 1}`,
                 ok: true,
                 result: {
                     runId: `run-${key}`,
@@ -256,7 +256,7 @@ function reviewStartFanout(
                 },
             }
             : {
-                key,
+                key: `step-1-reviewer-${index + 1}`,
                 ok: false,
                 errorCode: 'review_engine_unavailable',
                 error: 'review_engine_unavailable',

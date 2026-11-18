@@ -1,6 +1,5 @@
 import { readCurrentPrepareReviewWorkspace, readCurrentVerifyReviewWorkspaceOperation, verifyTriagePullRequestReviewWorkspace } from './entryReviewWorkspace.js';
 import { readTriageAccountDataSourceOptionsV1 } from './accountDataSources.js';
-import { readExecutionRunStartRunCreation } from '@happier-dev/plugin-sdk/actions';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import { PluginError, type JsonValue, type PluginInvocationContext, } from '@happier-dev/plugin-sdk';
 import { isPluginActionApprovalRequestCreated, type ActionHandler } from '@happier-dev/plugin-sdk/actions';
@@ -8,7 +7,7 @@ import {
     type TriageVerifyReviewWorkspaceResultV1,
 } from '@happier-dev/triage-protocol/v1';
 import { projectNativeJsonValueForTransport, pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
-import { ReviewStartInputSchema } from '@happier-dev/plugin-sdk/reviews';
+import { readReviewStartActionResultV1, reviewReviewerIdsForStartV1, ReviewStartInputSchema } from '@happier-dev/plugin-sdk/reviews';
 import { SessionIdSchema, SessionStatusActionResultV1Schema, SessionMessageSendResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/sessions';
 
 import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
@@ -327,43 +326,6 @@ function isJsonRecord(value: JsonValue): value is Readonly<Record<string, JsonVa
 }
 
 /**
- * Reads the canonical fan-out's own keyed verdict for the engines it was given.
- *
- * `packages/protocol/src/actions/actionExecutor.ts` starts one execution run per
- * requested engine and returns EVERY outcome — including a
- * `review_engine_unavailable` refusal — inside an outer success. Discarding that
- * value reported a review as started when none was, so the split is read here
- * and carried, keyed exactly as the caller asked.
- *
- * `null` means an engine has an unknown start effect or the answer cannot be
- * attributed to the requested engines. Runs may already exist, so the caller
- * must reach its non-repeatable outcome-unknown path instead of a retry.
- */
-function readReviewStartOutcomes(
-    result: unknown,
-    engineIds: readonly string[],
-): Readonly<{ started: readonly string[]; failed: readonly string[] }> | null {
-    if (typeof result !== 'object' || result === null) return null;
-    const results = (result as Readonly<{ results?: unknown }>).results;
-    if (!Array.isArray(results) || results.length !== engineIds.length) return null;
-    const started: string[] = [];
-    const failed: string[] = [];
-    for (const item of results) {
-        if (typeof item !== 'object' || item === null) return null;
-        const { key, ok, details } = item as Readonly<{ key?: unknown; ok?: unknown; details?: unknown }>;
-        if (typeof key !== 'string' || typeof ok !== 'boolean') return null;
-        if (!ok && readExecutionRunStartRunCreation(details) !== 'noRunCreated') return null;
-        (ok ? started : failed).push(key);
-    }
-    const answered = new Set([...started, ...failed]);
-    if (answered.size !== engineIds.length
-        || engineIds.some((engineId) => !answered.has(engineId))) {
-        return null;
-    }
-    return { started, failed };
-}
-
-/**
  * The terminal selected-PR review transition: one carrier-backed reread,
  * generic scope production, then the incumbent generic review fan-out. The
  * engine list and human choice deliberately happened on the mounted surface
@@ -420,8 +382,8 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
             ...(admission.data.teamCredentialModel === undefined ? {} : { teamCredentialModel: admission.data.teamCredentialModel }),
             ...(admission.data.teamCredentialSessionBindingConsent === undefined ? {} : { teamCredentialSessionBindingConsent: admission.data.teamCredentialSessionBindingConsent }),
         }, context.signal === undefined ? undefined : { signal: context.signal });
-        const outcomes = readReviewStartOutcomes(fanout, input.engineIds);
-        if (outcomes === null) {
+        const parsed = readReviewStartActionResultV1(fanout, admission.data);
+        if (parsed.kind !== 'native') {
             // The write happened and its per-engine effect is unknown. Failing
             // loudly reaches the caller's existing outcome-unknown state, which
             // offers only the idempotent Session open — never a blind second
@@ -436,14 +398,36 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
                     ? [{ code: item.errorCode, severity: 'error' as const }] : []),
             });
         }
-        if (outcomes.started.length === 0) {
+        const reviewerIds = reviewReviewerIdsForStartV1(admission.data);
+        const engineIdForReviewerId = (reviewerId: string): string | undefined => {
+            const index = reviewerIds.indexOf(reviewerId);
+            return index === -1 ? undefined : input.engineIds[index];
+        };
+        const started = parsed.runs
+            .map(run => engineIdForReviewerId(run.key))
+            .filter((engineId): engineId is string => engineId !== undefined);
+        const failed = parsed.failed
+            .map(run => engineIdForReviewerId(run.key))
+            .filter((engineId): engineId is string => engineId !== undefined);
+        if (started.length + failed.length !== input.engineIds.length) {
+            const answer = projectNativeJsonValueForTransport(fanout);
+            const items = isJsonRecord(answer) && Array.isArray(answer.results) ? answer.results : [];
+            throw new PluginError({
+                code: 'action_outcome_unknown',
+                details: answer,
+                diagnostics: items.flatMap(item => typeof item === 'object' && item !== null
+                    && !Array.isArray(item) && item.ok === false && typeof item.errorCode === 'string'
+                    ? [{ code: item.errorCode, severity: 'error' as const }] : []),
+            });
+        }
+        if (started.length === 0) {
             return { v: 1, status: 'refused', reason: 'noEngineStarted' };
         }
         return {
             v: 1,
             status: 'started',
-            startedEngineIds: outcomes.started,
-            failedEngineIds: outcomes.failed,
+            startedEngineIds: started,
+            failedEngineIds: failed,
         };
     };
 }
