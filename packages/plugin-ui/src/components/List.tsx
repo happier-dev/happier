@@ -40,6 +40,7 @@ import {
   withHappierPageSectionDividers,
 } from '../presentation/layout/PageSection.js';
 import { useHappierPageChrome } from '../presentation/layout/pageChrome.js';
+import { useHappierFloatingSurface } from '../presentation/layout/floatingSurface.js';
 import type {
   HappierFocusable,
   HappierGestureResponderEvent,
@@ -2810,6 +2811,8 @@ export function ItemGroup(props: ItemGroupProps): ReactElement {
   const theme = usePluginTheme();
   const palette = useOptionalHappierUiPalette(theme) ?? resolveHappierUiPalette(theme);
   const pageChrome = useHappierPageChrome();
+  // On a popover or menu a section is not a page's: no section gap above it, no page sheet inset beside it.
+  const floating = useHappierFloatingSurface();
   // In a column that already draws part of the edge (a detail's body) the sheet and its title keep their edges.
   const sheetInsetPx = useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.sheetInsetPx);
   const headingInsetPx = useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.sheetInsetPx + HAPPIER_PAGE_METRICS.headingOpticalInsetPx);
@@ -2878,7 +2881,7 @@ export function ItemGroup(props: ItemGroupProps): ReactElement {
             action={action}
             insetPx={headingInsetPx}
           />
-        ) : (
+        ) : floating ? null : (
           // An untitled page section starts one section gap below what precedes it, like a titled one
           // (the header → first block distance does not depend on what the first block is).
           <View style={{ height: HAPPIER_PAGE_METRICS.sectionGapPx }} />
@@ -2893,7 +2896,7 @@ export function ItemGroup(props: ItemGroupProps): ReactElement {
               accessibilityRole={rest.accessibilityRole}
               accessibilityLabel={resolvedAccessibilityLabel}
               aria-label={resolvedAccessibilityLabel}
-              style={{ marginHorizontal: sheetInsetPx }}
+              style={{ marginHorizontal: floating ? 0 : sheetInsetPx }}
             >
               {/* The radio projection runs first, so the sheet divides the projected rows. */}
               <HappierPageSheet surface={resolvedSurface} colors={palette}>

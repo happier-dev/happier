@@ -616,7 +616,10 @@ function PageWindowedVisualTiles<T extends string, I extends string>(props: Read
 
 /**
  * A visual tile with its own quiet operations: the choice and its "…" are siblings in one frame (a button never
- * nests in the choice), and the frame tracks the pointer so the operations appear over the tile it is on.
+ * nests in the choice), and the frame tracks the pointer so the operations appear over the tile it is on. The frame
+ * reads the pointer's enter and leave itself, like a list row's frame (`ListItemFrame`): React Native Web gives hover
+ * only to the innermost hoverable, so a frame waiting for its own hover never hears it while the choice inside
+ * claims it (QA-LIVE-3 c6: unselected tiles never revealed their operations).
  */
 function VisualTileAccessoryFrame(props: Readonly<{
   style: ComponentProps<typeof View>['style'];
@@ -628,14 +631,14 @@ function VisualTileAccessoryFrame(props: Readonly<{
 }>) {
   const [hovered, setHovered] = useState(false);
   return (
-    <Pressable accessible={false} focusable={false} style={props.style}
+    <View style={props.style}
       {...(props.onHeight === undefined ? {} : { onLayout: (event: { nativeEvent: { layout: { height: number } } }) => props.onHeight!(event.nativeEvent.layout.height) })}
-      onHoverIn={() => setHovered(true)} onHoverOut={() => setHovered(false)}>
+      {...{ onMouseEnter: () => setHovered(true), onMouseLeave: () => setHovered(false) }}>
       {props.children}
       <View style={visualAccessoryStyles.slot} pointerEvents="box-none">
         {props.renderAccessory(hovered || props.selected)}
       </View>
-    </Pressable>
+    </View>
   );
 }
 

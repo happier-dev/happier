@@ -18,7 +18,9 @@ function PluginActionControlButton({ controls, id, presentation, busy }: Readonl
     presentation: PluginUiActionControlPresentationV1;
     busy: boolean;
 }>) {
-    return <RoundButton size="small" title={presentation.title}
+    // The host's button for an author's Action.Control stands at the plugin Button's own default size (`normal`, the page
+    // control height), so it lines up with the author's Buttons and segmented controls beside it (DBW 02:57Z, Run).
+    return <RoundButton size="normal" title={presentation.title}
         accessibilityLabel={presentation.accessibilityLabel}
         display={DISPLAY[presentation.variant ?? 'secondary']}
         disabled={busy || presentation.disabled}

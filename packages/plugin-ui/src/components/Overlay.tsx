@@ -49,6 +49,7 @@ import { Surface } from './Surface.js';
 import type { HappierFloatingRole } from '../presentation/layout/Surface.js';
 import { SURFACE_PADDING_BY_SIZE } from './surfacePadding.js';
 import { HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL } from '../presentation/layout/pageChrome.js';
+import { HappierFloatingSurfaceContext } from '../presentation/layout/floatingSurface.js';
 import { COLLECTION_ADD_MENU_SEARCH_THRESHOLD } from '../presentation/collection/CollectionAddMenu.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 
@@ -284,7 +285,9 @@ function PopoverPresentation({
       return (
         <OverlayFieldTriggerContext.Provider value={null}>
           <HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL.Provider value={null}>
-            <View style={sheetRowsInsetStyle}>{renderedChildren}</View>
+            <HappierFloatingSurfaceContext.Provider value>
+              <View style={sheetRowsInsetStyle}>{renderedChildren}</View>
+            </HappierFloatingSurfaceContext.Provider>
           </HAPPIER_PAGE_CHROME_CONTEXT_INTERNAL.Provider>
         </OverlayFieldTriggerContext.Provider>
       );
@@ -975,7 +978,9 @@ function FloatingScrollSurface(props: Readonly<{ maxHeight: number; menu?: boole
       <View style={[{ borderRadius: theme.radii.panel }, lift ?? null]}>
         <Surface padding="none" materialRole="floating" themeSurface={props.menu ? { surface: 'menu', part: 'root' } : undefined}>
           <HappierScrollArea style={{ maxHeight: scrollMaxHeight }} contentContainerStyle={props.menu ? FLOATING_MENU_SCROLL_INSET : FLOATING_SURFACE_SCROLL_INSET}>
-            <HappierStack gap={4}>{props.children}</HappierStack>
+            <HappierFloatingSurfaceContext.Provider value>
+              <HappierStack gap={4}>{props.children}</HappierStack>
+            </HappierFloatingSurfaceContext.Provider>
           </HappierScrollArea>
         </Surface>
       </View>

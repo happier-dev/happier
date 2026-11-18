@@ -14,6 +14,8 @@ import {
     Banner as PluginBanner,
     Progress as PluginProgress,
     SetupSteps as PluginSetupSteps,
+    Popover as PluginPopover,
+    Button as PluginButton,
 } from '@happier-dev/plugin-ui';
 
 import { EmptyState } from '@/components/ui/empty/EmptyState';
@@ -277,7 +279,34 @@ export function PluginPageAnatomySample() {
             <PluginItemGroup title={COPY.history.title} description={COPY.history.description}>
                 <PluginEmptyState layout="line" title={COPY.history.empty} />
             </PluginItemGroup>
+            <PluginHistoryPopoverSample />
         </PluginStack>
+    );
+}
+
+const HISTORY_SAMPLE = [
+    "SELECT count(*) FROM payments WHERE status = 'failed';",
+    'SELECT id, email FROM customers ORDER BY created_at DESC LIMIT 20;',
+    'SELECT * FROM invoice_lines WHERE invoice_id = 48210;',
+] as const;
+
+/** An untitled `surface="none"` group on a popover (a console's History menu): its rows start at the popover's top. */
+function PluginHistoryPopoverSample() {
+    const [open, setOpen] = React.useState(false);
+    return (
+        <PluginItemGroup title="Popover rows" surface="none">
+            <View style={{ alignItems: 'flex-start' }}>
+                <PluginPopover open={open} onOpenChange={setOpen} trigger="History" triggerAccessibilityLabel="History"
+                    triggerAppearance="text" triggerSize="small" triggerDisclosure>
+                    <PluginItemGroup surface="none">
+                        {HISTORY_SAMPLE.map((sql) => (
+                            <PluginItem key={sql} title={sql} titleNumberOfLines={2} identifier onPress={() => setOpen(false)} />
+                        ))}
+                    </PluginItemGroup>
+                    <PluginButton variant="plain" size="small" title="Clear history" onPress={() => setOpen(false)} />
+                </PluginPopover>
+            </View>
+        </PluginItemGroup>
     );
 }
 

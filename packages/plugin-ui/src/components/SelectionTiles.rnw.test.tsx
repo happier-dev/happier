@@ -110,6 +110,32 @@ describe('SelectionTiles', () => {
     } finally { mount.unmount(); }
   });
 
+  // QA-LIVE-3 c6: the choice inside the frame is itself hoverable, and React Native Web gives hover to the innermost
+  // hoverable only, so a frame that waits for its own hover never reveals an unselected tile's operations.
+  it('reveals an unselected visual tile accessory when the pointer enters over its choice', async () => {
+    const mount = mountTiles(<SelectionTiles variant="visual" accessibilityLabel="Theme" value="linen" onChange={vi.fn()}
+      options={[
+        { id: 'linen', title: 'Linen', preview: <Text>Linen preview</Text> },
+        { id: 'slate', title: 'Slate', preview: <Text>Slate preview</Text> },
+      ]}
+      renderOptionAccessory={({ option, revealed }) => revealed
+        ? <button aria-label={`Manage ${option.title}`}>Manage</button> : null} />);
+    try {
+      expect(mount.container.querySelector('[aria-label="Manage Slate"]')).toBeNull();
+      const choice = [...mount.container.querySelectorAll<HTMLElement>('[role="radio"]')]
+        .find((node) => node.getAttribute('aria-checked') === 'false');
+      expect(choice).toBeDefined();
+      await act(async () => {
+        for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter']) {
+          const event = new MouseEvent(type, { bubbles: type.endsWith('over'), cancelable: true, relatedTarget: document.body });
+          Object.defineProperty(event, 'pointerType', { value: 'mouse' });
+          choice!.dispatchEvent(event);
+        }
+      });
+      expect(mount.container.querySelector('[aria-label="Manage Slate"]')).not.toBeNull();
+    } finally { mount.unmount(); }
+  });
+
   it('renders theme card previews above their description and lets a leading option span the grid', () => {
     const mount = mountTiles(<SelectionTiles accessibilityLabel="Theme" value="linen" onChange={() => undefined}
       descriptionPlacement="below" maximumColumns={2} testID="themes"
