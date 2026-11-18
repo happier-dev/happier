@@ -1,9 +1,10 @@
+import axios from 'axios';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse, AccountEncryptionCurrentnessResponseSchema, V2SessionRecordSchema } from '@happier-dev/protocol';
-import { setActiveAccountSettingsSnapshot, clearActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, commitActiveAcpCatalog, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { setActiveAccountSettingsSnapshot, clearActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import type { StoredCredentials } from '@/persistence';
-import { AcpCatalogRecordV1Schema, type AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema, type AcpCatalogRecordV1, type AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createCustomAcpAdmittedRuntimeFixture } from '@/plugins/testkit/customAcp';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -271,6 +272,7 @@ describe('configured continuation target resolution', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     clearActiveAccountSettingsSnapshot();
   });
 
@@ -293,7 +295,19 @@ describe('configured continuation target resolution', () => {
     }
   });
 
-  it('refuses the captured target when its catalog changes during runtime composition', async () => {
+  function publishHomeCatalog(record: AcpCatalogRecordV1, revision = 1) {
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+      } };
+      if (String(url).endsWith(ACP_CATALOG_ROWS_ROUTE_V1)) {
+        return { status: 200, data: { status: 'present', revision, content: { t: 'plain', v: record } } };
+      }
+      throw new Error(`Unexpected Home request: ${url}`);
+    });
+  }
+
+  it('resolves the selected definition from the current Home row even when the cached row changed', async () => {
     const record = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [{
       id: 'target-a', name: 'target-a', title: 'Before refresh', launch: { kind: 'command' as const, command: process.execPath, args: [] },
        env: {}, capabilities: { supportsLoadSession: true }, createdAt: 1, updatedAt: 1,
@@ -304,21 +318,15 @@ describe('configured continuation target resolution', () => {
       loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey,
       acpCatalog: { status: 'ready', revision: 1, record },
     });
-    // Credential persistence is the real async boundary. Domain publication and
-    // runtime composition remain real, including the replacement ready facet.
-    mocks.readStoredCredentials.mockImplementationOnce(async () => {
-      commitActiveAcpCatalog({ scopeKey, lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),
-        catalog: { status: 'ready', revision: 2, record: {
-          ...record, definitions: record.definitions.map(definition => ({ ...definition, title: 'After refresh' })),
-        } },
-      });
-      return { token: 'test-token', encryption: null };
-    });
+    mocks.readStoredCredentials.mockResolvedValue({ token: 'test-token', encryption: null });
+    publishHomeCatalog({
+      ...record, definitions: record.definitions.map(definition => ({ ...definition, title: 'After refresh' })),
+    }, 2);
     try {
       await expect(resolveSessionContinuationTargetAgent({
         readAgentCatalogSnapshot,
         agentId: 'acp:target-a',
-      })).resolves.toBeNull();
+      })).resolves.toMatchObject({ configuredBackend: { backendId: 'target-a', title: 'After refresh' } });
     } finally {
       clearActiveAccountSettingsSnapshot();
     }
@@ -329,6 +337,8 @@ describe('configured continuation target resolution', () => {
       id, name: id, title: id, launch: { kind: 'command' as const, command: process.execPath, args: [id] }, env: {},
       capabilities: { supportsLoadSession: true }, createdAt: 1, updatedAt: 1,
     })) });
+    mocks.readStoredCredentials.mockResolvedValue({ token: 'test-token', encryption: null });
+    publishHomeCatalog(configuredCatalog);
     setActiveAccountSettingsSnapshot({
       source: 'network',
       settings: accountSettingsParse({

@@ -1,6 +1,6 @@
 import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
+import { formatLegacyConfiguredAcpAgentId, readLegacyConfiguredAcpBackendId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 import { isCustomAcpAgentContributionIdentityV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
@@ -84,7 +84,6 @@ export async function resolveSessionContinuationTargetAgent(params: Readonly<{
     const accountSnapshot = getActiveAccountSettingsSnapshot();
     if (accountSnapshot?.acpCatalog?.status !== 'ready') return null;
     const lifetimeToken = getActiveAccountSettingsSnapshotLifetimeToken();
-    const catalog = accountSnapshot.acpCatalog;
     const settings = accountSnapshot.settings;
     const contribution = [...params.readAgentCatalogSnapshot().agentDefinitionsById.values()]
       .find(candidate => candidate.identity && isCustomAcpAgentContributionIdentityV1(candidate.identity));
@@ -106,7 +105,6 @@ export async function resolveSessionContinuationTargetAgent(params: Readonly<{
     if (!launch || !currentSnapshot
       || currentSnapshot.scopeKey !== accountSnapshot.scopeKey
       || getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken
-      || currentSnapshot.acpCatalog !== catalog
       || isBackendTargetDisabledByAccountSettings(currentSnapshot.settings, backendTarget)) return null;
     return {
       agentId: params.agentId,
@@ -137,13 +135,13 @@ export function resolveSessionContinuationCurrentAgentId(metadata: Record<string
   const backendTarget = resolveBackendTargetFromSessionMetadata(metadata);
   if (backendTarget?.sourceKind === 'configured') {
     const exact = resolveSessionPersistedRuntimeIdentity(metadata);
-    if (exact?.agentTarget && isCustomAcpAgentContributionIdentityV1(exact.agentTarget.identity)) {
-      return `acp:${exact.agentTarget.definitionId}`;
+    if (exact?.agentTarget?.definitionId !== undefined) {
+      return formatLegacyConfiguredAcpAgentId(exact.agentTarget.definitionId);
     }
     const target = exact?.backendTarget;
     if (target?.sourceKind !== 'configured') return null;
     const configuredBackendId = target.configuredBackendId ?? target.backendId;
-    return `acp:${configuredBackendId}`;
+    return formatLegacyConfiguredAcpAgentId(configuredBackendId);
   }
   return resolveAgentIdFromSessionMetadata(metadata);
 }

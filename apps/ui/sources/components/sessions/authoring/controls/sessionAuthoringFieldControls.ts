@@ -55,6 +55,8 @@ export type SessionAuthoringFieldOption = Readonly<{
     label: string;
     subtitle?: string;
     disabled?: boolean;
+    /** Picking the existing engine retains its running model, mode and configuration. */
+    preserveCurrentFields?: boolean;
 }>;
 
 export type SessionAuthoringFieldUnavailableReason =

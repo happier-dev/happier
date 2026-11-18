@@ -54,8 +54,8 @@ export function projectBulkSessionAuthoringFact(address: ActionSessionAddressV1,
         sessionConfigOptionOverrides,
         acpSessionModeId: modeControl?.effectiveModeId ?? null,
     };
-    const planningTarget: ExistingSessionPlanningTarget | null = reason === null && agentId && machineId ? {
-        address, agentId, machineId,
+    const planningTarget: ExistingSessionPlanningTarget | null = reason === null && agentId && snapshot?.agentTarget && machineId ? {
+        address, agentId, agentTarget: snapshot.agentTarget, machineId,
         ...(modeControl ? { availableModeIds: modeControl.options.map(mode => mode.id) } : {}),
         ...(snapshot?.capabilitySelection ? { capabilitySelection: snapshot.capabilitySelection } : {}),
         ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),

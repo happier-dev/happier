@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { useCrossSessionAuthoringFieldControl } from './useCrossSessionAuthoringFieldControl';
 import { AgentExecutionTargetV1Schema, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { MAX_AGENT_ROUTING_ID_BYTES } from '@happier-dev/protocol/agents/agentIdV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import type { SessionAuthoringControls } from './useSessionAuthoringControls';
@@ -52,6 +53,33 @@ const target = (agentTarget = claude, permissionMode: 'default' | 'read-only' = 
 const base = { targets: [target(), target(codex, 'read-only')], agentSwitchingEnabled: true, mixedLabel: 'Mixed' };
 
 describe('Session-specific field intersection', () => {
+    it('offers configured switches the transition can represent and disables an unrepresentable switch', () => {
+        const options = ['review-bot', 'b'.repeat(MAX_AGENT_ROUTING_ID_BYTES)].map(definitionId => {
+            const agentTarget = AgentExecutionTargetV1Schema.parse({
+                kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId,
+            });
+            return { id: buildBackendTargetKeyV2(agentTarget), label: definitionId,
+                agentId: 'custom-acp', target: agentTarget };
+        });
+        const facts = { agentTargets: options };
+        const current = { ...target(options[1]!.target), facts };
+        const switches = resolveCrossSessionAuthoringFieldControl({ ...base, field: 'agentTarget',
+            targets: [{ ...target(), facts }] });
+        expect(switches).toMatchObject({ kind: 'options', options: [
+            { id: options[0]!.id },
+            { id: options[1]!.id, disabled: true, subtitle: 'workflows.input.unavailable' },
+        ] });
+        if (switches.kind !== 'options') throw new Error('Expected engine options');
+        expect(switches.options[0]?.disabled).toBeUndefined();
+        const unchanged = resolveCrossSessionAuthoringFieldControl({ ...base, field: 'agentTarget', targets: [current] });
+        expect(unchanged).toMatchObject({ kind: 'options', selectedOptionId: options[1]!.id, options: [
+            { id: options[0]!.id, disabled: true },
+            { id: options[1]!.id, preserveCurrentFields: true },
+        ] });
+        if (unchanged.kind !== 'options') throw new Error('Current engine must be selectable');
+        expect(unchanged.options[1]?.disabled).toBeUndefined();
+    });
+
     it('keeps separately configured ACP engines distinct even when they share one runtime Agent', () => {
         const options = ['codex', 'other'].map(definitionId => {
             const agentTarget = AgentExecutionTargetV1Schema.parse({

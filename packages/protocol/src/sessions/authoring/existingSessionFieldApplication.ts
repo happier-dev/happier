@@ -1,5 +1,9 @@
 import type { ActionId } from '../../actions/actionIds.js';
 import type { SessionCapabilitiesSetInputV1 } from '../../actions/specs/sessionCapabilities.js';
+import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
+import type { AgentExecutionTargetV1 } from '../../agents/executionTargetV1.js';
+import { formatLegacyConfiguredAcpAgentId, readLegacyConfiguredAcpBackendId } from '../../backends/targets/compat/customAcp.js';
+import { buildQualifiedPluginContributionKey } from '../../plugins/contributionKey.js';
 import type { WorkflowSessionAuthoringSelection, WorkflowSessionAuthoringSelectionFieldId } from '../../workflows/workflowV1.js';
 
 export type ExistingSessionFieldApplication =
@@ -36,3 +40,25 @@ export const EXISTING_SESSION_FIELD_APPLICATIONS = {
   windowsTerminalWindowName: { via: 'unsupported', reason: 'new_sessions_only' },
   runtimeDescriptorV1: { via: 'unsupported', reason: 'new_sessions_only' },
 } as const satisfies Record<WorkflowSessionAuthoringSelectionFieldId, ExistingSessionFieldApplication>;
+
+/** The existing transition wire identifies configured instances by their definition. */
+export function buildExistingSessionTransitionAgentId(target: AgentExecutionTargetV1): string {
+  return target.definitionId === undefined ? buildQualifiedPluginContributionKey(target.identity)
+    : formatLegacyConfiguredAcpAgentId(target.definitionId);
+}
+
+export function resolveExistingSessionAgentTargetApplication(
+  selection: AgentExecutionTargetV1 | null | undefined,
+  currentAgentIds: readonly (string | null)[],
+): Readonly<{ via: 'keep' } | { via: 'transition'; agentId: string } | { via: 'unavailable'; reason: 'target_unavailable' }> {
+  if (selection === undefined) return { via: 'keep' };
+  if (selection === null) return { via: 'unavailable', reason: 'target_unavailable' };
+  const agentId = buildExistingSessionTransitionAgentId(selection);
+  if (currentAgentIds.every(current => current === agentId)) return { via: 'keep' };
+  if (!AgentIdV1Schema.safeParse(agentId).success
+    || (selection.definitionId !== undefined && readLegacyConfiguredAcpBackendId(agentId) !== selection.definitionId)
+    || currentAgentIds.some(current => current !== null && !AgentIdV1Schema.safeParse(current).success)) {
+    return { via: 'unavailable', reason: 'target_unavailable' };
+  }
+  return { via: 'transition', agentId };
+}

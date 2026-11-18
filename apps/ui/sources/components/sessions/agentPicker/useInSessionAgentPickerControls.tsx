@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { formatLegacyConfiguredAcpAgentId } from '@happier-dev/protocol/backends/targets/compat/customAcp';
 import { resolveAgentRoutingId } from '@happier-dev/agents';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
@@ -248,7 +249,7 @@ function isNativeAutomaticSelection(selection: SessionAgentPickerSelection): boo
 
 function resolveContinuationAgentId(entry: ResolvedBackendCatalogEntry): string {
     return entry.backendTarget.kind === 'agent' && entry.backendTarget.definitionId
-        ? `acp:${entry.backendTarget.definitionId}`
+        ? formatLegacyConfiguredAcpAgentId(entry.backendTarget.definitionId)
         : resolveAgentRoutingId(entry.agentCatalogEntry.qualifiedId, [{
             id: entry.agentId,
             identity: entry.agentCatalogEntry.identity,

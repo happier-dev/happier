@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { planExistingSessionChanges } from '@happier-dev/protocol/sessions/authoring/existingSessionPlanner';
+import { buildConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { findSessionAuthoringAgentTargetOption } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -9,6 +10,20 @@ import { projectBulkSessionAuthoringFact } from './bulkSessionAuthoringFacts';
 const address = { serverId: 'home-a', sessionId: 'session' };
 const session = createSessionFixture({ id: address.sessionId, serverId: address.serverId, active: true,
     metadata: { path: '/repo', host: 'host', agent: 'codex', machineId: 'machine' } });
+
+it('keeps Send available when reselecting the configured engine from current Session metadata', () => {
+    const configured = buildConfiguredAcpAgentSelectionV1('review-bot');
+    const fact = projectBulkSessionAuthoringFact(address, { ...session, metadata: {
+        ...session.metadata!, agent: configured.agentId, flavor: configured.flavor,
+        runtimeDescriptorV1: configured.runtimeDescriptorV1,
+        acpConfiguredBackendV1: { v: 1, updatedAt: 1, backendId: 'review-bot', title: 'Review Bot' },
+    } });
+    expect(fact.agentTarget).toEqual(configured.agentTarget);
+    if (!fact.planningTarget) throw new Error('Configured ACP session must be ready');
+    const ordinarySend = planExistingSessionChanges({}, [fact.planningTarget], 'hello');
+    expect(ordinarySend.stages).toEqual([{ actionId: 'session.message.send', input: { message: 'hello' }, targets: [address] }]);
+    expect(planExistingSessionChanges({ agentTarget: configured.agentTarget }, [fact.planningTarget], 'hello')).toEqual(ordinarySend);
+});
 
 it('keeps a Codex session on the built-in engine when the Machine also offers Q codex', () => {
     // Retained catalog projections can have an unqualified backend id equal to a bundled Agent id.

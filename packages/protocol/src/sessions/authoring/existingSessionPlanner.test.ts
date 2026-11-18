@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildConfiguredAcpAgentSelectionV1 } from '../../agents/executionTargetV1.js';
 import { planExistingSessionChanges, filterExistingSessionStageTargets } from './existingSessionPlanner.js';
 
 const targets = [
@@ -8,6 +9,35 @@ const targets = [
 ];
 
 describe('existing Session change planner', () => {
+  it('sends without transitioning the current configured engine and addresses other engines by definition', () => {
+    const selected = buildConfiguredAcpAgentSelectionV1('review-bot');
+    const other = buildConfiguredAcpAgentSelectionV1('build-bot');
+    const current = { ...targets[0], agentId: selected.agentId, agentTarget: selected.agentTarget };
+    const switching = { ...targets[1], agentId: other.agentId, agentTarget: other.agentTarget };
+    expect(planExistingSessionChanges({ agentTarget: selected.agentTarget }, [current, switching, targets[2]], 'hello')).toEqual({
+      skippedTargets: [], unsupportedFields: [], stages: [
+        { actionId: 'session.agent.transition', targets: [switching.address], input: {
+          expectedCurrentAgentId: 'acp:build-bot', selection: { v: 1, agentId: 'acp:review-bot' },
+        } },
+        { actionId: 'session.agent.transition', targets: [targets[2].address], input: {
+          expectedCurrentAgentId: targets[2].agentId, selection: { v: 1, agentId: 'acp:review-bot' },
+        } },
+        { actionId: 'session.message.send', targets: [current.address, switching.address, targets[2].address], input: { message: 'hello' } },
+      ],
+    });
+    expect(planExistingSessionChanges({ agentTarget: selected.agentTarget }, [current]).stages).toEqual([]);
+  });
+
+  it('identifies the exact configured source when switching back to a bundled engine', () => {
+    const current = buildConfiguredAcpAgentSelectionV1('review-bot');
+    const plan = planExistingSessionChanges({ agentTarget: { kind: 'agent',
+      identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+    } }, [{ ...targets[0], agentId: current.agentId, agentTarget: current.agentTarget }]);
+    expect(plan.stages).toMatchObject([{ actionId: 'session.agent.transition', input: {
+      expectedCurrentAgentId: 'acp:review-bot', selection: { agentId: 'happier.agent.codex/codex' },
+    } }]);
+  });
+
   it('groups message overrides without losing model-provider identity or cross-Home addresses', () => {
     const plan = planExistingSessionChanges({ permissionMode: 'read-only', modelSelection: {
       v: 1, updatedAt: 1, ref: { agentTargetKey: 'claude', providerConnectionId: 'provider', modelId: 'model' },

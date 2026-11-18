@@ -1,6 +1,7 @@
 import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
-import { EXISTING_SESSION_FIELD_APPLICATIONS } from '@happier-dev/protocol/sessions/authoring/existingSessionFieldApplication';
+import { buildExistingSessionTransitionAgentId, EXISTING_SESSION_FIELD_APPLICATIONS, resolveExistingSessionAgentTargetApplication } from '@happier-dev/protocol/sessions/authoring/existingSessionFieldApplication';
 import { readBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { t } from '@/text';
 import type { SessionAuthoringControls } from './useSessionAuthoringControls';
 import { areSnapshotProjectionsEquivalent } from '@/sync/domains/state/structuralSharing';
 import { resolveSessionAuthoringFieldControl, type SessionAuthoringControlFacts, type SessionAuthoringFieldControlModel, type SessionAuthoringFieldId } from './sessionAuthoringFieldControls';
@@ -74,7 +75,18 @@ export function resolveCrossSessionAuthoringFieldControl(params: Readonly<{
         const optionsModels = models.filter((model): model is Options => model.kind === 'options');
         if (optionsModels.length !== models.length) return unavailable('not_supported_on_target');
         const result = intersectOptions(optionsModels, mixedLabel);
-        return result.options.length ? result : unavailable('not_supported_on_target');
+        if (result.options.length === 0) return unavailable('not_supported_on_target');
+        if (field !== 'agentTarget') return result;
+        const entries = new Map(targets[0]!.facts?.agentTargets?.map(option => [option.id, option.target]));
+        const currentAgentIds = [...new Set(targets.map(({ values }) => values.agentTarget
+            ? buildExistingSessionTransitionAgentId(values.agentTarget) : null))];
+        return { ...result, options: result.options.map(option => {
+            const application = resolveExistingSessionAgentTargetApplication(entries.get(option.id), currentAgentIds);
+            if (application.via === 'unavailable') {
+                return { ...option, disabled: true, subtitle: t('workflows.input.unavailable') };
+            }
+            return application.via === 'keep' ? { ...option, preserveCurrentFields: true } : option;
+        }) };
     }
     if (first.kind === 'optionGroups') {
         const groupsModels = models.filter(model => model.kind === 'optionGroups');

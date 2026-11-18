@@ -20,10 +20,41 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 vi.mock('expo-image', () => ({ Image: 'Image' }));
 
 const { useSessionAuthoringEnginePicker } = await import('./useSessionAuthoringEnginePicker');
+const { t } = await import('@/text');
 const { getResolvedBackendCatalogEntries } = await import('@/agents/backendCatalog/getResolvedBackendCatalogEntries');
 const { resetDynamicModelProbeCacheForTests } = await import('@/sync/domains/models/dynamicModelProbeCache');
 const account = createProviderSettingsAccountHarness();
 afterEach(async () => { await standardCleanup(); await account.reset(); });
+
+it('honors supplied unavailable rows and retains existing fields on a current-engine reselect', async () => {
+    const { serverId } = await account.restore();
+    const entries = getResolvedBackendCatalogEntries({ enabledAgentIds: ['codex', 'claude'] });
+    const agentTargets = entries.flatMap(entry => entry.backendTarget.kind === 'agent' ? [{
+        id: entry.backendTargetKey, label: entry.title, agentId: entry.agentId,
+        target: entry.backendTarget, pickerEntry: entry,
+    }] : []);
+    const current = agentTargets.find(option => option.agentId === 'codex')!;
+    const blocked = agentTargets.find(option => option.agentId === 'claude')!;
+    const onChangeFields = vi.fn();
+    const hook = await renderHook(() => useSessionAuthoringEnginePicker({
+        values: {},
+        facts: { agentTargets, agentPickerContext: { machineId: 'm1', serverId, directory: '/repo' } },
+        engineOptions: [
+            { id: current.id, label: current.label, preserveCurrentFields: true },
+            { id: blocked.id, label: blocked.label, disabled: true, subtitle: t('workflows.input.unavailable') },
+        ],
+        onChangeFields,
+    }));
+    const picker = hook.getCurrent();
+    expect(picker.options.find(option => option.id === blocked.id)).toMatchObject({
+        disabled: true, subtitle: t('workflows.input.unavailable'),
+    });
+    picker.onSelect(blocked.id);
+    expect(onChangeFields).not.toHaveBeenCalled();
+    picker.onSelect(current.id);
+    expect(onChangeFields).toHaveBeenCalledWith({ agentTarget: current.target,
+        modelSelection: undefined, acpSessionModeId: undefined, sessionConfigOptionOverrides: undefined });
+});
 
 it('offers models probed with the authored service, profile and runtime instead of Account defaults', async () => {
     const { serverId } = await account.restore();

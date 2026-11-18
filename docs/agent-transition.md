@@ -125,17 +125,19 @@ protected-file read plus a `stat()` per offered target on every picker open.
 ## Configured ACP continuation
 
 The daemon and current-view producers below are implemented in development source.
-The configured picker/currentness projection remains incomplete on this line: its
-owner tests are blocked before dispatch by the canonical Protocol preparation gate.
-This section does not establish a usable configured continuation UI.
+In 0.3 development, Bulk Compose uses the definition ID for both the requested and
+expected current engine. Reselecting every recipient's current engine retains its
+settings and sends without a transition. The picker disables switches whose ID
+cannot be represented by the existing transition request.
 
 Configured targets use the existing open `agentId`, `acp:<backendId>`, on the request,
 inspection batch, armed draft, preview, and divider. Two configurations of the same executable
 remain distinct targets. There is no additional wire identity or configured-only RPC on this line.
 
 `resolveSessionContinuationTargetAgent` is the shared inspection/mutation owner. For a configured
-ID it resolves the exact Account definition through the existing configured ACP engine owner,
-including launch-environment materialization, before stopping the source. Bundled targets retain
+ID it resolves the exact definition from the current Account catalog row through the existing
+configured ACP engine owner, including launch-environment materialization, before stopping the
+source. Bundled targets retain
 catalog Sessions-surface inspection. Loading the configured engine is confined to that branch:
 bundled inspection does not activate the configured runtime composition path.
 

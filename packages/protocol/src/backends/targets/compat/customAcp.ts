@@ -1,3 +1,9 @@
+const CONFIGURED_ACP_AGENT_PREFIX = 'acp:';
+
+export function formatLegacyConfiguredAcpAgentId(definitionId: string): string {
+  return CONFIGURED_ACP_AGENT_PREFIX + definitionId;
+}
+
 function normalizeLegacyAgent(value: unknown): string | null {
   if (typeof value !== 'string') {
     return null;
@@ -16,10 +22,10 @@ export function isLegacyCustomAcpId(value: unknown): boolean {
 
 function readLegacyConfiguredAcpBackendIdRaw(value: unknown): string | null {
   const legacyAgent = normalizeLegacyAgent(value);
-  if (!legacyAgent || !legacyAgent.startsWith('acp:')) {
+  if (!legacyAgent || !legacyAgent.startsWith(CONFIGURED_ACP_AGENT_PREFIX)) {
     return null;
   }
-  const backendId = legacyAgent.slice('acp:'.length).trim();
+  const backendId = legacyAgent.slice(CONFIGURED_ACP_AGENT_PREFIX.length).trim();
   return backendId || null;
 }
 

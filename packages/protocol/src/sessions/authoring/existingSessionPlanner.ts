@@ -6,9 +6,10 @@ import type { WorkflowSessionAuthoringSelectionFieldId } from '../../workflows/w
 import type { AcpConfigOptionOverridesV1 } from '../metadata/metadataOverridesV1.js';
 import { projectSessionModelRefToExecutionModelSelection } from '../../providers/selection/v2.js';
 import { buildQualifiedPluginContributionKey } from '../../plugins/contributionKey.js';
+import type { AgentExecutionTargetV1 } from '../../agents/executionTargetV1.js';
 import type { SessionAgentTransitionSelectionV1 } from '../agentTransition.js';
 import type { SessionCapabilitySelectionV1 } from '../../reach/sessionCapabilitySelectionV1.js';
-import { EXISTING_SESSION_FIELD_APPLICATIONS, type ExistingSessionChangeSet } from './existingSessionFieldApplication.js';
+import { buildExistingSessionTransitionAgentId, EXISTING_SESSION_FIELD_APPLICATIONS, resolveExistingSessionAgentTargetApplication, type ExistingSessionChangeSet } from './existingSessionFieldApplication.js';
 import {
   buildExistingSessionModeActionInput, buildExistingSessionConfigOptionActionInput,
   buildExistingSessionPermissionModeActionInput, buildExistingSessionModelActionInput,
@@ -20,6 +21,8 @@ export type ExistingSessionPlanningTarget = Readonly<{
   address: ActionSessionAddressV1;
   /** Canonical Agent contribution key from the resolved backend catalog. */
   agentId: string;
+  /** Exact current engine, including its definition when several engines share an Agent. */
+  agentTarget?: AgentExecutionTargetV1;
   machineId: string;
   availableModeIds?: readonly string[];
   capabilitySelection?: SessionCapabilitySelectionV1;
@@ -65,10 +68,12 @@ export function planExistingSessionChanges(
     const application = EXISTING_SESSION_FIELD_APPLICATIONS[field];
     if (field !== 'capabilitySelection' && application.via === 'unsupported' && selection[field] !== undefined) unsupportedFields.push({ field, reason: application.reason });
   }
-  // The portable transition cannot identify a configured Agent definition.
-  if (selection.agentTarget !== undefined && (selection.agentTarget === null || selection.agentTarget.definitionId !== undefined)) return {
+  const currentAgentIds = selection.agentTarget ? targets.map(target => target.agentTarget
+    ? buildExistingSessionTransitionAgentId(target.agentTarget) : target.agentId) : [];
+  const engine = resolveExistingSessionAgentTargetApplication(selection.agentTarget, currentAgentIds);
+  if (engine.via === 'unavailable') return {
     stages: [], unsupportedFields,
-    skippedTargets: targets.map(target => ({ address: target.address, reason: 'target_unavailable' })),
+    skippedTargets: targets.map(target => ({ address: target.address, reason: engine.reason })),
   };
   const phases = new Map<number, Map<string, { actionId: ActionId; input: Record<string, unknown>; targets: ActionSessionAddressV1[] }>>();
   const add = (phase: number, actionId: ActionId, raw: Record<string, unknown>, address: ActionSessionAddressV1) => {
@@ -87,10 +92,11 @@ export function planExistingSessionChanges(
     ? { modelId: 'default', providerConnectionId: null }
     : model?.modelSelection;
   const selectedAgentId = selection.agentTarget ? buildQualifiedPluginContributionKey(selection.agentTarget.identity) : undefined;
-  for (const target of targets) {
+  for (const [index, target] of targets.entries()) {
     const sessionId = target.address.sessionId;
     const agentId = selectedAgentId ?? target.agentId;
-    const transitioning = agentId !== target.agentId;
+    const currentAgentId = currentAgentIds[index] ?? target.agentId;
+    const transitioning = engine.via === 'transition' && engine.agentId !== currentAgentId;
     if (!transitioning && selection.acpSessionModeId !== undefined) add(0, EXISTING_SESSION_FIELD_APPLICATIONS.acpSessionModeId.actionId,
       buildExistingSessionModeActionInput({ sessionId, modeId: selection.acpSessionModeId ?? '', availableModeIds: target.availableModeIds }), target.address);
     if (!transitioning && selection.sessionConfigOptionOverrides !== undefined) {
@@ -102,14 +108,14 @@ export function planExistingSessionChanges(
       }
     }
     if (transitioning) {
-      const transitionSelection: SessionAgentTransitionSelectionV1 = { v: 1, agentId,
+      const transitionSelection: SessionAgentTransitionSelectionV1 = { v: 1, agentId: engine.agentId,
         ...(selection.modelSelection ? { modelSelection: selection.modelSelection.ref }
           : flatModel ? { modelId: flatModel.modelId, providerConnectionId: flatModel.providerConnectionId } : {}),
         ...(selection.acpSessionModeId === undefined ? {} : { acpSessionModeId: selection.acpSessionModeId }),
         ...(selection.sessionConfigOptionOverrides === undefined ? {} : { sessionConfigOptionOverrides: selection.sessionConfigOptionOverrides ?? { v: 1, updatedAt: 0, overrides: {} } }),
       };
-      add(1, 'session.agent.transition', buildExistingSessionAgentTransitionActionInput({ sessionId,
-        expectedCurrentAgentId: target.agentId, selection: transitionSelection }), target.address);
+      add(1, SESSION_AGENT_TRANSITION_ACTION_ID_V1, buildExistingSessionAgentTransitionActionInput({ sessionId,
+        expectedCurrentAgentId: currentAgentId, selection: transitionSelection }), target.address);
     }
     if (selection.connectedServices !== undefined) add(2, EXISTING_SESSION_FIELD_APPLICATIONS.connectedServices.actionId,
       buildExistingSessionConnectedServicesAuthActionInput({ sessionId, serverId: target.address.serverId,

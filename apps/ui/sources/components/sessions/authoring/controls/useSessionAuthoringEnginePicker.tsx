@@ -10,7 +10,7 @@ import type { AgentInputChipPickerOption } from '@/components/sessions/agentInpu
 import { useAgentUiSettings } from '@/agents/catalog/useAgentUiSettings';
 import { t } from '@/text';
 import { resolveSessionAgentPickerSelectionFields } from '@/components/sessions/agentPicker/sessionAgentPickerSelectionFields';
-import type { SessionAuthoringControlFacts } from './sessionAuthoringFieldControls';
+import type { SessionAuthoringControlFacts, SessionAuthoringFieldOption } from './sessionAuthoringFieldControls';
 import { buildRolesRailPickerOption, type RolesRailPickerOptionParams } from '@/components/roles/rail/buildRolesRailPickerOption';
 import { buildSessionAgentPickerOptions } from '@/components/sessions/agentPicker/buildSessionAgentPickerOptions';
 
@@ -25,6 +25,8 @@ function readSessionAuthoringReadinessLabel(readiness: MachineAgentExecutionStat
 export function useSessionAuthoringEnginePicker(params: Readonly<{
     values: WorkflowStepExecutionSelection;
     facts?: SessionAuthoringControlFacts;
+    /** A host's field model may narrow the catalog and supply per-engine presentation. */
+    engineOptions?: readonly SessionAuthoringFieldOption[];
     disabled?: boolean;
     onChangeFields?: (fields: Partial<WorkflowStepExecutionSelection>) => void;
     roleSelection?: RolesRailPickerOptionParams;
@@ -32,7 +34,11 @@ export function useSessionAuthoringEnginePicker(params: Readonly<{
     const latest = React.useRef(params);
     latest.current = params;
     const selectedKey = params.values.agentTarget ? buildBackendTargetKeyV2(params.values.agentTarget) : null;
-    const targets = params.facts?.agentTargets ?? EMPTY_TARGETS;
+    const catalogTargets = params.facts?.agentTargets ?? EMPTY_TARGETS;
+    const engineOptions = React.useMemo(() => params.engineOptions
+        && new Map(params.engineOptions.map(option => [option.id, option])), [params.engineOptions]);
+    const targets = React.useMemo(() => engineOptions
+        ? catalogTargets.filter(option => engineOptions.has(option.id)) : catalogTargets, [catalogTargets, engineOptions]);
     const settings = useAgentUiSettings({ agentIds: targets.map(target => target.agentId).filter((id): id is string => Boolean(id)),
         machineId: params.facts?.agentPickerContext?.machineId, domain: 'runtime' });
     const selected = targets.find(option => buildBackendTargetKeyV2(option.target) === selectedKey);
@@ -41,8 +47,14 @@ export function useSessionAuthoringEnginePicker(params: Readonly<{
         entries: targets.flatMap(option => option.pickerEntry ? [option.pickerEntry] : []),
         leadingOptions: params.roleSelection ? [buildRolesRailPickerOption(params.roleSelection)] : [],
         identityScope: { machineId: context?.machineId ?? null, serverId: context?.serverId ?? null, current: true },
-        resolvePresentation: entry => ({ subtitle: entry.subtitle ?? undefined, disabled: params.disabled === true, muted: false }),
+        resolvePresentation: entry => {
+            const option = engineOptions?.get(entry.backendTargetKey);
+            if (option?.disabled) return { subtitle: option.subtitle, disabled: true, muted: false };
+            return { subtitle: entry.subtitle ?? undefined, disabled: params.disabled === true, muted: false };
+        },
         resolveBehavior: ({ entry }) => {
+            const fieldOption = engineOptions?.get(entry.backendTargetKey);
+            if (fieldOption?.disabled) return {};
             const option = targets.find(target => target.id === entry.backendTargetKey)!;
             const readSelection = (): SessionAgentPickerSelection => {
                 const values = latest.current.values;
@@ -76,7 +88,14 @@ export function useSessionAuthoringEnginePicker(params: Readonly<{
             const backendTarget: PersistedBackendTargetRefV2 = option.backendTarget ?? option.target;
             return {
                 closeOnSelectImmediate: false,
-                onSelectImmediate: () => apply(readSelection()),
+                onSelectImmediate: () => {
+                    if (!fieldOption?.preserveCurrentFields) return apply(readSelection());
+                    const current = latest.current;
+                    if (current.disabled || !current.onChangeFields) return;
+                    if (current.values.agentTarget && buildBackendTargetKeyV2(current.values.agentTarget) === option.id) return;
+                    current.onChangeFields({ agentTarget: option.target, modelSelection: undefined,
+                        acpSessionModeId: undefined, sessionConfigOptionOverrides: undefined });
+                },
                 renderDetailContent: () => <SessionAuthoringEngineDetail values={latest.current.values}
                     onSelectionChange={apply} detail={{
                     agentCatalogEntry: entry.agentCatalogEntry,
@@ -90,7 +109,7 @@ export function useSessionAuthoringEnginePicker(params: Readonly<{
                 }} />,
             };
         },
-    }), [targets, context, params.disabled, params.roleSelection, settings, params.values.teamCredentialBindings, params.values.modelSelection,
+    }), [targets, engineOptions, context, params.disabled, params.roleSelection, settings, params.values.teamCredentialBindings, params.values.modelSelection,
         params.values.acpSessionModeId, params.values.sessionConfigOptionOverrides]);
     const onSelect = React.useCallback((id: string) => {
         options.find(option => option.id === id)?.onSelectImmediate?.();
