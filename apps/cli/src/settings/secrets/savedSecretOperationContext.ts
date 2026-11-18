@@ -39,7 +39,7 @@ export type SavedSecretOperationContextV1 = Readonly<{
   commitProfileCatalog(input: Readonly<{ expectedSettingsVersion: number; catalog: ProfileCatalogSnapshotV1 }>): Promise<boolean>;
   commitApprovalProfileCatalog(catalog: NonNullable<ActiveAccountSettingsSnapshot['approvalProfileCatalog']>): Promise<boolean>;
   commitNotificationChannelCatalog(input: Readonly<{ expectedSettingsVersion: number; catalog: NotificationChannelCatalogSnapshotV1; signal?: AbortSignal }>): Promise<boolean>;
-  commitAcpCatalog(input: Readonly<{ catalog: AcpCatalogSnapshotV1 }>): Promise<boolean>;
+  commitAcpCatalog(input: Readonly<{ catalog: AcpCatalogSnapshotV1 }>): Promise<AcpCatalogSnapshotV1 | null>;
   commitMcpCatalog(catalog: McpServerCatalogSnapshotV1): Promise<boolean>;
   subscribeMcpCatalog(listener: () => void): () => void;
   commitProviderConnectionsCatalog(input: Readonly<{ expectedSettingsVersion: number; catalog: ProviderConnectionsCatalogSnapshotV1 }>): Promise<boolean>;
@@ -193,13 +193,14 @@ export function createInvocationSavedSecretOperationContextV1(input: Readonly<{
       return true;
     },
     commitAcpCatalog: async ({ catalog }: Parameters<SavedSecretOperationContextV1['commitAcpCatalog']>[0]) => {
-      if (!await isCurrent() || !snapshot) return false;
+      if (!await isCurrent() || !snapshot) return null;
       const admission = resolveAcpCatalogRevisionAdmission({ catalog, retainedRevision: acpRevision,
         settingsVersion: snapshot.settingsVersion });
-      if (admission.status === 'stale') return false;
+      if (admission.status === 'stale') return null;
       acpRevision = admission.revision;
-      if (!isDeepStrictEqual(snapshot.acpCatalog, catalog)) replaceSnapshot({ ...snapshot, acpCatalog: catalog });
-      return true;
+      if (snapshot.acpCatalog && isDeepStrictEqual(snapshot.acpCatalog, catalog)) return snapshot.acpCatalog;
+      replaceSnapshot({ ...snapshot, acpCatalog: catalog });
+      return catalog;
     },
     commitMcpCatalog: async (catalog: McpServerCatalogSnapshotV1) => {
       if (!await isCurrent() || !snapshot) return false;

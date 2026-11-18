@@ -11,7 +11,7 @@ import type { configuration } from '@/configuration';
 import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { AgentModelsProbeObservationSchema, AgentSessionModesProbeObservationSchema,
   AgentConfigOptionsProbeObservationSchema, projectProbedConfigOptionDefinitions } from '@happier-dev/protocol/capabilities';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure, ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
@@ -414,11 +414,24 @@ export function createCliActionInventoryDeps(params: Readonly<{
     return await read();
   };
 
+  const acpSnapshotUnavailable = async (
+    reason: 'not-authenticated' | 'scope-retired' | 'source-stale' | 'account-settings-unavailable',
+  ) => {
+    const { AcpCatalogUnavailableError } = await import("@/agent/acp/catalog/configured/resolveBackend");
+    const error = new AcpCatalogUnavailableError(reason);
+    return Object.assign(error, {
+      ok: false, errorCode: error.code, error: error.code,
+      failureCause: {
+        phase: `acp_catalog.snapshot.${reason.replaceAll('-', '_')}`,
+        errorClass: 'Error', errorCode: error.code, httpStatus: null, nativeErrorReason: reason,
+      } satisfies ActionFailureCauseV1,
+    } satisfies ActionExecuteFailure);
+  };
+
   const readAccountSettings = async (): Promise<import('@happier-dev/protocol').AccountSettings | null> => {
     if (params.savedSecretOperationContext) {
       if (!await params.savedSecretOperationContext.isCurrent()) {
-        const { AcpCatalogUnavailableError } = await import("@/agent/acp/catalog/configured/resolveBackend");
-        throw new AcpCatalogUnavailableError('scope-retired');
+        throw await acpSnapshotUnavailable('scope-retired');
       }
       const snapshot = params.savedSecretOperationContext.readSnapshot();
       return snapshot && snapshot.source !== 'none' ? snapshot.settings : null;
@@ -436,10 +449,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
   const readAcpCatalogSnapshot = async (signal?: AbortSignal) => runWithServerHttpBaseUrl(acpServerHttpBaseUrl, async () => {
     const operation = params.savedSecretOperationContext;
     const credentials = params.credentials ?? operation?.credentials;
-    if (!credentials) {
-      const { AcpCatalogUnavailableError } = await import("@/agent/acp/catalog/configured/resolveBackend");
-      throw new AcpCatalogUnavailableError('not-authenticated');
-    }
+    if (!credentials) throw await acpSnapshotUnavailable('not-authenticated');
     await readAccountSettings();
     const [{ refreshActiveAcpCatalog }, { getActiveAccountSettingsSnapshotLifetimeToken, getActiveAccountSettingsSnapshot }, { resolveAccountSettingsScopeKey }] = await Promise.all([import("@/agent/acp/catalog/hydrateAcpCatalog"), import("@/settings/accountSettings/activeAccountSettingsSnapshot"), import("@/settings/accountSettings/accountSettingsScopeKey")]);
     const scopeKey = resolveAccountSettingsScopeKey(credentials);
@@ -451,12 +461,10 @@ export function createCliActionInventoryDeps(params: Readonly<{
       const { getActiveAccountSettingsSnapshotLifetimeToken } = await import("@/settings/accountSettings/activeAccountSettingsSnapshot");
       if (operation && !await operation.isCurrent() || snapshot()?.scopeKey !== scopeKey
         || !operation && getActiveAccountSettingsSnapshotLifetimeToken() !== lifetimeToken) {
-        const { AcpCatalogUnavailableError } = await import("@/agent/acp/catalog/configured/resolveBackend");
-        throw new AcpCatalogUnavailableError('scope-retired');
+        throw await acpSnapshotUnavailable('scope-retired');
       }
       if (observedCatalog && snapshot()?.acpCatalog !== observedCatalog) {
-        const { AcpCatalogUnavailableError } = await import("@/agent/acp/catalog/configured/resolveBackend");
-        throw new AcpCatalogUnavailableError('source-stale');
+        throw await acpSnapshotUnavailable('source-stale');
       }
     };
     await assertCurrent();
@@ -464,10 +472,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
     observedCatalog = catalog;
     await assertCurrent();
     const account = snapshot();
-    if (!account || account.source === 'none') {
-      const { AcpCatalogUnavailableError } = await import("@/agent/acp/catalog/configured/resolveBackend");
-      throw new AcpCatalogUnavailableError('account-settings-unavailable');
-    }
+    if (!account || account.source === 'none') throw await acpSnapshotUnavailable('account-settings-unavailable');
     return { account, catalog, assertCurrent };
   });
   const readAcpInventorySnapshot = async (signal?: AbortSignal) => {

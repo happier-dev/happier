@@ -126,7 +126,7 @@ describe('Saved Secret catalog hydration', () => {
     expect(context.readSnapshot()?.mcpServerCatalog).toBe(mcpCatalog);
     expect(mcpObservations).toEqual([mcpCatalog]);
     expect(await context.commitMcpCatalog({ ...mcpCatalog, revision: 7 })).toBe(false);
-    expect(await context.commitAcpCatalog({ catalog: { ...acpCatalog, revision: 7 } })).toBe(false);
+    expect(await context.commitAcpCatalog({ catalog: { ...acpCatalog, revision: 7 } })).toBeNull();
     unsubscribe();
     source = { ...source, scopeKey: 'foreign-account' };
     expect(context.readSnapshot()).toBeNull();

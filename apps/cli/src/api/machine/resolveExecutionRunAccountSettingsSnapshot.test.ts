@@ -108,7 +108,8 @@ describe('Machine Execution Run owner account snapshot', () => {
             f.retire();
             expect((await read())?.settings.preferredLanguage).toBe('fr');
             await f.bootstrap.dispose();
-            await expect(read()).rejects.toMatchObject({ code: 'provider_authorization_changed' });
+            await expect(read()).rejects.toMatchObject({ code: 'provider_authorization_changed',
+                failureCause: { phase: 'account_snapshot.requester_not_current' } });
             expect(getActiveAccountSettingsSnapshot()).toBe(incumbent);
         } finally { await resolver.dispose(); }
     });
@@ -121,7 +122,8 @@ describe('Machine Execution Run owner account snapshot', () => {
         const operation = resolver.readOperationContext();
         expect(operation?.readSnapshot()).not.toBeNull();
         await resolver.dispose();
-        await expect(resolver()).rejects.toMatchObject({ code: 'provider_authorization_changed' });
+        await expect(resolver()).rejects.toMatchObject({ code: 'provider_authorization_changed',
+            failureCause: { phase: 'account_snapshot.machine_resolver_disposed' } });
         expect(operation?.readSnapshot()).toBeNull();
     });
 
@@ -132,6 +134,10 @@ describe('Machine Execution Run owner account snapshot', () => {
             await expect(resolver()).rejects.toMatchObject({ code: 'provider_authorization_changed', retryable: true, action: 'retry' });
             const refusal = ProviderErrorV1Schema.parse(await resolver().catch(error => error));
             expect(refusal.machineId).toBe(machineId.trim() || undefined);
+            expect(refusal.failureCause).toEqual({
+                phase: 'account_snapshot.machine_credentials_unavailable', errorClass: 'Error',
+                errorCode: 'provider_authorization_changed', httpStatus: null,
+            });
         } finally { await resolver.dispose(); }
     });
     it('withdraws a demanded captured catalog when its Home refresh is unavailable', async () => {

@@ -48,14 +48,15 @@ function failure(error: unknown, signal?: AbortSignal): AcpCatalogSnapshotV1 {
 }
 
 function refresh(input: RefreshInput, captured?: CapturedAccount, afterChange = false): Promise<AcpCatalogSnapshotV1> {
-  if (input.operationContext) return (async () => {
+  const operation = input.operationContext;
+  if (operation) return (async () => {
     const store = createCliAcpCatalogStore(input);
     let catalog: AcpCatalogSnapshotV1;
-    if (!await store.publish({ status: 'loading' })) return { status: 'unavailable', reason: 'scope-retired' };
+    if (!await operation.commitAcpCatalog({ catalog: { status: 'loading' } })) return { status: 'unavailable', reason: 'scope-retired' };
     try { catalog = await store.readCatalog(); } catch (error) { catalog = failure(error, input.signal); }
-    if (!await input.operationContext!.isCurrent()) return { status: 'unavailable', reason: 'scope-retired' };
-    if (!await store.publish(catalog)) return { status: 'unavailable', reason: 'source-stale' };
-    return catalog;
+    if (!await operation.isCurrent()) return { status: 'unavailable', reason: 'scope-retired' };
+    // The holder may retain an equivalent publication from a concurrent read.
+    return await operation.commitAcpCatalog({ catalog }) ?? { status: 'unavailable', reason: 'source-stale' };
   })();
   const scopeKey = captured?.scopeKey ?? resolveAccountSettingsScopeKey(input.credentials);
   const lifetimeToken = captured?.lifetimeToken ?? getActiveAccountSettingsSnapshotLifetimeToken();

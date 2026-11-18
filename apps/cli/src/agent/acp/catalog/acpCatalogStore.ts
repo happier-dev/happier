@@ -175,7 +175,7 @@ export function createCliAcpCatalogStore(input: Readonly<{
     return result.data;
   };
   const publish = async (catalog: AcpCatalogSnapshotV1) => (async () => {
-    if (operation) return await operation.commitAcpCatalog({ catalog });
+    if (operation) return (await operation.commitAcpCatalog({ catalog })) !== null;
     return commitActiveAcpCatalog({ scopeKey, lifetimeToken, catalog });
   })();
   return { assertCurrent, admitCurrent, readStorageContext, readRow, readSourceSnapshot, readCatalog, writeRecord, publish,

@@ -11,6 +11,21 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
+type AccountSnapshotRefusalPhase =
+    | 'machine_credentials_unavailable'
+    | 'machine_resolver_disposed'
+    | 'machine_not_current_after_settings'
+    | 'machine_operation_rejected_settings'
+    | 'machine_operation_not_current'
+    | 'machine_operation_retired_during_refresh'
+    | 'machine_snapshot_unavailable'
+    | 'requester_not_current'
+    | 'requester_settings_refresh_rejected'
+    | 'requester_operation_not_current'
+    | 'requester_not_current_after_catalogs'
+    | 'requester_operation_not_current_after_catalogs'
+    | 'requester_snapshot_unavailable';
+
 export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonly<{
     machineId: string;
     serverHttpBaseUrl: string;
@@ -21,39 +36,50 @@ export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonl
     onSettings: (settings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>>['settings'] | null) => void;
 }>) {
     const machineId = input.machineId.trim();
-    const authorizationChanged = () => createProviderErrorV1('provider_authorization_changed', machineId ? { machineId } : {});
+    const authorizationChanged = (phase: AccountSnapshotRefusalPhase) => createProviderErrorV1('provider_authorization_changed', {
+        ...(machineId ? { machineId } : {}),
+        failureCause: {
+            phase: `account_snapshot.${phase}`,
+            errorClass: 'Error',
+            errorCode: 'provider_authorization_changed',
+            httpStatus: null,
+        },
+    });
     let operation: SavedSecretOperationContextV1 | null = null;
     let disposed = false;
     const resolveSnapshot = async (demand?: Readonly<{ mcpServerCatalog?: boolean; secretReferenceOverlay?: import('@happier-dev/protocol').SecretReferenceOverlayV1;
         savedSecretReferences?: readonly import('@/settings/secrets/hydrateSavedSecretCatalog').SavedSecretOperationReferenceV1[]; signal?: AbortSignal }>) => runWithServerHttpBaseUrl(input.serverHttpBaseUrl, async () => {
         demand?.signal?.throwIfAborted();
-        const unavailable = () => {
+        const unavailable = (phase: AccountSnapshotRefusalPhase) => {
             input.onSettings(null);
-            return authorizationChanged();
+            return authorizationChanged(phase);
         };
         const credentials = await input.readCredentials();
-        if (!credentials || disposed) { await operation?.isCurrent(); throw unavailable(); }
+        if (!credentials || disposed) {
+            await operation?.isCurrent();
+            throw unavailable(disposed ? 'machine_resolver_disposed' : 'machine_credentials_unavailable');
+        }
         const isCurrent = async () => !disposed && input.isOwnerCurrent()
             && sameStoredCredentials(credentials, await input.readCredentials())
             && !disposed && input.isOwnerCurrent();
         const snapshot = await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', publication: 'invocation',
             honorAccountSettingsModeEnv: false, shouldCommit: () => !disposed && input.isOwnerCurrent() });
-        if (!await isCurrent()) throw unavailable();
+        if (!await isCurrent()) throw unavailable('machine_not_current_after_settings');
         if (!operation || operation.readSnapshot() === null || !sameStoredCredentials(operation.credentials, credentials)) {
             await operation?.isCurrent();
             operation = createInvocationSavedSecretOperationContextV1({ credentials, snapshot,
                 serverHttpBaseUrl: input.serverHttpBaseUrl, isCurrent });
-        } else if (!await operation.replaceAccountSettings(snapshot)) throw unavailable();
-        if (!await operation.isCurrent()) throw unavailable();
+        } else if (!await operation.replaceAccountSettings(snapshot)) throw unavailable('machine_operation_rejected_settings');
+        if (!await operation.isCurrent()) throw unavailable('machine_operation_not_current');
         if (demand?.mcpServerCatalog) await createCliMcpServerStoreForOperation({ operationContext: operation, signal: demand.signal }).readCatalogForOperation();
         if ((demand?.secretReferenceOverlay || demand?.savedSecretReferences?.length) && snapshot.scopeKey) {
             await refreshSavedSecretCatalogForOperation({ expectedScopeKey: snapshot.scopeKey,
                 secretReferenceOverlay: demand.secretReferenceOverlay, references: demand.savedSecretReferences, operationContext: operation, signal: demand.signal });
         }
         demand?.signal?.throwIfAborted();
-        if (!await operation.isCurrent()) throw unavailable();
+        if (!await operation.isCurrent()) throw unavailable('machine_operation_retired_during_refresh');
         const admitted = operation.readSnapshot();
-        if (!admitted) throw unavailable();
+        if (!admitted) throw unavailable('machine_snapshot_unavailable');
         input.onSettings(admitted.settings);
         return admitted;
     });
@@ -66,9 +92,10 @@ export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonl
     }>): AccountSettingsSnapshotResolver => {
         const read: AccountSettingsSnapshotResolver = async demand => runWithServerHttpBaseUrl(source.serverHttpBaseUrl, async () => {
             await source.readAgentExecutionContext?.(demand?.signal);
-            if (!await source.isCurrent(demand?.signal) || !await source.refreshAccountSettings(demand?.signal)) throw authorizationChanged();
+            if (!await source.isCurrent(demand?.signal)) throw authorizationChanged('requester_not_current');
+            if (!await source.refreshAccountSettings(demand?.signal)) throw authorizationChanged('requester_settings_refresh_rejected');
             const captured = source.savedSecretOperationContext;
-            if (!await captured.isCurrent(demand?.signal)) throw authorizationChanged();
+            if (!await captured.isCurrent(demand?.signal)) throw authorizationChanged('requester_operation_not_current');
             if (demand?.mcpServerCatalog) await createCliMcpServerStoreForOperation({ operationContext: captured,
                 signal: demand.signal }).readCatalogForOperation();
             const beforeSecrets = captured.readSnapshot();
@@ -78,9 +105,10 @@ export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonl
                     operationContext: captured, signal: demand.signal });
             }
             demand?.signal?.throwIfAborted();
-            if (!await source.isCurrent(demand?.signal) || !await captured.isCurrent(demand?.signal)) throw authorizationChanged();
+            if (!await source.isCurrent(demand?.signal)) throw authorizationChanged('requester_not_current_after_catalogs');
+            if (!await captured.isCurrent(demand?.signal)) throw authorizationChanged('requester_operation_not_current_after_catalogs');
             const snapshot = captured.readSnapshot();
-            if (!snapshot) throw authorizationChanged();
+            if (!snapshot) throw authorizationChanged('requester_snapshot_unavailable');
             return snapshot;
         });
         return Object.assign(read, { readOperationContext: () => source.savedSecretOperationContext,
@@ -145,11 +173,11 @@ export function createExecutionRunAccountSettingsSnapshotResolver(input: Readonl
             const captured = operation;
             if (captured?.readSnapshot()?.mcpServerCatalog === undefined) return;
             try {
-                if (!await captured.isCurrent()) throw authorizationChanged();
+                if (!await captured.isCurrent()) throw authorizationChanged('machine_operation_not_current');
                 await createCliMcpServerStoreForOperation({ operationContext: captured, signal }).readCatalogForOperation();
             } catch (error) {
                 const current = await captured.isCurrent();
-                if (!current) throw authorizationChanged();
+                if (!current) throw authorizationChanged('machine_operation_retired_during_refresh');
                 await captured.commitMcpCatalog(projectMcpServerCatalogRefreshFailure({ error, current, signal }));
                 throw error;
             }

@@ -445,9 +445,23 @@ describe('ACP Action inventory row authority', () => {
     expect(getActiveAccountSettingsSnapshot()).toBe(incumbent);
   });
 
-  it('does not return a row read after requester custody retires', async () => {
+  it('carries the catalog retirement reason through the Review inventory Action', async () => {
     const { deps } = await createInventory('ready', { retireOnRead: true });
-    await expect(deps.agentsBackendsList!({})).rejects.toMatchObject({ code: 'ACP_CATALOG_UNAVAILABLE' });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
+    await expect(executor.execute('review.engines.list', { sessionId: 'requester-session' },
+      { surface: 'cli', authority: 'present_user' })).resolves.toMatchObject({
+      ok: false, errorCode: 'ACP_CATALOG_UNAVAILABLE',
+      failureCause: { phase: 'acp_catalog.snapshot.scope_retired', nativeErrorReason: 'scope-retired' },
+    });
+  });
+
+  it('does not report an equivalent concurrent invocation catalog publication as stale', async () => {
+    const { deps, operationContext } = await createInventory();
+    const first = await deps.readAccountAcpCatalog({});
+    expect(first).toMatchObject({ status: 'ready', revision: 4 });
+    const results = await Promise.all([deps.readAccountAcpCatalog({}), deps.readAccountAcpCatalog({})]);
+    expect(results).toEqual([first, first]);
+    for (const result of results) expect(result).toBe(operationContext.readSnapshot()?.acpCatalog);
   });
 
   it('shares ready ACP authority between builders and retains only built-ins without it', async () => {

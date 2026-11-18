@@ -1475,7 +1475,8 @@ describe('requester Session lifecycle custody', () => {
     const record = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [{ id: 'custodian-managed', name: 'custodian-managed', title: 'Managed', createdAt: 1, updatedAt: 1,
       launch: { kind: 'npm', package: '@fixture/agent', version: '1.2.3', args: ['--acp'] }, env: { HAPPIER_HOME_DIR: { t: 'literal', v: join(directory!, 'authored-home') } },
     }] });
-    expect(await context.commitAcpCatalog({ catalog: { status: 'ready', record, revision: 1 } })).toBe(true);
+    expect(await context.commitAcpCatalog({ catalog: { status: 'ready', record, revision: 1 } }))
+      .toMatchObject({ status: 'ready', revision: 1 });
     host.setAcpCatalog(record);
     const command = resolveAgentCliManagedCommandPathForRuntime(getAcpNpmRuntimeSpec(record.definitions[0]!, 'bob')!, { processEnv: process.env });
     await mkdir(dirname(command), { recursive: true }); await writeFile(command, '#!/bin/sh\nexit 0\n'); await chmod(command, 0o755);

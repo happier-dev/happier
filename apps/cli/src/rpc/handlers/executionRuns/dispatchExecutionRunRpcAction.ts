@@ -1,5 +1,5 @@
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readUnexpectedActionErrorDiagnosticV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { ExecutionRunEnsureOrStartRequestSchema, ExecutionRunEnsureRequestSchema, ExecutionRunActionRequestSchema, ExecutionRunSendRequestSchema } from '@happier-dev/protocol/execution/runs/index';
@@ -12,7 +12,7 @@ import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessi
 import { ExecutionRunTurnStreamCancelRequestSchema, ExecutionRunTurnStreamStartRequestSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { ExecutionRunTurnStreamReadRequestSchema } from '@happier-dev/protocol/execution/runs/runPrimitives';
 import { normalizeExecutionRunWaitTimeoutMs, waitForExecutionRunTerminal } from '@happier-dev/protocol/execution/runs/waitForTerminal';
-import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
+import { ProviderErrorCodeV1Schema, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { ScmDiffSummaryErrorCodeSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type { ActionExecutorDeps, ActionExecutorContext, ActionExecuteResult, PluginPermissionGrantRequestActionInputV1, RuntimeActionIdV1, SessionInputCausalPermissionAuthorityV1, RequiredSessionTeamCredentialV1 } from '@happier-dev/protocol';
@@ -100,6 +100,7 @@ type ExecutionRunRpcFailure = Readonly<{
   error: string;
   errorCode: string;
   details?: unknown;
+  failureCause?: ActionFailureCauseV1;
 }>;
 
 /** Consume the signed Account-host invocation; neither Run input nor Session origin supplies it. */
@@ -112,14 +113,16 @@ function readAdmittedVoiceRunActionInvocation(context: ActionExecutorContext | u
     authority: context.authority ?? 'account_automation' as const };
 }
 
-function executionRunSetupFailure(error: unknown): ExecutionRunRpcFailure {
+function executionRunSetupFailure(error: unknown, providerFallback?: string): ExecutionRunRpcFailure {
   const providerCode = ProviderErrorCodeV1Schema.safeParse(
     error && typeof error === 'object' && 'code' in error ? error.code : undefined,
   );
+  const provider = ProviderErrorV1Schema.safeParse(error);
   return {
     ok: false,
     errorCode: providerCode.success ? providerCode.data : 'execution_run_failed',
-    error: error instanceof Error ? error.message : providerCode.success ? providerCode.data : 'Execution setup failed',
+    error: error instanceof Error ? error.message : providerCode.success ? providerFallback ?? providerCode.data : 'Execution setup failed',
+    ...(provider.success && provider.data.failureCause ? { failureCause: provider.data.failureCause } : {}),
   };
 }
 
@@ -633,9 +636,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       const providerErrorCode = ProviderErrorCodeV1Schema.safeParse(code);
       if (providerErrorCode.success) {
         return classifyFailure({
-          ok: false,
-          error: error instanceof Error ? error.message : 'Provider launch failed',
-          errorCode: providerErrorCode.data,
+          ...executionRunSetupFailure(error, 'Provider launch failed'),
           ...(rawDetails !== undefined ? { details: rawDetails } : {}),
         }, runCreation, error);
       }

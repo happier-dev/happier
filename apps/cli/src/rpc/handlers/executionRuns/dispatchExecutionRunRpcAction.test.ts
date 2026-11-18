@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
+import { createExecutionRunAccountSettingsSnapshotResolver } from '@/api/machine/resolveExecutionRunAccountSettingsSnapshot';
 import type { ExecutionRunHostBridgeContract } from '@/agent/runtime/bridges/executionRun/executionRunBridgeContract';
 import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import type { BrowserAutomationRoutes } from '@/daemon/browser/automation/routes';
@@ -1039,6 +1040,30 @@ describe('createExecutionRunRpcActionExecutor', () => {
       callId: 'call_scoped_1', sidechainId: 'sidechain_scoped_1' });
 
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'sess_1' }));
+  });
+
+  it('returns the Account snapshot refusal phase on a detached execution.run.start', async () => {
+    const readSnapshot = createExecutionRunAccountSettingsSnapshotResolver({
+      machineId: 'run-machine',
+      serverHttpBaseUrl: 'https://run-owner.test',
+      readCredentials: async () => null,
+      isOwnerCurrent: () => true,
+      onSettings() {},
+    });
+    const start = vi.fn(createUnusedExecutionRunBridge().start);
+    const executor = createExecutionRunRpcActionExecutor({
+      manager: { ...createUnusedExecutionRunBridge(), start },
+      context: { sessionId: null, cwd: '/workspace', resolveAccountSettings: async () => (await readSnapshot()).settings },
+      policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null, reviewBoundedTimeoutMs: null, maxTurns: null } }),
+      isExecutionRunsEnabled: () => true,
+    });
+    await expect(executor.execute('execution.run.start', AGENT_EXECUTION_RUN_START_REQUEST, { surface: 'rpc' }))
+      .resolves.toMatchObject({
+        ok: false, errorCode: 'provider_authorization_changed',
+        details: { executionRunStart: { runCreation: 'noRunCreated' } },
+        failureCause: { phase: 'account_snapshot.machine_credentials_unavailable' },
+      });
+    expect(start).not.toHaveBeenCalled();
   });
 
   it('distinguishes daemon setup failure before manager.start from an unclassified manager failure', async () => {
