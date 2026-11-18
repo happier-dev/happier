@@ -266,7 +266,9 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         expect(DatabaseOperationResultV1Schema.parse(semantic.result)).toMatchObject({ ok: true, operation: 'statement.run',
             results: [{ rows: [{ cells: [{ type: 'text', value: '[REDACTED]' }, { type: 'null' },
                 { type: 'text', value: 'before-control' }, { type: 'text', value: '[REDACTED]' }] }], completeness: { complete: true } }] });
-        const written = await owner.executeReviewed('action.invoke', {
+        // A daemon-held target Ask is decided by a present person (the UI person path);
+        // terminal provenance never mints a reviewer decision root (isApprovalDecisionReviewerBindingV1).
+        const written = await owner.executeWithApproval('action.invoke', {
             action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1) },
             input: DatabaseWriteStatementInputV1Schema.parse({ operation: 'statement.run', mode: 'write',
                 target: sourceDatabase, executionMode: 'transaction', statements: [{
@@ -274,6 +276,9 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
                     parameters: [{ type: 'text', value: '' }, { type: 'text', value: marker },
                         { type: 'integer', value: '9007199254740993' }, { type: 'text', value: 'before-control' }],
                 }] }),
+        }, async artifactId => {
+            const decided = await account.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' });
+            if (!decided.ok) throw new Error(`R6 person write approval refused (${decided.errorCode})`);
         }, { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
             presentUserConfirmation: { actionId: 'action.invoke' } });
         expect(written.ok, written.ok ? undefined : `R6 G1 setup admitted semantic write refused: ${JSON.stringify({
