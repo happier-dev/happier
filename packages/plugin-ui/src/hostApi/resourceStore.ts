@@ -20,7 +20,7 @@ type PluginUiResourceClientEvent = ResourceSubscriptionEvent | Readonly<{
   kind: 'invalidated'; digest?: undefined; contentIdentity?: object;
   /** Transport recovery replaces an interrupted read; ordinary pushes coalesce. */
   supersede?: true;
-}>;
+}> | Readonly<{ kind: 'watch-refused'; code: string }>;
 
 /**
  * The smallest client boundary the mounted Resource store needs. Surface host
@@ -782,6 +782,12 @@ export function createPluginUiResourceStore(input: Readonly<{
 
   function receiveWatchEvent(entry: MutableEntry, event: PluginUiResourceClientEvent): void {
     if (!isEntryCurrent(entry)) return;
+    if (event.kind === 'watch-refused') {
+      stopWatch(entry, false);
+      publishResourceFailure(entry, { code: event.code, message: event.code, retryable: true }, 'reconnecting');
+      waitForWatchRecovery(entry, event.code);
+      return;
+    }
     if (event.kind === 'pages') {
       if (event.pages.length === 0) return;
       // Once the watch delivers admitted continuation bytes, its independent
@@ -841,7 +847,7 @@ export function createPluginUiResourceStore(input: Readonly<{
     });
   }
 
-  function waitForWatchRecovery(entry: MutableEntry): void {
+  function waitForWatchRecovery(entry: MutableEntry, code: string | undefined): void {
     if (
       !isEntryCurrent(entry)
       || entry.liveSubscriberCount === 0
@@ -854,11 +860,11 @@ export function createPluginUiResourceStore(input: Readonly<{
       return;
     }
     entry.watchRecovery = input.client.onWatchRecovery?.(() => {
-      startWatch(entry);
+      startWatch(entry, code);
     }) ?? null;
   }
 
-  function startWatch(entry: MutableEntry): void {
+  function startWatch(entry: MutableEntry, recoveredCode?: string): void {
     if (
       !isEntryCurrent(entry)
       || entry.liveSubscriberCount === 0
@@ -913,7 +919,8 @@ export function createPluginUiResourceStore(input: Readonly<{
         if (input.client.delivery === 'pages') {
           if (entry.snapshot.pending === 'refresh') publish(entry, { ...entry.snapshot, pending: 'idle' });
           settleRefreshWaiters(entry);
-        } else if (!snapshotAlreadyMatchesAdmission && entry.snapshot.error?.retryable !== false) {
+        } else if (!snapshotAlreadyMatchesAdmission
+          && (entry.snapshot.error?.retryable !== false || entry.snapshot.error.code === recoveredCode)) {
           requestRead(
             entry,
             entry.snapshot.value === undefined ? 'initial' : 'refresh',
@@ -955,7 +962,7 @@ export function createPluginUiResourceStore(input: Readonly<{
         // A transient live transport failure never makes Resource bytes
         // unavailable. Keep one LKG owner and wait for the host's existing
         // Machine push/reconnect or an explicit Refresh, never an idle timer.
-        waitForWatchRecovery(entry);
+        waitForWatchRecovery(entry, resourceError.code);
       },
     );
   }

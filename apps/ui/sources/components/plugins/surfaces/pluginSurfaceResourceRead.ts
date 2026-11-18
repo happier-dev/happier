@@ -13,6 +13,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 
 import {
     machinePluginUiResourceRead,
+    isMachinePluginUiResourceTargetUnavailable,
     mapMachinePluginUiResourceTransportFailure,
 } from '@/sync/ops/machineContributionRegistryProjection';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
@@ -224,7 +225,11 @@ export function createPluginContextualResourceReadClient(input: Readonly<{
                     const failure = mapMachinePluginUiResourceTransportFailure(outcome.reason);
                     return resourceClientFailure(failure.code, 'Resource transport is unavailable', failure);
                 }
-                if (!outcome.result.ok) return resourceClientFailure(outcome.result.code, 'Resource is unavailable');
+                if (!outcome.result.ok) {
+                    const { code } = outcome.result;
+                    return resourceClientFailure(code, 'Resource is unavailable',
+                        isMachinePluginUiResourceTargetUnavailable(code) ? { code, retryable: false } : undefined);
+                }
                 return { contentType: outcome.result.contentType, digest: outcome.result.digest,
                     bytes: decodeBase64(outcome.result.bytesBase64, 'base64') };
             }

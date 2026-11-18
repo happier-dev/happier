@@ -218,6 +218,10 @@ export type MachinePluginTransportReason =
 
 export type MachinePluginUiResourceTransportReason = MachinePluginTransportReason;
 
+/** The Home could not deliver to the selected Machine. Recovery needs a new Machine signal. */
+export function isMachinePluginUiResourceTargetUnavailable(code: string): boolean {
+    return code === 'target_unavailable';
+}
 
 export type MachinePluginUiResourceReadResult =
     | Readonly<{ supported: true; result: DaemonPluginUiResourceReadResponse }>

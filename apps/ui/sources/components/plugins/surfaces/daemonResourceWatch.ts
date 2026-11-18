@@ -1,6 +1,6 @@
 import { projectDatabaseConnectionResourceReadV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 import { PluginUiArtifactDigestV1Schema, type PluginUiResourceSubscriptionEventV1, type PluginUiHostApiErrorPayloadV1 } from '@happier-dev/protocol/plugins/ui';
-import { mapMachinePluginUiResourceTransportFailure, machinePluginUiResourceWatchClose, machinePluginUiResourceWatchNext, machinePluginUiResourceWatchOpen } from '@/sync/ops/machineContributionRegistryProjection';
+import { isMachinePluginUiResourceTargetUnavailable, mapMachinePluginUiResourceTransportFailure, machinePluginUiResourceWatchClose, machinePluginUiResourceWatchNext, machinePluginUiResourceWatchOpen } from '@/sync/ops/machineContributionRegistryProjection';
 import { bindPluginSurfaceResourceInput, readPluginResourceStoreSnapshot, type PluginContextualResourceBinding } from './pluginSurfaceResourceRead';
 import { readPluginSurfaceHostApiFailureMetadata } from './createPluginSurfaceHostApi';
 import type { PluginUiReadAuthorityReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
@@ -46,6 +46,7 @@ type ActiveWatch = {
     readonly readAuthority?: PluginUiReadAuthorityReferenceV1['readAuthority'];
     readonly actionRead?: ActionReadWatch;
     readonly deliver: (event: PluginUiResourceSubscriptionEventV1) => void;
+    readonly onRefused?: (code: string) => void;
     readonly controller: AbortController;
     lastDigest: PluginSurfaceResourceDigest | null;
     closed: boolean;
@@ -115,6 +116,7 @@ type ContextualResourceWatchOwner = Readonly<{
         readAuthority?: PluginUiReadAuthorityReferenceV1['readAuthority'];
         actionRead?: ActionReadWatch;
         deliver: (event: PluginUiResourceSubscriptionEventV1) => void;
+        onRefused?: (code: string) => void;
         signal?: AbortSignal;
     }>): Promise<WatchOpenResult>;
     retire(subscriptionId: string): void;
@@ -217,6 +219,15 @@ export function createContextualResourceWatchOwner(input: Readonly<{
             : { ok: false, terminal: true, reason: 'plugin_resource_digest_invalid' };
     }
 
+    function settleTargetRefusal(watch: ActiveWatch, code: string): boolean {
+        if (!isMachinePluginUiResourceTargetUnavailable(code)) return false;
+        watch.closed = true;
+        watches.delete(watch.subscriptionId);
+        if (watch.onRefused) watch.onRefused(code);
+        else watch.deliver(terminalEvent(watch.subscriptionId, 'unavailable', code));
+        return true;
+    }
+
     /**
      * Re-establishes a subscription after a delivery gap and tells the observer
      * only when the digest it last held actually moved.
@@ -231,6 +242,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
         if (watch.closed || !isCurrent()) return 'stop';
         if (input.resource.store && watch.input === undefined) { retireOrdinaryWatches(); return 'stop'; }
         if (!reopened.ok) {
+            if (settleTargetRefusal(watch, reopened.reason)) return 'stop';
             if (!reopened.terminal) return 'retry';
             watch.closed = true;
             watches.delete(watch.subscriptionId);
@@ -334,11 +346,14 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                     watch.deliver(event);
                     return;
                 }
-                if (outcome.supported && !outcome.result.ok && outcome.result.reason === 'stale_occurrence') {
-                    watch.closed = true;
-                    watches.delete(watch.subscriptionId);
-                    watch.deliver(terminalEvent(watch.subscriptionId, 'expired_resource', outcome.result.code));
-                    return;
+                if (outcome.supported && !outcome.result.ok) {
+                    if (settleTargetRefusal(watch, outcome.result.code)) return;
+                    if (outcome.result.reason === 'stale_occurrence') {
+                        watch.closed = true;
+                        watches.delete(watch.subscriptionId);
+                        watch.deliver(terminalEvent(watch.subscriptionId, 'expired_resource', outcome.result.code));
+                        return;
+                    }
                 }
                 if (watch.readAuthority || watch.actionRead) {
                     // No credential revision crosses this seam. A delivery gap
@@ -507,6 +522,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                 ...(context === undefined ? {} : { context }),
                 ...(params.readAuthority === undefined ? {} : { readAuthority: params.readAuthority }),
                 ...(params.actionRead === undefined ? {} : { actionRead: params.actionRead }),
+                ...(params.onRefused === undefined ? {} : { onRefused: params.onRefused }),
                 deliver: params.deliver,
                 controller: new AbortController(),
                 lastDigest: opened.digest ?? null,

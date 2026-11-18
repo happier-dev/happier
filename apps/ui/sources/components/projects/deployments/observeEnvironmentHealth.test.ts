@@ -7,6 +7,9 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV
 import type { DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/deployment-protocol/v1';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
+import { createMachineServiceResourceBinding } from '@/components/machines/resources/useMachineServiceResource';
+import { machineServicesListProjection } from '@/components/machines/services/machineServicesListProjection';
 import { createDeploymentReadTransport } from './deploymentReadTransport';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentDomainReadItemV1 } from '@happier-dev/deployments';
@@ -21,6 +24,92 @@ beforeEach(async () => {
         serverIdentityId: 'srv_current_edge', accountId: 'account', currentAccount: true, active: false });
 });
 afterEach(async () => { await homes.reset(); });
+
+it('settles a refused Machine Services watch without idle Action requests and recovers on Machine push', async () => {
+    const machineId = 'machine-a';
+    const installationId = 'installation';
+    const row = { ...createPlainMachineRowFixture({ id: machineId, accountId: 'account' }), installationId };
+    homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+        body: await createMachineReadBatchResponseFixture(body, () => row).json(),
+    }) });
+    const actionId = 'machines.services.list';
+    const path = `/v1/actions/${actionId}`;
+    homes.answer(serverId, `${path}/execution-authorization`, { select: body => {
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+        return { body: { v: 1, token: 'machine-services-proof', binding: {
+            serverIdentityId: 'srv_current_edge', accountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 },
+            actionId, requestId: envelope.requestId, target: { kind: 'machine', machineId }, machineId, installationId,
+            custodianAccountId: 'account', accountEncryptionMode: 'plain',
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        } } };
+    } });
+    const bytes = Buffer.from(JSON.stringify({ kind: 'snapshot', services: [] }));
+    const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    const requests: string[] = [];
+    let refused = true;
+    const read = RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ;
+    const open = RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN;
+    const next = RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_NEXT;
+    homes.answer(serverId, path, { select: (body, request) => {
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+        const continuation = envelope.resourceContinuation;
+        if (!continuation) throw new Error('Expected a Machine Services Resource continuation');
+        requests.push(continuation.method);
+        const reply = (result: unknown): HomeDomainAnswer => ({ body: { v: 1, actionId,
+            requestId: envelope.requestId, execution: { ok: true, result } } });
+        if (continuation.method === read) return reply({ ok: true, resource: continuation.params.resource,
+            contentType: 'application/json', bytesBase64: bytes.toString('base64'), digest });
+        if (continuation.method === open) return reply({ ok: true, subscriptionId: continuation.params.subscriptionId, digest });
+        if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) return reply({ ok: true, closed: true });
+        if (refused) return { status: 409, body: { error: 'invalid_request', code: 'target_unavailable', requestId: envelope.requestId } };
+        return new Promise<HomeDomainAnswer>(resolve => {
+            const idle = () => resolve(reply({ ok: true, status: 'idle' }));
+            request.signal?.addEventListener('abort', idle, { once: true });
+            if (request.signal?.aborted) idle();
+        });
+    } });
+    const scope = { serverId, accountId: 'account' };
+    const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const transport = createDeploymentReadTransport(lifetime);
+    const resource = createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
+        hostRead: actionId, input: { serverId, machineId },
+    }, projection: machineServicesListProjection });
+    const rows = ['apps-a', 'apps-b'].map(id => {
+        const link = createDeploymentTargetLinkHeaderV1({ environmentId: id, machines: [machineId],
+            members: [{ machineId, installationId, state: 'active' }] });
+        return { title: id, environment: createDeploymentEnvironmentHeaderV1({ serverId, id, runtimeTargetLinkId: link.id }),
+            runtimeTargetLink: link };
+    });
+    const abort = new AbortController();
+    vi.useFakeTimers();
+    const stop = transport.observeEnvironmentCollectionHealth!(scope, rows, () => {}, { signal: abort.signal });
+    try {
+        await vi.waitFor(() => expect(requests).toContain(next));
+        expect(requests.filter(method => method === read)).toHaveLength(1);
+        expect(requests.filter(method => method === open)).toHaveLength(1);
+        const openCount = requests.length;
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(requests.slice(openCount)).toEqual([]);
+        expect(resource.selection.getSnapshot()).toMatchObject({
+            pending: 'idle', subscription: 'reconnecting', error: { code: 'target_unavailable' },
+        });
+        refused = false;
+        publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: 'unrelated-machine' }, 'authority');
+        await vi.advanceTimersByTimeAsync(0);
+        expect(requests).toHaveLength(openCount);
+        publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId }, 'authority');
+        await vi.waitFor(() => expect(requests.filter(method => method === open)).toHaveLength(2));
+        await vi.waitFor(() => expect(requests.filter(method => method === next)).toHaveLength(2));
+        await vi.waitFor(() => expect(resource.selection.getSnapshot()).toMatchObject({
+            pending: 'idle', subscription: 'live', freshness: 'fresh', value: { kind: 'snapshot', services: [] },
+        }));
+        expect(requests.filter(method => method === read)).toHaveLength(2);
+    } finally {
+        abort.abort();
+        stop();
+        vi.useRealTimers();
+    }
+});
 
 it('reads selected Domain facts through the same controller Resource while keeping metadata and prior facts on unavailability', async () => {
     const base = createDeploymentEnvironmentDetailV1();

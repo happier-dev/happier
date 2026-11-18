@@ -144,6 +144,7 @@ export function createPluginContextualResourceWatchClient(input: Readonly<{
                 deliver: event => listener(event.kind === 'pages'
                     ? { ...event, pages: event.pages.map(page => ({ contentType: page.contentType, digest: page.digest,
                         bytes: decodeBase64(page.bytesBase64, 'base64') })) } : event),
+                onRefused: code => listener({ kind: 'watch-refused', code }),
                 ...(signal === undefined ? {} : { signal }),
             }).catch((error: unknown) => {
                 signal?.removeEventListener('abort', onAbort);
