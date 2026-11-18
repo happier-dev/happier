@@ -1409,6 +1409,9 @@ existing remote Machine acquisition before the run's workspace is admitted.
 The canonical creation owner checks existing creation correspondence before
 allocating a policy-selected target. Local placement uses the incumbent managed
 acquire/reconcile owner in resource-bound mode, without enrolling another daemon.
+For a Can-use member, the installed controller opens its Account-owned configured
+preset. Home binds acquisition to the signed Session child and its exact
+controller, and the member remains the Session requester.
 Retry retains that mode and resource identity. Shared-kept selection uses the
 existing managed row and Session association, scoped to the same custody, preset
 revision and controller. A nonarchived Session keeps its association occupied;

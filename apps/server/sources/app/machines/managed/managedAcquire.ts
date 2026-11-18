@@ -59,6 +59,8 @@ export async function admitManagedAcquire(params: Readonly<{
     managedAcquireDelegation?: true;
     /** Exact scope consumed from a verified reviewed Session child, never request input. */
     sessionPresetAcquisition?: ExternalActionSessionPresetAcquisitionV1;
+    /** Installed controller selected a preset through its Machine policy on the verified Session child. */
+    machinePolicySandbox?: true;
     authentication?: TeamOperationAuthenticationContext;
     requestEnvelopeDigest: string;
     /** Original transport, derived by the route from its verified Workflow root. */
@@ -72,8 +74,10 @@ export async function admitManagedAcquire(params: Readonly<{
         const admittedSessionPreset = request.acquisitionMode === 'resource-bound' && params.sessionPresetAcquisition !== undefined
             && sameManagedInput({ selection: params.sessionPresetAcquisition.selection, controller: params.sessionPresetAcquisition.controller },
                 { selection: request.input.selection, controller: review.controller });
+        const crossAccount = params.custodianAccountId !== params.requesterAccountId;
+        const custodianPolicyPreset = crossAccount && request.acquisitionMode === 'resource-bound' && params.machinePolicySandbox === true;
         if (request.acquisitionMode && (!isManagedPresetAcquireInputV1(request.input) || !review.controller
-            || params.custodianAccountId !== params.requesterAccountId && !admittedSessionPreset)) {
+            || crossAccount && !admittedSessionPreset && !custodianPolicyPreset)) {
             throw new ManagedMachineError('invalid_request');
         }
         if (!review.controller && params.custodianAccountId !== params.requesterAccountId) throw new ManagedMachineError('permission_denied');
@@ -137,7 +141,9 @@ export async function admitManagedAcquire(params: Readonly<{
                     preset: ManagedMachinePresetV1Schema.parse({ ...snapshot.preset, ...snapshot.presetContent }),
                     presetContent: snapshot.presetContent, custodianAccountId: params.custodianAccountId,
                     delegated: snapshot.delegated,
-                } : await resolveMachinePresetForAcquireInTx(tx, { accountId: params.requesterAccountId, authentication: params.authentication,
+                } : await resolveMachinePresetForAcquireInTx(tx, {
+                    ...(custodianPolicyPreset ? { accountId: params.custodianAccountId, accountOwned: true }
+                        : { accountId: params.requesterAccountId, authentication: params.authentication }),
                     ...request.input.selection, boundController: review.controller,
                     ...(request.reuseIdle ? { checkCapacity: false } : {}) });
                 if (selected.kind === "conflict") throw new ManagedMachineError("request_conflict");

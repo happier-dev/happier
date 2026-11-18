@@ -386,10 +386,13 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             authority = requireManagedControllerProof(request, machine.id, ['machines.managed.acquire']);
         } else { requireManagedPresentUser(request); authority = { requestId: request.body.requestId, custodianAccountId: request.userId }; }
         const rootBinding = request.externalActionExecutionAuthorizationBinding;
+        const reviewedAcquire = request.externalActionReviewedChildAdmission;
+        const reviewedSessionAcquire = isSessionSpawnNewActionIdV1(rootBinding?.actionId ?? '')
+            && reviewedAcquire?.actionId === MANAGED_ACQUIRE_ACTION_ID_V1
+            && reviewedAcquire.role === 'acquire-session-sandbox';
         const reviewedWorkflowAcquire = rootBinding?.actionId === WORKFLOW_RUN_START_ACTION_ID_V1
-            && request.externalActionReviewedChildAdmission?.actionId === MANAGED_ACQUIRE_ACTION_ID_V1;
-        const reviewedCreationAcquire = (isSessionSpawnNewActionIdV1(rootBinding?.actionId ?? '') || reviewedWorkflowAcquire)
-            && request.externalActionReviewedChildAdmission?.actionId === MANAGED_ACQUIRE_ACTION_ID_V1;
+            && reviewedAcquire?.actionId === MANAGED_ACQUIRE_ACTION_ID_V1;
+        const reviewedCreationAcquire = reviewedSessionAcquire || reviewedWorkflowAcquire;
         const custodianAccountId = authority.custodianAccountId;
         const requestId = reviewedCreationAcquire ? request.body.requestId : authority.requestId;
         if (requestId !== request.body.requestId) throw new ManagedMachineError("request_conflict");
@@ -412,8 +415,9 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             ? ExternalActionRetainedWorkflowRootV1Schema.parse({ binding: projectExternalActionEncryptionBindingV2(rootBinding),
                 envelope: request.body.originalActionEnvelope }) : undefined;
         return await admitManagedAcquire({ custodianAccountId, requesterAccountId: request.userId,
-            ...(reviewedCreationAcquire && isSessionSpawnNewActionIdV1(rootBinding?.actionId ?? '') && rootBinding?.sessionPresetAcquisition
-                ? { sessionPresetAcquisition: rootBinding.sessionPresetAcquisition } : {}),
+            ...(reviewedSessionAcquire
+                ? rootBinding?.sessionPresetAcquisition ? { sessionPresetAcquisition: rootBinding.sessionPresetAcquisition }
+                    : { machinePolicySandbox: true } : {}),
             ...(workflowRoot ? { workflowRoot } : {}),
             managedAcquireDelegation: request.externalActionExecutionAuthorizationBinding?.managedAcquireDelegation, authentication: readTeamOperationAuthenticationFromRequest(request), requestEnvelopeDigest, input: request.body });
     }));

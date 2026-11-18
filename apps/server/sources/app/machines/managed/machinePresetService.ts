@@ -1169,13 +1169,18 @@ export async function resolveMachinePresetForAcquireInTx(tx: Tx, params: PresetC
     homeId: string; id: string; revision: number;
     /** Preflight/proof reads omit capacity; the inserting admission always enforces it. */
     checkCapacity?: boolean;
+    /** Machine-policy admission may select the installed custodian's Account-owned preset. */
+    accountOwned?: true;
     boundController?: ManagedControllerV1;
     poolSelection?: Readonly<{ requestKey: string; presence: MachineDaemonPresenceInventory }>;
 }>): Promise<Readonly<{ kind: "ready"; preset: ManagedMachinePresetV1; custodianAccountId: string; delegated: boolean;
     presetContent: Pick<ManagedMachinePresetV1, 'content' | 'recipients'>;
     controllerAccess?: ManagedControllerAccessV1; poolPriorityTier?: number }> | PresetRefusal | Extract<PresetMutationResultV1, { kind: "conflict" }>> {
     await requireHomeInTx(tx, params.homeId);
-    const stored = await tx.managedMachinePreset.findFirst({ where: { id: params.id, homeId: params.homeId } });
+    const stored = await tx.managedMachinePreset.findFirst({ where: {
+        id: params.id, homeId: params.homeId,
+        ...(params.accountOwned ? { teamId: null, custodianAccountId: params.accountId } : {}),
+    } });
     const access = stored ? await resolvePresetAccessInTx(tx, params, ownerOf(stored), 'read') : null;
     if (!stored || !access) return { kind: "refused", code: "preset_not_found" };
     const row = inheritPresetOwnerArchive(stored, access.teamArchivedAt);

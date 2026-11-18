@@ -848,6 +848,7 @@ resolveServerFeaturesSnapshot?: () =>
       };
       const nativeManagedMachineAdapter = createDaemonManagedMachineActionAdapter({
           credentials,
+          controllerCredentials: params.credentials,
           executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
           ...(params.prepareTeamCredentialNativeSource ? { prepareTeamCredentialNativeSource: params.prepareTeamCredentialNativeSource } : {}),
           machineId: params.machineId,
