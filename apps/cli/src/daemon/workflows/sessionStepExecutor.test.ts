@@ -12,7 +12,7 @@ import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolv
 import * as persistence from '@/persistence';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { WorkflowSessionAuthoringSelectionSchema } from '@happier-dev/protocol/workflows/workflowV1';
+import { WorkflowSessionAuthoringSelectionSchema, type WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { resolveWorkflowAcceptedStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
@@ -3094,6 +3094,7 @@ describe('workflow Session step executor', () => {
     { denied: false, boundSessionId: 'new-session', policy: 'reject', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'disabled', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed', surface: 'agent' },
+    { denied: false, boundSessionId: 'new-session', policy: 'composed-mixed', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed-reclaim', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed-unknown', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed-reject', surface: 'agent' },
@@ -3138,8 +3139,9 @@ describe('workflow Session step executor', () => {
         : { pluginId: 'happier.agent.claude', localId: 'claude' } },
       connectedServices: { v: 2 as const, bindingsByServiceId: {} },
       ...(frozenRole ? { roleId: frozenRole.roleId, permissionMode: 'read-only' as const, approvalProfileId: 'builtin:full-trust' } : {}) };
-    const creationKey = 'workflow:discussion-run:invocation-1';
-    const ref = { discussionId: 'discussion-1', participantSlotId: creationKey };
+    const mixed = policy === 'composed-mixed';
+    let creationKey = 'workflow:discussion-run:invocation-1';
+    const discussionId = 'discussion-1';
     const reservations: unknown[] = [];
     const births: unknown[] = [];
     const originalPost = readiness.post.getMockImplementation()!;
@@ -3176,13 +3178,13 @@ describe('workflow Session step executor', () => {
       if (url.endsWith('/v1/discussions/discussion-1/participants/invite') && method === 'POST') {
         reservations.push(JSON.parse(data!));
         return denied ? { status: 403, data: { error: 'discussion_access_forbidden' } } : { status: 200, data: {
-          discussionId: ref.discussionId, ownerAccountId: 'account-1', access: 'owner', grants: [], changed: reservations.length === 1,
+          discussionId, ownerAccountId: 'account-1', access: 'owner', grants: [], changed: reservations.length === 1,
           modelParticipant: { participant: { kind: 'model', participantSlotId: creationKey }, launch,
             sessionId: null, answerPolicy: 'when_addressed', createdAt: 1 },
         } };
       }
       if (url.endsWith('/v1/discussions/discussion-1/participants') && method === 'GET') return { status: 200, data: {
-        discussionId: ref.discussionId, ownerAccountId: 'account-1', access: 'owner', grants: [],
+        discussionId, ownerAccountId: 'account-1', access: 'owner', grants: [],
         participants: [{ participant: { kind: 'model', participantSlotId: creationKey }, launch,
           sessionId: boundSessionId, answerPolicy: 'when_addressed', createdAt: 1 }],
       } };
@@ -3240,7 +3242,7 @@ describe('workflow Session step executor', () => {
           isCurrent: async () => !signal.aborted,
         }) } : {}),
         observeRun: async () => { throw new Error('reservation must not start an Execution Run'); } };
-    const discussionOrigin = { discussion: { serverId: 'server-1', discussionId: ref.discussionId }, messageId: 'question-1', throughSeq: 1 };
+    const discussionOrigin = { discussion: { serverId: 'server-1', discussionId }, messageId: 'question-1', throughSeq: 1 };
     const create = createProductionFreshWorkflowSessionConversation({ credentials,
       serverId: 'server-1', machineId: 'machine-1', workDepth: 0, originRunId: 'discussion-run',
       discussionOrigin, action,
@@ -3248,11 +3250,19 @@ describe('workflow Session step executor', () => {
     if (composed) {
       const store = createInMemoryWorkflowCoordinatorStore();
       const workspace = { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' };
-      let accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: { version: 1, defaults: {}, inputs: [
+      const review: WorkflowDefinitionV1['blocks'][number] = { kind: 'step', id: 'review', input: [], result: { kind: 'text' },
+        document: { text: 'Review the question', references: [], attachments: [] }, execution: { participant: { kind: 'input', name: 'reviewer' } } };
+      const existing = { serverId: 'server-1', sessionId: 'existing-reviewer' };
+      const definition: WorkflowDefinitionV1 = { version: 1, defaults: {}, inputs: [
         { name: 'reviewer', valueType: 'json', required: true, inputType: { hostType: 'agentParticipant' } },
-      ], blocks: [{ kind: 'step', id: 'review', input: [], result: { kind: 'text' },
-        document: { text: 'Review the question', references: [], attachments: [] }, execution: { participant: { kind: 'input', name: 'reviewer' } } }] },
-      context: { source: { kind: 'inline' }, inputs: { reviewer: { kind: 'model', launch } }, machineId: workspace.machineId,
+        ...(mixed ? [{ name: 'peer', valueType: 'json' as const, required: true, inputType: { hostType: 'agentParticipant' as const } }] : []),
+      ], blocks: mixed ? [{ kind: 'parallel', id: 'opinions', failurePolicy: 'collect_outcomes', branches: [
+        { id: 'existing', blocks: [{ ...review, id: 'peer', execution: { participant: { kind: 'input', name: 'peer' } } }] },
+        { id: 'model', blocks: [review] },
+      ] }] : [review] };
+      let accepted = await materializeWorkflowAcceptedSnapshotV1({ definition,
+      context: { source: { kind: 'inline' }, inputs: { reviewer: { kind: 'model', launch },
+        ...(mixed ? { peer: { kind: 'session', session: existing } } : {}) }, machineId: workspace.machineId,
         executionTarget: { kind: 'session' }, workspaceTarget: { project: workspace },
         origin: { kind: 'direct', discussion: discussionOrigin,
           ...(policy === 'composed-automation' || policy === 'composed-missing-starter' ? {} : { authenticatedStarterV1: {
@@ -3261,7 +3271,8 @@ describe('workflow Session step executor', () => {
           } }),
           actionPolicy: { surface: originSurface, authority: policy === 'composed-automation' ? 'account_automation' : 'present_user', actionsSettings: settings } },
         authorization: { principal: { kind: 'host' } } },
-      admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
+      admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true,
+        ...(mixed ? { resolveSessionTarget: async () => ({ address: existing, machineId: workspace.machineId }) } : {}) } });
       if (!accepted.ok) throw new Error(JSON.stringify(accepted.error));
       if (policy === 'composed-replay-profile') {
         // A new replay inherits its initiating profile while retaining the old
@@ -3283,8 +3294,10 @@ describe('workflow Session step executor', () => {
       const inputs: unknown[] = [];
       const conversations = createProductionWorkflowConversationOwner({ credentials, serverId: 'server-1', machineId: workspace.machineId,
         createFreshConversation: create, resolveSharedRunConversation: async () => null,
-        resolveProducerConversation: async () => null, resolveExistingSessionConversation: async () => null });
-      const coordinator = createWorkflowCoordinator({ store, action, allocateInvocationRecordId: () => 'invocation-1',
+        resolveProducerConversation: async () => null, resolveExistingSessionConversation: async ({ sessionId }) => mixed && sessionId === existing.sessionId
+          ? { sessionId, machineId: workspace.machineId, directory: workspace.directory } : null });
+      let nextRecord = 0;
+      const coordinator = createWorkflowCoordinator({ store, action, allocateInvocationRecordId: () => mixed ? `invocation-${++nextRecord}` : 'invocation-1',
         prepareStep: async params => ({ preparedStep: await conversations.prepare(params),
           conversationWorkspace: { machineId: launch.executionTarget.machineId, directory: launch.directory.path } }),
         resolveWorkspace: createCoordinatorWorkspaceResolver({ store, projectWorkspace: workspace, scm: {
@@ -3301,7 +3314,7 @@ describe('workflow Session step executor', () => {
           // Native Session input/observation transports are system boundaries;
           // input classification and coordinator settlement remain real.
           sessionInput: { enqueue: async request => {
-            expect(store.list().find(row => row.blockId === 'review')?.lifecycle).toBe('admitting');
+            expect(store.list().find(row => row.recordId === request.workflow.invocationRecordId)?.lifecycle).toBe('admitting');
             inputs.push(request); return { status: 'accepted',
             localId: deriveWorkflowSessionInputLocalIdV2(request.workflow) }; },
             observe: async request => ({ ok: true, sessionId: request.sessionId, localId: request.localId,
@@ -3326,16 +3339,24 @@ describe('workflow Session step executor', () => {
             .toMatchObject({ lifecycle: 'waiting_for_approval' });
         });
         const held = store.list().find(row => row.blockId === 'review');
+        if (!held) throw new Error('Expected retained model invitation');
+        if (mixed) {
+          await vi.waitFor(() => expect(store.list().find(row => row.blockId === 'peer')).toMatchObject({ lifecycle: 'completed' }));
+          creationKey = `workflow:${run.runId}:${held.recordId}`;
+        }
         expect(stored).toMatchObject({ requestedSurface: 'agent', executionOriginV1: { caller: {
-          kind: 'workflowRun', discussionModelReservation: { policySurface: originSurface },
+          kind: 'workflowRun', discussionModelReservation: { policySurface: originSurface, participantSlotId: creationKey },
           authenticatedStarterV1: accepted.snapshot.origin?.authenticatedStarterV1,
         } } });
-        expect(held).toMatchObject({ recordId: 'invocation-1', lifecycle: 'waiting_for_approval', execution: {
+        expect(held).toMatchObject({ ...(!mixed ? { recordId: 'invocation-1' } : {}), lifecycle: 'waiting_for_approval', execution: {
           kind: 'action', actionId: 'discussion.invite', output: { kind: 'approval_request_created', artifactId: 'invitation-approval' },
         } });
         expect(reservations).toEqual([]); expect(launches).toEqual([]); expect(births).toEqual([]);
         expect(invitationCards).toBe(1);
-        expect(inputs).toEqual([]);
+        const addressed = (sessionId: string) => expect.objectContaining({ sessionId, discussionAddressing: {
+          discussionId, messageId: discussionOrigin.messageId, throughSeq: discussionOrigin.throughSeq, participantSessionId: sessionId,
+        } });
+        expect(inputs).toEqual(mixed ? [addressed(existing.sessionId)] : []);
         if (policy === 'composed-unknown') {
           expect(await running).toMatchObject({ result: { state: 'paused', reason: 'approval_required' } });
           if (!stored) throw new Error('Expected retained invitation Approval');
@@ -3368,11 +3389,11 @@ describe('workflow Session step executor', () => {
         if (policy === 'composed-replay-profile') expect(births[0]).toMatchObject({ ownerMetadata: {
           v: { runtime: { approvalProfileId: 'builtin:full-trust' } },
         } });
-        expect(inputs).toHaveLength(1);
+        expect(inputs).toEqual(mixed ? [addressed(existing.sessionId), addressed('new-session')] : [addressed('new-session')]);
         expect(invitationCards).toBe(1);
         expect(await coordinator.run(run)).toMatchObject({ state: 'succeeded' });
         expect(reservations).toHaveLength(1); expect(launches).toHaveLength(1); expect(births).toHaveLength(1);
-        expect(inputs).toHaveLength(1);
+        expect(inputs).toHaveLength(mixed ? 2 : 1);
       } finally {
         lifetime.abort();
         await running;
@@ -3437,6 +3458,7 @@ describe('workflow Session step executor', () => {
     } else if (boundSessionId !== 'new-session') {
       await expect(invoke()).rejects.toMatchObject({ code: 'discussion_subject_ineligible' });
     } else {
+      const ref = { discussionId, participantSlotId: creationKey };
       await expect(invoke()).resolves.toMatchObject({ sessionId: 'new-session', origin: { kind: 'discussion', discussionParticipant: ref } });
       expect(spawnAdmissions.filter(id => id === 'session.spawn_new')).toHaveLength(1);
       expect(births).toEqual([expect.objectContaining({ originKind: 'discussion', discussionParticipant: ref,

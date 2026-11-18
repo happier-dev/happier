@@ -5,8 +5,8 @@ import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol';
 import { ArtifactCreateHttpResponseV1Schema, ArtifactHttpReadV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
-import { MEMORY_ARCHIVE_TOPIC_TITLE_V1, MemoryDocArtifactHeaderV1StoredSchema } from '@happier-dev/protocol/prompts/library/memoryDocV1';
-import { createMemoryDocInLibrary, readMemoryDocInLibrary, rememberMemoryFactInLibrary, type PromptLibraryArtifactStore } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import { MEMORY_ARCHIVE_TOPIC_TITLE_V1, MemoryDocArtifactHeaderV1StoredSchema, renderMemoryDocV1 } from '@happier-dev/protocol/prompts/library/memoryDocV1';
+import { createMemoryDocInLibrary, readMemoryDocInLibrary, readMemoryDocVersionInLibrary, rememberMemoryFactInLibrary, type PromptLibraryArtifactStore } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { buildDiscussionMutationRequestBodyV1 } from '@happier-dev/protocol/discussions/api';
 import { createDiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { DOC_EDIT_PROPOSAL_HTTP_PATHS_V1 as paths, DocEditAcceptTransportInputV1Schema, DocEditDecisionResultV1Schema } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
@@ -151,11 +151,12 @@ describe('Doc proposal HTTP decisions with verified credentials and SQLite', () 
                 },
             };
             const text = 'Emphasize the runbook passage';
+            const topic = 'Rollout decisions';
             const author = { store, sourceSessionRef: null, randomId: () => crypto.randomUUID() };
-            const saved = await createMemoryDocInLibrary({ ...author, decision, request: { title: 'Payments decisions', text, expiresAtMs } });
+            const saved = await createMemoryDocInLibrary({ ...author, decision, request: { title: 'Payments decisions', topic, text, expiresAtMs } });
             const readMemory = { store, artifactId: saved.artifactId };
-            const before = await readMemoryDocInLibrary(readMemory);
-            expect(before).toMatchObject({ body: { index: [{ id: saved.factId, text, decision, expiresAtMs }] } });
+            const before = await readMemoryDocInLibrary({ ...readMemory, topic });
+            expect(before).toMatchObject({ topic: { facts: [{ id: saved.factId, text, decision, expiresAtMs }] } });
 
             const replacement = { ...decision, reason: 'Keep the warning prominent during the Payments rollout' };
             const request = { ref: { kind: 'doc' as const, serverId: 'home', artifactId: saved.artifactId },
@@ -166,7 +167,12 @@ describe('Doc proposal HTTP decisions with verified credentials and SQLite', () 
                 duplicateChoice: { kind: 'replace', factId: saved.factId, expectedRevision: before.revision } } });
             expect(replaced).toMatchObject({ ok: true });
             if (!replaced.ok) throw new Error(replaced.errorCode);
-            expect(await readMemoryDocInLibrary(readMemory)).toMatchObject({ body: { index: [{ id: replaced.factId,
+            const current = await readMemoryDocVersionInLibrary(readMemory);
+            const prompt = renderMemoryDocV1({ body: current.body, nowMs: Date.now() });
+            expect(prompt.loadedTopicTitles).toContain(topic);
+            expect(prompt.markdown).not.toContain(request.text);
+            expect(prompt.markdown).not.toContain(replacement.reason);
+            expect(await readMemoryDocInLibrary({ ...readMemory, topic })).toMatchObject({ topic: { facts: [{ id: replaced.factId,
                 supersedes: saved.factId, text: request.text, decision: replacement, expiresAtMs: request.expiresAtMs }] } });
             expect(await readMemoryDocInLibrary({ ...readMemory, topic: MEMORY_ARCHIVE_TOPIC_TITLE_V1 })).toMatchObject({ topic: {
                 facts: [{ id: saved.factId, text, decision, expiresAtMs, archivedByMutation: true }],
