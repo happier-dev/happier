@@ -10,6 +10,7 @@ import {
   parseDockerPortLine,
   sanitizeDockerEnv,
 } from './extended-db-docker.plan.mjs';
+import { EXTENDED_DB_OWNER_LABEL, extendedDbOwnerToken, selectOrphanedExtendedDbContainers } from './extended-db-docker.ownership.mjs';
 
 function usage() {
   // Keep this short; the pnpm scripts are the primary UX.
@@ -179,6 +180,15 @@ export async function main(argv = process.argv) {
   }
 
   runOrThrow('docker', ['info'], { stdio: 'ignore', env: dockerEnv(), timeoutMs: dockerCommandTimeoutMs });
+  // A harness killed outright (SIGKILL, lost SSH session) leaves its container running.
+  // Remove the containers whose owning harness process is gone before starting another.
+  const ownedRows = runCapture('docker', ['ps', '-a', '--filter', `label=${EXTENDED_DB_OWNER_LABEL}`,
+    '--format', `{{.ID}} {{.Label "${EXTENDED_DB_OWNER_LABEL}"}}`], { env: dockerEnv(), timeoutMs: dockerCommandTimeoutMs });
+  const orphaned = selectOrphanedExtendedDbContainers(ownedRows);
+  if (orphaned.length) {
+    console.log(`[extended-db] Removing ${orphaned.length} container(s) left by exited harness runs`);
+    runOrThrow('docker', ['rm', '-f', '-v', ...orphaned], { stdio: 'ignore', env: dockerEnv(), timeoutMs: dockerCommandTimeoutMs });
+  }
 
   const plan = buildDbContainerPlan({ db, name: nameArg });
 
@@ -202,6 +212,10 @@ export async function main(argv = process.argv) {
     cleanup();
     process.exit(143);
   });
+  process.on('SIGHUP', () => {
+    cleanup();
+    process.exit(129);
+  });
 
   try {
     const envPairs = Object.entries(plan.env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
@@ -212,6 +226,8 @@ export async function main(argv = process.argv) {
       'run',
       '-d',
       '--rm',
+      '--label',
+      `${EXTENDED_DB_OWNER_LABEL}=${extendedDbOwnerToken()}`,
       '--name',
       plan.name,
       '-p',
