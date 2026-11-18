@@ -8963,6 +8963,7 @@ const machineDetailPageTranslations = { pt: translated({
                 folderBranch: "O branch atual da pasta",
                 branchHelp: "O agente trabalha num novo branch a partir dele, pronto para um pull request.",
                 gitAccountNeeded: "Necessário para clonar repositórios privados e enviar o branch de trabalho.",
+                gitHost: "Host Git",
                 gitAccountCustody: "O Happier clona e envia com ela; o agente nunca a recebe.",
                 connectGit: ({ service }: { service: string }) => `Conectar ${service}`,
                 clonesFolder: ({ folder }: { folder: string }) => `Clona o repositório de ${folder}`,

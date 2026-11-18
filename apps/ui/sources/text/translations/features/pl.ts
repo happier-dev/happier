@@ -8999,6 +8999,7 @@ const machineDetailPageTranslations = { pl: translated({
                 folderBranch: "Bieżąca gałąź folderu",
                 branchHelp: "Agent pracuje na nowej gałęzi z niej, gotowej do pull requesta.",
                 gitAccountNeeded: "Potrzebne do klonowania prywatnych repozytoriów i wypychania gałęzi roboczej.",
+                gitHost: "Host Git",
                 gitAccountCustody: "Happier klonuje i wypycha z jego użyciem; agent nigdy go nie otrzymuje.",
                 connectGit: ({ service }: { service: string }) => `Połącz ${service}`,
                 clonesFolder: ({ folder }: { folder: string }) => `Klonuje repozytorium z ${folder}`,

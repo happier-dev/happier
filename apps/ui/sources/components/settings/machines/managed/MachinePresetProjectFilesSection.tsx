@@ -20,7 +20,9 @@ import {
 import { t } from '@/text';
 
 import { ManagedFieldRow } from './MachinePresetDetail';
-import { selectPresetGitHostingProvider, withPresetGitAccount } from './presetGitAccount';
+import { presetGitHostingProviders, selectPresetGitHostingProvider, withPresetGitAccount } from './presetGitAccount';
+import { connectedAccountPurposeServiceTargets } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
+import { storage } from '@/sync/domains/state/storageStore';
 import { SCM_HOSTING_CONNECTED_ACCOUNT_PURPOSE_ID } from '@happier-dev/protocol/plugins/contributions/scmHostingProviders';
 import { useDaemonScmContributionCatalog } from '@/scm/registry/useDaemonScmContributionCatalog';
 import { useFirstConnection } from '@/components/projects/deployments/useFirstConnection';
@@ -166,12 +168,34 @@ function PresetGitAccountRow(props: Readonly<{
 }>) {
   const { value, onChange } = props;
   const catalog = useDaemonScmContributionCatalog({ machineId: props.machineId, serverId: props.serverId });
-  const provider = selectPresetGitHostingProvider(catalog.hostingProviders, value.gitAccount);
+  const accounts = storage((state) => state.profile.connectedAccountsV4, GIT_ACCOUNT_INVENTORY_KEYS);
+  // The host the row chose while no account is stored yet; a stored account names its own host.
+  const [chosenHostId, setChosenHostId] = React.useState<string | null>(null);
+  const hosts = presetGitHostingProviders(catalog.hostingProviders);
+  const provider = selectPresetGitHostingProvider(catalog.hostingProviders, value.gitAccount, chosenHostId,
+    service => connectedAccountPurposeServiceTargets(accounts ?? [], [], service).accounts.length > 0);
   const firstConnection = useFirstConnection(null, provider?.authService ?? null,
     account => onChange?.(withPresetGitAccount(value, account)));
   if (!provider) return null;
+  // Several hosts: the row chooses which one this clone signs in to (owner 09:24Z); changing it drops the old account.
+  const hostRow = hosts.length > 1 ? (
+    <ManagedFieldRow
+      testID={`${props.testID}.host`}
+      row={{
+        title: t('machineDetailPage.projectFiles.gitHost'),
+        choices: hosts.map(host => ({ id: host.id, title: host.title })),
+        value: provider.id,
+        disabled: !onChange,
+        onChange: (id) => {
+          if (id === provider.id) return;
+          setChosenHostId(id);
+          if (value.gitAccount) onChange?.(withPresetGitAccount(value, null));
+        },
+      }}
+    />
+  ) : null;
   if (firstConnection.missing && !value.gitAccount) {
-    return (
+    return (<>{hostRow}
       <Item
         testID={props.testID}
         title={provider.title}
@@ -185,9 +209,9 @@ function PresetGitAccountRow(props: Readonly<{
             onPress={() => { void firstConnection.connect(); }} />
         ) : undefined}
       />
-    );
+    </>);
   }
-  return (
+  return (<>{hostRow}
     <ConnectedAccountPurposeTargetChooser
       testID={props.testID}
       localizedTextPluginId={provider.pluginId ?? provider.authService.pluginId}
@@ -199,5 +223,8 @@ function PresetGitAccountRow(props: Readonly<{
       disabled={!onChange}
       onChange={next => onChange?.(withPresetGitAccount(value, next?.kind === 'account' ? next.account : null))}
     />
-  );
+  </>);
 }
+
+/** The profile's connected accounts, read through the key-scoped subscription (as the shared Connect owner does). */
+const GIT_ACCOUNT_INVENTORY_KEYS = { profile: ['connectedAccountsV4'], profileScope: true } as const;

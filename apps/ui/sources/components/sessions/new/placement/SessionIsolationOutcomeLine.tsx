@@ -260,7 +260,8 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'flex-start',
     columnGap: theme.space.s8,
   },
-  // Both columns size to their words and yield together: the longer sentence wraps first, the link wraps last.
+  // The sentence takes what the link leaves and wraps; the link is one line (the shared link never wraps), so it
+  // keeps its words whole at the line's end.
   sentence: {
     flexShrink: 1,
     minWidth: 0,
@@ -270,7 +271,7 @@ const styles = StyleSheet.create((theme) => ({
     columnGap: theme.space.s8,
     rowGap: theme.space.s2,
   },
-  link: { flexShrink: 1, minWidth: 0 },
+  link: { flexShrink: 0 },
   mark: { height: Typography.variant('meta').lineHeight, justifyContent: 'center' },
   text: { ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 },
   warning: {

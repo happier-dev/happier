@@ -8862,6 +8862,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 folderBranch: "文件夹的当前分支",
                 branchHelp: "代理从它创建新分支工作，可直接提交拉取请求。",
                 gitAccountNeeded: "克隆私有仓库和推送工作分支时需要。",
+                gitHost: "Git 托管",
                 gitAccountCustody: "Happier 用它克隆和推送；代理永远不会拿到它。",
                 connectGit: ({ service }: { service: string }) => `连接 ${service}`,
                 clonesFolder: ({ folder }: { folder: string }) => `克隆 ${folder} 的仓库`,

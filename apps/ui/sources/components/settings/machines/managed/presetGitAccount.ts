@@ -14,25 +14,32 @@ const sameService = (
   right: PluginContributionIdentityV1,
 ) => left.pluginId === right.pluginId && left.localId === right.localId;
 
+/** The hosts a clone can take an account from: the managing Machine's SCM hosting providers with an account service. */
+export function presetGitHostingProviders(
+  providers: readonly ScmProjectedHostingProvider[],
+): PresetGitHostingProvider[] {
+  return providers.filter(
+    (provider): provider is PresetGitHostingProvider => provider.authService !== null,
+  );
+}
+
 /**
- * The Git host a clone's account belongs to (lab F4): the managing Machine's SCM hosting providers that declare an
- * authentication service. A stored account keeps its own host; otherwise the first such host is offered.
+ * The Git host a clone's account belongs to (lab F4). A stored account keeps its own host; otherwise the host the
+ * row chose, else one the person already has an account for, else the first offered.
  */
 export function selectPresetGitHostingProvider(
   providers: readonly ScmProjectedHostingProvider[],
   gitAccount: QualifiedConnectedAccountRef | undefined,
+  chosenHostId: string | null,
+  hasAccount: (service: PluginContributionIdentityV1) => boolean,
 ): PresetGitHostingProvider | null {
-  const withAuth = providers.filter(
-    (provider): provider is PresetGitHostingProvider =>
-      provider.authService !== null,
-  );
-  if (gitAccount) {
-    const own = withAuth.find((provider) =>
-      sameService(provider.authService, gitAccount.service),
-    );
-    if (own) return own;
-  }
-  return withAuth[0] ?? null;
+  const hosts = presetGitHostingProviders(providers);
+  const stored = gitAccount ? hosts.find((host) => sameService(host.authService, gitAccount.service)) : undefined;
+  return stored
+    ?? hosts.find((host) => host.id === chosenHostId)
+    ?? hosts.find((host) => hasAccount(host.authService))
+    ?? hosts[0]
+    ?? null;
 }
 
 /** The clone with the chosen account (or none): Happier keeps the credential and uses it to clone and push. */

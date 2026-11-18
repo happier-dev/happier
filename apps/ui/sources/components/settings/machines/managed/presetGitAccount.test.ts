@@ -25,24 +25,16 @@ const githubAuth = { pluginId: 'forge.github', localId: 'github-account' };
 const gitlabAuth = { pluginId: 'forge.gitlab', localId: 'gitlab-account' };
 
 describe('a Git clone preset’s account', () => {
-  it('offers the host that declares an account service, and keeps a stored account on its own host', () => {
-    const providers = [
-      host('plain', null),
-      host('github', githubAuth),
-      host('gitlab', gitlabAuth),
-    ];
-    expect(selectPresetGitHostingProvider(providers, undefined)?.localId).toBe(
-      'github',
-    );
-    expect(
-      selectPresetGitHostingProvider(providers, {
-        service: gitlabAuth,
-        accountId: 'mine',
-      })?.localId,
-    ).toBe('gitlab');
-    expect(
-      selectPresetGitHostingProvider([host('plain', null)], undefined),
-    ).toBeNull();
+  it('keeps a stored account on its own host, then the host the row chose, then a host already connected', () => {
+    const providers = [host('azure', { pluginId: 'forge.azure', localId: 'azure-account' }), host('plain', null),
+      host('github', githubAuth), host('gitlab', gitlabAuth)];
+    const none = () => false;
+    const githubConnected = (service: { localId: string }) => service.localId === 'github-account';
+    expect(selectPresetGitHostingProvider(providers, { service: gitlabAuth, accountId: 'mine' }, 'forge.github/github', none)?.localId).toBe('gitlab');
+    expect(selectPresetGitHostingProvider(providers, undefined, 'forge.gitlab/gitlab', githubConnected)?.localId).toBe('gitlab');
+    expect(selectPresetGitHostingProvider(providers, undefined, null, githubConnected)?.localId).toBe('github');
+    expect(selectPresetGitHostingProvider(providers, undefined, null, none)?.localId).toBe('azure');
+    expect(selectPresetGitHostingProvider([host('plain', null)], undefined, null, none)).toBeNull();
   });
 
   it('stores the chosen account on the clone and clears it without touching the rest', () => {

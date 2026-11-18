@@ -8985,6 +8985,7 @@ const machineDetailPageTranslations = { fr: translated({
                 folderBranch: "La branche actuelle du dossier",
                 branchHelp: "L’agent travaille sur une nouvelle branche issue de celle-ci, prête pour une pull request.",
                 gitAccountNeeded: "Nécessaire pour cloner les dépôts privés et pousser la branche de travail.",
+                gitHost: "Hébergeur Git",
                 gitAccountCustody: "Happier clone et pousse avec ; l’agent ne le reçoit jamais.",
                 connectGit: ({ service }: { service: string }) => `Connecter ${service}`,
                 clonesFolder: ({ folder }: { folder: string }) => `Clone le dépôt de ${folder}`,

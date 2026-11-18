@@ -8922,6 +8922,7 @@ const machineDetailPageTranslations = { ja: translated({
                 folderBranch: "フォルダーの現在のブランチ",
                 branchHelp: "エージェントはそこから新しいブランチで作業し、プルリクエストの準備をします。",
                 gitAccountNeeded: "プライベートリポジトリのクローンと作業ブランチのプッシュに必要です。",
+                gitHost: "Git ホスト",
                 gitAccountCustody: "Happier がこれでクローンとプッシュを行います。エージェントには渡されません。",
                 connectGit: ({ service }: { service: string }) => `${service} を接続`,
                 clonesFolder: ({ folder }: { folder: string }) => `${folder} のリポジトリをクローン`,

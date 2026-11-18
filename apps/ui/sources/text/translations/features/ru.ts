@@ -9000,6 +9000,7 @@ const machineDetailPageTranslations = { ru: translated({
                 folderBranch: "Текущая ветка папки",
                 branchHelp: "Агент работает в новой ветке от неё, готовой для pull request.",
                 gitAccountNeeded: "Нужен, чтобы клонировать приватные репозитории и отправлять рабочую ветку.",
+                gitHost: "Git-хостинг",
                 gitAccountCustody: "Happier клонирует и отправляет изменения с ним; агент его никогда не получает.",
                 connectGit: ({ service }: { service: string }) => `Подключить ${service}`,
                 clonesFolder: ({ folder }: { folder: string }) => `Клонирует репозиторий ${folder}`,

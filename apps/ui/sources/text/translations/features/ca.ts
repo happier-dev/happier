@@ -8969,6 +8969,7 @@ const machineDetailPageTranslations = { ca: translated({
                 folderBranch: "La branca actual de la carpeta",
                 branchHelp: "L’agent treballa en una branca nova a partir d’aquesta, a punt per a una pull request.",
                 gitAccountNeeded: "Cal per clonar repositoris privats i pujar la branca de treball.",
+                gitHost: "Allotjament Git",
                 gitAccountCustody: "Happier clona i puja amb aquest compte; l’agent no el rep mai.",
                 connectGit: ({ service }: { service: string }) => `Connecta ${service}`,
                 clonesFolder: ({ folder }: { folder: string }) => `Clona el repositori de ${folder}`,

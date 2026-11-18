@@ -161,6 +161,7 @@ export const english = {
             folderBranch: "The folder’s current branch",
             branchHelp: "The agent works on a new branch from it, ready for a pull request.",
             gitAccountNeeded: "Needed to clone private repositories and push the work branch.",
+            gitHost: "Git host",
             gitAccountCustody: "Happier clones and pushes with it; the agent never receives it.",
             connectGit: ({ service }: { service: string }) => `Connect ${service}`,
             clonesFolder: ({ folder }: { folder: string }) => `Clones the repository of ${folder}`,
