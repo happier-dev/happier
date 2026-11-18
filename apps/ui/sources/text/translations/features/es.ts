@@ -7106,6 +7106,8 @@ const es: typeof en = {
     errorAccountNotFound: 'Esta cuenta ya no existe en este Home.',
     errorAccountInactive: 'Esta cuenta no está activa, así que no puede recibir esta autoridad.',
     errorErasureTransitionCleanupPending: 'La eliminación de la cuenta está esperando la limpieza del cifrado. Intenta eliminar la cuenta de nuevo.',
+    errorErasureUploadPending: 'Todavía hay una carga en curso. Espera a que termine y vuelve a intentar eliminar la cuenta.',
+    errorErasureDeploymentCleanupRequired: 'Un despliegue todavía necesita limpieza o tiene dependencias compartidas. Completa el desmantelamiento y resuelve esas dependencias; después, vuelve a intentar eliminar la cuenta.',
     errorGeneric: 'Este Home no pudo completar el cambio. No se cambió nada.',
     errorConflict: 'Aquí ya se cambió otra cosa antes. Actualiza este Home e inténtalo de nuevo.',
     changeFailedTitle: 'El cambio no se realizó',

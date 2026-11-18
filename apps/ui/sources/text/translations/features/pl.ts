@@ -7234,6 +7234,8 @@ const pl: typeof en = {
     errorAccountNotFound: 'To konto już nie istnieje w tym Home.',
     errorAccountInactive: 'To konto nie jest aktywne, więc nie może otrzymać tych uprawnień.',
     errorErasureTransitionCleanupPending: 'Usunięcie konta czeka na zakończenie czyszczenia danych szyfrowania. Spróbuj ponownie usunąć konto.',
+    errorErasureUploadPending: 'Przesyłanie nadal trwa. Poczekaj na jego zakończenie, a następnie spróbuj ponownie usunąć konto.',
+    errorErasureDeploymentCleanupRequired: 'Wdrożenie nadal wymaga uporządkowania lub ma współdzielone zależności. Zakończ demontaż i rozwiąż te zależności, a następnie spróbuj ponownie usunąć konto.',
     errorGeneric: 'Ten Home nie mógł dokończyć zmiany. Nic nie zostało zmienione.',
     errorConflict: 'Coś innego zostało tu zmienione wcześniej. Odśwież ten Home i spróbuj ponownie.',
     changeFailedTitle: 'Zmiana nie została wykonana',

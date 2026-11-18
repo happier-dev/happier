@@ -7218,6 +7218,8 @@ const it: typeof en = {
     errorAccountNotFound: 'Questo account non esiste più su questo Home.',
     errorAccountInactive: 'Questo account non è attivo, quindi non può ricevere questa autorità.',
     errorErasureTransitionCleanupPending: 'L’eliminazione dell’account attende la pulizia della crittografia. Prova a eliminare di nuovo l’account.',
+    errorErasureUploadPending: 'È ancora in corso un caricamento. Attendi che finisca, poi prova di nuovo a eliminare l’account.',
+    errorErasureDeploymentCleanupRequired: 'Un deployment richiede ancora una pulizia o ha dipendenze condivise. Completa lo smantellamento e risolvi queste dipendenze, poi prova di nuovo a eliminare l’account.',
     errorGeneric: 'Questo Home non ha potuto completare la modifica. Non è stato cambiato nulla.',
     errorConflict: 'Qui è stato modificato prima qualcos’altro. Aggiorna questo Home e riprova.',
     changeFailedTitle: 'La modifica non è andata a buon fine',

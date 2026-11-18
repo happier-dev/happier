@@ -1,4 +1,4 @@
-import type { MachinePresetItemV1 } from '../machines/managed/machineSetupV1.js';
+import { isMachineSetupRecipeItemV1, type MachinePresetItemV1 } from '../machines/managed/machineSetupV1.js';
 import type { MachineSetupApplyInputV1, MachineSetupCombinedPlanResultV1, MachineSetupPlanResultV1 } from '../machines/managed/actionsV1.js';
 import { DOCKER_ENGINE_RECIPE_REF_V1 } from '../machines/setup/machineRecipeReferenceV1.js';
 
@@ -37,7 +37,7 @@ export function readDeployHostRecipe(result: HostPlan, machineId: string) {
   return support.flatMap(row => {
     const source = sources[row.sourceIndex];
     const item = source && source.kind !== 'accountPresetOpaque' ? source.setup.items?.[row.itemIndex] : undefined;
-    return item && item.kind !== 'app' && item.selection.ref.pluginId === DEPLOY_HOST_DOCKER_ITEM.selection.ref.pluginId
+    return item && isMachineSetupRecipeItemV1(item) && item.selection.ref.pluginId === DEPLOY_HOST_DOCKER_ITEM.selection.ref.pluginId
       && item.selection.ref.recipeId === DEPLOY_HOST_DOCKER_ITEM.selection.ref.recipeId ? [{ item, status: row.status }] : [];
   })[0];
 }

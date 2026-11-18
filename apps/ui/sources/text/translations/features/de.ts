@@ -7222,6 +7222,8 @@ const de: typeof en = {
     errorAccountNotFound: 'Dieses Konto existiert auf diesem Home nicht mehr.',
     errorAccountInactive: 'Dieses Konto ist nicht aktiv und kann diese Berechtigung nicht erhalten.',
     errorErasureTransitionCleanupPending: 'Das Löschen des Kontos wartet auf die Verschlüsselungsbereinigung. Versuche erneut, das Konto zu löschen.',
+    errorErasureUploadPending: 'Ein Upload läuft noch. Warte, bis er abgeschlossen ist, und versuche dann erneut, das Konto zu löschen.',
+    errorErasureDeploymentCleanupRequired: 'Ein Deployment muss noch bereinigt werden oder hat gemeinsam genutzte Abhängigkeiten. Schließe den Abbau ab und löse diese Abhängigkeiten auf. Versuche dann erneut, das Konto zu löschen.',
     errorGeneric: 'Dieses Home konnte die Änderung nicht abschließen. Es wurde nichts geändert.',
     errorConflict: 'Hier wurde zuerst etwas anderes geändert. Lade dieses Home neu und versuche es erneut.',
     changeFailedTitle: 'Die Änderung wurde nicht ausgeführt',

@@ -7227,6 +7227,8 @@ const fr: typeof en = {
     errorAccountNotFound: 'Ce compte n’existe plus sur ce Home.',
     errorAccountInactive: 'Ce compte n’est pas actif et ne peut pas recevoir cette autorité.',
     errorErasureTransitionCleanupPending: 'La suppression du compte attend le nettoyage du chiffrement. Réessaie de supprimer le compte.',
+    errorErasureUploadPending: 'Un téléversement est toujours en cours. Attends sa fin, puis réessaie de supprimer le compte.',
+    errorErasureDeploymentCleanupRequired: 'Un déploiement nécessite encore un nettoyage ou possède des dépendances partagées. Termine le démantèlement et résous ces dépendances, puis réessaie de supprimer le compte.',
     errorGeneric: 'Ce Home n’a pas pu appliquer la modification. Rien n’a été changé.',
     errorConflict: 'Autre chose a été modifié ici entre-temps. Actualise ce Home et réessaie.',
     changeFailedTitle: 'La modification n’a pas abouti',

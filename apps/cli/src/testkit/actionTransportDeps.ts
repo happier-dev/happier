@@ -1,7 +1,7 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 
 /** Unused OS/network transport ports fail loudly; real Action admission still runs. */
-export function createUnavailableActionTransportDeps(): ActionExecutorDeps {
+export function createUnavailableActionTransportDeps() {
     const unavailable = async (): Promise<never> => { throw new Error('Unexpected Action transport in this fixture'); };
     return {
         executionRunStart: unavailable, executionRunList: unavailable, executionRunGet: unavailable,
@@ -14,5 +14,5 @@ export function createUnavailableActionTransportDeps(): ActionExecutorDeps {
         sessionModeSet: unavailable, sessionModesList: unavailable, sessionList: unavailable,
         sessionActivityGet: unavailable, sessionRecentMessagesGet: unavailable, resetGlobalVoiceAgent: unavailable,
         daemonMemorySearch: unavailable, daemonMemoryGetWindow: unavailable, daemonMemoryEnsureUpToDate: unavailable,
-    };
+    } satisfies ActionExecutorDeps;
 }

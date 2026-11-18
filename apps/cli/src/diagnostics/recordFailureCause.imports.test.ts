@@ -10,7 +10,7 @@ describe('cold diagnostics before Project readiness', () => {
       readEnvironment: async () => { throw error; },
       readHealthAndAlerts: async () => [],
     });
-    const result = await read({ serverId: 'home', projectId: 'project',
+    const result = await read({ serverId: 'home', machineId: 'machine-a', projectId: 'project',
       environments: [{ environmentId: 'environment', expectedRevision: 1 }] }, { surface: 'cli' });
     expect(result).toMatchObject({ ok: false, errorCode: 'ECONNRESET' });
     expect(readActionOutputDiagnostic(result)).toMatchObject({

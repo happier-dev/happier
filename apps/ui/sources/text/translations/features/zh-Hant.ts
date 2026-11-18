@@ -7107,6 +7107,8 @@ const zhHant: typeof en = {
     errorAccountNotFound: '這個帳戶已不在該 Home 中。',
     errorAccountInactive: '這個帳戶並非有效狀態，因此無法取得該權限。',
     errorErasureTransitionCleanupPending: '帳戶刪除正在等待加密資料清理完成。請再次嘗試刪除帳戶。',
+    errorErasureUploadPending: '仍有上傳正在進行。請等待上傳完成後，再嘗試刪除帳戶。',
+    errorErasureDeploymentCleanupRequired: '某個部署仍需清理或存在共用相依項目。請完成拆除並解決這些相依項目後，再嘗試刪除帳戶。',
     errorGeneric: '這個 Home 無法完成變更。未做任何變更。',
     errorConflict: '這裡已先被其他變更修改。請重新載入這個 Home 後再試一次。',
     changeFailedTitle: '變更未完成',

@@ -7211,6 +7211,8 @@ const ca: typeof en = {
     errorAccountNotFound: 'Aquest compte ja no existeix en aquest Home.',
     errorAccountInactive: 'Aquest compte no està actiu, així que no pot rebre aquesta autoritat.',
     errorErasureTransitionCleanupPending: 'La supressió del compte espera la neteja del xifratge. Torna a provar de suprimir el compte.',
+    errorErasureUploadPending: 'Encara hi ha una pujada en curs. Espera que acabi i torna a provar de suprimir el compte.',
+    errorErasureDeploymentCleanupRequired: 'Un desplegament encara necessita neteja o té dependències compartides. Completa el desmantellament i resol aquestes dependències; després, torna a provar de suprimir el compte.',
     errorGeneric: 'Aquest Home no ha pogut completar el canvi. No s’ha canviat res.',
     errorConflict: 'Aquí s’ha canviat una altra cosa abans. Actualitza aquest Home i torna-ho a provar.',
     changeFailedTitle: 'El canvi no s’ha dut a terme',
