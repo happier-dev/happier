@@ -28,6 +28,8 @@ import { useDeploymentProject } from '../deployments/useDeploymentProject';
 import { useDeploymentCollection } from '../deployments/useDeploymentReads';
 import { deploymentEnvironmentRoute } from '../deployments/deploymentNavigation';
 import { projectSourceRoute } from '../sources/projectSourceNavigation';
+import { useOpenNewApp } from '../starters/newAppPresentation';
+import { deploymentEnvironmentGlyph } from '../deployments/rows/DeploymentEnvironmentRow';
 import { useProjectReadiness } from './useProjectReadiness';
 
 /**
@@ -71,9 +73,21 @@ export function ProjectReadinessWidgetBody(props: Readonly<{ target: ProjectSurf
     environments: [{ environmentId: environment.id, expectedRevision: environment.revision }],
   } : null, [environment?.serverId, environment?.controllerMachineId, environment?.id, environment?.revision, projectId]);
   const readiness = useProjectReadiness(lifetime, input, visible);
+  const openNewApp = useOpenNewApp();
   useWidgetFrameResourceActivity(readiness.pending || collection.snapshot.status === 'loading');
   if (!projectId) return <SurfaceStateCard kind="unavailable" size="line" title={t('projects.readiness.sourceRequired')} />;
   const items = collection.snapshot.value?.items ?? [];
+  const settled = collection.snapshot.status !== 'idle' && collection.snapshot.status !== 'loading';
+  // No Environments: one line and its Add (phone-lists P1), never a chooser with nothing to choose above it.
+  if (settled && collection.snapshot.status !== 'unavailable' && collection.snapshot.value?.coverage !== 'partial'
+    && items.length === 0 && !collection.hasPreviousPage && !collection.hasNextPage) {
+    return <View testID={props.testID}>
+      <SurfaceStateCard kind="empty" size="line" iconName={deploymentEnvironmentGlyph(false)}
+        title={t('projects.readiness.empty')} reason={t('projects.readiness.emptyHint')}
+        action={{ label: t('common.add'), testID: `${props.testID}.add`,
+          onPress: () => openNewApp(null, null, { projectSourceId: projectId }) }} />
+    </View>;
+  }
   return <View testID={props.testID} style={{ gap: theme.space.s8 }}>
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.s4 }}>
       <SelectionListFilterChip filter={{ id: `${props.testID}.environment`, testID: `${props.testID}.environment`,
@@ -88,10 +102,9 @@ export function ProjectReadinessWidgetBody(props: Readonly<{ target: ProjectSurf
       ? <SurfaceStateCard kind="unavailable" size="line" title={t('projects.readiness.partial')}
           diagnosticCode={collection.snapshot.failure?.code} /> : null}
     {/* An unread list already says so above; it is never also "no Environments". */}
-    {!selected && collection.snapshot.status === 'unavailable' && !items.length ? null : !selected ? <SurfaceStateCard size="line"
-      kind={collection.snapshot.status === 'idle' || collection.snapshot.status === 'loading' ? 'loading' : 'empty'}
-      title={collection.snapshot.status === 'idle' || collection.snapshot.status === 'loading' ? t('projects.readiness.loading')
-        : items.length ? t('projects.readiness.choose') : t('projects.readiness.empty')} />
+    {/* The chooser already says "Choose an Environment"; only a list still loading has a line of its own. */}
+    {!selected && settled ? null : !selected ? <SurfaceStateCard size="line"
+      kind="loading" title={t('projects.readiness.loading')} />
       : !input ? <SurfaceStateCard kind="unavailable" size="line" title={t('projects.readiness.controllerRequired')} />
       : <>
         {readiness.failureCode ? <SurfaceStateCard kind="unavailable" size="line" title={t('projects.readiness.failed')}

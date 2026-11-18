@@ -240,6 +240,24 @@ it('says the Environments could not be read, never also that there are none', as
 });
 
 
+it('says a Project with no Environments in one line with Add, never a chooser above it (phone-lists P1)', async () => {
+  await homes.reset();
+  const serverId = await homes.addHome({ name: 'Readiness', serverUrl: 'https://readiness-empty.test',
+    serverIdentityId: `srv_${'7'.repeat(32)}`, accountId: 'alice', currentAccount: true });
+  await loadSyncSingletonForTests();
+  const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+  await restoreConnectionToActiveServer({ token: homes.findByServerUrl('https://readiness-empty.test')!.token! });
+  homes.answer(serverId, '/v1/deployments/environments', { body: { ok: true, items: [], nextCursor: null } });
+  const target = { kind: 'project' as const, projectKey: 'project', source: { serverId,
+    source: ProjectSourceV1Schema.parse({ id: 'project', revision: 1, name: 'App', audience: [], createdByAccountId: 'alice' }) } };
+  const screen = await renderScreen(<AccountNoticeInvestigationBoundary>
+    <ProjectReadinessWidgetBody target={target} testID="readiness" />
+  </AccountNoticeInvestigationBoundary>);
+  await vi.waitFor(() => expect(screen.findAllByType(SurfaceStateCard).map(card => card.props.kind)).toEqual(['empty']), { timeout: 20000 });
+  expect(screen.findAllByType(SelectionListFilterChip)).toHaveLength(0);
+  expect(screen.findAllByType(SurfaceStateCard)[0]!.props.action).toMatchObject({ testID: 'readiness.add' });
+});
+
 it('keeps unavailable facts visible while ready facts fold without another read or write', async () => {
   const { screen, reads } = await readinessScreen([
     { kind: 'ci', owner: 'forgeCI', status: 'ready', reason: 'ci_source_present' },
