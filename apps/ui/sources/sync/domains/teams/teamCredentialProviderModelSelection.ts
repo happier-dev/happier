@@ -45,7 +45,7 @@ export function readTeamCredentialProviderModelSelection(input: Readonly<{
 
 /** Restore the effective model reference for readers of an authored Agent selection. */
 export function readAuthoredSessionModelRef(input: Readonly<{
-    agentTarget?: AgentExecutionTargetV1;
+    agentTarget?: AgentExecutionTargetV1 | null;
     modelSelection?: SessionModelSelection | null;
     teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
 }>): SessionModelRef | undefined {
