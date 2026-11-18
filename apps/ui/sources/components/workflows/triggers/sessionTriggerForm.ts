@@ -40,6 +40,8 @@ export type SessionLifecycleWhen = {
         kind: Kind;
         subject?: AutomationSessionLifecycleSubjectV1;
         filter?: AutomationEventFilterV1;
+        /** An unfinished editor operand must never become an unfiltered saved habit. */
+        filterInvalid?: true;
         /** Keep a saved subset until the person chooses a different Event group. */
         events?: readonly AutomationSessionLifecycleEvent[];
         nextTimeOnly?: true;
@@ -208,6 +210,7 @@ export function buildTriggerDefinition(params: Readonly<{
     if ('pullRequest' in when) {
         return params.sessionId === null || when.pullRequest === null ? null : { kind: when.kind, enabled, pullRequest: when.pullRequest };
     }
+    if (when.filterInvalid) return null;
     if (when.kind === 'turnEnds' && when.sourceTurnId !== undefined && when.subject?.kind !== 'session') return null;
     return {
         kind: 'sessionLifecycle',
@@ -235,6 +238,7 @@ export function buildInitialTriggerDefinition(params: Readonly<{
     if (when.kind === 'prComment' || when.kind === 'ciFailed') {
         return when.pullRequest === null ? null : { kind: when.kind, enabled, pullRequest: when.pullRequest };
     }
+    if (when.filterInvalid) return null;
     if (when.kind === 'turnEnds' && when.sourceTurnId !== undefined) return null;
     return SessionInitialTriggerDefinitionV1Schema.parse({
         kind: 'sessionLifecycle', enabled, events: [...(when.events ?? LIFECYCLE_EVENTS[when.kind])],

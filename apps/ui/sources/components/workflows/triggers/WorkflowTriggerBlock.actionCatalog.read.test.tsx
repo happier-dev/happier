@@ -5,7 +5,9 @@ import { getActionSpec, listActionSpecs } from '@happier-dev/protocol/actions/ac
 import { serializeActionSpec } from '@happier-dev/protocol/actions/actionCatalog';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { resolveWorkflowActionTitle } from '@/sync/domains/workflows/workflowActionPresentation';
-import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
@@ -28,6 +30,7 @@ const network = await installSessionOpsNetworkBoundary();
 await loadSyncSingletonForTests();
 const { WorkflowTriggerBlock } = await import('./WorkflowTriggerBlock');
 const { TriggerPopover } = await import('./TriggerPopover');
+const { ValueFieldSelect } = await import('@/components/ui/forms/ValueFieldSelect');
 const { Item } = await import('@/components/ui/lists/Item');
 const { WorkflowActionBlockEditor } = await import('../editor/WorkflowActionBlockEditor');
 const { createWorkflowEditorDraft } = await import('@/sync/domains/workflows/workflowEditorDraft');
@@ -65,6 +68,50 @@ describe('Action trigger catalog read presentation', () => {
         await serverScopedRpcSocketPool.stopAll();
         serverScopedRpcSocketPool.resetForTests();
         resetScopedMachineTransportCacheForTests();
+    });
+
+    it('authors an all-Session changed-files habit through the shared lifecycle filter controls', async () => {
+        const changes: import('./sessionTriggerForm').TriggerWhenValue[] = [];
+        let restoreFilter = () => {};
+        function Habit() {
+            const [when, setWhen] = React.useState<import('./sessionTriggerForm').TriggerWhenValue>({ kind: 'turnEnds',
+                subject: { kind: 'session', serverId, sessionId: 'source-session' } });
+            restoreFilter = () => setWhen({ kind: 'turnEnds', filter: { v: 1, all: [
+                { field: '/launchProfileId', op: 'eq', value: 'review-profile' },
+            ] } });
+            return <WorkflowTriggerBlock testID="habit" title="Habit" when={when} enabled incomplete={false}
+                startOptions={[]} onSelectStart={() => {}} onChangeWhen={next => { changes.push(next); setWhen(next); }}
+                onRemove={() => {}} machineId={null} serverId={serverId} />;
+        }
+        const screen = await renderScreen(<Habit />);
+        const source = screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === 'habit-session');
+        const any = source?.props.items.find((item: { id: string }) => item.id === 'any-session');
+        expect(any).toBeDefined();
+        await act(async () => source!.props.onSelect(any.id));
+        expect(changes.at(-1)).not.toHaveProperty('subject');
+        await screen.pressByTestIdAsync('automation-event-filter-add-clause');
+        const picker = screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === 'habit-session');
+        expect(picker?.props.selectedId).toBe('any-session');
+        const fieldPicker = screen.findAll(node => typeof node.props.testID === 'string'
+            && node.props.testID.startsWith('automation-event-filter-clause-') && node.props.testID.endsWith('-field-picker'))[0];
+        await act(async () => fieldPicker!.props.onPress());
+        const field = screen.findAll(node => typeof node.props.testID === 'string'
+            && node.props.testID.endsWith('-field-option-/changedFiles'))[0];
+        await act(async () => field!.props.onPress());
+        const value = screen.findAll(node => typeof node.props.testID === 'string'
+            && node.props.testID.startsWith('automation-event-filter-clause-') && node.props.testID.endsWith('-value'))[0];
+        await act(async () => value!.props.onChangeText('true'));
+        expect(changes.at(-1)).toMatchObject({ kind: 'turnEnds', filter: { v: 1, all: [
+            { field: '/changedFiles', op: 'eq', value: true },
+        ] } });
+        await act(async () => value!.props.onChangeText(''));
+        expect(changes.at(-1)).toMatchObject({ filterInvalid: true });
+        expect(changes.at(-1)).not.toHaveProperty('filter');
+        // Restoring a Sentence snapshot replaces the draft rather than leaving stale filter controls.
+        await act(async () => restoreFilter());
+        const restored = screen.findAll(node => typeof node.props.testID === 'string'
+            && node.props.testID.startsWith('automation-event-filter-clause-') && node.props.testID.endsWith('-value'))[0];
+        expect(restored?.props.value).toBe('"review-profile"');
     });
 
     it.each([

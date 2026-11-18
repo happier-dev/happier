@@ -40,6 +40,7 @@ import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server
 import { useWorkflowActionCatalog } from '@/components/workflows/presentation/useWorkflowActionCatalog';
 import { ActionSubjectSelect, formatActionOperand, isActionOperandSubject, readSubjectOperand } from './ActionSubjectSelect';
 import { t } from '@/text';
+import { SessionLifecycleFilterFields } from './SessionLifecycleFilterFields';
 
 import {
   formatNextScheduledRunTime,
@@ -880,6 +881,7 @@ function SessionEventTrackRows(
     settled: open && sessionOptionsStatus === 'ready',
   });
   const items: ValueFieldSelectItem[] = [
+    { id: 'any-session', title: t('workflows.triggers.card.subjectKinds.session.any') },
     ...menu.leadingItems.map((item) => ({
       id: item.id,
       title: item.title,
@@ -954,7 +956,7 @@ function SessionEventTrackRows(
             testID={`${props.testID}-session`}
             label={t('workflows.triggers.card.session')}
             items={items}
-            selectedId={sourceSessionId ?? null}
+            selectedId={sourceSessionId ?? 'any-session'}
             placeholder={t('common.choose')}
             onOpenChange={setOpen}
             {...(menu.emptyLabel === undefined
@@ -963,6 +965,10 @@ function SessionEventTrackRows(
             keepsOpen={(id) => id === WORKFLOW_SESSION_RETRY_ITEM_ID}
             invalid={stored?.disabled === true}
             onSelect={(sessionId) => {
+              if (sessionId === 'any-session') {
+                props.onChange(withSource(undefined));
+                return;
+              }
               if (sessionId === WORKFLOW_SESSION_RETRY_ITEM_ID) {
                 retrySessionOptions();
                 return;
@@ -1006,6 +1012,7 @@ function SessionEventTrackRows(
           testIDPrefix={`${props.testID}-how-often`}
         />
       </TrackRow>
+      <SessionLifecycleFilterFields when={when} onChange={props.onChange} />
     </>
   );
 }

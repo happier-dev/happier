@@ -22,6 +22,11 @@ import {
 const selection = { agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
 
 describe('session trigger form', () => {
+    it('keeps an unfinished lifecycle filter unsaveable in both existing and new Sessions', () => {
+        const when = { kind: 'turnEnds' as const, filterInvalid: true as const };
+        expect(buildTriggerDefinition({ when, enabled: true, sessionId: null })).toBeNull();
+        expect(buildInitialTriggerDefinition({ when, enabled: true })).toBeNull();
+    });
     // P01 U2: watched scope is independent of the Session retaining the habit.
     it.each([
         undefined,

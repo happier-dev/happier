@@ -8,7 +8,6 @@ import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1, Plu
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { readEligibleEventPluginName, readEligibleEventPresentation, type EligibleEventPresentation } from './pluginEventAutomationEventPresentation';
 import { type PluginMachineExecutionOriginV1, arePluginMachineExecutionOriginsEqual, arePluginMachineMaterializationRefsEqual, getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
-import { validateAutomationEventFilterAgainstPayloadSchemaV1 } from '@happier-dev/protocol/automations/event';
 
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { PLUGIN_EVENT_AUTOMATION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
@@ -55,14 +54,13 @@ import {
     type PluginEventAutomationWebhookEndpointBinding,
     type PluginEventAutomationWebhookEndpoint,
 } from './pluginEventAutomationWebhookEndpoint';
+import { useAutomationEventFilterDraft } from './useAutomationEventFilterDraft';
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 import {
     readPluginEventAutomationFilterClauses,
-    readPluginEventAutomationFilterDraft,
     type PluginEventAutomationFilterClauseDraft,
 } from './pluginEventAutomationFilterBuilder';
 import {
-    buildPluginEventAutomationPayloadBrowser,
     type PluginEventAutomationPayloadBrowser,
 } from './pluginEventAutomationPayloadBrowser';
 import {
@@ -348,8 +346,6 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setSelectedWatcherOrigin(null);
         eraseConfiguredSource();
     }
-    const [filterClauses, setFilterClauses] = React.useState<readonly PluginEventAutomationFilterClauseDraft[]>([]);
-    const nextFilterClauseIdRef = React.useRef(0);
     const [maximumObservationAgeMsText, setMaximumObservationAgeMsText] = React.useState('');
     const [revision, advanceRevision] = React.useReducer((value: number) => value + 1, 0);
     const eligibleEvents = React.useMemo(() => (
@@ -531,73 +527,14 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         params.serverId, params.projectionInputs, watcherPluginId, watcherEvent, selectableWatchers,
         suppliedWatcherFacts.establishingTargets, watcherFailures]);
 
-    const payloadBrowser = React.useMemo(
-        () => buildPluginEventAutomationPayloadBrowser(selectedEvent?.event.payloadSchema),
-        [selectedEvent?.event.payloadSchema],
-    );
-    const filter = React.useMemo<Readonly<{
-        value: AutomationEventFilterV1 | null;
-        valid: boolean;
-    }>>(() => {
-        const drafted = readPluginEventAutomationFilterDraft(filterClauses);
-        if (!drafted.valid) return Object.freeze({ value: null, valid: false });
-        const validation = validateAutomationEventFilterAgainstPayloadSchemaV1({
-            filter: drafted.filter,
-            payloadSchema: selectedEvent?.event.payloadSchema,
-        });
-        return validation.kind === 'valid'
-            ? Object.freeze({ value: drafted.filter, valid: true })
-            : Object.freeze({ value: null, valid: false });
-    }, [filterClauses, selectedEvent?.event.payloadSchema]);
+    const { payloadBrowser, filter, filterClauses, setFilterClauses, addFilterClause, removeFilterClause,
+        setFilterClauseField, setFilterClauseOperator, setFilterClauseValueText } = useAutomationEventFilterDraft({
+        payloadSchema: selectedEvent?.event.payloadSchema, onEdit: advanceRevision,
+    });
     const maximumObservationAgeMs = React.useMemo(
         () => readMaximumObservationAgeMs(maximumObservationAgeMsText),
         [maximumObservationAgeMsText],
     );
-
-    const addFilterClause = React.useCallback(() => {
-        const firstField = payloadBrowser.fields[0];
-        if (!firstField) return;
-        const id = `draft-${nextFilterClauseIdRef.current++}`;
-        setFilterClauses((current) => Object.freeze([
-            ...current,
-            Object.freeze({
-                id,
-                field: firstField.pointer,
-                op: 'eq' as const,
-                valueText: JSON.stringify(firstField.sampleValue),
-            }),
-        ]));
-        advanceRevision();
-    }, [payloadBrowser.fields]);
-    const removeFilterClause = React.useCallback((id: string) => {
-        setFilterClauses((current) => {
-            const next = current.filter((clause) => clause.id !== id);
-            return next.length === current.length ? current : Object.freeze(next);
-        });
-        advanceRevision();
-    }, []);
-    const setFilterClauseField = React.useCallback((id: string, field: string) => {
-        if (!payloadBrowser.fields.some((candidate) => candidate.pointer === field)) return;
-        setFilterClauses((current) => Object.freeze(current.map((clause) => (
-            clause.id === id ? Object.freeze({ ...clause, field }) : clause
-        ))));
-        advanceRevision();
-    }, [payloadBrowser.fields]);
-    const setFilterClauseOperator = React.useCallback((
-        id: string,
-        op: PluginEventAutomationFilterClauseDraft['op'],
-    ) => {
-        setFilterClauses((current) => Object.freeze(current.map((clause) => (
-            clause.id === id ? Object.freeze({ ...clause, op }) : clause
-        ))));
-        advanceRevision();
-    }, []);
-    const setFilterClauseValueText = React.useCallback((id: string, valueText: string) => {
-        setFilterClauses((current) => Object.freeze(current.map((clause) => (
-            clause.id === id ? Object.freeze({ ...clause, valueText }) : clause
-        ))));
-        advanceRevision();
-    }, []);
 
     const availableObservationTransports = React.useMemo<
         readonly PluginEventAutomationObservationDraft['kind'][]
