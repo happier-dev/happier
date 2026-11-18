@@ -17,6 +17,8 @@ import {
 import {
   DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
   TELEMETRY_METRICS_READ_ACTION_ID_V1,
+  TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1,
+  type TelemetryMetricsReadInputV1,
   type DatabaseCaptureEndpointCursorV1,
   type DatabaseCaptureEndpointV1,
   type TelemetryMetricsReadResultV1,
@@ -26,9 +28,7 @@ import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import {
   TELEMETRY_PLUGIN_ID,
   describeTelemetryEnvironment,
-  telemetryWidgetMeasure,
   type TelemetryWidgetEnvironmentV1,
-  type TelemetryWidgetMetricV1,
 } from './telemetryWidgetModel.js';
 
 const ENDPOINTS_ACTION = Object.freeze({
@@ -40,6 +40,10 @@ const ENDPOINTS_ACTION = Object.freeze({
 const METRICS_ACTION = Object.freeze({
   pluginId: TELEMETRY_PLUGIN_ID,
   localId: databaseActionLocalIdV1(TELEMETRY_METRICS_READ_ACTION_ID_V1),
+});
+const COMPARE_ACTION = Object.freeze({
+  pluginId: TELEMETRY_PLUGIN_ID,
+  localId: databaseActionLocalIdV1(TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1),
 });
 
 export type TelemetryWidgetFailureV1 = Readonly<{
@@ -56,11 +60,19 @@ export type TelemetryWidgetReader = Readonly<{
     items: readonly DatabaseCaptureEndpointV1[];
     nextCursor: DatabaseCaptureEndpointCursorV1 | null;
   }>>;
-  /** One whole-service measure for the window. */
+  /** One measure for the window: the whole service's, a route's, or a runtime metric. */
   metrics: (
     serviceName: string,
-    metric: TelemetryWidgetMetricV1,
+    measure: TelemetryMetricsReadInputV1['measure'],
   ) => Promise<TelemetryMetricsReadResultV1>;
+  /**
+   * The live version against the one before it, over the same window on each side of the deploy (the regression
+   * comparison). It answers in its own words: comparable, or inconclusive with reasons.
+   */
+  compare: (
+    serviceName: string,
+    measure: Exclude<TelemetryMetricsReadInputV1['measure'], { kind: 'http' }>,
+  ) => Promise<unknown>;
 }>;
 
 export type TelemetryWidgetReadState<T> =
@@ -141,6 +153,7 @@ export function useTelemetryWidgetRead<T>(
   const { execute: executeEndpoints } =
     useExecutePluginAction(ENDPOINTS_ACTION);
   const { execute: executeMetrics } = useExecutePluginAction(METRICS_ACTION);
+  const { execute: executeCompare } = useExecutePluginAction(COMPARE_ACTION);
   const [state, setState] = React.useState<TelemetryWidgetReadState<T>>({
     kind: 'loading',
   });
@@ -175,16 +188,17 @@ export function useTelemetryWidgetRead<T>(
           await executeEndpoints({ source, page: { limit, ...(before ? { before } : {}) }, ...window }, { signal }));
         return { items: page.items, nextCursor: page.nextCursor ?? null };
       },
-      metrics: async (serviceName, metric) =>
+      metrics: async (serviceName, measure) =>
         settle<TelemetryMetricsReadResultV1>(
           await executeMetrics(
-            {
-              serverId,
-              environmentId,
-              serviceName,
-              ...window,
-              measure: telemetryWidgetMeasure(metric),
-            },
+            { serverId, environmentId, serviceName, ...window, measure },
+            { signal },
+          ),
+        ),
+      compare: async (serviceName, measure) =>
+        settle<unknown>(
+          await executeCompare(
+            { serverId, environmentId, serviceName, measure, windowMs: input.windowMs },
             { signal },
           ),
         ),

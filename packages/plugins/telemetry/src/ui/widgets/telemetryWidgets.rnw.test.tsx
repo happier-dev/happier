@@ -257,6 +257,75 @@ describe('Metric widget', () => {
   });
 });
 
+describe('Metric widget: route, comparison and Show', () => {
+  const CHECKOUT = { method: 'POST', route: '/checkout' };
+  const comparing =
+    (compare: JsonValue): Answer =>
+    (localId, input) =>
+      localId === 'capture/regressions/compare'
+        ? compare
+        : okAnswer({ p95Ms: 412, value: 412 })(localId, input);
+
+  it('reads the chosen route, compares it with the version before the deploy and says the earlier value', async () => {
+    const { page, calls } = await mount(
+      renderMetric,
+      { environment: ENVIRONMENT, metric: 'p95', range: '24h', route: CHECKOUT },
+      comparing({
+        status: 'comparable', change: 224, changePercent: 119,
+        before: { status: 'up', observedAt: 1, measurements: { measure: 'p95', value: 188 } },
+      }),
+    );
+    await vi.waitFor(async () => {
+      await expect(page.getByText('was 188 ms before the last deploy')).resolves.toBeDefined();
+    });
+    await expect(page.getByText('412 ms')).resolves.toBeDefined();
+    const routeMeasure = { kind: 'route', routes: [CHECKOUT], statistic: 'p95' };
+    // The route's own service answers both reads, with the same measure.
+    expect(calls.find((call) => call.localId === 'capture/metrics/read')!.input).toMatchObject({
+      serviceName: 'billing-api/Production', measure: routeMeasure,
+    });
+    expect(calls.find((call) => call.localId === 'capture/regressions/compare')!.input).toMatchObject({
+      ...ENVIRONMENT, serviceName: 'billing-api/Production', measure: routeMeasure, windowMs: 24 * HOUR,
+    });
+  });
+
+  it('keeps the number alone when the comparison is inconclusive or fails', async () => {
+    for (const compare of [{ status: 'inconclusive', reasons: ['previous_deployment_required'] },
+      { ok: false, code: 'collector_unavailable', message: 'Offline.' }] as JsonValue[]) {
+      const { page } = await mount(renderMetric,
+        { environment: ENVIRONMENT, metric: 'p95', route: CHECKOUT }, comparing(compare));
+      await vi.waitFor(async () => {
+        await expect(page.getByText('412 ms')).resolves.toBeDefined();
+      });
+      await expect(page.queryByText('was 188 ms before the last deploy')).resolves.toBeUndefined();
+    }
+  });
+
+  it('reads the whole service, with no comparison, when no route is chosen or the metric has none', async () => {
+    const { page, calls } = await mount(renderMetric,
+      { environment: ENVIRONMENT, metric: 'requests', route: CHECKOUT }, comparing({ status: 'inconclusive', reasons: [] }));
+    await vi.waitFor(() => {
+      expect(calls.some((call) => call.localId === 'capture/metrics/read')).toBe(true);
+    });
+    expect(calls.find((call) => call.localId === 'capture/metrics/read')!.input.measure)
+      .toEqual({ kind: 'http', statistic: 'requests' });
+    expect(calls.some((call) => call.localId === 'capture/regressions/compare')).toBe(false);
+    await expect(page.queryByText('POST /checkout')).resolves.toBeUndefined();
+  });
+
+  it('draws only the line when Show is Chart', async () => {
+    const { page, calls } = await mount(renderMetric,
+      { environment: ENVIRONMENT, metric: 'p95', show: 'chart' }, comparing({ status: 'inconclusive', reasons: [] }));
+    await vi.waitFor(() => {
+      expect(calls.some((call) => call.localId === 'capture/metrics/read')).toBe(true);
+    });
+    await vi.waitFor(async () => {
+      await expect(page.queryByText('Waiting for traffic')).resolves.toBeUndefined();
+    });
+    await expect(page.queryByText('412 ms')).resolves.toBeUndefined();
+  });
+});
+
 describe('Slowest routes widget', () => {
   it('ranks routes by mean time per request, slowest first, untimed last', () => {
     const ranked = rankSlowestRoutes([

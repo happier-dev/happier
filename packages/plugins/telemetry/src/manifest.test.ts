@@ -57,7 +57,7 @@ describe('Telemetry widgets (D36)', () => {
   it('offers App vitals, Metric and Slowest routes as installed App widgets the person adds, never auto-added', async () => {
     const { projectPluginPortableUiDeclarationsV1 } = await import('@happier-dev/protocol/plugins/contributions/ui/declarationProjection');
     const { PluginManifestV2Schema } = await import('@happier-dev/protocol/plugins/manifest/v2');
-    const { DEPLOYMENT_TELEMETRY_ENVIRONMENTS_OPTIONS_SOURCE_ID_V1 } = await import('@happier-dev/protocol/inputs/deploymentTelemetryEnvironmentOptions');
+    const { DEPLOYMENT_TELEMETRY_ENVIRONMENTS_OPTIONS_SOURCE_ID_V1, DEPLOYMENT_TELEMETRY_ROUTES_OPTIONS_SOURCE_ID_V1 } = await import('@happier-dev/protocol/inputs/deploymentTelemetryEnvironmentOptions');
     // The host's own normalizer, as the daemon runs it at load.
     const manifest = PluginManifestV2Schema.parse(PLUGIN_MANIFEST);
     const entries = projectPluginPortableUiDeclarationsV1(manifest);
@@ -72,9 +72,15 @@ describe('Telemetry widgets (D36)', () => {
       const environment = view && 'inputs' in view ? view.inputs?.fields.find(field => field.path === 'environment') : undefined;
       // The Environment picker is the host's option source, named by its owner's constant.
       expect(environment?.optionsSourceId).toBe(DEPLOYMENT_TELEMETRY_ENVIRONMENTS_OPTIONS_SOURCE_ID_V1);
+      // Add widget says what each one is for, under its title.
+      expect(placement).toHaveProperty('display.description.fallback', expect.any(String));
       const renderer = manifest.contributes.ui.renderers.find(candidate => candidate.id === view?.renderer);
       const artifact = renderer?.kind === 'reactNative' ? renderer.artifact : undefined;
       expect(packageJson.exports[`./happier-plugin-ui/${String(artifact)}`], id).toMatch(/^\.\/src\/ui\/widgets\/.+Widget\.tsx$/);
     }
+    const metric = manifest.contributes.ui.views.find(candidate => candidate.id === 'metric');
+    const route = metric && 'inputs' in metric ? metric.inputs?.fields.find(field => field.path === 'route') : undefined;
+    // Metric's Route picker lists what the chosen Environment served, from the host's option source.
+    expect(route).toMatchObject({ widget: 'select', required: false, optionsSourceId: DEPLOYMENT_TELEMETRY_ROUTES_OPTIONS_SOURCE_ID_V1 });
   });
 });

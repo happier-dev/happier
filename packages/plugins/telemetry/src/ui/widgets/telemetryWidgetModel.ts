@@ -22,6 +22,10 @@ export type TelemetryWidgetMetricV1 =
   | 'requests'
   | 'heap';
 export type TelemetryWidgetRangeV1 = '24h' | '7d';
+/** What the Metric card draws: its number with the line under it (the default), or only one of them. */
+export type TelemetryWidgetShowV1 = 'numberAndChart' | 'number' | 'chart';
+/** One served route, as the `deployments.environments.telemetry.routes` option source writes it. */
+export type TelemetryWidgetRouteV1 = Readonly<{ method: string; route: string }>;
 
 const HOUR_MS = 3_600_000;
 export const TELEMETRY_WIDGET_RANGE_MS: Readonly<
@@ -46,29 +50,77 @@ export function readTelemetryWidgetInputs(launchInput: unknown): Readonly<{
   environment: TelemetryWidgetEnvironmentV1 | null;
   metric: TelemetryWidgetMetricV1;
   range: TelemetryWidgetRangeV1;
+  /** The route the metric is read for; null reads the whole service. Only request time and errors have one. */
+  route: TelemetryWidgetRouteV1 | null;
+  show: TelemetryWidgetShowV1;
 }> {
   const input = readRecord(launchInput);
   const environment = readRecord(input?.environment);
   const serverId = readText(environment?.serverId);
   const environmentId = readText(environment?.environmentId);
   const metric = input?.metric;
+  const selected = readRecord(input?.route);
+  const method = readText(selected?.method);
+  const route = readText(selected?.route);
+  const read: TelemetryWidgetMetricV1 =
+    metric === 'p50' ||
+    metric === 'errorRate' ||
+    metric === 'requests' ||
+    metric === 'heap'
+      ? metric
+      : 'p95';
   return {
     environment: serverId && environmentId ? { serverId, environmentId } : null,
-    metric:
-      metric === 'p50' ||
-      metric === 'errorRate' ||
-      metric === 'requests' ||
-      metric === 'heap'
-        ? metric
-        : 'p95',
+    metric: read,
     range: input?.range === '7d' ? '7d' : '24h',
+    route: method && route && telemetryMetricHasRoute(read) ? { method, route } : null,
+    show: input?.show === 'number' || input?.show === 'chart' ? input.show : 'numberAndChart',
   };
 }
 
-/** The one collector measure each metric reads. Heap is the runtime metric the SDKs report. */
-export function telemetryWidgetMeasure(metric: TelemetryWidgetMetricV1): TelemetryMetricsReadInputV1['measure'] {
+/** Request time and error rate are measured per route; request rate and heap are the whole service's. */
+export function telemetryMetricHasRoute(
+  metric: TelemetryWidgetMetricV1,
+): metric is 'p95' | 'p50' | 'errorRate' {
+  return metric === 'p95' || metric === 'p50' || metric === 'errorRate';
+}
+
+/** "POST /checkout". */
+export function formatTelemetryRoute(route: TelemetryWidgetRouteV1): string {
+  return `${route.method} ${route.route}`;
+}
+
+/** The one collector measure each metric reads. Heap is the runtime metric the SDKs report; a route narrows request time and errors. */
+export function telemetryWidgetMeasure(
+  metric: TelemetryWidgetMetricV1,
+  route: TelemetryWidgetRouteV1 | null = null,
+): TelemetryMetricsReadInputV1['measure'] {
   if (metric === 'heap') return { kind: 'runtime', metricName: 'v8js.memory.heap.used', statistic: 'latest' };
+  if (route && telemetryMetricHasRoute(metric)) return { kind: 'route', routes: [route], statistic: metric };
   return { kind: 'http', statistic: metric };
+}
+
+/**
+ * The measure the deploy comparison reads, or null when the metric has none: the comparison reads key-flow
+ * measures, which are a route's request time or errors, or a runtime metric (heap).
+ */
+export function telemetryWidgetComparedMeasure(
+  metric: TelemetryWidgetMetricV1,
+  route: TelemetryWidgetRouteV1 | null,
+): Exclude<TelemetryMetricsReadInputV1['measure'], { kind: 'http' }> | null {
+  const measure = telemetryWidgetMeasure(metric, route);
+  return measure.kind === 'http' ? null : measure;
+}
+
+/**
+ * The value the live version is compared with: the same window just before the current deploy, as the regression
+ * comparison measured it. Null when the comparison could not compare (no previous deploy, too little traffic).
+ */
+export function readComparedBeforeValue(compared: unknown): number | null {
+  const result = readRecord(compared);
+  if (result?.status !== 'comparable') return null;
+  const value = readRecord(readRecord(result.before)?.measurements)?.value;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 type Measurements = TelemetryMetricsReadResultV1['result']['measurements'];

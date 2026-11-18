@@ -29,6 +29,7 @@ import {
   readRequestRate,
   readTelemetryWidgetInputs,
   readTelemetryWidgetSeries,
+  telemetryWidgetMeasure,
   type TelemetryWidgetMetricV1,
 } from './telemetryWidgetModel.js';
 import {
@@ -101,7 +102,7 @@ export function TelemetryAppVitalsWidget(
       // The Environment's service, as its app names itself to the collector.
       const service = (await reader.endpoints(1)).items[0]?.serviceName;
       if (!service) throw new TelemetryWidgetQuiet();
-      return await reader.metrics(service, 'p95');
+      return await reader.metrics(service, telemetryWidgetMeasure('p95'));
     },
   });
   const vitals = React.useMemo(
