@@ -3,18 +3,20 @@ import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentModelConfig } from '@happier-dev/agents';
 import { readClaudeSettingSourcesV2 } from '@happier-dev/protocol/agents/claude/predecessor-message-meta';
 
 import { withAgentPreflightCatalog } from '@/capabilities/probes/withAgentPreflightCatalog';
 import { createPreflightCatalogCleanupScope } from '@/capabilities/probes/preflightCatalogCleanupScope';
+import { logger } from '@/ui/logger';
 
 import { isDynamicModelProbeEnabled, resolveNativeCatalogTarget } from './nativeCatalogCredential';
 
 const roots: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map(async (root) => await rm(root, { recursive: true, force: true })));
 });
 
@@ -153,6 +155,7 @@ describe('native catalog credentials', () => {
   });
 
   it('accepts the documented maximum token with outer whitespace and rejects excess token output', async () => {
+    const warning = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     const fixture = await helperFixture("process.stdout.write(' '.repeat(100_000) + 'k'.repeat(16_384) + '\\r\\n');");
     const args = { observation: helperObservation, catalogEntry: fixture.catalogEntry,
       defaultEndpointUrl: 'https://api.anthropic.com', enabledSettingSources: ['user'],
@@ -160,9 +163,11 @@ describe('native catalog credentials', () => {
     await expect(resolveNativeCatalogTarget(args)).resolves.toMatchObject({ status: 'ready', credentialValue: 'k'.repeat(16_384) });
     await writeFile(join(fixture.root, 'helper.cjs'), "process.stdout.write('k'.repeat(16_385));");
     await expect(resolveNativeCatalogTarget(args)).resolves.toMatchObject({ status: 'unavailable' });
+    expect(warning).toHaveBeenCalledWith(expect.any(String), { phase: 'providers.catalog.native_helper_output' });
   });
 
   it('does not send a saved default-endpoint login to a custom gateway', async () => {
+    const warning = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     const fixture = await helperFixture("process.stdout.write('must-not-run');");
     const args = { observation: helperObservation, catalogEntry: fixture.catalogEntry,
       defaultEndpointUrl: 'https://api.anthropic.com', enabledSettingSources: [],
@@ -170,6 +175,7 @@ describe('native catalog credentials', () => {
     await expect(resolveNativeCatalogTarget(args)).resolves.toEqual({ status: 'absent' });
     await expect(resolveNativeCatalogTarget({ ...args, environment: { ...args.environment, ANTHROPIC_BASE_URL: 'invalid' } }))
       .resolves.toEqual({ status: 'unavailable' });
+    expect(warning).toHaveBeenCalledWith(expect.any(String), { phase: 'providers.catalog.native_endpoint' });
     await expect(access(fixture.markerPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 

@@ -49,15 +49,23 @@ export async function resolveNativeCatalogTarget(input: Readonly<{
   assertCurrent();
   const declaration = input.observation.nativeTarget;
   if (!declaration) return { status: 'absent' };
+  const unavailable = (phase: 'native_endpoint' | 'native_credential_file' | 'native_helper_setting'
+    | 'native_helper_execution' | 'native_helper_output'): NativeCatalogTargetResolution => {
+    // Native exceptions and inputs can contain credentials. Report the phase alone.
+    logger.warnLocalFile('[native-catalog] Configured native credential source unavailable; model discovery skipped', {
+      phase: `providers.catalog.${phase}`,
+    });
+    return { status: 'unavailable' };
+  };
   let endpointUrl: string;
   let defaultEndpointUrl: string;
   try {
     defaultEndpointUrl = new URL(input.defaultEndpointUrl).href;
     const explicit = declaration.endpointEnvironmentVariable ? input.environment[declaration.endpointEnvironmentVariable]?.trim() : undefined;
     const endpoint = new URL(explicit || defaultEndpointUrl);
-    if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') return { status: 'unavailable' };
+    if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') return unavailable('native_endpoint');
     endpointUrl = endpoint.href;
-  } catch { return { status: 'unavailable' }; }
+  } catch { return unavailable('native_endpoint'); }
   const ready = (credentialValue: string, source: NativeTargetDeclaration['credentialSources'][number]): NativeCatalogTarget => ({
     status: 'ready', endpointUrl, credentialValue, headerBindings: source.headers,
     credentialFingerprint: `sha256:${createHash('sha256').update(credentialValue).digest('hex')}`,
@@ -72,6 +80,8 @@ export async function resolveNativeCatalogTarget(input: Readonly<{
     }
     if (source.kind === 'jsonCommand' && !input.enabledSettingSources.includes(source.requiredSettingSource)) continue;
     if (source.kind === 'jsonFile' && source.defaultEndpointOnly && endpointUrl !== defaultEndpointUrl) continue;
+    let failurePhase: 'native_credential_file' | 'native_helper_setting' | 'native_helper_execution' | 'native_helper_output' =
+      source.kind === 'jsonCommand' ? 'native_helper_setting' : 'native_credential_file';
     try {
       if (readService === undefined) {
         const descriptor = await input.catalogEntry?.getConnectedServiceStateSharingDescriptor?.();
@@ -100,7 +110,7 @@ export async function resolveNativeCatalogTarget(input: Readonly<{
           logger.warnLocalFile('[native-catalog] Invalid native helper settings root ignored');
           continue;
         }
-        return { status: 'unavailable' };
+        return unavailable(failurePhase);
       }
       const configured = readJsonPath(settings, source.jsonPath);
       if (configured === undefined || configured === null || configured === '') continue;
@@ -109,9 +119,9 @@ export async function resolveNativeCatalogTarget(input: Readonly<{
           logger.warnLocalFile('[native-catalog] Invalid native helper command setting ignored');
           continue;
         }
-        return { status: 'unavailable' };
+        return unavailable(failurePhase);
       }
-      if (configured.trim().length === 0) return { status: 'unavailable' };
+      if (configured.trim().length === 0) return unavailable(failurePhase);
       if (source.kind === 'jsonFile') return ready(configured.trim(), source);
       const invalidOutput = new AbortController();
       const signal = input.signal ? AbortSignal.any([input.signal, invalidOutput.signal]) : invalidOutput.signal;
@@ -119,6 +129,7 @@ export async function resolveNativeCatalogTarget(input: Readonly<{
       let ended = false;
       let invalid = false;
       if (!Number.isSafeInteger(source.maxCredentialLength) || source.maxCredentialLength <= 0) return { status: 'unavailable' };
+      failurePhase = 'native_helper_execution';
       let operation: ReturnType<typeof execFileWithDeadline> | undefined;
       const releaseCleanup = await input.retainCleanup?.(async () => {
         await operation?.catch(error => { if (error instanceof ExecFileTerminationError) throw error; });
@@ -135,6 +146,7 @@ export async function resolveNativeCatalogTarget(input: Readonly<{
               if (/\s/u.test(character)) { if (token.length) ended = true; }
               else if (ended || !/[\x21-\x7e]/u.test(character) || token.length >= source.maxCredentialLength) {
                 invalid = true;
+                failurePhase = 'native_helper_output';
                 invalidOutput.abort();
                 return;
               } else token += character;
@@ -146,14 +158,12 @@ export async function resolveNativeCatalogTarget(input: Readonly<{
         releaseCleanup?.();
       }
       assertCurrent();
-      if (!token || invalid) return { status: 'unavailable' };
+      if (!token || invalid) return unavailable('native_helper_output');
       return ready(token, source);
     } catch (error) {
       if (error instanceof ExecFileTerminationError) throw error;
       assertCurrent();
-      // Commands, output, environment and OS failures may all contain credentials.
-      logger.warnLocalFile('[native-catalog] Configured native credential source unavailable; model discovery skipped');
-      return { status: 'unavailable' };
+      return unavailable(failurePhase);
     }
   }
   assertCurrent();
