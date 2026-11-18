@@ -1220,24 +1220,46 @@ describe('Account source watcher assignment', () => {
       create: async input => f.deps.automations.create(AutomationDefinitionCreateRequestSchema.parse(input)),
     };
     const deploymentPreview = { serverId: 'home', environmentId: 'preview-template' };
+    const environment = DeploymentEnvironmentHeaderV1Schema.parse({ v: 1, id: deploymentPreview.environmentId,
+      serverId: deploymentPreview.serverId, projectSourceId: 'preview-source', revision: 9,
+      owner: { kind: 'account', accountId: 'owner' }, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+      dataEditorMode: 'managers', dataAgentAccess: 'none', controllerMachineId: project.machineId,
+      runtimeTargetLinkId: 'runtime', contentArtifactId: 'environment-content', contentHeaderVersion: 1,
+      contentBodyVersion: 1, createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1,
+      capabilities: { editData: false, role: 'manager', read: true, deploy: true, manage: true,
+        manageBindings: true, manageTargets: true, delete: true } });
+    // The authenticated Environment read is a transport boundary; trigger sealing stays real.
+    let environmentReads = 0;
+    const previewParams = { ...params, deploymentAction: async () => {
+      environmentReads++;
+      return { ok: true as const, environment, targetLinks: [] };
+    } };
     const previewDefinition = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [], defaults: {}, blocks: [{
       kind: 'action', id: 'preview-source', actionId: 'deployments.environments.get', input: {
         serverId: { kind: 'literal', value: 'home' }, environmentId: { kind: 'literal', value: 'preview-template' },
       },
     }] });
-    const actions = createAccountWorkflowTriggerActions(params);
+    const actions = createAccountWorkflowTriggerActions(previewParams);
     const saved = await actions.add({ target: { kind: 'inline', definition: previewDefinition }, project,
-      executionTarget: { kind: 'detached_run' }, deploymentPreview, trigger: deploymentEventTrigger });
-    const reloaded = createAccountWorkflowTriggerActions(params);
+      executionTarget: { kind: 'detached_run' }, deploymentPreview, trigger: deploymentEventTrigger }, { surface: 'ui' });
+    expect(f.rows.get(saved.set.automationId)?.executionRecipe).toMatchObject({ deploymentEnvironment: {
+      ...deploymentPreview, projectSourceId: 'preview-source', previewRole: 'preview_admission',
+    } });
+    expect(environmentReads).toBe(1);
+    const reloaded = createAccountWorkflowTriggerActions(previewParams);
     const listed = WorkflowTriggerListResultV1Schema.parse(await reloaded.list({ scope: 'account_inline' }));
     const incumbent = listed.sets.find(set => set.context?.deploymentPreview?.serverId === deploymentPreview.serverId
       && set.context.deploymentPreview.environmentId === deploymentPreview.environmentId);
     expect(incumbent).toMatchObject({ automationId: saved.set.automationId, context: { deploymentPreview } });
     if (!incumbent) throw new Error('Preview enrollment must find its saved Environment');
     await reloaded.update({ automationId: incumbent.automationId, expectedRevision: incumbent.revision,
-      triggerId: saved.triggerId, patch: { enabled: true } });
-    expect(await createAccountWorkflowTriggerActions(params).list({ scope: 'account_inline' }))
+      triggerId: saved.triggerId, patch: { project: { ...project, directory: '/changed' } } });
+    expect(f.rows.get(saved.set.automationId)?.executionRecipe).toMatchObject({ deploymentEnvironment: {
+      ...deploymentPreview, projectSourceId: 'preview-source', previewRole: 'preview_admission',
+    } });
+    expect(await createAccountWorkflowTriggerActions(previewParams).list({ scope: 'account_inline' }))
       .toMatchObject({ sets: [{ automationId: incumbent.automationId, context: { deploymentPreview } }] });
+    expect(environmentReads).toBe(1);
     expect(f.rows.size).toBe(1);
   });
 

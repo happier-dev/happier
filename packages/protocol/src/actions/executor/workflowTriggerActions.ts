@@ -143,7 +143,9 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
   sessionRead?: ActionExecutorDeps['sessionRead'];
   resolveServerProfileScopeId?: ActionExecutorDeps['resolveServerProfileScopeId'];
   openContext: (automation: AutomationDefinitionDetail) => Promise<unknown>;
-  sealContext: (input: Readonly<{ automationId: string; templateVersion: number; context: WorkflowTriggerContextV1 }>) => Promise<AutomationStoredWorkflowDefinitionRecipeV2>;
+  sealContext: (input: Readonly<{ automationId: string; templateVersion: number; context: WorkflowTriggerContextV1;
+    caller?: Caller; deploymentEnvironment?: AutomationStoredWorkflowDefinitionRecipeV2['deploymentEnvironment'];
+  }>) => Promise<AutomationStoredWorkflowDefinitionRecipeV2>;
   newId: (kind: 'automation' | 'trigger') => string;
   /** One authorized current-definition read supplies both execution content and display provenance. */
   resolveWorkflow: (ref: string) => Promise<Readonly<{
@@ -817,19 +819,20 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
   };
   const reconcile = async (row: AutomationDefinitionDetail, context: WorkflowTriggerContextV1, target: TriggerTargetV1,
     targetProject: WorkflowProjectTargetV1, changes: Pick<AutomationDefinitionReconcileRequest, 'triggers' | 'removedTriggers'>,
-    enabled = row.enabled, preserveAssignments = false, storedContext?: unknown, signal?: AbortSignal) => deps.automations.reconcile(row.id, {
+    enabled = row.enabled, preserveAssignments = false, storedContext?: unknown, caller?: Caller) => deps.automations.reconcile(row.id, {
       expectedTemplateVersion: row.templateVersion, name: row.name, description: row.description, enabled,
       workflowDefinitionId: target.kind === 'workflow' ? target.ref : null,
       ...(storedContext !== undefined && sameStrictJsonValue(storedContext, context)
         && (row.executionRecipe?.v !== 2 || (row.executionRecipe.visibleTeamId ?? null) === (context.visibleTeamId ?? null)) ? {} : {
-        executionRecipe: await deps.sealContext({ automationId: row.id, templateVersion: row.templateVersion + 1, context }),
+        executionRecipe: await deps.sealContext({ automationId: row.id, templateVersion: row.templateVersion + 1, context, caller,
+          deploymentEnvironment: row.executionRecipe?.v === 2 ? row.executionRecipe.deploymentEnvironment : undefined }),
       }),
       assignments: preserveAssignments
         ? row.assignments.map(({ machineId, enabled, priority }) => ({ machineId, enabled, priority }))
         : [{ machineId: targetProject.machineId, enabled: row.assignments[0]?.enabled ?? true,
           ...(row.assignments[0]?.priority === undefined ? {} : { priority: row.assignments[0].priority }) }],
       ...changes,
-    }, row, undefined, signal);
+    }, row, undefined, caller?.signal);
   const actions = {
     prepareActionMatching: (accountId: string) => createActionAutomationPrivateMatchingV1({ accountId,
       readDefinition: readRetained,
@@ -957,7 +960,8 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         steps: projected.steps, materializedLeaves: projected.materializedLeaves,
         context: caller, ...(deps.nativeAccount ? { nativeAccount: deps.nativeAccount } : {}) });
       context.actionApprovals = [{ triggerId: AutomationTriggerIdSchema.parse(triggerId), operation }];
-      const executionRecipe = await deps.sealContext({ automationId, templateVersion: (row?.templateVersion ?? 0) + 1, context });
+      const executionRecipe = await deps.sealContext({ automationId, templateVersion: (row?.templateVersion ?? 0) + 1, context, caller,
+        deploymentEnvironment: row?.executionRecipe?.v === 2 ? row.executionRecipe.deploymentEnvironment : undefined });
       let saved: AutomationDefinitionDetail;
       if (row) {
         const trigger = row.triggers.find(item => item.id === triggerId);
@@ -1254,7 +1258,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         const prepared = await prepareTriggerProjection({ target, context: mergedContext }, scope?.sessionId, admittedSource);
         const committed = await reconcile(row, mergedContext, target, targetProject, {
           triggers: [...retainedTriggers(row), { kind: 'new', triggerId, trigger: input.trigger }], removedTriggers: [],
-        }, row.enabled, false, current.storedContext, caller?.signal);
+        }, row.enabled, false, current.storedContext, caller);
         return writeResult(committed, triggerId, false, prepared);
       }
       if (input.deployment !== undefined) context.deploymentTriggers = [{ triggerId, ...input.deployment }];
@@ -1314,7 +1318,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
             const committed = candidate.assignments.length === 1 && candidate.assignments[0]?.machineId === machineId
               ? candidate
               : await reconcile(candidate, context, target, targetProject,
-                { triggers: retainedTriggers(candidate), removedTriggers: [] }, candidate.enabled, false, current.storedContext, caller?.signal);
+                { triggers: retainedTriggers(candidate), removedTriggers: [] }, candidate.enabled, false, current.storedContext, caller);
             return writeResult(committed, registered.id, false, prepared);
           }
         }
@@ -1324,7 +1328,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         mode: input.actionApproval, initialDeployment: input.trigger.kind === 'pluginEvent' && input.deployment !== undefined,
         parent: { actionId: 'workflow.trigger.add', input: approvalInput(input) }, caller });
       const prepared = await prepareTriggerProjection({ target, context }, scope?.sessionId, admittedSource);
-      const executionRecipe = await deps.sealContext({ automationId, templateVersion: 1, context });
+      const executionRecipe = await deps.sealContext({ automationId, templateVersion: 1, context, caller });
       const row = await deps.automations.create({ automationId, name: WORKFLOW_TRIGGER_SET_STORAGE_NAME, description: null, enabled: true,
         workflowDefinitionId: target.kind === 'workflow' ? target.ref : null, scopeSessionId: scope?.sessionId ?? null,
         executionRecipe,
@@ -1469,7 +1473,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const prepared = await prepareTriggerProjection({ target, context }, row.scopeSessionId, admittedSource);
       return writeResult(await reconcile(row, context, target, targetProject, { triggers, removedTriggers: [] },
         setEnabled, nextProject === undefined || (reviewedProject !== undefined
-          && createCanonicalJsonSigningInput(reviewedProject) === createCanonicalJsonSigningInput(targetProject)), current.storedContext, caller?.signal), input.triggerId, false, prepared);
+          && createCanonicalJsonSigningInput(reviewedProject) === createCanonicalJsonSigningInput(targetProject)), current.storedContext, caller), input.triggerId, false, prepared);
     },
     remove: async (raw: WorkflowTriggerRemoveRequestV1 & { triggerId: string }, sessionId?: string, caller?: Caller) => {
       const input = WorkflowTriggerRemoveRequestV1Schema.parse(raw);
@@ -1575,7 +1579,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           ? await deps.prepareBirthTrigger(automationId, triggerId, trigger) : trigger;
         prepared.push(SessionInitialTriggerAdmissionV1Schema.parse({ automationId, name: WORKFLOW_TRIGGER_SET_STORAGE_NAME, description: null,
           enabled: true, workflowDefinitionId: draft.target.kind === 'workflow' ? draft.target.ref : null,
-          executionRecipe: await deps.sealContext({ automationId, templateVersion: 1, context }),
+          executionRecipe: await deps.sealContext({ automationId, templateVersion: 1, context, caller: input.caller }),
           assignments: [{ machineId: input.project.machineId, enabled: true }],
           triggers: [{ triggerId, trigger: admittedTrigger }],
         }));

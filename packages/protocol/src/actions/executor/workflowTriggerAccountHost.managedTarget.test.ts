@@ -47,6 +47,7 @@ function fixture(encryption: AvailableAutomationAccountEncryptionV1 = plain) {
   }> = {
     listDetails: async input => {
       lists.push(input);
+      if (input.legacySessionLifecycleSelections) return { automations: [], legacySessionLifecycleSelections: [], nextCursor: null };
       return { automations: [...rows.values()].filter(row => !input.managedTargetUnindexed || row.managedTarget === undefined), nextCursor: null };
     },
     list: async input => {
@@ -100,6 +101,10 @@ describe('Automation managed-target migration', () => {
     for (let index = 0; index < 1000; index++) f.seed(`unrelated-${index}`, false, true);
     f.seed('old-managed', true);
     f.seed('old-unrelated', false, false, 'team-one');
+    const unrelatedRecipe = f.rows.get('old-unrelated')!.executionRecipe;
+    if (unrelatedRecipe?.v !== 2) throw new Error('Expected the workflow recipe');
+    const deploymentEnvironment = { serverId: 'home-one', projectSourceId: 'source-one', environmentId: 'environment-one' };
+    unrelatedRecipe.deploymentEnvironment = deploymentEnvironment;
     expect(await backfillAutomationManagedTargetsV1(f.params)).toEqual({ updated: 2, unresolved: 0 });
     expect(f.writes).toEqual(['old-managed', 'old-unrelated']);
     expect(f.reads).toHaveLength(0);
@@ -109,13 +114,15 @@ describe('Automation managed-target migration', () => {
     expect(await backfillAutomationManagedTargetsV1(f.params)).toEqual({ updated: 0, unresolved: 0 });
     expect(f.writes).toHaveLength(2);
     expect(f.reads).toHaveLength(0);
-    expect(f.lists).toEqual([{ managedTargetUnindexed: true }, { managedTargetUnindexed: true }]);
+    expect(f.lists).toEqual([{ legacySessionLifecycleSelections: true }, { managedTargetUnindexed: true },
+      { legacySessionLifecycleSelections: true }, { managedTargetUnindexed: true }]);
     const recipe = f.rows.get('old-managed')!.executionRecipe!;
     if (recipe.v !== 2) throw new Error('Current recipe required');
     expect(recipe.managedTarget).toEqual(target);
     expect(Object.keys(recipe).sort()).toEqual(['managedTarget', 'templateVersion', 'triggerEvidence', 'v', 'visibleTeamId', 'workflow']);
     expect(recipe.visibleTeamId).toBeNull();
     expect(f.rows.get('old-unrelated')!.executionRecipe).toMatchObject({ v: 2, visibleTeamId: 'team-one' });
+    expect(f.rows.get('old-unrelated')!.executionRecipe).toMatchObject({ deploymentEnvironment });
     const opened = recipe.workflow.t === 'plain' ? recipe.workflow.v : isAvailableE2eeAutomationAccountEncryptionV1(mode)
       ? openAccountScopedBlobCiphertext({ kind: 'automation_template_payload', material: mode.material.material, ciphertext: recipe.workflow.c })?.value : null;
     expect(AutomationStoredWorkflowDefinitionV2ReadSchema.parse(opened).workspace.directory).toBe('/private/repo');

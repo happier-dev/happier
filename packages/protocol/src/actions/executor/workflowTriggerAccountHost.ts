@@ -73,7 +73,10 @@ import {
 } from './workflowTriggerActions.js';
 import { normalizeStoredWorkflowTriggerConsent } from './workflowTriggerConsent.js';
 import type { WorkflowAccountRunActionDeps } from './workflowRunActions.js';
-import { isConfirmedActionWriteRefusal } from './actionFailureEnvelope.js';
+import { isConfirmedActionWriteRefusal, readActionFailureEnvelope } from './actionFailureEnvelope.js';
+import { DeploymentEnvironmentGetResultV1Schema } from '../../deployments/deploymentActionsV1.js';
+import { createActionExecuteFailureError } from '../actionExecutionResult.js';
+import type { ActionExecutorContext } from './types.js';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '../../deployments/healthCheckV1.js';
 import { isHealthCheckEventSourceV1 } from '../../deployments/healthCheckSourceV1.js';
 import { canonicalizeAutomationSessionLifecycleStructuralConfiguration, projectAutomationSessionLifecycleStructuralConfiguration } from '../../automations/automationSessionLifecycle.js';
@@ -97,7 +100,7 @@ export type WorkflowTriggerAccountHostParams = Readonly<{
   newId: () => string;
 }> & Pick<WorkflowTriggerActionsDependencies, 'nativeAccount' | 'deploymentAction' | 'sessionList' | 'sessionRead' | 'resolveWorkflow' | 'resolveWorkflowTeamIds' | 'resolveSession' | 'resolveRunTrigger' | 'resolveRunSource' | 'resolveManagedMachine' | 'resolveMaterializer' | 'pullRequests' | 'listContributedActionDefinitions'>;
 
-type WorkflowCodecParams = Pick<WorkflowTriggerAccountHostParams, 'resolveEncryption' | 'randomBytes'>;
+type WorkflowCodecParams = Pick<WorkflowTriggerAccountHostParams, 'resolveEncryption' | 'randomBytes' | 'deploymentAction'>;
 
 function openWorkflowEnvelope(raw: unknown, current: AvailableAutomationAccountEncryptionV1): AutomationStoredWorkflowDefinitionV2 {
   const opened = openAutomationStoredWorkflowDefinitionV2({ workflow: raw, encryption: current });
@@ -108,8 +111,24 @@ function openWorkflowEnvelope(raw: unknown, current: AvailableAutomationAccountE
 /** Every authoring host and the one-shot migration use this same seal and relationship derivation. */
 async function sealWorkflowContext(params: WorkflowCodecParams, input: Readonly<{
   templateVersion: number; context: AutomationStoredWorkflowDefinitionV2;
+  caller?: ActionExecutorContext;
+  deploymentEnvironment?: AutomationStoredWorkflowDefinitionRecipeV2['deploymentEnvironment'];
 }>) {
   const payload = AutomationStoredWorkflowDefinitionV2Schema.parse(input.context);
+  let deploymentEnvironment = input.deploymentEnvironment;
+  const preview = payload.deploymentPreview;
+  if (preview && (!deploymentEnvironment || deploymentEnvironment.serverId !== preview.serverId
+    || deploymentEnvironment.environmentId !== preview.environmentId || deploymentEnvironment.previewRole !== 'preview_admission')) {
+    if (!input.caller || !params.deploymentAction) unavailable('target_unavailable');
+    const loaded = await params.deploymentAction('deployments.environments.get', preview, input.caller);
+    const failure = readActionFailureEnvelope(loaded);
+    if (failure) throw createActionExecuteFailureError(failure);
+    const current = DeploymentEnvironmentGetResultV1Schema.safeParse(loaded);
+    if (!current.success) unavailable('invalid_action_output');
+    if (!current.data.ok) unavailable(current.data.error, current.data);
+    deploymentEnvironment = { ...preview, projectSourceId: current.data.environment.projectSourceId,
+      previewRole: 'preview_admission' };
+  }
   const current = await params.resolveEncryption();
   const workflow = isAvailableE2eeAutomationAccountEncryptionV1(current)
     ? { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({ kind: 'automation_template_payload',
@@ -118,6 +137,7 @@ async function sealWorkflowContext(params: WorkflowCodecParams, input: Readonly<
   const managed = payload.inlineDefinition && readManagedMachineTriggerAction({ kind: 'inline', definition: payload.inlineDefinition });
   return AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: input.templateVersion,
     workflow, triggerEvidence: null, visibleTeamId: payload.visibleTeamId ?? null,
+    ...(deploymentEnvironment ? { deploymentEnvironment } : {}),
     managedTarget: managed ? { homeId: managed.input.homeId, managedId: managed.input.managedId } : null });
 }
 
@@ -205,7 +225,7 @@ export async function backfillAutomationManagedTargetsV1(params: WorkflowCodecPa
         };
         const executionRecipe = await sealWorkflowContext({ ...params,
           resolveEncryption: async () => sameAuthority(await params.resolveEncryption()) }, {
-          templateVersion: row.templateVersion + 1, context,
+          templateVersion: row.templateVersion + 1, context, deploymentEnvironment: row.executionRecipe.deploymentEnvironment,
         });
         const beforeWrite = async () => { sameAuthority(await params.resolveEncryption()); };
         await beforeWrite();
@@ -323,11 +343,11 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
     if (!hasPrivateAutomationDefinitionDisplayCarrierV1(row)) return row;
     return materializePrivateDisplay(row, await params.resolveEncryption());
   };
-  const sealPrivateDisplay = async (recipe: Pick<AutomationStoredWorkflowDefinitionRecipeV2, 'workflow'>,
+  const sealPrivateDisplay = async (recipe: Pick<AutomationStoredWorkflowDefinitionRecipeV2, 'workflow' | 'deploymentEnvironment'>,
     templateVersion: number, display: AutomationDefinitionDisplayV1) => {
     const opened = await openWorkflowDefinition(recipe);
     return sealWorkflowContext({ ...params, resolveEncryption: sameEncryption(opened.current) }, {
-      templateVersion, context: { ...opened.context, display },
+      templateVersion, context: { ...opened.context, display }, deploymentEnvironment: recipe.deploymentEnvironment,
     });
   };
   const openActionDefinition = async (recipe: AutomationStoredActionDefinitionRecipeV1) => {
@@ -418,7 +438,7 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
       description: null,
       executionRecipe: await sealWorkflowContext({ ...params, resolveEncryption: sameEncryption(opened.current) }, {
         templateVersion: input.executionRecipe?.v === 2 ? input.executionRecipe.templateVersion : row.templateVersion + 1,
-        context: { ...opened.context, display },
+        context: { ...opened.context, display }, deploymentEnvironment: recipe.deploymentEnvironment,
       }),
     };
   };
