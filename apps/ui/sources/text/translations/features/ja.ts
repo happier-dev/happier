@@ -427,7 +427,7 @@ const deploymentDefaultsTranslations = {
   "ja": {
         accountDescription: 'アカウント所有プロジェクトの新しい環境に適用する既定値です。チームのプロジェクトでは共有のプロジェクト既定値を使います。',
         projectDescription: '環境の作成時に適用します。既存の環境は現在の設定を維持します。',
-        useAccount: 'アカウントの既定値を使う', useBuiltin: 'Happierの既定値を使う', retention: 'ロールバック用に保持するリリース数',
+        useAccount: 'アカウントの既定値を使う', useBuiltin: 'Happierの既定値を使う', sectionDeploys: 'デプロイ', resetBuiltin: 'Happierの既定値に戻す', resetAccount: 'アカウントの既定値に戻す', retention: 'ロールバック用に保持するリリース数',
         clearToInherit: '空にすると既定値を継承します', projectTitle: 'デプロイ設定', alertChannels: '通知チャンネル', accountLink: 'アカウントのデプロイ既定値',
         triggersTitle: "トリガー", triggersDescription: "トリガーは環境ごとに動きます。環境を開いて確認・追加できます。",
     },

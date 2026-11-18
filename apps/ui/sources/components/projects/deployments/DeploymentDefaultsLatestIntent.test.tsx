@@ -124,7 +124,9 @@ it('keeps a replacement Account binding independent of its predecessor’s held 
             selectAccount(accountB.credentials);
         });
         await vi.waitFor(() => expect(database()?.props.disabled).toBe(false));
-        expect(database().props.value).toBe('inherit');
+        // The new binding's own value: nothing set, so the row follows the default (no per-row "Use default" choice).
+        expect(database().props.value).toBeNull();
+        expect(database().props.valueSource).toBe('inherited');
         await act(async () => database().props.onChange('branch'));
         await vi.waitFor(() => expect(accountB?.persistedSettings.deploymentDefaultsV1.previewDatabase).toBe('branch'));
         await act(async () => first.resolve());

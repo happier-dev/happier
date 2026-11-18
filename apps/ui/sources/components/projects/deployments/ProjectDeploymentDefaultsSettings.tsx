@@ -101,11 +101,12 @@ export function ProjectDeploymentDefaultsSettings(props: Readonly<{ lifetime: Se
             summary={execution.approval.approvalSummary} onOpenApproval={execution.approval.openApproval} /> : null}
         {error ? <SurfaceStateCard kind="error" title={t('projects.deployments.loadErrorTitle')}
             action={{ label: t('common.retry'), onPress: () => setRetry(value => value + 1) }} /> : null}
-        {value && preferences && resolved && lifetime && (!ownAccount || account.preferences) ? <ItemGroup title={t('projects.deployments.creationDefaults')}>
-            {renderDeploymentDefaultsEditorRows({ serverId: lifetime.scope.serverId, preferences, resolved,
+        {value && preferences && resolved && lifetime && (!ownAccount || account.preferences)
+            ? renderDeploymentDefaultsEditorRows({ serverId: lifetime.scope.serverId, preferences, resolved,
                 inheritLabel: t(ownAccount ? 'projects.deployments.defaultsEditor.useAccount' : 'projects.deployments.defaultsEditor.useBuiltin'),
-                disabled: !value.canManage || !execution.ready || Boolean(error), onChange: next => { void save(next); } })}
-        </ItemGroup> : !error ? <SurfaceStateCard kind={account.error ? 'error' : 'loading'} title={t('projects.deployments.creationDefaults')}
+                resetLabel: t(ownAccount ? 'projects.deployments.defaultsEditor.resetAccount' : 'projects.deployments.defaultsEditor.resetBuiltin'),
+                disabled: !value.canManage || !execution.ready || Boolean(error), onChange: next => { void save(next); } })
+            : !error ? <SurfaceStateCard kind={account.error ? 'error' : 'loading'} title={t('projects.deployments.creationDefaults')}
             {...(account.error ? { action: { label: t('common.retry'), onPress: account.retry } } : {})} /> : null}
         {ownAccount && lifetime ? <ItemGroup><Item testID="project-deployment-defaults.account" title={t('projects.deployments.defaultsEditor.accountLink')}
             icon={<Icon name="sliders-horizontal" size={18} color={theme.colors.text.secondary} />}

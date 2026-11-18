@@ -430,7 +430,7 @@ const deploymentDefaultsTranslations = {
   "pt": {
         accountDescription: 'Padrões para novos ambientes nos projetos da sua conta. Projetos de equipe usam os padrões compartilhados do projeto.',
         projectDescription: 'Usados ao criar um ambiente. Os ambientes existentes mantêm suas configurações.',
-        useAccount: 'Usar padrão da conta', useBuiltin: 'Usar padrão do Happier', retention: 'Versões mantidas para reverter',
+        useAccount: 'Usar padrão da conta', useBuiltin: 'Usar padrão do Happier', sectionDeploys: 'Implementações', resetBuiltin: 'Repor os padrões do Happier', resetAccount: 'Repor os padrões da conta', retention: 'Versões mantidas para reverter',
         clearToInherit: 'Limpe para herdar o padrão', projectTitle: 'Configurações de implantação', alertChannels: 'Canais de notificação', accountLink: 'Padrões de implantação da sua conta',
         triggersTitle: "Gatilhos", triggersDescription: "Cada ambiente executa os próprios gatilhos. Abra um para vê-los ou adicioná-los.",
     },

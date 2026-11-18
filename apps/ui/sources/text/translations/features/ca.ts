@@ -430,7 +430,7 @@ const deploymentDefaultsTranslations = {
   "ca": {
         accountDescription: 'Valors per als entorns nous dels projectes del teu compte. Els projectes d’equip fan servir els valors compartits del projecte.',
         projectDescription: 'S’apliquen en crear un entorn. Els entorns existents conserven la seva configuració.',
-        useAccount: 'Fes servir el valor del compte', useBuiltin: 'Fes servir el valor de Happier', retention: 'Versions conservades per desfer',
+        useAccount: 'Fes servir el valor del compte', useBuiltin: 'Fes servir el valor de Happier', sectionDeploys: 'Desplegaments', resetBuiltin: 'Restableix els valors de Happier', resetAccount: 'Restableix els valors del compte', retention: 'Versions conservades per desfer',
         clearToInherit: 'Buida-ho per heretar el valor', projectTitle: 'Configuració dels desplegaments', alertChannels: 'Canals de notificacions', accountLink: 'Valors de desplegament del teu compte',
         triggersTitle: "Activadors", triggersDescription: "Cada entorn executa els seus propis activadors. Obre’n un per veure’ls o afegir-ne.",
     },

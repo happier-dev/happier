@@ -426,7 +426,7 @@ const deploymentDefaultsTranslations = {
   "de": {
         accountDescription: 'Vorgaben für neue Umgebungen deiner Kontoprojekte. Teamprojekte verwenden ihre gemeinsamen Projektvorgaben.',
         projectDescription: 'Gilt beim Erstellen einer Umgebung. Bestehende Umgebungen behalten ihre Einstellungen.',
-        useAccount: 'Kontovorgabe verwenden', useBuiltin: 'Happier-Vorgabe verwenden', retention: 'Für Rollback aufbewahrte Versionen',
+        useAccount: 'Kontovorgabe verwenden', useBuiltin: 'Happier-Vorgabe verwenden', sectionDeploys: 'Bereitstellungen', resetBuiltin: 'Auf Happier-Vorgaben zurücksetzen', resetAccount: 'Auf Kontovorgaben zurücksetzen', retention: 'Für Rollback aufbewahrte Versionen',
         clearToInherit: 'Leeren, um die Vorgabe zu übernehmen', projectTitle: 'Bereitstellungseinstellungen', alertChannels: 'Benachrichtigungskanäle', accountLink: 'Bereitstellungsvorgaben deines Kontos',
         triggersTitle: "Auslöser", triggersDescription: "Jede Umgebung hat ihre eigenen Auslöser. Öffne eine, um sie zu sehen oder hinzuzufügen.",
     },

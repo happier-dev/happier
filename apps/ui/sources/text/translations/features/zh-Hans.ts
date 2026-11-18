@@ -422,7 +422,7 @@ const deploymentDefaultsTranslations = {
   "zh-Hans": {
         accountDescription: '用于你的账号所拥有项目中的新环境。团队项目使用共享的项目默认设置。',
         projectDescription: '创建环境时使用。现有环境保留各自的设置。',
-        useAccount: '使用账号默认值', useBuiltin: '使用 Happier 默认值', retention: '为回滚保留的版本数',
+        useAccount: '使用账号默认值', useBuiltin: '使用 Happier 默认值', sectionDeploys: '部署', resetBuiltin: '重置为 Happier 默认值', resetAccount: '重置为账号默认值', retention: '为回滚保留的版本数',
         clearToInherit: '清空以继承默认值', projectTitle: '部署设置', alertChannels: '通知渠道', accountLink: '你的账号部署默认设置',
         triggersTitle: "触发器", triggersDescription: "每个环境运行自己的触发器。打开一个环境即可查看或添加。",
     },

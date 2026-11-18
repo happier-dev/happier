@@ -428,7 +428,7 @@ const deploymentDefaultsTranslations = {
   "it": {
         accountDescription: 'Valori per i nuovi ambienti nei progetti del tuo account. I progetti del team usano i valori condivisi del progetto.',
         projectDescription: 'Usati quando crei un ambiente. Gli ambienti esistenti mantengono le proprie impostazioni.',
-        useAccount: 'Usa il valore dell’account', useBuiltin: 'Usa il valore di Happier', retention: 'Versioni conservate per il ripristino',
+        useAccount: 'Usa il valore dell’account', useBuiltin: 'Usa il valore di Happier', sectionDeploys: 'Rilasci', resetBuiltin: 'Ripristina i valori di Happier', resetAccount: 'Ripristina i valori dell’account', retention: 'Versioni conservate per il ripristino',
         clearToInherit: 'Svuota per ereditare il valore', projectTitle: 'Impostazioni dei deployment', alertChannels: 'Canali di notifica', accountLink: 'Valori di deployment del tuo account',
         triggersTitle: "Trigger", triggersDescription: "Ogni ambiente esegue i propri trigger. Aprine uno per vederli o aggiungerli.",
     },

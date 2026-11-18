@@ -150,6 +150,9 @@ export const FieldValueItem = React.memo(function FieldValueItem(props: FieldVal
             accessibilityLabel={fieldAccessibilityLabel ?? (unit ? `${title ?? ''} (${unit})` : title ?? '')}
             accessibilityHint={description}
             keyboardType={resolveHappierFieldKeyboardType(kind, signed)}
+            // A count that follows a default shows it muted, never an empty box between − and + (R2 defaults).
+            placeholder={placeholder}
+            placeholderTextColor={theme.colors.input.placeholder}
             editable={itemProps.disabled !== true}
             onBlur={field.commit}
             onSubmitEditing={field.commit}

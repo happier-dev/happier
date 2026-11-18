@@ -427,7 +427,7 @@ const deploymentDefaultsTranslations = {
   "pl": {
         accountDescription: 'Domyślne ustawienia nowych środowisk w projektach Twojego konta. Projekty zespołu używają wspólnych ustawień projektu.',
         projectDescription: 'Stosowane przy tworzeniu środowiska. Istniejące środowiska zachowują swoje ustawienia.',
-        useAccount: 'Użyj ustawienia konta', useBuiltin: 'Użyj ustawienia Happier', retention: 'Wersje zachowane do wycofania',
+        useAccount: 'Użyj ustawienia konta', useBuiltin: 'Użyj ustawienia Happier', sectionDeploys: 'Wdrożenia', resetBuiltin: 'Przywróć ustawienia Happier', resetAccount: 'Przywróć ustawienia konta', retention: 'Wersje zachowane do wycofania',
         clearToInherit: 'Wyczyść, aby odziedziczyć ustawienie', projectTitle: 'Ustawienia wdrożeń', alertChannels: 'Kanały powiadomień', accountLink: 'Domyślne ustawienia wdrożeń konta',
         triggersTitle: "Wyzwalacze", triggersDescription: "Każde środowisko ma własne wyzwalacze. Otwórz je, aby je zobaczyć lub dodać.",
     },

@@ -429,7 +429,7 @@ const deploymentDefaultsTranslations = {
   "es": {
         accountDescription: 'Valores para entornos nuevos en los proyectos de tu cuenta. Los proyectos de equipo usan los valores compartidos del proyecto.',
         projectDescription: 'Se aplican al crear un entorno. Los entornos existentes conservan su configuración.',
-        useAccount: 'Usar el valor de la cuenta', useBuiltin: 'Usar el valor de Happier', retention: 'Versiones conservadas para revertir',
+        useAccount: 'Usar el valor de la cuenta', useBuiltin: 'Usar el valor de Happier', sectionDeploys: 'Despliegues', resetBuiltin: 'Restablecer los valores de Happier', resetAccount: 'Restablecer los valores de la cuenta', retention: 'Versiones conservadas para revertir',
         clearToInherit: 'Borra para heredar el valor', projectTitle: 'Configuración de despliegues', alertChannels: 'Canales de notificaciones', accountLink: 'Valores de despliegue de tu cuenta',
         triggersTitle: "Disparadores", triggersDescription: "Cada entorno ejecuta sus propios disparadores. Abre uno para verlos o añadirlos.",
     },

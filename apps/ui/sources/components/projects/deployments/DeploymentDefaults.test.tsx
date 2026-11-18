@@ -61,14 +61,12 @@ describe('deployment defaults pages', () => {
             const count = () => screen.findAllByType(FieldValueItem).find(row => row.props.testID === 'deployment-defaults.backupRetention.daily')!;
             await act(async () => count().props.onCommit('14'));
             await vi.waitFor(() => expect(account.persistedSettings.deploymentDefaultsV1.backupRetention).toEqual({ kind: 'keep', daily: 14 }));
-            await act(async () => database().props.onChange('inherit'));
-            await vi.waitFor(() => expect(account.persistedSettings.deploymentDefaultsV1.previewDatabase).toBeUndefined());
+            // The row shows the value it holds; there is no per-row "Use Happier's default" segment (UI refinements 11-18).
+            expect(database().props.options.map((option: { id: string }) => option.id)).toEqual(['none', 'own', 'branch']);
             const alerts = () => screen.findAllByType(SegmentedChoiceItem).find(row => row.props.testIDPrefix === 'deployment-defaults.alertChannels')!;
             expect(alerts()).toBeDefined();
             await act(async () => alerts().props.onChange('off'));
             await vi.waitFor(() => expect(account.persistedSettings.deploymentDefaultsV1.alertChannels).toEqual([]));
-            await act(async () => alerts().props.onChange('inherit'));
-            await vi.waitFor(() => expect(account.persistedSettings.deploymentDefaultsV1.alertChannels).toBeUndefined());
             expect(alerts().props.options).toContainEqual(expect.objectContaining({ id: 'configured' }));
             const priorPresentations = vi.mocked(Modal.show).mock.calls.length;
             await act(async () => { alerts().props.onChange('configured'); });
@@ -92,6 +90,10 @@ describe('deployment defaults pages', () => {
             expect(removeAlert).toBeDefined();
             await act(async () => { removeAlert!.props.onPress(); });
             await vi.waitFor(() => expect(account.persistedSettings.deploymentDefaultsV1.alertChannels).toEqual([secondChannel]));
+            // One reset at the foot returns every value to Happier's default.
+            await screen.pressByTestIdAsync('deployment-defaults.reset.button');
+            await vi.waitFor(() => expect(account.persistedSettings.deploymentDefaultsV1).toEqual({}));
+            expect(screen.findByTestId('deployment-defaults.reset.button')).toBeNull();
         } finally { standardCleanup(); await account.dispose(); }
     });
 

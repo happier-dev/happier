@@ -423,7 +423,7 @@ const deploymentDefaultsTranslations = {
   "zh-Hant": {
         accountDescription: '用於你的帳號所擁有專案中的新環境。團隊專案使用共用的專案預設設定。',
         projectDescription: '建立環境時使用。現有環境保留各自的設定。',
-        useAccount: '使用帳號預設值', useBuiltin: '使用 Happier 預設值', retention: '為復原保留的版本數',
+        useAccount: '使用帳號預設值', useBuiltin: '使用 Happier 預設值', sectionDeploys: '部署', resetBuiltin: '重設為 Happier 預設值', resetAccount: '重設為帳號預設值', retention: '為復原保留的版本數',
         clearToInherit: '清空以繼承預設值', projectTitle: '部署設定', alertChannels: '通知管道', accountLink: '你的帳號部署預設設定',
         triggersTitle: "觸發器", triggersDescription: "每個環境執行自己的觸發器。開啟一個環境即可查看或新增。",
     },

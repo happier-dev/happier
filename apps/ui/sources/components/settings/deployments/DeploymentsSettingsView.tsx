@@ -81,11 +81,10 @@ function DeploymentDefaultsEditor({ binding, serverId, homeLabel }: Readonly<{
         {execution.approval.approvalPending ? <ActionApprovalPendingNotice message={t('approvals.waitingForYou')}
             summary={execution.approval.approvalSummary} onOpenApproval={execution.approval.openApproval} /> : null}
         {resolved && preferences && serverId ? <SettingAnchor setting={DEPLOYMENTS_SETTINGS.settings.creationDefaults}>
-            <ItemGroup title={t('projects.deployments.creationDefaults')}>
-                {renderDeploymentDefaultsEditorRows({ serverId, preferences, resolved,
-                    inheritLabel: t('projects.deployments.defaultsEditor.useBuiltin'), disabled: !execution.ready,
-                    onChange: next => { void save(next); } })}
-            </ItemGroup>
+            {renderDeploymentDefaultsEditorRows({ serverId, preferences, resolved,
+                inheritLabel: t('projects.deployments.defaultsEditor.useBuiltin'),
+                resetLabel: t('projects.deployments.defaultsEditor.resetBuiltin'), disabled: !execution.ready,
+                onChange: next => { void save(next); } })}
         </SettingAnchor> : <SurfaceStateCard kind={defaults.error ? 'error' : 'loading'} title={t('projects.deployments.creationDefaults')}
             {...(defaults.error ? { action: { label: t('common.retry'), onPress: defaults.retry } } : {})} />}
         {serverId ? <DeploySuggestionAgentSetting serverId={serverId} disabled={!execution.ready}

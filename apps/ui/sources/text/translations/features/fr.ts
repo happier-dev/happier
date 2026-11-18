@@ -430,7 +430,7 @@ const deploymentDefaultsTranslations = {
   "fr": {
         accountDescription: 'Valeurs pour les nouveaux environnements des projets de ton compte. Les projets d’équipe utilisent leurs valeurs partagées.',
         projectDescription: 'Appliquées à la création d’un environnement. Les environnements existants gardent leurs réglages.',
-        useAccount: 'Utiliser la valeur du compte', useBuiltin: 'Utiliser la valeur de Happier', retention: 'Versions gardées pour revenir en arrière',
+        useAccount: 'Utiliser la valeur du compte', useBuiltin: 'Utiliser la valeur de Happier', sectionDeploys: 'Déploiements', resetBuiltin: 'Rétablir les valeurs de Happier', resetAccount: 'Rétablir les valeurs du compte', retention: 'Versions gardées pour revenir en arrière',
         clearToInherit: 'Effacer pour hériter de la valeur', projectTitle: 'Réglages des déploiements', alertChannels: 'Canaux de notification', accountLink: 'Valeurs de déploiement de ton compte',
         triggersTitle: "Déclencheurs", triggersDescription: "Chaque environnement a ses propres déclencheurs. Ouvrez-en un pour les voir ou en ajouter.",
     },
