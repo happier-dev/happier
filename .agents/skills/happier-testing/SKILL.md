@@ -206,6 +206,7 @@ Most live failures in 0.3 were correct owners wired together wrongly: an empty e
 - Before starting Metro or Playwright in a shared development VM, inspect current compiler, Vitest, and Metro load. A bundle-fetch timeout under unrelated saturation is not valid RED evidence and must not become a larger repository timeout.
 - Preserve the original stack, phase label, browser diagnostics, and focused artifacts. Inspect artifact metadata before downloading a potentially huge diagnostics tree.
 - When a failure involves a timeout, retry count, request/body cap, or other bound, first prove which lifecycle or resource owner should govern it. Do not turn one slow run or fixture size into a new production limit. A deciding regression test should show reuse of the canonical budget/boundary and accept valid work beyond the incorrect local cutoff it replaces.
+- A long queued check must run detached (the runtime's background facility, or nohup with a log and a recorded PID) and be polled. A tool-call timeout that kills a queued run makes it not run, never a result.
 
 ## Live Validation Gates
 
