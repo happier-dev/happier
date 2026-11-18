@@ -2,7 +2,7 @@ import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/mac
 import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import type { ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
-import { prepareManagedOpaquePresetAcquireV1 } from '@happier-dev/cli-common/machines/managed';
+import { managedMachineSetupHasWorkV1, prepareManagedOpaquePresetAcquireV1 } from '@happier-dev/cli-common/machines/managed';
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { projectManagedMachineRolePurposeBindingsV1 } from '@happier-dev/cli-common/machines/managed';
 import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
@@ -704,7 +704,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 : { platform: await probeManagedNativeGuestPlatform(io.exec, finiteSignal) };
             const setup = hydrator.readSetupDefinition(current);
             const setupRemaining = current.machineSetup?.state !== 'succeeded' && current.machineSetup?.state !== 'skipped'
-                && Boolean(setup?.toolchain || setup?.items?.length || setup?.scripts?.some(script => script.body));
+                && managedMachineSetupHasWorkV1(setup);
             const selectedExecution = hydrator.readPresetDefinition(current)?.preparationExecution;
             const channel = resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label;
             let setupBinaryPath = selectedExecution?.binaryPath ?? resolveRemoteInstalledFirstPartyBinaryPath({ componentId: 'happier-cli',

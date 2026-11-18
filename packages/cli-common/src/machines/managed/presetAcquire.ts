@@ -140,6 +140,11 @@ function readLatestOpaquePresetNativeProjection(opened: ManagedMachinePresetCont
             : native?.kind === 'unknown' ? { recovery: native.recovery } : {};
 }
 
+/** Whether a creation Setup has anything to run; an empty script body is no work. */
+export function managedMachineSetupHasWorkV1(setup: ManagedMachinePresetContentV1['setup'] | undefined): boolean {
+    return Boolean(setup?.toolchain || setup?.items?.length || setup?.scripts?.some(script => script.body));
+}
+
 /**
  * A host-local full view is the only presentation/execution form of an opaque
  * row. The structural row stays exactly server-shaped; this helper never
@@ -152,8 +157,13 @@ export function hydrateManagedOpaquePresetMachineV1(params: Readonly<{
     if (!params.opened.launch) return null;
     const execution = params.opened.preparationExecution;
     const setup = execution === undefined ? params.opened.setup : execution.deferredSetup ?? {};
-    const machineSetup = params.machine.machineSetup === undefined ? undefined
-        : setup === undefined ? null : { ...params.machine.machineSetup, setup,
+    // Home cannot read a sealed recipe, so it records no Setup at admission and
+    // treats an unrecorded creation Setup as pending. The keyholder applies the
+    // same rule once it has opened content with Setup work.
+    const recorded = params.machine.machineSetup
+        ?? (managedMachineSetupHasWorkV1(setup) ? { state: 'pending' as const } : undefined);
+    const machineSetup = recorded === undefined ? undefined
+        : setup === undefined ? null : { ...recorded, setup,
             ...(params.opened.setupSourceFacts === undefined ? {} : { sourceFacts: params.opened.setupSourceFacts }) };
     if (machineSetup === null) return null;
     // Native identity and detailed observations are sealed with the admitted

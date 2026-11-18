@@ -199,6 +199,23 @@ describe('prepare managed opaque preset acquire', () => {
     expect(hydrateManagedOpaquePresetMachineV1({ machine, opened: base.v })).toBeNull();
   });
 
+  it('treats an unrecorded opaque Setup as pending only when the opened preset has Setup work', () => {
+    // Home stores no Setup record for a sealed preset at admission (it cannot read the recipe);
+    // the keyholder decides from the opened content, as Home's creation-Setup reader does.
+    const machine = ManagedOpaquePresetMachineV1Schema.parse({ id: 'machine', homeId: 'home', custodianAccountId: 'account',
+      preset: { id: 'preset', revision: 0, contentEncryptionMode: 'plain' }, allocation: 'unsubmitted',
+      creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+      retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+    const setup = { items: [{ kind: 'softwareRecipe' as const, selection: {
+      ref: { pluginId: 'happier.machine.recipes', recipeId: 'ffmpeg', revision: '1' }, inputs: {} } }],
+      scripts: [{ body: 'echo one', affects: 'none' as const }] };
+    expect(hydrateManagedOpaquePresetMachineV1({ machine, opened: { ...base.v, setup } }))
+      .toMatchObject({ machineSetup: { state: 'pending', setup } });
+    expect(hydrateManagedOpaquePresetMachineV1({ machine, opened: base.v })).not.toHaveProperty('machineSetup');
+    expect(hydrateManagedOpaquePresetMachineV1({ machine, opened: { ...base.v, setup: { scripts: [{ body: '', affects: 'none' as const }] } } }))
+      .not.toHaveProperty('machineSetup');
+  });
+
   it('restores sealed native identity and observation only for the keyholding local full view', () => {
     const machine = ManagedOpaquePresetMachineV1Schema.parse({ id: 'bound-machine', homeId: 'home', custodianAccountId: 'account',
       preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' }, allocation: 'bound',
