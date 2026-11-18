@@ -2747,6 +2747,65 @@ describe("plugin Availability operations", () => {
         await expect(db.pluginMachineMaterialization.count({ where: { accountId: ACCOUNT_ID } })).resolves.toBe(0);
     });
 
+    it("replaces the old Home inventory when the same installation reports through its new Home", async () => {
+        await seedAccountAndMachine();
+        const oldHome = "srv_availabilityRetiredHome";
+        let currentHome = oldHome;
+        const service = createPluginAvailabilityOperations({ resolveServerIdentityId: async () => currentHome });
+        const keyPair = tweetnacl.sign.keyPair();
+        const publisher = { machineId: MACHINE_ID, installationId: "machine-installation-availability", keyPair };
+        await db.machine.update({
+            where: { id: MACHINE_ID },
+            data: { installationPublicKey: new Uint8Array(keyPair.publicKey) },
+        });
+
+        const reportPath = PluginAvailabilityActionHttpPathsV1["account.plugins.availability.materializations.report"];
+        const readPath = PluginAvailabilityActionHttpPathsV1["account.plugins.availability.materializations.read"];
+        const headers = { "x-test-user-id": ACCOUNT_ID };
+        await withAuthenticatedTestApp(app => registerPluginAvailabilityRoutes(app, { operations: service }), async app => {
+            const report = async (serverIdentityId: string, expectedRevision: number | null) => {
+                const body = { expectedRevision, snapshot: { serverIdentityId, machineId: MACHINE_ID, materializations: [{
+                    serverIdentityId, machineId: MACHINE_ID, materializationId: "bundled-starters",
+                    pluginId: "happier.deployment.templates", version: "1.0.0", sourceClass: "bundledFirstParty",
+                    portableRelease: false, uiArtifacts: [], enabled: true, trustState: "trusted", observedAt: 1,
+                }] } };
+                return await app.inject({ method: "POST", url: reportPath, payload: body, headers: {
+                    ...headers,
+                    [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]:
+                        createSignedPluginInstallationPublisherHeader({ ...publisher, path: reportPath, body }),
+                } });
+            };
+            const read = async () => {
+                const response = await app.inject({ method: "POST", url: readPath, headers, payload: {} });
+                expect(response.statusCode, response.body).toBe(200);
+                return PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse(response.json());
+            };
+
+            expect((await report(oldHome, null)).json()).toEqual({ outcome: "replaced", revision: 1 });
+            currentHome = SERVER_IDENTITY_ID;
+            // A read alone cannot attribute the installed plugin to a different Home.
+            const before = await read();
+            expect(before.snapshots[0]?.serverIdentityId).toBe(oldHome);
+            const unrelatedReport = await report(oldHome, 1);
+            expect(unrelatedReport.json()).toMatchObject({ error: "plugin_materialization_server_identity_mismatch" });
+
+            const conflict = await report(currentHome, null);
+            expect(conflict.statusCode, conflict.body).toBe(200);
+            expect(conflict.json()).toEqual({ outcome: "conflict", revision: 1 });
+            expect((await read()).snapshots[0]?.serverIdentityId).toBe(oldHome);
+
+            expect((await report(currentHome, 1)).json()).toEqual({ outcome: "replaced", revision: 2 });
+            const rebound = await read();
+            expect(rebound.availabilityCursor).toBe(before.availabilityCursor + 1);
+            expect(rebound.snapshots).toMatchObject([{
+                serverIdentityId: currentHome, machineId: MACHINE_ID,
+                materializations: [{ serverIdentityId: currentHome, materializationId: "bundled-starters" }],
+            }]);
+            expect((await report(currentHome, null)).json()).toEqual({ outcome: "rejoined", revision: 2 });
+            expect((await read()).availabilityCursor).toBe(rebound.availabilityCursor);
+        });
+    });
+
     it("rejoins descriptor-bearing reports from fresh reporter lifetimes without revising installation facts", async () => {
         await seedAccountAndMachine();
         // The canonical Vitest test Home is established before CLI imports.

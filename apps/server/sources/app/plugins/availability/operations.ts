@@ -1227,13 +1227,10 @@ function reconcileMaterializationReplacement(input: Readonly<{
     snapshot: PluginMachineMaterializationSnapshotV1;
     changedPluginIds: readonly string[];
 }> {
-    const current = normalizePluginMachineMaterializationSnapshotV1({
-        serverIdentityId: input.next.serverIdentityId,
-        machineId: input.next.machineId,
-        materializations: input.current,
-    });
+    // Stored rows came from a normalized report and carry the Home that
+    // accepted it. Compare that Home as a fact when the Machine reports again.
     const currentByMaterializationId = new Map(
-        current.materializations.map((row) => [row.materializationId, row]),
+        input.current.map((row) => [row.materializationId, row]),
     );
     const nextByMaterializationId = new Map(
         input.next.materializations.map((row) => [row.materializationId, row]),
@@ -1268,10 +1265,7 @@ function reconcileMaterializationReplacement(input: Readonly<{
         }
     }
     return {
-        snapshot: normalizePluginMachineMaterializationSnapshotV1({
-            ...input.next,
-            materializations: reconciledMaterializations,
-        }),
+        snapshot: { ...input.next, materializations: reconciledMaterializations },
         changedPluginIds: [...changedPluginIds].sort(comparePluginIds),
     };
 }

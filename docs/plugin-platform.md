@@ -5586,6 +5586,12 @@ retirement release them. Unchanged reconnects retain the 124-byte reply.
 Corrupt or missing bodies settle as `invalid-response`, never an empty
 catalogue.
 
+In 0.3 development source, Machine materializations retain the Home that
+accepted their signed installation report. After a Home rebind, the daemon's
+next complete report uses the current Home. Availability replaces that Machine's
+inventory through the existing revision check and publishes changes for the
+affected plugins. A read still projects the Home that accepted each inventory.
+
 In 0.3 development source, the active Account Availability reader first reads
 machine materializations, then requests `account.plugins.availability.intents.list`
 with those plugin ids and previously observed ids as `knownPluginIds`. The list
