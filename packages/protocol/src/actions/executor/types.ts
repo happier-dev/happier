@@ -1001,6 +1001,8 @@ export type ActionExecutorContext = Readonly<{
    * detached Run invocation. It is never Action input or RPC wire content.
    */
   executionRunWorkflowObservationSink?: unknown;
+  /** Admission-owned source evidence; never Action input or a persisted Run field. */
+  executionRunReviewTranscriptEvidence?: import('../../reviews/reviewStart.js').ReviewTranscriptEvidence;
   /** Host-private admitted Workflow identity, not caller Action input. */
   executionRunWorkflowRunId?: string;
   /** Host-stamped accepted invocation used by protected Workflow Session input. */
@@ -1244,6 +1246,8 @@ export type RuntimeActionDispatchArgs<TActionId extends RuntimeActionIdV1 = Runt
 export type { ApprovalQueueListItemV1, ApprovalQueueQueryPlanV1, ApprovalQueueListResultV1 } from '../../approvals/approvalRequestPublicRead.js';
 
 type ExecutionRunActionOptions = Readonly<{
+  /** Live host launch evidence, excluded from RPC input and retained Run state. */
+  reviewTranscriptEvidence?: import('../../reviews/reviewStart.js').ReviewTranscriptEvidence;
   approvalProfileId?: string | null;
   approvalProfileTeamOrGroupDerived?: boolean;
   serverId?: string | null;

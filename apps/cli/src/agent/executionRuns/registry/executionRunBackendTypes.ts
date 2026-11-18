@@ -4,6 +4,8 @@ export type ExecutionRunBackendStartContext = Readonly<{
   allowedTools?: import('@happier-dev/protocol/runtime/agentSessionV1').AgentSessionConfigurationSnapshotV1['allowedTools'];
   unlistedTools?: import('@happier-dev/protocol/runtime/agentSessionV1').AgentSessionConfigurationSnapshotV1['unlistedTools'];
   intentInput?: unknown;
+  /** Admission-only evidence appended at the native provider boundary. */
+  reviewTranscriptEvidence?: import('@happier-dev/protocol/reviews/reviewStart').ReviewTranscriptEvidence;
   structuredInput?: import('@happier-dev/protocol').HappierStructuredInputV1;
   localInputId?: string;
   resultContract?: import('@happier-dev/protocol').ExecutionRunResultContractV1;

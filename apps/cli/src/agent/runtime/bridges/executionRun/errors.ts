@@ -12,8 +12,9 @@ import type { AgentRuntimeDiagnosticDataV1 } from '@happier-dev/protocol/runtime
 import { redactDiagnosticsUrl } from '@happier-dev/protocol/browser/diagnostics/egress/headers';
 import { isSensitiveUrlPathSegment } from '@happier-dev/protocol/browser/diagnostics/egress/url';
 import axios from 'axios';
-import { readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { normalizeConnectedServiceUxDiagnosticV1, readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { redactPluginInvocationResultData } from '@happier-dev/cli-common/plugins/registration';
 
 /**
  * Preparation precedes fresh Run creation. The refusal keeps the error's own typed code; an error with
@@ -164,15 +165,20 @@ export function sanitizeExecutionRunError(
 ): Error & { code?: string } {
   recordExecutionRunHttpFailure(error, sanitize, context);
   const sanitized = new Error(sanitize(typeof error === 'string' ? error : readExecutionRunErrorMessage(error)));
-  if (error instanceof Error) sanitized.name = error.name;
+  if (error instanceof Error) sanitized.name = sanitize(error.name);
   const code = readExecutionRunErrorCode(error);
   const runtimeIssueV1 = readExecutionRunRuntimeIssue(error);
   const details = readAgentStartupFailureDetails(error);
   const uxDiagnostic = readConnectedServiceUxDiagnosticFromError(error);
-  return Object.assign(sanitized, code ? { code } : {}, details ? { details } : {}, runtimeIssueV1 ? { runtimeIssueV1: {
-    ...runtimeIssueV1,
-    ...(runtimeIssueV1.sanitizedPreview ? { sanitizedPreview: sanitize(runtimeIssueV1.sanitizedPreview) } : {}),
-  } } : {}, uxDiagnostic ? { uxDiagnostic, details: { ...details, uxDiagnostic } } : {});
+  // Redaction can invalidate a typed identifier or enum. Omit that projection
+  // rather than retaining the original private diagnostic as a fallback.
+  const safeRuntimeIssue = runtimeIssueV1
+    ? sanitizeSessionRuntimeIssueV1(redactPluginInvocationResultData(runtimeIssueV1, sanitize)) : null;
+  const safeUxDiagnostic = uxDiagnostic
+    ? normalizeConnectedServiceUxDiagnosticV1(redactPluginInvocationResultData(uxDiagnostic, sanitize)) : null;
+  return Object.assign(sanitized, code ? { code: sanitize(code) } : {}, details ? { details } : {},
+    safeRuntimeIssue ? { runtimeIssueV1: safeRuntimeIssue } : {},
+    safeUxDiagnostic ? { uxDiagnostic: safeUxDiagnostic, details: { ...details, uxDiagnostic: safeUxDiagnostic } } : {});
 }
 
 export function createExecutionRunCodedError(code: string, message: string): Error {

@@ -8,6 +8,7 @@ import type {
     AgentExecutionRunEvent,
     AgentExecutionRunOpenRequest,
     AgentExecutionRunRuntime,
+    AgentExecutionRunConversationRuntimeV1,
     AgentRuntime,
     AgentRuntimeContext,
     AgentSessionOpenRequest,
@@ -39,6 +40,7 @@ import { logger } from '@/ui/logger';
 import { reloadConfiguration } from '@/configuration';
 import { HappierStructuredInputV1Schema } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { buildStandardReviewPrompt } from '@/agent/reviews/prompt/buildStandardReviewPrompt';
+import type { ReviewTranscriptEvidence } from '@happier-dev/protocol/reviews/reviewStart';
 import { readRetainedExecutionRunRecords } from '@/daemon/executionRunRegistry';
 import type { ExecutionRunState } from './executionRunTypes';
 import { finishExecutionRun } from './finishExecutionRun';
@@ -149,6 +151,201 @@ it.each(['session', 'detached', 'execution-only'] as const)(
         }
     },
 );
+
+it.each(['session', 'retained-session', 'detached', 'execution-only'] as const)(
+    'delivers opted-in private Review transcript only in native provider input through %s', async (facet) => {
+        const evidence = {
+            sourceSession: { serverId: 'private-source-home', sessionId: 'private-source-session' },
+            coverage: 'partial',
+            items: [{ id: 'private-message', createdAt: 1, role: 'user', semanticRole: 'user', kind: 'message',
+                text: 'private-source-request: preserve the original behavior' }],
+        } satisfies ReviewTranscriptEvidence;
+        for (const admission of ['provision', 'delivery'] as const) {
+            const inputs: import('@happier-dev/plugin-sdk/agents/runtime').AgentSessionInput[] = [];
+            const openRequests: Array<AgentSessionOpenRequest | AgentExecutionRunOpenRequest> = [];
+            const resolvedTexts: string[] = [];
+            const observedEvents: unknown[] = [];
+            const executionRuns: NonNullable<AgentRuntime['executionRuns']> = { async open(request) {
+                openRequests.push(request);
+                if (request.kind === 'create') inputs.push(request.input);
+                return { async send(input) { inputs.push(input); return { status: 'admitted' as const }; },
+                    async stop() { return { status: 'requested' as const }; },
+                    watch() { return { dispose() {} }; }, async dispose() {} };
+            } };
+            const runtime: AgentRuntime = facet === 'session' || facet === 'retained-session'
+                ? { sessions: { async open(request) {
+                    openRequests.push(request);
+                    let listener: ((event: AgentSessionRuntimeEvent) => void) | undefined;
+                    return { async send(input) {
+                        inputs.push(input.input);
+                        listener?.({ kind: 'transcript-message-committed', sessionId: request.sessionId,
+                            sequence: 1, emittedAtMs: 1, messageId: 'native-user-message', role: 'user',
+                            text: input.input.text, nativeContent: [{ type: 'text', text: input.input.text }] });
+                        return { status: 'admitted' as const };
+                    }, watch(next) { listener = next; return { dispose() {} }; }, async dispose() {} };
+                } } } : { executionRuns };
+            const resolveStructuredInputForDispatch: NonNullable<NativeAgentSessionContextLeaseFactory['resolveStructuredInputForDispatch']> = async ({ input }) => {
+                resolvedTexts.push(input.text);
+                return input;
+            };
+            const createSessionContext = Object.assign(
+                ({ services, signal }: Parameters<NativeAgentSessionContextLeaseFactory>[0]) =>
+                    createVoiceSessionContextLease({ services, signal, async dispose() {} }),
+                { resolveStructuredInputForDispatch },
+            );
+            const common = { runtime, supportsResume: false,
+                lease: { pluginId: 'acme.private', pluginVersion: '1.0.0', agentId: 'acme.private/default',
+                    localAgentId: 'default', occurrenceId: 'private-review', isCurrent: () => true },
+                options: { cwd: '/repo', runId: 'private-review', scope: 'detached' as const,
+                    backendId: 'acme.private/default', permissionMode: 'read_only',
+                    start: { intent: 'review' as const, runClass: 'bounded' as const, retentionPolicy: 'ephemeral' as const,
+                        reviewTranscriptEvidence: evidence } } };
+            const host = facet === 'retained-session'
+                ? createNativeAgentSessionInteractionHostRuntime({ ...common, createSessionContext,
+                    sessionCapabilities: { open: ['create'], delivery: ['newTurn'], cancel: false } })
+                : facet === 'session'
+                    ? createNativeAgentSessionExecutionRunHostRuntime({ ...common, createSessionContext })
+                    : createNativeAgentExecutionRunHostRuntime({ ...common, resolveStructuredInputForDispatch,
+                        ...(facet === 'detached' ? { executionRunContextV1: executionRuns } : {}) });
+            const authoredInput = { text: 'Review the implementation against the request.' };
+            host.subscribeRuntimeEvents?.(event => { observedEvents.push(event); });
+            try {
+                await host.provisionRuntime(admission === 'provision' ? { initialPrompt: authoredInput.text } : undefined);
+                if (admission === 'delivery') {
+                    await expect(host.deliverInput('private-review', authoredInput)).resolves.toMatchObject({ status: 'admitted' });
+                }
+                expect(inputs).toHaveLength(1);
+                expect(inputs[0]?.text).toContain(authoredInput.text);
+                expect(inputs[0]?.text).toContain(evidence.items[0].text);
+                expect(inputs[0]?.text).toMatch(/partial/i);
+                expect(inputs[0]?.text).toMatch(/missing|incomplete|not infer/i);
+                expect(authoredInput).toEqual({ text: 'Review the implementation against the request.' });
+                expect(resolvedTexts.every(text => !text.includes(evidence.items[0].text))).toBe(true);
+                expect(openRequests.every(request => !Object.hasOwn(request, 'reviewTranscriptEvidence'))).toBe(true);
+                expect(JSON.stringify(observedEvents)).not.toContain(evidence.items[0].text);
+                if (facet === 'session' || facet === 'retained-session') {
+                    expect(JSON.stringify(openRequests)).not.toContain(evidence.items[0].text);
+                }
+            } finally { await host.dispose(); }
+        }
+    },
+);
+
+it.each([
+    { kind: 'openSettings', path: 'private request echoed in provider refusal' },
+    { kind: 'installDependency', dependencyId: 'private request echoed in provider refusal' },
+    { kind: 'selectAccount', service: { pluginId: 'private request echoed in provider refusal', localId: 'private request echoed in provider refusal' } },
+] as const)('redacts private Review transcript quoted by a native Session refusal ($kind) before Happier input subscribers observe it', async (remediation) => {
+    const privateText = 'private request echoed in provider refusal';
+    const outcomes: unknown[] = [];
+    const evidence = { sourceSession: { serverId: 'home', sessionId: 'source' }, coverage: 'complete',
+        items: [{ id: 'request', createdAt: 1, role: 'user', semanticRole: 'user', kind: 'message', text: privateText }],
+    } satisfies ReviewTranscriptEvidence;
+    const host = createNativeAgentSessionInteractionHostRuntime({
+        runtime: { sessions: { async open() { return {
+            async send(input) {
+                expect(input.input.text).toContain(privateText);
+                return { status: 'rejected' as const, retryable: false,
+                    diagnostic: { code: 'provider_input_refused', severity: 'error' as const, message: `Refused ${privateText}`,
+                        details: { prompt: input.input.text, nested: [privateText, 7, true, null], [privateText]: 'key also projected' },
+                        remediation } };
+            }, watch() { return { dispose() {} }; }, async dispose() {},
+        }; } } },
+        lease: { pluginId: 'acme.private', pluginVersion: '1.0.0', agentId: 'acme.private/default',
+            localAgentId: 'default', occurrenceId: 'private-refusal', isCurrent: () => true },
+        options: { cwd: '/repo', runId: 'private-refusal', scope: 'detached', backendId: 'acme.private/default',
+            permissionMode: 'read_only', start: { intent: 'review', reviewTranscriptEvidence: evidence },
+            sanitizeProviderDiagnosticText: text => text.replaceAll(privateText, '[redacted]') },
+        sessionCapabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+        createSessionContext: ({ services, signal }) => createVoiceSessionContextLease({ services, signal, async dispose() {} }),
+    });
+    host.subscribeProviderInputOutcomes?.(outcome => { outcomes.push(outcome); });
+    try {
+        const { runtimeId } = await host.provisionRuntime();
+        const refusal = await host.deliverInput(runtimeId, { text: 'Review the code' }).catch((error: unknown) => error);
+        expect(readExecutionRunErrorCode(refusal)).toBe('provider_input_refused');
+        expect(outcomes).toHaveLength(1);
+        expect(JSON.stringify(outcomes)).not.toContain(privateText);
+        expect(JSON.stringify(outcomes)).toContain('[redacted]');
+        expect(outcomes).toEqual([expect.objectContaining({ diagnostic: expect.objectContaining({
+            code: 'provider_input_refused', details: expect.objectContaining({ nested: ['[redacted]', 7, true, null] }),
+        }) })]);
+    } finally { await host.dispose(); }
+});
+
+it.each(['private review source echoed after the completed turn', 'https://example.test/private-source'])(
+'redacts a private Review transcript quoted by native conversation end before Run subscribers retain it (%s)', async (privateText) => {
+    const evidence = { sourceSession: { serverId: 'home', sessionId: 'source' }, coverage: 'complete',
+        items: [{ id: 'request', createdAt: 1, role: 'user', semanticRole: 'user', kind: 'message', text: privateText }],
+    } satisfies ReviewTranscriptEvidence;
+    let publish: Parameters<AgentExecutionRunConversationRuntimeV1['watch']>[0] | undefined;
+    let turnId = '';
+    const observedEvents: unknown[] = [];
+    const executionRuns: NonNullable<Parameters<typeof createNativeAgentExecutionRunHostRuntime>[0]['executionRunContextV1']> = {
+        async open() { throw new Error('Expected retained native conversation'); },
+        async openConversation() { return {
+            async send(request) {
+                turnId = request.delivery.turnId;
+                expect(request.input.text.split(privateText)).toHaveLength(2);
+                return { status: 'admitted' as const };
+            }, watch(listener) { publish = listener; return { dispose() {} }; }, async dispose() {},
+        }; },
+    };
+    const host = createNativeAgentExecutionRunHostRuntime({ runtime: {}, executionRunContextV1: executionRuns,
+        retainedConversation: true, supportsResume: false,
+        lease: { pluginId: 'acme.private', pluginVersion: '1.0.0', agentId: 'acme.private/default',
+            localAgentId: 'default', occurrenceId: 'private-runtime-end', isCurrent: () => true },
+        options: { cwd: '/repo', runId: 'private-runtime-end', scope: 'detached', backendId: 'acme.private/default',
+            permissionMode: 'read_only', start: { intent: 'review', reviewTranscriptEvidence: evidence },
+            sanitizeProviderDiagnosticText: text => text.replaceAll(privateText, '[redacted]') },
+    });
+    host.subscribeRuntimeEvents?.(event => { observedEvents.push(event); });
+    try {
+        await host.provisionRuntime({ initialPrompt: 'Review the code' });
+        publish?.({ kind: 'turn-complete', turnId });
+        publish?.({ kind: 'runtime-ended', diagnostic: { code: 'provider_ended', severity: 'error', message: privateText,
+            details: { cause: { prompt: privateText } }, remediation: { kind: 'openUrl',
+                url: privateText.startsWith('https:') ? privateText : `https://example.test/${privateText}` } } });
+        expect(observedEvents).toEqual([expect.objectContaining({ kind: 'runtime-ended', diagnostic:
+            expect.objectContaining({ code: 'provider_ended', message: '[redacted]' }) })]);
+        expect(JSON.stringify(observedEvents)).not.toContain(privateText);
+        if (privateText.startsWith('https:')) {
+            expect(observedEvents.at(-1)).not.toHaveProperty('diagnostic.remediation');
+        }
+    } finally { await host.dispose(); }
+});
+
+it('redacts private Review evidence inside a finite native failure cause before public Run projection', async () => {
+    const privateText = 'private source request in a native failure cause';
+    let publish: Parameters<AgentExecutionRunRuntime['watch']>[0] | undefined;
+    const evidence = { sourceSession: { serverId: 'home', sessionId: 'source' }, coverage: 'complete',
+        items: [{ id: 'request', createdAt: 1, role: 'user', semanticRole: 'user', kind: 'message', text: privateText }],
+    } satisfies ReviewTranscriptEvidence;
+    const host = createNativeAgentExecutionRunHostRuntime({
+        runtime: { executionRuns: { async open(request) {
+            if (request.kind === 'create') expect(request.input.text).toContain(privateText);
+            return { async send() { return { status: 'admitted' as const }; },
+                async stop() { return { status: 'requested' as const }; },
+                watch(listener) { publish = listener; return { dispose() {} }; }, async dispose() {},
+            };
+        } } }, supportsResume: false,
+        lease: { pluginId: 'acme.private', pluginVersion: '1.0.0', agentId: 'acme.private/default',
+            localAgentId: 'default', occurrenceId: 'private-finite-failure', isCurrent: () => true },
+        options: { cwd: '/repo', runId: 'private-finite-failure', scope: 'detached', backendId: 'acme.private/default',
+            permissionMode: 'read_only', start: { intent: 'review', reviewTranscriptEvidence: evidence },
+            sanitizeProviderDiagnosticText: text => text.replaceAll(privateText, '[redacted]') },
+    });
+    try {
+        await host.provisionRuntime({ initialPrompt: 'Review the code' });
+        publish?.({ kind: 'run-failed', runId: 'private-finite-failure', sequence: 1, emittedAtMs: 1,
+            diagnostic: { code: 'provider_failed', severity: 'error', message: privateText,
+                details: { failureCause: { phase: 'turn', failureReason: 'unclassified_provider_error', providerErrorMessage: privateText } } } });
+        const failure = await host.waitForTurnCompletion!().catch((error: unknown) => error);
+        expect(readExecutionRunErrorCode(failure)).toBe('provider_failed');
+        expect(failure).toHaveProperty('runtimeIssueV1.failureCause.providerErrorMessage', '[redacted]');
+        expect(JSON.stringify(failure)).not.toContain(privateText);
+    } finally { await host.dispose(); }
+});
 
 it('settles a native execution-only Run when send returns unavailable without a terminal event', async () => {
     const host = createNativeAgentExecutionRunHostRuntime({

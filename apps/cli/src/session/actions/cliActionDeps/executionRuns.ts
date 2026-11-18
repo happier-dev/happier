@@ -138,7 +138,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
     opts?.workDepth !== undefined || opts?.workspaceWrites !== undefined || opts?.permissionRequestStore !== undefined
       || opts?.workflowObservationSink !== undefined || opts?.workflowRunId !== undefined
       || opts?.requesterWorkAttributionV1 !== undefined || opts?.causalPermissionAuthority !== undefined
-      || opts?.effectiveCallerPermissionMode !== undefined;
+      || opts?.effectiveCallerPermissionMode !== undefined || opts?.reviewTranscriptEvidence !== undefined;
 
   const admittedExecutionRunContext = (opts?: ExecutionRunActionTransportOptions): LocalSessionRpcActionContext => ({
     ...(opts?.surface ? { surface: opts.surface } : {}),
@@ -162,6 +162,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
     ...(opts?.workspaceWrites === undefined ? {} : { agentStartWorkspaceWrites: opts.workspaceWrites }),
     ...(opts?.workflowRunId ? { executionRunWorkflowRunId: opts.workflowRunId } : {}),
     ...(opts?.workflowScope ? { executionRunWorkflowScope: opts.workflowScope } : {}),
+    ...(opts?.reviewTranscriptEvidence ? { executionRunReviewTranscriptEvidence: opts.reviewTranscriptEvidence } : {}),
     ...(opts?.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: opts.requesterWorkAttributionV1 } : {}),
   });
 

@@ -13894,3 +13894,27 @@ failures retain their existing fallback. Matching development hosts and SDK
 readers consume the extended closed error envelope together; no wire epoch or
 new presenter is introduced. Caller-authored
 HTML's existing restricted method ceiling is unchanged.
+
+
+### Review source transcript delivery (0.3 development)
+
+A reviewer receives a source Session transcript only when its
+`includeSessionTranscript` selection is explicitly enabled and its profile
+supports transcript evidence. The concrete `review.start` Action reads the
+source through `session.transcript.get` at admission, using that Action's
+requester authority. A mixed Workflow retains the selection and source address;
+its concrete Review leaves perform the read when admitted. One admission shares
+its captured evidence across the selected reviewer fanout.
+
+The host carries the captured evidence privately and appends it at the native
+Agent input boundary. Happier excludes it from Review records, authored Run
+prompts and input publications, retained Run state, server storage and diagnostic
+logs. The Agent's ordinary native local history may retain the prompt. This
+exception does not change the explicit opt-in default. Partial source coverage
+remains partial in the normalized Review outcome, even if the Agent claims a
+complete review. Native input admission continues to own the input budget.
+
+Attached Session launches require the existing private local Session transport;
+its Windows pipe-server identity check is unavailable, so that path currently
+refuses the launch. Detached exact-machine launches use the in-process Machine
+transport.

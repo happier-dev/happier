@@ -12,7 +12,8 @@ import { ReviewWalkthroughRequestSchema, ReviewExplainFindingsRequestSchema, Rev
 import { resolveSessionIdFromInput, resolveServerIdForExecutionRunScope } from '../sessionScope.js';
 import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, buildAvailableExecutionBackendOptionKeys, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, classifyExecutionRunStartFailure } from '../executionRuns.js';
 import { readRecord, hasOwn } from '../../../inputs/inputRecords.js';
-import { requiresReviewWorkflowCompositionV1, reviewReviewerIdForSelectionV1, reviewReviewerIdsForStartV1, type ReviewStartInput } from '../../../reviews/reviewStart.js';
+import { requiresReviewWorkflowCompositionV1, reviewReviewerIdForSelectionV1, reviewReviewerIdsForStartV1, type ReviewStartInput, type ReviewTranscriptEvidence } from '../../../reviews/reviewStart.js';
+import { SESSION_TRANSCRIPT_GET_MAX_LIMIT, SessionTranscriptGetResultSchema } from '../../specs/session/transcript.js';
 import { createPermissionPolicyResult, resolveAgentExecutionRunPermission } from '../callerContext.js';
 import { EXECUTION_RUN_ACTION_PERMISSION_MODES } from '../../executionRunActionPermissionMode.js';
 import { tryNormalizeExecutionBackendOptionValue, readReviewNarratorOptions } from '../../../inputs/inputOptions.js';
@@ -29,6 +30,36 @@ import { dispatchReviewRoundAction } from './rounds.js';
 export function reviewScopeForInput(input: unknown): 'paths' | undefined {
   const record = readRecord(input);
   return hasOwn(record, 'selectedPaths') || hasOwn(record, 'selectedFiles') ? 'paths' : undefined;
+}
+
+export async function readReviewTranscriptEvidence(sourceSession: ReviewTranscriptEvidence['sourceSession'],
+  execute: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>,
+  context: ActionExecutorContext): Promise<Readonly<{ ok: true; evidence: ReviewTranscriptEvidence }> | Extract<ActionExecuteResult, { ok: false }>> {
+  const items: ReviewTranscriptEvidence['items'][number][] = [];
+  let cursor: string | null = null;
+  let partial = false;
+  for (;;) {
+    const response = await execute('session.transcript.get', { sessionId: sourceSession.sessionId,
+      cursor, direction: 'after', limit: SESSION_TRANSCRIPT_GET_MAX_LIMIT,
+      includeTools: true, includeReasoning: false, includeEvents: false, includeRaw: false,
+      maxCharsPerMessage: null }, { ...context, serverId: sourceSession.serverId });
+    if (!response.ok) return response;
+    const parsed = SessionTranscriptGetResultSchema.safeParse(response.result);
+    if (!parsed.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+    const page = parsed.data;
+    if (!page.ok) return { ok: false, errorCode: page.errorCode, error: page.errorMessage };
+    if ('projection' in page || page.sessionId !== sourceSession.sessionId) {
+      return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+    }
+    items.push(...page.items);
+    partial ||= page.diagnostics.payloadTruncations > 0 || page.items.some(item => item.truncated === true);
+    if (!page.hasMore || page.nextCursor === null) {
+      partial ||= page.hasMore || page.diagnostics.scanLimitReached;
+      break;
+    }
+    cursor = page.nextCursor;
+  }
+  return { ok: true, evidence: { sourceSession, items, coverage: partial ? 'partial' : 'complete' } };
 }
 
 export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionId' | 'deps' | 'ctx' | 'parsed' | 'data'> & Readonly<{
@@ -242,13 +273,10 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const opts = workflowScope ? { ...baseOptions, workflowScope } : baseOptions;
 
         const reviewInput = data as ReviewStartInput;
-        // Native Agent histories currently persist provider inputs. Until a transport
-        // can honor the approved no-persistence contract, refuse before source reads
-        // or Workflow admission rather than silently dropping selected evidence.
-        if (reviewInput.reviewers.some(reviewer => reviewer.kind === 'engine' && reviewer.includeSessionTranscript === true)) {
-          return { ok: false, errorCode: 'review_transcript_unsupported', error: 'review_transcript_unsupported' };
-        }
         if (requiresReviewWorkflowCompositionV1(reviewInput)) {
+          // Workflow execution may happen on another host or after a restart.
+          // Its concrete review.start leaves own source admission; only the
+          // explicit selection and source address enter the accepted graph.
           const records = deps.reviewRecords?.(ctx);
           if (!records) return { ok: false, errorCode: 'review_record_unavailable', error: 'review_record_unavailable' };
           const reviewRound = await records.start({ reviewId: globalThis.crypto.randomUUID(), title: 'Code review',
@@ -368,6 +396,16 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             && (!engineInput.profileId || option.profileId === engineInput.profileId));
           return [reviewerId, item] as const;
         }));
+        // Source access belongs to the existing transcript Action and caller;
+        // only the selected launches receive its transient evidence.
+        const transcriptRequested = engineSelections.some(({ selection }) => selection.includeSessionTranscript === true);
+        if (engineSelections.some(({ selection, reviewerId }) => selection.includeSessionTranscript === true
+          && selectedReviewEngineItems.get(reviewerId)?.capabilities.sessionTranscript !== true)) {
+          return { ok: false, errorCode: 'review_transcript_unsupported', error: 'review_transcript_unsupported' };
+        }
+        const transcript = transcriptRequested && reviewInput.sourceSession
+          ? await readReviewTranscriptEvidence(reviewInput.sourceSession, executeHostChild, ctx) : null;
+        if (transcript && !transcript.ok) return transcript;
         const availableReviewEngineKeys = buildAvailableExecutionBackendOptionKeys(reviewEngineInventory);
         const narrationRequested = reviewInput.outputs?.includes('walkthrough') === true;
         const narrationPolicy = resolveReviewNarratorPolicy({
@@ -408,6 +446,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
           reviewerIds: reviewReviewerIdsForStartV1(reviewInput), startedAt: Date.now(), signal: ctx.signal });
         const reviewGroupId = reviewRound.reviewId;
+        const { reviewTranscriptEvidence: _inheritedTranscript, ...reviewLaunchOptions } = executionRunDispatchOpts ?? {};
         const results = await fanoutStarts({
           keys: engineSelections.map(entry => entry.reviewerId),
           recordActionOutputDiagnostic: deps.recordActionOutputDiagnostic,
@@ -488,7 +527,9 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
                 } } : {}),
               },
               {
-                ...executionRunDispatchOpts,
+                ...reviewLaunchOptions,
+                ...(selection.includeSessionTranscript === true && transcript?.ok
+                  ? { reviewTranscriptEvidence: transcript.evidence } : {}),
                 ...(ctx.agentStartWorkDepth !== undefined ? { workDepth: ctx.agentStartWorkDepth, agentStartContext: ctx.agentStartContext, workspaceWrites: ctx.agentStartWorkspaceWrites, sessionAgentSpawnPolicyV1: ctx.sessionAgentSpawnPolicyV1 } : {}),
               }, ctx,
             );

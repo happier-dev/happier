@@ -94,6 +94,7 @@ export async function executeBoundedBackendRun(args: Readonly<{
       backendTarget: params.backendTarget,
       instructions: params.instructions ?? '',
       intentInput: params.intentInput,
+      ...(params.reviewTranscriptEvidence ? { reviewTranscriptEvidence: params.reviewTranscriptEvidence } : {}),
       ...(params.resultContract ? { resultContract: params.resultContract } : {}),
       permissionMode: params.permissionMode,
       retentionPolicy: params.retentionPolicy,

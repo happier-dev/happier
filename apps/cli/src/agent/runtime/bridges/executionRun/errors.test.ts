@@ -9,6 +9,40 @@ import { createRunnerDaemonPluginServicesPreparationError } from '@/daemon/agent
 import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 describe('Run startup failure redaction', () => {
+    it('redacts private evidence from a thrown structured native cause before public Run projection', () => {
+        const privateText = 'private source transcript echoed by a thrown native error';
+        const failure = Object.assign(new Error(privateText), { code: 'provider_failed',
+            details: { failureCause: { phase: 'turn', failureReason: 'unclassified_provider_error', providerErrorMessage: privateText } },
+        });
+        const projected = projectExecutionRunError(sanitizeExecutionRunError(failure, text => text.replaceAll(privateText, '[redacted]')));
+        expect(projected.code).toBe('provider_failed');
+        expect(projected.runtimeIssueV1?.failureCause).toMatchObject({ phase: 'turn',
+            failureReason: 'unclassified_provider_error', providerErrorMessage: '[redacted]' });
+        expect(JSON.stringify(projected)).not.toContain(privateText);
+        const privateIdentity = Object.assign(new Error(privateText), { name: privateText, code: privateText });
+        expect(sanitizeExecutionRunError(privateIdentity, text => text.replaceAll(privateText, '[redacted]')))
+            .toMatchObject({ name: '[redacted]', code: '[redacted]' });
+        expect(projectExecutionRunError(sanitizeExecutionRunError(failure, text => text === 'turn' ? '[redacted]' : text)))
+            .not.toHaveProperty('runtimeIssueV1');
+    });
+
+    it('redacts private evidence from connected account diagnostic data before public Run projection', async () => {
+        const privateText = 'private source transcript echoed by credential diagnostic';
+        const { buildConnectedServiceCredentialSpawnErrorResult } = await import('@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult');
+        const failure = buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'codex', error: {
+            name: 'ConnectedServiceSpawnProfileActionRequiredError', kind: 'profile_action_required',
+            action: 'reconnect_connected_service_profile', serviceId: 'happier.agent.codex/openai-codex', profileId: 'work',
+        } });
+        if (!failure || failure.errorDetail?.kind !== 'connected_service_ux_diagnostic') throw new Error('Expected diagnostic');
+        const uxDiagnostic = { ...failure.errorDetail.uxDiagnostic, diagnostics: { providerMessage: privateText } };
+        const error = Object.assign(new Error(privateText), { code: uxDiagnostic.code, uxDiagnostic });
+        const projected = projectExecutionRunError(sanitizeExecutionRunError(error, text => text.replaceAll(privateText, '[redacted]')));
+        expect(projected.uxDiagnostic).toMatchObject({ code: uxDiagnostic.code, diagnostics: { providerMessage: '[redacted]' } });
+        expect(JSON.stringify(projected)).not.toContain(privateText);
+        expect(projectExecutionRunError(sanitizeExecutionRunError(error, text => text === uxDiagnostic.code ? '[redacted]' : text)))
+            .not.toHaveProperty('uxDiagnostic');
+    });
+
     it('marks no Run creation with the preparation cause without private exception fields', () => {
         const error = Object.assign(new TypeError('PRIVATE_PREPARATION_REASON'), {
             cause: { headers: { authorization: 'PRIVATE_CREDENTIAL' }, body: 'PRIVATE_RESPONSE' },
@@ -42,7 +76,7 @@ describe('Run startup failure redaction', () => {
         const uxDiagnostic = failure.errorDetail.uxDiagnostic;
         const error = Object.assign(new Error('PRIVATE_PROVIDER_BODY'), { code: uxDiagnostic.code, uxDiagnostic });
         const projected = projectExecutionRunError(sanitizeExecutionRunError(
-            sanitizeExecutionRunError(error, () => 'Startup refused'), value => value));
+            sanitizeExecutionRunError(error, text => text.replaceAll('PRIVATE_PROVIDER_BODY', 'Startup refused')), value => value));
         expect(projected).toMatchObject({ code: uxDiagnostic.code, uxDiagnostic });
         const { ExecutionRunStartFailureDetailsV1Schema, withExecutionRunStartFailureDetails } = await import('@happier-dev/protocol/execution/runs/responseSchemas');
         expect(ExecutionRunStartFailureDetailsV1Schema.parse(withExecutionRunStartFailureDetails(
@@ -65,7 +99,7 @@ describe('Run startup failure redaction', () => {
         const failure = createCodexAppServerTurnFailure({ phase: 'client_start', value:
             Object.assign(new Error('PRIVATE_PROVIDER_RESPONSE'), { code: 'provider_endpoint_unavailable' }) });
         const projected = projectExecutionRunError(sanitizeExecutionRunError(
-            sanitizeExecutionRunError(failure, () => 'Startup refused'), value => value));
+            sanitizeExecutionRunError(failure, text => text.replaceAll('PRIVATE_PROVIDER_RESPONSE', 'Startup refused')), value => value));
         expect(projected).toMatchObject({ code: 'provider_endpoint_unavailable', runtimeIssueV1: {
             code: 'provider_endpoint_unavailable', failureCause: { phase: 'client_start' },
         } });
@@ -81,7 +115,7 @@ describe('Run startup failure redaction', () => {
         );
         const failure = createCodexAppServerTurnFailure({ phase: 'client_start', value: preparationError });
         const projected = projectExecutionRunError(sanitizeExecutionRunError(
-            sanitizeExecutionRunError(failure, () => 'Startup refused'), value => value));
+            sanitizeExecutionRunError(failure, text => text.replaceAll('PRIVATE_PROVIDER_RESPONSE', 'Startup refused')), value => value));
         expect(SessionRuntimeIssueV1Schema.parse(projected.runtimeIssueV1)).toMatchObject({
             code: 'runner_plugin_services_unavailable',
             failureCause: { phase: 'client_start', preparationCause: { code: 'ENOENT', stage: 'registry_acquisition' } },
@@ -94,7 +128,8 @@ describe('Run startup failure redaction', () => {
             code: 'codex_refresh_free_auth_unsupported', reason: 'refresh_bridge_unavailable',
             details: { secret: 'private credential sentinel' },
         });
-        const sanitized = sanitizeExecutionRunError(sanitizeExecutionRunError(failure, () => 'Startup refused'), value => value);
+        const sanitized = sanitizeExecutionRunError(sanitizeExecutionRunError(failure,
+            text => text.replaceAll('private credential sentinel', 'Startup refused')), value => value);
         expect(sanitized).toMatchObject({ code: failure.code, details: { reason: 'refresh_bridge_unavailable' } });
         expect(JSON.stringify(sanitized)).not.toContain('private credential sentinel');
         for (const unsafe of [

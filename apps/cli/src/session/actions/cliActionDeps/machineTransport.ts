@@ -332,6 +332,7 @@ export function createCliMachineActionTransport(
         ...(input.context?.actionRequestId ? { actionRequestId: input.context.actionRequestId } : {}),
         ...(input.context?.executionRunWorkflowRunId ? { executionRunWorkflowRunId: input.context.executionRunWorkflowRunId } : {}),
         ...(input.context?.executionRunWorkflowScope ? { executionRunWorkflowScope: input.context.executionRunWorkflowScope } : {}),
+        ...(input.context?.executionRunReviewTranscriptEvidence ? { executionRunReviewTranscriptEvidence: input.context.executionRunReviewTranscriptEvidence } : {}),
         ...(input.context?.executionRunTargetMachineId ? { executionRunTargetMachineId: input.context.executionRunTargetMachineId } : {}),
         ...(input.context?.operationProgress ? { operationProgress: input.context.operationProgress } : {}),
         ...(input.context?.operationOwnerUpdate ? { operationOwnerUpdate: input.context.operationOwnerUpdate } : {}),
