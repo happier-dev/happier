@@ -110,6 +110,27 @@ function lane(sourceInstanceId: string, overrides: Partial<TriageListLaneV1> = {
     };
 }
 
+it('replaces a source routing token without changing the canonical row identity', () => {
+    const observation = present({ sourceInstanceId: INSTANCE[0] });
+    if (observation.outcome.kind !== 'present') throw new Error('Expected a present source observation');
+    const original = {
+        ...observation,
+        outcome: { ...observation.outcome, locator: testkitLocator({ routingToken: 'old/route' }) },
+    };
+    const replacement = {
+        ...original,
+        observedAtMs: original.observedAtMs + 1,
+        outcome: { ...original.outcome, locator: testkitLocator({ routingToken: 'new/route' }) },
+    };
+    const before = fold({ observations: [original] }).rows[0];
+    const after = fold({ observations: [original, replacement] }).rows[0];
+    expect(after?.entryRef).toEqual(before?.entryRef);
+    expect(after?.entryRef && triageEntryRowKey(after.entryRef))
+        .toBe(before?.entryRef && triageEntryRowKey(before.entryRef));
+    expect(after?.content?.outcome.locator.routingToken).toBe('new/route');
+    expect(after?.selected).toEqual(before?.selected);
+});
+
 function fold(input: Readonly<{
     observations: readonly CorpusQualifiedObservationV1[];
     lanes?: readonly TriageListLaneV1[];
