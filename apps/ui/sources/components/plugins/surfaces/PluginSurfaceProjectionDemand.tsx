@@ -4,7 +4,11 @@ import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/accoun
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import { usePluginExecutionOriginProjectionDemand } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
-import { PLUGIN_UI_SECTIONS, pluginUiSections } from '@/sync/domains/plugins/ui/projectionSections';
+import { PLUGIN_UI_SECTIONS, pluginUiSections, REGISTRY_SOURCE_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
+import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import type { AppShellPluginProjectionTarget } from '@/components/appShell/plugins/appShellPluginUiProjectionPublication';
+
+const NO_TARGETS: readonly AppShellPluginProjectionTarget[] = Object.freeze([]);
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { normalizeCredentialScopeServerId, useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { usePluginSurfaceExecutionOrigin } from './pluginSurfaceExecutionOrigin';
@@ -31,6 +35,10 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
     const availability = usePluginAccountAvailabilityReader(props.accountScope, props.pluginId, { enabled: presented });
     const installed = presented ? availability?.readInstalledPlugins() : null;
     const selectedOrigin = props.pluginId !== undefined && props.presents !== 'allInstallations';
+    // A surface presenting registry sources reads every Machine the registry wait is on, also one no installation names.
+    const readsRegistrySources = props.sections?.some(section => REGISTRY_SOURCE_PROJECTION_SECTIONS.includes(section as never)) === true;
+    const owingRegistrySources = useAppShellPluginUiProjection(value => value.registrySourcesPendingTargets ?? NO_TARGETS,
+        presented && readsRegistrySources);
     const targets = React.useMemo(() => {
         const targets = new Map<string, MachineAdministrationTargetV1>();
         if (presented && !selectedOrigin && installed?.kind === 'available') {
@@ -45,8 +53,14 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
                 }
             }
         }
+        if (presented && readsRegistrySources) for (const owing of owingRegistrySources) {
+            const serverIdentityId = owing.serverId ?? props.accountScope?.serverId;
+            if (!serverIdentityId) continue;
+            const key = JSON.stringify([serverIdentityId, owing.machineId]);
+            if (!targets.has(key)) targets.set(key, { serverIdentityId, machineId: owing.machineId });
+        }
         return [...targets.entries()];
-    }, [installed, presented, props.pluginId, props.presents, selectedOrigin]);
+    }, [installed, owingRegistrySources, presented, props.accountScope?.serverId, props.pluginId, props.presents, readsRegistrySources, selectedOrigin]);
     const hosted = useHostedDemands(targets, 'presentation');
     // Administration's uncontextual selection is plugin-scoped, so one presented body decides it for all.
     const decides = selectedOrigin && presented;

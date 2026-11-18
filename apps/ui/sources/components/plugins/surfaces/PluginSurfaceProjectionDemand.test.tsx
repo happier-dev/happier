@@ -81,3 +81,25 @@ it('keeps every shared Machine demand on its host when one surface gains a targe
     await screen.update(surfaces);
     expect(hosts()).toEqual({ ...Object.fromEntries(machineIds.map(id => [id, 'store'])), 'machine-5': 'store' });
 });
+
+// AUTO-PATTERNS #176d: the starters wait reads the app union's Machines whose registry sources are unread. A
+// registry demand reads those same Machines, also when no installation names that Home (a retired Home id).
+it('reads registry sources from each Machine the app union still waits on, beside the installations', async () => {
+    const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    const { REGISTRY_SOURCE_PROJECTION_SECTIONS } = await import('@/sync/domains/plugins/ui/projectionSections');
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, intentReads: [], snapshots: [],
+        materializations: [{ ...materialization('machine-1'), serverIdentityId: 'srv_retired' }] } });
+    const value = { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null, phase: 'current' as const,
+        hasEstablishingMembers: true, registrySourcesPending: true,
+        registrySourcesPendingTargets: [{ machineId: 'machine-1', serverId: 'home-demand' }],
+        interactionEnabled: true, machineId: null, serverId: null, platform: 'web' as const, accountLifetime: null,
+        reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'ready' as const }, reloadClientExecutables() {} };
+    const screen = await renderScreen(<AppShellPluginUiProjectionValueProvider value={value}>
+        <PluginSurfaceProjectionDemand accountScope={scope} presents="allInstallations" sections={REGISTRY_SOURCE_PROJECTION_SECTIONS} />
+    </AppShellPluginUiProjectionValueProvider>);
+    const targets = screen.root.findAll(node => typeof node.type === 'function' && node.type.name === 'SourceDemand')
+        .map(node => node.props.target as { serverIdentityId: string; machineId: string })
+        .map(target => [target.serverIdentityId, target.machineId]).sort();
+    expect(targets).toEqual([['home-demand', 'machine-1'], ['srv_retired', 'machine-1']]);
+});

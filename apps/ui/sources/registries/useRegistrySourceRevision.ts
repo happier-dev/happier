@@ -41,9 +41,9 @@ export function useRegistrySourceDescriptor(sourceId: string, enabled = true): R
 function useRegistrySourceSelection(enabled: boolean, sourceIds?: readonly string[], kind?: RegistryKindV1, scope?: ServerAccountScope) {
     const presented = useLayoutPresentationActive();
     const active = enabled && presented;
-    // A Machine still establishing may carry the only source of this kind (Deploy an app's starters), so an empty
-    // selection waits for it; a known catalog never does (below).
-    const pluginsResolving = useAppShellPluginUiProjection(value => value.phase === 'establishing' || value.hasEstablishingMembers === true, active);
+    // A Machine still owing its registry sources may carry the only source of this kind (Deploy an app's starters),
+    // so an empty selection waits for it; one that answered them, or failed, no longer may. A known catalog never waits.
+    const pluginsResolving = useAppShellPluginUiProjection(value => value.registrySourcesPending === true, active);
     const activeSources = useAppShellPluginUiProjection(value => scope === undefined ? value.pluginUiProjection?.registrySourcesById : undefined, active);
     const readSources = React.useCallback(() => scope ? readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true })?.registrySourcesById : undefined,
         [scope?.serverId, scope?.accountId]);

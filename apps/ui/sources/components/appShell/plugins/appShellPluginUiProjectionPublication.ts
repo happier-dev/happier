@@ -103,6 +103,14 @@ export type AppShellPluginUiProjectionSnapshot = Readonly<{
     destinationSurfacePlacements: ReturnType<typeof selectPluginDestinationSurfacePlacements>;
     settingsPages: readonly PluginUiProjectionModel['settingsPagesById'][string][];
     candidateFactsByPluginId: ReadonlyMap<string, PluginUiExecutionOriginCandidateFacts>;
+    /**
+     * Whether a registry source may still arrive: nothing published yet, the Account census pending, or a Machine
+     * still establishing whose registry sources are unread. A Machine that answered them, or whose read failed, no
+     * longer may, even while its other sections establish.
+     */
+    registrySourcesPending: boolean;
+    /** The Machines still owing their registry sources: a surface that waits on them reads them. */
+    registrySourcesPendingTargets: readonly AppShellPluginProjectionTarget[];
     connectedAccountResolution: ConnectedAccountDescriptorProjectionResolution;
 }>;
 
@@ -145,7 +153,8 @@ export const EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_SNAPSHOT: AppShellPluginUiProj
     projectionUnion: EMPTY_UNION, pluginUiProjection: null, mountedActionProjections: EMPTY_MOUNTED_CLIENT_ACTION_PROJECTIONS,
     skillSourceIdentity: EMPTY_PLUGIN_SKILL_SOURCE_IDENTITY, candidateFactsByPluginId: NO_FACTS,
     destinationSurfacePlacements: NO_DESTINATION_PLACEMENTS, settingsPages: NO_SETTINGS_PAGES,
-    connectedAccountResolution: Object.freeze({ kind: 'loading', descriptors: Object.freeze([]), conflicts: Object.freeze([]) }) });
+    connectedAccountResolution: Object.freeze({ kind: 'loading', descriptors: Object.freeze([]), conflicts: Object.freeze([]) }),
+    registrySourcesPending: true, registrySourcesPendingTargets: NO_TARGETS });
 const EMPTY_SNAPSHOT = EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_SNAPSHOT;
 
 type InstalledPlugins = PluginAccountUiProjectionInputs['installedPlugins'];
@@ -537,11 +546,23 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             ? previous.settingsPages
             : pluginUiProjection ? Object.freeze(Object.values(pluginUiProjection.settingsPagesById)) : NO_SETTINGS_PAGES;
         const connectedAccountResolution = publishConnectedAccounts(targets, currentness, admitted, accountLifetime);
+        // A Machine owes its registry sources until it answers them (registry read or a current catalogue) or settles.
+        const owing = targets.filter(target => {
+            const report = currentness.get(target.machineId);
+            return membersByMachineId.get(target.machineId)?.phase === 'establishing'
+                && report?.phase !== 'current' && report?.registrySourcesCurrent !== true;
+        });
+        const registrySourcesPendingTargets = owing.length === 0 ? NO_TARGETS
+            : owing.length === previous.registrySourcesPendingTargets.length
+                && owing.every((target, index) => target === previous.registrySourcesPendingTargets[index])
+                ? previous.registrySourcesPendingTargets : Object.freeze(owing);
+        const registrySourcesPending = (accountLifetime !== null && availabilityInputs === null) || owing.length > 0;
         const next: AppShellPluginUiProjectionSnapshot = Object.freeze({ accountLifetime, activeServerId: sources.activeServerId, accountUiProjection,
             executionOriginMaterializations: materializations, executionOriginPluginIds: pluginIds, projectionTargets: targets,
             currentnessForActiveAccountByMachineId, projectionUnion, pluginUiProjection,
             mountedActionProjections: previous.mountedActionProjections, skillSourceIdentity,
-            destinationSurfacePlacements, settingsPages, candidateFactsByPluginId, connectedAccountResolution });
+            destinationSurfacePlacements, settingsPages, candidateFactsByPluginId, connectedAccountResolution,
+            registrySourcesPending, registrySourcesPendingTargets });
         if ((Object.keys(next) as (keyof AppShellPluginUiProjectionSnapshot)[]).every(key => next[key] === previous[key])) return;
         snapshot = next;
         if (!quiet) notify(previous);

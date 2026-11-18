@@ -127,7 +127,7 @@ describe('registry item last-known reads through the Account and HTTP owners', (
     it('keeps starter selection resolving until plugin sources answer', async () => {
         await setupHome('plugin-sources-pending');
         let shell: ShellValue = { pluginUiProjection: null, pluginBrowserProjection: null,
-            phase: 'establishing', interactionEnabled: false, machineId: null, serverId: null, platform: 'web', accountLifetime: null,
+            phase: 'establishing', registrySourcesPending: true, interactionEnabled: false, machineId: null, serverId: null, platform: 'web', accountLifetime: null,
             reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {} };
         const wrapper = ({ children }: React.PropsWithChildren) => React.createElement(AppShellPluginUiProjectionValueProvider, { value: shell, children });
         const hook = await renderHook(() => useRegistryItems({ kind: 'starter' }), { wrapper });
@@ -135,18 +135,18 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         await flushHookEffects();
         expect(hook.getCurrent().loading).toBe(true);
         expect(hook.getCurrent().hasValue).toBe(false);
-        shell = { ...shell, phase: 'current', interactionEnabled: true, pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION };
+        shell = { ...shell, phase: 'current', registrySourcesPending: false, interactionEnabled: true, pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION };
         await hook.rerender();
         await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
         expect(hook.getCurrent().hasValue).toBe(true);
         expect(hook.getCurrent().items).toEqual([]);
         const held = hook.getCurrent().items;
-        shell = { ...shell, phase: 'establishing', pluginUiProjection: null };
+        shell = { ...shell, phase: 'establishing', registrySourcesPending: true, pluginUiProjection: null };
         await hook.rerender();
         expect(hook.getCurrent().loading).toBe(true);
         expect(hook.getCurrent().hasValue).toBe(true);
         expect(hook.getCurrent().items).toBe(held);
-        shell = { ...shell, phase: 'current', pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION };
+        shell = { ...shell, phase: 'current', registrySourcesPending: false, pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION };
         await hook.rerender();
         await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
         expect(hook.getCurrent().items).toBe(held);
@@ -154,7 +154,7 @@ describe('registry item last-known reads through the Account and HTTP owners', (
     it('never certifies an empty starter list while a plugin member that may carry it is still establishing (Deploy an app)', async () => {
         await setupHome('plugin-member-establishing');
         let shell: ShellValue = { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
-            phase: 'current', hasEstablishingMembers: true, interactionEnabled: true, machineId: null, serverId: null, platform: 'web',
+            phase: 'current', hasEstablishingMembers: true, registrySourcesPending: true, interactionEnabled: true, machineId: null, serverId: null, platform: 'web',
             accountLifetime: null, reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {} };
         const wrapper = ({ children }: React.PropsWithChildren) => React.createElement(AppShellPluginUiProjectionValueProvider, { value: shell, children });
         const hook = await renderHook(() => useRegistryItems({ kind: 'starter' }), { wrapper });
@@ -163,8 +163,22 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         // One Machine has published; the one that may carry the starter source has not. Still loading, never empty.
         expect(hook.getCurrent().loading).toBe(true);
         expect(hook.getCurrent().hasValue).toBe(false);
-        shell = { ...shell, hasEstablishingMembers: false };
+        shell = { ...shell, hasEstablishingMembers: false, registrySourcesPending: false };
         await hook.rerender();
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().hasValue).toBe(true);
+        expect(hook.getCurrent().items).toEqual([]);
+    });
+    it('settles an empty starter list once every Machine has answered its registry sources, while other sections still establish (Deploy an app)', async () => {
+        await setupHome('plugin-member-registry-read');
+        // AUTO-PATTERNS #176d: a Machine still establishing its UI sections had answered its registry sources with no
+        // starter source; the Source step said "Loading…" for good.
+        const shell: ShellValue = { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
+            phase: 'current', hasEstablishingMembers: true, registrySourcesPending: false, interactionEnabled: true, machineId: null,
+            serverId: null, platform: 'web', accountLifetime: null, reloadConnectedAccountProjection() {},
+            clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {} };
+        const wrapper = ({ children }: React.PropsWithChildren) => React.createElement(AppShellPluginUiProjectionValueProvider, { value: shell, children });
+        const hook = await renderHook(() => useRegistryItems({ kind: 'starter' }), { wrapper });
         await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
         expect(hook.getCurrent().hasValue).toBe(true);
         expect(hook.getCurrent().items).toEqual([]);

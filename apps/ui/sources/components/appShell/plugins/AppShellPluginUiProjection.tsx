@@ -120,6 +120,10 @@ export type AppShellPluginUiProjectionValue = Readonly<{
     unavailableReasonCode?: string;
     /** Catalog completeness only; never a contribution's execution authority. */
     hasEstablishingMembers?: boolean;
+    /** A registry source may still arrive (the publication's fact); absent means settled. */
+    registrySourcesPending?: boolean;
+    /** The Machines still owing registry sources, for the surface that waits on them to read. */
+    registrySourcesPendingTargets?: readonly AppShellPluginProjectionTarget[];
     interactionEnabled: boolean;
     machineId: string | null;
     serverId: string | null;
@@ -454,6 +458,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         accountUiProjection, executionOriginPluginIds, projectionTargets,
         currentnessForActiveAccountByMachineId, projectionUnion, pluginUiProjection, mountedActionProjections,
         candidateFactsByPluginId, connectedAccountResolution, destinationSurfacePlacements, settingsPages,
+        registrySourcesPending, registrySourcesPendingTargets,
     } = derived;
     const publishMachineProjectionCurrentness = projectionPublication.publishMachineCurrentness;
     const publishPluginExecutionOrigin = React.useCallback((
@@ -828,6 +833,8 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         phase,
         unavailableReasonCode,
         hasEstablishingMembers,
+        registrySourcesPending,
+        registrySourcesPendingTargets,
         interactionEnabled,
         machineId: projectionUnion.machineId,
         serverId: projectionUnion.serverId,
@@ -839,7 +846,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         getVoiceProviderActivation,
         reloadClientExecutables,
         reloadConnectedAccountProjection,
-    }), [accountLifetime, getVoiceProviderActivation, clientExecutableActivation, connectedAccountProjectionRevision, connectedAccountProjectionState, hasEstablishingMembers, interactionEnabled, phase, platform, pluginBrowserProjection, pluginUiProjection, mountedActionProjections, projectionUnion.machineId, projectionUnion.serverId, reloadClientExecutables, reloadConnectedAccountProjection, unavailableReasonCode]);
+    }), [accountLifetime, getVoiceProviderActivation, clientExecutableActivation, connectedAccountProjectionRevision, connectedAccountProjectionState, hasEstablishingMembers, interactionEnabled, phase, platform, pluginBrowserProjection, pluginUiProjection, mountedActionProjections, projectionUnion.machineId, registrySourcesPending, registrySourcesPendingTargets, projectionUnion.serverId, reloadClientExecutables, reloadConnectedAccountProjection, unavailableReasonCode]);
     return (
         <AppShellPluginUiProjectionValueProvider value={value} declarationReady={declarationReady} publication={projectionPublication}>
             {projectionTargets.map((projectionTarget) => (

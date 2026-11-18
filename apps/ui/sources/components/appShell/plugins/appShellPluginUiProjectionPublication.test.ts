@@ -115,6 +115,31 @@ describe('AppShell projection source publication', () => {
         // Published with no Machine to read plugins from: settled, not pending.
         expect(owner.getSnapshot().projectionUnion.phase).toBe('unavailable');
     });
+    it('keeps registry sources pending only for a Machine whose registry sources are unread (Deploy an app starters)', () => {
+        const owner = createAppShellPluginUiProjectionPublication();
+        try {
+            // Nothing published yet: pending, with no Machine to read from.
+            expect(owner.getSnapshot()).toMatchObject({ registrySourcesPending: true, registrySourcesPendingTargets: [] });
+            owner.publishSources({ accountLifetime: null, availabilityInputs: null, hostBundledUiEnabled: false,
+                activeServerId: null, serverProfilesGeneration: 0, activeInventoryLoaded: true,
+                onlineMachineIds: ['machine'], selectableMachineIds: ['machine'] });
+            // An online Machine nobody has read yet may still carry the only source: it is the one to read.
+            expect(owner.getSnapshot()).toMatchObject({ registrySourcesPending: true,
+                registrySourcesPendingTargets: [{ machineId: 'machine', serverId: null }] });
+            const establishing = { ...currentness(EMPTY_PLUGIN_UI_PROJECTION), phase: 'establishing' as const, interactionEnabled: false };
+            owner.publishMachineCurrentness('machine', null, establishing);
+            expect(owner.getSnapshot().registrySourcesPending).toBe(true);
+            // Its registry sources answered (with none of this kind): settled, although its other sections still establish.
+            owner.publishMachineCurrentness('machine', null, { ...establishing, registrySourcesCurrent: true,
+                installedPackagesProjection: EMPTY_PLUGIN_UI_PROJECTION });
+            expect(owner.getSnapshot().projectionUnion.hasEstablishingMembers).toBe(true);
+            expect(owner.getSnapshot()).toMatchObject({ registrySourcesPending: false, registrySourcesPendingTargets: [] });
+            // A Machine whose read failed is not pending either.
+            owner.publishMachineCurrentness('machine', null, { ...establishing, phase: 'unavailable',
+                unavailableReasonCode: 'plugin_daemon_unavailable' });
+            expect(owner.getSnapshot().registrySourcesPending).toBe(false);
+        } finally { owner.dispose(); }
+    });
     it('settles Account discovery while passive Machine descriptor observers have no answer', () => {
         const owner = createAppShellPluginUiProjectionPublication();
         const store = createPluginAccountAvailabilityReaderStore();
