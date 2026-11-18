@@ -28,6 +28,9 @@ import { queryWithContext } from '../../../../../packages/plugins/claude/src/age
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import { resolveHappierMcpServerConfig } from '@/agent/runtime/createHappierMcpBridge';
 import { buildPiRpcLaunch } from '../../../../../packages/plugins/pi/src/agent/runtime/rpc/args';
+import { createCodexSharedAppServer } from '../../../../../packages/plugins/codex/src/agent/runtime/appServer/sharedServer';
+import { createCodexNativeAppServerRuntimeHost } from '../../../../../packages/plugins/codex/src/agent/runtime/appServer/native';
+import type { AgentSessionOpenRequest, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { SESSION_HOLDER_ADOPT_ENV_KEY, resolveAgentSessionHolderLaunch, type SessionHolderChild } from './sessionHolder';
 import { SESSION_TARGET_PLACEMENT_ENV_KEY, assertSessionTargetWorkspaceUnambiguous, connectSessionTarget,
@@ -100,6 +103,59 @@ describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session targ
         delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY];
         delete sessionProcessEnvironment()[SESSION_HOLDER_ADOPT_ENV_KEY];
         await rm(directory, { recursive: true, force: true });
+    });
+
+    it('uses Codex stdio in the placed target when a host native socket cannot reach it', async () => {
+        const session = new AbortController();
+        const channels: ChildProcess[] = [];
+        const { socketPath } = await serveSessionTargetRelay({ operations: shellOperations(channels), lifetime: session.signal,
+            readTrustedCallerPid: () => process.pid, socketPath: join(directory, 'codex.sock') });
+        const targetRoot = join(directory, 'codex-workspace');
+        await mkdir(targetRoot);
+        sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({
+            id: 'managed:codex', holderPath: holderExecutable, socketDirectory: directory, relaySocketPath: socketPath,
+            launch: { executables: { [process.execPath]: process.execPath }, env: { HAPPIER_TEST_AGENT_HOME: '/target/codex-home' },
+                workspace: { hostRoot: directory, targetRoot } } });
+        // The native Codex process is the boundary fixture; placement, Exec,
+        // transport selection and JSON-RPC initialization all remain real.
+        const agent = String.raw`
+const { createInterface } = require('node:readline');
+if (process.argv.includes('--version')) { console.log('codex-cli 0.162.1'); process.exit(0); }
+if (process.argv.includes('features')) process.exit(0);
+createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  const result = request.method === 'initialize' ? { userAgent: 'happier_cli/0.162.1 (fixture)' }
+    : { cwd: process.cwd(), home: process.env.HAPPIER_TEST_AGENT_HOME, args: process.argv.slice(1) };
+  process.stdout.write(JSON.stringify({ id: request.id, result }) + '\n');
+});`;
+        const exec = createStablePluginExecService({ signal: session.signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => directory,
+            systemTools: { resolve: async request => ({ grantId: 'codex-target-fixture', toolId: request.toolId,
+                displayName: 'Codex native fixture', source: 'system', executablePath: process.execPath,
+                launch: { kind: 'binary', executablePath: process.execPath, args: ['-e', agent, '--'] } }) } });
+        const processEnv = { CODEX_HOME: directory, CODEX_SQLITE_HOME: directory };
+        let shared: Awaited<ReturnType<typeof createCodexSharedAppServer>> = null;
+        let client: Awaited<ReturnType<ReturnType<typeof createCodexNativeAppServerRuntimeHost>['createClient']>> | undefined;
+        try {
+            shared = await createCodexSharedAppServer({ exec, processEnv, platform: 'linux', signal: session.signal });
+            expect(shared).toBeNull();
+            // Only createClient is used from this boundary's otherwise unavailable host services.
+            const context = { signal: session.signal, services: { ...createUnavailablePluginServices(), exec, logger: { debug() {} } },
+                session: { id: 'placed-codex', services: {} } } as unknown as AgentSessionRuntimeContext;
+            const host = createCodexNativeAppServerRuntimeHost({ request: { sessionId: 'placed-codex' } as AgentSessionOpenRequest,
+                context, processEnv, sharedAppServer: shared });
+            client = await host.createClient({ cwd: directory, processEnv, configOverrides: [], disableUserMcpServers: true });
+            await expect(client.request('fixture/observe', {})).resolves.toMatchObject({
+                cwd: targetRoot, home: '/target/codex-home', args: expect.arrayContaining(['app-server', '--listen', 'stdio://']),
+            });
+        } finally {
+            await client?.dispose();
+            await shared?.dispose();
+            session.abort();
+            delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY];
+            await Promise.all(channels.filter(child => child.exitCode === null).map(child => new Promise<void>(resolve => child.once('close', () => resolve()))));
+        }
     });
 
     it.each([true, false])('places a managed service through Exec; mapped executable available: %s', async (available) => {

@@ -35,7 +35,7 @@ import {
 } from '../../exec/processSupervisor';
 import { resolveProcessCustodySupportExecutable, type ProcessCustodySpawnSpec } from '@/subprocess/supervision/processCustody';
 import { resolveSessionProcessHolderLaunch, trackSessionManagedProcess, type SessionHolderRole } from '@/subprocess/supervision/sessionHolder';
-import { resolveSessionHostCwd } from '@/subprocess/supervision/sessionTargetRelay';
+import { readSessionTargetPlacement, resolveSessionHostCwd } from '@/subprocess/supervision/sessionTargetRelay';
 import { createSessionHolderAdoption, JSON_RPC_INITIALIZE_HANDSHAKE, JSON_STREAM_ADOPT_HANDSHAKES } from '@/subprocess/supervision/sessionHolderAdoption';
 import {
     PluginExecClientError,
@@ -2511,6 +2511,10 @@ export function createStablePluginExecService(params: Readonly<{
             const readMaterial = nativeLaunch ? INTERNAL_NATIVE_MCP_MATERIAL.get(nativeLaunch) : undefined;
             const material = readMaterial?.();
             if (readMaterial && !material) return fail('agent_isolation_unavailable', 'Held native transport identity is unavailable');
+            // A target's Agent cannot publish a socket into the host's filesystem.
+            if (readSessionTargetPlacement(inheritedEnvironment)) {
+                return fail('plugin_exec_native_socket_unavailable', 'Host native sockets are unavailable for a placed Session');
+            }
             const uid = material?.nativeIdentity.agentUid ?? process.getuid?.();
             if (uid === undefined) return fail('agent_isolation_unavailable', 'Native Unix transport is unavailable');
             const directory = await createSessionNativeDirectory({ uid, prefix: 'happier-codex-', access: 'rwx', runtimeRoot: '/tmp' })

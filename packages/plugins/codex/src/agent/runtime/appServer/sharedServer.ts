@@ -3,7 +3,7 @@ import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { constants } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import { redactBugReportSensitiveText, type LoggerService } from '@happier-dev/plugin-sdk';
+import { isPluginError, redactBugReportSensitiveText, type LoggerService } from '@happier-dev/plugin-sdk';
 import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 import type { ExecService, PluginProcessHandle, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
@@ -432,7 +432,11 @@ export async function createCodexSharedAppServer(params: Readonly<{
     ...(params.logger ? { logger: params.logger } : {}), readCodexVersion: dependencies.readCodexVersion });
   if (versionOutput === null) return null;
 
-  const runtimeDirectory = await dependencies.createRuntimeDirectory();
+  const runtimeDirectory = await dependencies.createRuntimeDirectory().catch(error => {
+    if (isPluginError(error) && error.code === 'plugin_exec_native_socket_unavailable') return null;
+    throw error;
+  });
+  if (runtimeDirectory === null) return null;
   const transport = { kind: 'unixWebSocket' as const, socketPath: join(runtimeDirectory, 'private', 'app-server.sock'),
     ...(nativeDirectory?.nativeProxy ? { nativeProxy: true as const } : {}) };
   // Leave the socket parent absent so Codex creates it with its cross-platform

@@ -3276,8 +3276,11 @@ so it preserves Codex's native directory/socket permissions and targets the exac
 Session server. The existing supervisor owns readiness and cancellation; the
 plugin supplies no UID and has no owner-identity fallback. Session MCP retains
 its separate per-Session bearer authentication. The short Unix runtime root is
-independent of an overlong `TMPDIR`, including same-UID launches. Windows stdio
-retains its existing contract. These are development-source contracts, not
+independent of an overlong `TMPDIR`, including same-UID launches. For a Session
+placed in another execution target, Exec reports `plugin_exec_native_socket_unavailable`
+instead of allocating a host-only endpoint. Codex then uses its existing stdio
+transport through the Session target relay. Windows stdio retains its existing
+contract. These are development-source contracts, not
 certification of a loaded runner.
 
 In 0.3 development source, `codex_refresh_free_auth_unsupported` retains its
