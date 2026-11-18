@@ -10,6 +10,7 @@ import { createWorkflowEditorDraft, type WorkflowEditorDraft } from '@/sync/doma
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { t } from '@/text';
 import { formatWorkflowProblemMessage } from '../presentation/workflowProblemPresentation';
+import { formatWorkflowSummaryLine } from '../presentation/workflowSummaryLine';
 import { useWorkflowEditorAccountMemory } from '../screens/useWorkflowEditorAccountMemory';
 import { createWorkflowEditorReadable, type WorkflowEditorDraftStore } from '../editor/workflowEditorDraftStore';
 import { useWorkflowEditorHistory, workflowEditorSnapshotsEqual, type WorkflowEditorHistoryControls } from '../editor/useWorkflowEditorHistory';
@@ -17,6 +18,7 @@ import { saveWorkflowEditorDefinition, type PendingWorkflowDefinitionCreate, typ
 import { useWorkflowTriggerEditing, type WorkflowTriggerEditing } from '../triggers/useWorkflowTriggerEditing';
 import { editWorkflowTriggerDraft, EMPTY_WORKFLOW_TRIGGER_DRAFT, type WorkflowTriggerSnapshot } from '../triggers/workflowTriggerDraft';
 import { createWorkflowTriggerIncompleteSeed } from '../triggers/workflowTriggerStarts';
+import { formatTriggerSetSentence, type TriggerSummaryContext, type TriggerSummarySource } from '../triggers/formatTriggerSummary';
 import { prepareWorkflowSentenceEditorEntry, type WorkflowSentenceEditorIntent } from './workflowSentenceAuthoring';
 
 export type WorkflowSentenceDraft = Readonly<{
@@ -39,17 +41,26 @@ export type WorkflowSentenceDraft = Readonly<{
     openInEditor: () => ReturnType<typeof prepareWorkflowSentenceEditorEntry>;
 }>;
 
+function withSentenceName(draft: WorkflowEditorDraft, triggers: readonly TriggerSummarySource[], context?: TriggerSummaryContext): WorkflowEditorDraft {
+    const name = formatWorkflowSummaryLine(draft, {
+        trigger: triggers.length === 0 ? null : formatTriggerSetSentence(triggers, { ...context, form: 'clause' }),
+    });
+    return name === null || name === draft.name ? draft : { ...draft, name };
+}
+
 /** One mounted intent: dismiss/remount for another source; rerenders never replace authored operands. */
 export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
     accountLifetime?: ServerAccountScopeLifetime | null): WorkflowSentenceDraft {
     const [source] = React.useState(() => {
         const draftId = randomUUID();
+        const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
         const definition = intent.step === undefined ? intent.definition
             : WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [intent.step] });
         const draft = definition === undefined ? createWorkflowEditorDraft({ draftId, name: intent.name, blocks: [] })
             : buildWorkflowEditorDraftFromDefinition({ draftId, name: intent.name, definition });
-        return { intent, lifetime: accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime,
-            store: createWorkflowEditorReadable(draft),
+        return { intent, lifetime,
+            store: createWorkflowEditorReadable(withSentenceName(draft, intent.trigger === undefined ? [] : [intent.trigger],
+                { machineId: intent.project?.machineId, serverId: lifetime?.scope.serverId })),
             incomplete: createWorkflowTriggerIncompleteSeed(intent) };
     });
     const mounted = React.useRef(true);
@@ -65,6 +76,8 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
     const [saving, setSaving] = React.useState(false);
     const [failed, setFailed] = React.useState<string | null>(null);
     const accountMemory = useWorkflowEditorAccountMemory(source.lifetime, { workspaceRefs: false });
+    // Draft-local authorship belongs in Undo/Redo, never in the saved workflow's schema.
+    const nameEdited = React.useRef(false);
     const triggers = useWorkflowTriggerEditing({ definitionId: saved?.definitionId ?? null,
         sourceKey: source.store.get().draftId, projectTarget: project,
         ...(source.intent.lifetimeSession === undefined ? {} : { lifetimeSession: source.intent.lifetimeSession }),
@@ -74,14 +87,23 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
         triggers.setDraft(editWorkflowTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT, { kind: 'add', clientId: randomUUID(),
             trigger: source.intent.trigger, ...(source.intent.payloadSchema === undefined ? {} : { payloadSchema: source.intent.payloadSchema }) }));
     }, [source, triggers.setDraft]);
-    const history = useWorkflowEditorHistory<{ draft: WorkflowEditorDraft; triggers: WorkflowTriggerSnapshot }>(source.store.get().draftId, snapshot => {
+    const history = useWorkflowEditorHistory<{ draft: WorkflowEditorDraft; triggers: WorkflowTriggerSnapshot; nameEdited: boolean }>(source.store.get().draftId, snapshot => {
         triggers.restoreSnapshot(snapshot.triggers);
+        nameEdited.current = snapshot.nameEdited;
         source.store.set(snapshot.draft);
     });
+    const nameForTriggers = React.useCallback((draft: WorkflowEditorDraft, snapshot: WorkflowTriggerSnapshot) => withSentenceName(draft,
+        snapshot.rows.flatMap(row => row.trigger === null ? [] : [row.trigger]),
+        { machineId: projectRef.current?.machineId, serverId: source.lifetime?.scope.serverId }), [source]);
     const onChange = React.useCallback((draft: WorkflowEditorDraft, label = t('workflows.editor.history.edited')) => {
-        const snapshot = { draft: source.store.get(), triggers: triggers.captureSnapshot() };
-        if (history.record(snapshot, { ...snapshot, draft }, label)) source.store.set(draft);
-    }, [history.record, source, triggers.captureSnapshot]);
+        const snapshot = { draft: source.store.get(), triggers: triggers.captureSnapshot(), nameEdited: nameEdited.current };
+        const edited = snapshot.nameEdited || draft.name !== snapshot.draft.name;
+        const next = edited ? draft : nameForTriggers(draft, snapshot.triggers);
+        if (history.record(snapshot, { ...snapshot, draft: next, nameEdited: edited }, label)) {
+            nameEdited.current = edited;
+            source.store.set(next);
+        }
+    }, [history.record, source, triggers.captureSnapshot, nameForTriggers]);
     const readStep = () => { const block = source.store.get().blocks[0]; return block?.kind === 'action' ? block : null; };
     const changeStep = (step: WorkflowActionLeafV1) => {
         const current = source.store.get();
@@ -141,9 +163,13 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
     };
     return { startContext: source.intent.startContext, draftStore: source.store, onChange, get step() { return readStep(); }, get operands() { return readStep()?.input ?? {}; },
         changeStep, changeOperand, project, changeProject: setProject, triggers: { ...triggers, setDraft: next => {
-            const before = { draft: source.store.get(), triggers: triggers.captureSnapshot() };
-            const after = { ...before, triggers: triggers.captureSnapshot(next) };
-            if (history.record(before, after, t('workflows.editor.history.edited'))) triggers.setDraft(next);
+            const before = { draft: source.store.get(), triggers: triggers.captureSnapshot(), nameEdited: nameEdited.current };
+            const snapshot = triggers.captureSnapshot(next);
+            const after = { ...before, triggers: snapshot, draft: before.nameEdited ? before.draft : nameForTriggers(before.draft, snapshot) };
+            if (history.record(before, after, t('workflows.editor.history.edited'))) {
+                triggers.setDraft(next);
+                source.store.set(after.draft);
+            }
         } }, history: history.controls, save, saving, failed, saved,
         openInEditor: () => {
             if (source.lifetime === null) return null;

@@ -23,6 +23,20 @@ function interval(everyMs: number) {
 }
 
 describe('formatTriggerSummary', () => {
+    it('names an Action clause without moving its wait or notify policy into the workflow name', () => {
+        const trigger = { kind: 'action' as const, phase: 'before' as const, actionIds: ['scm.commit.create'] };
+        const actionTitle = () => 'Commit';
+        expect(formatTriggerSummary({ ...trigger, mode: 'wait' }, { actionTitle, form: 'clause' }))
+            .toBe('workflows.triggers.link.beforeAction(action=Commit)');
+        expect(formatTriggerSummary({ ...trigger, mode: 'notify' }, { actionTitle, form: 'clause' }))
+            .toBe('workflows.triggers.link.beforeAction(action=Commit)');
+        expect(formatTriggerSummary({ ...trigger, phase: 'after' }, { actionTitle, form: 'clause' }))
+            .toBe('workflows.triggers.link.afterAction(action=Commit)');
+        expect(formatTriggerSummary({ ...trigger, mode: 'wait' }, { actionTitle }))
+            .toBe('workflows.triggers.card.actionSentence.beforeWait(action=Commit)');
+        expect(formatTriggerSummary({ ...trigger, mode: 'notify' }, { actionTitle }))
+            .toBe('workflows.triggers.card.actionSentence.beforeNotify(action=Commit)');
+    });
     it('keeps turn-start activity distinct from turn completion in summaries and grouping', () => {
         const trigger = { kind: 'sessionLifecycle' as const, events: ['parentTurnStarted' as const] };
         expect(readSessionLifecycleKind(trigger.events)).toBe('turnStarts');

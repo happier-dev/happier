@@ -166,6 +166,8 @@ export function readSessionLifecycleKind(events: readonly AutomationSessionLifec
 }
 
 export type TriggerSummaryContext = Readonly<{
+    /** A generated name needs the event clause, without the Action's execution-policy sentence. */
+    form?: 'clause';
     machineId?: string | null;
     serverId?: string | null;
     projection?: Pick<DaemonMergedProjectionInputs, 'automationEligibleEvents' | 'pluginUiProjection'> | null;
@@ -235,6 +237,8 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
             const facts = readActionTriggerSummaryFacts(trigger, context);
             if (facts.actions.length === 0) return t(facts.phase === 'before' ? 'workflows.triggers.card.actionBefore' : 'workflows.triggers.card.actionAfter');
             const action = joinList(facts.actions.map(entry => entry.title));
+            if (context?.form === 'clause') return t(facts.phase === 'before'
+                ? 'workflows.triggers.link.beforeAction' : 'workflows.triggers.link.afterAction', { action });
             if (facts.phase === 'after') return t('workflows.triggers.card.actionSentence.after', { action });
             return t(facts.mode === 'notify' ? 'workflows.triggers.card.actionSentence.beforeNotify' : 'workflows.triggers.card.actionSentence.beforeWait', { action });
         }
@@ -272,9 +276,9 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
  * "When you press Run now" with no trigger, else every trigger's sentence joined ("When a turn ends and
  * Every weekday at 09:00"). Run now always works too, so it is said only when nothing else starts it.
  */
-export function formatTriggerSetSentence(triggers: readonly TriggerSummarySource[]): string {
+export function formatTriggerSetSentence(triggers: readonly TriggerSummarySource[], context?: TriggerSummaryContext): string {
     if (triggers.length === 0) return t('workflows.triggers.card.manualSentence');
-    return joinList(triggers.map((trigger, index) => index === 0 ? formatTriggerSummary(trigger) : lowerSentenceStart(formatTriggerSummary(trigger))));
+    return joinList(triggers.map((trigger, index) => index === 0 ? formatTriggerSummary(trigger, context) : lowerSentenceStart(formatTriggerSummary(trigger, context))));
 }
 
 /**

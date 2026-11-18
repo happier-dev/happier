@@ -24,7 +24,7 @@ import { useSessionWorkflowContext, type SessionWorkflowContextRead } from './us
 import { createSessionWorkflowSentenceIntent, type SessionWorkflowSentenceOptions, type WorkflowSentenceEditorIntent } from '../authoring/workflowSentenceAuthoring';
 import { useWorkflowActionCatalog } from '../presentation/useWorkflowActionCatalog';
 import { useWorkflowTriggerEventOptions } from './useWorkflowTriggerEventOptions';
-import { buildResourceWorkflowTriggerStartOptions, type ResourceWorkflowTriggerStartOption } from './workflowTriggerStarts';
+import { buildActionWorkflowTriggerStartOptions, buildResourceWorkflowTriggerStartOptions, type ResourceWorkflowTriggerStartOption, type WorkflowLinkTriggerStartOption } from './workflowTriggerStarts';
 
 const NO_SHARED_AUDIENCE: readonly PrincipalRefV1[] = [];
 const EMPTY_ROWS: readonly AccountTriggerRow[] = [];
@@ -73,7 +73,7 @@ export type ResourceAutomationsSectionRead = SelectedAutomationsSectionRead & Re
         createSentenceIntent(options?: SessionWorkflowSentenceOptions): WorkflowSentenceEditorIntent | null;
     }>) | null;
     link: Readonly<{
-        whenOptions: readonly ResourceWorkflowTriggerStartOption[];
+        whenOptions: readonly WorkflowLinkTriggerStartOption[];
         whenStatus: 'idle' | 'loading' | 'ready' | 'unavailable';
         draft: ResourceAutomationLinkDraft | null;
         setDraft(draft: ResourceAutomationLinkDraft | null): void;
@@ -116,7 +116,7 @@ const BOTH_PHASES: readonly ActionTriggerPhase[] = ['before', 'after'];
  * offers), without inventing a resource or audience. One section reads both: the editor and rows see one read.
  */
 export function useActionAutomationsSection(props: Readonly<{ actionId: Extract<WorkflowTriggerListRequestV1, { actionId: string }>['actionId'];
-    phases?: readonly ActionTriggerPhase[]; accountLifetime: ServerAccountScopeLifetime | null }>): SelectedAutomationsSectionRead {
+    phases?: readonly ActionTriggerPhase[]; accountLifetime: ServerAccountScopeLifetime | null }>): SelectedAutomationsSectionRead & Pick<ResourceAutomationsSectionRead, 'link'> {
     const { accountLifetime, actionId } = props;
     const phases = props.phases ?? BOTH_PHASES;
     const demanded = useLayoutPresentationActive();
@@ -147,7 +147,19 @@ export function useActionAutomationsSection(props: Readonly<{ actionId: Extract<
     const acknowledge = React.useCallback((set: WorkflowTriggerSetV1) => {
         handles.current.before.acknowledge(set); handles.current.after.acknowledge(set);
     }, []);
-    return useSelectedAutomationsProjection({ sets, attachedPage, status, loadMore, retry, acknowledge }, accountLifetime);
+    const selected = useSelectedAutomationsProjection({ sets, attachedPage, status, loadMore, retry, acknowledge }, accountLifetime);
+    const actionScope = React.useMemo(() => ({ kind: 'machine' as const, machineId: null,
+        serverId: accountLifetime?.scope.serverId }), [accountLifetime]);
+    const catalog = useWorkflowActionCatalog(actionScope, 'automation', { enabled: demanded && accountLifetime !== null, accountLifetime });
+    const whenStatus = !demanded || !accountLifetime ? 'idle' as const
+        : catalog.phase === 'error' || catalog.phase === 'unsupported' ? 'unavailable' as const
+            : catalog.phase === 'ready' ? 'ready' as const : 'loading' as const;
+    const whenOptions = React.useMemo(() => whenStatus === 'ready'
+        ? buildActionWorkflowTriggerStartOptions({ actionId, actions: catalog.specs }).filter(option => phases.includes(option.relation))
+        : EMPTY_WHEN_OPTIONS, [whenStatus, actionId, catalog.specs, phases]);
+    const { link } = useWorkflowLinkController({ subject: null, binding: accountLifetime, demanded, editor: selected.editor,
+        whenOptions, whenStatus, retryWhen: catalog.retry });
+    return { ...selected, link };
 }
 
 /** Resource section data and mutations, consuming the incumbent read and presentation lifetimes. */
@@ -205,6 +217,20 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
         if (actionCatalog.phase === 'error' || actionCatalog.phase === 'unsupported') actionCatalog.retry();
         if (eventCatalog.status === 'unavailable') eventCatalog.retry();
     });
+    const { link, audience } = useWorkflowLinkController({ subject, subjectName: props.subjectName, sourceAudience: props.sourceAudience,
+        binding, demanded, editor, project, whenOptions, whenStatus, retryWhen });
+    return { accountLifetime, read, editor, rows, also, skippedNotSharedCount, project, audience, session, link };
+}
+
+/** Resource and Action hosts link through the same trigger writer and optional grant review. */
+function useWorkflowLinkController(input: Readonly<{
+    subject: AutomationSubjectV1 | null; subjectName?: string; sourceAudience?: readonly PrincipalRefV1[];
+    binding: ServerAccountScopeLifetime | null | undefined; demanded: boolean;
+    editor: SelectedAutomationsSectionRead['editor']; project?: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'>;
+    whenOptions: readonly WorkflowLinkTriggerStartOption[]; whenStatus: ResourceAutomationsSectionRead['link']['whenStatus'];
+    retryWhen(): void;
+}>) {
+    const { subject, subjectName, sourceAudience, binding, demanded, editor, project, whenOptions, whenStatus, retryWhen } = input;
     const [linkDraft, setLinkDraft] = React.useState<ResourceAutomationLinkDraft | null>(null);
     const setDraft = React.useCallback((draft: ResourceAutomationLinkDraft | null) => {
         // This flow links an Automation to the selected resource. Source setup supplies
@@ -217,12 +243,12 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
     const machineId = subject?.kind === 'machine' ? subject.machineId : '';
     const machineSubject = subject?.kind === 'machine';
     const machineSharing = useMachineShareController({ machineId,
-        machineName: props.subjectName ?? machineId,
+        machineName: subjectName ?? machineId,
         scope: demanded && linkDraft !== null && machineSubject && binding ? binding.scope : null });
     const profileSubject = subject?.kind === 'approvalProfile';
     const profileSharing = useDocumentShareController(demanded && linkDraft !== null && profileSubject && binding
         ? { scope: binding.scope, artifactId: subject.profileId, kind: 'approval-profile.v1' } : null);
-    const audience = machineSubject ? machineSharing.audience : profileSubject ? profileSharing.audience : props.sourceAudience;
+    const audience = machineSubject ? machineSharing.audience : profileSubject ? profileSharing.audience : sourceAudience;
     const workflow = linkDraft ? parseWorkflowDefinitionRefV1(linkDraft.workflow) : null;
     const review = useDocumentShareController(demanded && binding && workflow?.kind === 'artifact'
         && audience !== undefined ? { scope: binding.scope, artifactId: workflow.artifactId,
@@ -231,7 +257,7 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
         if (decision === 'decline') return { ok: false, phase: 'declined', shared: [] };
         // Catalog Workflows have no Artifact grant roster; their ordinary trigger admission
         // owns availability. Only a saved Artifact can require audience sharing here.
-        const sharing: DocumentAudienceShareResult = workflow?.kind === 'artifact'
+        const sharing: DocumentAudienceShareResult = workflow?.kind === 'artifact' && subject !== null
             ? await review.shareMissingAudience() : { ok: true, shared: NO_SHARED_AUDIENCE };
         if (!sharing.ok) return { ...sharing, phase: 'sharing' };
         try {
@@ -241,7 +267,7 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
         } catch (error) {
             return { ok: false, phase: 'link', shared: sharing.shared, error };
         }
-    }, [linkDraft, workflow?.kind, review.shareMissingAudience, editor.add, project, binding]);
+    }, [linkDraft, workflow?.kind, review.shareMissingAudience, editor.add, project, binding, subject]);
     const missingAudience = workflow && workflow.kind !== 'artifact' ? NO_SHARED_AUDIENCE : review.missingAudience;
     const sourceSharing = machineSubject ? machineSharing : profileSubject ? profileSharing : null;
     const reviewIssue = sourceSharing?.issue ?? review.issue;
@@ -251,5 +277,5 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
         missingAudience, issue: reviewIssue, loading: reviewLoading,
         retryReview, retryWhen, submit: submitLink }),
     [whenOptions, whenStatus, linkDraft, setDraft, missingAudience, reviewIssue, reviewLoading, retryReview, retryWhen, submitLink]);
-    return { accountLifetime, read, editor, rows, also, skippedNotSharedCount, project, audience, session, link };
+    return { link, audience };
 }

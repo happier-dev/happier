@@ -41,6 +41,23 @@ export type ResourceWorkflowTriggerStartOption = Readonly<{
         when: Extract<TriggerWhenValue, { kind: 'pluginEvent' }>;
         trigger: null; eventSeed: PluginUiOpenAutomationEventRequestV1 }>);
 
+export type ActionWorkflowTriggerStartOption = Omit<Extract<ResourceWorkflowTriggerStartOption,
+    { relation: 'before' | 'after' }>, 'subject'>;
+export type WorkflowLinkTriggerStartOption = ResourceWorkflowTriggerStartOption | ActionWorkflowTriggerStartOption;
+
+export function buildActionWorkflowTriggerStartOptions(params: Readonly<{
+    actionId: string; actions: readonly WorkflowActionSpec[];
+}>): readonly ActionWorkflowTriggerStartOption[] {
+    return params.actions.filter(action => action.id === params.actionId).flatMap(action => ACTION_PHASES.flatMap(phase => {
+        if (action.automation?.[phase] !== true) return [];
+        const start = createWorkflowTriggerStartWhen(actionStartId(phase));
+        if (start?.kind !== 'action') return [];
+        const when = { ...start, actionIds: [action.id] };
+        return [{ id: `${actionStartId(phase)}:${action.id}`, label: action.title,
+            relation: phase, when, setupRequired: false as const, trigger: { ...when, enabled: true } }];
+    }));
+}
+
 export function buildResourceWorkflowTriggerStartOptions(params: Readonly<{
     subject: AutomationSubjectV1;
     actions: readonly WorkflowActionSpec[];
@@ -56,13 +73,9 @@ export function buildResourceWorkflowTriggerStartOptions(params: Readonly<{
             if (typeof kind !== 'object' || kind.kind !== 'plugin' || action.plugin?.id !== subject.pluginId
                 || kind.subjectKindId !== subject.subjectKindId) continue;
         }
-        for (const phase of ACTION_PHASES) {
-            if (action.automation[phase] !== true) continue;
-            const start = createWorkflowTriggerStartWhen(actionStartId(phase));
-            if (start?.kind !== 'action') continue;
-            const when = { ...start, actionIds: [action.id], subject };
-            options.push({ id: `${actionStartId(phase)}:${action.id}`, label: action.title,
-                relation: phase, subject, when, setupRequired: false, trigger: { ...when, enabled: true } });
+        for (const option of buildActionWorkflowTriggerStartOptions({ actionId: action.id, actions: [action] })) {
+            const when = { ...option.when, subject };
+            options.push({ ...option, subject, when, trigger: { ...when, enabled: true } });
         }
     }
     for (const event of params.events) {
