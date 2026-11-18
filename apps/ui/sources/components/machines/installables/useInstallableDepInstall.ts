@@ -6,6 +6,7 @@ import { isInstallableDepUpdateAvailable } from '@/capabilities/installablesUpda
 import type { InstallableDepDataLike } from '@/capabilities/installablesRegistry';
 import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
 /**
@@ -53,7 +54,7 @@ export function useInstallableDepInstall(
         },
       );
       if (!execution.ok) {
-        Modal.alert(t('common.error'), execution.error);
+        Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(execution, t('deps.installFailed')));
       } else {
         const invoke = MachineCapabilityInstallOutputSchema.parse(
           execution.result,

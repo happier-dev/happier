@@ -95,6 +95,24 @@ describe('install and Computer repair share configurable Action approval', () =>
         await hook.unmount();
     });
 
+    it('explains the install policy refusal before calling the daemon', async () => {
+        const { profileId, serverId } = await addInstallerHome('Allowed');
+        await harness.setActionPolicy(profileId, 'machines.capabilities.install', 'ui', 'off');
+        const screen = await renderSettingsView(<InstallableDepInstaller
+            machineId="machine" serverId={serverId} enabled groupTitle="Dependencies" depId={COMPUTER_CUA_DRIVER_DEP_ID}
+            depTitle="Native driver" depIconName="wrench" depStatus={null} capabilitiesStatus="loaded"
+            installLabels={{ install: 'Install', update: 'Update', reinstall: 'Reinstall' }}
+            installModal={{ installTitle: 'Install', updateTitle: 'Update', reinstallTitle: 'Reinstall', description: 'Native driver' }}
+            refreshStatus={vi.fn()} />);
+        try {
+            await act(async () => { screen.pressRowByTitle('Install'); });
+            await waitForHomeGovernance(() => expect(boundary.alert).toHaveBeenCalledWith(
+                'common.error', 'actionConfirmations.turnedOffUnnamedMessage',
+            ));
+            expect(boundary.rpc).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); }
+    });
+
     it('distinguishes a failed capability invocation from an unsupported capability', async () => {
         const { serverId, lifetime } = await addInstallerHome('Allowed');
         boundary.rpc.mockResolvedValue({ error: 'daemon failure' });

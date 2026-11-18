@@ -4,6 +4,7 @@ import { MachineCapabilityInstallOutputSchema } from '@happier-dev/protocol/acti
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { ComputerScope } from '@/sync/domains/computer/computerControlClient';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
@@ -26,8 +27,9 @@ export function useComputerDriverRepair(scope: ComputerScope, accountLifetime: S
                     capabilityId: COMPUTER_CUA_DRIVER_DEP_ID, method: 'install',
                 });
                 if (!installation.isCurrent() || !accountLifetime.isCurrent() || current.current !== installation) return;
-                if (!execution.ok) Modal.alert(t('common.error'), execution.error);
-                else {
+                if (!execution.ok) {
+                    Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(execution, t('deps.installFailed')));
+                } else {
                     const result = MachineCapabilityInstallOutputSchema.safeParse(execution.result);
                     if (!result.success) Modal.alert(t('common.error'), t('deps.installFailed'));
                     else if (!result.data.supported) Modal.alert(t('common.error'), result.data.reason === 'not-supported' ? t('deps.installNotSupported') : t('deps.installFailed'));
