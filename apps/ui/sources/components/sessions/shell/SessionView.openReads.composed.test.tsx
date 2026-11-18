@@ -386,3 +386,50 @@ it('renders nothing of the Session view when a turn reports its usage', async ()
         await screen.unmount();
     }
 });
+
+it('a Session switch inside one workspace tab mounts the new Session view once, under the chrome it keeps', async () => {
+    installShippedNativeFrameScheduler();
+    const [first, second] = ['switch-first', 'switch-second'];
+    storage.getState().applySessions([first, second].map(id => createSessionFixture({ id, serverId: runtime.serverId, seq: 4, encryptionMode: 'plain' })));
+    for (const id of [first, second]) await sync.ensureSessionVisibleForMessageRoute(id, { serverId: runtime.serverId, hydrateMessages: false });
+    const counts = createCommittedFiberRenderCounter();
+    let readRoot: (() => ReturnType<ReturnType<typeof readTestRendererRoot>>) | null = null;
+    const navigation = { push: () => {}, replace: () => {}, back: () => {} };
+    // A sidebar row click retargets the focused preview tab (`setTarget`): same tab, same body element, new ref.
+    const body = <SessionDestinationBody />;
+    const tab = (id: string) => <React.Profiler id="session-tab" onRender={() => { if (readRoot) counts.onCommitRoot(readRoot()); }}>
+        <DestinationInstanceHost tabId="preview-tab" ref={{ kind: 'session', params: { id, serverId: runtime.serverId } }}
+            pathname={`/session/${id}`} focused visible navigation={navigation}>
+            {body}
+        </DestinationInstanceHost>
+    </React.Profiler>;
+    const loaded = async (id: string) => act(async () => {
+        await waitForHomeGovernance(() => expect(storage.getState().sessionMessages[id]?.isLoaded).toBe(true));
+        await waitForHomeGovernance(() => expect(hasCurrentSessionTurnsProjection(storage.getState().sessions[id] ?? {})).toBe(true));
+    });
+    const screen = await renderScreen(tab(first), { wrapper: runtime.Wrapper });
+    try {
+        await loaded(first);
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        readRoot = readTestRendererRoot(screen.tree.root);
+        counts.start();
+        await screen.update(tab(second));
+        await loaded(second);
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        counts.stop();
+        expect(screen.getTextContent()).toContain('Turn 1');
+        const { mounts } = counts.read();
+        const summary = JSON.stringify(Object.fromEntries([...mounts].sort((a, b) => b[1] - a[1]).slice(0, 40)));
+        // The Session view is one instance per Session (the destination scope, transcript hand-off, retained surface,
+        // Board controller and transcript list are keyed by Session address): a switch mounts that view once, and
+        // nothing of it mounts a second time while it opens. The tab's host and chrome stay mounted.
+        for (const name of ['SessionViewerDestinationScope', 'SessionDestinationBody', 'SessionViewLoaded', 'ChatListContent']) {
+            expect(mounts.get(name) ?? 0, `${name} ${summary}`).toBe(1);
+        }
+        for (const name of ['DestinationInstanceHost', 'DestinationNavigationChrome', 'HeaderActionsScope']) {
+            expect(mounts.get(name) ?? 0, `${name} ${summary}`).toBe(0);
+        }
+    } finally {
+        await screen.unmount();
+    }
+});

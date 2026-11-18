@@ -33,7 +33,7 @@ export function readTestRendererRoot(instance: unknown): () => CountedFiber {
 
 /** Observe committed React DOM work without replacing any component or subscription owner. */
 export function createCommittedFiberRenderCounter() {
-    const state = { enabled: false, commits: 0, renders: new Map<string, number>(), componentCommits: new Map<unknown, number>(), componentRenders: new Map<unknown, number>(), renderedMessageIds: new Map<string, number>(), changedProps: new Map<string, number>() };
+    const state = { enabled: false, commits: 0, renders: new Map<string, number>(), componentCommits: new Map<unknown, number>(), componentRenders: new Map<unknown, number>(), renderedMessageIds: new Map<string, number>(), changedProps: new Map<string, number>(), mounts: new Map<string, number>() };
     const componentTags = new Set([0, 1, 11, 14, 15]);
     const performedWork = 1;
     const isUntouched = (parent: CountedFiber, child: CountedFiber) => {
@@ -59,7 +59,14 @@ export function createCommittedFiberRenderCounter() {
             while (stack.length) {
                 const fiber = stack.pop()!;
                 for (let child = fiber.child; child; child = child.sibling) {
-                    if (child.alternate && fiber.alternate && isUntouched(fiber.alternate, child)) continue;
+                    // A child React did not visit is shared with the previous tree; it can still carry its first
+                    // mount's empty alternate and stale flags, so it is skipped whether or not it has an alternate.
+                    if (fiber.alternate && isUntouched(fiber.alternate, child)) continue;
+                    if (componentTags.has(child.tag) && !child.alternate) {
+                        // A committed component fiber without an alternate rendered for the first time in this commit.
+                        const name = componentName(child.type);
+                        state.mounts.set(name, (state.mounts.get(name) ?? 0) + 1);
+                    }
                     if (componentTags.has(child.tag) && child.alternate && (child.flags & performedWork)) {
                         committedComponents.add(componentIdentity(child.type));
                         state.componentRenders.set(componentIdentity(child.type), (state.componentRenders.get(componentIdentity(child.type)) ?? 0) + 1);
@@ -84,7 +91,7 @@ export function createCommittedFiberRenderCounter() {
             for (const component of committedComponents) state.componentCommits.set(component, (state.componentCommits.get(component) ?? 0) + 1);
             for (const id of renderedMessageIds) state.renderedMessageIds.set(id, (state.renderedMessageIds.get(id) ?? 0) + 1);
         },
-        start() { state.enabled = true; state.commits = 0; state.renders.clear(); state.componentCommits.clear(); state.componentRenders.clear(); state.renderedMessageIds.clear(); state.changedProps.clear(); },
+        start() { state.enabled = true; state.commits = 0; state.renders.clear(); state.componentCommits.clear(); state.componentRenders.clear(); state.renderedMessageIds.clear(); state.changedProps.clear(); state.mounts.clear(); },
         stop() { state.enabled = false; },
         read() {
             const componentCommits = new Map(state.componentCommits);
@@ -93,7 +100,9 @@ export function createCommittedFiberRenderCounter() {
                 commitsFor: (component: unknown) => componentCommits.get(componentIdentity(component)) ?? 0,
                 /** Every re-render of that component's mounted instances (one per instance per commit). */
                 rendersFor: (component: unknown) => componentRenders.get(componentIdentity(component)) ?? 0,
-                renderedMessageIds: new Map(state.renderedMessageIds), changedProps: new Map(state.changedProps) };
+                renderedMessageIds: new Map(state.renderedMessageIds), changedProps: new Map(state.changedProps),
+                /** Component instances that rendered for the first time while counting, by component name. */
+                mounts: new Map(state.mounts) };
         },
     };
     return api;
