@@ -336,7 +336,7 @@ function AllMachinesIndexBody() {
     );
 
     // The header, the table or grid, then the dashboard and configuration share the page column's edges (lab `F`, `FC`).
-    // The page's scroller stands above the Collection, so the table windows its rows in it (`page-virtualized`).
+    // The page's scroller stands above the Collection, so the list windows its rows in it (`page-virtualized`).
     // The content column sits inside the Collection scope: the column draws no edge and says so after the scope
     // states the page's, so the header text, the table and every section take their own insets from it.
     return (
@@ -347,10 +347,10 @@ function AllMachinesIndexBody() {
                 model={model}
                 anatomy={anatomy}
                 accessibilityLabel={t('allMachines.rowTitle')}
-                presentation={view === 'grid' ? 'grid' : 'table'}
+                presentation={view === 'grid' ? 'grid' : 'list'}
                 detail="none"
-                // The table windows its rows in the page (a fleet is user-sized data); the grid's cards still scroll with
-                // the page, every card mounted, since Collection windows only tables and catalog directories in a page.
+                // The page list windows its rows in the page (a fleet is user-sized data); the grid's cards still scroll
+                // with the page, every card mounted, since Collection windows only lists, tables and directories there.
                 scroll={view === 'grid' ? 'page' : 'page-virtualized'}
                 minListWidth={LIST_MIN_WIDTH_PX}
                 minDetailWidth={LIST_MIN_WIDTH_PX}
@@ -473,9 +473,9 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
 });
 
 /**
- * One anatomy for both views (lab `rm` F, Fp, FC). The table: the machine with what it is after its name
- * ("48 cores · 125 GB"), its work, one cell per shown metric — offline machines keep missing-value marks,
- * while an online refusal says why across its figures. The phone's list: the name alone, and one status line beneath it
+ * One anatomy for both views (lab `rm` F, Fp, FC). The wide list: the machine's name, what it is beneath it
+ * ("Linux · 48 cores · 125 GB"), then its work and one end column per shown metric (the page list's Services shape) —
+ * offline machines keep missing-value marks. The phone's list: the name alone, and one status line beneath it
  * (why it is quiet, what needs attention, or its work). The grid: the card body with its metric tiles.
  */
 function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummaryStyle, metrics: readonly MachineSummaryMetric[], cardAttention: ReadonlyMap<string, MachineAttentionEntry>,
@@ -493,19 +493,17 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         title: (item) => item.title,
         // A name still decrypting holds the Collection's title skeleton (as the rail does), never "Loading…".
         titlePending: (item) => item.hydrating === true,
-        // What the machine is ("64 cores · 251 GiB") gives way before its name, so the part that tells namesakes apart
-        // ("· 0c82") stays readable (Collection's inline title line truncates first).
-        titleSuffix: (item) => item.facts ? <Text numberOfLines={1} style={stylesheet.quiet}>{item.facts}</Text> : null,
-        // The list's one row anatomy (phones): the name alone on line 1, and one status line beneath it on every
-        // row (DESIGN "Phones recompose": a sentence never sits right of a label). That line is why the machine is
-        // quiet (offline, unreadable), else what needs attention with its one value, else its work, as the table's
-        // Work column says it. The grid's cards carry their own lines.
-        ...(view === 'grid' ? {} : { byline: (item: MachineIndexItem) => <MachineIndexListLine item={item} /> }),
+        // The list's one row anatomy: the name alone on line 1, so a long name never truncates for what follows it.
+        // Where the Work and instrument columns stand (wide), line 2 says what the machine is ("Linux · 64 cores ·
+        // 251 GiB", lab rdDelta-dMachines overlay). On a phone the columns are gone, so line 2 is its one status line
+        // (DESIGN "Phones recompose"): why it is quiet, else what needs attention with its one value, else its work.
+        // The grid's cards carry their own lines.
+        ...(view === 'grid' ? {} : { byline: (item: MachineIndexItem, layout?: Readonly<{ fieldColumns: boolean }>) => layout?.fieldColumns
+            ? <MachineIndexFactsLine item={item} /> : <MachineIndexListLine item={item} /> }),
         fields: [
-            // Offline machines retain one missing-value mark per metric; an online refusal can span the figures.
+            // Offline machines retain one missing-value mark per metric; an online refusal says why in its Work cell.
             ...(anyOnline ? [
-            { key: 'work', title: t('allMachines.columnWork'), minWidth: WORK_COLUMN_WIDTH_PX, priority: 2,
-                ...(metrics.length > 0 ? { spanRest: (item: MachineIndexItem) => item.online && item.reason !== null } : {}),
+            { key: 'work', title: t('allMachines.columnWork'), minWidth: WORK_COLUMN_WIDTH_PX, priority: 2, listColumn: true,
                 render: (item: MachineIndexItem) => metrics.length > 0 && (!item.online || item.reason !== null)
                     ? <Text numberOfLines={2} style={stylesheet.quiet}>{item.reason ?? item.presence}</Text> : (
                         // The work, then the one update fact that needs the person (lab mIdx, review H2: no new column).
@@ -516,12 +514,13 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
                     ) },
             ] : []),
             ...(metrics.length === 0 ? [
-                { key: 'status', title: t('allMachines.columnStatus'), minWidth: 200, priority: 1, render: (item: MachineIndexItem) => <MachinePresenceCell item={item} /> },
+                { key: 'status', title: t('allMachines.columnStatus'), minWidth: 200, priority: 1, listColumn: true, render: (item: MachineIndexItem) => <MachinePresenceCell item={item} /> },
             ] : metrics.map((metric, index) => ({
                 key: metric,
                 title: machineSummaryMetricTitle(metric),
                 minWidth: metric === 'memory' ? MEMORY_COLUMN_WIDTH_PX : METRIC_COLUMN_WIDTH_PX,
                 priority: 1,
+                listColumn: true,
                 render: (item: MachineIndexItem) => <MachineMetricCell item={item} metric={metric} style={style} first={index === 0} />,
             }))),
         ],
@@ -565,6 +564,12 @@ const MachineIndexListLine = React.memo(function MachineIndexListLine(props: Rea
         <MachineListRowSummary testID={`machines.index.strip.${item.key}`} serverId={item.serverId}
             machineId={machineKeyOf(item).machineId} online={item.online} quietWord={null} />
     </MachineIndexMeter>;
+});
+
+/** A wide row's second line: what the machine is (its owner or platform, then cores and memory), never its status. */
+const MachineIndexFactsLine = React.memo(function MachineIndexFactsLine(props: Readonly<{ item: MachineIndexItem }>) {
+    const line = [describeWhere(props.item), props.item.facts].filter(Boolean).join(' · ');
+    return line ? <Text testID={`machines.index.facts.${props.item.key}`} numberOfLines={1} style={stylesheet.quiet}>{line}</Text> : null;
 });
 
 /** A card's one status line: the reason it needs you as a sentence, lead word in the attention tone, then its detail. */

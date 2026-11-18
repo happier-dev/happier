@@ -358,6 +358,11 @@ it('gives every phone index row one anatomy: the name alone on line 1, its one s
       { ...machine('idle', 'Idle', 'idle.local'), active: false },
     ] }]);
     const tree = await renderPage();
+    // The list's stage measures its own width (on web, before the first paint), which is what makes its rows narrow.
+    await act(async () => {
+      const stage = tree.findAll(node => node.props?.testID === 'machines.index.collection:stage' && typeof node.props?.onLayout === 'function')[0]!;
+      stage.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 844 } } });
+    });
     const row = (id: string) => tree.findAll(node => node.props.testID === `machines.index.row.machine:srv_a:${id}`);
     await waitForHomeGovernance(() => expect(row('idle').length).toBeGreaterThan(0));
     // The row reads its attention from the same per-machine owner as the list column, never "No work" first.
@@ -549,6 +554,28 @@ describe('All machines (the Settings door index)', () => {
     expect(work('vps')).toContain(t('machineDetailPage.work.failing', { count: 1 }));
     // Not reported: no services part at all, never "0 services".
     expect(work('quiet')).not.toContain(t('machineDetailPage.work.services', { count: 0 }));
+  });
+
+  it('says what a Machine is on its row\'s second line at desktop width, never inline after its name (round-4 overlay)', async () => {
+    const resources = MachinePublishedResourceSummaryV1Schema.parse({ v: 1, vitals: { state: 'reporting' },
+      host: { logicalCores: 64, memoryTotalBytes: 2 ** 34, bootedAt: 1 },
+      attention: { level: 'calm', reasons: [] } });
+    await setMachines([{ serverId: 'srv_a', serverName: 'Home A', status: 'idle', machines: [
+      { ...machine('big', 'NLDW6-3-11-20', 'big.local'), daemonState: { status: 'running', resources } },
+    ] }]);
+    const tree = await renderPage();
+    await act(async () => {
+      const stage = tree.findAll(node => node.props?.testID === 'machines.index.collection:stage' && typeof node.props?.onLayout === 'function')[0]!;
+      stage.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1440, height: 900 } } });
+    });
+    const text = (node: { children: unknown[] } | undefined): string => !node ? '' : node.children
+      .map(child => typeof child === 'string' ? child : text(child as { children: unknown[] })).join('');
+    const facts = (await import('@/text')).t('machineVitals.header.coresMemory', { cores: 64, memory: '16 GB' }).split(' · ')[0]!;
+    const row = 'machines.index.row.machine:srv_a:big';
+    // The facts line under the name (lab rdDelta-dMachines overlay), so a long name keeps its whole line.
+    const line2 = () => tree.findAll(node => typeof node.type === 'string' && node.props?.testID === `machines.index.facts.machine:srv_a:big`);
+    await waitForHomeGovernance(() => expect(text(line2()[0])).toContain(facts));
+    expect(tree.findAll(node => node.props?.testID === `${row}:title-suffix`)).toHaveLength(0);
   });
 
   it('says a Machine\'s waiting security updates, or that it needs a restart, on the Work cell\'s second line (lab mIdx)', async () => {
