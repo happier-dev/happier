@@ -11,7 +11,10 @@ import type {
 } from './registry';
 import type { NormalizedLocalServiceInventorySnapshot } from './scanner';
 
-export type LocalServiceInventoryWatchResult = ParkWatchResult<NormalizedLocalServiceInventorySnapshot>;
+export type LocalServiceInventoryWatchResult = ParkWatchResult<NormalizedLocalServiceInventorySnapshot> & Readonly<{
+    /** The snapshot the caller holds (`sinceGeneratedAt`), when this owner still has it. */
+    base?: NormalizedLocalServiceInventorySnapshot;
+}>;
 
 export type LocalServiceInventoryRoutes = Readonly<{
     getSummary?(): LocalServiceMachineSummaryV1;
@@ -95,14 +98,17 @@ export function createLocalServiceInventoryRoutes(input: Readonly<{
                         signal: request.signal,
                     });
                 }
+                const held = input.registry.getSnapshot();
+                const base = held.generatedAt === request.sinceGeneratedAt ? held : undefined;
                 if (input.ensureFreshSnapshot) await input.ensureFreshSnapshot();
-                return await watches.parkWatch({
+                const result = await watches.parkWatch({
                     isNewer: () => typeof request.sinceGeneratedAt === 'number'
                         && input.registry.getSnapshot().generatedAt > request.sinceGeneratedAt,
                     subscribe: input.registry.subscribe,
                     read: input.registry.getSnapshot,
                     signal: request.signal,
                 });
+                return result.changed && base ? { ...result, base } : result;
             } finally { release?.(); }
         },
         async watchLauncherSnapshot(request) {

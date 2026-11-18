@@ -78,7 +78,8 @@ export function createRestrictedRunnerLocalServicesRoutes(input: Readonly<{
     watchSnapshot: async (request) => {
       const result = await input.runtime.inventoryRoutes.watchSnapshot(request);
       return result.changed
-        ? { changed: true, snapshot: scopeInventorySnapshot(result.snapshot, input.workingDirectory) }
+        ? { changed: true, snapshot: scopeInventorySnapshot(result.snapshot, input.workingDirectory),
+          ...(result.base ? { base: scopeInventorySnapshot(result.base, input.workingDirectory) } : {}) }
         : result;
     },
   };

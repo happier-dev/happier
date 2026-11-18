@@ -332,7 +332,8 @@ describe('daemon local services machine rpc handlers', () => {
                 now += 1;
                 command = 'private-web-updated';
                 await runtime.inventoryRoutes.refreshSnapshot();
-                expect(await pending).toMatchObject(visible);
+                // This caller holds the current snapshot, so only the changed entry crosses.
+                expect(await pending).toMatchObject({ protocolVersion: 1, delta: { upserts: visible.snapshot.entries } });
                 expect(verificationRequests).toBe(1);
                 expect(runtime.inventoryRoutes.watcherCount()).toBe(0);
                 current = true;
@@ -703,6 +704,40 @@ describe('daemon local services machine rpc handlers', () => {
         expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_START,
             { machineId: 'machine_1', targetId: 'unavailable-declaration' }))
             .toMatchObject({ status: 'denied', reasonCode: 'machine_admission_required' });
+    });
+
+    it('answers a parked inventory watch with only the entries that changed since the held snapshot', async () => {
+        const entry = (id: string, port: number, lastSeenAt: number) => ({
+            id, machineId: 'machine_1', address: { kind: 'loopback', host: '127.0.0.1', family: 'ipv4' }, port,
+            protocol: 'tcp', detectedAt: 1_000, lastSeenAt, state: 'listening', source: 'detected', labels: [],
+            confidence: 'high', processOwnershipConfidence: 'medium', workspaceAssociationConfidence: 'high', diagnostics: [],
+        }) as const;
+        const registry = createLocalServiceInventoryRegistry();
+        registry.replaceSnapshot({ ...inventorySnapshot,
+            entries: [entry('entry-1', 3001, 1_000), entry('entry-2', 3002, 1_000), entry('entry-3', 3003, 1_000)] });
+        const held = registry.getSnapshot().generatedAt;
+        const { handlers, registrar } = createRegistrar();
+        registerDaemonLocalServicesMachineRpcHandlers(registrar, {
+            localServicesInventory: createLocalServiceInventoryRoutes({ registry }),
+        });
+        const watch = handlers.get(RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH)!;
+
+        const pending = watch({ machineId: 'machine_1', sinceGeneratedAt: held });
+        await Promise.resolve();
+        // One material change (entry-2 went stale) and one removal; every scan observation moved.
+        registry.replaceSnapshot({ ...inventorySnapshot, generatedAt: 2_000,
+            entries: [entry('entry-1', 3001, 2_000), { ...entry('entry-2', 3002, 2_000), state: 'stale' }] });
+        const response = DaemonLocalServiceInventoryWatchResponseV1Schema.parse(await pending);
+
+        expect(response).not.toHaveProperty('snapshot');
+        expect(response).toMatchObject({ changed: true, delta: {
+            baseGeneratedAt: held, generatedAt: registry.getSnapshot().generatedAt, machineId: 'machine_1',
+            removedIds: ['entry-3'], upserts: [expect.objectContaining({ id: 'entry-2', state: 'stale' })],
+        } });
+        expect((response as { delta: { upserts: unknown[] } }).delta.upserts).toHaveLength(1);
+        // A caller whose held snapshot the daemon no longer has still receives the whole snapshot.
+        const stale = DaemonLocalServiceInventoryWatchResponseV1Schema.parse(await watch({ machineId: 'machine_1', sinceGeneratedAt: held }));
+        expect(stale).toMatchObject({ changed: true, snapshot: { entries: [{ id: 'entry-1' }, { id: 'entry-2' }] } });
     });
 
     it('serves inventory, launcher, and action routes through one daemon-owned registration point', async () => {

@@ -274,6 +274,34 @@ describe('shared local-service inventory store', () => {
         unsubscribe();
     });
 
+    it('applies a watch delta onto the held rows, keeping untouched row identities, and reads in full when the base moved', async () => {
+        const second = { ...snapshot.entries[0]!, id: 'api-8080', port: 8080 };
+        const held = LocalServiceInventorySnapshotV1Schema.parse({ ...snapshot, entries: [snapshot.entries[0], second] });
+        const watches: Array<(value: unknown) => void> = [];
+        rpc.machine.mockImplementation(async (request: { method: string; payload?: { observationOnly?: true } }) => {
+            if (request.payload?.observationOnly) return new Promise(() => {});
+            if (request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) return new Promise(resolve => { watches.push(resolve); });
+            return { protocolVersion: 1, snapshot: held };
+        });
+        const key = { machineId: 'machine-a', serverId: 'server-a' };
+        const unsubscribe = subscribeLocalServiceInventoryStore(key, () => {});
+        await vi.waitFor(() => expect(watches).toHaveLength(1));
+        const untouched = getLocalServiceInventoryState(key).rowsById.get('vite-5173');
+        const added = { ...second, id: 'docs-3000', port: 3000 };
+        watches[0]!({ protocolVersion: 1, changed: true, delta: { v: 1, machineId: 'machine-a', baseGeneratedAt: 1_000,
+            generatedAt: 2_000, refreshState: 'idle', upserts: [added], removedIds: ['api-8080'], diagnostics: [] } });
+        await vi.waitFor(() => expect(getLocalServiceInventoryState(key).generatedAt).toBe(2_000));
+        expect(selectLocalServiceInventoryRows(getLocalServiceInventoryState(key)).map(row => row.id)).toEqual(['vite-5173', 'docs-3000']);
+        expect(getLocalServiceInventoryState(key).rowsById.get('vite-5173')).toBe(untouched);
+        const snapshotReads = rpc.machine.mock.calls.filter(([request]) => request.method !== RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH).length;
+        await vi.waitFor(() => expect(watches).toHaveLength(2));
+        watches[1]!({ protocolVersion: 1, changed: true, delta: { v: 1, machineId: 'machine-a', baseGeneratedAt: 1_500,
+            generatedAt: 3_000, refreshState: 'idle', upserts: [], removedIds: [], diagnostics: [] } });
+        await vi.waitFor(() => expect(rpc.machine.mock.calls.filter(([request]) => request.method !== RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH).length)
+            .toBe(snapshotReads + 1));
+        unsubscribe();
+    });
+
     it.each(['unavailable', 'rejection'] as const)('rearms the real watch transport after fresh publication overtakes %s', async failure => {
         const watches: Array<{ resolve(value: unknown): void; reject(error: unknown): void }> = [];
         rpc.machine.mockImplementation(async (request: { method: string; payload?: { observationOnly?: true } }) => {

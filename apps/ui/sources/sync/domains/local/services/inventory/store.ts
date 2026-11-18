@@ -41,6 +41,41 @@ export type LocalServiceInventorySnapshot = Readonly<{
     diagnostics: readonly unknown[];
 }>;
 
+export type LocalServiceInventorySnapshotDelta = Readonly<{
+    v: 1;
+    machineId: string;
+    baseGeneratedAt: number;
+    generatedAt: number;
+    refreshState: LocalServiceInventorySnapshot['refreshState'];
+    upserts: readonly LocalServiceInventoryRow[];
+    removedIds: readonly string[];
+    order?: readonly string[];
+    diagnostics: readonly unknown[];
+}>;
+
+/**
+ * The snapshot a watch delta describes, rebuilt from the rows this state holds. Null when the
+ * state no longer holds the delta's base snapshot; the caller then reads the whole inventory.
+ */
+export function resolveLocalServiceInventorySnapshotDelta(
+    state: LocalServiceInventoryState,
+    delta: LocalServiceInventorySnapshotDelta,
+): LocalServiceInventorySnapshot | null {
+    if (state.machineId !== delta.machineId || state.generatedAt !== delta.baseGeneratedAt) return null;
+    const upserts = new Map(delta.upserts.map(row => [row.id, row]));
+    const removed = new Set(delta.removedIds);
+    const order = delta.order ?? [...state.rowIds.filter(id => !removed.has(id)),
+        ...delta.upserts.filter(row => !state.rowsById.has(row.id)).map(row => row.id)];
+    const entries: LocalServiceInventoryRow[] = [];
+    for (const id of order) {
+        const row = upserts.get(id) ?? state.rowsById.get(id);
+        if (!row) return null;
+        entries.push(row);
+    }
+    return { v: 1, machineId: delta.machineId, generatedAt: delta.generatedAt,
+        refreshState: delta.refreshState, entries, diagnostics: delta.diagnostics };
+}
+
 export type LocalServiceInventoryState = Readonly<{
     summary: LocalServiceMachineSummaryV1 | null;
     machineId: string | null;

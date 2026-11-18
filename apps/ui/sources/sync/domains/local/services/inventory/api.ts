@@ -2,7 +2,7 @@ import { LocalServiceInventorySnapshotV1Schema } from '@happier-dev/protocol/loc
 import type { LocalServiceLauncherScopeV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 
 import type { LocalServiceRpcFailureMetadata } from '../rpcFailure';
-import type { LocalServiceInventorySnapshot } from './store';
+import type { LocalServiceInventorySnapshot, LocalServiceInventorySnapshotDelta } from './store';
 
 export const LOCAL_SERVICE_INVENTORY_SNAPSHOT_ROUTE = '/local-services/inventory/snapshot';
 export const LOCAL_SERVICE_INVENTORY_REFRESH_ROUTE = '/local-services/inventory/refresh';
@@ -92,5 +92,7 @@ export type LocalServiceInventoryWatchClientInput = Readonly<{
 
 export type LocalServiceInventoryWatchClientResult =
     | Readonly<{ ok: true; changed: true; snapshot: LocalServiceInventorySnapshot }>
+    /** Only the entries that changed since the caller's held `sinceGeneratedAt` snapshot. */
+    | Readonly<{ ok: true; changed: true; delta: LocalServiceInventorySnapshotDelta }>
     | Readonly<{ ok: true; changed: false }>
     | LocalServiceRpcFailureMetadata & Readonly<{ ok: false; reason: 'unavailable' | 'request_failed' | 'invalid_response' }>;

@@ -25,6 +25,7 @@ import {
     applyLocalServiceInventorySummary,
     applyLocalServiceInventoryMachineSummary,
     readLocalServiceInventoryMachineSummarySource,
+    resolveLocalServiceInventorySnapshotDelta,
     createLocalServiceInventoryState,
     type LocalServiceInventorySnapshot,
     type LocalServiceInventoryState,
@@ -201,9 +202,13 @@ const store = createSharedSubscriptionStore<
             if (result.reasonCode === MACHINE_RPC_TIMEOUT_ERROR_CODE) return { status: 'retry' };
             return { status: 'unavailable' };
         }
-        return result.changed
-            ? { status: 'changed', snapshot: result.snapshot }
-            : { status: 'idle' };
+        if (!result.changed) return { status: 'idle' };
+        if ('snapshot' in result) return { status: 'changed', snapshot: result.snapshot };
+        const snapshot = resolveLocalServiceInventorySnapshotDelta(store.getState(input), result.delta);
+        if (snapshot) return { status: 'changed', snapshot };
+        // The held rows moved on under this watch: read the whole inventory instead.
+        store.invalidate(input);
+        return { status: 'idle' };
     },
 });
 

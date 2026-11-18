@@ -103,7 +103,8 @@ function attachStoredLabels(
     return labels.length > 0 ? { ...entry, labels } : entry;
 }
 
-function materialEntry(entry: NormalizedLocalServiceInventoryEntry) {
+/** The facts a consumer reads; scan observations change on every scan and are not material. */
+export function materialEntry(entry: NormalizedLocalServiceInventoryEntry) {
     // Connection counts are private Guard observations, stripped by Inventory V1 egress.
     const { lastSeenAt: _lastSeenAt, establishedConnections: _connections, endpoint, ...facts } = entry;
     if (!endpoint) return facts;

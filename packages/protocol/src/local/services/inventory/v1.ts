@@ -291,11 +291,35 @@ export type DaemonLocalServiceInventoryWatchRequestV1 = z.infer<
   typeof DaemonLocalServiceInventoryWatchRequestV1Schema
 >;
 
-export const DaemonLocalServiceInventoryWatchResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('changed', [
+/**
+ * A watch answer relative to the snapshot the caller holds (`sinceGeneratedAt`): only entries
+ * whose material facts changed, the removed ids, and the entry order when it is not the held
+ * order minus removals plus new ids appended. Scan observations (`lastSeenAt`, `probedAt`) are
+ * not material; a caller keeps its held values for unchanged entries.
+ */
+export const LocalServiceInventorySnapshotDeltaV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  machineId: z.string().check(z.trim(), z.minLength(1)),
+  baseGeneratedAt: z.number().check(z.int(), z.nonnegative()),
+  generatedAt: z.number().check(z.int(), z.nonnegative()),
+  refreshState: LocalServiceInventoryRefreshStateV1Schema,
+  upserts: z.array(LocalServiceInventoryEntryV1Schema),
+  removedIds: z.array(z.string().check(z.trim(), z.minLength(1))),
+  order: z.optional(z.array(z.string().check(z.trim(), z.minLength(1)))),
+  diagnostics: z._default(z.array(LocalServiceInventoryDiagnosticV1Schema), []),
+}));
+export type LocalServiceInventorySnapshotDeltaV1 = z.infer<typeof LocalServiceInventorySnapshotDeltaV1Schema>;
+
+export const DaemonLocalServiceInventoryWatchResponseV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({
     protocolVersion: z.literal(1),
     changed: z.literal(true),
     snapshot: LocalServiceInventorySnapshotV1Schema,
+  }),
+  z.strictObject({
+    protocolVersion: z.literal(1),
+    changed: z.literal(true),
+    delta: LocalServiceInventorySnapshotDeltaV1Schema,
   }),
   z.strictObject({
     protocolVersion: z.literal(1),

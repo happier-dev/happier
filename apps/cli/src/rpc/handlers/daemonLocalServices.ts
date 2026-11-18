@@ -14,7 +14,7 @@ import type { RpcHandler } from '@/api/rpc/types';
 
 import type { LocalServiceActionRoutes } from '@/daemon/local/services/actions/routes';
 import type { LocalServiceInventoryRoutes } from '@/daemon/local/services/inventory/routes';
-import { projectLocalServiceInventorySnapshotV1 } from '@/daemon/local/services/inventory/wire';
+import { projectLocalServiceInventorySnapshotDeltaV1, projectLocalServiceInventorySnapshotV1 } from '@/daemon/local/services/inventory/wire';
 import type { LocalServiceLauncherRoutes } from '@/daemon/local/services/launch/routes';
 import type { LocalServicePreviewRoutes } from '@/daemon/local/services/preview/routes';
 import type { LocalServicePublicPreviewRoutes } from '@/daemon/local/services/public/routes';
@@ -170,10 +170,12 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
                         ...(context ? { signal: context.signal } : {}),
                     });
                     await assertRequesterRead(context);
+                    // A caller that holds the base snapshot receives only the entries that changed.
                     return DaemonLocalServiceInventoryWatchResponseV1Schema.parse(
-                        result.changed
-                            ? { protocolVersion: 1, changed: true, snapshot: projectLocalServiceInventorySnapshotV1(result.snapshot) }
-                            : { protocolVersion: 1, changed: false },
+                        !result.changed ? { protocolVersion: 1, changed: false }
+                            : result.base && result.base.machineId === result.snapshot.machineId
+                                ? { protocolVersion: 1, changed: true, delta: projectLocalServiceInventorySnapshotDeltaV1(result.base, result.snapshot) }
+                                : { protocolVersion: 1, changed: true, snapshot: projectLocalServiceInventorySnapshotV1(result.snapshot) },
                     );
                 },
             );

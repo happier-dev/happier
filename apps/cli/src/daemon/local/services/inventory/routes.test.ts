@@ -127,9 +127,11 @@ describe('createLocalServiceInventoryRoutes', () => {
         registry.replaceSnapshot(snapshotAt(2_000, 'entry-reconnected'));
         expect(await routes.watchSnapshot({ sinceGeneratedAt: 1_000 })).toEqual({ changed: true, snapshot: registry.getSnapshot() });
         const reconnected = new AbortController();
+        const held = registry.getSnapshot();
         const next = routes.watchSnapshot({ sinceGeneratedAt: 2_000, signal: reconnected.signal });
         registry.replaceSnapshot(snapshotAt(3_000, 'entry-live'));
-        expect(await next).toEqual({ changed: true, snapshot: registry.getSnapshot() });
+        // The caller holds the 2_000 snapshot, so the answer names it as the delta base.
+        expect(await next).toEqual({ changed: true, snapshot: registry.getSnapshot(), base: held });
         expect(vi.getTimerCount()).toBe(0);
     });
 
@@ -144,10 +146,11 @@ describe('createLocalServiceInventoryRoutes', () => {
             },
         });
 
+        const held = registry.getSnapshot();
         const pending = routes.watchSnapshot({ sinceGeneratedAt: 1_000 });
         await vi.advanceTimersByTimeAsync(25_000);
 
-        expect(await pending).toEqual({ changed: true, snapshot: registry.getSnapshot() });
+        expect(await pending).toEqual({ changed: true, snapshot: registry.getSnapshot(), base: held });
         expect(routes.watcherCount()).toBe(0);
     });
 

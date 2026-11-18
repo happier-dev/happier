@@ -129,6 +129,11 @@ export async function watchLocalServiceInventorySnapshotViaMachineRpc(
         if (!parsed.data.changed) {
             return { ok: true, changed: false };
         }
+        if ('delta' in parsed.data) {
+            return parsed.data.delta.machineId === input.machineId
+                ? { ok: true, changed: true, delta: parsed.data.delta }
+                : { ok: false, reason: 'invalid_response' };
+        }
         return parsed.data.snapshot.machineId === input.machineId
             ? { ok: true, changed: true, snapshot: parsed.data.snapshot }
             : { ok: false, reason: 'invalid_response' };
